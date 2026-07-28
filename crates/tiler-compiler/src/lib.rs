@@ -10,6 +10,7 @@ mod cover;
 mod effects;
 mod estimate;
 mod explain;
+mod failure_stage;
 mod feasibility;
 mod frontier;
 mod fusion;

@@ -73,4 +73,16 @@ Three independent axes, deliberately not collapsed: `Elimination` (removable whe
 
 `meet` takes the conservative value **per axis**, for a region containing more than one opaque call — the region may only be optimized as far as its most restrictive member allows. Written as an explicit match per axis rather than a numeric minimum, so a third value on any axis is a build error here instead of silently ordering itself against the others. Tested that one undeclared call constrains a whole region, that the meet is symmetric so the result does not depend on member order, and that an axis both declarations agree on is *not* needlessly constrained — the last is what catches a `meet` that just returns `unknown()`.
 
-**Still not included:** the typed ABI and placement contracts; provider registration and applicability; failure stages; and the additive coexistence with scheduled kernels. Those remain the bulk of the ticket.
+## Failure stages landed (2026-07-27)
+
+`crates/tiler-compiler/src/failure_stage.rs`. Seven stages in sequence order — applicability, preflight, validation, program construction, allocation, partial encoding, submission — and the thing that matters about a stage is which side of the commit point it falls on, not how severe it is.
+
+**`fallback_permitted` encodes `AGENTS.md`'s rule directly:** "preflight before routing commit, fallback only before program work, and no fallback after allocation, partial encoding, submission, or semantic validation failure." It is a property of the stage, not a policy a caller may override, and there is no stage at which a caller may opt back in.
+
+*Why the rule bites hardest here.* Once resources are allocated or a command buffer is partly encoded, a fallback must reason about what the abandoned attempt already did to device state — and that is precisely what nobody can do for an **opaque** call, since the compiler does not model its body and cannot know what it touched before failing. A fallback there is not a slower correct path; it is a guess.
+
+*Written as an exhaustive match rather than a `<=` comparison*, so inserting a stage forces a decision about which side of the boundary it belongs on instead of inheriting an answer from where it happens to sit in the declaration order. The `Ord` derive makes declaration order meaningful, which is exactly why it must not silently decide this. A test pins that the declaration order *is* the sequence order, because a reordering that looked cosmetic would otherwise move the boundary; another checks the exhaustive match and the named `LAST_FALLBACK_STAGE` agree, since they are written independently and the match would silently win a disagreement.
+
+**Only applicability is an ordinary failure.** A provider declining a target is not an error; everything else must be explained. Treating a preflight rejection as routine is how an infeasible plan becomes a silent one.
+
+**Still not included:** the typed ABI and placement contracts; provider registration and applicability resolution; and the additive coexistence with scheduled kernels. Those remain the bulk of the ticket.
