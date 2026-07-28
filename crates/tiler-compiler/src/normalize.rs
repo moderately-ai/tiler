@@ -4,10 +4,8 @@
 //! It produces one canonical semantic graph for a class of programs that differ
 //! only in redundant spelling. Since the routing landed, the stage does that
 //! *by driving the rewrite engine in this module* with the common-subexpression
-//! rule registered: the engine can produce a set of alternatives, and this
-//! stage adopts exactly one, rejecting a multi-alternative run outright because
-//! choosing among alternatives is a cost decision with no cost model in scope
-//! here.
+//! rule registered. That rule produces at most one canonical proposal.
+//! Costed algebraic alternatives are explored only after this phase.
 //!
 //! The first profile proves exactly one rule, common-subexpression elimination
 //! over referentially transparent operations. Breadth is deliberately not the
@@ -56,8 +54,8 @@ use tiler_ir::shape::Shape;
 
 use crate::explain::{
     EvidenceBasis, ExplainError, ExplainEvent, ExplainFact, ExplainRecordId, ExplainStage,
-    ExplainWriter, FactValue, PredicateAssessment, RejectionClass, ResourceKey, RuleRef,
-    SubjectKey, SubjectKind,
+    ExplainWriter, FactValue, PredicateAssessment, ProviderRef, ReasonCode, RejectionClass,
+    ResourceKey, RuleRef, SubjectKey, SubjectKind, SubjectRef,
 };
 use crate::request::{DeterministicBudgets, StrictF32NumericalContract};
 use crate::rewrite::{
@@ -305,6 +303,15 @@ fn count(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
 }
 
+fn sole_canonical_alternative<T>(alternatives: &[T]) -> Result<&T, NormalizeError> {
+    let [alternative] = alternatives else {
+        return Err(NormalizeError::InvalidRewrite {
+            rule: "canonical-provider-cardinality",
+        });
+    };
+    Ok(alternative)
+}
+
 /// Runs the deterministic normalization stage over one verified program.
 ///
 /// The input is never mutated. When a rewrite is committed the returned outcome
@@ -331,9 +338,8 @@ pub(crate) fn normalize_semantics(
     // is preserved exactly.
     // The mapping drops the failing rule's identity: `NormalizeError` has no
     // field for it, and with one hard-coded rule there is nothing to exclude.
-    // A second rule makes the identity worth keeping — the whole point of
-    // `EngineFailure::Revalidation` carrying it — so widening this error is
-    // part of wiring the second-rule seam, not an oversight to paper over now.
+    // Algebraic exploration retains its rule identities separately; this
+    // canonical phase still has one hard-coded rule and therefore no ambiguity.
     let run = run_rewrite_engine(&registry, program, budgets).map_err(|failure| match failure {
         EngineFailure::Provider(ProviderDefect::Failed { reason, .. })
         | EngineFailure::Revalidation { reason, .. } => {
@@ -364,17 +370,10 @@ pub(crate) fn normalize_semantics(
     if alternatives.is_empty() {
         return Ok(unchanged(None));
     }
-    // `NormalizationOutcome` carries one program, so this stage can express one
-    // alternative. With a single rule registered that is all the engine can
-    // produce; a second rule makes this reachable, and it rejects rather than
-    // silently picking, because choosing among alternatives is a cost decision
-    // and no cost model is in scope here.
-    if alternatives.len() > 1 {
-        return Err(NormalizeError::InvalidRewrite {
-            rule: "multiple-alternatives",
-        });
-    }
-    let adopted = &alternatives[0];
+    // This canonical phase registers exactly one rule and that rule emits at
+    // most one proposal. Algebraic alternatives are explored only after this
+    // phase, where the portfolio owns their comparison.
+    let adopted = sole_canonical_alternative(&alternatives)?;
     let normalized = adopted.candidate().clone();
     Ok(NormalizationOutcome {
         operations_before,
@@ -490,27 +489,27 @@ impl RewriteRuleProvider<SemanticProgram> for CommonSubexpressionRule {
 /// Configuration is explicit per rule rather than one portfolio switch. A
 /// disabled member still receives a stable configuration assessment, so its
 /// absence cannot be confused with a provider that was never considered.
-#[allow(
-    dead_code,
-    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
-)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct AlgebraicRuleConfiguration {
     add: bool,
     multiply: bool,
 }
 
-#[allow(
-    dead_code,
-    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
-)]
 impl AlgebraicRuleConfiguration {
     /// Enables the complete governed algebraic portfolio.
-    pub(crate) const fn all() -> Self {
+    pub(crate) fn all() -> Self {
         Self {
-            add: true,
-            multiply: true,
+            add: false,
+            multiply: false,
         }
+        .with(
+            ORDERED_REASSOCIATE_ADD_RULE.expect("the add rule is named"),
+            true,
+        )
+        .with(
+            ORDERED_REASSOCIATE_MULTIPLY_RULE.expect("the multiply rule is named"),
+            true,
+        )
     }
 
     /// Enables or disables one governed member.
@@ -545,10 +544,6 @@ impl AlgebraicRuleConfiguration {
 }
 
 /// Baseline-preserving result of one bounded algebraic exploration.
-#[allow(
-    dead_code,
-    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
-)]
 #[derive(Debug)]
 pub(crate) struct AlgebraicExplorationOutcome {
     baseline: SemanticProgram,
@@ -557,46 +552,135 @@ pub(crate) struct AlgebraicExplorationOutcome {
     budget_stop: Option<(u64, u64)>,
 }
 
-#[allow(
-    dead_code,
-    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
-)]
+pub(crate) struct AlgebraicExplorationParts {
+    pub(crate) baseline: SemanticProgram,
+    pub(crate) alternatives: Vec<RewriteProposal<SemanticProgram>>,
+    pub(crate) assessments: Vec<RewriteAssessment>,
+    pub(crate) budget_stop: Option<(u64, u64)>,
+}
+
 impl AlgebraicExplorationOutcome {
+    pub(crate) fn into_parts(self) -> AlgebraicExplorationParts {
+        AlgebraicExplorationParts {
+            baseline: self.baseline,
+            alternatives: self.alternatives,
+            assessments: self.assessments,
+            budget_stop: self.budget_stop,
+        }
+    }
+
     /// The unchanged input candidate, retained regardless of all rule outcomes.
+    #[cfg(test)]
     pub(crate) const fn baseline(&self) -> &SemanticProgram {
         &self.baseline
     }
 
     /// Structurally revalidated algebraic alternatives in canonical rule order.
+    #[cfg(test)]
     pub(crate) fn alternatives(&self) -> &[RewriteProposal<SemanticProgram>] {
         &self.alternatives
     }
 
     /// Stable semantic, numerical, and configuration assessments.
+    #[cfg(test)]
     pub(crate) fn assessments(&self) -> &[RewriteAssessment] {
         &self.assessments
     }
 
     /// The existing transaction's typed budget stop, if it abandoned the run.
+    #[cfg(test)]
     pub(crate) const fn budget_stop(&self) -> Option<(u64, u64)> {
         self.budget_stop
     }
 }
 
-#[allow(
-    dead_code,
-    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
-)]
+pub(crate) fn rewrite_assessment_key(assessment: RewriteAssessment) -> String {
+    let rule = assessment.rule();
+    format!(
+        "rewrite.p{}:{}.r{}:{}@{}",
+        rule.provider().len(),
+        rule.provider(),
+        rule.rule().len(),
+        rule.rule(),
+        rule.revision()
+    )
+}
+
+pub(crate) fn record_rewrite_assessment(
+    explain: &mut ExplainWriter,
+    assessment: RewriteAssessment,
+    subject: SubjectRef,
+    causes: Vec<ExplainRecordId>,
+) -> Result<ExplainRecordId, ExplainError> {
+    let identity = assessment.rule();
+    let stage = match assessment.class() {
+        RewriteAssessmentClass::Semantic => ExplainStage::CandidateEnumeration,
+        RewriteAssessmentClass::Numerical => ExplainStage::NumericalLegality,
+        RewriteAssessmentClass::Configuration => ExplainStage::CapabilityResolution,
+    };
+    let predicate = match assessment.class() {
+        RewriteAssessmentClass::Semantic => "rewrite.semantic-applicable",
+        RewriteAssessmentClass::Numerical => "rewrite.numerically-legal",
+        RewriteAssessmentClass::Configuration => "rewrite.configuration-enabled",
+    };
+    let rejection = match assessment.class() {
+        RewriteAssessmentClass::Numerical => RejectionClass::NumericalIllegal,
+        RewriteAssessmentClass::Semantic | RewriteAssessmentClass::Configuration => {
+            RejectionClass::IntrinsicInvalid
+        }
+    };
+    let facts = [
+        ExplainFact::new(
+            "rewrite-provider",
+            FactValue::Identity(SubjectKey::new(identity.provider())?),
+        )?,
+        ExplainFact::new(
+            "rewrite-rule",
+            FactValue::Identity(SubjectKey::new(identity.rule())?),
+        )?,
+        ExplainFact::new(
+            "rewrite-revision",
+            FactValue::Count(u64::from(identity.revision())),
+        )?,
+        ExplainFact::new(
+            "assessment-reason",
+            FactValue::Identity(SubjectKey::new(assessment.reason())?),
+        )?,
+    ];
+    let mut predicate = if assessment.is_accepted() {
+        PredicateAssessment::proven(predicate, EvidenceBasis::CheckedInvariant)?
+    } else {
+        PredicateAssessment::disproved(
+            predicate,
+            ReasonCode::new(assessment.reason())?,
+            EvidenceBasis::CheckedInvariant,
+        )?
+    };
+    for fact in facts {
+        predicate = predicate.with_fact(fact)?;
+    }
+    explain.push_detail(
+        RuleRef::provided(
+            rewrite_assessment_key(assessment),
+            identity.revision(),
+            ProviderRef::builtin(),
+        )?,
+        vec![subject],
+        ExplainEvent::Check {
+            stage,
+            assessment: predicate,
+            rejection,
+        },
+        causes,
+    )
+}
+
 #[derive(Clone, Copy, Debug)]
 struct OrderedReassociationRule {
     identity: RewriteRuleIdentity,
     operation: fn() -> OpKey,
 }
 
-#[allow(
-    dead_code,
-    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
-)]
 impl OrderedReassociationRule {
     fn add() -> Self {
         Self {
@@ -693,20 +777,12 @@ impl OrderedReassociationRule {
     }
 }
 
-#[allow(
-    dead_code,
-    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
-)]
 #[derive(Clone, Debug)]
 struct PreparedAlgebraicRule {
     assessments: Vec<RewriteAssessment>,
     operation: OpKey,
 }
 
-#[allow(
-    dead_code,
-    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
-)]
 impl PreparedAlgebraicRule {
     fn declined(operation: OpKey, assessment: RewriteAssessment) -> Self {
         Self {
@@ -767,10 +843,6 @@ impl RewriteRuleProvider<SemanticProgram> for PreparedAlgebraicRule {
     }
 }
 
-#[allow(
-    dead_code,
-    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
-)]
 #[derive(Debug)]
 struct AlgebraicRuleExplain {
     assessments: Vec<RewriteAssessment>,
@@ -779,8 +851,8 @@ struct AlgebraicRuleExplain {
 impl RuleExplain for AlgebraicRuleExplain {
     fn record(
         &self,
-        _explain: &mut ExplainWriter,
-        cause: ExplainRecordId,
+        explain: &mut ExplainWriter,
+        mut cause: ExplainRecordId,
     ) -> Result<ExplainRecordId, ExplainError> {
         debug_assert!(
             self.assessments
@@ -788,14 +860,15 @@ impl RuleExplain for AlgebraicRuleExplain {
                 .all(|assessment| assessment.is_accepted()),
             "only an accepted algebraic proposal may carry an adopted payload"
         );
+        for assessment in &self.assessments {
+            let subject =
+                explain.subject(SubjectKind::Capability, rewrite_assessment_key(*assessment))?;
+            cause = record_rewrite_assessment(explain, *assessment, subject, vec![cause])?;
+        }
         Ok(cause)
     }
 }
 
-#[allow(
-    dead_code,
-    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
-)]
 #[derive(Clone, Debug)]
 struct OrderedReassociationSite {
     root: OperationId,
@@ -805,10 +878,6 @@ struct OrderedReassociationSite {
     original_result: ValueId,
 }
 
-#[allow(
-    dead_code,
-    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
-)]
 fn find_ordered_reassociation(
     program: &SemanticProgram,
     operation: &OpKey,
@@ -875,10 +944,6 @@ fn find_ordered_reassociation(
     Ok(None)
 }
 
-#[allow(
-    dead_code,
-    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
-)]
 fn value_fact(program: &SemanticProgram, value: ValueId) -> Result<ValueFact, NormalizeError> {
     let value = program
         .value(value)
@@ -891,10 +956,6 @@ fn value_fact(program: &SemanticProgram, value: ValueId) -> Result<ValueFact, No
     ))
 }
 
-#[allow(
-    dead_code,
-    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
-)]
 fn reassociated_signature_is_valid(
     program: &SemanticProgram,
     operation: &OpKey,
@@ -929,10 +990,6 @@ fn reassociated_signature_is_valid(
     Ok(outer.resolved_type() == original.resolved_type() && outer.shape() == original.shape())
 }
 
-#[allow(
-    dead_code,
-    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
-)]
 fn rebuild_ordered_reassociation(
     program: &SemanticProgram,
     site: &OrderedReassociationSite,
@@ -1049,12 +1106,8 @@ fn rebuild_ordered_reassociation(
 /// program size. The unchanged baseline is always retained. All proposals pass
 /// through [`run_rewrite_engine`], which remains the sole revalidation and
 /// budget authority.
-#[allow(
-    dead_code,
-    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
-)]
-pub(crate) fn explore_algebraic_alternatives(
-    program: &SemanticProgram,
+pub(crate) fn explore_algebraic_alternatives_owned(
+    program: SemanticProgram,
     budgets: DeterministicBudgets,
     contract: StrictF32NumericalContract,
     configuration: AlgebraicRuleConfiguration,
@@ -1073,7 +1126,7 @@ pub(crate) fn explore_algebraic_alternatives(
             ));
             continue;
         }
-        let prepared = rule.evaluate(program, &contract)?;
+        let prepared = rule.evaluate(&program, &contract)?;
         assessments.extend_from_slice(&prepared.assessments);
         registry
             .register(Box::new(prepared))
@@ -1081,7 +1134,7 @@ pub(crate) fn explore_algebraic_alternatives(
                 rule: "algebraic-rule-registration",
             })?;
     }
-    let (alternatives, budget_stop) = match run_rewrite_engine(&registry, program, budgets)
+    let (alternatives, budget_stop) = match run_rewrite_engine(&registry, &program, budgets)
         .map_err(|failure| match failure {
             EngineFailure::Provider(ProviderDefect::Failed { reason, .. })
             | EngineFailure::Revalidation { reason, .. } => {
@@ -1097,11 +1150,21 @@ pub(crate) fn explore_algebraic_alternatives(
         EngineRun::BudgetStopped { limit, demand } => (Vec::new(), Some((limit, demand))),
     };
     Ok(AlgebraicExplorationOutcome {
-        baseline: program.clone(),
+        baseline: program,
         alternatives,
         assessments,
         budget_stop,
     })
+}
+
+#[cfg(test)]
+fn explore_algebraic_alternatives(
+    program: &SemanticProgram,
+    budgets: DeterministicBudgets,
+    contract: StrictF32NumericalContract,
+    configuration: AlgebraicRuleConfiguration,
+) -> Result<AlgebraicExplorationOutcome, NormalizeError> {
+    explore_algebraic_alternatives_owned(program.clone(), budgets, contract, configuration)
 }
 
 fn detect_shared_values(program: &SemanticProgram) -> Result<Congruence, NormalizeError> {
@@ -1432,24 +1495,16 @@ pub(crate) fn run_rewrite_engine(
 /// rarest — a rule that misbehaves on one program in a hundred. If a rewrite is
 /// ever shown to *legitimately* change what a program requires, this is the
 /// place that should be relaxed, on that evidence and not before.
-#[allow(
-    dead_code,
-    reason = "the second-rule seam: unconsumed until a second rewrite rule registers. The live path readmits inline in pipeline.rs and adopts a single alternative, so per-alternative readmission, contract grouping, and survivor-only emission have nothing to do yet; whoever registers a second rule wires these in and deletes the inline duplicate (see route-the-compile-path ticket, Assessment corrections)"
-)]
 pub(crate) fn readmit_alternatives<Verified>(
     alternatives: Vec<RewriteProposal<SemanticProgram>>,
     readmit: impl Fn(&SemanticProgram) -> Option<Verified>,
-) -> Result<Vec<(RewriteRuleIdentity, SemanticProgram, Verified)>, NormalizeError> {
+) -> Result<Vec<(RewriteProposal<SemanticProgram>, Verified)>, NormalizeError> {
     let mut readmitted = Vec::with_capacity(alternatives.len());
     for alternative in alternatives {
         let verified = readmit(alternative.candidate()).ok_or(NormalizeError::InvalidRewrite {
             rule: "request-readmission",
         })?;
-        readmitted.push((
-            alternative.rule(),
-            alternative.candidate().clone(),
-            verified,
-        ));
+        readmitted.push((alternative, verified));
     }
     Ok(readmitted)
 }
@@ -1477,10 +1532,6 @@ pub(crate) fn readmit_alternatives<Verified>(
 /// A single group is the ordinary case and carries no special meaning; more
 /// than one means the caller must choose *within* a group and then choose
 /// between groups on the contract, not on cost.
-#[allow(
-    dead_code,
-    reason = "the second-rule seam: unconsumed until a second rewrite rule registers. The live path readmits inline in pipeline.rs and adopts a single alternative, so per-alternative readmission, contract grouping, and survivor-only emission have nothing to do yet; whoever registers a second rule wires these in and deletes the inline duplicate (see route-the-compile-path ticket, Assessment corrections)"
-)]
 pub(crate) fn group_by_resolved_contract<Item>(
     alternatives: Vec<Item>,
     contract_key: impl Fn(&Item) -> &'static str,
@@ -1722,6 +1773,17 @@ mod tests {
         FloatBitOrder, InputBinding, ReferenceElement, ReferenceEvaluator, Tensor,
         TensorPayloadView,
     };
+
+    #[test]
+    fn canonical_phase_refuses_a_provider_cardinality_defect() {
+        assert_eq!(
+            sole_canonical_alternative(&[1_u8, 2]),
+            Err(NormalizeError::InvalidRewrite {
+                rule: "canonical-provider-cardinality"
+            })
+        );
+        assert_eq!(sole_canonical_alternative(&[1_u8]), Ok(&1));
+    }
 
     /// A retained root record the stage chain hangs from.
     ///
@@ -2731,8 +2793,8 @@ mod tests {
             1,
             "readmission did not run once per alternative"
         );
-        assert_eq!(readmitted[0].0, CommonSubexpressionRule.identity());
-        assert_eq!(readmitted[0].2, 1);
+        assert_eq!(readmitted[0].0.rule(), CommonSubexpressionRule.identity());
+        assert_eq!(readmitted[0].1, 1);
     }
 
     /// A refused readmission is a fault, not a dropped alternative.

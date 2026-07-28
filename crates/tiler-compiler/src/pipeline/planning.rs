@@ -432,9 +432,33 @@ pub(super) fn region_id_of(
 }
 
 /// Assembles one retained complete plan into KIR, a kernel program, and a plan.
+#[cfg(test)]
 pub(super) fn build_alternative(
     semantic: &tiler_ir::semantic::SemanticProgram,
     verified: &crate::request::VerifiedTargetRequest,
+    plan: &SelectedPlan,
+    kind: ProgramAlternativeKind,
+    plans: &CompletePlans,
+    cause: Option<&TerminalCause>,
+) -> Result<ProgramAlternative, TargetFailure> {
+    build_alternative_for_origin(
+        semantic,
+        verified,
+        SemanticAlternativeOwner {
+            origin: SemanticAlternativeOrigin::Baseline,
+            key: "semantic:baseline",
+        },
+        plan,
+        kind,
+        plans,
+        cause,
+    )
+}
+
+pub(super) fn build_alternative_for_origin(
+    semantic: &tiler_ir::semantic::SemanticProgram,
+    verified: &crate::request::VerifiedTargetRequest,
+    owner: SemanticAlternativeOwner<'_>,
     plan: &SelectedPlan,
     kind: ProgramAlternativeKind,
     plans: &CompletePlans,
@@ -504,8 +528,11 @@ pub(super) fn build_alternative(
             ProgramAlternativeKind::Materialized => None,
         },
     };
+    let identity = ProgramAlternativeIdentity::new(owner.origin, semantic, verified, plan);
     Ok(ProgramAlternative {
-        stable_id: plan.identity().label(),
+        stable_id: identity.label(),
+        identity,
+        owner_key: owner.key.to_owned(),
         kind,
         plan: plan.clone(),
         scheduled_regions: scheduled,

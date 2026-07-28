@@ -26,9 +26,8 @@
 //! [`crate::normalize::run_rewrite_engine`]'s, so one authority owns the
 //! all-or-nothing contract. Also not yet here: a route from
 //! [`RewriteRuleIdentity`] into explain output. The stage's records use its own
-//! governed rule constants, and the provider identity reaches no record today;
-//! wiring it is part of the second-rule seam, since with one hard-coded rule
-//! there is nothing to distinguish.
+//! governed rule constants, and the full provider/rule/revision identity is
+//! retained in the live semantic-portfolio explanation.
 
 use crate::explain::{ExplainError, ExplainRecordId, ExplainWriter};
 use core::fmt;
@@ -53,10 +52,6 @@ pub(crate) struct RewriteRuleIdentity {
     revision: u32,
 }
 
-#[allow(
-    dead_code,
-    reason = "read only by tests today: the compile path attributes through RewriteProposal::rule and the identity reaches no explain record yet — wiring it into explain is part of the second-rule seam, and `encode` is the canonical-bytes half of that same wiring"
-)]
 impl RewriteRuleIdentity {
     /// Builds a rule identity.
     ///
@@ -129,26 +124,14 @@ pub(crate) const COMMON_SUBEXPRESSION_RULE: Option<RewriteRuleIdentity> =
     RewriteRuleIdentity::new("tiler.normalize", "common-subexpression.v1", 1);
 
 /// Ordered reassociation of the governed binary `f32` addition operation.
-#[allow(
-    dead_code,
-    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
-)]
 pub(crate) const ORDERED_REASSOCIATE_ADD_RULE: Option<RewriteRuleIdentity> =
     RewriteRuleIdentity::new("tiler.algebraic", "ordered-reassociate-add-f32.v1", 1);
 
 /// Ordered reassociation of the governed binary `f32` multiplication operation.
-#[allow(
-    dead_code,
-    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
-)]
 pub(crate) const ORDERED_REASSOCIATE_MULTIPLY_RULE: Option<RewriteRuleIdentity> =
     RewriteRuleIdentity::new("tiler.algebraic", "ordered-reassociate-multiply-f32.v1", 1);
 
 /// Which independently checked guard produced one rule assessment.
-#[allow(
-    dead_code,
-    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
-)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RewriteAssessmentClass {
     /// Whether the graph and operation definition admit the transformation.
@@ -165,10 +148,6 @@ pub(crate) enum RewriteAssessmentClass {
 /// It deliberately carries the full rule identity and keeps semantic,
 /// numerical, and configuration outcomes separate. The live explain surface is
 /// not widened until the exploration is wired into the pipeline.
-#[allow(
-    dead_code,
-    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
-)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct RewriteAssessment {
     rule: RewriteRuleIdentity,
@@ -177,10 +156,6 @@ pub(crate) struct RewriteAssessment {
     reason: &'static str,
 }
 
-#[allow(
-    dead_code,
-    reason = "the reviewed algebraic exploration is intentionally not live-wired yet"
-)]
 impl RewriteAssessment {
     /// Records one successful guard.
     pub(crate) const fn accepted(
@@ -642,10 +617,6 @@ where
 /// Records form one linear causal chain rooted at `cause`, matching how
 /// `NormalizationOutcome::record` chains its own, so a later stage depends on a
 /// single receipt rather than an unbounded cause set.
-#[allow(
-    dead_code,
-    reason = "the second-rule seam: unconsumed until a second rewrite rule registers. The live path readmits inline in pipeline.rs and adopts a single alternative, so per-alternative readmission, contract grouping, and survivor-only emission have nothing to do yet; whoever registers a second rule wires these in and deletes the inline duplicate (see route-the-compile-path ticket, Assessment corrections)"
-)]
 pub(crate) fn record_adopted_alternatives<Program>(
     adopted: &[RewriteProposal<Program>],
     explain: &mut ExplainWriter,

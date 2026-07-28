@@ -348,9 +348,9 @@ impl Compilation {
     /// Returns the compilation's verified composite explanation.
     ///
     /// The value binds the top-level selection to every independently sealed
-    /// semantic-candidate trace. The bounded profile currently has one semantic
-    /// candidate, but callers use the same boundary once algebraic exploration
-    /// contributes several.
+    /// semantic-candidate trace for every contract group the compiler evaluated.
+    /// Candidates in lower-preference groups are represented by explicit
+    /// contract-preference-pruned records rather than unevaluated traces.
     #[must_use]
     pub const fn explain(&self) -> &VerifiedCompilationExplain {
         &self.explain
@@ -959,7 +959,7 @@ fn into_compilations(
             feasibility_rule_set: target.feasibility_rule_set,
             selected_alternative_id: target.portfolio.selection.selected_alternative_id,
             alternatives: target.portfolio.alternatives,
-            explain: VerifiedCompilationExplain::one_candidate(target.explain),
+            explain: target.compilation_explain,
         })
         .collect()
 }
@@ -1258,7 +1258,7 @@ mod tests {
             .explain()
             .expect("a post-request failure retains its sealed trace")
             .render();
-        assert!(rendered.starts_with("tiler-explain-v2 "));
+        assert!(rendered.starts_with("tiler-explain-v3 "));
         assert!(
             rendered.contains("compiler-failure"),
             "the trace names the terminal failure: {rendered}",

@@ -459,7 +459,10 @@ fn provider_only_revision_changes_provenance_and_not_structure() {
         );
         assert_eq!(left.kernels, right.kernels);
         assert_eq!(left.plan.identity(), right.plan.identity());
-        assert_eq!(left.stable_id, right.stable_id);
+        assert_ne!(
+            left.stable_id, right.stable_id,
+            "the complete semantic provenance participates in alternative identity"
+        );
         assert_eq!(left.structural_cost, right.structural_cost);
         // Selected-provider provenance is retained and unchanged: a semantic
         // provider revision is not a lowering-provider revision.

@@ -30,7 +30,7 @@ fn test_root(explain: &mut ExplainWriter) -> ExplainRecordId {
 }
 use crate::explain::ExplainDisposition;
 use crate::physical::{RegionId, TensorRole};
-use crate::request::CompilerCapabilitySnapshot;
+use crate::request::{CompilerCapabilitySnapshot, StrictF32NumericalContract};
 use std::collections::BTreeMap;
 use tiler_ir::kernel::{BinaryOp, CompareOp, ConvertOp, KernelConstant, OperationView};
 use tiler_ir::program::{DependencyReasonView, ValueRole};
@@ -92,6 +92,18 @@ fn semantic_case_with_axis(
     let sum = StrictSerialF32Sum::apply(&mut builder, mapped, [reduction_axis]).unwrap();
     builder
         .output(OutputKey::new("result").unwrap(), sum)
+        .unwrap();
+    builder.build().unwrap()
+}
+
+fn algebraic_add_chain() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let leaves = [1.0e20_f32, -1.0e20, 1.0]
+        .map(|value| F32Constant::apply(&mut builder, value.to_bits()).unwrap());
+    let left = F32Add::apply(&mut builder, leaves[0], leaves[1]).unwrap();
+    let root = F32Add::apply(&mut builder, left, leaves[2]).unwrap();
+    builder
+        .output(OutputKey::new("result").unwrap(), root)
         .unwrap();
     builder.build().unwrap()
 }
@@ -322,20 +334,13 @@ pub(super) fn reduction_loop(kernel: &VerifiedKernel) -> Option<(u64, u64)> {
 
 /// Returns the one retained alternative of the requested plan shape.
 fn alternative(product: &CompilationProduct, kind: ProgramAlternativeKind) -> &ProgramAlternative {
-    let mut matching = product.targets[0]
+    product.targets[0]
         .portfolio
         .alternatives
         .iter()
-        .filter(|alternative| alternative.kind == kind);
-    let found = matching
-        .next()
-        .unwrap_or_else(|| panic!("a retained {} alternative", kind.name()));
-    assert!(
-        matching.next().is_none(),
-        "the bounded profile retains exactly one {} alternative",
-        kind.name()
-    );
-    found
+        .filter(|alternative| alternative.kind == kind)
+        .min_by(|left, right| left.identity.cmp(&right.identity))
+        .unwrap_or_else(|| panic!("a retained {} alternative", kind.name()))
 }
 
 /// Returns the kind of the alternative the portfolio selected.
@@ -434,7 +439,7 @@ fn product_is_deterministic_and_preserves_the_materialized_boundary() {
     assert_eq!(first, second);
     let target = &first.targets[0];
     let rendered = target.explain.render();
-    assert!(rendered.starts_with("tiler-explain-v2 request="));
+    assert!(rendered.starts_with("tiler-explain-v3 request="));
     assert!(rendered.contains("feasibility:threads-per-workgroup:admitted"));
     assert!(rendered.contains("feasibility:buffer-bindings:admitted"));
     assert!(rendered.contains("event=selection:tiler.selection.structural-pareto.v1:selected"));
@@ -529,10 +534,10 @@ fn product_is_deterministic_and_preserves_the_materialized_boundary() {
     // fused plan materializes nothing across a boundary.
     assert_eq!(materialized.plan.handoffs().len(), 1);
     assert!(fused.plan.handoffs().is_empty());
-    // Both alternatives are the exact selected plans, so their stable
-    // identity is the plan's content-derived identity label.
+    // Stable identity binds the semantic origin and request contract as well as
+    // the selected physical plan.
     for alternative in &target.portfolio.alternatives {
-        assert_eq!(alternative.stable_id, alternative.plan.identity().label());
+        assert_eq!(alternative.stable_id, alternative.identity.label());
     }
 }
 
@@ -550,7 +555,6 @@ fn every_wired_authority_emits_its_typed_explain_records() {
         rule_counts(trace),
         BTreeMap::from([
             ("compile.request.general-boundary", 1),
-            ("normalize.semantics.v1", 1),
             ("region.formation.v1", 1),
             ("region.candidate.v1", 17),
             // One resolution and one refinement per recognized occurrence.
@@ -657,8 +661,12 @@ fn every_wired_authority_emits_its_typed_explain_records() {
         ("cover.enumeration.v1", "cover-count", 16),
         ("selection.complete-plan.v1", "plan-count", 2),
     ] {
-        let record = trace
-            .records()
+        let records = if rule == "normalize.semantics.v1" {
+            product.targets[0].selection_explain.records()
+        } else {
+            trace.records()
+        };
+        let record = records
             .iter()
             .find(|record| record.rule().key().as_str() == rule)
             .unwrap_or_else(|| panic!("missing typed count emitter {rule}"));
@@ -717,7 +725,7 @@ fn every_wired_authority_emits_its_typed_explain_records() {
         .find(|record| record.rule().key().as_str() == "fusion.legality.v1")
         .expect("a fusion-legality record");
     assert_eq!(legality.event().disposition(), ExplainDisposition::Admitted);
-    assert!(trace.render().starts_with("tiler-explain-v2 request="));
+    assert!(trace.render().starts_with("tiler-explain-v3 request="));
 }
 
 /// Asserts the honourability half of the end-to-end explain conformance.
@@ -867,6 +875,16 @@ fn normalization_converges_duplicated_and_shared_constants_on_one_portfolio() {
 
     let from_duplicated = compile(CompilationRequest::governed(&duplicated)).unwrap();
     let from_shared = compile(CompilationRequest::governed(&shared)).unwrap();
+    let rendered = from_duplicated.targets[0].compilation_explain.render();
+    let request_headers = rendered
+        .lines()
+        .filter(|line| line.starts_with("tiler-explain-v3 request="))
+        .collect::<Vec<_>>();
+    assert_eq!(request_headers.len(), 2);
+    assert_ne!(
+        request_headers[0], request_headers[1],
+        "the original selection subject and canonical candidate remain independently sealed"
+    );
 
     // Both spellings normalize to the same canonical program, so every
     // downstream physical decision and receipt is identical.
@@ -878,7 +896,7 @@ fn normalization_converges_duplicated_and_shared_constants_on_one_portfolio() {
     // The traces differ only in what normalization actually did.
     let rewrite_counts = |product: &CompilationProduct| {
         product.targets[0]
-            .explain
+            .selection_explain
             .records()
             .iter()
             .find(|record| record.rule().key().as_str() == "normalize.semantics.v1")
@@ -899,7 +917,7 @@ fn normalization_converges_duplicated_and_shared_constants_on_one_portfolio() {
     assert_eq!(rewrite_counts(&from_shared), FactValue::Count(0));
     assert!(
         from_duplicated.targets[0]
-            .explain
+            .selection_explain
             .records()
             .iter()
             .any(
@@ -909,7 +927,7 @@ fn normalization_converges_duplicated_and_shared_constants_on_one_portfolio() {
     );
     assert!(
         !from_shared.targets[0]
-            .explain
+            .selection_explain
             .records()
             .iter()
             .any(|record| record.rule().key().as_str() == "normalize.common-subexpression.v1")
@@ -1693,9 +1711,15 @@ fn verification_refuses_an_alternative_with_an_opaque_plan() {
         .find(|plan| plan_region_order(plan).is_none())
         .expect("one opaque plan")
         .clone();
-    forged.stable_id = plan.identity().label();
     forged.structural_cost = plan.cost();
     forged.plan = plan;
+    forged.identity = ProgramAlternativeIdentity::new(
+        SemanticAlternativeOrigin::Baseline,
+        &semantic,
+        &request,
+        &forged.plan,
+    );
+    forged.stable_id = forged.identity.label();
 
     let error = super::verify::verify_alternative(&semantic, &request, &formation, &forged, None)
         .unwrap_err();
@@ -1704,6 +1728,266 @@ fn verification_refuses_an_alternative_with_an_opaque_plan() {
         error.context.reason.as_str(),
         "structure-portfolio-schedule-binding"
     );
+}
+
+#[test]
+fn global_semantic_selection_rejects_a_forged_winner() {
+    let semantic = semantic(false);
+    let compiled = compile(CompilationRequest::governed(&semantic)).unwrap();
+    let mut portfolio = compiled.targets[0].portfolio.clone();
+    let forged = portfolio
+        .alternatives
+        .iter()
+        .find(|alternative| alternative.stable_id != portfolio.selection.selected_alternative_id)
+        .expect("the fixture retains a non-selected physical alternative")
+        .stable_id
+        .clone();
+    portfolio.selection.selected_alternative_id = forged;
+
+    let error = verify_global_selection(&portfolio).unwrap_err();
+    assert!(matches!(
+        error,
+        CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
+            ProgramError::Structure {
+                rule: "semantic-portfolio-selection"
+            }
+        ))
+    ));
+}
+
+#[test]
+fn final_portfolio_verifier_rejects_deletion_owner_and_origin_misbinding() {
+    let semantic = semantic(false);
+    let verified = verify_request(CompilationRequest::governed(&semantic)).unwrap();
+    let request = verified.for_target(verified.target_profiles()[0]).unwrap();
+    let compiled = compile(CompilationRequest::governed(&semantic)).unwrap();
+    let portfolio = compiled.targets[0].portfolio.clone();
+    let expected_identities = portfolio
+        .alternatives
+        .iter()
+        .map(|alternative| alternative.identity.clone())
+        .collect();
+    let expected = [ExpectedCandidateOwner {
+        key: "semantic:baseline".to_owned(),
+        origin: SemanticAlternativeOrigin::Baseline,
+        semantic: &semantic,
+        request: request.clone(),
+        alternatives: expected_identities,
+    }];
+    assert!(verify_global_portfolio(&portfolio, &expected).is_ok());
+
+    let mut deleted = portfolio.clone();
+    deleted.alternatives.pop();
+    assert!(matches!(
+        verify_global_portfolio(&deleted, &expected),
+        Err(CompileError::InvalidCompilerOutput(
+            CompilerOutputError::Program(ProgramError::Structure {
+                rule: "semantic-portfolio-owner-set"
+            })
+        ))
+    ));
+
+    let mut misowned = portfolio.clone();
+    misowned.alternatives[0].owner_key = "semantic:wrong-owner".to_owned();
+    assert!(matches!(
+        verify_global_portfolio(&misowned, &expected),
+        Err(CompileError::InvalidCompilerOutput(
+            CompilerOutputError::Program(ProgramError::Structure {
+                rule: "semantic-portfolio-owner-binding"
+            })
+        ))
+    ));
+
+    let wrong_origin = RewriteRuleIdentity::new("test", "wrong-origin", 1).unwrap();
+    let wrong_expected = [ExpectedCandidateOwner {
+        key: "semantic:baseline".to_owned(),
+        origin: SemanticAlternativeOrigin::Rewrite(wrong_origin),
+        semantic: &semantic,
+        request,
+        alternatives: portfolio
+            .alternatives
+            .iter()
+            .map(|alternative| alternative.identity.clone())
+            .collect(),
+    }];
+    assert!(matches!(
+        verify_global_portfolio(&portfolio, &wrong_expected),
+        Err(CompileError::InvalidCompilerOutput(
+            CompilerOutputError::Program(ProgramError::Structure {
+                rule: "semantic-portfolio-owner-binding"
+            })
+        ))
+    ));
+}
+
+#[test]
+fn contract_groups_fall_back_after_infeasibility_and_do_not_plan_later_groups() {
+    let stated = StrictF32NumericalContract::governed_profile();
+    let groups = vec![
+        (stated[0].key, vec![("preferred", false)]),
+        (stated[1].key, vec![("fallback", true)]),
+        (stated[2].key, vec![("later", true)]),
+    ];
+    let mut evaluated = Vec::new();
+    let outcome = evaluate_preferred_groups(
+        &stated,
+        groups,
+        |item| {
+            evaluated.push(item.0);
+            Ok::<_, ()>(item)
+        },
+        |item| item.1,
+        |_| (),
+    )
+    .unwrap();
+
+    assert_eq!(outcome.selected_contract, Some(stated[1].key));
+    assert_eq!(evaluated, ["preferred", "fallback"]);
+    assert_eq!(
+        outcome
+            .evaluated
+            .iter()
+            .map(|item| item.0)
+            .collect::<Vec<_>>(),
+        ["preferred", "fallback"]
+    );
+    assert_eq!(outcome.pruned, [(("later", true), stated[1].key)]);
+}
+
+#[test]
+fn contract_group_evaluation_rejects_an_unstated_contract_key() {
+    let stated = StrictF32NumericalContract::governed_profile();
+    let error = evaluate_preferred_groups(
+        &stated,
+        vec![("test.unstated-contract", vec![("candidate", true)])],
+        Ok::<_, CompileError>,
+        |item| item.1,
+        |_| {
+            CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
+                ProgramError::Structure {
+                    rule: "semantic-portfolio-unstated-contract",
+                },
+            ))
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
+            ProgramError::Structure {
+                rule: "semantic-portfolio-unstated-contract"
+            }
+        ))
+    ));
+}
+
+#[test]
+fn live_semantic_portfolio_explains_every_governed_rule_decline_stably() {
+    let semantic = semantic(false);
+    let first = compile(CompilationRequest::governed(&semantic)).unwrap();
+    let second = compile(CompilationRequest::governed(&semantic)).unwrap();
+    let first = first.targets[0].compilation_explain.render();
+    let second = second.targets[0].compilation_explain.render();
+
+    assert_eq!(first, second);
+    for rule in [
+        "ordered-reassociate-add-f32.v1",
+        "ordered-reassociate-multiply-f32.v1",
+    ] {
+        assert!(
+            first.contains(rule),
+            "the complete rule identity must remain visible when the rule declines"
+        );
+    }
+    assert!(first.contains("disproved:semantic.no-left-associated-chain"));
+}
+
+#[test]
+fn live_semantic_portfolio_renders_per_rule_disablement() {
+    let semantic = semantic(false);
+    let add = crate::rewrite::ORDERED_REASSOCIATE_ADD_RULE.unwrap();
+    let configuration = AlgebraicRuleConfiguration::all().with(add, false);
+    let product = compile_with_algebraic_configuration(
+        CompilationRequest::governed(&semantic),
+        configuration,
+    )
+    .unwrap();
+    let rendered = product.targets[0].compilation_explain.render();
+
+    assert!(
+        rendered.contains("rewrite.configuration-enabled:disproved:configuration.rule-disabled")
+    );
+    assert!(rendered.contains("rewrite-provider:identity=tiler.algebraic"));
+    assert!(rendered.contains("rewrite-rule:identity=ordered-reassociate-add-f32.v1"));
+    assert!(rendered.contains("rewrite-revision:count=1"));
+    assert!(
+        rendered.contains("ordered-reassociate-multiply-f32.v1"),
+        "disabling add must not remove multiply's independent assessment"
+    );
+}
+
+#[test]
+fn top_level_emitter_renders_strict_numerical_decline_and_algebraic_budget_stop() {
+    let chain = algebraic_add_chain();
+    let strict = crate::normalize::explore_algebraic_alternatives_owned(
+        chain.clone(),
+        crate::request::DeterministicBudgets::governed(),
+        StrictF32NumericalContract::governed(),
+        AlgebraicRuleConfiguration::all(),
+    )
+    .unwrap();
+    let AlgebraicExplorationParts { assessments, .. } = strict.into_parts();
+    let binding = semantic(false);
+    let verified = verify_request(CompilationRequest::governed(&binding)).unwrap();
+    let target = verified.for_target(verified.target_profiles()[0]).unwrap();
+    let mut writer = ExplainWriter::new(&target).unwrap();
+    let root = test_root(&mut writer);
+    record_algebraic_exploration(&mut writer, root, &assessments, None, &[]).unwrap();
+    let alternative = writer
+        .subject(SubjectKind::Alternative, "alternative:test")
+        .unwrap();
+    writer
+        .note_selection(alternative, SelectionOutcome::Selected, None)
+        .unwrap();
+    let strict = writer
+        .finish_success(&["alternative:test"], "alternative:test")
+        .unwrap()
+        .render();
+    assert!(strict.contains("rewrite.semantic-applicable:proven"));
+    assert!(
+        strict.contains("rewrite.numerically-legal:disproved:numerical.reassociation-forbidden")
+    );
+    assert!(strict.contains("rewrite-rule:identity=ordered-reassociate-add-f32.v1"));
+    assert!(strict.contains("rewrite-revision:count=1"));
+
+    let mut budgets = crate::request::DeterministicBudgets::governed();
+    budgets.normalization_rewrites = 0;
+    let stopped = crate::normalize::explore_algebraic_alternatives_owned(
+        chain,
+        budgets,
+        StrictF32NumericalContract::governed_relaxed(),
+        AlgebraicRuleConfiguration::all(),
+    )
+    .unwrap();
+    let AlgebraicExplorationParts {
+        assessments,
+        budget_stop,
+        ..
+    } = stopped.into_parts();
+    let mut writer = ExplainWriter::new(&target).unwrap();
+    let root = test_root(&mut writer);
+    record_algebraic_exploration(&mut writer, root, &assessments, budget_stop, &[]).unwrap();
+    let alternative = writer
+        .subject(SubjectKind::Alternative, "alternative:test")
+        .unwrap();
+    writer
+        .note_selection(alternative, SelectionOutcome::Selected, None)
+        .unwrap();
+    let stopped = writer
+        .finish_success(&["alternative:test"], "alternative:test")
+        .unwrap()
+        .render();
+    assert!(stopped.contains("budget-stop:normalization-rewrites:0:1"));
 }
 
 #[test]

@@ -13,8 +13,8 @@ use tiler_ir::identity::{push_len, push_slice};
 use crate::fusion::FusionNumericalProof;
 use crate::request::{LoweringProviderIdentity, VerifiedTargetRequest};
 
-pub(crate) const EXPLAIN_SCHEMA_VERSION: u32 = 2;
-pub(crate) const EXPLAIN_RENDERER_VERSION: u32 = 2;
+pub(crate) const EXPLAIN_SCHEMA_VERSION: u32 = 3;
+pub(crate) const EXPLAIN_RENDERER_VERSION: u32 = 3;
 const COMPILATION_EXPLAIN_SCHEMA_VERSION: u32 = 1;
 const COMPILATION_EXPLAIN_RENDERER_VERSION: u32 = 1;
 const MAX_COMPILATION_EXPLAIN_CANDIDATES: usize = 256;
@@ -110,6 +110,7 @@ pub(crate) enum ExplainDisposition {
     Retained,
     DominancePruned,
     HigherCost,
+    PreferencePruned,
     NotSelectedTradeoff,
     Selected,
     CompilerFailure,
@@ -601,6 +602,15 @@ pub(crate) enum ExplainEvent {
         policy: SelectionPolicyKey,
         outcome: SelectionOutcome,
     },
+    SemanticSelection {
+        policy: SelectionPolicyKey,
+        outcome: SelectionOutcome,
+        candidate: CompilationSubject,
+    },
+    PreferencePruned {
+        preferred_contract: ReasonCode,
+        candidate_contract: ReasonCode,
+    },
     CompilerFailure {
         stage: ExplainStage,
         reason: ReasonCode,
@@ -618,7 +628,9 @@ impl ExplainEvent {
             }
             Self::DeferredCapability { .. } => ExplainStage::CapabilityResolution,
             Self::CostAssessment { .. } => ExplainStage::Costing,
-            Self::Selection { .. } => ExplainStage::Selection,
+            Self::Selection { .. }
+            | Self::SemanticSelection { .. }
+            | Self::PreferencePruned { .. } => ExplainStage::Selection,
         }
     }
 
@@ -689,6 +701,10 @@ impl ExplainEvent {
             | Self::Selection {
                 outcome: SelectionOutcome::Infeasible,
                 ..
+            }
+            | Self::SemanticSelection {
+                outcome: SelectionOutcome::Infeasible,
+                ..
             } => ExplainDisposition::RejectedTarget,
             Self::CostAssessment {
                 disposition: CostDisposition::Retained,
@@ -701,6 +717,10 @@ impl ExplainEvent {
             | Self::Selection {
                 outcome: SelectionOutcome::Dominated,
                 ..
+            }
+            | Self::SemanticSelection {
+                outcome: SelectionOutcome::Dominated,
+                ..
             } => ExplainDisposition::DominancePruned,
             Self::CostAssessment {
                 disposition: CostDisposition::HigherCost,
@@ -709,11 +729,20 @@ impl ExplainEvent {
             Self::Selection {
                 outcome: SelectionOutcome::NotSelectedTradeoff,
                 ..
+            }
+            | Self::SemanticSelection {
+                outcome: SelectionOutcome::NotSelectedTradeoff,
+                ..
             } => ExplainDisposition::NotSelectedTradeoff,
             Self::Selection {
                 outcome: SelectionOutcome::Selected,
                 ..
+            }
+            | Self::SemanticSelection {
+                outcome: SelectionOutcome::Selected,
+                ..
             } => ExplainDisposition::Selected,
+            Self::PreferencePruned { .. } => ExplainDisposition::PreferencePruned,
             Self::CompilerFailure { .. } => ExplainDisposition::CompilerFailure,
         }
     }
@@ -801,6 +830,8 @@ impl ExplainEvent {
             | Self::DeferredCapability { .. }
             | Self::NumericalHonourability { .. }
             | Self::Selection { .. }
+            | Self::SemanticSelection { .. }
+            | Self::PreferencePruned { .. }
             | Self::CompilerFailure { .. } => {}
         }
         Ok(())
@@ -894,6 +925,7 @@ struct PendingSelection {
     outcome: SelectionOutcome,
     cause: Option<TerminalCause>,
     authoritative_infeasible: bool,
+    candidate: Option<CompilationSubject>,
 }
 
 /// A retained record a terminal record may cite as its cause.
@@ -1048,7 +1080,9 @@ impl ExplainWriter {
     ) -> Result<ExplainRecordId, ExplainError> {
         if matches!(
             event,
-            ExplainEvent::Selection { .. } | ExplainEvent::CompilerFailure { .. }
+            ExplainEvent::Selection { .. }
+                | ExplainEvent::SemanticSelection { .. }
+                | ExplainEvent::CompilerFailure { .. }
         ) {
             return Err(ExplainError::InvalidEventClass);
         }
@@ -1076,7 +1110,9 @@ impl ExplainWriter {
     ) -> Result<ExplainRecordId, ExplainError> {
         if !matches!(
             event,
-            ExplainEvent::Selection { .. } | ExplainEvent::CompilerFailure { .. }
+            ExplainEvent::Selection { .. }
+                | ExplainEvent::SemanticSelection { .. }
+                | ExplainEvent::CompilerFailure { .. }
         ) {
             return Err(ExplainError::InvalidEventClass);
         }
@@ -1161,7 +1197,13 @@ impl ExplainWriter {
         let committed = self.encoded_records.len();
         push_record(&mut self.encoded_records, &record);
         let bytes = self.encoded_records.len() - committed;
-        if terminal && bytes > usize::try_from(MAX_TERMINAL_RECORD_BYTES).unwrap_or(usize::MAX) {
+        let terminal_record_limit =
+            if matches!(record.event, ExplainEvent::SemanticSelection { .. }) {
+                MAX_CANONICAL_BYTES.saturating_add(MAX_TERMINAL_RECORD_BYTES)
+            } else {
+                MAX_TERMINAL_RECORD_BYTES
+            };
+        if terminal && bytes > usize::try_from(terminal_record_limit).unwrap_or(usize::MAX) {
             self.encoded_records.truncate(committed);
             return Err(ExplainError::TerminalCapacity);
         }
@@ -1241,6 +1283,11 @@ impl ExplainWriter {
                 return Err(ExplainError::InvalidTerminalLedger);
             }
         }
+        if selection_policy == SEMANTIC_PORTFOLIO_SELECTION_POLICY
+            && expected.len() > MAX_COMPILATION_EXPLAIN_CANDIDATES
+        {
+            return Err(ExplainError::TerminalLedgerCapacity);
+        }
         let selected = SubjectKey::new(selected)?;
         if !expected.contains(&selected)
             || self.selection_ledger.len() != expected.len()
@@ -1253,6 +1300,8 @@ impl ExplainWriter {
             let is_infeasible = pending.authoritative_infeasible;
             if (pending.outcome == SelectionOutcome::Selected) != should_select
                 || (pending.outcome == SelectionOutcome::Infeasible) != is_infeasible
+                || (selection_policy == SEMANTIC_PORTFOLIO_SELECTION_POLICY)
+                    != pending.candidate.is_some()
             {
                 return Err(ExplainError::InvalidTerminalLedger);
             }
@@ -1264,13 +1313,22 @@ impl ExplainWriter {
                 .map(|cause| self.materialize_terminal_cause(cause))
                 .transpose()?;
             let subject = self.subject(SubjectKind::Alternative, key.as_str())?;
+            let policy = SelectionPolicyKey::new(selection_policy)?;
+            let event = match pending.candidate {
+                Some(candidate) => ExplainEvent::SemanticSelection {
+                    policy,
+                    outcome: pending.outcome,
+                    candidate,
+                },
+                None => ExplainEvent::Selection {
+                    policy,
+                    outcome: pending.outcome,
+                },
+            };
             self.push_terminal(
                 RuleRef::builtin(selection_policy)?,
                 vec![subject],
-                ExplainEvent::Selection {
-                    policy: SelectionPolicyKey::new(selection_policy)?,
-                    outcome: pending.outcome,
-                },
+                event,
                 cause.into_iter().collect(),
             )?;
         }
@@ -1309,7 +1367,12 @@ impl ExplainWriter {
         let selections = self
             .records
             .iter()
-            .filter(|record| matches!(record.event, ExplainEvent::Selection { .. }))
+            .filter(|record| {
+                matches!(
+                    record.event,
+                    ExplainEvent::Selection { .. } | ExplainEvent::SemanticSelection { .. }
+                )
+            })
             .count();
         if failures != 1 || selections != 0 {
             return Err(ExplainError::InvalidTerminalLedger);
@@ -1326,7 +1389,7 @@ impl ExplainWriter {
             return Err(ExplainError::CrossCompilationSubject);
         }
         let key = subject.key;
-        self.admit_selection(key, SelectionOutcome::Infeasible, cause, true)
+        self.admit_selection(key, SelectionOutcome::Infeasible, cause, true, None)
     }
 
     pub(crate) fn note_selection(
@@ -1342,8 +1405,50 @@ impl ExplainWriter {
         if outcome == SelectionOutcome::Infeasible || self.selection_ledger.contains_key(&key) {
             return Err(ExplainError::InvalidTerminalLedger);
         }
-        self.admit_selection(key, outcome, cause, false)?;
+        self.admit_selection(key, outcome, cause, false, None)?;
         Ok(())
+    }
+
+    pub(crate) fn note_semantic_selection(
+        &mut self,
+        subject: SubjectRef,
+        candidate: &VerifiedTargetRequest,
+        outcome: SelectionOutcome,
+        cause: Option<TerminalCause>,
+    ) -> Result<(), ExplainError> {
+        if subject.compilation != self.subject || subject.kind != SubjectKind::Alternative {
+            return Err(ExplainError::CrossCompilationSubject);
+        }
+        if outcome == SelectionOutcome::Infeasible
+            || self.selection_ledger.contains_key(&subject.key)
+        {
+            return Err(ExplainError::InvalidTerminalLedger);
+        }
+        self.admit_selection(
+            subject.key,
+            outcome,
+            cause,
+            false,
+            Some(CompilationSubject::from_request(candidate)),
+        )
+    }
+
+    pub(crate) fn note_semantic_infeasible(
+        &mut self,
+        subject: SubjectRef,
+        candidate: &VerifiedTargetRequest,
+        cause: Option<TerminalCause>,
+    ) -> Result<(), ExplainError> {
+        if subject.compilation != self.subject || subject.kind != SubjectKind::Alternative {
+            return Err(ExplainError::CrossCompilationSubject);
+        }
+        self.admit_selection(
+            subject.key,
+            SelectionOutcome::Infeasible,
+            cause,
+            true,
+            Some(CompilationSubject::from_request(candidate)),
+        )
     }
 
     fn admit_selection(
@@ -1352,6 +1457,7 @@ impl ExplainWriter {
         outcome: SelectionOutcome,
         cause: Option<TerminalCause>,
         authoritative_infeasible: bool,
+        candidate: Option<CompilationSubject>,
     ) -> Result<(), ExplainError> {
         if self.selection_ledger.contains_key(&key) {
             return Err(ExplainError::InvalidTerminalLedger);
@@ -1361,6 +1467,11 @@ impl ExplainWriter {
             .as_str()
             .len()
             .saturating_add(cause.map_or(0, |_| TerminalCause::retained_bytes()))
+            .saturating_add(
+                candidate
+                    .as_ref()
+                    .map_or(0, |candidate| candidate.canonical.len()),
+            )
             .saturating_add(16);
         let next_count = self.selection_ledger.len().saturating_add(1);
         let next_bytes = self.terminal_ledger_bytes.saturating_add(entry_bytes);
@@ -1371,6 +1482,7 @@ impl ExplainWriter {
                 outcome,
                 cause,
                 authoritative_infeasible,
+                candidate,
             },
         );
         self.terminal_ledger_bytes = next_bytes;
@@ -1633,14 +1745,13 @@ impl VerifiedCompilationExplain {
     /// Binds a top-level selection trace to the readmitted semantic candidates
     /// it selected among.
     ///
-    /// The original request must also occur as one candidate — the unchanged
-    /// baseline — or the selection trace would be rooted in a request absent
-    /// from the portfolio it claims to summarize. Each bounded key is a
-    /// correlation handle local to this sealed composite, not an identity:
-    /// construction requires its exact equality with the dedicated semantic
-    /// selection ledger and still encodes the full request subject beside it.
-    /// Duplicate keys and duplicate request subjects are refused rather than
-    /// silently deduplicated.
+    /// The selection remains rooted in the original request while candidate
+    /// traces are rooted in their independently readmitted, post-normalization
+    /// requests. Each bounded key is a correlation handle local to this sealed
+    /// composite, not an identity: construction requires its exact equality
+    /// with the dedicated semantic selection ledger and still encodes every
+    /// full request subject beside it. Duplicate keys and duplicate candidate
+    /// request subjects are refused rather than silently deduplicated.
     pub(crate) fn from_traces(
         selection: VerifiedExplainTrace,
         candidates: Vec<(SubjectKey, VerifiedExplainTrace)>,
@@ -1683,21 +1794,28 @@ impl VerifiedCompilationExplain {
             .iter()
             .map(|candidate| candidate.key.clone())
             .collect::<BTreeSet<_>>();
+        let mut semantic_bindings = None;
         let selection_keys = match binding {
             SelectionBinding::Singleton => {
                 let key = selected_candidate_key(&selection)?;
                 BTreeSet::from([key])
             }
-            SelectionBinding::SemanticPortfolio => semantic_selection_keys(&selection)?,
+            SelectionBinding::SemanticPortfolio => {
+                let bindings = semantic_selection_bindings(&selection)?;
+                let keys = bindings.keys().cloned().collect();
+                semantic_bindings = Some(bindings);
+                keys
+            }
         };
         if selection_keys != candidate_keys {
             return Err(CompilationExplainError::CandidateKeyMismatch);
         }
-        if !candidates
-            .iter()
-            .any(|candidate| candidate.trace.compilation_subject == selection.compilation_subject)
-        {
-            return Err(CompilationExplainError::UnboundSelection);
+        if semantic_bindings.is_some_and(|bindings| {
+            candidates.iter().any(|candidate| {
+                bindings.get(&candidate.key) != Some(&candidate.trace.compilation_subject)
+            })
+        }) {
+            return Err(CompilationExplainError::CandidateSubjectMismatch);
         }
         let candidates = candidates.into_boxed_slice();
         let canonical_identity = encode_compilation_explain(&selection, &candidates, binding)?;
@@ -1753,7 +1871,16 @@ impl VerifiedCompilationExplain {
             SelectionBinding::Singleton => {
                 selected_candidate_key(&self.selection).map(|key| BTreeSet::from([key]))
             }
-            SelectionBinding::SemanticPortfolio => semantic_selection_keys(&self.selection),
+            SelectionBinding::SemanticPortfolio => semantic_selection_bindings(&self.selection)
+                .and_then(|bindings| {
+                    if self.candidates.iter().all(|candidate| {
+                        bindings.get(&candidate.key) == Some(&candidate.trace.compilation_subject)
+                    }) {
+                        Ok(bindings.into_keys().collect())
+                    } else {
+                        Err(CompilationExplainError::CandidateSubjectMismatch)
+                    }
+                }),
         }
         .map_err(|_| CompilationExplainError::StaleIdentity)?;
         let candidate_keys = self
@@ -1764,9 +1891,6 @@ impl VerifiedCompilationExplain {
         if self.candidates.is_empty()
             || self.candidates.len() > MAX_COMPILATION_EXPLAIN_CANDIDATES
             || selection_keys != candidate_keys
-            || !self.candidates.iter().any(|candidate| {
-                candidate.trace.compilation_subject == self.selection.compilation_subject
-            })
             || self.candidates.windows(2).any(|pair| {
                 (&pair[0].key, &pair[0].trace.compilation_subject.canonical)
                     >= (&pair[1].key, &pair[1].trace.compilation_subject.canonical)
@@ -1872,20 +1996,25 @@ fn selected_candidate_key(
     selected.ok_or(CompilationExplainError::InvalidSelectionTrace)
 }
 
-fn semantic_selection_keys(
+fn semantic_selection_bindings(
     trace: &VerifiedExplainTrace,
-) -> Result<BTreeSet<SubjectKey>, CompilationExplainError> {
-    let mut keys = BTreeSet::new();
+) -> Result<BTreeMap<SubjectKey, CompilationSubject>, CompilationExplainError> {
+    let mut bindings = BTreeMap::new();
     let mut selected = 0_usize;
     for record in trace.records() {
         match record.event() {
-            ExplainEvent::Selection { policy, outcome }
-                if policy.as_str() == SEMANTIC_PORTFOLIO_SELECTION_POLICY =>
-            {
+            ExplainEvent::SemanticSelection {
+                policy,
+                outcome,
+                candidate,
+            } if policy.as_str() == SEMANTIC_PORTFOLIO_SELECTION_POLICY => {
                 let [subject] = record.subjects() else {
                     return Err(CompilationExplainError::InvalidSelectionTrace);
                 };
-                if subject.kind() != SubjectKind::Alternative || !keys.insert(subject.key().clone())
+                if subject.kind() != SubjectKind::Alternative
+                    || bindings
+                        .insert(subject.key().clone(), candidate.clone())
+                        .is_some()
                 {
                     return Err(CompilationExplainError::InvalidSelectionTrace);
                 }
@@ -1897,10 +2026,10 @@ fn semantic_selection_keys(
             _ => {}
         }
     }
-    if keys.is_empty() || selected != 1 {
+    if bindings.is_empty() || selected != 1 {
         return Err(CompilationExplainError::InvalidSelectionTrace);
     }
-    Ok(keys)
+    Ok(bindings)
 }
 
 fn check_compilation_explain_capacity(
@@ -1919,8 +2048,8 @@ pub(crate) enum CompilationExplainError {
     Empty,
     DuplicateCandidateKey,
     CandidateKeyMismatch,
+    CandidateSubjectMismatch,
     DuplicateCandidate,
-    UnboundSelection,
     CandidateCapacity,
     CanonicalCapacity,
     StaleIdentity,
@@ -2006,6 +2135,30 @@ fn render_event(output: &mut String, event: &ExplainEvent) {
                 "selection:{}:{}",
                 policy.as_str(),
                 selection_name(*outcome)
+            );
+        }
+        ExplainEvent::SemanticSelection {
+            policy,
+            outcome,
+            candidate,
+        } => {
+            let _ = write!(
+                output,
+                "semantic-selection:{}:{}:request={:016x}",
+                policy.as_str(),
+                selection_name(*outcome),
+                stable_qualifier(&candidate.canonical)
+            );
+        }
+        ExplainEvent::PreferencePruned {
+            preferred_contract,
+            candidate_contract,
+        } => {
+            let _ = write!(
+                output,
+                "contract-preference-pruned:preferred={}:candidate={}",
+                preferred_contract.as_str(),
+                candidate_contract.as_str()
             );
         }
         ExplainEvent::CompilerFailure { reason, .. } => {
@@ -2132,6 +2285,7 @@ const fn disposition_name(disposition: ExplainDisposition) -> &'static str {
         ExplainDisposition::Retained => "retained",
         ExplainDisposition::DominancePruned => "dominance-pruned",
         ExplainDisposition::HigherCost => "higher-cost",
+        ExplainDisposition::PreferencePruned => "preference-pruned",
         ExplainDisposition::NotSelectedTradeoff => "not-selected-tradeoff",
         ExplainDisposition::Selected => "selected",
         ExplainDisposition::CompilerFailure => "compiler-failure",
@@ -2443,6 +2597,29 @@ fn encode_event(bytes: &mut Vec<u8>, event: &ExplainEvent) {
                 SelectionOutcome::Infeasible => 4,
             });
         }
+        ExplainEvent::SemanticSelection {
+            policy,
+            outcome,
+            candidate,
+        } => {
+            bytes.push(11);
+            push_slice(bytes, policy.as_str().as_bytes());
+            bytes.push(match outcome {
+                SelectionOutcome::Selected => 1,
+                SelectionOutcome::Dominated => 2,
+                SelectionOutcome::NotSelectedTradeoff => 3,
+                SelectionOutcome::Infeasible => 4,
+            });
+            push_slice(bytes, &candidate.canonical);
+        }
+        ExplainEvent::PreferencePruned {
+            preferred_contract,
+            candidate_contract,
+        } => {
+            bytes.push(12);
+            push_slice(bytes, preferred_contract.as_str().as_bytes());
+            push_slice(bytes, candidate_contract.as_str().as_bytes());
+        }
         ExplainEvent::CompilerFailure { stage, reason } => {
             bytes.extend_from_slice(&[7, stage_tag(*stage)]);
             push_slice(bytes, reason.as_str().as_bytes());
@@ -2642,6 +2819,7 @@ const fn disposition_tag(disposition: ExplainDisposition) -> u8 {
         ExplainDisposition::Retained => 7,
         ExplainDisposition::DominancePruned => 8,
         ExplainDisposition::HigherCost => 9,
+        ExplainDisposition::PreferencePruned => 14,
         ExplainDisposition::NotSelectedTradeoff => 10,
         ExplainDisposition::Selected => 11,
         ExplainDisposition::CompilerFailure => 12,
@@ -2732,15 +2910,20 @@ mod tests {
 
     fn finish_semantic_selection_trace(
         request: &VerifiedTargetRequest,
-        candidates: &[(&str, SelectionOutcome)],
+        candidates: &[(&str, SelectionOutcome, &VerifiedTargetRequest)],
         selected: &str,
     ) -> VerifiedExplainTrace {
         let mut writer = ExplainWriter::new(request).unwrap();
-        for (key, outcome) in candidates {
+        for (key, outcome, candidate) in candidates {
             let subject = writer.subject(SubjectKind::Alternative, key).unwrap();
-            writer.note_selection(subject, *outcome, None).unwrap();
+            writer
+                .note_semantic_selection(subject, candidate, *outcome, None)
+                .unwrap();
         }
-        let keys = candidates.iter().map(|(key, _)| *key).collect::<Vec<_>>();
+        let keys = candidates
+            .iter()
+            .map(|(key, _, _)| *key)
+            .collect::<Vec<_>>();
         writer.finish_semantic_portfolio(&keys, selected).unwrap()
     }
 
@@ -2796,7 +2979,7 @@ mod tests {
                 //   cargo nextest run -p tiler-compiler -E \
                 //     'test(deterministic_trace_is_sealed_and_rendered_separately)'
                 // and read the `left` value the assertion reports.
-                "tiler-explain-v2 request=808d6f8acd62afee\n",
+                "tiler-explain-v3 request=808d6f8acd62afee\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )
@@ -3478,6 +3661,39 @@ mod tests {
     }
 
     #[test]
+    fn contract_preference_pruning_is_never_reported_as_cost() {
+        let request = request(2.0);
+        let mut writer = ExplainWriter::new(&request).unwrap();
+        let subject = writer
+            .subject(SubjectKind::Alternative, "semantic:pruned")
+            .unwrap();
+        writer
+            .push_detail(
+                RuleRef::builtin("semantic.contract-preference").unwrap(),
+                vec![subject],
+                ExplainEvent::PreferencePruned {
+                    preferred_contract: ReasonCode::new("contract.preferred").unwrap(),
+                    candidate_contract: ReasonCode::new("contract.pruned").unwrap(),
+                },
+                Vec::new(),
+            )
+            .unwrap();
+        let trace = finish_test_trace(writer);
+        let record = trace
+            .records()
+            .iter()
+            .find(|record| matches!(record.event(), ExplainEvent::PreferencePruned { .. }))
+            .unwrap();
+        assert_eq!(
+            record.event().disposition(),
+            ExplainDisposition::PreferencePruned
+        );
+        let rendered = trace.render();
+        assert!(rendered.contains("selection preference-pruned"));
+        assert!(!rendered.contains("selection higher-cost"));
+    }
+
+    #[test]
     fn maximum_terminal_ledger_seals_within_hard_trace_bounds() {
         let request = request(2.0);
         let mut writer = ExplainWriter::new(&request).unwrap();
@@ -3541,6 +3757,10 @@ mod tests {
             .push_detail(parts.rule, parts.subjects, parts.event, parts.causes)
             .unwrap();
         let trace = finish_test_trace(writer);
+
+        let mut stale_schema = trace.clone();
+        stale_schema.schema_version = 2;
+        assert_eq!(stale_schema.verify(), Err(ExplainError::StaleIdentity));
 
         let mut stale_digest = trace.clone();
         stale_digest.canonical_identity.0[0] ^= 1;
@@ -3622,14 +3842,20 @@ mod tests {
 
     #[test]
     fn compilation_explain_canonically_binds_selection_and_candidate_traces() {
-        let first = finish_test_trace(ExplainWriter::new(&request(2.0)).unwrap());
-        let second = finish_test_trace(ExplainWriter::new(&request(3.0)).unwrap());
-        let selection_request = request(2.0);
+        let first_request = request(2.0);
+        let second_request = request(3.0);
+        let first = finish_test_trace(ExplainWriter::new(&first_request).unwrap());
+        let second = finish_test_trace(ExplainWriter::new(&second_request).unwrap());
+        let selection_request = request(4.0);
         let selection = finish_semantic_selection_trace(
             &selection_request,
             &[
-                ("semantic:first", SelectionOutcome::Selected),
-                ("semantic:second", SelectionOutcome::Dominated),
+                ("semantic:first", SelectionOutcome::Selected, &first_request),
+                (
+                    "semantic:second",
+                    SelectionOutcome::Dominated,
+                    &second_request,
+                ),
             ],
             "semantic:first",
         );
@@ -3662,7 +3888,7 @@ mod tests {
         assert_eq!(
             forward
                 .render()
-                .matches("tiler-explain-v2 request=")
+                .matches("tiler-explain-v3 request=")
                 .count(),
             3,
             "the top-level selection and both complete candidate traces render",
@@ -3671,15 +3897,18 @@ mod tests {
 
     #[test]
     fn compilation_explain_rejects_incomplete_or_ambiguous_bindings() {
-        let first = finish_test_trace(ExplainWriter::new(&request(2.0)).unwrap());
-        let second = finish_test_trace(ExplainWriter::new(&request(3.0)).unwrap());
-        let third = finish_test_trace(ExplainWriter::new(&request(4.0)).unwrap());
-        let selection_request = request(2.0);
+        let first_request = request(2.0);
+        let second_request = request(3.0);
+        let third_request = request(4.0);
+        let first = finish_test_trace(ExplainWriter::new(&first_request).unwrap());
+        let second = finish_test_trace(ExplainWriter::new(&second_request).unwrap());
+        let third = finish_test_trace(ExplainWriter::new(&third_request).unwrap());
+        let selection_request = request(5.0);
         let selection = finish_semantic_selection_trace(
             &selection_request,
             &[
-                ("semantic:a", SelectionOutcome::Selected),
-                ("semantic:b", SelectionOutcome::Dominated),
+                ("semantic:a", SelectionOutcome::Selected, &first_request),
+                ("semantic:b", SelectionOutcome::Dominated, &second_request),
             ],
             "semantic:a",
         );
@@ -3746,7 +3975,7 @@ mod tests {
                     (SubjectKey::new("semantic:b").unwrap(), third),
                 ],
             ),
-            Err(CompilationExplainError::UnboundSelection),
+            Err(CompilationExplainError::CandidateSubjectMismatch),
         );
 
         let shared = std::sync::Arc::new(first);

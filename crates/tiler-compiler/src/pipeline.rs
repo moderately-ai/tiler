@@ -33,6 +33,8 @@
 use std::error::Error;
 use std::fmt;
 
+use tiler_ir::identity::push_slice;
+
 use crate::cover::{
     CoverEnumeration, CoverError, RegionCover, RegionCoverIdentity, enumerate_covers,
 };
@@ -57,7 +59,10 @@ use crate::fusion_legality::{
 };
 use crate::lowering::{LoweringError, OccurrenceEvidence, ResolvedLowering, resolve_lowering};
 use crate::normalize::{
-    NORMALIZATION_SUBJECT, NormalizationOutcome, NormalizeError, normalize_semantics,
+    AlgebraicExplorationParts, AlgebraicRuleConfiguration, NORMALIZATION_SUBJECT,
+    NormalizationOutcome, NormalizeError, explore_algebraic_alternatives_owned,
+    group_by_resolved_contract, normalize_semantics, readmit_alternatives,
+    record_rewrite_assessment, rewrite_assessment_key,
 };
 use crate::physical::{
     PhysicalError, VerifiedKernel, VerifiedScheduledRegion, lower_structured_kernel,
@@ -72,6 +77,9 @@ use crate::region::{
     form_region_candidates,
 };
 use crate::request::{CompilationRequest, RequestError, verify_request};
+use crate::rewrite::{
+    RewriteAssessment, RewriteProposal, RewriteRuleIdentity, record_adopted_alternatives,
+};
 use crate::selection::{
     CoverFrontiers, PlanStructuralCost, RegionFrontier, SelectedPlan, SelectedPortfolio,
     SelectionError, select_physical_plans, verify_selected_portfolio,
@@ -104,7 +112,11 @@ pub(crate) struct TargetCompilationProduct {
     pub(crate) target_profile_descriptor: Vec<u8>,
     pub(crate) feasibility_rule_set: FeasibilityRuleSetIdentity,
     pub(crate) portfolio: ProgramPortfolio,
+    #[cfg(test)]
     pub(crate) explain: VerifiedExplainTrace,
+    #[cfg(test)]
+    pub(crate) selection_explain: VerifiedExplainTrace,
+    pub(crate) compilation_explain: crate::explain::VerifiedCompilationExplain,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -176,14 +188,17 @@ impl EquivalenceEvidence {
 /// One retained complete plan, assembled through structured KIR into a verified
 /// kernel program and a neutral artifact construction plan.
 ///
-/// The alternative *is* the selected physical plan: its stable identifier is the
-/// plan's content-derived identity label, and its cost is the plan's exact
-/// aggregate structural cost. Nothing here re-decides feasibility or legality;
-/// both were settled by the frontier and the fusion-legality authority before the
-/// plan was retained.
+/// The alternative owns one selected physical plan under one semantic origin.
+/// Its exact identity binds that origin, the rewritten semantic authority, the
+/// resolved contract, and the plan identity; its stable string is presentation
+/// only. Its cost is the plan's exact aggregate structural cost. Nothing here
+/// re-decides feasibility or legality; both were settled by the frontier and
+/// the fusion-legality authority before the plan was retained.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ProgramAlternative {
     pub(crate) stable_id: String,
+    pub(crate) identity: ProgramAlternativeIdentity,
+    owner_key: String,
     pub(crate) kind: ProgramAlternativeKind,
     pub(crate) plan: SelectedPlan,
     pub(crate) scheduled_regions: Vec<VerifiedScheduledRegion>,
@@ -192,6 +207,68 @@ pub(crate) struct ProgramAlternative {
     pub(crate) artifact_plan: ArtifactConstructionPlan,
     pub(crate) structural_cost: PlanStructuralCost,
     pub(crate) equivalence: EquivalenceEvidence,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct ProgramAlternativeIdentity(Box<[u8]>);
+
+impl ProgramAlternativeIdentity {
+    fn new(
+        origin: SemanticAlternativeOrigin,
+        semantic: &tiler_ir::semantic::SemanticProgram,
+        request: &crate::request::VerifiedTargetRequest,
+        plan: &SelectedPlan,
+    ) -> Self {
+        debug_assert!(plan.identity().is_labelled(&plan.identity().label()));
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"tiler.program-alternative.v1\0");
+        match origin {
+            SemanticAlternativeOrigin::Baseline => bytes.push(1),
+            SemanticAlternativeOrigin::Rewrite(rule) => {
+                bytes.push(2);
+                rule.encode(&mut bytes);
+            }
+        }
+        let identity = semantic.semantic_identity();
+        for component in [
+            identity.graph().as_bytes(),
+            identity.reached_definitions().as_bytes(),
+            identity.admission_provenance().as_bytes(),
+            identity.registry_snapshot().as_bytes(),
+            request.numerical_contract().key.as_bytes(),
+            plan.identity().as_bytes(),
+        ] {
+            push_slice(&mut bytes, component);
+        }
+        Self(bytes.into_boxed_slice())
+    }
+
+    fn label(&self) -> String {
+        let digest = self.0.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+        });
+        format!("program-alternative:{digest:016x}")
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum SemanticAlternativeOrigin {
+    Baseline,
+    Rewrite(RewriteRuleIdentity),
+}
+
+#[derive(Clone, Copy)]
+struct SemanticAlternativeOwner<'a> {
+    origin: SemanticAlternativeOrigin,
+    key: &'a str,
+}
+
+#[derive(Clone, Debug)]
+struct SemanticCandidate {
+    key: String,
+    origin: SemanticAlternativeOrigin,
+    proposal: RewriteProposal<tiler_ir::semantic::SemanticProgram>,
+    verified: crate::request::VerifiedCompilationRequest,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -400,6 +477,13 @@ impl From<SelectionError> for CompileError {
 }
 
 pub(crate) fn compile(request: CompilationRequest<'_>) -> Result<CompilationProduct, CompileError> {
+    compile_with_algebraic_configuration(request, AlgebraicRuleConfiguration::all())
+}
+
+fn compile_with_algebraic_configuration(
+    request: CompilationRequest<'_>,
+    algebraic_configuration: AlgebraicRuleConfiguration,
+) -> Result<CompilationProduct, CompileError> {
     let semantic = request.program;
     let shape_environment = request.shape_environment;
     let target_profiles = request.target_profiles.clone();
@@ -422,57 +506,166 @@ pub(crate) fn compile(request: CompilationRequest<'_>) -> Result<CompilationProd
                 rule: "divergent-resolved-contracts",
             })?;
     let normalization = normalize_semantics(semantic, verified.budgets(), resolved_contract)?;
-    let Some(normalized) = normalization.normalized_program() else {
-        return compile_verified(semantic, &verified, &normalization);
-    };
-    // A committed rewrite is a new program, so it must independently re-enter
-    // the request boundary rather than inheriting the input's verification.
-    // Rejection here is invalid compiler output, not an unsupported user
-    // program: the input was already admitted. The caller's *stated* preference
-    // is what re-enters, not the contract this run resolved: readmission must
-    // repeat the resolution rather than inherit its answer, so a rewrite that
-    // changed what the program requires cannot keep a resolution it invalidated.
-    let readmitted = verify_request(CompilationRequest {
-        program: normalized,
-        shape_environment,
-        numerical_contracts: verified.numerical_contracts().clone(),
-        budgets: verified.budgets(),
-        target_profiles,
-        capabilities,
-    })
-    .map_err(|_| {
-        CompileError::from(NormalizeError::InvalidRewrite {
-            rule: "request-readmission",
+    let canonical = normalization.normalized_program().unwrap_or(semantic);
+    let exploration = explore_algebraic_alternatives_owned(
+        canonical.clone(),
+        verified.budgets(),
+        resolved_contract,
+        algebraic_configuration,
+    )?;
+    let baseline_rule =
+        RewriteRuleIdentity::new("tiler.pipeline", "canonical-semantic-baseline.v1", 1)
+            .expect("the baseline identity is valid");
+    let AlgebraicExplorationParts {
+        baseline,
+        alternatives,
+        assessments,
+        budget_stop,
+    } = exploration.into_parts();
+    let mut proposals = Vec::with_capacity(alternatives.len() + 1);
+    proposals.push(RewriteProposal::new(baseline_rule, baseline, 0));
+    proposals.extend(alternatives);
+    let readmitted = readmit_alternatives(proposals, |candidate| {
+        verify_request(CompilationRequest {
+            program: candidate,
+            shape_environment,
+            numerical_contracts: verified.numerical_contracts().clone(),
+            budgets: verified.budgets(),
+            target_profiles: target_profiles.clone(),
+            capabilities: capabilities.clone(),
         })
+        .ok()
     })?;
-    verify_semantic_output_type(normalized)?;
-    compile_verified(normalized, &readmitted, &normalization)
+    let candidates = readmitted
+        .into_iter()
+        .enumerate()
+        .map(|(index, (proposal, readmitted))| {
+            verify_semantic_output_type(proposal.candidate())?;
+            let origin = if index == 0 {
+                SemanticAlternativeOrigin::Baseline
+            } else {
+                SemanticAlternativeOrigin::Rewrite(proposal.rule())
+            };
+            let key = match origin {
+                SemanticAlternativeOrigin::Baseline => "semantic:baseline".to_owned(),
+                SemanticAlternativeOrigin::Rewrite(rule) => format!(
+                    "semantic:p{}:{}.r{}:{}@{}",
+                    rule.provider().len(),
+                    rule.provider(),
+                    rule.rule().len(),
+                    rule.rule(),
+                    rule.revision()
+                ),
+            };
+            Ok(SemanticCandidate {
+                key,
+                origin,
+                proposal,
+                verified: readmitted,
+            })
+        })
+        .collect::<Result<Vec<_>, CompileError>>()?;
+    compile_verified(
+        &verified,
+        &normalization,
+        &assessments,
+        budget_stop,
+        &candidates,
+    )
 }
 
 fn compile_verified(
-    semantic: &tiler_ir::semantic::SemanticProgram,
-    verified: &crate::request::VerifiedCompilationRequest,
+    original: &crate::request::VerifiedCompilationRequest,
     normalization: &NormalizationOutcome,
+    assessments: &[RewriteAssessment],
+    budget_stop: Option<(u64, u64)>,
+    candidates: &[SemanticCandidate],
 ) -> Result<CompilationProduct, CompileError> {
-    let targets = verified
+    let targets = original
         .target_profiles()
         .iter()
         .copied()
         .map(|target| {
-            let target_request = verified.for_target(target)?;
-            compile_target(semantic, &target_request, normalization)
+            let original_target = original.for_target(target)?;
+            compile_semantic_portfolio_target(
+                &original_target,
+                target,
+                normalization,
+                assessments,
+                budget_stop,
+                candidates,
+            )
         })
         .collect::<Result<_, _>>()?;
     Ok(CompilationProduct { targets })
 }
 
-fn compile_target(
-    semantic: &tiler_ir::semantic::SemanticProgram,
+struct CandidateTargetCompilation {
+    key: String,
+    request: crate::request::VerifiedTargetRequest,
+    portfolio: Option<ProgramPortfolio>,
+    explain: VerifiedExplainTrace,
+    failure: Option<Box<CompileError>>,
+}
+
+struct ExpectedCandidateOwner<'a> {
+    key: String,
+    origin: SemanticAlternativeOrigin,
+    semantic: &'a tiler_ir::semantic::SemanticProgram,
+    request: crate::request::VerifiedTargetRequest,
+    alternatives: std::collections::BTreeSet<ProgramAlternativeIdentity>,
+}
+
+#[derive(Debug)]
+struct PreferredGroupEvaluation<Item, Output> {
+    selected_contract: Option<&'static str>,
+    evaluated: Vec<Output>,
+    pruned: Vec<(Item, &'static str)>,
+}
+
+fn evaluate_preferred_groups<Item, Output, Error>(
+    stated: &[crate::request::StrictF32NumericalContract],
+    mut groups: Vec<(&'static str, Vec<Item>)>,
+    mut evaluate: impl FnMut(Item) -> Result<Output, Error>,
+    feasible: impl Fn(&Output) -> bool,
+    unstated: impl Fn(&'static str) -> Error,
+) -> Result<PreferredGroupEvaluation<Item, Output>, Error> {
+    let mut evaluated = Vec::new();
+    let mut pruned = Vec::new();
+    let mut selected_contract = None;
+    for contract in stated {
+        let Some(position) = groups.iter().position(|(key, _)| *key == contract.key) else {
+            continue;
+        };
+        let (_, group) = groups.remove(position);
+        if let Some(preferred) = selected_contract {
+            pruned.extend(group.into_iter().map(|item| (item, preferred)));
+            continue;
+        }
+        let start = evaluated.len();
+        for item in group {
+            evaluated.push(evaluate(item)?);
+        }
+        if evaluated[start..].iter().any(&feasible) {
+            selected_contract = Some(contract.key);
+        }
+    }
+    if let Some((key, _)) = groups.first() {
+        return Err(unstated(key));
+    }
+    Ok(PreferredGroupEvaluation {
+        selected_contract,
+        evaluated,
+        pruned,
+    })
+}
+
+fn compile_candidate_target(
+    candidate: &SemanticCandidate,
     verified: &crate::request::VerifiedTargetRequest,
-    normalization: &NormalizationOutcome,
-) -> Result<TargetCompilationProduct, CompileError> {
+) -> Result<CandidateTargetCompilation, CompileError> {
     let mut explain = ExplainWriter::new(verified)?;
-    match compile_target_with_explain(semantic, verified, normalization, &mut explain) {
+    match compile_target_with_explain(candidate, verified, &mut explain) {
         Ok(portfolio) => {
             let expected_alternatives = portfolio
                 .alternatives
@@ -483,25 +676,391 @@ fn compile_target(
                 &expected_alternatives,
                 &portfolio.selection.selected_alternative_id,
             )?;
-            let (target_profile_descriptor, feasibility_rule_set) = target_assessment(&portfolio)?;
-            Ok(TargetCompilationProduct {
-                stated_contracts: verified.numerical_contracts().stated().to_vec(),
-                resolved_contract: verified.numerical_contract(),
-                target_profile_key: verified.target_profile().key,
-                target_profile_descriptor,
-                feasibility_rule_set,
-                portfolio,
+            Ok(CandidateTargetCompilation {
+                key: candidate.key.clone(),
+                request: verified.clone(),
+                portfolio: Some(portfolio),
                 explain,
+                failure: None,
             })
         }
         Err(failure) => {
             let explain = explain.finish_failure(*failure.context)?;
+            if matches!(failure.source.as_ref(), CompileError::NoFeasiblePlan(_)) {
+                return Ok(CandidateTargetCompilation {
+                    key: candidate.key.clone(),
+                    request: verified.clone(),
+                    portfolio: None,
+                    explain,
+                    failure: Some(failure.source),
+                });
+            }
             Err(CompileError::Explained {
                 source: failure.source,
                 explain,
             })
         }
     }
+}
+
+fn compile_semantic_portfolio_target(
+    original: &crate::request::VerifiedTargetRequest,
+    target: crate::request::PrototypeTargetProfile,
+    normalization: &NormalizationOutcome,
+    assessments: &[RewriteAssessment],
+    budget_stop: Option<(u64, u64)>,
+    candidates: &[SemanticCandidate],
+) -> Result<TargetCompilationProduct, CompileError> {
+    let targeted = candidates
+        .iter()
+        .map(|candidate| {
+            let request = candidate.verified.for_target(target)?;
+            Ok((candidate, request))
+        })
+        .collect::<Result<Vec<_>, RequestError>>()?;
+    let groups =
+        group_by_resolved_contract(targeted, |(_, request)| request.numerical_contract().key);
+    let evaluation = evaluate_preferred_groups(
+        original.numerical_contracts().stated(),
+        groups,
+        |(candidate, request)| {
+            let compiled = compile_candidate_target(candidate, &request)?;
+            Ok::<_, CompileError>((compiled, candidate, request))
+        },
+        |(compiled, _, _)| compiled.portfolio.is_some(),
+        |_| {
+            CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
+                ProgramError::Structure {
+                    rule: "semantic-portfolio-unstated-contract",
+                },
+            ))
+        },
+    )?;
+    let Some(selected_contract) = evaluation.selected_contract else {
+        let compiled = evaluation
+            .evaluated
+            .iter()
+            .map(|(compiled, _, _)| compiled)
+            .collect::<Vec<_>>();
+        let baseline = compiled
+            .iter()
+            .find(|candidate| candidate.key == "semantic:baseline")
+            .ok_or(RequestError::UnsupportedCapability {
+                phase: "numerics",
+                rule: "semantic-portfolio-contract-group",
+            })?;
+        return Err(CompileError::Explained {
+            source: baseline
+                .failure
+                .clone()
+                .expect("an infeasible baseline retains its failure"),
+            explain: baseline.explain.clone(),
+        });
+    };
+    let mut compiled = evaluation
+        .evaluated
+        .into_iter()
+        .map(|(compiled, _, _)| compiled)
+        .collect::<Vec<_>>();
+    let pruned = evaluation
+        .pruned
+        .into_iter()
+        .map(|((candidate, request), preferred)| (candidate, request, preferred))
+        .collect::<Vec<_>>();
+    let mut alternative_candidates = std::collections::BTreeMap::new();
+    let mut expected = Vec::new();
+    for candidate in &compiled {
+        if let Some(portfolio) = &candidate.portfolio {
+            let semantic = candidates
+                .iter()
+                .find(|owner| owner.key == candidate.key)
+                .expect("every evaluated candidate retains its semantic owner");
+            for alternative in &portfolio.alternatives {
+                alternative_candidates.insert(alternative.identity.clone(), candidate.key.clone());
+            }
+            expected.push(ExpectedCandidateOwner {
+                key: candidate.key.clone(),
+                origin: semantic.origin,
+                semantic: semantic.proposal.candidate(),
+                request: candidate.request.clone(),
+                alternatives: portfolio
+                    .alternatives
+                    .iter()
+                    .map(|alternative| alternative.identity.clone())
+                    .collect(),
+            });
+        }
+    }
+    let mut alternatives = compiled
+        .iter_mut()
+        .filter_map(|candidate| candidate.portfolio.as_mut())
+        .flat_map(|portfolio| std::mem::take(&mut portfolio.alternatives))
+        .collect::<Vec<_>>();
+    if alternatives.is_empty() {
+        let baseline = compiled
+            .iter()
+            .find(|candidate| candidate.key == "semantic:baseline")
+            .expect("the semantic portfolio always retains its baseline");
+        return Err(CompileError::Explained {
+            source: baseline
+                .failure
+                .clone()
+                .expect("an infeasible candidate retains its failure"),
+            explain: baseline.explain.clone(),
+        });
+    }
+    alternatives.sort_by(|left, right| left.identity.cmp(&right.identity));
+    let selected = select_global_non_dominated(&alternatives)?
+        .stable_id
+        .clone();
+    let portfolio = ProgramPortfolio {
+        alternatives,
+        selection: PortfolioSelection {
+            policy_key: SELECTION_POLICY_KEY,
+            selected_alternative_id: selected.clone(),
+        },
+    };
+    verify_global_portfolio(&portfolio, &expected)?;
+    let mut selection = ExplainWriter::new(original)?;
+    let request_record = record_request_verification(&mut selection)?;
+    let mut cause = normalization.record(&mut selection, request_record)?;
+    cause =
+        record_algebraic_exploration(&mut selection, cause, assessments, budget_stop, candidates)?;
+    for (candidate, request, preferred) in &pruned {
+        let subject = selection.subject(SubjectKind::Alternative, &candidate.key)?;
+        cause = selection.push_detail(
+            RuleRef::builtin("semantic.contract-preference")?,
+            vec![subject],
+            ExplainEvent::PreferencePruned {
+                preferred_contract: ReasonCode::new(preferred)?,
+                candidate_contract: ReasonCode::new(request.numerical_contract().key)?,
+            },
+            vec![cause],
+        )?;
+    }
+    let selected_identity = &portfolio
+        .alternatives
+        .iter()
+        .find(|alternative| alternative.stable_id == selected)
+        .expect("the selected alternative belongs to the portfolio")
+        .identity;
+    let selected_candidate = alternative_candidates
+        .get(selected_identity)
+        .expect("every flattened alternative retains its semantic owner")
+        .as_str();
+    for candidate in &compiled {
+        let subject = selection.subject(SubjectKind::Alternative, &candidate.key)?;
+        if candidate.portfolio.is_some() {
+            let retains_tradeoff = portfolio.alternatives.iter().any(|alternative| {
+                alternative_candidates.get(&alternative.identity) == Some(&candidate.key)
+                    && globally_non_dominated(alternative, &portfolio.alternatives)
+            });
+            selection.note_semantic_selection(
+                subject,
+                &candidate.request,
+                if candidate.key == selected_candidate {
+                    SelectionOutcome::Selected
+                } else if retains_tradeoff {
+                    SelectionOutcome::NotSelectedTradeoff
+                } else {
+                    SelectionOutcome::Dominated
+                },
+                Some(TerminalCause::from_record(cause)),
+            )?;
+        } else {
+            selection.note_semantic_infeasible(
+                subject,
+                &candidate.request,
+                Some(TerminalCause::from_record(cause)),
+            )?;
+        }
+    }
+    let keys = compiled
+        .iter()
+        .filter(|candidate| candidate.portfolio.is_some())
+        .map(|candidate| candidate.key.as_str())
+        .collect::<Vec<_>>();
+    let selection = selection.finish_semantic_portfolio(&keys, selected_candidate)?;
+    #[cfg(test)]
+    let selection_explain = selection.clone();
+    #[cfg(test)]
+    let explain = compiled
+        .iter()
+        .find(|candidate| candidate.key == selected_candidate)
+        .expect("the selected semantic candidate has a trace")
+        .explain
+        .clone();
+    let compilation_explain = crate::explain::VerifiedCompilationExplain::from_traces(
+        selection,
+        compiled
+            .into_iter()
+            .map(|candidate| {
+                Ok((
+                    crate::explain::SubjectKey::new(candidate.key)?,
+                    candidate.explain,
+                ))
+            })
+            .collect::<Result<Vec<_>, ExplainError>>()?,
+    )
+    .map_err(|_| ExplainError::StaleIdentity)?;
+    let (target_profile_descriptor, feasibility_rule_set) = target_assessment(&portfolio)?;
+    Ok(TargetCompilationProduct {
+        stated_contracts: original.numerical_contracts().stated().to_vec(),
+        resolved_contract: original
+            .numerical_contracts()
+            .stated()
+            .iter()
+            .find(|contract| contract.key == selected_contract)
+            .copied()
+            .expect("selected contract came from the stated preference"),
+        target_profile_key: original.target_profile().key,
+        target_profile_descriptor,
+        feasibility_rule_set,
+        portfolio,
+        #[cfg(test)]
+        explain,
+        #[cfg(test)]
+        selection_explain,
+        compilation_explain,
+    })
+}
+
+fn record_algebraic_exploration(
+    selection: &mut ExplainWriter,
+    mut cause: ExplainRecordId,
+    assessments: &[RewriteAssessment],
+    budget_stop: Option<(u64, u64)>,
+    candidates: &[SemanticCandidate],
+) -> Result<ExplainRecordId, ExplainError> {
+    for assessment in assessments {
+        let adopted = candidates.iter().find(|candidate| {
+            candidate.origin == SemanticAlternativeOrigin::Rewrite(assessment.rule())
+        });
+        let subject = selection.subject(
+            if adopted.is_some() {
+                SubjectKind::Alternative
+            } else {
+                SubjectKind::Capability
+            },
+            adopted.map_or_else(
+                || rewrite_assessment_key(*assessment),
+                |candidate| candidate.key.clone(),
+            ),
+        )?;
+        cause = record_rewrite_assessment(selection, *assessment, subject, vec![cause])?;
+    }
+    if let Some((limit, actual)) = budget_stop {
+        let subject = selection.subject(SubjectKind::Normalization, "algebraic-portfolio")?;
+        cause = selection.push_detail(
+            RuleRef::builtin("rewrite.portfolio-budget")?,
+            vec![subject],
+            ExplainEvent::BudgetStop {
+                stage: ExplainStage::CandidateEnumeration,
+                resource: crate::explain::ResourceKey::new("normalization-rewrites")?,
+                limit,
+                actual,
+            },
+            vec![cause],
+        )?;
+    }
+    Ok(cause)
+}
+
+fn select_global_non_dominated(
+    alternatives: &[ProgramAlternative],
+) -> Result<&ProgramAlternative, CompileError> {
+    let identities = alternatives
+        .iter()
+        .map(|alternative| &alternative.identity)
+        .collect::<std::collections::BTreeSet<_>>();
+    let labels = alternatives
+        .iter()
+        .map(|alternative| alternative.stable_id.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    if alternatives.is_empty()
+        || identities.len() != alternatives.len()
+        || labels.len() != alternatives.len()
+    {
+        return Err(ProgramError::Structure {
+            rule: "semantic-portfolio-identity",
+        }
+        .into());
+    }
+    alternatives
+        .iter()
+        .filter(|candidate| globally_non_dominated(candidate, alternatives))
+        .min_by(|left, right| left.identity.cmp(&right.identity))
+        .ok_or_else(|| {
+            ProgramError::Structure {
+                rule: "semantic-portfolio-empty",
+            }
+            .into()
+        })
+}
+
+fn globally_non_dominated(
+    candidate: &ProgramAlternative,
+    alternatives: &[ProgramAlternative],
+) -> bool {
+    !alternatives.iter().any(|other| {
+        other.identity != candidate.identity
+            && other.structural_cost.dominates(&candidate.structural_cost)
+    })
+}
+
+fn verify_global_portfolio(
+    portfolio: &ProgramPortfolio,
+    expected: &[ExpectedCandidateOwner<'_>],
+) -> Result<(), CompileError> {
+    let expected_identities = expected
+        .iter()
+        .flat_map(|owner| owner.alternatives.iter())
+        .collect::<std::collections::BTreeSet<_>>();
+    let actual_identities = portfolio
+        .alternatives
+        .iter()
+        .map(|alternative| &alternative.identity)
+        .collect::<std::collections::BTreeSet<_>>();
+    if expected_identities != actual_identities {
+        return Err(ProgramError::Structure {
+            rule: "semantic-portfolio-owner-set",
+        }
+        .into());
+    }
+    for alternative in &portfolio.alternatives {
+        let owner = expected
+            .iter()
+            .find(|owner| owner.alternatives.contains(&alternative.identity))
+            .ok_or(ProgramError::Structure {
+                rule: "semantic-portfolio-owner",
+            })?;
+        let identity = ProgramAlternativeIdentity::new(
+            owner.origin,
+            owner.semantic,
+            &owner.request,
+            &alternative.plan,
+        );
+        if alternative.owner_key != owner.key || alternative.identity != identity {
+            return Err(ProgramError::Structure {
+                rule: "semantic-portfolio-owner-binding",
+            }
+            .into());
+        }
+    }
+    verify_global_selection(portfolio)
+}
+
+fn verify_global_selection(portfolio: &ProgramPortfolio) -> Result<(), CompileError> {
+    let selected = select_global_non_dominated(&portfolio.alternatives)?;
+    if portfolio.selection.policy_key != SELECTION_POLICY_KEY
+        || portfolio.selection.selected_alternative_id != selected.stable_id
+    {
+        return Err(ProgramError::Structure {
+            rule: "semantic-portfolio-selection",
+        }
+        .into());
+    }
+    Ok(())
 }
 
 /// Lifts the compilation-invariant assessment identities off a target's portfolio.
@@ -765,30 +1324,33 @@ fn region_role(
     }
 }
 
+fn record_request_verification(
+    explain: &mut ExplainWriter,
+) -> Result<ExplainRecordId, CompileError> {
+    let request_subject = explain.subject(SubjectKind::SemanticProgram, "semantic-program")?;
+    Ok(explain.push_detail(
+        RuleRef::builtin("compile.request.general-boundary")?,
+        vec![request_subject],
+        check(
+            ExplainStage::RequestVerification,
+            "compile.request.verified",
+            EvidenceBasis::CheckedInvariant,
+        )?,
+        Vec::new(),
+    )?)
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "keeps the phase-local failure contexts beside the target compilation transaction"
 )]
 fn compile_target_with_explain(
-    semantic: &tiler_ir::semantic::SemanticProgram,
+    candidate: &SemanticCandidate,
     verified: &crate::request::VerifiedTargetRequest,
-    normalization: &NormalizationOutcome,
     explain: &mut ExplainWriter,
 ) -> Result<ProgramPortfolio, TargetFailure> {
-    let request_record = (|| -> Result<_, CompileError> {
-        let request_subject = explain.subject(SubjectKind::SemanticProgram, "semantic-program")?;
-        Ok(explain.push_detail(
-            RuleRef::builtin("compile.request.general-boundary")?,
-            vec![request_subject],
-            check(
-                ExplainStage::RequestVerification,
-                "compile.request.verified",
-                EvidenceBasis::CheckedInvariant,
-            )?,
-            Vec::new(),
-        )?)
-    })()
-    .map_err(|source| {
+    let semantic = candidate.proposal.candidate();
+    let request_record = record_request_verification(explain).map_err(|source| {
         target_failure(
             source,
             ExplainStage::RequestVerification,
@@ -798,13 +1360,15 @@ fn compile_target_with_explain(
             None,
         )
     })?;
-    let normalization_record = explain_step(
-        normalization
-            .record(explain, request_record)
-            .map_err(CompileError::from),
-        ExplainStage::Normalization,
-        SubjectKind::Normalization,
-        NORMALIZATION_SUBJECT,
+    let adopted = match candidate.origin {
+        SemanticAlternativeOrigin::Baseline => &[][..],
+        SemanticAlternativeOrigin::Rewrite(_) => std::slice::from_ref(&candidate.proposal),
+    };
+    let semantic_record = explain_step(
+        record_adopted_alternatives(adopted, explain, request_record).map_err(CompileError::from),
+        ExplainStage::CandidateEnumeration,
+        SubjectKind::Alternative,
+        &candidate.key,
         record_cause(request_record),
     )?;
     // `EnumerateRegionCandidates` runs immediately after normalization and only
@@ -816,17 +1380,17 @@ fn compile_target_with_explain(
                 failure_at_source(
                     source.into(),
                     ExplainStage::RegionFormation,
-                    record_cause(normalization_record),
+                    record_cause(semantic_record),
                 )
             })?;
     let region_records = explain_step(
         formation
-            .record(explain, normalization_record)
+            .record(explain, semantic_record)
             .map_err(CompileError::from),
         ExplainStage::RegionFormation,
         SubjectKind::Region,
         REGION_FORMATION_SUBJECT,
-        record_cause(normalization_record),
+        record_cause(semantic_record),
     )?;
     let region_root = region_records.summary;
     let plans = enumerate_complete_plans(
@@ -842,9 +1406,13 @@ fn compile_target_with_explain(
     let alternative_cause = record_cause(plans.selection_record);
     for plan in plans.portfolio.plans() {
         let kind = ProgramAlternativeKind::of(plan.cover(), formation.graph().operation_count());
-        let alternative = build_alternative(
+        let alternative = build_alternative_for_origin(
             semantic,
             verified,
+            SemanticAlternativeOwner {
+                origin: candidate.origin,
+                key: &candidate.key,
+            },
             plan,
             kind,
             &plans,
@@ -1216,8 +1784,10 @@ mod planning;
 mod trace;
 mod verify;
 
+#[cfg(test)]
+use planning::build_alternative;
 use planning::{
-    build_alternative, build_plan_program, enumerate_complete_plans, plan_region_order,
+    build_alternative_for_origin, build_plan_program, enumerate_complete_plans, plan_region_order,
     select_non_dominated,
 };
 use trace::{
