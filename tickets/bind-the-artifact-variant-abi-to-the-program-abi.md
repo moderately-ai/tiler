@@ -1,11 +1,11 @@
 ---
 id: bind-the-artifact-variant-abi-to-the-program-abi
 title: Bind the artifact variant ABI to the program ABI
-status: todo
+status: done
 priority: p1
 dependencies: [complete-program-identity-with-abi-guards-and-routing]
 related: [prototype-artifact-program-model]
-scopes: [implementation/artifact, implementation/metal-aot]
+scopes: [implementation/artifact, implementation/metal-aot, implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, abi, identity]
@@ -134,3 +134,21 @@ The 266-test wall was `UnusedExpression`, unanimously: adopting the program's AB
 **Reverted rather than landed** because the last row is the one that matters: deleting three tests whose subject no longer exists is correct and already precedented in this change, but the linearity instrument is the evidence that artifact identity is linear in arena size, and adapting it means growing `fused_program`'s ABI instead. Getting that wrong silently removes the guarantee `flatten-artifact-expression-identity` established. That judgement wants a fresh session, not the end of one.
 
 **Everything needed is on `main`:** `adopt_abi`, its tests, and the replay probe. The remaining work is the four steps above plus the six dispositions in that table.
+
+## Outcome — landed 2026-07-27; a variant's ABI is its program's
+
+`VariantSpec` no longer carries an applicability guard, `LaunchSpec` no longer carries launch geometry, and `BindingSpec` no longer carries an accessible range. All three are derived from the bound `VerifiedKernelProgram`, replayed onto the artifact's arena by `adopt_abi`. **A variant that contradicts its program is no longer constructible**, which is stronger than rejecting one that does.
+
+`ARTIFACT_DOMAIN` steps `v5` → `v6`, with its reason at the constant: the identity now folds the program's expressions where it folded a caller's restatement, so two artifacts that differed only because one producer wrote `UnsignedLiteral(24)` where another wrote `rows * columns * 4` over the same program are one artifact.
+
+**The step that made it work, after two failed attempts, was `formulas()`.** It minted five expressions where only two are still supplied by a caller. Once the variant stopped naming the other three they were unreachable from any use site — `UnusedExpression`, which the artifact correctly refuses. That single fixture change was 125 of 132 failures. Both earlier attempts read the resulting `ArtifactVerificationError` as a contract conflict; it was a fixture minting garbage.
+
+**Six tests, each dispositioned rather than deleted wholesale:**
+
+- **Three removed** — `rejects_a_guard_that_is_not_a_predicate`, `rejects_a_guard_naming_a_fact_from_a_later_phase`, `rejects_a_size_expression_naming_a_device_property`. Their subject is unrepresentable: a caller cannot supply these at all now, so nothing can reject one.
+- **Two rewired** — `rejects_an_expression_handle_from_another_builder` and `evaluation_reports_an_unbound_root_rather_than_guessing` now reach the builder through a launch precondition, which is still caller-supplied. The second needed retargeting for a real reason: the program's launch expression is a *constant*, so evaluating it consults no fact and the test would have passed for the wrong reason.
+- **One adapted, and it is the one that mattered** — `artifact_identity_size_grows_linearly_with_the_abi_arena` grew the artifact's guard to drive arena size. The guard is derived now, so growth moved to a launch precondition: still artifact-owned, still reaching identity, measuring exactly what it measured before. This is the instrument behind `flatten-artifact-expression-identity`'s linearity guarantee and deleting it would have removed that silently.
+
+**Both prototypes shed the work they were doing by hand.** `serial-sum-compile` and `serial-sum-run` transliterated the program's arena and resolved each use site themselves — the convention this ticket existed to make checked. Their `resolve` closures are gone. Each keeps its `replay` call, because its root set is a parameter that exercises a pruning property, with a `debug_assert` that a non-empty root set replays something.
+
+`make full` green: 1,022 workspace tests, 298 release-profile tests, both doctests, no warnings.

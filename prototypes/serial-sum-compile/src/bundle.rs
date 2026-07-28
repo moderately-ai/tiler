@@ -146,7 +146,15 @@ fn assemble_from(
     let abi = plan.abi();
     let arena = abi.expressions();
     let program = abi.kernel_program();
+    // Replayed even though the variant no longer names these: the root set is a
+    // parameter so the pruning obligation can be exercised as a property, and
+    // the builder deduplicates by content, so this resolves to the same nodes it
+    // adopts from the program rather than adding any.
     let minted = replay(&mut builder, arena, replay_roots)?;
+    debug_assert!(
+        minted.iter().any(Option::is_some),
+        "a non-empty root set must replay at least one node"
+    );
 
     let mut entries = Vec::with_capacity(abi.entries().len());
     for (entry, stage) in abi.entries().zip(program.stages()) {
@@ -155,18 +163,20 @@ fn assemble_from(
         if !mapped.contains(&entry_key) {
             return Err(BundleError::UnmappedEntry);
         }
-        let mut bindings = Vec::with_capacity(entry.accessible_bytes().len());
-        for accessible in entry.accessible_bytes() {
-            bindings.push(BindingSpec {
+        // The accessible range, launch geometry, and applicability guard are no
+        // longer restated here: `ArtifactProgramBuilder` derives them from the
+        // program it is given. This producer used to transliterate them by hand
+        // and was the only one that did it correctly, which is exactly why the
+        // artifact layer took the job over.
+        let bindings = entry
+            .accessible_bytes()
+            .map(|_| BindingSpec {
                 kind: BindingKind::Buffer,
-                accessible_bytes: resolve(&minted, accessible)?,
-            });
-        }
+            })
+            .collect();
         entries.push(EntrySpec {
             bindings,
             launch: LaunchSpec {
-                grid_threads: resolve(&minted, entry.grid_threads())?,
-                threads_per_workgroup: resolve(&minted, entry.threads_per_workgroup())?,
                 // Not a producer choice: `tiler_ir::schedule`'s intrinsic
                 // verifier refuses a scheduled region whose launch plan does not
                 // skip a zero-thread dispatch, so every verified region this
@@ -186,7 +196,6 @@ fn assemble_from(
     builder.push_variant(
         program,
         VariantSpec {
-            applicability_guard: resolve(&minted, abi.applicability_guard())?,
             target_profile: profile,
             feasibility_rules: rules,
             deferred_predicates: Vec::new(),

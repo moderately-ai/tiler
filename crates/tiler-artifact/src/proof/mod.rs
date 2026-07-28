@@ -300,18 +300,9 @@
 //! #     execution_policy: ArtifactExecutionPolicy::RequiresDeviceTranslation,
 //! # })?;
 //! # let key = InputKey::new("input")?;
-//! # let rows = builder.push_root(AbiRoot::InputExtent { key: key.clone(), axis: Axis::new(0) })?;
-//! # let columns = builder.push_root(AbiRoot::InputExtent { key, axis: Axis::new(1) })?;
-//! # let width = builder.push_root(AbiRoot::UnsignedLiteral(4))?;
-//! # let elements = builder.push_binary(AbiBinaryOp::CheckedMultiply, rows, columns)?;
-//! # let input_bytes = builder.push_binary(AbiBinaryOp::CheckedMultiply, elements, width)?;
-//! # let output_bytes = builder.push_binary(AbiBinaryOp::CheckedMultiply, rows, width)?;
-//! # let one = builder.push_root(AbiRoot::UnsignedLiteral(1))?;
-//! # let always = builder.push_root(AbiRoot::BooleanLiteral(true))?;
 //! # builder.push_variant(
 //! #     &program,
 //! #     VariantSpec {
-//! #         applicability_guard: always,
 //! #         target_profile: profile,
 //! #         feasibility_rules: FeasibilityRuleSetRef {
 //! #             key: FeasibilityRuleSetKey::new("tiler.feasibility.baseline")?,
@@ -320,12 +311,10 @@
 //! #         deferred_predicates: Vec::new(),
 //! #         entries: vec![EntrySpec {
 //! #             bindings: vec![
-//! #                 BindingSpec { kind: BindingKind::Buffer, accessible_bytes: input_bytes },
-//! #                 BindingSpec { kind: BindingKind::Buffer, accessible_bytes: output_bytes },
+//! #                 BindingSpec { kind: BindingKind::Buffer },
+//! #                 BindingSpec { kind: BindingKind::Buffer },
 //! #             ],
 //! #             launch: LaunchSpec {
-//! #                 grid_threads: rows,
-//! #                 threads_per_workgroup: one,
 //! #                 zero_work_skips_dispatch: true,
 //! #                 preconditions: Vec::new(),
 //! #             },
