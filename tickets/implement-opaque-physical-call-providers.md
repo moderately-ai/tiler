@@ -85,4 +85,16 @@ Three independent axes, deliberately not collapsed: `Elimination` (removable whe
 
 **Only applicability is an ordinary failure.** A provider declining a target is not an error; everything else must be explained. Treating a preflight rejection as routine is how an infeasible plan becomes a silent one.
 
-**Still not included:** the typed ABI and placement contracts; provider registration and applicability resolution; and the additive coexistence with scheduled kernels. Those remain the bulk of the ticket.
+## Typed ABI landed (2026-07-28)
+
+`crates/tiler-compiler/src/call_abi.rs`. Parameters are **named with a typed role**, not positional.
+
+*That is settled by a mistake already recorded in `AGENTS.md`*, in the section on eliminating options that do not survive: an artifact "binding buffers by slot position could not verify the position meant what it assumed", and the consequence named there is a silently wrong result rather than a trade-off. A positional ABI is checkable only for arity — two calls taking three buffers agree positionally whatever those buffers are for, so swapping an input for an output passes every check a position can support.
+
+Slots still exist, because a binding table is ordered, but a slot is **derived from declaration order rather than supplied by the provider**, and nothing matches two parameters by comparing slots. `parameter(name)` is the only lookup; there is deliberately no lookup by slot, since a caller holding a slot and wanting a parameter would be reintroducing exactly what this prevents.
+
+The tests are built around the distinction the positional form cannot make: the same names declared in either order **are** compatible (and their slots differ, asserted), while the same positions with swapped roles are **not**. A positional ABI would get both of those backwards.
+
+`NoWrittenParameter` is refused at declaration: a call writing nothing produces nothing observable, and if that is genuinely intended it belongs in the effect declaration rather than in the absence of every output.
+
+**Still not included:** the placement contract; provider registration and applicability resolution; and the additive coexistence with scheduled kernels.

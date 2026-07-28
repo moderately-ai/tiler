@@ -4,6 +4,7 @@
 //! not depend on Metal emission, live runtime APIs, Candle, or frontend syntax.
 
 mod boundary;
+mod call_abi;
 pub mod capability;
 mod component_cost;
 mod cover;
