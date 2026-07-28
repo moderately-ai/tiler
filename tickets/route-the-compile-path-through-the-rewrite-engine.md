@@ -195,5 +195,10 @@ They coincide only where the test happens to sit. `an_exhausted_rewrite_budget_a
 
 **The fix: a proposal declares its rewrite count.** `RewriteProposal` gains it alongside the explain payload — supplied by the rule, summed by the engine, compared against the budget. That also recovers the *demand* figure `NormalizationOutcome::budget_stop` reports as `(limit, demand)`, which the engine currently discards when it returns `Ok(None)` — so the existing budget-stop record cannot be reproduced from engine output today either.
 
-**Do this before the swap.** The swap without it compiles, passes every existing test, and quietly relaxes a budget contract — which is the exact failure profile of the defects this session has been finding by reading rather than by testing.
+**Fixed 2026-07-28, before the swap.** `RewriteProposal::new` now takes a rewrite count as a **required** third argument. No default, and that is the point: one proposal is not one rewrite, so any default would guess, and every guess is wrong in the dangerous direction — under-counting lets a rewrite commit past a budget meant to forbid it. Only the rule knows.
 
+`run_rewrite_engine` sums the counts instead of counting proposals, so it bounds the same quantity `normalize_semantics` does. `CommonSubexpressionRule` supplies its merge count. Revalidation carries the count over, since rebuilding a program does not change how many rewrites produced it.
+
+The regression test drives one rule returning one proposal worth three rewrites: a budget of two must stop it, and a budget of three must admit it. The second half matters — without it a budget that refused everything would pass.
+
+**Still not recovered:** the *demand* figure. `NormalizationOutcome::budget_stop` reports `(limit, demand)`, and `run_rewrite_engine` returns a bare `Ok(None)`. The demand is now computable — it is the sum that exceeded the limit — but the engine discards it. Return it with the stop, or the existing budget-stop explain record cannot be reproduced from engine output.

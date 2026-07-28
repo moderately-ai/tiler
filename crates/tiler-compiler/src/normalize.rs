@@ -443,8 +443,9 @@ impl RewriteRuleProvider<SemanticProgram> for CommonSubexpressionRule {
         verify_normalized(program, &candidate, &congruence).map_err(failed)?;
         // The rule's own records travel with the proposal and are emitted only
         // if it is adopted; see `RuleExplain`.
+        let rewrites = count(congruence.merges.len());
         Ok(vec![
-            RewriteProposal::new(self.identity(), candidate)
+            RewriteProposal::new(self.identity(), candidate, rewrites)
                 .with_explain(Arc::new(SharedValueExplain::new(congruence.merges))),
         ])
     }
@@ -672,8 +673,16 @@ pub(crate) fn run_rewrite_engine(
 ) -> Result<Option<Vec<RewriteProposal<SemanticProgram>>>, EngineFailure> {
     let proposals = collect_proposals(registry, program).map_err(EngineFailure::Provider)?;
 
+    // Rewrites, not proposals: one proposal can represent many rewrites, and
+    // counting proposals would let a rule commit past a budget meant to forbid
+    // it. This is the same resource `normalize_semantics` bounds and must stay
+    // the same quantity, or routing through the engine would silently relax it.
     let limit = u64::from(budgets.normalization_rewrites);
-    if count(proposals.len()) > limit {
+    let demand: u64 = proposals
+        .iter()
+        .map(RewriteProposal::rewrites)
+        .fold(0, u64::saturating_add);
+    if demand > limit {
         return Ok(None);
     }
 
@@ -689,7 +698,13 @@ pub(crate) fn run_rewrite_engine(
         // Adopting the candidate the provider handed over while only *verifying*
         // a rebuild of it would keep whatever the provider actually constructed,
         // and the rebuild is the version the frozen authority produced.
-        alternatives.push(RewriteProposal::new(proposal.rule(), revalidated));
+        // The rewrite count carries over: revalidation rebuilds the program, it
+        // does not change how many rewrites produced it.
+        alternatives.push(RewriteProposal::new(
+            proposal.rule(),
+            revalidated,
+            proposal.rewrites(),
+        ));
     }
     Ok(Some(alternatives))
 }
@@ -1519,6 +1534,7 @@ mod tests {
                 Ok(vec![RewriteProposal::new(
                     CommonSubexpressionRule.identity(),
                     program.clone(),
+                    1,
                 )])
             }
         }
@@ -1653,6 +1669,62 @@ mod tests {
             forward[0].1.iter().map(|item| item.0).collect::<Vec<_>>(),
             ["a", "c"],
             "members lost their input order"
+        );
+    }
+
+    /// The budget counts rewrites, not proposals.
+    ///
+    /// This is the regression that motivated giving a proposal a rewrite count.
+    /// One rule returns one proposal representing three rewrites; a budget of
+    /// two must stop it. An engine counting proposals sees one against two and
+    /// proceeds — committing three rewrites past a budget that forbade them,
+    /// with nothing reporting the difference.
+    ///
+    /// The permitted case is asserted too, so a budget that refused everything
+    /// would fail here rather than pass.
+    #[test]
+    fn the_budget_counts_rewrites_rather_than_proposals() {
+        struct Bulk;
+        impl RewriteRuleProvider<SemanticProgram> for Bulk {
+            fn identity(&self) -> RewriteRuleIdentity {
+                RewriteRuleIdentity::new("test", "bulk", 1).expect("named")
+            }
+            fn propose(
+                &self,
+                program: &SemanticProgram,
+            ) -> Result<Vec<RewriteProposal<SemanticProgram>>, ProviderDefect> {
+                // One proposal, three rewrites.
+                Ok(vec![RewriteProposal::new(
+                    self.identity(),
+                    program.clone(),
+                    3,
+                )])
+            }
+        }
+
+        let mut registry = RuleRegistry::new();
+        registry.register(Box::new(Bulk)).expect("one rule");
+        let subject = program(2.0, 2.0, false);
+
+        let mut under = DeterministicBudgets::governed();
+        under.normalization_rewrites = 2;
+        assert!(
+            run_rewrite_engine(&registry, &subject, under)
+                .expect("no failure")
+                .is_none(),
+            "three rewrites were admitted under a budget of two, so the budget \
+             counted proposals rather than rewrites"
+        );
+
+        let mut exact = DeterministicBudgets::governed();
+        exact.normalization_rewrites = 3;
+        assert_eq!(
+            run_rewrite_engine(&registry, &subject, exact)
+                .expect("no failure")
+                .expect("a budget equal to the demand admits it")
+                .len(),
+            1,
+            "a budget exactly meeting the demand refused it"
         );
     }
 

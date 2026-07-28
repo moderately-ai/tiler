@@ -206,6 +206,7 @@ pub(crate) trait RuleExplain: fmt::Debug + Send + Sync {
 pub(crate) struct RewriteProposal<Program> {
     rule: RewriteRuleIdentity,
     candidate: Program,
+    rewrites: u64,
     explain: Option<Arc<dyn RuleExplain>>,
 }
 
@@ -220,12 +221,27 @@ impl<Program> RewriteProposal<Program> {
     /// semantic IR before the engine does. The engine instantiates it at
     /// `SemanticProgram`; the tests below at a stand-in, which is what lets the
     /// pairing be tested without building a program.
-    pub(crate) const fn new(rule: RewriteRuleIdentity, candidate: Program) -> Self {
+    /// Pairs a candidate with the rule that proposed it and the number of
+    /// rewrites it represents.
+    ///
+    /// **`rewrites` is a required argument and deliberately has no default.**
+    /// One proposal is not one rewrite: the common-subexpression rule returns a
+    /// single candidate however many redundant operations it merged. The budget
+    /// counts rewrites, so a default would have to guess — and every guess is
+    /// wrong in the dangerous direction, because under-counting lets a rewrite
+    /// commit past a budget meant to forbid it. Only the rule knows.
+    pub(crate) const fn new(rule: RewriteRuleIdentity, candidate: Program, rewrites: u64) -> Self {
         Self {
             rule,
             candidate,
+            rewrites,
             explain: None,
         }
+    }
+
+    /// How many rewrites this proposal represents, for the budget.
+    pub(crate) const fn rewrites(&self) -> u64 {
+        self.rewrites
     }
 
     /// Attaches the rule's own explain records.
@@ -657,7 +673,7 @@ mod tests {
     #[test]
     fn a_proposal_names_the_rule_that_made_it() {
         let rule = COMMON_SUBEXPRESSION_RULE.expect("the normalize rule is named");
-        let proposal = RewriteProposal::new(rule, "candidate-program-stand-in");
+        let proposal = RewriteProposal::new(rule, "candidate-program-stand-in", 1);
         assert_eq!(proposal.rule(), rule);
         assert_eq!(*proposal.candidate(), "candidate-program-stand-in");
     }
@@ -672,10 +688,12 @@ mod tests {
         let left = RewriteProposal::new(
             RewriteRuleIdentity::new("p", "a", 1).expect("named"),
             "same",
+            1,
         );
         let right = RewriteProposal::new(
             RewriteRuleIdentity::new("p", "b", 1).expect("named"),
             "same",
+            1,
         );
         assert_eq!(*left.candidate(), *right.candidate());
         assert_ne!(
@@ -697,8 +715,8 @@ mod tests {
         let theirs = RewriteRuleIdentity::new("p", "theirs", 1).expect("named");
 
         let honest = [
-            RewriteProposal::new(mine, "a"),
-            RewriteProposal::new(mine, "b"),
+            RewriteProposal::new(mine, "a", 1),
+            RewriteProposal::new(mine, "b", 1),
         ];
         assert!(
             misattributed(mine, &honest).is_empty(),
@@ -706,8 +724,8 @@ mod tests {
         );
 
         let tainted = [
-            RewriteProposal::new(mine, "a"),
-            RewriteProposal::new(theirs, "b"),
+            RewriteProposal::new(mine, "a", 1),
+            RewriteProposal::new(theirs, "b", 1),
         ];
         let caught = misattributed(mine, &tainted);
         assert_eq!(caught.len(), 1, "the foreign proposal was not caught");
@@ -727,7 +745,7 @@ mod tests {
                 &self,
                 _program: &&'static str,
             ) -> Result<Vec<RewriteProposal<&'static str>>, ProviderDefect> {
-                Ok(vec![RewriteProposal::new(self.identity(), "candidate")])
+                Ok(vec![RewriteProposal::new(self.identity(), "candidate", 1)])
             }
         }
 
@@ -821,7 +839,7 @@ mod tests {
             &self,
             _program: &&'static str,
         ) -> Result<Vec<RewriteProposal<&'static str>>, ProviderDefect> {
-            Ok(vec![RewriteProposal::new(self.1, "candidate")])
+            Ok(vec![RewriteProposal::new(self.1, "candidate", 1)])
         }
     }
 
@@ -968,8 +986,8 @@ mod tests {
     #[test]
     fn a_payload_attaches_to_its_own_proposal_only() {
         let rule = RewriteRuleIdentity::new("p", "r", 1).expect("named");
-        let silent = RewriteProposal::new(rule, "no-payload");
-        let loud = RewriteProposal::new(rule, "payload").with_explain(Arc::new(Silent));
+        let silent = RewriteProposal::new(rule, "no-payload", 1);
+        let loud = RewriteProposal::new(rule, "payload", 1).with_explain(Arc::new(Silent));
 
         assert!(
             silent.explain().is_none(),
