@@ -23,18 +23,21 @@
 //! an operation and flushing a newly produced result are both exact host
 //! operations on the bits.
 //!
-//! It does **not** cover contraction or reassociation, and
+//! It does **not** cover contraction, reassociation, permutation, signed-zero
+//! elimination, or exceptional-value absence assumptions, and
 //! [`ReferenceNumericalConformance::from_realization`] refuses a realization that
-//! permits either rather than accepting one and ignoring it. The evaluator
-//! computes a separately rounded multiply and add and a strict left fold in
-//! canonical contributor order; those are one legal realization of a permissive
-//! contract, but a permissive contract's *result set* is larger than one value,
-//! and an oracle that returned a single value for it would be asserting a
-//! bitwise equality the contract does not promise. Refusing names that gap
-//! instead of hiding it.
+//! uses any of them rather than accepting one and ignoring it. The evaluator
+//! computes a separately rounded multiply and add, a strict left fold in
+//! canonical contributor order, and bit-preserving signed-zero behaviour. Those
+//! are one legal realization of a permissive transform contract, but that
+//! contract's result set is larger than one value, and an oracle that returned a
+//! single value would assert a bitwise equality the contract does not promise.
+//! It also has no authority that validates an exceptional-value absence
+//! assumption before evaluation. Refusing names each gap instead of hiding it.
 
 use tiler_ir::schedule::{
-    FlushedZeroSign, NumericalPermission, NumericalRealization, SubnormalMode,
+    ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, NumericalRealization,
+    SubnormalMode, ValueDomainProvenance,
 };
 
 use std::error::Error;
@@ -54,6 +57,20 @@ pub enum UnsupportedReferenceContract {
     /// A contract permitting reassociation admits every legal regrouping of the
     /// contributor sequence, which is a result set rather than one value.
     ReassociationPermitted,
+    /// The realization permits reduction contributor permutation.
+    PermutationPermitted,
+    /// The realization permits eliminating signed-zero distinctions.
+    SignedZeroEliminationPermitted,
+    /// The realization assumes NaNs absent on evidence this evaluator cannot validate.
+    NanAbsenceAssumed {
+        /// Authority behind the domain assumption.
+        provenance: ValueDomainProvenance,
+    },
+    /// The realization assumes infinities absent on evidence this evaluator cannot validate.
+    InfinityAbsenceAssumed {
+        /// Authority behind the domain assumption.
+        provenance: ValueDomainProvenance,
+    },
 }
 
 impl UnsupportedReferenceContract {
@@ -63,17 +80,34 @@ impl UnsupportedReferenceContract {
         match self {
             Self::ContractionPermitted => "reference.numerics.contraction-permitted",
             Self::ReassociationPermitted => "reference.numerics.reassociation-permitted",
+            Self::PermutationPermitted => "reference.numerics.permutation-permitted",
+            Self::SignedZeroEliminationPermitted => {
+                "reference.numerics.signed-zero-elimination-permitted"
+            }
+            Self::NanAbsenceAssumed { .. } => "reference.numerics.nan-absence-assumed",
+            Self::InfinityAbsenceAssumed { .. } => "reference.numerics.infinity-absence-assumed",
         }
     }
 }
 
 impl fmt::Display for UnsupportedReferenceContract {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "{}: the reference evaluates one value and this contract admits a result set",
-            self.rule()
-        )
+        match self {
+            Self::ContractionPermitted
+            | Self::ReassociationPermitted
+            | Self::PermutationPermitted
+            | Self::SignedZeroEliminationPermitted => write!(
+                formatter,
+                "{}: the reference evaluates one value and this contract admits a result set",
+                self.rule()
+            ),
+            Self::NanAbsenceAssumed { provenance }
+            | Self::InfinityAbsenceAssumed { provenance } => write!(
+                formatter,
+                "{}: the reference cannot validate the {provenance:?} domain assumption",
+                self.rule()
+            ),
+        }
     }
 }
 
@@ -131,22 +165,55 @@ impl ReferenceNumericalConformance {
     pub const fn from_realization(
         realization: &NumericalRealization,
     ) -> Result<Self, UnsupportedReferenceContract> {
-        match realization.contraction {
+        let NumericalRealization {
+            profile_key: _,
+            canonical_arithmetic_nan_bits: _,
+            input_subnormals,
+            result_subnormals,
+            contraction,
+            reassociation,
+            permutation,
+            signed_zero,
+            nan_assumptions,
+            infinity_assumptions,
+        } = *realization;
+        match contraction {
             NumericalPermission::Permitted => {
                 return Err(UnsupportedReferenceContract::ContractionPermitted);
             }
             NumericalPermission::Forbidden => {}
         }
-        match realization.reassociation {
+        match reassociation {
             NumericalPermission::Permitted => {
                 return Err(UnsupportedReferenceContract::ReassociationPermitted);
             }
             NumericalPermission::Forbidden => {}
         }
-        Ok(Self::new(
-            realization.input_subnormals,
-            realization.result_subnormals,
-        ))
+        match permutation {
+            NumericalPermission::Permitted => {
+                return Err(UnsupportedReferenceContract::PermutationPermitted);
+            }
+            NumericalPermission::Forbidden => {}
+        }
+        match signed_zero {
+            NumericalPermission::Permitted => {
+                return Err(UnsupportedReferenceContract::SignedZeroEliminationPermitted);
+            }
+            NumericalPermission::Forbidden => {}
+        }
+        match nan_assumptions {
+            ExceptionalValueAssumption::MakeNoAssumption => {}
+            ExceptionalValueAssumption::AssumeAbsent { provenance } => {
+                return Err(UnsupportedReferenceContract::NanAbsenceAssumed { provenance });
+            }
+        }
+        match infinity_assumptions {
+            ExceptionalValueAssumption::MakeNoAssumption => {}
+            ExceptionalValueAssumption::AssumeAbsent { provenance } => {
+                return Err(UnsupportedReferenceContract::InfinityAbsenceAssumed { provenance });
+            }
+        }
+        Ok(Self::new(input_subnormals, result_subnormals))
     }
 
     /// The declared treatment of subnormal operands.
@@ -212,7 +279,8 @@ fn apply(mode: SubnormalMode, value: f32) -> f32 {
 mod tests {
     use super::{ReferenceNumericalConformance, UnsupportedReferenceContract};
     use tiler_ir::schedule::{
-        FlushedZeroSign, NumericalPermission, NumericalRealization, SubnormalMode,
+        ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, NumericalRealization,
+        SubnormalMode, ValueDomainProvenance,
     };
 
     const fn flush(zero_sign: FlushedZeroSign) -> SubnormalMode {
@@ -232,6 +300,10 @@ mod tests {
             result,
             contraction,
             reassociation,
+            NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            ExceptionalValueAssumption::MakeNoAssumption,
+            ExceptionalValueAssumption::MakeNoAssumption,
         )
     }
 
@@ -345,6 +417,60 @@ mod tests {
                 .to_string()
                 .contains("result set")
         );
+    }
+
+    /// Every newly carried freedom is refused independently rather than ignored.
+    #[test]
+    fn every_new_dimension_is_accounted_for_by_the_reference_boundary() {
+        let strict = realization(
+            SubnormalMode::Preserve,
+            SubnormalMode::Preserve,
+            NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+        );
+        for (declared, expected) in [
+            (
+                NumericalRealization {
+                    permutation: NumericalPermission::Permitted,
+                    ..strict
+                },
+                UnsupportedReferenceContract::PermutationPermitted,
+            ),
+            (
+                NumericalRealization {
+                    signed_zero: NumericalPermission::Permitted,
+                    ..strict
+                },
+                UnsupportedReferenceContract::SignedZeroEliminationPermitted,
+            ),
+            (
+                NumericalRealization {
+                    nan_assumptions: ExceptionalValueAssumption::AssumeAbsent {
+                        provenance: ValueDomainProvenance::CompilerProven,
+                    },
+                    ..strict
+                },
+                UnsupportedReferenceContract::NanAbsenceAssumed {
+                    provenance: ValueDomainProvenance::CompilerProven,
+                },
+            ),
+            (
+                NumericalRealization {
+                    infinity_assumptions: ExceptionalValueAssumption::AssumeAbsent {
+                        provenance: ValueDomainProvenance::RuntimeValidated,
+                    },
+                    ..strict
+                },
+                UnsupportedReferenceContract::InfinityAbsenceAssumed {
+                    provenance: ValueDomainProvenance::RuntimeValidated,
+                },
+            ),
+        ] {
+            assert_eq!(
+                ReferenceNumericalConformance::from_realization(&declared),
+                Err(expected),
+            );
+        }
     }
 
     /// A strict realization carries both subnormal dimensions across unchanged.

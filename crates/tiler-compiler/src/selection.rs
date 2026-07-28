@@ -1856,6 +1856,10 @@ mod tests {
                 result_subnormals: realization.result_subnormals,
                 contraction: realization.contraction,
                 reassociation: realization.reassociation,
+                permutation: realization.permutation,
+                signed_zero: realization.signed_zero,
+                nan_assumptions: realization.nan_assumptions,
+                infinity_assumptions: realization.infinity_assumptions,
             },
             WorkScaling::Fixed(2),
         )

@@ -10,7 +10,10 @@ use crate::shape::{Axis, Shape};
 
 use super::error::{ContributorError, ElementCountOverflow};
 use super::handles::{BoundsWitnessId, OwnershipWitnessId, RegionId};
-use super::numerics::{FlushedZeroSign, NumericalPermission, NumericalRealization, SubnormalMode};
+use super::numerics::{
+    ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, NumericalRealization,
+    SubnormalMode, ValueDomainProvenance,
+};
 
 /// The role a boundary tensor plays for one scheduled region.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -429,6 +432,14 @@ pub struct ResourceRequirements {
     pub contraction: NumericalPermission,
     /// Whether the region's declared realization permits reassociation.
     pub reassociation: NumericalPermission,
+    /// Whether the region's declared realization permits contributor permutation.
+    pub permutation: NumericalPermission,
+    /// Whether the region's declared realization permits signed-zero elimination.
+    pub signed_zero: NumericalPermission,
+    /// The region's declared NaN-absence assumption.
+    pub nan_assumptions: ExceptionalValueAssumption,
+    /// The region's declared infinity-absence assumption.
+    pub infinity_assumptions: ExceptionalValueAssumption,
 }
 
 /// Opaque canonical bytes identifying one verified scheduled region.
@@ -575,6 +586,10 @@ pub(super) fn derive_requirements(region: &ScheduledRegion) -> ResourceRequireme
         result_subnormals: region.index.numerical.result_subnormals,
         contraction: region.index.numerical.contraction,
         reassociation: region.index.numerical.reassociation,
+        permutation: region.index.numerical.permutation,
+        signed_zero: region.index.numerical.signed_zero,
+        nan_assumptions: region.index.numerical.nan_assumptions,
+        infinity_assumptions: region.index.numerical.infinity_assumptions,
     }
 }
 
@@ -664,6 +679,21 @@ fn push_permission(bytes: &mut Vec<u8>, permission: NumericalPermission) {
     });
 }
 
+/// Encodes one exceptional-value assumption and its evidence class.
+fn push_exceptional_assumption(bytes: &mut Vec<u8>, assumption: ExceptionalValueAssumption) {
+    match assumption {
+        ExceptionalValueAssumption::MakeNoAssumption => bytes.push(0x01),
+        ExceptionalValueAssumption::AssumeAbsent { provenance } => {
+            bytes.push(0x02);
+            bytes.push(match provenance {
+                ValueDomainProvenance::CompilerProven => 0x01,
+                ValueDomainProvenance::RuntimeValidated => 0x02,
+                ValueDomainProvenance::CallerDeclaredUnvalidated => 0x03,
+            });
+        }
+    }
+}
+
 /// Encodes the complete numerical realization a region declares.
 ///
 /// Every field is encoded, including both subnormal dimensions. `profile_key`
@@ -683,6 +713,10 @@ fn push_numerical(bytes: &mut Vec<u8>, numerical: &NumericalRealization) {
     push_subnormal(bytes, numerical.result_subnormals);
     push_permission(bytes, numerical.contraction);
     push_permission(bytes, numerical.reassociation);
+    push_permission(bytes, numerical.permutation);
+    push_permission(bytes, numerical.signed_zero);
+    push_exceptional_assumption(bytes, numerical.nan_assumptions);
+    push_exceptional_assumption(bytes, numerical.infinity_assumptions);
 }
 
 fn push_scalar_program(bytes: &mut Vec<u8>, program: &ScalarProgram) {

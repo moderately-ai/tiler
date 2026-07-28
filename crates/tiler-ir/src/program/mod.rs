@@ -87,10 +87,10 @@
 //! };
 //! use tiler_ir::schedule::{
 //!     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
-//!     ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission,
-//!     NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId, RegionId,
-//!     ReductionTopology, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy,
-//!     TensorRole,
+//!     ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
+//!     NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
+//!     OwnershipWitnessId, RegionId, ReductionTopology, ScalarProgram, ScheduledRegionBuilder,
+//!     SubnormalMode, TailPolicy, TensorRole,
 //! };
 //! use tiler_ir::semantic::{
 //!     F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgramBuilder,
@@ -170,6 +170,10 @@
 //!     SubnormalMode::Preserve,
 //!     NumericalPermission::Forbidden,
 //!     NumericalPermission::Forbidden,
+//!     NumericalPermission::Forbidden,
+//!     NumericalPermission::Forbidden,
+//!     ExceptionalValueAssumption::MakeNoAssumption,
+//!     ExceptionalValueAssumption::MakeNoAssumption,
 //! ))?;
 //! region.schedule(KernelSchedule {
 //!     binding: ExecutionBinding::GlobalLinearInvocation,

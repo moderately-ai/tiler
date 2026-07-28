@@ -251,7 +251,9 @@ impl OpaqueCallProposal {
 mod tests {
     use super::*;
     use crate::call_declaration::WorkScaling;
-    use tiler_ir::schedule::{NumericalPermission, ResourceRequirements, SubnormalMode};
+    use tiler_ir::schedule::{
+        ExceptionalValueAssumption, NumericalPermission, ResourceRequirements, SubnormalMode,
+    };
 
     /// Resources ample enough that only the fault under test can fire.
     fn resources(bindings: u32) -> ResourceRequirements {
@@ -265,6 +267,10 @@ mod tests {
             result_subnormals: SubnormalMode::Preserve,
             contraction: NumericalPermission::Forbidden,
             reassociation: NumericalPermission::Forbidden,
+            permutation: NumericalPermission::Forbidden,
+            signed_zero: NumericalPermission::Forbidden,
+            nan_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+            infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
         }
     }
 

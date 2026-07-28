@@ -323,6 +323,10 @@ impl StrictF32NumericalContract {
             self.result_subnormals,
             self.contraction,
             self.reassociation,
+            self.permutation,
+            self.signed_zero,
+            self.nan_assumptions,
+            self.infinity_assumptions,
         )
     }
 }
@@ -2527,28 +2531,25 @@ mod tests {
         assert_eq!(first.dimension(), NumericalDimension::InputSubnormals);
     }
 
-    /// Stating a dimension this build cannot realize is refused by name.
-    ///
-    /// The refusal names the build, not a target: no profile is consulted, so
-    /// reporting it as an unhonourable dimension would attribute a limitation to
-    /// a declaration that never spoke about it.
+    /// Every consumable contract dimension reaches the scheduled realization.
     #[test]
-    fn an_unrealizable_dimension_is_refused_before_any_target_is_consulted() {
-        let program = program();
+    fn realization_carries_every_consumable_contract_dimension() {
         let mut contract = StrictF32NumericalContract::governed();
+        contract.permutation = NumericalPermission::Permitted;
         contract.signed_zero = NumericalPermission::Permitted;
-        let request = CompilationRequest::governed_under(&program, contract);
-        let Err(RequestError::UnrepresentableNumericalDimension { cause }) =
-            verify_request(request)
-        else {
-            panic!("a signed-zero relaxation is unrealizable by this build");
+        contract.nan_assumptions = ExceptionalValueAssumption::AssumeAbsent {
+            provenance: tiler_ir::schedule::ValueDomainProvenance::CompilerProven,
         };
-        assert_eq!(cause.dimension(), NumericalDimension::SignedZero);
-        assert_eq!(cause.arithmetic(), ArithmeticType::F32);
-        assert!(
-            RequestError::UnrepresentableNumericalDimension { cause }
-                .to_string()
-                .starts_with("compile.request.numerics.unrepresentable: numerics.signed-zero"),
+        contract.infinity_assumptions = ExceptionalValueAssumption::AssumeAbsent {
+            provenance: tiler_ir::schedule::ValueDomainProvenance::RuntimeValidated,
+        };
+        let realization = contract.realization();
+        assert_eq!(realization.permutation, contract.permutation);
+        assert_eq!(realization.signed_zero, contract.signed_zero);
+        assert_eq!(realization.nan_assumptions, contract.nan_assumptions);
+        assert_eq!(
+            realization.infinity_assumptions,
+            contract.infinity_assumptions
         );
     }
 

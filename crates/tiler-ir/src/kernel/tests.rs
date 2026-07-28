@@ -11,10 +11,10 @@ use std::cell::Cell;
 use super::*;
 use crate::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
-    ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission,
-    NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
-    ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy,
-    TensorRole, VerifiedScheduledRegion,
+    ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
+    NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
+    OwnershipWitnessId, ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder,
+    SubnormalMode, TailPolicy, TensorRole, VerifiedScheduledRegion,
 };
 use crate::shape::{Axis, Shape};
 
@@ -30,6 +30,10 @@ fn numerical() -> NumericalRealization {
         SubnormalMode::Preserve,
         NumericalPermission::Forbidden,
         NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        ExceptionalValueAssumption::MakeNoAssumption,
+        ExceptionalValueAssumption::MakeNoAssumption,
     )
 }
 

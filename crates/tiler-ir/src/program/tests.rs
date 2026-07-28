@@ -8,10 +8,10 @@
 use crate::kernel::{KernelType, VerifiedKernel, lower_scheduled_region};
 use crate::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
-    ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission,
-    NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
-    ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy,
-    TensorRole, VerifiedScheduledRegion,
+    ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
+    NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
+    OwnershipWitnessId, ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder,
+    SubnormalMode, TailPolicy, TensorRole, VerifiedScheduledRegion,
 };
 use crate::semantic::{
     F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
@@ -41,6 +41,10 @@ fn strict() -> NumericalRealization {
         SubnormalMode::Preserve,
         NumericalPermission::Forbidden,
         NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        ExceptionalValueAssumption::MakeNoAssumption,
+        ExceptionalValueAssumption::MakeNoAssumption,
     )
 }
 

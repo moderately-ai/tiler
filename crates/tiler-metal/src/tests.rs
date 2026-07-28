@@ -26,17 +26,18 @@ use tiler_ir::kernel::{
 };
 use tiler_ir::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
-    ExecutionBinding, FlushedZeroSign, KernelSchedule, LaunchPlan, LogicalAccess,
-    NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
+    ExceptionalValueAssumption, ExecutionBinding, FlushedZeroSign, KernelSchedule, LaunchPlan,
+    LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
     OwnershipWitnessId, ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder,
-    SubnormalMode, TailPolicy, TensorRole, VerifiedScheduledRegion, element_count,
+    SubnormalMode, TailPolicy, TensorRole, ValueDomainProvenance, VerifiedScheduledRegion,
+    element_count,
 };
 use tiler_ir::shape::{Axis, Shape};
 
 use crate::diagnostic::{BarrierRejection, MetalEmitError};
 use crate::emit::{
     address_space_declaration, barrier_call, emit_translation_unit, is_f32_nan, msl_type,
-    reserve_symbol,
+    realization_requirements, reserve_symbol,
 };
 use crate::record::{MetalNumericalGap, MetalNumericalRequirement, MetalTranslationUnit};
 use crate::target::{
@@ -114,6 +115,10 @@ fn subnormal_realization(
         result_subnormals,
         NumericalPermission::Forbidden,
         NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        ExceptionalValueAssumption::MakeNoAssumption,
+        ExceptionalValueAssumption::MakeNoAssumption,
     )
 }
 
@@ -612,6 +617,75 @@ fn strict_numerics_require_safe_math_and_no_contraction() {
         MetalNumericalRequirement::NoFloatingPointContraction.flag(),
         "-ffp-contract=off"
     );
+}
+
+/// Every newly consumable dimension independently reaches Metal selection.
+///
+/// The baseline authorizes every safe-math licence and proves exceptional
+/// values absent; contraction stays forbidden because the pointwise scalar
+/// program itself requires that exact refinement. Each case then tightens one
+/// safe-math dimension. This prevents the strict fixture's already-forbidden
+/// reassociation from making a dropped field look covered.
+#[test]
+fn each_consumable_dimension_independently_requires_safe_math() {
+    let baseline = NumericalRealization::new(
+        "tiler.test.relaxed-f32",
+        NAN_BITS,
+        SubnormalMode::Preserve,
+        SubnormalMode::Preserve,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Permitted,
+        NumericalPermission::Permitted,
+        NumericalPermission::Permitted,
+        ExceptionalValueAssumption::AssumeAbsent {
+            provenance: ValueDomainProvenance::CompilerProven,
+        },
+        ExceptionalValueAssumption::AssumeAbsent {
+            provenance: ValueDomainProvenance::RuntimeValidated,
+        },
+    );
+    let requirements = |realization| {
+        realization_requirements(realization)
+            .into_iter()
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        requirements(baseline),
+        [MetalNumericalRequirement::NoFloatingPointContraction],
+    );
+
+    for realization in [
+        NumericalRealization {
+            permutation: NumericalPermission::Forbidden,
+            ..baseline
+        },
+        NumericalRealization {
+            signed_zero: NumericalPermission::Forbidden,
+            ..baseline
+        },
+        NumericalRealization {
+            nan_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+            ..baseline
+        },
+        NumericalRealization {
+            infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+            ..baseline
+        },
+        NumericalRealization {
+            nan_assumptions: ExceptionalValueAssumption::AssumeAbsent {
+                provenance: ValueDomainProvenance::CallerDeclaredUnvalidated,
+            },
+            ..baseline
+        },
+    ] {
+        assert_eq!(
+            requirements(realization),
+            [
+                MetalNumericalRequirement::SafeMathMode,
+                MetalNumericalRequirement::NoFloatingPointContraction,
+            ],
+        );
+    }
 }
 
 /// Pins the ticket's central obligation on the one operation that can carry it.

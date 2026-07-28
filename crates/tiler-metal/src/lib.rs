@@ -96,10 +96,11 @@
 //! ```
 //! use tiler_ir::kernel::lower_scheduled_region;
 //! use tiler_ir::schedule::{
-//!     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ExecutionBinding,
-//!     KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission, NumericalRealization,
-//!     OwnershipProof, OwnershipProofKind, OwnershipWitnessId, RegionId, ReductionTopology,
-//!     ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
+//!     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId,
+//!     ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
+//!     NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
+//!     OwnershipWitnessId, RegionId, ReductionTopology, ScalarProgram, ScheduledRegionBuilder,
+//!     SubnormalMode, TailPolicy, TensorRole,
 //! };
 //! use tiler_ir::shape::Shape;
 //! use tiler_metal::emit::emit_translation_unit;
@@ -155,6 +156,10 @@
 //!     SubnormalMode::Preserve,
 //!     NumericalPermission::Forbidden,
 //!     NumericalPermission::Forbidden,
+//!     NumericalPermission::Forbidden,
+//!     NumericalPermission::Forbidden,
+//!     ExceptionalValueAssumption::MakeNoAssumption,
+//!     ExceptionalValueAssumption::MakeNoAssumption,
 //! ))?;
 //! builder.schedule(KernelSchedule {
 //!     binding: ExecutionBinding::GlobalLinearInvocation,

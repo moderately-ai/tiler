@@ -90,7 +90,9 @@ use std::error::Error;
 use std::fmt;
 
 use tiler_ir::kernel::{AddressSpace, BufferAccess, KernelType};
-use tiler_ir::schedule::{NumericalPermission, ResourceRequirements, SubnormalMode};
+use tiler_ir::schedule::{
+    ExceptionalValueAssumption, NumericalPermission, ResourceRequirements, SubnormalMode,
+};
 use tiler_ir::semantic::{InputKey, OutputKey, ProviderIdentity};
 use tiler_ir::shape::Shape;
 
@@ -743,6 +745,30 @@ impl<'a> DecodedNumerical<'a> {
     #[must_use]
     pub const fn reassociation(self) -> NumericalPermission {
         self.0.reassociation
+    }
+
+    /// Returns whether reduction contributors may be permuted.
+    #[must_use]
+    pub const fn permutation(self) -> NumericalPermission {
+        self.0.permutation
+    }
+
+    /// Returns whether transformations may eliminate signed zero distinctions.
+    #[must_use]
+    pub const fn signed_zero(self) -> NumericalPermission {
+        self.0.signed_zero
+    }
+
+    /// Returns whether NaNs may be assumed absent, and on what evidence.
+    #[must_use]
+    pub const fn nan_assumptions(self) -> ExceptionalValueAssumption {
+        self.0.nan_assumptions
+    }
+
+    /// Returns whether infinities may be assumed absent, and on what evidence.
+    #[must_use]
+    pub const fn infinity_assumptions(self) -> ExceptionalValueAssumption {
+        self.0.infinity_assumptions
     }
 }
 

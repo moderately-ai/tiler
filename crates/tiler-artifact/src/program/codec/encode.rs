@@ -37,15 +37,18 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 /// role tag with the interface reference naming what the slot addresses, to
 /// `4.0` when a selected provider row replaced its `u16` capability API version
 /// with the `u32` capability revision, and to `5.0` when each ABI binding row
-/// gained the accessible offset placing its range inside the value it binds.
-/// All four are deliberately **major** steps rather than the minor ones they
+/// gained the accessible offset placing its range inside the value it binds,
+/// and to `6.0` when the two numerical records gained permutation, signed-zero,
+/// NaN-assumption, and infinity-assumption fields.
+/// All five are deliberately **major** steps rather than the minor ones they
 /// might look like: the reader admits `minor <= implemented`, so a minor bump
 /// would have left it accepting an older manifest whose rows it can no longer
 /// parse. A field changed *or added* inside a fixed-width record is not
 /// additive — the `5.0` step inserts four bytes ahead of an existing field, so a
 /// `4.0` reader would consume the offset as the extent and lose framing for
-/// everything after it — and the `4.0` step also moved a field's width.
-pub(super) const MANIFEST_SCHEMA: (u16, u16) = (5, 0);
+/// everything after it, while the `6.0` step appends fields inside each entry
+/// before its bindings — and the `4.0` step also moved a field's width.
+pub(super) const MANIFEST_SCHEMA: (u16, u16) = (6, 0);
 
 /// Versioned domain tag opening the canonical manifest bytes.
 pub(super) const MANIFEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.manifest.v1\0";

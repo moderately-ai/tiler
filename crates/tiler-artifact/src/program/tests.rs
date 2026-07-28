@@ -18,10 +18,10 @@ use tiler_ir::program::{
 };
 use tiler_ir::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
-    ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission,
-    NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
-    ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy,
-    TensorRole,
+    ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
+    NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
+    OwnershipWitnessId, ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder,
+    SubnormalMode, TailPolicy, TensorRole,
 };
 use tiler_ir::semantic::{
     CanonicalIntegerWidth, CanonicalValue, CanonicalValueKind, CanonicalValueView, F32,
@@ -144,6 +144,10 @@ pub(super) fn strict() -> NumericalRealization {
         SubnormalMode::Preserve,
         NumericalPermission::Forbidden,
         NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        NumericalPermission::Forbidden,
+        ExceptionalValueAssumption::MakeNoAssumption,
+        ExceptionalValueAssumption::MakeNoAssumption,
     )
 }
 

@@ -51,8 +51,8 @@
 //! - **Reserved in the type system.** Every dimension in
 //!   [`crate::honourability::NumericalDimension`] can be stated, declared, and
 //!   assessed.
-//! - **Implemented.** [`REALIZED_DIMENSIONS`] names the four the scheduled-region
-//!   IR carries, so only those four can differ between two regions.
+//! - **Implemented.** [`REALIZED_DIMENSIONS`] names the eight consumable
+//!   dimensions the scheduled-region IR carries.
 //! - **Tested guarantee.** Only a dimension some admitted operation can consume
 //!   *and* the region IR carries has an observable resolution at all, and only
 //!   those carry conformance evidence.
@@ -102,11 +102,15 @@ pub(crate) const RELAXED_APPROXIMATION_ENVELOPE: ApproximationEnvelope =
 /// what makes an unenumerated dimension fail closed — but it *is* a defect the
 /// moment an admitted operation can consume one of the missing dimensions, which
 /// is exactly what [`unrepresentable_dimension`] refuses.
-pub(crate) const REALIZED_DIMENSIONS: [NumericalDimension; 4] = [
+pub(crate) const REALIZED_DIMENSIONS: [NumericalDimension; 8] = [
     NumericalDimension::InputSubnormals,
     NumericalDimension::ResultSubnormals,
     NumericalDimension::Contraction,
     NumericalDimension::Reassociation,
+    NumericalDimension::Permutation,
+    NumericalDimension::SignedZero,
+    NumericalDimension::NanAssumptions,
+    NumericalDimension::InfinityAssumptions,
 ];
 
 /// The dimensions one admitted semantic operation family can consume.
@@ -428,16 +432,10 @@ pub(crate) enum NumericalPolicyPreset {
     /// an approximate elementary function within
     /// [`RELAXED_APPROXIMATION_ENVELOPE`].
     ///
-    /// **What it deliberately does not authorize, and why.** Operand permutation,
+    /// **What it deliberately does not authorize.** Operand permutation,
     /// signed-zero elimination, and both exceptional-value assumptions stay at
-    /// their strict resolution. Each is a freedom some admitted operation could
-    /// consume, and none is carried by
-    /// [`tiler_ir::schedule::NumericalRealization`], so a region compiled under a
-    /// permissive resolution would be indistinguishable from one compiled under
-    /// the strict resolution — the same identity for two different meanings.
-    /// Authorizing them here would therefore not make this build faster; it would
-    /// make its artifacts ambiguous. [`unrepresentable_dimension`] refuses that
-    /// contract by name rather than leaving the restraint to this comment.
+    /// their strict resolution. The realization can represent those freedoms,
+    /// but this preset does not silently broaden its established meaning.
     Relaxed,
 }
 
@@ -502,7 +500,7 @@ mod tests {
     use crate::honourability::{CANONICAL_DIMENSIONS, DimensionBehaviour, NumericalDimension};
     use crate::request::StrictF32NumericalContract;
     use tiler_ir::schedule::{
-        ArithmeticType, ExceptionalValueAssumption, NumericalPermission, ValueDomainProvenance,
+        ExceptionalValueAssumption, NumericalPermission, ValueDomainProvenance,
     };
     use tiler_ir::semantic::{
         add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
@@ -527,28 +525,12 @@ mod tests {
         }
     }
 
-    /// The representability check can say no.
-    ///
-    /// A rule whose failure path is never exercised is indistinguishable from one
-    /// that never runs, and every registered preset passes by construction. This
-    /// drives the one case that must fail: permitting operand permutation, which
-    /// the strict serial sum can consume and which no scheduled region can record.
+    /// A newly representable freedom is no longer refused by the build boundary.
     #[test]
-    fn permitting_an_unrealizable_consumable_dimension_is_refused_by_name() {
+    fn permitting_a_representable_consumable_dimension_is_not_refused() {
         let mut contract = StrictF32NumericalContract::governed();
         contract.permutation = NumericalPermission::Permitted;
-        let refused = unrepresentable_dimension(&contract).expect("permutation is unrealizable");
-        assert_eq!(refused.dimension(), NumericalDimension::Permutation);
-        assert_eq!(refused.arithmetic(), ArithmeticType::F32);
-        assert_eq!(
-            refused.required(),
-            DimensionBehaviour::Transform(NumericalPermission::Permitted)
-        );
-        assert_eq!(
-            refused.realized(),
-            DimensionBehaviour::Transform(NumericalPermission::Forbidden)
-        );
-        assert_eq!(refused.consumed_by(), "tiler::strict-serial-sum-f32@1");
+        assert_eq!(unrepresentable_dimension(&contract), None);
     }
 
     /// The capability table names the operations the registry actually admits.
@@ -578,7 +560,7 @@ mod tests {
         assert_eq!(declared, expected);
     }
 
-    /// Each of the four consumable-but-unrealizable dimensions is refused.
+    /// Each of the four widened dimensions is representable.
     ///
     /// Named individually rather than by a loop over a derived set, so that a
     /// dimension moving between the two classes changes this test rather than
@@ -587,7 +569,7 @@ mod tests {
     type WideningCase = (NumericalDimension, fn(&mut StrictF32NumericalContract));
 
     #[test]
-    fn every_consumable_dimension_outside_the_realization_is_refused() {
+    fn every_widened_dimension_is_representable() {
         let assume_absent = ExceptionalValueAssumption::AssumeAbsent {
             provenance: ValueDomainProvenance::CompilerProven,
         };
@@ -616,9 +598,12 @@ mod tests {
         for (dimension, widen) in cases {
             let mut contract = StrictF32NumericalContract::governed();
             widen(&mut contract);
-            let refused = unrepresentable_dimension(&contract)
-                .unwrap_or_else(|| panic!("{} must be refused", dimension.key()));
-            assert_eq!(refused.dimension(), dimension);
+            assert_eq!(
+                unrepresentable_dimension(&contract),
+                None,
+                "{} must be representable",
+                dimension.key()
+            );
         }
     }
 

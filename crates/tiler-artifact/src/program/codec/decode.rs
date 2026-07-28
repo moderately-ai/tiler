@@ -23,7 +23,7 @@
 //! needs a `VerifiedKernelProgram` must hold the one it compiled — permanently,
 //! not until some ticket lands.
 
-use tiler_ir::schedule::ResourceRequirements;
+use tiler_ir::schedule::{ExceptionalValueAssumption, ResourceRequirements};
 use tiler_ir::semantic::{InputKey, OutputKey, ProviderIdentity};
 use tiler_ir::shape::Shape;
 
@@ -41,8 +41,8 @@ use super::super::model::{
     BINDING_TARGET_PROGRAM_OUTPUT, BackendPayloadDescriptor, BindingData, BindingKind,
     BindingTargetData, DeferredPredicateData, InterfaceEntryData, LaunchData, RoutingPolicy,
     SchemaVersion, SelectedProvider, StageDependencyData, StageDependencyReason,
-    address_space_from_tag, buffer_access_from_tag, element_type_from_tag, permission_from_tag,
-    subnormal_from_tag,
+    address_space_from_tag, buffer_access_from_tag, element_type_from_tag,
+    exceptional_assumption_from_tag, permission_from_tag, subnormal_from_tag,
 };
 use super::super::{
     MAX_ABI_EXPRESSIONS, MAX_ARTIFACT_PAYLOADS, MAX_ARTIFACT_VARIANTS, MAX_DEFERRED_PREDICATES,
@@ -864,6 +864,10 @@ fn parse_entry(
         result_subnormals: cursor.subnormal()?,
         contraction: cursor.permission()?,
         reassociation: cursor.permission()?,
+        permutation: cursor.permission()?,
+        signed_zero: cursor.permission()?,
+        nan_assumptions: cursor.exceptional_assumption()?,
+        infinity_assumptions: cursor.exceptional_assumption()?,
     };
     let numerical = NumericalFacts {
         profile_key: cursor.text()?,
@@ -872,6 +876,10 @@ fn parse_entry(
         result_subnormals: cursor.subnormal()?,
         contraction: cursor.permission()?,
         reassociation: cursor.permission()?,
+        permutation: cursor.permission()?,
+        signed_zero: cursor.permission()?,
+        nan_assumptions: cursor.exceptional_assumption()?,
+        infinity_assumptions: cursor.exceptional_assumption()?,
     };
     let bindings = cursor.vec(
         MAX_ENTRY_BINDINGS,
@@ -1268,4 +1276,10 @@ tag_reader!(
     tiler_ir::schedule::NumericalPermission,
     permission_from_tag,
     TagSubject::NumericalPermission
+);
+tag_reader!(
+    exceptional_assumption,
+    ExceptionalValueAssumption,
+    exceptional_assumption_from_tag,
+    TagSubject::ExceptionalValueAssumption
 );

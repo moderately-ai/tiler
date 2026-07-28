@@ -139,11 +139,23 @@ pub struct NumericalRealization {
     pub contraction: NumericalPermission,
     /// Whether reduction reassociation is permitted.
     pub reassociation: NumericalPermission,
+    /// Whether reduction contributors may be permuted.
+    pub permutation: NumericalPermission,
+    /// Whether observable signed-zero distinctions may be eliminated.
+    pub signed_zero: NumericalPermission,
+    /// Whether NaN values may be assumed absent.
+    pub nan_assumptions: ExceptionalValueAssumption,
+    /// Whether infinity values may be assumed absent.
+    pub infinity_assumptions: ExceptionalValueAssumption,
 }
 
 impl NumericalRealization {
     /// Assembles a numerical realization from its declared parts.
     #[must_use]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "every consumable numerical dimension is an explicit required argument so widening the contract breaks every constructor instead of silently defaulting a new obligation"
+    )]
     pub const fn new(
         profile_key: &'static str,
         canonical_arithmetic_nan_bits: u32,
@@ -151,6 +163,10 @@ impl NumericalRealization {
         result_subnormals: SubnormalMode,
         contraction: NumericalPermission,
         reassociation: NumericalPermission,
+        permutation: NumericalPermission,
+        signed_zero: NumericalPermission,
+        nan_assumptions: ExceptionalValueAssumption,
+        infinity_assumptions: ExceptionalValueAssumption,
     ) -> Self {
         Self {
             profile_key,
@@ -159,6 +175,10 @@ impl NumericalRealization {
             result_subnormals,
             contraction,
             reassociation,
+            permutation,
+            signed_zero,
+            nan_assumptions,
+            infinity_assumptions,
         }
     }
 
@@ -172,6 +192,18 @@ impl NumericalRealization {
     #[must_use]
     pub const fn permits_reassociation(self) -> bool {
         permits(self.reassociation)
+    }
+
+    /// Returns whether contributor permutation is permitted.
+    #[must_use]
+    pub const fn permits_permutation(self) -> bool {
+        permits(self.permutation)
+    }
+
+    /// Returns whether signed-zero elimination is permitted.
+    #[must_use]
+    pub const fn permits_signed_zero_elimination(self) -> bool {
+        permits(self.signed_zero)
     }
 }
 

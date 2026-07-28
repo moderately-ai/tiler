@@ -54,10 +54,11 @@
 //!
 //! ```
 //! use tiler_ir::schedule::{
-//!     Access, AccessMode, BoundsProof, BoundsProofKind, ExecutionBinding, KernelSchedule,
-//!     LaunchPlan, LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof,
-//!     OwnershipProofKind, BoundsWitnessId, OwnershipWitnessId, RegionId, ReductionTopology,
-//!     ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
+//!     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId,
+//!     ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
+//!     NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
+//!     OwnershipWitnessId, RegionId, ReductionTopology, ScalarProgram, ScheduledRegionBuilder,
+//!     SubnormalMode, TailPolicy, TensorRole,
 //! };
 //! use tiler_ir::shape::Shape;
 //!
@@ -106,6 +107,10 @@
 //!     SubnormalMode::Preserve,
 //!     NumericalPermission::Forbidden,
 //!     NumericalPermission::Forbidden,
+//!     NumericalPermission::Forbidden,
+//!     NumericalPermission::Forbidden,
+//!     ExceptionalValueAssumption::MakeNoAssumption,
+//!     ExceptionalValueAssumption::MakeNoAssumption,
 //! ))?;
 //! builder.schedule(KernelSchedule {
 //!     binding: ExecutionBinding::GlobalLinearInvocation,

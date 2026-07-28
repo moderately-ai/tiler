@@ -348,7 +348,7 @@ fn verify_access_and_semantics(
             && order == scheduled_order
             && order == access_order
             && *permits_reassociation == numerical.permits_reassociation()
-            && !permits_permutation
+            && *permits_permutation == numerical.permits_permutation()
             && *empty_identity_bits == 0.0_f32.to_bits()
             && output_shape == &region.index.iteration_shape
             && input_shape.without_axes(axes) == *output_shape
@@ -378,8 +378,8 @@ fn verify_access_and_semantics(
             && axes == access_axes
             && order == scheduled_order
             && order == access_order
-            && !permits_reassociation
-            && !permits_permutation
+            && *permits_reassociation == numerical.permits_reassociation()
+            && *permits_permutation == numerical.permits_permutation()
             && !contraction
             && *empty_identity_bits == 0.0_f32.to_bits()
             && output_shape == &region.index.iteration_shape
@@ -462,12 +462,19 @@ mod tests {
 
     use crate::schedule::handles::{BoundsWitnessId, OwnershipWitnessId};
     use crate::schedule::model::{ContributorOrder, LaunchPlan};
-    use crate::schedule::numerics::{FlushedZeroSign, NumericalPermission, SubnormalMode};
+    use crate::schedule::numerics::{
+        ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, SubnormalMode,
+        ValueDomainProvenance,
+    };
     use crate::shape::{Axis, Shape};
 
     /// Recorded canonical identity of the strict-`f32` pointwise test region.
     ///
-    /// 202 bytes, after the second deliberate re-baseline. Two tag-form
+    /// 206 bytes, after widening the realization to every consumable
+    /// numerical dimension. The four added strict tags carry permutation,
+    /// signed-zero elimination, NaN assumptions, and infinity assumptions.
+    ///
+    /// The preceding 202-byte baseline followed two tag-form
     /// deviations closed together, each adding bytes at a known place, so the
     /// shift is attributable rather than opaque:
     ///
@@ -490,8 +497,8 @@ mod tests {
         "0101000000000000000000000002000000000111000000000000000600000001",
         "021100000000000000060000000002000000000000000621400000003f800000",
         "7fc0000000000000000000001574696c65722e746573742e7374726963742d66",
-        "33327fc000000101010101000000000000000600000001010000000031000000",
-        "00000000060000000101",
+        "33327fc000000101010101010101010000000000000006000000010100000000",
+        "3100000000000000060000000101",
     );
 
     fn strict_numerical() -> NumericalRealization {
@@ -502,6 +509,10 @@ mod tests {
             SubnormalMode::Preserve,
             NumericalPermission::Forbidden,
             NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            ExceptionalValueAssumption::MakeNoAssumption,
+            ExceptionalValueAssumption::MakeNoAssumption,
         )
     }
 
@@ -596,6 +607,16 @@ mod tests {
         assert_eq!(requirements.result_subnormals, SubnormalMode::Preserve);
         assert_eq!(requirements.contraction, NumericalPermission::Forbidden);
         assert_eq!(requirements.reassociation, NumericalPermission::Forbidden);
+        assert_eq!(requirements.permutation, NumericalPermission::Forbidden);
+        assert_eq!(requirements.signed_zero, NumericalPermission::Forbidden);
+        assert_eq!(
+            requirements.nan_assumptions,
+            ExceptionalValueAssumption::MakeNoAssumption
+        );
+        assert_eq!(
+            requirements.infinity_assumptions,
+            ExceptionalValueAssumption::MakeNoAssumption
+        );
     }
 
     /// A contract that permits both transforms still carries its subnormal
@@ -621,6 +642,10 @@ mod tests {
             SubnormalMode::Preserve,
             NumericalPermission::Permitted,
             NumericalPermission::Permitted,
+            NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            ExceptionalValueAssumption::MakeNoAssumption,
+            ExceptionalValueAssumption::MakeNoAssumption,
         ));
         let carried = builder.build().unwrap().requirements();
         assert_eq!(carried.contraction, NumericalPermission::Permitted);
@@ -653,6 +678,10 @@ mod tests {
             SubnormalMode::Preserve,
             NumericalPermission::Forbidden,
             NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            ExceptionalValueAssumption::MakeNoAssumption,
+            ExceptionalValueAssumption::MakeNoAssumption,
         );
         let preserving_sign = SubnormalMode::FlushToZero {
             zero_sign: FlushedZeroSign::PreservesSign,
@@ -682,6 +711,32 @@ mod tests {
             },
             NumericalRealization {
                 reassociation: NumericalPermission::Permitted,
+                ..baseline
+            },
+            NumericalRealization {
+                permutation: NumericalPermission::Permitted,
+                ..baseline
+            },
+            NumericalRealization {
+                signed_zero: NumericalPermission::Permitted,
+                ..baseline
+            },
+            NumericalRealization {
+                nan_assumptions: ExceptionalValueAssumption::AssumeAbsent {
+                    provenance: ValueDomainProvenance::CompilerProven,
+                },
+                ..baseline
+            },
+            NumericalRealization {
+                infinity_assumptions: ExceptionalValueAssumption::AssumeAbsent {
+                    provenance: ValueDomainProvenance::RuntimeValidated,
+                },
+                ..baseline
+            },
+            NumericalRealization {
+                nan_assumptions: ExceptionalValueAssumption::AssumeAbsent {
+                    provenance: ValueDomainProvenance::CallerDeclaredUnvalidated,
+                },
                 ..baseline
             },
         ];

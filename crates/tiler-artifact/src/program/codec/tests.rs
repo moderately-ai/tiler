@@ -20,7 +20,7 @@
 use std::time::Instant;
 
 use tiler_ir::kernel::{AddressSpace, BufferAccess, KernelType};
-use tiler_ir::schedule::NumericalPermission;
+use tiler_ir::schedule::{ExceptionalValueAssumption, NumericalPermission, ValueDomainProvenance};
 use tiler_ir::semantic::{InputKey, OutputKey, ProviderIdentity};
 use tiler_ir::shape::Axis;
 
@@ -38,7 +38,8 @@ use super::super::model::{
     BINDING_TARGET_PROGRAM_OUTPUT, BindingKind, BindingTarget, BindingTargetData, RoutingPolicy,
     SchemaVersion, StageDependencyData, StageDependencyReason, address_space_from_tag,
     address_space_tag, buffer_access_from_tag, buffer_access_tag, element_type_from_tag,
-    element_type_tag, permission_from_tag, permission_tag, subnormal_from_tag, subnormal_tag,
+    element_type_tag, exceptional_assumption_from_tag, exceptional_assumption_tag,
+    permission_from_tag, permission_tag, subnormal_from_tag, subnormal_tag,
 };
 use super::super::tests::{
     ELEMENT_BYTES, Formulas, OTHER_SCALE_BITS, SCALE_BITS, SCRATCH_OFFSET, build_artifact,
@@ -441,6 +442,23 @@ fn every_governed_tag_table_round_trips() {
         NumericalPermission::Permitted,
     ] {
         assert_eq!(permission_from_tag(permission_tag(value)), Some(value));
+    }
+    for value in [
+        ExceptionalValueAssumption::MakeNoAssumption,
+        ExceptionalValueAssumption::AssumeAbsent {
+            provenance: ValueDomainProvenance::CompilerProven,
+        },
+        ExceptionalValueAssumption::AssumeAbsent {
+            provenance: ValueDomainProvenance::RuntimeValidated,
+        },
+        ExceptionalValueAssumption::AssumeAbsent {
+            provenance: ValueDomainProvenance::CallerDeclaredUnvalidated,
+        },
+    ] {
+        assert_eq!(
+            exceptional_assumption_from_tag(exceptional_assumption_tag(value)),
+            Some(value),
+        );
     }
     assert_eq!(
         RoutingPolicy::from_tag(RoutingPolicy::StablePriority.tag()),
@@ -1748,6 +1766,38 @@ fn a_decoded_artifact_carries_everything_one_dispatch_needs() {
     assert_eq!(
         entry.numerical().contraction(),
         NumericalPermission::Forbidden,
+    );
+    assert_eq!(
+        entry.numerical().permutation(),
+        NumericalPermission::Forbidden,
+    );
+    assert_eq!(
+        entry.numerical().signed_zero(),
+        NumericalPermission::Forbidden,
+    );
+    assert_eq!(
+        entry.numerical().nan_assumptions(),
+        ExceptionalValueAssumption::MakeNoAssumption,
+    );
+    assert_eq!(
+        entry.numerical().infinity_assumptions(),
+        ExceptionalValueAssumption::MakeNoAssumption,
+    );
+    assert_eq!(
+        entry.resources().permutation,
+        NumericalPermission::Forbidden,
+    );
+    assert_eq!(
+        entry.resources().signed_zero,
+        NumericalPermission::Forbidden,
+    );
+    assert_eq!(
+        entry.resources().nan_assumptions,
+        ExceptionalValueAssumption::MakeNoAssumption,
+    );
+    assert_eq!(
+        entry.resources().infinity_assumptions,
+        ExceptionalValueAssumption::MakeNoAssumption,
     );
     assert!(entry.zero_work_skips_dispatch());
     assert_eq!(entry.launch_preconditions().len(), 0);

@@ -1,11 +1,11 @@
 ---
 id: widen-the-region-realization-to-consumable-dimensions
 title: Widen the scheduled-region realization to every consumable numerical dimension
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [implement-first-profile-numerical-policies, express-metal-honourability-in-the-shared-form]
-scopes: [implementation/ir, implementation/compiler, implementation/metal, implementation/artifact]
+scopes: [implementation/ir, implementation/compiler, implementation/metal, implementation/artifact, implementation/reference, contracts/artifacts, project/tickets]
 shared_scopes: []
 paths: []
 tags: [implementation, numerics, mature-product]
@@ -23,3 +23,13 @@ Four dimensions of the resolved numerical contract are ones an admitted operatio
 ## Closes when
 
 `NumericalRealization` carries every dimension `crate::policy::operation_capabilities` says an admitted operation can consume; both `push_numerical` encoders and `ResourceRequirements` carry them, exhaustively per dimension; the Metal emitter derives a requirement or records a gap for each; the artifact codec round-trips them; `REALIZED_DIMENSIONS` grows to match, so `policy.rs`'s `every_realized_dimension_is_consumable` and the four refusal cases move together; and the affected identity fixtures are rebaselined on the merged tree rather than taken from either branch. `make full` passes. (Citation corrected at landing: the Python gate this ticket originally named was retired by `e197176`.)
+
+## User-visible outcome
+
+Operand permutation, signed-zero elimination, and NaN and infinity absence assumptions now remain typed and inspectable from request resolution through scheduled-region and kernel identity, artifact encoding and decoding, Metal mode selection, and the reference-evaluator boundary. Contracts using these dimensions are no longer rejected merely because the runtime route could not represent them; a consumer either honours the exact realization or refuses it with a typed cause.
+
+Artifact manifest schema 6.0 and artifact identity domain v8 distinguish the widened records from the former four-dimension encoding. Metal selects safe math independently for every freedom that requires it, while compiler- or runtime-validated exceptional-value absence may justify relaxed math and an unvalidated caller declaration may not. The reference evaluator fails closed for every newly represented freedom it cannot validate.
+
+## Graph maintenance
+
+The implementation, merged-tree identity rebaselines, artifact ABI update, targeted package checks, deliberate failure-path checks, and `make full` are complete. Tom ratified the widened `NumericalRealization` constructor, the four `DecodedNumerical` accessors, and the four `UnsupportedReferenceContract` variants. No remainder needs a follow-up ticket; mark this ticket done and refill the serial queue from `tkt ready`.

@@ -19,7 +19,8 @@ use tiler_ir::program::{
     ByteWindow, MaterializedValueRef, StageRef, ValueRole, VerifiedKernelProgram,
 };
 use tiler_ir::schedule::{
-    FlushedZeroSign, NumericalPermission, NumericalRealization, ResourceRequirements, SubnormalMode,
+    ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, NumericalRealization,
+    ResourceRequirements, SubnormalMode, ValueDomainProvenance,
 };
 use tiler_ir::semantic::{
     InputKey, OutputKey, ProviderIdentity, SemanticAdmissionProvenanceIdentity,
@@ -112,7 +113,16 @@ use super::keys::{
 /// is the intended consequence — a `v6` identity described a record that could
 /// not express a placement, so an artifact carrying one is not the same subject
 /// as the artifact carrying its `v7` restatement.
-const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v7\0";
+///
+/// # Why this is a `v8` step
+///
+/// Raised to `v8` when the artifact stopped dropping four consumable numerical
+/// dimensions: permutation, signed-zero elimination, NaN absence, and infinity
+/// absence. Those fields landed inside both the resource-requirement and
+/// numerical-realization records, so a `v7` encoding of one artifact could
+/// otherwise equal a `v8` encoding of another. Retagging makes the old,
+/// incomplete subject incomparable with the complete one.
+const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v8\0";
 const STAGE_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.stage.v1\0";
 const PAYLOAD_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.payload.v1\0";
 /// Versioned domain separator of one selected provider's canonical key.
@@ -1540,6 +1550,42 @@ pub(super) const fn permission_from_tag(tag: u8) -> Option<NumericalPermission> 
     }
 }
 
+/// Encodes one exceptional-value assumption and its provenance in one tag.
+///
+/// The flattened table keeps the record fixed-width while remaining injective:
+/// the three provenance classes are semantically distinct and therefore receive
+/// distinct tags rather than sharing an `AssumeAbsent` tag with trailing data.
+pub(super) const fn exceptional_assumption_tag(assumption: ExceptionalValueAssumption) -> u8 {
+    match assumption {
+        ExceptionalValueAssumption::MakeNoAssumption => 0x01,
+        ExceptionalValueAssumption::AssumeAbsent {
+            provenance: ValueDomainProvenance::CompilerProven,
+        } => 0x02,
+        ExceptionalValueAssumption::AssumeAbsent {
+            provenance: ValueDomainProvenance::RuntimeValidated,
+        } => 0x03,
+        ExceptionalValueAssumption::AssumeAbsent {
+            provenance: ValueDomainProvenance::CallerDeclaredUnvalidated,
+        } => 0x04,
+    }
+}
+
+pub(super) const fn exceptional_assumption_from_tag(tag: u8) -> Option<ExceptionalValueAssumption> {
+    match tag {
+        0x01 => Some(ExceptionalValueAssumption::MakeNoAssumption),
+        0x02 => Some(ExceptionalValueAssumption::AssumeAbsent {
+            provenance: ValueDomainProvenance::CompilerProven,
+        }),
+        0x03 => Some(ExceptionalValueAssumption::AssumeAbsent {
+            provenance: ValueDomainProvenance::RuntimeValidated,
+        }),
+        0x04 => Some(ExceptionalValueAssumption::AssumeAbsent {
+            provenance: ValueDomainProvenance::CallerDeclaredUnvalidated,
+        }),
+        _ => None,
+    }
+}
+
 pub(super) fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirements) {
     let ResourceRequirements {
         buffer_bindings,
@@ -1551,6 +1597,10 @@ pub(super) fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirement
         result_subnormals,
         contraction,
         reassociation,
+        permutation,
+        signed_zero,
+        nan_assumptions,
+        infinity_assumptions,
     } = resources;
     bytes.extend_from_slice(&buffer_bindings.to_be_bytes());
     bytes.extend_from_slice(&threads_per_workgroup.to_be_bytes());
@@ -1561,6 +1611,10 @@ pub(super) fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirement
     bytes.push(subnormal_tag(result_subnormals));
     bytes.push(permission_tag(contraction));
     bytes.push(permission_tag(reassociation));
+    bytes.push(permission_tag(permutation));
+    bytes.push(permission_tag(signed_zero));
+    bytes.push(exceptional_assumption_tag(nan_assumptions));
+    bytes.push(exceptional_assumption_tag(infinity_assumptions));
 }
 
 pub(super) fn push_numerical(bytes: &mut Vec<u8>, numerical: &NumericalFacts) {
@@ -1571,6 +1625,10 @@ pub(super) fn push_numerical(bytes: &mut Vec<u8>, numerical: &NumericalFacts) {
         result_subnormals,
         contraction,
         reassociation,
+        permutation,
+        signed_zero,
+        nan_assumptions,
+        infinity_assumptions,
     } = numerical;
     push_slice(bytes, profile_key.as_bytes());
     bytes.extend_from_slice(&canonical_arithmetic_nan_bits.to_be_bytes());
@@ -1578,6 +1636,10 @@ pub(super) fn push_numerical(bytes: &mut Vec<u8>, numerical: &NumericalFacts) {
     bytes.push(subnormal_tag(*result_subnormals));
     bytes.push(permission_tag(*contraction));
     bytes.push(permission_tag(*reassociation));
+    bytes.push(permission_tag(*permutation));
+    bytes.push(permission_tag(*signed_zero));
+    bytes.push(exceptional_assumption_tag(*nan_assumptions));
+    bytes.push(exceptional_assumption_tag(*infinity_assumptions));
 }
 
 /// Encodes the canonical identity of one packaged artifact program.

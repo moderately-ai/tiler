@@ -67,7 +67,8 @@ use tiler_ir::kernel::{
     OperationView, SerialLoopRef, VerifiedBufferId, VerifiedKernel, VerifiedValueId,
 };
 use tiler_ir::schedule::{
-    FlushedZeroSign, NumericalPermission, NumericalRealization, SubnormalMode,
+    ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, NumericalRealization,
+    SubnormalMode, ValueDomainProvenance,
 };
 
 use crate::diagnostic::{BarrierRejection, MetalEmitError, MetalOperationFamily};
@@ -599,7 +600,7 @@ pub(crate) const fn msl_type(value_type: KernelType) -> &'static str {
 /// routed to [`KernelEmitter::record_subnormal_obligation`] as a
 /// [`MetalNumericalGap`] or, where no fact is stated for the arithmetic type,
 /// as an unstated type.
-fn realization_requirements(
+pub(crate) fn realization_requirements(
     realization: NumericalRealization,
 ) -> BTreeSet<MetalNumericalRequirement> {
     let mut requirements = BTreeSet::new();
@@ -609,11 +610,8 @@ fn realization_requirements(
         }
         NumericalPermission::Permitted => {}
     }
-    match realization.reassociation {
-        NumericalPermission::Forbidden => {
-            requirements.insert(MetalNumericalRequirement::SafeMathMode);
-        }
-        NumericalPermission::Permitted => {}
+    if requires_safe_math(realization) {
+        requirements.insert(MetalNumericalRequirement::SafeMathMode);
     }
     for mode in [realization.input_subnormals, realization.result_subnormals] {
         match mode {
@@ -621,6 +619,35 @@ fn realization_requirements(
         }
     }
     requirements
+}
+
+/// Returns whether a realization forbids a licence of relaxed Metal math.
+///
+/// `safe` is required for every dimension the emitted operations cannot carry:
+/// reassociation and permutation, signed-zero elimination, and exceptional
+/// values unless their absence rests on compiler proof or a runtime validation.
+/// A caller declaration is intentionally treated like no assumption because it
+/// is ineligible to justify a correctness-sensitive relaxation.
+const fn requires_safe_math(realization: NumericalRealization) -> bool {
+    matches!(realization.reassociation, NumericalPermission::Forbidden)
+        || matches!(realization.permutation, NumericalPermission::Forbidden)
+        || matches!(realization.signed_zero, NumericalPermission::Forbidden)
+        || exceptional_values_require_safe_math(realization.nan_assumptions)
+        || exceptional_values_require_safe_math(realization.infinity_assumptions)
+}
+
+/// Returns whether one exceptional-value contract can justify relaxed math.
+const fn exceptional_values_require_safe_math(assumption: ExceptionalValueAssumption) -> bool {
+    match assumption {
+        ExceptionalValueAssumption::MakeNoAssumption
+        | ExceptionalValueAssumption::AssumeAbsent {
+            provenance: ValueDomainProvenance::CallerDeclaredUnvalidated,
+        } => true,
+        ExceptionalValueAssumption::AssumeAbsent {
+            provenance:
+                ValueDomainProvenance::CompilerProven | ValueDomainProvenance::RuntimeValidated,
+        } => false,
+    }
 }
 
 /// Returns the gap one declared subnormal behaviour has against a target fact.

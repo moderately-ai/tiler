@@ -1417,7 +1417,7 @@ pub(crate) fn enumerate_frontier(
                     };
                     // The call's declared numerics must match the request's
                     // resolved contract, not merely be feasible on the target.
-                    // `assess_resources` below checks the four dimensions
+                    // `assess_resources` below checks the eight dimensions
                     // against the *target profile*, which is a different
                     // question: a call permitting contraction can be feasible on
                     // a device that offers it while still violating a program
@@ -1430,6 +1430,10 @@ pub(crate) fn enumerate_frontier(
                         || declared.result_subnormals != contract.result_subnormals
                         || declared.contraction != contract.contraction
                         || declared.reassociation != contract.reassociation
+                        || declared.permutation != contract.permutation
+                        || declared.signed_zero != contract.signed_zero
+                        || declared.nan_assumptions != contract.nan_assumptions
+                        || declared.infinity_assumptions != contract.infinity_assumptions
                     {
                         refuse("numerical-contract-mismatch");
                         continue;
@@ -1912,7 +1916,8 @@ mod tests {
         CompilationRequest, TargetProfileKey, VerifiedTargetRequest, verify_request,
     };
     use tiler_ir::schedule::{
-        AccessMode, NumericalPermission, ScheduledRegion, SubnormalMode, TensorRole,
+        AccessMode, ExceptionalValueAssumption, NumericalPermission, ScheduledRegion,
+        SubnormalMode, TensorRole,
     };
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, ProviderIdentity,
@@ -2531,6 +2536,10 @@ mod tests {
                 result_subnormals: SubnormalMode::Preserve,
                 contraction: NumericalPermission::Forbidden,
                 reassociation: NumericalPermission::Forbidden,
+                permutation: NumericalPermission::Forbidden,
+                signed_zero: NumericalPermission::Forbidden,
+                nan_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+                infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
             },
             WorkScaling::Fixed(1),
         )
@@ -2631,6 +2640,10 @@ mod tests {
             result_subnormals: contract.result_subnormals,
             contraction: contract.contraction,
             reassociation: contract.reassociation,
+            permutation: contract.permutation,
+            signed_zero: contract.signed_zero,
+            nan_assumptions: contract.nan_assumptions,
+            infinity_assumptions: contract.infinity_assumptions,
         }
     }
 
@@ -2797,6 +2810,10 @@ mod tests {
                 result_subnormals: SubnormalMode::Preserve,
                 contraction: NumericalPermission::Forbidden,
                 reassociation: NumericalPermission::Forbidden,
+                permutation: NumericalPermission::Forbidden,
+                signed_zero: NumericalPermission::Forbidden,
+                nan_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+                infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
             },
             WorkScaling::Fixed(1),
         )
@@ -2891,6 +2908,10 @@ mod tests {
                 result_subnormals: SubnormalMode::Preserve,
                 contraction: NumericalPermission::Forbidden,
                 reassociation: NumericalPermission::Forbidden,
+                permutation: NumericalPermission::Forbidden,
+                signed_zero: NumericalPermission::Forbidden,
+                nan_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+                infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
             },
             WorkScaling::Fixed(1),
         )
@@ -3004,6 +3025,10 @@ mod tests {
                 result_subnormals: SubnormalMode::Preserve,
                 contraction: NumericalPermission::Forbidden,
                 reassociation: NumericalPermission::Forbidden,
+                permutation: NumericalPermission::Forbidden,
+                signed_zero: NumericalPermission::Forbidden,
+                nan_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+                infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
             },
             WorkScaling::PerElementOf("x"),
         )

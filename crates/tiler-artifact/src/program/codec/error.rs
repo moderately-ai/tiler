@@ -67,6 +67,8 @@ pub(crate) enum TagSubject {
     SubnormalMode,
     /// A numerical transform permission of one numerical realization.
     NumericalPermission,
+    /// An exceptional-value assumption and the provenance that supports it.
+    ExceptionalValueAssumption,
     /// The availability phase of a root fact or deferred predicate.
     AvailabilityPhase,
     /// The node kind of one ABI expression arena entry.

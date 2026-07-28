@@ -15,8 +15,9 @@
 use crate::identity::{push_len, push_slice};
 use crate::schedule::{BoundsWitnessId, OwnershipWitnessId};
 use crate::schedule::{
-    CanonicalScheduledRegionIdentity, FlushedZeroSign, NumericalPermission, NumericalRealization,
-    RegionId, ResourceRequirements, SubnormalMode, TensorRole,
+    CanonicalScheduledRegionIdentity, ExceptionalValueAssumption, FlushedZeroSign,
+    NumericalPermission, NumericalRealization, RegionId, ResourceRequirements, SubnormalMode,
+    TensorRole, ValueDomainProvenance,
 };
 
 use super::MAX_KERNEL_IDENTITY_BYTES;
@@ -998,6 +999,20 @@ fn push_permission(bytes: &mut Vec<u8>, permission: NumericalPermission) {
     });
 }
 
+fn push_exceptional_assumption(bytes: &mut Vec<u8>, assumption: ExceptionalValueAssumption) {
+    match assumption {
+        ExceptionalValueAssumption::MakeNoAssumption => bytes.push(0x01),
+        ExceptionalValueAssumption::AssumeAbsent { provenance } => {
+            bytes.push(0x02);
+            bytes.push(match provenance {
+                ValueDomainProvenance::CompilerProven => 0x01,
+                ValueDomainProvenance::RuntimeValidated => 0x02,
+                ValueDomainProvenance::CallerDeclaredUnvalidated => 0x03,
+            });
+        }
+    }
+}
+
 fn push_numerical(bytes: &mut Vec<u8>, numerical: &NumericalRealization) {
     push_slice(bytes, numerical.profile_key.as_bytes());
     bytes.extend_from_slice(&numerical.canonical_arithmetic_nan_bits.to_be_bytes());
@@ -1005,6 +1020,10 @@ fn push_numerical(bytes: &mut Vec<u8>, numerical: &NumericalRealization) {
     push_subnormal(bytes, numerical.result_subnormals);
     push_permission(bytes, numerical.contraction);
     push_permission(bytes, numerical.reassociation);
+    push_permission(bytes, numerical.permutation);
+    push_permission(bytes, numerical.signed_zero);
+    push_exceptional_assumption(bytes, numerical.nan_assumptions);
+    push_exceptional_assumption(bytes, numerical.infinity_assumptions);
 }
 
 fn push_requirements(bytes: &mut Vec<u8>, requirements: &ResourceRequirements) {
@@ -1017,6 +1036,10 @@ fn push_requirements(bytes: &mut Vec<u8>, requirements: &ResourceRequirements) {
     push_subnormal(bytes, requirements.result_subnormals);
     push_permission(bytes, requirements.contraction);
     push_permission(bytes, requirements.reassociation);
+    push_permission(bytes, requirements.permutation);
+    push_permission(bytes, requirements.signed_zero);
+    push_exceptional_assumption(bytes, requirements.nan_assumptions);
+    push_exceptional_assumption(bytes, requirements.infinity_assumptions);
 }
 
 fn push_buffer(bytes: &mut Vec<u8>, buffer: &BufferParameter) {
@@ -1239,8 +1262,22 @@ fn numerical_encoded_len(numerical: &NumericalRealization) -> usize {
     LENGTH_BYTES
         .saturating_add(numerical.profile_key.len())
         .saturating_add(size_of_val(&numerical.canonical_arithmetic_nan_bits))
-        // Two subnormal modes and two permissions, one tag byte each.
-        .saturating_add(4)
+        // Two subnormal modes and four permissions, one tag byte each.
+        .saturating_add(6)
+        .saturating_add(exceptional_assumption_encoded_len(
+            numerical.nan_assumptions,
+        ))
+        .saturating_add(exceptional_assumption_encoded_len(
+            numerical.infinity_assumptions,
+        ))
+}
+
+/// Mirrors [`push_exceptional_assumption`].
+const fn exceptional_assumption_encoded_len(assumption: ExceptionalValueAssumption) -> usize {
+    match assumption {
+        ExceptionalValueAssumption::MakeNoAssumption => 1,
+        ExceptionalValueAssumption::AssumeAbsent { .. } => 2,
+    }
 }
 
 /// Mirrors [`push_requirements`].
@@ -1249,8 +1286,14 @@ fn requirements_encoded_len(requirements: &ResourceRequirements) -> usize {
         .saturating_add(size_of_val(&requirements.threads_per_workgroup))
         .saturating_add(size_of_val(&requirements.local_memory_bytes))
         .saturating_add(size_of_val(&requirements.barriers))
-        // The device-memory flag, two subnormal modes, and two permissions.
-        .saturating_add(5)
+        // The device-memory flag, two subnormal modes, and four permissions.
+        .saturating_add(7)
+        .saturating_add(exceptional_assumption_encoded_len(
+            requirements.nan_assumptions,
+        ))
+        .saturating_add(exceptional_assumption_encoded_len(
+            requirements.infinity_assumptions,
+        ))
 }
 
 /// Mirrors [`push_constant`]: a discriminant tag and the payload.

@@ -26,7 +26,8 @@ use std::collections::BTreeMap;
 
 use tiler_ir::program::{DependencyReasonView, StageRef, VerifiedKernelProgram};
 use tiler_ir::schedule::{
-    NumericalPermission, NumericalRealization, ResourceRequirements, SubnormalMode,
+    ExceptionalValueAssumption, NumericalPermission, NumericalRealization, ResourceRequirements,
+    SubnormalMode,
 };
 use tiler_ir::semantic::{InputKey, OutputKey};
 
@@ -205,6 +206,10 @@ pub(crate) struct NumericalFacts {
     pub(crate) result_subnormals: SubnormalMode,
     pub(crate) contraction: NumericalPermission,
     pub(crate) reassociation: NumericalPermission,
+    pub(crate) permutation: NumericalPermission,
+    pub(crate) signed_zero: NumericalPermission,
+    pub(crate) nan_assumptions: ExceptionalValueAssumption,
+    pub(crate) infinity_assumptions: ExceptionalValueAssumption,
 }
 
 impl NumericalFacts {
@@ -217,6 +222,10 @@ impl NumericalFacts {
             result_subnormals,
             contraction,
             reassociation,
+            permutation,
+            signed_zero,
+            nan_assumptions,
+            infinity_assumptions,
         } = numerical;
         Self {
             profile_key: profile_key.to_owned(),
@@ -225,6 +234,10 @@ impl NumericalFacts {
             result_subnormals,
             contraction,
             reassociation,
+            permutation,
+            signed_zero,
+            nan_assumptions,
+            infinity_assumptions,
         }
     }
 }
