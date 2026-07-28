@@ -1,18 +1,18 @@
 ---
 id: implement-index-domain-predicates
 title: Implement typed index-domain predicates and proof exchange
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: [implement-shapeenv-index-bindings]
 related: [prototype-canonical-index-region-slice]
-scopes: [implementation/ir, implementation/compiler]
+scopes: [implementation/ir, implementation/compiler, contracts/decisions, contracts/foundation, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, indexing, proof, mature-product]
 ---
 Add the accepted bounded typed predicate language, semantic obligations, durable proof evidence, and sound Unknown outcomes to verified index regions. Extend bounds and write-ownership proving beyond the static structural and finite fallback profile without converting semantic predicates into physical guards.
 
-## Decision needed (2026-07-28)
+## Decision outcome (2026-07-28)
 
 **The question, atomic:** what expression class may a typed index-domain obligation be stated in?
 
@@ -64,3 +64,18 @@ Thirteen lines naming four deliverables at once. Reading `crates/tiler-ir/src/in
 4. **Semantic obligations and discharge.** Who discharges a carried obligation, when, and what happens if nobody does — which must be an explainable refusal at a named stage, not an admitted program.
 
 Do not start at 3 or 4. Without 1 there is no vocabulary to state an obligation in, and an obligation stated ad hoc is the physical-guard failure in a different spelling.
+
+## Outcome (2026-07-28)
+
+Tom authorized the full admitted semi-affine expression class and ratified the exact `tiler_ir::index::{IndexDomainPredicate, IndexExtentRef}` public boundary. ADR 0084 records the accepted language. Predicates reference canonical verified expression handles and region-owned dimension or tensor-axis extents; the initial exhaustive atoms state `0 <= e` and `e < extent` without a second expression tree, Boolean escape hatch, proof result, runtime check, or physical guard.
+
+The ticket's former “fifth outcome” analysis was rejected after reading the construction authority: `docs/research/shapes/constraint-prover-boundary.md` already fixes `Proved`, `Disproved`, and `Unknown(reason)`. A symbolic fragment that no current lane can discharge is `Unknown(UnsupportedFragment)` or `Unknown(ResourceLimit)`, not evidence and not a new outcome.
+
+The public correspondence test exhaustively matches every current `IndexExprClass`; changing the quasi-affine arm to unsupported made it fail before the correct form was restored.
+
+## Graph maintenance
+
+- `retain-durable-index-domain-proof-evidence` owns durable evidence and identity.
+- `carry-unknown-index-domain-obligations` owns verified-region carriage and the no-physical-guard fixture.
+- `discharge-residual-index-domain-obligations` owns named pre-program-work discharge.
+- `represent-semi-affine-index-expressions-in-the-ir` remains the owner of symbolic coefficients and divisors. ADR 0084's reference-based predicate vocabulary does not depend on duplicating that representation and does not claim it is implemented.

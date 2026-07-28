@@ -85,6 +85,7 @@ accepted. Unresolved questions are collected in
 
 ### Physical planning and lowering
 
+- [0084: Reference canonical index expressions from domain predicates](0084-reference-canonical-index-expressions-from-domain-predicates.md) — accepted; contracts: [IR stack and invariants](../ir.md); evidence: [Shape constraint prover boundary](../research/shapes/constraint-prover-boundary.md), [Symbolic index and access model](../research/indexing/index-access-model.md)
 - [0068: Co-locate ABI expressions with executable program IR](0068-co-locate-abi-expressions-with-executable-program-ir.md) — accepted; contracts: [System architecture](../architecture.md), [IR stack and invariants](../ir.md), [Artifact envelope and Metal kernel ABI profile](../artifact-abi.md); evidence: [Ownership of target-neutral ABI expressions](../research/program-planning/abi-expression-ownership.md)
 - [0007: Make normalized hardware schedules first-class IR](0007-first-class-kernel-schedules.md) — accepted; contracts: [System architecture](../architecture.md), [IR stack and invariants](../ir.md), [Optimizer model](../compiler/optimizer.md), [Fusion and scheduling](../compiler/fusion-and-scheduling.md); evidence: [First-class scheduled-region model](../research/scheduling/scheduled-region-model.md)
 - [0047: Model placement as physical properties over capability graphs](0047-model-placement-as-physical-properties.md) — accepted; contracts: [System architecture](../architecture.md), [Proposed CPU/SIMD target profile](../backends/cpu.md), [Fusion and scheduling](../compiler/fusion-and-scheduling.md); evidence: [Device placement and memory-domain contract](../research/placement/device-placement-and-memory-domains.md)
@@ -207,6 +208,7 @@ accepted. Unresolved questions are collected in
 - [0081: Admit tiler-runtime as a device-free artifact loader](0081-admit-tiler-runtime-as-a-device-free-artifact-loader.md) — accepted
 - [0082: Admit tiler-cache as the expansion cache owner](0082-admit-tiler-cache-as-the-expansion-cache-owner.md) — accepted
 - [0083: Keep process-crash as the default cache durability](0083-keep-process-crash-as-the-default-cache-durability.md) — accepted
+- [0084: Reference canonical index expressions from domain predicates](0084-reference-canonical-index-expressions-from-domain-predicates.md) — accepted
 <!-- END GENERATED ADR CHRONOLOGY -->
 
 ## Template

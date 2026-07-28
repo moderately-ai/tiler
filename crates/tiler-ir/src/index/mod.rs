@@ -5,6 +5,7 @@ mod error;
 mod handles;
 mod integer;
 mod model;
+mod predicate;
 mod scalar;
 // Draft under ADR 0074 convention 7: `implement-shapeenv-index-bindings` keeps any
 // consequential boundary a draft until it is reviewed, so the index layer's
@@ -35,6 +36,7 @@ pub use model::{
     ScalarReductionRef, ScalarValueDefinitionView, ScalarValueRef, TensorAccessRef, TensorRef,
     TensorRole, VerifiedIndexRegion, WriteOwnershipProofView,
 };
+pub use predicate::{IndexDomainPredicate, IndexExtentRef};
 pub use scalar::{
     CanonicalScalarDefinitionProjection, CanonicalScalarRegistrySnapshotIdentity,
     FrozenScalarRegistry, ScalarAdmissionProvenanceIdentity, ScalarApplicationRejection,

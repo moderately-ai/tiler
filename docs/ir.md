@@ -1021,6 +1021,10 @@ per-point schedule predicates are distinct. A `TensorAccessMap` is total over
 its declared domain. Tail masks belong to scheduled IR rather than weakening
 logical totality.
 
+ADR 0084 fixes the accepted index-domain predicate language. A predicate is one atom in a closed exhaustive vocabulary, and a verified region carries atoms as an implicit conjunction. `NonNegative { expression }` and `LessThanExtent { expression, extent }` reference canonical verified index-expression nodes and region-owned dimension or tensor-axis extents; they do not embed a second expression tree. The two atoms state `0 <= e` and `e < extent` for every admitted affine, quasi-affine, or semi-affine expression. The vocabulary contains no Boolean escape hatch, physical guard, runtime check, or proof result.
+
+Proof exchange keeps the accepted `Proved`, `Disproved`, and `Unknown(reason)` outcomes. Insufficient facts, an unsupported fragment, and a resource limit are structured reasons for `Unknown`, not evidence and not additional outcomes. An unproved index predicate may be discharged by a later named semantic check before program work, but it never silently becomes a physical variant guard.
+
 ### Index verifier
 
 - Access-map result rank matches the logical tensor rank.
