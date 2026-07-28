@@ -38,7 +38,7 @@ Each needs an input the compiler does not have. `Allocation` was computable beca
 ## Progress
 
 - Six of nine modelled: `Allocation`, `Dispatch`, `Synchronization`, `Indexing`, `RedundantWork`, `MemoryTraffic`. Three remain — `ResourcePressure` (needs a register/occupancy model that does not exist), `ArtifactSize` (encoded bytes exist only after an encoding that planning precedes), and `CompileTime` (scoped out to `calibrate-device-cost-models`, which owns measurement).
-- **Five of the original nine "unreachable" notes were wrong**, each overturned by one read of the source. They were written in a single sitting describing what the data model was expected to look like, and it was simpler and closer to hand every time. The two genuine blockers left were written the same way; treat them as claims.
+- **Six of the original nine "unreachable" notes were wrong**, each overturned by one read of the source. They were written in a single sitting describing what the data model was expected to look like, and it was simpler and closer to hand every time. The two genuine blockers left were written the same way; treat them as claims.
 - **Two of the three came off the list because the source contradicted this table, not because anything changed.** `Synchronization` was recorded as needing the kernel program's barrier structure; it needed the plan's handoff edges, which it already had. `Indexing` was recorded as not summarized anywhere; `IndexRegion` states it directly. Both notes were written from the same reading, in one sitting, with the same confidence as the five that remain. **Treat those five as unverified**: re-derive each against the source before accepting that it cannot be modelled. That is the cheapest work left on this ticket and it has now paid twice.
 - What the checks do and do not cover: the explain census pins *reachability* — a component silently reverting to `Unknown` drops the record count and fails, verified by forcing `Indexing` to `Unknown` and watching the count fall from 10 to 8. It does **not** pin the *values*. `Synchronization` has a value cross-check (at or above the materialization count); `Allocation`, `Dispatch`, and `Indexing` do not, and a wrong-but-non-zero value in those three would pass today.
 
@@ -77,9 +77,15 @@ The rest is already computed: elements touched per region is `accesses.len() × 
 
 **The fail-closed path is verified, not asserted.** Replacing the recognized keys with an unrecognized one drops the explain record count from 16 to 12 — the two `Bounded` records per plan disappear — confirming it reports `Unknown` rather than continuing to multiply by four. This is the first component to construct `CostValue::Bounded`, which until now was well-formedness-checked but never built.
 
-**`ResourcePressure` — no model exists to compute from.** Registers per thread and occupancy are target-profile properties, and no target profile declares them. This is not a missing summary; it is a missing model.
+**`ResourcePressure` — the note was wrong a sixth time, and what remains is a vocabulary question rather than a missing model.** I wrote that no target profile declares these axes. `ResourceRequirements` (`schedule/model.rs:413`) carries `local_memory_bytes: u64` — threadgroup memory, one of the two things this component's own doc names — and it is reachable from a plan today via `selection.implementation().resources()`. The explain census already shows `target.local-memory-bytes` being assessed per region.
 
-*Trigger: a target profile declares register and threadgroup-memory axes.*
+What is genuinely absent is narrower than claimed: **registers per thread**, and the **occupancy model** that would combine registers and threadgroup memory into pressure. Threadgroup memory alone is exact and available.
+
+**Why it is still `Unknown`, and this is a deliberate choice rather than the blocker.** `CostComponent::unit()` fixes this component's unit as `Registers`. Reporting threadgroup-memory *bytes* under a `Registers` unit would be a unit lie, and units here are contract rather than documentation — an uncalibrated model whose numbers have no true stated unit cannot be calibrated, because nothing says what the device measurement should be compared against. A missing number is recoverable; a number in the wrong unit is what a calibration pass would silently trust.
+
+**So the real question is a vocabulary one.** Either this component stays `Unknown` until registers and an occupancy model exist, or the governed vocabulary gains a distinct component for threadgroup memory in bytes — which is exact today. The second is a change to "exactly the nine the accepted ticket names", so it should be visible rather than slipped in.
+
+*Recommendation: leave it `Unknown` and split threadgroup memory into its own component in a follow-up, because it is exact and immediately useful. Do not repair this by widening the unit — that trades a stated boundary for a wrong number.*
 
 **`ArtifactSize` — an ordering problem, not a data problem.** Encoded bytes exist only after encoding, and this cost is computed during planning, which precedes it. Nothing in the plan can be summed to get it.
 
