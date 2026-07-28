@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: [implement-transactional-rewrite-engine, implement-first-profile-numerical-policies]
 related: []
-scopes: [implementation/compiler, implementation/reference, implementation/ir, contracts/numerics, contracts/optimizer, contracts/navigation, implementation/artifact, implementation/metal]
+scopes: [implementation/compiler, implementation/reference, implementation/ir, contracts/numerics, contracts/optimizer, contracts/navigation, implementation/artifact, implementation/metal, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, optimizer, rewrites, numerics]
