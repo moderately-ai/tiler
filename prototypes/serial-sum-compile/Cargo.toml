@@ -22,5 +22,8 @@ tiler-metal.workspace = true
 tiler-metal-aot.workspace = true
 tiler-reference.workspace = true
 
+[dev-dependencies]
+tiler-cache.workspace = true
+
 [lints]
 workspace = true

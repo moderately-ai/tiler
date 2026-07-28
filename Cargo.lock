@@ -371,6 +371,7 @@ name = "tiler-build"
 version = "0.0.0"
 dependencies = [
  "tiler-artifact",
+ "tiler-cache",
  "tiler-ir",
  "tiler-metal",
  "tiler-metal-aot",
@@ -420,6 +421,7 @@ version = "0.0.0"
 dependencies = [
  "tiler-artifact",
  "tiler-build",
+ "tiler-cache",
  "tiler-compiler",
  "tiler-ir",
  "tiler-metal",

@@ -117,42 +117,116 @@ pub fn validate_prepared_metal_payload(
 ) -> Result<(), MetalPayloadMismatch> {
     let request = prepared.request();
     let expected = prepared.provenance();
-    let actual = &metadata.provenance;
+    validate_metal_payload_facts(
+        &MetalPayloadFacts {
+            source_representation: SOURCE_REPRESENTATION,
+            source: request.source.as_bytes(),
+            toolchain: TOOLCHAIN,
+            target: &expected.target_triple,
+            family: expected.platform.as_str(),
+            language: expected.msl_version.semantic_name(),
+            deployment_major: expected.deployment_minimum.major(),
+            deployment_minor: expected.deployment_minimum.minor(),
+            components: ExpectedComponents::Prepared(expected),
+            sdk_name: &expected.sdk.canonical_name,
+            sdk_version: &expected.sdk.version,
+            sdk_build: &expected.sdk.build,
+            compile_flags: &expected.compile_flags,
+            link_flags: &expected.link_flags,
+        },
+        metadata,
+    )
+}
 
+pub(crate) fn validate_metal_payload_metadata(
+    expected: &PayloadMetadata,
+    actual: &PayloadMetadata,
+) -> Result<(), MetalPayloadMismatch> {
+    let provenance = &expected.provenance;
+    validate_metal_payload_facts(
+        &MetalPayloadFacts {
+            source_representation: expected.source_representation.as_str(),
+            source: &expected.source,
+            toolchain: &provenance.toolchain,
+            target: &provenance.target,
+            family: &provenance.family,
+            language: &provenance.language,
+            deployment_major: provenance.deployment_major,
+            deployment_minor: provenance.deployment_minor,
+            components: ExpectedComponents::Metadata(&provenance.components),
+            sdk_name: &provenance.sdk.name,
+            sdk_version: &provenance.sdk.version,
+            sdk_build: &provenance.sdk.build,
+            compile_flags: &provenance.compile_flags,
+            link_flags: &provenance.link_flags,
+        },
+        actual,
+    )
+}
+
+struct MetalPayloadFacts<'facts> {
+    source_representation: &'facts str,
+    source: &'facts [u8],
+    toolchain: &'facts str,
+    target: &'facts str,
+    family: &'facts str,
+    language: &'facts str,
+    deployment_major: u16,
+    deployment_minor: u16,
+    components: ExpectedComponents<'facts>,
+    sdk_name: &'facts str,
+    sdk_version: &'facts str,
+    sdk_build: &'facts str,
+    compile_flags: &'facts [String],
+    link_flags: &'facts [String],
+}
+
+enum ExpectedComponents<'facts> {
+    Prepared(&'facts tiler_metal_aot::record::ArtifactProvenance),
+    Metadata(&'facts [ToolComponent]),
+}
+
+fn validate_metal_payload_facts(
+    expected: &MetalPayloadFacts<'_>,
+    metadata: &PayloadMetadata,
+) -> Result<(), MetalPayloadMismatch> {
+    let actual = &metadata.provenance;
     require(
-        metadata.source_representation.as_str() == SOURCE_REPRESENTATION,
+        metadata.source_representation.as_str() == expected.source_representation,
         MetalPayloadFact::SourceRepresentation,
     )?;
     require(
-        metadata.source.as_slice() == request.source.as_bytes(),
+        metadata.source.as_slice() == expected.source,
         MetalPayloadFact::Source,
     )?;
-    require(actual.toolchain == TOOLCHAIN, MetalPayloadFact::Toolchain)?;
     require(
-        actual.target == expected.target_triple,
-        MetalPayloadFact::Target,
+        actual.toolchain == expected.toolchain,
+        MetalPayloadFact::Toolchain,
     )?;
+    require(actual.target == expected.target, MetalPayloadFact::Target)?;
+    require(actual.family == expected.family, MetalPayloadFact::Family)?;
     require(
-        actual.family == expected.platform.as_str(),
-        MetalPayloadFact::Family,
-    )?;
-    require(
-        actual.language == expected.msl_version.semantic_name(),
+        actual.language == expected.language,
         MetalPayloadFact::Language,
     )?;
     require(
-        actual.deployment_major == expected.deployment_minimum.major()
-            && actual.deployment_minor == expected.deployment_minimum.minor(),
+        actual.deployment_major == expected.deployment_major
+            && actual.deployment_minor == expected.deployment_minor,
         MetalPayloadFact::DeploymentMinimum,
     )?;
     require(
-        components_match(&actual.components, expected),
+        match expected.components {
+            ExpectedComponents::Prepared(expected) => {
+                components_match(&actual.components, expected)
+            }
+            ExpectedComponents::Metadata(expected) => actual.components == expected,
+        },
         MetalPayloadFact::Components,
     )?;
     require(
-        actual.sdk.name == expected.sdk.canonical_name
-            && actual.sdk.version == expected.sdk.version
-            && actual.sdk.build == expected.sdk.build,
+        actual.sdk.name == expected.sdk_name
+            && actual.sdk.version == expected.sdk_version
+            && actual.sdk.build == expected.sdk_build,
         MetalPayloadFact::Sdk,
     )?;
     require(

@@ -1,11 +1,11 @@
 ---
 id: accept-and-publish-validated-artifacts-through-the-expansion-cache
 title: Accept and publish validated artifacts through the expansion cache
-status: todo
+status: done
 priority: p2
 dependencies: [assemble-prepared-metal-artifacts-in-tiler-build]
 related: [implement-the-expansion-cache-protocol]
-scopes: [implementation/cache, implementation/artifact, implementation/workspace, implementation/build]
+scopes: [implementation/cache, implementation/artifact, implementation/workspace, implementation/build, contracts/decisions]
 shared_scopes: []
 paths: []
 tags: [build, cache, correctness]

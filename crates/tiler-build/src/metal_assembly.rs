@@ -5,9 +5,9 @@ use std::fmt;
 
 use tiler_artifact::program::{
     ArtifactBuildError, ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey,
-    BackendKey, PayloadContent, PayloadEntryMapping, PayloadId, PayloadMetadata, PayloadProvenance,
-    PayloadSdkIdentity, PayloadTargetObligation, RepresentationKey, SchemaVersion,
-    TargetProfileRef, ToolComponent,
+    BackendKey, BackendPayloadDescriptor, PayloadContent, PayloadDigest, PayloadEntryMapping,
+    PayloadId, PayloadMetadata, PayloadProvenance, PayloadSdkIdentity, PayloadTargetObligation,
+    RepresentationKey, SchemaVersion, TargetProfileRef, ToolComponent,
 };
 use tiler_metal::diagnostic::MetalEmitError;
 use tiler_metal::record::{MetalNumericalRequirement, MetalTranslationUnit};
@@ -24,11 +24,11 @@ use tiler_metal_aot::input::{
 use crate::metal_payload::{COMPILER_ROLE, LINKER_ROLE, SOURCE_REPRESENTATION, TOOLCHAIN};
 use crate::{MetalPayloadMismatch, validate_prepared_metal_payload};
 
-const BACKEND: &str = "tiler.metal";
-const REPRESENTATION: &str = "metallib";
+pub(crate) const BACKEND: &str = "tiler.metal";
+pub(crate) const REPRESENTATION: &str = "metallib";
 const NUMERICAL_GAP_OBLIGATION: &str = "tiler.numerical.unhonoured-gap";
 const NUMERICAL_REQUIREMENT_OBLIGATION: &str = "tiler.numerical.emission-requirement";
-const PAYLOAD_SCHEMA: SchemaVersion = SchemaVersion::new(1, 0);
+pub(crate) const PAYLOAD_SCHEMA: SchemaVersion = SchemaVersion::new(1, 0);
 
 /// A typed refusal while deriving, preparing, or compiling a Metal payload.
 #[derive(Debug)]
@@ -111,9 +111,28 @@ impl From<MetalTargetError> for MetalAssemblyError {
 pub struct PreparedMetalPayload<'request> {
     prepared: PreparedCompilation<'request>,
     metadata: PayloadMetadata,
+    digest: PayloadDigest,
 }
 
-impl PreparedMetalPayload<'_> {
+impl<'request> PreparedMetalPayload<'request> {
+    pub(crate) fn compilation_identity_bytes(&self) -> &[u8] {
+        self.prepared.identity().as_bytes()
+    }
+
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        PreparedCompilation<'request>,
+        PayloadMetadata,
+        PayloadDigest,
+    ) {
+        (self.prepared, self.metadata, self.digest)
+    }
+
+    pub(crate) const fn digest(&self) -> &PayloadDigest {
+        &self.digest
+    }
+
     /// Returns the compilation subject used for pending artifact identity.
     #[must_use]
     pub const fn metadata(&self) -> &PayloadMetadata {
@@ -130,14 +149,14 @@ impl PreparedMetalPayload<'_> {
         builder: &mut ArtifactProgramBuilder,
         compatibility: TargetProfileRef,
     ) -> Result<PayloadId, ArtifactBuildError> {
-        builder.push_pending_payload(
-            BackendKey::new(BACKEND)?,
-            RepresentationKey::new(REPRESENTATION)?,
-            PAYLOAD_SCHEMA,
+        builder.push_payload(BackendPayloadDescriptor {
+            backend: BackendKey::new(BACKEND)?,
+            representation: RepresentationKey::new(REPRESENTATION)?,
+            payload_schema: PAYLOAD_SCHEMA,
             compatibility,
-            ArtifactExecutionPolicy::NativeImage,
-            &self.metadata,
-        )
+            execution_policy: ArtifactExecutionPolicy::NativeImage,
+            digest: self.digest.clone(),
+        })
     }
 
     /// Compiles the prepared operation and binds its object to the checked metadata.
@@ -146,10 +165,20 @@ impl PreparedMetalPayload<'_> {
     ///
     /// Returns the AOT driver's typed compilation failure.
     pub fn compile(self) -> Result<CompiledMetalPayload, MetalAssemblyError> {
-        let compiled = self.prepared.compile()?;
-        Ok(CompiledMetalPayload {
+        let (prepared, metadata, _digest) = self.into_parts();
+        CompiledMetalPayload::compile_prepared(prepared, metadata)
+    }
+}
+
+impl CompiledMetalPayload {
+    pub(crate) fn compile_prepared(
+        prepared: PreparedCompilation<'_>,
+        metadata: PayloadMetadata,
+    ) -> Result<Self, MetalAssemblyError> {
+        let compiled = prepared.compile()?;
+        Ok(Self {
             content: PayloadContent {
-                metadata: self.metadata,
+                metadata,
                 code: compiled.metallib,
             },
         })
@@ -222,7 +251,12 @@ pub fn prepare_metal_payload<'request>(
     let metadata = payload_metadata(unit, prepared.provenance())?;
     validate_prepared_metal_payload(&prepared, &metadata)
         .map_err(MetalAssemblyError::Correspondence)?;
-    Ok(PreparedMetalPayload { prepared, metadata })
+    let digest = metadata.identity()?;
+    Ok(PreparedMetalPayload {
+        prepared,
+        metadata,
+        digest,
+    })
 }
 
 fn validate_numerical_selection(

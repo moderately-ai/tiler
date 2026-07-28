@@ -53,7 +53,7 @@
 //! a shorter key nobody notices. Completeness *within* a facet is the supplying
 //! authority's obligation, discharged by that authority's own mechanism.
 //!
-//! **Both facets now have producers, but no orchestrator holds both.**
+//! **Both facets have producers and the first orchestrator holds their singular Metal slice.**
 //! `CanonicalArtifactProgramIdentity` does not need compiled object bytes. The payload digest is
 //! `payload_identity` of the payload-*metadata* bytes, which carry the source,
 //! the target, the flags, and the toolchain provenance and no object byte at all
@@ -71,9 +71,13 @@
 //! `CompilationIdentity::as_bytes` for lookup and consumes the same request and
 //! resolved tools on a cache miss. The identity has no public constructor, so a
 //! caller cannot mint the facet from invented toolchain facts or resolve once
-//! for the key and again for execution. The remaining integration boundary is
-//! orchestration: no crate yet holds the artifact-program identity, every
-//! prepared backend compilation, and the expansion cache together.
+//! for the key and again for execution. `tiler-build` now holds that token
+//! beside one pending artifact identity and the expansion cache, composes both
+//! facets, compiles only in `get_or_publish`'s miss closure, and re-proves the
+//! returned payload before accepting any resolution. Its current public entry
+//! point names the one-payload bound explicitly; ordered multi-payload
+//! orchestration remains a broader slice rather than a property this cache
+//! composer silently infers.
 
 use core::fmt;
 

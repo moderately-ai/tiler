@@ -61,6 +61,8 @@ use tiler_artifact::program::{
     VariantSpec, VerifiedArtifactProgram,
 };
 use tiler_build::CompiledMetalPayload;
+#[cfg(test)]
+use tiler_build::PreparedMetalPayload;
 use tiler_compiler::session::{Compilation, PlanAlternative};
 use tiler_ir::program::abi::ExprNode;
 use tiler_ir::semantic::SemanticProgram;
@@ -89,6 +91,39 @@ pub fn assemble(
     assemble_from(semantic, compilation, plan, payload, &roots)
 }
 
+/// Packages the descriptor-only form of one plan before its payload is compiled.
+///
+/// The resulting identity is the cache subject. It is assembled through the
+/// same path as [`assemble`], differing only in whether the payload declaration
+/// carries its object.
+///
+/// # Errors
+///
+/// Returns [`BundleError`] naming the artifact boundary that refused.
+#[cfg(test)]
+pub fn assemble_pending(
+    semantic: &SemanticProgram,
+    compilation: &Compilation,
+    plan: PlanAlternative<'_>,
+    payload: &PreparedMetalPayload<'_>,
+) -> Result<VerifiedArtifactProgram, BundleError> {
+    let roots = variant_roots(plan.abi());
+    let mapped: Vec<BackendEntryKey> = payload
+        .metadata()
+        .entries
+        .iter()
+        .map(|mapping| mapping.entry_key.clone())
+        .collect();
+    assemble_declared(
+        semantic,
+        compilation,
+        plan,
+        &mapped,
+        |builder, profile| Ok(payload.push_pending(builder, profile)?),
+        &roots,
+    )
+}
+
 /// Packages one alternative, replaying the arena from a stated root set.
 ///
 /// The root set is a parameter rather than a constant so the pruning obligation
@@ -101,6 +136,34 @@ fn assemble_from(
     compilation: &Compilation,
     plan: PlanAlternative<'_>,
     payload: CompiledMetalPayload,
+    replay_roots: &[u32],
+) -> Result<VerifiedArtifactProgram, BundleError> {
+    let mapped: Vec<BackendEntryKey> = payload
+        .content()
+        .metadata
+        .entries
+        .iter()
+        .map(|mapping| mapping.entry_key.clone())
+        .collect();
+    assemble_declared(
+        semantic,
+        compilation,
+        plan,
+        &mapped,
+        |builder, profile| Ok(payload.push_carried(builder, profile)?),
+        replay_roots,
+    )
+}
+
+fn assemble_declared(
+    semantic: &SemanticProgram,
+    compilation: &Compilation,
+    plan: PlanAlternative<'_>,
+    mapped: &[BackendEntryKey],
+    declare_payload: impl FnOnce(
+        &mut ArtifactProgramBuilder,
+        TargetProfileRef,
+    ) -> Result<tiler_artifact::program::PayloadId, BundleError>,
     replay_roots: &[u32],
 ) -> Result<VerifiedArtifactProgram, BundleError> {
     let profile = target_profile(compilation)?;
@@ -122,23 +185,10 @@ fn assemble_from(
         })?;
     }
 
-    // Held before the payload moves into the builder: the artifact's executable
-    // entries must name backend entry keys this payload actually maps, and
-    // proving that needs the mappings after the content is gone.
-    let mapped: Vec<BackendEntryKey> = payload
-        .content()
-        .metadata
-        .entries
-        .iter()
-        .map(|mapping| mapping.entry_key.clone())
-        .collect();
-    let payload_id = payload.push_carried(
-        &mut builder,
-        // The payload's own compatibility contract. These bytes were compiled
-        // for this profile, which is the same one the variant was assessed
-        // against; a payload shared across profiles would state a different one.
-        profile.clone(),
-    )?;
+    // The payload's own compatibility contract. These bytes were compiled for
+    // this profile, which is the same one the variant was assessed against; a
+    // payload shared across profiles would state a different one.
+    let payload_id = declare_payload(&mut builder, profile.clone())?;
 
     let abi = plan.abi();
     let arena = abi.expressions();
