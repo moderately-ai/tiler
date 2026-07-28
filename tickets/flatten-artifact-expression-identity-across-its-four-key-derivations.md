@@ -1,7 +1,7 @@
 ---
 id: flatten-artifact-expression-identity-across-its-four-key-derivations
 title: Flatten artifact expression identity across its four key derivations
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/artifact]
 shared_scopes: []
 paths: []
 tags: [performance]
+claimed_from: todo
+assignee: coordinator
+lease_expires_at: 1785205343
 ---
 
 Split from `encode-artifact-abi-identity-in-linear-space`, whose builder half landed; read that ticket's Outcome section first.
@@ -41,3 +44,23 @@ If `tiler-artifact` stops calling `expr_key`, delete it rather than leaving a pu
 ## Closes when
 
 Artifact expression identity is linear in arena size; deep-chain and shared-DAG cases are measured by a checked-in instrument as `tiler-ir`'s `abi_identity_size_grows_linearly_with_the_arena` does; injectivity is unchanged and tested; `ARTIFACT_DOMAIN` is stepped with its reason recorded; every moved golden carries its regeneration command; `make full` passes.
+
+## Finding 2026-07-27 — the `tiler-ir` shape does not transfer directly, and why
+
+**This ticket says "reuse, do not reimplement" and it is right about the traversal. It assumes the `tiler-ir` call shape transfers with it, and that part is false.** The obstacle is small to state and decides the design, so it is recorded before any code moves.
+
+**Fact — `tiler-ir` has no sorted expression set; `tiler-artifact` has two.** `crates/tiler-ir/src/program/model.rs`'s `abi_use_sites` builds its root list purely positionally: the applicability guard, then per stage the grid, workgroup, and access sites, in stage order. Nothing there is sorted by an expression-derived key. `tiler-artifact`'s `encode_identity` sorts two expression sets by their key bytes — the deferred feasibility predicates (`push_sorted_keys(... deferred_key(keys, predicate) ...)`) and each entry's launch preconditions — because which obligation the producer happened to enumerate first is not meaning.
+
+**Inference — replacing keys with canonical IDs is circular at exactly those two sites.** The sort needs a per-expression key; the canonical ID is that key; the ID comes from the numbering; the numbering comes from the root order; and the root order is the sorted order. `tiler-ir` never met this because its roots are positional.
+
+**Three ways out, and the elimination:**
+
+1. **Root the numbering in declaration order and sort the encoded set by canonical ID.** Breaks the cycle and breaks canonicity with it: an expression reachable *only* from a deferred predicate is numbered by the producer's enumeration order, so two artifacts differing only in that order get different identities. That is the regression the sort exists to prevent. **Rejected.**
+2. **Keep a structural key solely to order the two sets, and use canonical IDs everywhere else.** Retains something `expr_key`-shaped, which is the quadratic encoder this ticket exists to delete — unless the ordering key is cheap. **Survives only in the form below.**
+3. **Order the two sets by a digest of the subtree, used for ordering only.** This is the option worth stating explicitly, because it looks like the thing the ticket forbids and is not. The ticket's "do not replace the key with a digest" is about *identity*: a digest there would trade injectivity for speed. An ordering digest costs no injectivity at all, because the arena is still encoded in full and in canonical order — a collision would make the *order* of two set members ambiguous, not the identity ambiguous, and it can be broken deterministically by comparing the subtrees. **Survives.**
+
+**So the shape of the work is: option 3 or option 2-with-a-cheap-key, decided explicitly, and the decision belongs in the same change** — it is what `canonical_expression_order`'s removal turns into. The ticket already says "decide it explicitly, do not keep both"; this is the decision it was pointing at, now with the reason it cannot be skipped.
+
+**Nothing was changed.** The four sites move together or not at all, and starting the conversion before this is settled would produce exactly the partially-converted state the ticket warns about. The traversal in `tiler-ir` is still the right thing to reuse and still needs promoting from `pub(crate)` to `pub` as step one.
+
+**Also confirmed while reading, and it enlarges the change beyond the four named sites:** `tiler-artifact`'s builder uses `expr_key` for *deduplication* (`crates/tiler-artifact/src/program/builder.rs` inserts `node -> expression_keys.len()` keyed by the node's key), not only for identity. A canonical numbering is not available at build time — it is a function of the finished use-site set — so the dedup needs its own answer, and "delete `expr_key` if `tiler-artifact` stops calling it" cannot be satisfied until that answer exists.
