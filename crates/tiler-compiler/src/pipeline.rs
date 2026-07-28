@@ -321,6 +321,10 @@ impl From<RequestError> for CompileError {
             // Stating no contract at all is a malformed request, distinct from
             // stating one the target cannot honour.
             | RequestError::UnstatedNumericalContract
+            // Stating a contract this build cannot realize is a malformed
+            // request too, and for the same reason: no target was consulted, so
+            // it is not a statement that any plan was infeasible.
+            | RequestError::UnrepresentableNumericalDimension { .. }
             | RequestError::UnverifiedTargetSelection => Self::InvalidRequest(value),
         }
     }
@@ -1046,13 +1050,23 @@ fn request_failure_details(error: &RequestError) -> (String, SubjectKind, String
                 || "numerics-contract-unresolvable".to_owned(),
                 |rejection| {
                     format!(
-                        "numerics-unhonourable-{}-{}",
+                        "numerics-unhonourable-{}-{}-{}",
                         rejection.dimension().key().replace('.', "-"),
+                        rejection
+                            .arithmetic()
+                            .canonical_type_key()
+                            .replace("::", "-"),
                         rejection.required().key()
                     )
                 },
             )
         }
+        RequestError::UnrepresentableNumericalDimension { cause } => format!(
+            "numerics-unrepresentable-{}-{}-{}",
+            cause.dimension().key().replace('.', "-"),
+            cause.arithmetic().canonical_type_key().replace("::", "-"),
+            cause.required().key()
+        ),
         RequestError::BudgetExceeded {
             resource,
             limit,

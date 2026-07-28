@@ -64,6 +64,7 @@
 //! keys and every aggregate is emitted in a fixed canonical order.
 
 use tiler_ir::identity::{push_len, push_slice};
+use tiler_ir::schedule::ArithmeticType;
 
 use crate::explain::Quantity;
 use crate::honourability::{
@@ -719,14 +720,20 @@ impl CheckedTargetProfile {
         available_phase: AvailabilityPhase,
     ) -> DimensionResolution {
         let dimension = requirement.dimension();
+        let arithmetic = requirement.arithmetic();
         let required = requirement.behaviour();
         let mut now: Option<NumericalHonourabilityFact> = None;
         let mut later: Option<AvailabilityPhase> = None;
-        for fact in self
-            .honourability
-            .iter()
-            .filter(|fact| fact.dimension() == dimension && fact.behaviour() == required)
-        {
+        // The arithmetic type is part of the match, not a filter applied
+        // afterwards: a fact about a neighbouring type is measurably not a
+        // substitute — one Apple profile flushes subnormals in `f32` and
+        // preserves them in `f16` — so a declaration for another type leaves this
+        // one undeclared rather than partially answered.
+        for fact in self.honourability.iter().filter(|fact| {
+            fact.dimension() == dimension
+                && fact.arithmetic() == arithmetic
+                && fact.behaviour() == required
+        }) {
             if fact.phase() <= available_phase {
                 // Prefer the most refined declaration already available.
                 now = Some(match now {
@@ -742,10 +749,12 @@ impl CheckedTargetProfile {
         }
         let Some(fact) = now else {
             return match later {
-                Some(phase) => {
-                    DimensionResolution::Later(DeferredDimension::new(dimension, required, phase))
-                }
-                None => DimensionResolution::NoPath(UndeclaredDimension::new(dimension, required)),
+                Some(phase) => DimensionResolution::Later(DeferredDimension::new(
+                    dimension, arithmetic, required, phase,
+                )),
+                None => DimensionResolution::NoPath(UndeclaredDimension::new(
+                    dimension, arithmetic, required,
+                )),
             };
         };
         let honoured = match fact.means() {
@@ -755,6 +764,7 @@ impl CheckedTargetProfile {
             HonouringMeans::SupportedOnlyUnderDeclaredRelaxation { relaxation } => {
                 authorized.iter().any(|stated| {
                     stated.dimension() == relaxation.dimension()
+                        && stated.arithmetic() == relaxation.arithmetic()
                         && stated.behaviour() == relaxation.behaviour()
                 })
             }
@@ -763,6 +773,7 @@ impl CheckedTargetProfile {
         if honoured {
             DimensionResolution::Honoured(HonouredDimension::new(
                 dimension,
+                arithmetic,
                 required,
                 fact.means(),
                 self.identity,
@@ -770,30 +781,37 @@ impl CheckedTargetProfile {
         } else {
             DimensionResolution::Unhonoured(UnhonouredDimension::new(
                 dimension,
+                arithmetic,
                 required,
                 fact.means(),
-                self.honoured_alternative(dimension, available_phase),
+                self.honoured_alternative(dimension, arithmetic, available_phase),
                 self.identity,
             ))
         }
     }
 
-    /// The canonical-first behaviour on `dimension` this profile honours
-    /// unconditionally, when it honours one at all.
+    /// The canonical-first behaviour on `dimension`, in `arithmetic`, this
+    /// profile honours unconditionally, when it honours one at all.
     ///
     /// Reported in a rejection so a caller can see which contract this target
     /// would accept. A conditional means is excluded because whether it honours
     /// anything depends on the request, so it is not an alternative the profile
     /// offers on its own.
+    ///
+    /// The arithmetic type is matched rather than ignored: reporting a behaviour
+    /// honoured in another dtype would tell the caller a contract is available
+    /// that this dimension does not in fact offer for the type it asked about.
     fn honoured_alternative(
         &self,
         dimension: NumericalDimension,
+        arithmetic: ArithmeticType,
         available_phase: AvailabilityPhase,
     ) -> Option<DimensionBehaviour> {
         self.honourability
             .iter()
             .find(|fact| {
                 fact.dimension() == dimension
+                    && fact.arithmetic() == arithmetic
                     && fact.phase() <= available_phase
                     && fact.is_unconditionally_honoured()
             })
@@ -1039,10 +1057,14 @@ impl FeasibilityProposal {
                 rule: "duplicate-requirement",
             });
         }
-        numerical.sort_by_key(|requirement| requirement.dimension());
+        // Unique per `(dimension, arithmetic type)`, not per dimension: one
+        // program may require preservation on the input-subnormal dimension in
+        // one dtype and flushing in another, which is a well-formed contract on
+        // measured hardware and not a duplicate.
+        numerical.sort_by_key(|requirement| requirement.subject());
         if numerical
             .windows(2)
-            .any(|pair| pair[0].dimension() == pair[1].dimension())
+            .any(|pair| pair[0].subject() == pair[1].subject())
         {
             return Err(FeasibilityError::MalformedProposal {
                 rule: "duplicate-dimension",
@@ -1401,7 +1423,8 @@ mod tests {
         behaviour: DimensionBehaviour,
         means: HonouringMeans,
     ) -> NumericalHonourabilityFact {
-        DeclaredBehaviour::compile_profile(dimension, behaviour, means).attributed_to(id)
+        DeclaredBehaviour::compile_profile(dimension, ArithmeticType::F32, behaviour, means)
+            .attributed_to(id)
     }
 
     /// The baseline's honourability declaration: strict everywhere, exactly.
@@ -1453,13 +1476,47 @@ mod tests {
         .unwrap()
     }
 
+    /// The dimensions this module's synthetic fixture speaks about.
+    ///
+    /// Deliberately its own list rather than
+    /// [`crate::honourability::CANONICAL_DIMENSIONS`]. These tests exercise the
+    /// *authority* — how one declaration and one requirement compose into a
+    /// verdict — over a fixture that declares four dimensions, and that is a
+    /// complete test of the authority whatever the governed contract's dimension
+    /// count happens to be. Asserting against the production list instead would
+    /// make every added dimension fail here for a reason that has nothing to do
+    /// with what these tests check, and would quietly turn them into a second
+    /// pin on the vocabulary that `crate::policy`'s tests already own.
+    const FIXTURE_DIMENSIONS: [NumericalDimension; 4] = [
+        NumericalDimension::InputSubnormals,
+        NumericalDimension::ResultSubnormals,
+        NumericalDimension::Contraction,
+        NumericalDimension::Reassociation,
+    ];
+
     /// The strict contract, projected per dimension.
     fn strict_requirements() -> Vec<NumericalRequirement> {
         vec![
-            NumericalRequirement::new(NumericalDimension::InputSubnormals, PRESERVE),
-            NumericalRequirement::new(NumericalDimension::ResultSubnormals, PRESERVE),
-            NumericalRequirement::new(NumericalDimension::Contraction, FORBIDDEN),
-            NumericalRequirement::new(NumericalDimension::Reassociation, FORBIDDEN),
+            NumericalRequirement::new(
+                NumericalDimension::InputSubnormals,
+                ArithmeticType::F32,
+                PRESERVE,
+            ),
+            NumericalRequirement::new(
+                NumericalDimension::ResultSubnormals,
+                ArithmeticType::F32,
+                PRESERVE,
+            ),
+            NumericalRequirement::new(
+                NumericalDimension::Contraction,
+                ArithmeticType::F32,
+                FORBIDDEN,
+            ),
+            NumericalRequirement::new(
+                NumericalDimension::Reassociation,
+                ArithmeticType::F32,
+                FORBIDDEN,
+            ),
         ]
     }
 
@@ -1627,7 +1684,7 @@ mod tests {
                 .iter()
                 .map(|honoured| (honoured.dimension(), honoured.means()))
                 .collect::<Vec<_>>(),
-            crate::honourability::CANONICAL_DIMENSIONS
+            FIXTURE_DIMENSIONS
                 .iter()
                 .map(|dimension| (*dimension, HonouringMeans::SupportedExactly))
                 .collect::<Vec<_>>(),
@@ -1743,6 +1800,7 @@ mod tests {
             HonouringMeans::SupportedOnlyUnderDeclaredRelaxation {
                 relaxation: RelaxationRequirement::new(
                     NumericalDimension::Reassociation,
+                    ArithmeticType::F32,
                     PERMITTED,
                 ),
             },
@@ -1773,6 +1831,7 @@ mod tests {
             HonouringMeans::SupportedOnlyUnderDeclaredRelaxation {
                 relaxation: RelaxationRequirement::new(
                     NumericalDimension::Reassociation,
+                    ArithmeticType::F32,
                     PERMITTED,
                 ),
             }
@@ -1780,7 +1839,11 @@ mod tests {
 
         // The same declaration, with the caller stating the relaxation.
         let mut numerical = strict_requirements();
-        numerical[3] = NumericalRequirement::new(NumericalDimension::Reassociation, PERMITTED);
+        numerical[3] = NumericalRequirement::new(
+            NumericalDimension::Reassociation,
+            ArithmeticType::F32,
+            PERMITTED,
+        );
         let authorized = FeasibilityProposal::new(
             "candidate:authorized",
             vec![
@@ -1832,7 +1895,7 @@ mod tests {
                 .iter()
                 .map(|dimension| dimension.dimension())
                 .collect::<Vec<_>>(),
-            crate::honourability::CANONICAL_DIMENSIONS.to_vec(),
+            FIXTURE_DIMENSIONS.to_vec(),
         );
 
         // (b) Three of four dimensions declared: the fourth is unknown alone.
@@ -1894,6 +1957,7 @@ mod tests {
         let mut declaration = baseline_honourability(id);
         declaration[0] = DeclaredBehaviour::new(
             NumericalDimension::InputSubnormals,
+            ArithmeticType::F32,
             PRESERVE,
             HonouringMeans::SupportedExactly,
             AvailabilityPhase::LiveDevicePreflight,
@@ -2299,6 +2363,7 @@ mod tests {
                     HonouringMeans::SupportedOnlyUnderDeclaredRelaxation {
                         relaxation: RelaxationRequirement::new(
                             NumericalDimension::Reassociation,
+                            ArithmeticType::F32,
                             PRESERVE,
                         ),
                     },
@@ -2318,6 +2383,7 @@ mod tests {
                 vec![
                     DeclaredBehaviour::new(
                         NumericalDimension::InputSubnormals,
+                        ArithmeticType::F32,
                         PRESERVE,
                         HonouringMeans::SupportedExactly,
                         AvailabilityPhase::LiveDevicePreflight,
@@ -2390,6 +2456,7 @@ mod tests {
                 Vec::new(),
                 vec![NumericalRequirement::new(
                     NumericalDimension::Contraction,
+                    ArithmeticType::F32,
                     PRESERVE
                 )],
             ),
@@ -2404,8 +2471,16 @@ mod tests {
                 "candidate:two-behaviours",
                 Vec::new(),
                 vec![
-                    NumericalRequirement::new(NumericalDimension::Contraction, FORBIDDEN),
-                    NumericalRequirement::new(NumericalDimension::Contraction, PERMITTED),
+                    NumericalRequirement::new(
+                        NumericalDimension::Contraction,
+                        ArithmeticType::F32,
+                        FORBIDDEN,
+                    ),
+                    NumericalRequirement::new(
+                        NumericalDimension::Contraction,
+                        ArithmeticType::F32,
+                        PERMITTED,
+                    ),
                 ],
             ),
             Err(FeasibilityError::MalformedProposal {
@@ -2427,10 +2502,7 @@ mod tests {
             .iter()
             .map(|fact| fact.dimension())
             .collect();
-        assert_eq!(
-            dimensions,
-            crate::honourability::CANONICAL_DIMENSIONS.to_vec()
-        );
+        assert_eq!(dimensions, FIXTURE_DIMENSIONS.to_vec());
     }
 
     /// The two identities are separate values a consumer records separately.

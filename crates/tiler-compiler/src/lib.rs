@@ -28,6 +28,7 @@ mod lowering;
 mod normalize;
 mod physical;
 mod pipeline;
+mod policy;
 mod program;
 mod region;
 mod request;

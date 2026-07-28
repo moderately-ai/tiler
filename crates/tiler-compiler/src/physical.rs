@@ -18,7 +18,7 @@ pub(crate) use tiler_ir::schedule::{
     ResourceRequirements, ScalarProgram, ScheduledRegion, TailPolicy, TensorRole,
 };
 use tiler_ir::schedule::{
-    ScheduledRegionBuildError, ScheduledRegionBuilder, ScheduledRegionDiagnostic,
+    ArithmeticType, ScheduledRegionBuildError, ScheduledRegionBuilder, ScheduledRegionDiagnostic,
 };
 
 use crate::feasibility::{
@@ -426,7 +426,15 @@ pub(crate) fn fused_region(
                 order: ContributorOrder::OriginalAxisLexicographic,
                 canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
                 empty_identity_bits: 0.0_f32.to_bits(),
-                contraction: false,
+                // Derived from the contract, exactly as the unfused pointwise and
+                // reduction regions derive theirs. Hard-coding `false` here was
+                // invisible while every registered contract forbade both
+                // freedoms, and would have made this candidate fail the schedule
+                // verifier's realization cross-check under one that permits them
+                // — losing the fused plan silently rather than wrongly, but
+                // losing it for a reason no diagnostic would have named.
+                contraction: request.numerical_contract().contraction
+                    != NumericalPermission::Forbidden,
             },
             numerical: request.numerical_contract().realization(),
         },
@@ -434,7 +442,12 @@ pub(crate) fn fused_region(
             reduction: ReductionTopology::Serial {
                 axes: request.serial_sum().reduction_axes.clone(),
                 order: ContributorOrder::OriginalAxisLexicographic,
-                permits_reassociation: false,
+                permits_reassociation: request.numerical_contract().reassociation
+                    != NumericalPermission::Forbidden,
+                // Permutation stays refused: no contract this build registers
+                // permits it, and `crate::policy::unrepresentable_dimension`
+                // refuses one that tries, because no scheduled region can record
+                // which resolution was chosen.
                 permits_permutation: false,
             },
             ..linear_schedule(
@@ -519,6 +532,10 @@ pub(crate) fn verify_schedule_with_feasibility(
     let evidence = assess_region(
         id,
         verified.requirements(),
+        // The region implements this request's resolved contract — checked one
+        // line above by comparing the region's realization against it — so its
+        // arithmetic type is the contract's, not a value re-derived here.
+        request.numerical_contract().arithmetic,
         verified.region().schedule.work_items,
         &request.target_profile(),
     )?;
@@ -688,11 +705,13 @@ pub(crate) enum ResourceVerdict {
 )]
 pub(crate) fn assess_resources(
     requirements: ResourceRequirements,
+    arithmetic: ArithmeticType,
     work_items: u64,
     target: &PrototypeTargetProfile,
 ) -> Result<ProvenEvidence, ResourceVerdict> {
     let profile = checked_target_profile(target).map_err(ResourceVerdict::Intrinsic)?;
-    let proposal = region_proposal(requirements, work_items).map_err(ResourceVerdict::Intrinsic)?;
+    let proposal = region_proposal(requirements, arithmetic, work_items)
+        .map_err(ResourceVerdict::Intrinsic)?;
     match profile.assess(&proposal, AvailabilityPhase::CompileProfile) {
         FeasibilityOutcome::Proven(evidence) => Ok(evidence),
         FeasibilityOutcome::Rejected(rejection) => {
@@ -708,25 +727,30 @@ pub(crate) fn assess_resources(
 pub(crate) fn assess_region(
     region: RegionId,
     requirements: ResourceRequirements,
+    arithmetic: ArithmeticType,
     work_items: u64,
     target: &PrototypeTargetProfile,
 ) -> Result<ProvenEvidence, PhysicalError> {
-    assess_resources(requirements, work_items, target).map_err(|verdict| match verdict {
-        ResourceVerdict::Intrinsic(error) => feasibility_intrinsic(error, region),
-        ResourceVerdict::Rejected(RejectionCause::Numerical(cause)) => {
-            PhysicalError::Numerical { region, cause }
-        }
-        ResourceVerdict::Rejected(RejectionCause::Capability(predicate)) => PhysicalError::Target {
-            rule: predicate.axis().key(),
-            region,
-            required: predicate.required().value(),
-            available: predicate.available().value(),
+    assess_resources(requirements, arithmetic, work_items, target).map_err(
+        |verdict| match verdict {
+            ResourceVerdict::Intrinsic(error) => feasibility_intrinsic(error, region),
+            ResourceVerdict::Rejected(RejectionCause::Numerical(cause)) => {
+                PhysicalError::Numerical { region, cause }
+            }
+            ResourceVerdict::Rejected(RejectionCause::Capability(predicate)) => {
+                PhysicalError::Target {
+                    rule: predicate.axis().key(),
+                    region,
+                    required: predicate.required().value(),
+                    available: predicate.available().value(),
+                }
+            }
+            ResourceVerdict::Unresolved => PhysicalError::Intrinsic {
+                rule: "target-assessment-unresolved",
+                region,
+            },
         },
-        ResourceVerdict::Unresolved => PhysicalError::Intrinsic {
-            rule: "target-assessment-unresolved",
-            region,
-        },
-    })
+    )
 }
 
 /// Assesses one numerical contract alone against a target's declaration.
@@ -841,6 +865,7 @@ fn checked_target_profile(
 /// which could neither name a failing dimension nor express emulation.
 fn region_proposal(
     requirements: ResourceRequirements,
+    arithmetic: ArithmeticType,
     work_items: u64,
 ) -> Result<FeasibilityProposal, FeasibilityError> {
     FeasibilityProposal::new(
@@ -869,18 +894,22 @@ fn region_proposal(
         vec![
             NumericalRequirement::new(
                 NumericalDimension::InputSubnormals,
+                arithmetic,
                 DimensionBehaviour::Subnormals(requirements.input_subnormals),
             ),
             NumericalRequirement::new(
                 NumericalDimension::ResultSubnormals,
+                arithmetic,
                 DimensionBehaviour::Subnormals(requirements.result_subnormals),
             ),
             NumericalRequirement::new(
                 NumericalDimension::Contraction,
+                arithmetic,
                 DimensionBehaviour::Transform(requirements.contraction),
             ),
             NumericalRequirement::new(
                 NumericalDimension::Reassociation,
+                arithmetic,
                 DimensionBehaviour::Transform(requirements.reassociation),
             ),
         ],
@@ -956,6 +985,14 @@ mod tests {
     /// and step whatever domain tag the change requires in the same commit.
     #[test]
     fn the_governed_descriptor_bytes_do_not_move() {
+        // Rebaselined on the numerical-policies merge and recomputed on the
+        // merged tree (never taken from a branch): the contract widened from
+        // four numerical dimensions to the docs/numerical-semantics.md set,
+        // each keyed by the arithmetic type it resolves, so the descriptor's
+        // numerical rows grew from 8 to 12 entries and gained the type key.
+        // Every artifact identity and cache entry derived from the descriptor
+        // moves with it, which is this test's message and the reason the move
+        // is stated here rather than silent.
         const GOVERNED: &str = concat!(
             "000000000000002374696c65722e7461726765742d70726f66696c652e646573",
             "63726970746f722e763300000000000000002a74696c65722e70726f746f7479",
@@ -963,8 +1000,10 @@ mod tests {
             "000000000701000000000000ffff010101020000000000000001010101030000",
             "0000000000020101010400000000000000400101010500000000000000010101",
             "0107000000000000000001010108000000000000000001010100000000000000",
-            "0801010101010101010102010101010201010101010102010201010101030201",
-            "01010101030202010101010402010101010104020201010101"
+            "0c01030101010101010103010201010101020301010101010102030102010101",
+            "0103030201010101010303020201010101040302010101010104030202010101",
+            "010503020101010101060302010101010109030401010101010a030401010101",
+            "01",
         );
 
         let descriptor =

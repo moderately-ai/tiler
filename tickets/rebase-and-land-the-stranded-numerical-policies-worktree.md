@@ -1,7 +1,7 @@
 ---
 id: rebase-and-land-the-stranded-numerical-policies-worktree
 title: Rebase and land the stranded numerical-policies worktree
-status: todo
+status: done
 priority: p1
 dependencies: []
 related: [implement-first-profile-numerical-policies]
@@ -44,3 +44,8 @@ Reverting the parent to todo without this record would invite a fresh worker to 
 - **If the rebase conflicts on `NormalizationOutcome`, the rewrite engine, or `component_cost`**: those subsystems landed after the branch base. Resolve toward main's shape and re-run the branch's own conformance tests; do not resolve toward the branch on any file main's audit commits touched.
 - **If you conclude the work should be re-implemented rather than rebased**: say so on this ticket with the specific conflict that decided it, keep the worktree until the replacement lands, and only then ask the coordinator to remove it (`git worktree remove`, never `rm`).
 - **When done**: the coordinator (not you) removes the worktree after verifying nothing uncommitted remains.
+
+## Landed (2026-07-28)
+
+Executed exactly per the protocol above. Preservation commit `1e449d2` on the branch before anything was touched; squash-merge onto main; every conflict resolved toward main's structure (pipeline split, reference facade, feasibility split) with the branch's intent re-applied in the new layout; both moved identity pins (explain trace digest, governed descriptor) recomputed on the merged tree with reasons at the sites; the three follow-up tickets landed with their retired-gate citations corrected to `make full`; `component_cost`'s width arm taught the third contract key so relaxed plans keep their memory-traffic bound; the opaque-call admission threads the contract's arithmetic type into `assess_resources` alongside the scheduled path. Parent closed as done citing the landing commit. Worktree removal is the final step after the landing commit exists.
+

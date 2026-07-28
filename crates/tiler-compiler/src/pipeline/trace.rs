@@ -643,6 +643,7 @@ pub(super) fn record_target_admissions(
         let admitted = crate::physical::assess_region(
             region.index.id,
             scheduled.requirements(),
+            request.numerical_contract().arithmetic,
             region.schedule.work_items,
             &profile,
         )

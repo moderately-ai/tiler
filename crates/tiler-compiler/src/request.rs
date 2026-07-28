@@ -13,7 +13,10 @@ use tiler_ir::shape::{Axis, Shape};
 
 // The numerical-realization vocabulary is target-neutral and owned by the shared
 // IR (ADR 0070); the compiler contract references it rather than duplicating it.
-pub(crate) use tiler_ir::schedule::{FlushedZeroSign, NumericalPermission, SubnormalMode};
+pub(crate) use tiler_ir::schedule::{
+    ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign,
+    MaterializationRounding, NumericalPermission, SubnormalMode,
+};
 
 use crate::capability::{
     CanonicalLoweringRegistryIdentity, FrozenLoweringCapabilityRegistry, LoweringCapabilityRevision,
@@ -23,6 +26,7 @@ use crate::honourability::{
     DeclaredBehaviour, DeferredDimension, DimensionBehaviour, HonouringMeans, NumericalDimension,
     NumericalRequirement, UndeclaredDimension, UnhonouredDimension,
 };
+use crate::policy::{NumericalPolicyPreset, UnrepresentableDimension};
 use crate::region::SemanticMemberId;
 
 const REQUEST_SCHEMA_VERSION: u32 = 1;
@@ -33,6 +37,18 @@ pub(crate) const NUMERICAL_CONTRACT_KEY: &str = "tiler.strict-f32.v1";
 /// the same program different observable results, so they must give it
 /// different canonical identities, artifacts, and cache entries.
 pub(crate) const FLUSH_CONTRACT_KEY: &str = "tiler.flush-f32.v1";
+/// Versioned key of the governed contract that authorizes the reshaping
+/// freedoms this build can express.
+///
+/// A third key for the same reason: a program compiled under it may return
+/// different bits than the strict one, so the two must not share an identity.
+///
+/// `pub(crate)` like its two siblings: `component_cost`'s memory-traffic arm
+/// matches recognized contract keys to derive an element width fail-closed, and
+/// a key it cannot see falls to `Unknown` — which is safe but would silently
+/// stop sizing every relaxed-contract plan. Keep the arm's key list in sync
+/// when adding a fourth.
+pub(crate) const RELAXED_CONTRACT_KEY: &str = "tiler.relaxed-f32.v1";
 const TARGET_PROFILE_KEY: &str = "tiler.prototype-target-neutral-baseline.v1";
 
 /// Maximum byte length of one target-profile key.
@@ -122,26 +138,53 @@ impl StaticShapeEnvironment {
     }
 }
 
+/// One caller-stated resolved numerical contract, complete over every dimension.
+///
+/// **Complete, and complete for one arithmetic type.** Every governed dimension
+/// is resolved here, because a contract that omitted one would place no
+/// requirement on it, and no requirement is trivially satisfiable rather than
+/// `Unknown`; and every resolution here is stated for exactly one
+/// [`ArithmeticType`], because subnormal behaviour is measurably per-dtype — one
+/// Apple row flushes in `f32` and preserves in `f16` — so a dtype-free contract
+/// would be stating something known to be false for one of them.
+///
+/// The name is historical and now narrower than the type: this is the general
+/// contract, and only one of the presets that build it is strict.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct StrictF32NumericalContract {
     pub(crate) key: &'static str,
+    /// The arithmetic type every resolution below is stated for.
+    pub(crate) arithmetic: ArithmeticType,
     pub(crate) canonical_arithmetic_nan_bits: u32,
     pub(crate) input_subnormals: SubnormalMode,
     pub(crate) result_subnormals: SubnormalMode,
     pub(crate) contraction: NumericalPermission,
     pub(crate) reassociation: NumericalPermission,
+    /// Whether changing a reduction's logical contributor order is permitted.
+    pub(crate) permutation: NumericalPermission,
+    /// Whether eliminating the two signed zeros' distinction is permitted.
+    pub(crate) signed_zero: NumericalPermission,
+    /// Whether replacing a division by a reciprocal multiplication is permitted.
+    pub(crate) reciprocal_transform: NumericalPermission,
+    /// The maximum accuracy envelope approximate intrinsics may consume.
+    pub(crate) approximate_intrinsics: ApproximationEnvelope,
+    /// Whether NaN operands may be assumed absent, and on what evidence.
+    pub(crate) nan_assumptions: ExceptionalValueAssumption,
+    /// Whether infinite operands may be assumed absent, and on what evidence.
+    pub(crate) infinity_assumptions: ExceptionalValueAssumption,
+    /// The rounding an observable materialization boundary applies.
+    pub(crate) materialization_rounding: MaterializationRounding,
 }
 
 impl StrictF32NumericalContract {
+    /// The strict preset: every freedom refused, both subnormal dimensions
+    /// preserved.
     pub(crate) const fn governed() -> Self {
-        Self {
-            key: NUMERICAL_CONTRACT_KEY,
-            canonical_arithmetic_nan_bits: tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS,
-            input_subnormals: SubnormalMode::Preserve,
-            result_subnormals: SubnormalMode::Preserve,
-            contraction: NumericalPermission::Forbidden,
-            reassociation: NumericalPermission::Forbidden,
-        }
+        crate::policy::strict_contract(
+            NUMERICAL_CONTRACT_KEY,
+            ArithmeticType::F32,
+            tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS,
+        )
     }
 
     /// The governed contract that accepts sign-preserving subnormal flushing.
@@ -156,20 +199,44 @@ impl StrictF32NumericalContract {
     /// (`0x80400000 * 2.0f` returns `0x80000000`), and a contract must name
     /// which zero it accepts: the two zeros are observably different results.
     ///
-    /// Contraction and reassociation stay `Forbidden`. This widens exactly one
-    /// dimension, so accepting flushing does not silently accept reassociation.
+    /// Every other dimension is the strict resolution. This widens exactly two
+    /// dimensions — visibly, by overriding exactly two fields of the strict
+    /// contract — so accepting flushing does not silently accept reassociation.
     pub(crate) const fn governed_flush_to_zero() -> Self {
+        let flush = SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::PreservesSign,
+        };
         Self {
-            key: FLUSH_CONTRACT_KEY,
-            canonical_arithmetic_nan_bits: tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS,
-            input_subnormals: SubnormalMode::FlushToZero {
-                zero_sign: FlushedZeroSign::PreservesSign,
-            },
-            result_subnormals: SubnormalMode::FlushToZero {
-                zero_sign: FlushedZeroSign::PreservesSign,
-            },
-            contraction: NumericalPermission::Forbidden,
-            reassociation: NumericalPermission::Forbidden,
+            input_subnormals: flush,
+            result_subnormals: flush,
+            ..crate::policy::strict_contract(
+                FLUSH_CONTRACT_KEY,
+                ArithmeticType::F32,
+                tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS,
+            )
+        }
+    }
+
+    /// The governed contract that authorizes the reshaping freedoms this build
+    /// can express.
+    ///
+    /// Contraction, reassociation, reciprocal replacement, and approximate
+    /// intrinsics within a named envelope. Subnormals stay preserved, and operand
+    /// permutation, signed-zero elimination, and both exceptional-value
+    /// assumptions stay refused — see [`crate::policy::NumericalPolicyPreset`]
+    /// for why, and `crate::policy::unrepresentable_dimension` for the rule that
+    /// enforces it rather than leaving it to this comment.
+    pub(crate) const fn governed_relaxed() -> Self {
+        Self {
+            contraction: NumericalPermission::Permitted,
+            reassociation: NumericalPermission::Permitted,
+            reciprocal_transform: NumericalPermission::Permitted,
+            approximate_intrinsics: crate::policy::RELAXED_APPROXIMATION_ENVELOPE,
+            ..crate::policy::strict_contract(
+                RELAXED_CONTRACT_KEY,
+                ArithmeticType::F32,
+                tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS,
+            )
         }
     }
 
@@ -179,9 +246,15 @@ impl StrictF32NumericalContract {
     /// constant. Three separate sites previously compared against `governed()`
     /// directly — the request boundary, the per-target verification, and the
     /// physical schedule verifier — so registering a second contract meant
-    /// finding all three. This is the single authority they now share.
-    pub(crate) const fn governed_profile() -> [Self; 2] {
-        [Self::governed(), Self::governed_flush_to_zero()]
+    /// finding all three. This is the single authority they now share, and it is
+    /// derived from the preset table so that a registered preset and an admitted
+    /// contract cannot diverge.
+    pub(crate) const fn governed_profile() -> [Self; 3] {
+        [
+            NumericalPolicyPreset::Strict.contract(),
+            NumericalPolicyPreset::FlushSubnormalsToZero.contract(),
+            NumericalPolicyPreset::Relaxed.contract(),
+        ]
     }
 
     /// Returns whether this contract is one this build registers.
@@ -191,38 +264,53 @@ impl StrictF32NumericalContract {
             .any(|admitted| admitted == self)
     }
 
+    /// This contract's resolution of one governed dimension.
+    ///
+    /// Exhaustive over the dimension vocabulary, so a new dimension is a build
+    /// error here rather than a field the contract silently fails to project.
+    /// `key`, `arithmetic`, and `canonical_arithmetic_nan_bits` are deliberately
+    /// not reachable through it: the first names the governing contract, the
+    /// second keys every resolution, and the third is a produced value, and none
+    /// is a behaviour a target declares honourability for. Letting the key stand
+    /// in for the dimensions it names is exactly the projection ADR 0076 item 6
+    /// forbids.
+    pub(crate) const fn behaviour(&self, dimension: NumericalDimension) -> DimensionBehaviour {
+        match dimension {
+            NumericalDimension::InputSubnormals => {
+                DimensionBehaviour::Subnormals(self.input_subnormals)
+            }
+            NumericalDimension::ResultSubnormals => {
+                DimensionBehaviour::Subnormals(self.result_subnormals)
+            }
+            NumericalDimension::Contraction => DimensionBehaviour::Transform(self.contraction),
+            NumericalDimension::Reassociation => DimensionBehaviour::Transform(self.reassociation),
+            NumericalDimension::Permutation => DimensionBehaviour::Transform(self.permutation),
+            NumericalDimension::SignedZero => DimensionBehaviour::Transform(self.signed_zero),
+            NumericalDimension::ReciprocalTransform => {
+                DimensionBehaviour::Transform(self.reciprocal_transform)
+            }
+            NumericalDimension::ApproximateIntrinsics => {
+                DimensionBehaviour::Approximation(self.approximate_intrinsics)
+            }
+            NumericalDimension::NanAssumptions => {
+                DimensionBehaviour::ExceptionalValue(self.nan_assumptions)
+            }
+            NumericalDimension::InfinityAssumptions => {
+                DimensionBehaviour::ExceptionalValue(self.infinity_assumptions)
+            }
+            NumericalDimension::MaterializationRounding => {
+                DimensionBehaviour::Rounding(self.materialization_rounding)
+            }
+        }
+    }
+
     /// Projects this contract into the per-dimension requirements a target
     /// profile's honourability declaration is assessed against.
     ///
-    /// One requirement per governed dimension, complete and in canonical order.
-    /// Completeness is what makes an unenumerated dimension fail closed: a
-    /// contract that simply omitted a dimension would place no requirement on
-    /// it, and no requirement is trivially satisfiable rather than `Unknown`.
-    ///
-    /// `key` and `canonical_arithmetic_nan_bits` are deliberately not projected.
-    /// The first names the governing contract and the second is a produced
-    /// value; neither is a behaviour a target declares honourability for, and
-    /// letting the key stand in for the dimensions it names is exactly the
-    /// projection ADR 0076 item 6 forbids.
+    /// Delegated to [`crate::policy::dimension_requirements`], which owns the
+    /// rule deciding which dimensions place an obligation on a target at all.
     pub(crate) fn dimension_requirements(&self) -> Vec<NumericalRequirement> {
-        vec![
-            NumericalRequirement::new(
-                NumericalDimension::InputSubnormals,
-                DimensionBehaviour::Subnormals(self.input_subnormals),
-            ),
-            NumericalRequirement::new(
-                NumericalDimension::ResultSubnormals,
-                DimensionBehaviour::Subnormals(self.result_subnormals),
-            ),
-            NumericalRequirement::new(
-                NumericalDimension::Contraction,
-                DimensionBehaviour::Transform(self.contraction),
-            ),
-            NumericalRequirement::new(
-                NumericalDimension::Reassociation,
-                DimensionBehaviour::Transform(self.reassociation),
-            ),
-        ]
+        crate::policy::dimension_requirements(self)
     }
 
     /// Projects this contract into the target-neutral numerical realization the
@@ -519,15 +607,28 @@ impl Eq for CompilerCapabilitySnapshot {}
 /// must not claim a behaviour on no evidence. A contract requiring it therefore
 /// resolves to [`crate::feasibility::FeasibilityOutcome::Unknown`] rather than
 /// being admitted — the fail-closed direction, and the case that shows an
-/// unenumerated behaviour does not default to honoured.
+/// unenumerated behaviour does not default to honoured. `Permitted` on the
+/// permutation and signed-zero dimensions, and `AssumeAbsent` on either
+/// exceptional-value dimension, are absent for the same reason at one remove: no
+/// registered contract asks for them, and a build that cannot realize them has
+/// nothing to declare.
+///
+/// **Every line names `f32` and only `f32`.** This build admits `f32` arithmetic
+/// and nothing else, and a declaration is per `(dimension, arithmetic type)`
+/// because the two are measurably independent — the same Apple profile flushes
+/// subnormals in `f32` and preserves them in `f16`. A contract stating any other
+/// arithmetic type therefore finds nothing declared and resolves to `Unknown`,
+/// which is the fail-closed direction and not an omission.
 const GOVERNED_TARGET_HONOURABILITY: &[DeclaredBehaviour] = &[
     DeclaredBehaviour::compile_profile(
         NumericalDimension::InputSubnormals,
+        ArithmeticType::F32,
         DimensionBehaviour::Subnormals(SubnormalMode::Preserve),
         HonouringMeans::SupportedExactly,
     ),
     DeclaredBehaviour::compile_profile(
         NumericalDimension::InputSubnormals,
+        ArithmeticType::F32,
         DimensionBehaviour::Subnormals(SubnormalMode::FlushToZero {
             zero_sign: FlushedZeroSign::PreservesSign,
         }),
@@ -535,11 +636,13 @@ const GOVERNED_TARGET_HONOURABILITY: &[DeclaredBehaviour] = &[
     ),
     DeclaredBehaviour::compile_profile(
         NumericalDimension::ResultSubnormals,
+        ArithmeticType::F32,
         DimensionBehaviour::Subnormals(SubnormalMode::Preserve),
         HonouringMeans::SupportedExactly,
     ),
     DeclaredBehaviour::compile_profile(
         NumericalDimension::ResultSubnormals,
+        ArithmeticType::F32,
         DimensionBehaviour::Subnormals(SubnormalMode::FlushToZero {
             zero_sign: FlushedZeroSign::PreservesSign,
         }),
@@ -547,22 +650,50 @@ const GOVERNED_TARGET_HONOURABILITY: &[DeclaredBehaviour] = &[
     ),
     DeclaredBehaviour::compile_profile(
         NumericalDimension::Contraction,
+        ArithmeticType::F32,
         DimensionBehaviour::Transform(NumericalPermission::Forbidden),
         HonouringMeans::SupportedExactly,
     ),
     DeclaredBehaviour::compile_profile(
         NumericalDimension::Contraction,
+        ArithmeticType::F32,
         DimensionBehaviour::Transform(NumericalPermission::Permitted),
         HonouringMeans::SupportedExactly,
     ),
     DeclaredBehaviour::compile_profile(
         NumericalDimension::Reassociation,
+        ArithmeticType::F32,
         DimensionBehaviour::Transform(NumericalPermission::Forbidden),
         HonouringMeans::SupportedExactly,
     ),
     DeclaredBehaviour::compile_profile(
         NumericalDimension::Reassociation,
+        ArithmeticType::F32,
         DimensionBehaviour::Transform(NumericalPermission::Permitted),
+        HonouringMeans::SupportedExactly,
+    ),
+    DeclaredBehaviour::compile_profile(
+        NumericalDimension::Permutation,
+        ArithmeticType::F32,
+        DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+        HonouringMeans::SupportedExactly,
+    ),
+    DeclaredBehaviour::compile_profile(
+        NumericalDimension::SignedZero,
+        ArithmeticType::F32,
+        DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+        HonouringMeans::SupportedExactly,
+    ),
+    DeclaredBehaviour::compile_profile(
+        NumericalDimension::NanAssumptions,
+        ArithmeticType::F32,
+        DimensionBehaviour::ExceptionalValue(ExceptionalValueAssumption::MakeNoAssumption),
+        HonouringMeans::SupportedExactly,
+    ),
+    DeclaredBehaviour::compile_profile(
+        NumericalDimension::InfinityAssumptions,
+        ArithmeticType::F32,
+        DimensionBehaviour::ExceptionalValue(ExceptionalValueAssumption::MakeNoAssumption),
         HonouringMeans::SupportedExactly,
     ),
 ];
@@ -989,16 +1120,27 @@ impl VerifiedRequestSubject {
 
 /// Appends one numerical contract's complete canonical encoding.
 ///
-/// Complete over every dimension and exhaustive per dimension through
-/// [`subnormal_tag`] and [`permission_tag`]: the contract key is encoded beside
-/// the field values it names and never in place of them (ADR 0076 item 6).
+/// Complete over every dimension and exhaustive per dimension: each dimension is
+/// written through [`StrictF32NumericalContract::behaviour`] and
+/// [`DimensionBehaviour::encode`], whose matches are exhaustive over every
+/// behaviour space, and the dimensions are walked in
+/// [`crate::honourability::CANONICAL_DIMENSIONS`] order. The contract key is
+/// encoded beside the field values it names and never in place of them, and the
+/// arithmetic type keying every resolution is encoded too — two contracts that
+/// resolve the same dimensions for different dtypes are different contracts
+/// (ADR 0076 item 6).
+///
+/// Walking the canonical order rather than listing fields is what makes adding a
+/// dimension a build error at `behaviour` instead of a silent omission here.
 fn encode_contract(bytes: &mut Vec<u8>, contract: StrictF32NumericalContract) {
     push_slice(bytes, contract.key.as_bytes());
+    bytes.push(contract.arithmetic.tag());
     bytes.extend_from_slice(&contract.canonical_arithmetic_nan_bits.to_be_bytes());
-    bytes.push(subnormal_tag(contract.input_subnormals));
-    bytes.push(subnormal_tag(contract.result_subnormals));
-    bytes.push(permission_tag(contract.contraction));
-    bytes.push(permission_tag(contract.reassociation));
+    push_len(bytes, crate::honourability::CANONICAL_DIMENSIONS.len());
+    for dimension in crate::honourability::CANONICAL_DIMENSIONS {
+        bytes.push(dimension.tag());
+        contract.behaviour(dimension).encode(bytes);
+    }
 }
 
 /// Returns the canonical tag of one subnormal dimension.
@@ -1220,6 +1362,20 @@ impl ContractRejection {
         }
     }
 
+    /// The arithmetic type the resolution failed for.
+    ///
+    /// Reported beside the dimension because one profile can honour a dimension
+    /// in one arithmetic type and refuse it in another — the measured Apple row
+    /// preserves subnormals in `f16` and flushes them in `f32` — so a rejection
+    /// naming only the dimension would be false about the other type.
+    pub(crate) const fn arithmetic(self) -> ArithmeticType {
+        match self {
+            Self::Unhonourable { cause, .. } => cause.arithmetic(),
+            Self::Undeclared { cause, .. } => cause.arithmetic(),
+            Self::Deferred { cause, .. } => cause.arithmetic(),
+        }
+    }
+
     /// The behaviour the contract required on that dimension.
     pub(crate) const fn required(self) -> DimensionBehaviour {
         match self {
@@ -1234,9 +1390,10 @@ impl fmt::Display for ContractRejection {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "{}: {} requires {}",
+            "{}: {} in {} requires {}",
             self.contract_key(),
             self.dimension().key(),
+            self.arithmetic().canonical_type_key(),
             self.required().key()
         )?;
         match self {
@@ -1278,6 +1435,17 @@ pub(crate) enum RequestError {
     NoResolvableNumericalContract {
         target_profile: &'static str,
         rejections: Vec<ContractRejection>,
+    },
+    /// A stated contract resolves a dimension this build cannot realize.
+    ///
+    /// Distinct from every target rejection above, and deliberately so: those say
+    /// *this target* cannot do what the caller asked, and this says *no target
+    /// could*, because the scheduled-region IR has nowhere to record which
+    /// resolution was chosen and two contracts differing only there would reach
+    /// one region. Reporting it as an unhonourable dimension would attribute a
+    /// build limitation to a profile that never claimed anything about it.
+    UnrepresentableNumericalDimension {
+        cause: UnrepresentableDimension,
     },
     BudgetExceeded {
         resource: &'static str,
@@ -1322,6 +1490,15 @@ impl fmt::Display for RequestError {
                 }
                 Ok(())
             }
+            Self::UnrepresentableNumericalDimension { cause } => write!(
+                formatter,
+                "compile.request.numerics.unrepresentable: {} in {} requires {}, this build realizes only {} and {} can consume it",
+                cause.dimension().key(),
+                cause.arithmetic().canonical_type_key(),
+                cause.required().key(),
+                cause.realized().key(),
+                cause.consumed_by(),
+            ),
             Self::BudgetExceeded {
                 resource,
                 limit,
@@ -1370,6 +1547,21 @@ pub(crate) fn verify_request(
     }
     if request.numerical_contracts.stated().is_empty() {
         return Err(RequestError::UnstatedNumericalContract);
+    }
+    // Representability is checked before admission and before any target is
+    // consulted. Before a target, because it is a property of this build rather
+    // than of a profile: a dimension an admitted operation can consume and no
+    // scheduled region can record would give two meanings one identity on every
+    // target at once, and reporting that as an unhonourable dimension would
+    // attribute a build limitation to a declaration that never spoke about it.
+    // Before admission, because it is the more specific of two true statements —
+    // an unrealizable contract is also unregistered, and "this build cannot
+    // realize a permitted signed-zero dimension" names the reason while "this
+    // contract is not one this build registers" only names the consequence.
+    for contract in request.numerical_contracts.stated() {
+        if let Some(cause) = crate::policy::unrepresentable_dimension(contract) {
+            return Err(RequestError::UnrepresentableNumericalDimension { cause });
+        }
     }
     if request
         .numerical_contracts
@@ -2283,25 +2475,81 @@ mod tests {
         }
     }
 
-    /// The governed baseline resolves both registered contracts, and its
+    /// The governed baseline resolves every registered contract, and its
     /// declaration is what admits them.
     #[test]
-    fn the_governed_baseline_honours_both_registered_contracts() {
+    fn the_governed_baseline_honours_every_registered_contract() {
         let target = PrototypeTargetProfile::governed();
+        let expected = crate::honourability::CANONICAL_DIMENSIONS
+            .into_iter()
+            .filter(|dimension| crate::policy::is_consumable(*dimension))
+            .count();
         for contract in StrictF32NumericalContract::governed_profile() {
             let outcome = crate::physical::assess_contract(&target, contract).unwrap();
             let crate::feasibility::FeasibilityOutcome::Proven(evidence) = outcome else {
                 panic!("the baseline honours {}", contract.key);
             };
-            assert_eq!(evidence.honoured().len(), 4, "one per governed dimension");
+            assert_eq!(
+                evidence.honoured().len(),
+                expected,
+                "one per dimension an admitted operation can consume"
+            );
             for honoured in evidence.honoured() {
                 assert_eq!(
                     honoured.means(),
                     crate::honourability::HonouringMeans::SupportedExactly
                 );
+                assert_eq!(honoured.arithmetic(), contract.arithmetic);
                 assert_eq!(honoured.profile().key(), target.key);
             }
         }
+    }
+
+    /// A contract stating an arithmetic type the profile is silent about is
+    /// `Unknown`, never honoured by inheritance from a neighbouring type.
+    ///
+    /// This is the measured case in miniature. One Apple profile flushes
+    /// subnormals in `f32` and preserves them in `f16`, so a declaration for one
+    /// width says nothing about the other; a resolver that fell back to a
+    /// neighbouring type's fact would report a conformance claim the hardware
+    /// contradicts.
+    #[test]
+    fn a_contract_for_an_undeclared_arithmetic_type_is_unknown() {
+        let target = PrototypeTargetProfile::governed();
+        let mut contract = StrictF32NumericalContract::governed();
+        contract.arithmetic = ArithmeticType::F16;
+        let outcome = crate::physical::assess_contract(&target, contract).unwrap();
+        let crate::feasibility::FeasibilityOutcome::Unknown(unknown) = outcome else {
+            panic!("a profile silent about f16 cannot prove an f16 contract");
+        };
+        let first = unknown.dimensions().first().expect("a cause is reported");
+        assert_eq!(first.arithmetic(), ArithmeticType::F16);
+        assert_eq!(first.dimension(), NumericalDimension::InputSubnormals);
+    }
+
+    /// Stating a dimension this build cannot realize is refused by name.
+    ///
+    /// The refusal names the build, not a target: no profile is consulted, so
+    /// reporting it as an unhonourable dimension would attribute a limitation to
+    /// a declaration that never spoke about it.
+    #[test]
+    fn an_unrealizable_dimension_is_refused_before_any_target_is_consulted() {
+        let program = program();
+        let mut contract = StrictF32NumericalContract::governed();
+        contract.signed_zero = NumericalPermission::Permitted;
+        let request = CompilationRequest::governed_under(&program, contract);
+        let Err(RequestError::UnrepresentableNumericalDimension { cause }) =
+            verify_request(request)
+        else {
+            panic!("a signed-zero relaxation is unrealizable by this build");
+        };
+        assert_eq!(cause.dimension(), NumericalDimension::SignedZero);
+        assert_eq!(cause.arithmetic(), ArithmeticType::F32);
+        assert!(
+            RequestError::UnrepresentableNumericalDimension { cause }
+                .to_string()
+                .starts_with("compile.request.numerics.unrepresentable: numerics.signed-zero"),
+        );
     }
 
     #[test]

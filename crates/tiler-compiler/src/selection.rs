@@ -1583,7 +1583,8 @@ fn aggregate_honoured(selections: &[RegionSelection]) -> Vec<HonouredDimension> 
     honoured.sort_by_key(|entry| {
         (
             entry.dimension(),
-            entry.behaviour().tag(),
+            entry.arithmetic(),
+            entry.behaviour().canonical_key(),
             entry.means().key(),
             entry.profile().key(),
         )
@@ -1650,7 +1651,8 @@ fn encode_guard(output: &mut Vec<u8>, guard: ResolvedPredicate) {
 /// either omission would give distinguishable plans one identity.
 fn encode_honoured(output: &mut Vec<u8>, honoured: HonouredDimension) {
     push_slice(output, honoured.dimension().key().as_bytes());
-    output.extend_from_slice(&honoured.behaviour().tag());
+    output.push(honoured.arithmetic().tag());
+    honoured.behaviour().encode(output);
     push_slice(output, honoured.means().key().as_bytes());
     push_slice(output, honoured.profile().key().as_bytes());
 }

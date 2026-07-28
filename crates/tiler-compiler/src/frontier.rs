@@ -1097,12 +1097,13 @@ impl FrontierRejection {
                 output.push(4);
                 encode_provider(output, provider);
                 output.push(cause.dimension().tag());
-                output.extend_from_slice(&cause.required().tag());
+                output.push(cause.arithmetic().tag());
+                cause.required().encode(output);
                 push_slice(output, cause.means().key().as_bytes());
                 match cause.honoured() {
                     Some(honoured) => {
                         output.push(1);
-                        output.extend_from_slice(&honoured.tag());
+                        honoured.encode(output);
                     }
                     None => output.push(0),
                 }
@@ -1446,6 +1447,11 @@ pub(crate) fn enumerate_frontier(
                     // not have.
                     let Ok(feasibility) = crate::physical::assess_resources(
                         *registered.declaration().resources(),
+                        // The admission has already required the call's declared
+                        // numerics to match the request's resolved contract, so
+                        // the contract's arithmetic type is the call's — the
+                        // same derivation the scheduled path uses one layer up.
+                        request.numerical_contract().arithmetic,
                         work_items,
                         &request.target_profile(),
                     ) else {

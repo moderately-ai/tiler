@@ -65,6 +65,7 @@ use crate::pipeline::{
     CompilationProduct, CompileError, ProgramAlternative, ProgramAlternativeKind,
     compile as compile_internal,
 };
+use crate::policy::NumericalPolicyPreset;
 use crate::program::KernelProgram;
 use crate::request::{
     CompilationRequest, CompilerCapabilitySnapshot, LoweringProviderIdentity,
@@ -659,45 +660,81 @@ const fn rule_of(error: &RequestError) -> &'static str {
         RequestError::NoResolvableNumericalContract { .. } => {
             "compile.request.numerics.unhonourable"
         }
+        RequestError::UnrepresentableNumericalDimension { .. } => {
+            "compile.request.numerics.unrepresentable"
+        }
         RequestError::BudgetExceeded { resource, .. } => resource,
         RequestError::UnsupportedCapability { rule, .. } => rule,
         RequestError::ShapeProductOverflow { role } => role,
     }
 }
 
-/// A numerical contract this build registers.
+/// A named numerical policy preset this build registers.
 ///
-/// Stating one is **required**, not defaulted. These are two different
-/// contracts rather than a strict setting and a relaxed one: each carries its
-/// own versioned key, so the same program under each has different canonical
+/// Stating one is **required**, not defaulted. These are different *contracts*
+/// rather than one contract at three strictness settings: each carries its own
+/// versioned key, so the same program under each has different canonical
 /// identities, artifacts, and cache entries. The choice belongs to the caller
 /// because it decides what the program *means*, and no authority below may
 /// narrow, weaken, or substitute it to make a target feasible.
+///
+/// **Naming a laxer preset is not a way to make a strict program compile.** It
+/// states a different program, which feasibility then assesses on its own terms;
+/// an unhonourable request is a typed rejection naming the dimension, the
+/// arithmetic type, the required behaviour, the behaviour the target declares,
+/// and the declaring profile — never a downgrade and never a cost.
+///
+/// Every preset resolves one arithmetic type, `f32`, and says so in its key.
+/// Subnormal behaviour is measurably per-dtype — one Apple row flushes in `f32`
+/// and preserves in `f16` — so a preset that spoke for every width at once would
+/// be stating something already known to be false.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum NumericalContract {
-    /// Subnormals preserved on both dimensions; no contraction, no
-    /// reassociation.
+    /// Every freedom refused; subnormals preserved on both dimensions.
     ///
     /// Not deliverable on any governed Apple family, whose `f32` arithmetic
     /// flushes subnormals in every math mode. A caller states it when it needs
     /// preservation and would rather not run than run wrong.
     StrictF32,
-    /// Subnormals flushed to the sign-preserving zero; no contraction, no
-    /// reassociation.
+    /// Strict, except that both subnormal dimensions flush to the
+    /// sign-preserving zero.
     ///
     /// This is what Apple hardware measurably delivers, so stating it makes
     /// running there a choice the caller made rather than a compromise made on
-    /// its behalf. It widens exactly one dimension: accepting flushing does not
+    /// its behalf. It widens exactly two dimensions: accepting flushing does not
     /// thereby accept reassociated sums.
     FlushSubnormalsToZeroF32,
+    /// Subnormals preserved, and the reshaping freedoms this build can express
+    /// authorized: fused-multiply-add contraction, reduction reassociation,
+    /// reciprocal replacement of division, and approximate elementary functions
+    /// within a named accuracy envelope.
+    ///
+    /// Operand permutation, signed-zero elimination, and assuming NaNs or
+    /// infinities absent are deliberately *not* authorized. Each is a freedom an
+    /// admitted operation could consume and none is carried by the region IR, so
+    /// two programs differing only there would share one identity; stating one is
+    /// refused by name rather than compiled ambiguously.
+    RelaxedF32,
 }
 
 impl NumericalContract {
-    fn resolve(self) -> StrictF32NumericalContract {
+    /// Resolves this preset into the complete contract it names.
+    ///
+    /// Routed through the internal preset table rather than naming each
+    /// constructor again, so the public spelling and the registered contract set
+    /// cannot drift apart: a preset added to one and not the other fails to
+    /// compile here.
+    const fn resolve(self) -> StrictF32NumericalContract {
+        self.preset().contract()
+    }
+
+    /// The internal preset this public name denotes.
+    const fn preset(self) -> NumericalPolicyPreset {
         match self {
-            Self::StrictF32 => StrictF32NumericalContract::governed(),
-            Self::FlushSubnormalsToZeroF32 => StrictF32NumericalContract::governed_flush_to_zero(),
+            Self::StrictF32 => NumericalPolicyPreset::Strict,
+            Self::FlushSubnormalsToZeroF32 => NumericalPolicyPreset::FlushSubnormalsToZero,
+            Self::RelaxedF32 => NumericalPolicyPreset::Relaxed,
         }
     }
 }

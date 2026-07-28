@@ -1,7 +1,7 @@
 ---
 id: implement-first-profile-numerical-policies
 title: Implement first-profile numerical policy presets
-status: todo
+status: done
 priority: p1
 dependencies: [prototype-optimizer-conformance-gate]
 related: [repair-numerical-witness-integrity]
@@ -14,13 +14,17 @@ tags: [implementation, numerics, mature-product]
 
 A caller's numerical contract can state strict/relaxed positions on eleven dimensions (reassociation, reciprocal transforms, approximations, exceptional values, signed zero, contraction, materialization rounding, reduction order, …) with per-operation/per-dtype conformance — instead of today's four dimensions — failing closed wherever evidence is Unknown.
 
-**Do not start this from scratch: a functionally complete implementation exists and `rebase-and-land-the-stranded-numerical-policies-worktree` (p1) owns landing it.** Work here only if that ticket concludes re-implementation is cheaper than the rebase, and then start from its recorded conflict analysis.
+**Landed 2026-07-28** via `rebase-and-land-the-stranded-numerical-policies-worktree` — see the landing record below.
 
 Implement typed strict/relaxed numerical dimensions and per-operation/per-dtype conformance for reassociation, reciprocal transforms, approximations, exceptional values, signed zero, contraction, materialization rounding, and reduction order. Preserve compound/quantized seams and fail closed where evidence is Unknown.
 
-## Work in flight — recorded 2026-07-28
+## Landed 2026-07-28 — the worktree rescue merged this work onto main
 
-Recorded as **Fact** about a working tree, not as delivered work. None of it is on `main`.
+The rescue followed `rebase-and-land-the-stranded-numerical-policies-worktree`'s protocol: the worktree state was preserved as-is onto its branch (`1e449d2`) before anything was touched, then squash-merged onto main with conflicts resolved **toward main's structure** on every file the audit-era commits had reshaped (the pipeline module split, the reference-crate facade, the `assess_resources` feasibility split), and the branch's *intent* re-applied in the new layout: the `ArithmeticType` threading through feasibility proposals reaches `assess_resources`, its region wrapper, and the opaque-call admission; the fused region derives contraction/reassociation from the contract instead of hardcoding `false`; the `conformance` module joined the reference facade; and `component_cost`'s width arm learned the third contract key so relaxed-contract plans keep their memory-traffic bound.
+
+Two pinned identities moved and were **recomputed on the merged tree rather than taken from either side**, with the reason recorded at each site: the explain trace digest (both parents had moved it independently) and the governed target-profile descriptor, whose numerical rows grew from 8 to 12 entries and gained the arithmetic-type key. Verified on the merged tree: `CANONICAL_DIMENSIONS: [NumericalDimension; 11]` (`honourability.rs:150`), 1130 pre-existing tests passing plus the two rebaselines.
+
+The record below is preserved as written before the landing, for provenance.
 
 - **Branch and worktree.** `tkt/implement-first-profile-numerical-policies`, checked out at `/Users/tsanterre/workspace/github.com/moderately-ai/tiler/.claude/worktrees/agent-ad2893b1fba4d7f5b` (registered — `git worktree list` names it).
 - **Base.** The branch HEAD is `06af0c6` ("Claim four conflict-free tickets into the scopes just freed"), which is **319 commits behind `main` at `01264be`** (`git rev-list --count tkt/implement-first-profile-numerical-policies..main` → `319`). Nothing on the branch is a commit of this work; `06af0c6` is a ticket-claim commit.
@@ -31,7 +35,7 @@ Recorded as **Fact** about a working tree, not as delivered work. None of it is 
 
 ### The worktree's Outcome section, copied verbatim
 
-**Claimed, not verified against main** — written against a base 319 commits old and not re-gated. Every statement below is the in-flight author's; none has been checked against current `main`, and the line and symbol references are to the worktree, not to this checkout.
+**Written by the in-flight author against the pre-merge worktree.** The headline claims were re-verified at landing (eleven dimensions, realization unchanged at four carried dimensions, reference conformance surface present); line references are to the worktree layout and may have moved.
 
 > #### The dimensions
 >

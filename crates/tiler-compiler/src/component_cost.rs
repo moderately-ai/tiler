@@ -515,7 +515,8 @@ pub(crate) fn analytical_plan_cost(plan: &SelectedPlan) -> AnalyticalPlanCost {
                             let region = &selection.implementation().scheduled()?.region().index;
                             let width = match region.numerical.profile_key {
                                 crate::request::NUMERICAL_CONTRACT_KEY
-                                | crate::request::FLUSH_CONTRACT_KEY => 4_u64,
+                                | crate::request::FLUSH_CONTRACT_KEY
+                                | crate::request::RELAXED_CONTRACT_KEY => 4_u64,
                                 _ => return None,
                             };
                             let points = element_count(&region.iteration_shape).ok()?;

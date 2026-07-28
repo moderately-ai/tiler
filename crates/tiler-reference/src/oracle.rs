@@ -40,9 +40,9 @@ use crate::identity::{
 use crate::{
     EvaluationError, FloatBitOrder, FrozenReferenceRegistry, MAX_REFERENCE_CAPABILITIES,
     MAX_REFERENCE_REGISTRY_IDENTITY_BYTES, MAX_REFERENCE_TENSOR_ELEMENTS,
-    ReferenceCapabilityRevision, ReferenceElement, ReferenceOperationError, ReferenceRegistryError,
-    ReferenceRegistryResource, ReferenceSignature, Tensor, TensorPayloadView,
-    canonicalize_arithmetic_f32,
+    ReferenceCapabilityRevision, ReferenceElement, ReferenceNumericalConformance,
+    ReferenceOperationError, ReferenceRegistryError, ReferenceRegistryResource, ReferenceSignature,
+    Tensor, TensorPayloadView, canonicalize_arithmetic_f32,
 };
 
 /// Maximum scalar, reducer-body, and index evaluations in one region evaluation.
@@ -127,6 +127,7 @@ impl fmt::Display for UnsupportedRegionFeature {
 pub struct ScalarReferenceRequest<'a> {
     operands: &'a [&'a Tensor],
     attributes: &'a ScalarAttributes,
+    conformance: ReferenceNumericalConformance,
 }
 
 impl<'a> ScalarReferenceRequest<'a> {
@@ -140,6 +141,17 @@ impl<'a> ScalarReferenceRequest<'a> {
     #[must_use]
     pub const fn attributes(self) -> &'a ScalarAttributes {
         self.attributes
+    }
+
+    /// Returns the numerical contract this evaluation is performed under.
+    ///
+    /// A scalar capability that performs floating-point arithmetic must consult
+    /// this. The refined region and the semantic evaluator answer the same
+    /// program, so one honouring the contract and the other ignoring it would
+    /// disagree on exactly the values the contract exists to decide.
+    #[must_use]
+    pub const fn conformance(self) -> ReferenceNumericalConformance {
+        self.conformance
     }
 }
 
@@ -677,13 +689,16 @@ impl ScalarReferenceOperation for StandardScalarBinaryF32 {
         if !fields.is_empty() {
             return Err(ReferenceOperationError::InvalidApplication);
         }
-        let left = decode_scalar_f32(left)?;
-        let right = decode_scalar_f32(right)?;
+        let conformance = request.conformance();
+        let left = conformance.apply_to_operand(decode_scalar_f32(left)?);
+        let right = conformance.apply_to_operand(decode_scalar_f32(right)?);
         let value = match self {
             Self::Multiply => left * right,
             Self::Add => left + right,
         };
-        outputs.push(scalar_f32_value(canonicalize_arithmetic_f32(value))?)
+        outputs.push(scalar_f32_value(
+            conformance.apply_to_result(canonicalize_arithmetic_f32(value)),
+        )?)
     }
 }
 
@@ -1135,16 +1150,45 @@ fn unsupported(feature: UnsupportedRegionFeature) -> IndexRegionEvaluationError 
 pub struct IndexRegionEvaluator {
     values: FrozenReferenceRegistry,
     scalars: FrozenScalarReferenceRegistry,
+    conformance: ReferenceNumericalConformance,
 }
 
 impl IndexRegionEvaluator {
-    /// Creates an evaluator over exact value-representation and scalar snapshots.
+    /// Creates an evaluator over exact value-representation and scalar
+    /// snapshots, evaluating the strict reading.
+    ///
+    /// The strict reading is what this oracle computed before it could be told a
+    /// contract, so this constructor changes no result. Use [`Self::under`] to
+    /// evaluate a region whose declared realization flushes subnormals; a region
+    /// carries that realization, and
+    /// [`crate::ReferenceNumericalConformance::from_realization`] is the checked
+    /// bridge from one to the other.
     #[must_use]
     pub const fn new(
         values: FrozenReferenceRegistry,
         scalars: FrozenScalarReferenceRegistry,
     ) -> Self {
-        Self { values, scalars }
+        Self::under(values, scalars, ReferenceNumericalConformance::strict())
+    }
+
+    /// Creates an evaluator bound to one stated numerical contract.
+    #[must_use]
+    pub const fn under(
+        values: FrozenReferenceRegistry,
+        scalars: FrozenScalarReferenceRegistry,
+        conformance: ReferenceNumericalConformance,
+    ) -> Self {
+        Self {
+            values,
+            scalars,
+            conformance,
+        }
+    }
+
+    /// Returns the numerical contract every evaluation is performed under.
+    #[must_use]
+    pub const fn conformance(&self) -> ReferenceNumericalConformance {
+        self.conformance
     }
 
     /// Returns the value-representation capability snapshot.
@@ -1833,6 +1877,7 @@ impl<'a> RegionEvaluation<'a> {
             ScalarReferenceRequest {
                 operands: &borrowed,
                 attributes: &application.attributes,
+                conformance: self.evaluator.conformance,
             },
             &mut outputs,
         );

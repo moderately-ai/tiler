@@ -32,6 +32,7 @@
 //! shared mechanism would erase a distinction the contracts depend on.
 
 mod arithmetic;
+mod conformance;
 mod error;
 mod evaluate;
 mod identity;
@@ -40,6 +41,7 @@ mod registry;
 mod standard;
 mod tensor;
 
+pub use conformance::{ReferenceNumericalConformance, UnsupportedReferenceContract};
 pub use error::{
     EvaluationError, ReferenceOperationError, ReferenceRegistryError, ReferenceRegistryResource,
     ReferenceResource, ReferenceValueError,
