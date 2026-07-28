@@ -63,5 +63,14 @@ Unblocked by `implement-analytical-component-cost-model` closing. Two notes so t
 
 **Note for whoever takes `model-resource-pressure-from-a-register-and-occupancy-model`:** that ticket is deferred waiting for exactly this vocabulary. `PressureDimension::Registers` and `Occupancy` now exist. What is still missing there is a *target profile* declaring the axes — an estimate carrying a register count does not tell the cost model what the device's limit is. Check before assuming it is unblocked.
 
-**Still not included:** the typed ABI, effect, aliasing, and placement contracts; provider registration and applicability; failure stages; and the additive coexistence with scheduled kernels. Those are the bulk of the ticket.
+## Effect and aliasing contract landed (2026-07-27)
 
+`crates/tiler-compiler/src/effects.rs`. An opaque call's body is not modelled, so every question an optimizer would answer by inspection — may this be reordered, fused, eliminated, run twice — has to come from a declaration.
+
+Three independent axes, deliberately not collapsed: `Elimination` (removable when results are unused, or required), `Motion` (free to reorder and re-execute, or ordered against other effects), and `Aliasing` (results distinct from inputs, or may alias them). Motion and aliasing are separate because the questions are independent — a pure call can still return a view onto an input, and an ordered call can return storage aliasing nothing. Collapsing them would make one declaration answer a question it was never asked.
+
+**Every axis's conservative value is the undeclared value**, and `CallEffects::unknown()` is all three at once. **There is deliberately no `Default` impl**: a `Default` reads as "the ordinary case", and for an opaque call the ordinary case is *not knowing*, which a caller should have to write down rather than receive by omission. That is this ticket's "may not smuggle unknown semantics or effects into logical IR" expressed as a type rather than a rule.
+
+`meet` takes the conservative value **per axis**, for a region containing more than one opaque call — the region may only be optimized as far as its most restrictive member allows. Written as an explicit match per axis rather than a numeric minimum, so a third value on any axis is a build error here instead of silently ordering itself against the others. Tested that one undeclared call constrains a whole region, that the meet is symmetric so the result does not depend on member order, and that an axis both declarations agree on is *not* needlessly constrained — the last is what catches a `meet` that just returns `unknown()`.
+
+**Still not included:** the typed ABI and placement contracts; provider registration and applicability; failure stages; and the additive coexistence with scheduled kernels. Those remain the bulk of the ticket.
