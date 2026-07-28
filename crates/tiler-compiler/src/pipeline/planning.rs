@@ -446,7 +446,18 @@ pub(super) fn build_alternative(
         numerical,
         ..
     } = plans;
-    let scheduled = plan_regions(plan);
+    // A plan containing an opaque call has no scheduled region for it, and
+    // lowering one is not implemented. Refusing here is what stops the plan
+    // being lowered as though the call were not in it.
+    let scheduled = plan_regions(plan).ok_or_else(|| {
+        failure_at_source(
+            CompileError::from(ProgramError::Structure {
+                rule: "unlowerable-opaque-body",
+            }),
+            ExplainStage::ProgramVerification,
+            cause.copied(),
+        )
+    })?;
     let kernels = scheduled
         .iter()
         .map(lower_structured_kernel)
@@ -517,24 +528,31 @@ pub(super) fn build_alternative(
 /// Ordering is the whole of what this derives, so it sorts references. A caller
 /// that must *own* the result asks for it through [`plan_regions`]; a caller
 /// that only compares against regions it already holds does not pay for a copy.
-pub(super) fn plan_region_order(plan: &SelectedPlan) -> Vec<&VerifiedScheduledRegion> {
-    let mut regions: Vec<&VerifiedScheduledRegion> = plan
-        .selections()
-        .iter()
-        // An opaque call contributes no scheduled region. Filtered rather than
-        // rejected here because this is an ordering helper, not an admission
-        // check — the stage that must *lower* a plan is where an unlowerable
-        // body rejects, and doing it twice would put the refusal in the place
-        // with less to say about it.
-        .filter_map(|selection| selection.implementation().scheduled())
-        .collect();
+/// Returns `None` when any selection has no scheduled region.
+///
+/// **Filtering here would be silently wrong**, and became so the moment opaque
+/// calls were admittable. A plan of one scheduled region and one opaque call
+/// filters to a single region, which `build_plan_program` then matches as a
+/// *fused* program — producing a kernel that omits the call's work entirely and
+/// reports success. Nothing downstream compares the region count against the
+/// selection count, so the omission would surface as a wrong result rather than
+/// an error.
+///
+/// Lowering an opaque call is genuinely not implemented; declining to order a
+/// plan containing one is how that is said, and the caller turns it into a typed
+/// refusal.
+pub(super) fn plan_region_order(plan: &SelectedPlan) -> Option<Vec<&VerifiedScheduledRegion>> {
+    let mut regions: Vec<&VerifiedScheduledRegion> = Vec::with_capacity(plan.selections().len());
+    for selection in plan.selections() {
+        regions.push(selection.implementation().scheduled()?);
+    }
     regions.sort_by_key(|region| region.region().index.id.get());
-    regions
+    Some(regions)
 }
 
 /// Returns an owned copy of a plan's scheduled regions in planning order.
-pub(super) fn plan_regions(plan: &SelectedPlan) -> Vec<VerifiedScheduledRegion> {
-    plan_region_order(plan).into_iter().cloned().collect()
+pub(super) fn plan_regions(plan: &SelectedPlan) -> Option<Vec<VerifiedScheduledRegion>> {
+    Some(plan_region_order(plan)?.into_iter().cloned().collect())
 }
 
 /// Assembles the verified kernel program for one plan shape.

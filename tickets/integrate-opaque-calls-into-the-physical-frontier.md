@@ -423,8 +423,11 @@ The cause is already a type — `RejectionCause` with `Numerical` and `Capabilit
 
 ## What remains
 
-- **Lowering must reject an opaque body** with a typed reason. `physical::lower_scheduled_region` is reached through `plan_region_order`, which filters opaque bodies out today; the refusal belongs at the stage that lowers, not in the ordering helper.
+- ~~**Lowering must reject an opaque body**~~ — **done 2026-07-28, and it was already a live defect.** `plan_region_order` *filtered* bodies with no scheduled region, which was harmless while none were admittable and became silently wrong the moment they were. A plan of one scheduled region and one opaque call filtered to a single region, and `build_plan_program` then matched it as a **fused** program — producing a kernel that omits the call's work entirely and reporting success. Nothing downstream compared the region count against the selection count, so it would have surfaced as a wrong result rather than an error.
+
+  It now returns `Option` and declines, with the caller turning that into a typed `unlowerable-opaque-body` refusal at the lowering stage. `pipeline/verify.rs` treats `None` as a schedule-binding failure, which is what it is — an alternative could not have been built from a plan it cannot order.
+
+  **This is the cost of the previous change, paid one turn later.** Admitting opaque calls made a filter that had been correct into a silent omission, and nothing failed when it did.
 - **Numerical guarantees** — an opaque call's realization stated and checked against the region's contract. Nothing yet touches numerics, and `assess_resources` does compare the four numerical dimensions in `ResourceRequirements`, so check what it already covers before adding.
 - **Explain records** for the four rejection variants; the census moves there.
 - **`Intermediate` work scaling** still declines, for the reason recorded above.
-

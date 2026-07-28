@@ -111,7 +111,19 @@ pub(super) fn verify_alternative(
     // is gone. Once the stored regions are proven equal to the re-derivation,
     // they *are* the re-derivation, so the layers below verify against the
     // borrowed slice instead of against a duplicate of it.
-    let ordered = plan_region_order(&alternative.plan);
+    // `None` means the plan contains a body with no scheduled region, which the
+    // alternative could not have been built from — so it is a binding failure
+    // like any other mismatch, not a separate outcome.
+    let Some(ordered) = plan_region_order(&alternative.plan) else {
+        return Err(failure_at_source(
+            ProgramError::Structure {
+                rule: "portfolio-schedule-binding",
+            }
+            .into(),
+            ExplainStage::ProgramVerification,
+            cause,
+        ));
+    };
     if alternative.scheduled_regions.len() != ordered.len()
         || alternative
             .scheduled_regions
