@@ -34,16 +34,18 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 ///
 /// Raised to `2.0` when the section descriptor grew its purpose disposition and
 /// content schema, to `3.0` when each ABI binding row replaced its program
-/// role tag with the interface reference naming what the slot addresses, and to
+/// role tag with the interface reference naming what the slot addresses, to
 /// `4.0` when a selected provider row replaced its `u16` capability API version
-/// with the `u32` capability revision. All three are deliberately **major**
-/// steps rather than the minor ones they might look like: the reader admits
-/// `minor <= implemented`, so a minor bump would have left it accepting an older
-/// manifest whose rows it can no longer parse. A field changed inside a record
-/// is not additive, and the `4.0` step also moved a field's *width*, so a `3.0`
-/// reader would not merely misinterpret two bytes — it would lose framing for
-/// every row after them.
-pub(super) const MANIFEST_SCHEMA: (u16, u16) = (4, 0);
+/// with the `u32` capability revision, and to `5.0` when each ABI binding row
+/// gained the accessible offset placing its range inside the value it binds.
+/// All four are deliberately **major** steps rather than the minor ones they
+/// might look like: the reader admits `minor <= implemented`, so a minor bump
+/// would have left it accepting an older manifest whose rows it can no longer
+/// parse. A field changed *or added* inside a fixed-width record is not
+/// additive — the `5.0` step inserts four bytes ahead of an existing field, so a
+/// `4.0` reader would consume the offset as the extent and lose framing for
+/// everything after it — and the `4.0` step also moved a field's width.
+pub(super) const MANIFEST_SCHEMA: (u16, u16) = (5, 0);
 
 /// Versioned domain tag opening the canonical manifest bytes.
 pub(super) const MANIFEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.manifest.v1\0";
@@ -355,6 +357,7 @@ fn encode_entry(bytes: &mut Vec<u8>, entry: &EntryRow) {
         bytes.push(buffer_access_tag(binding.access));
         bytes.extend_from_slice(&binding.alignment.to_be_bytes());
         push_binding_target(bytes, &binding.target);
+        bytes.extend_from_slice(&binding.accessible_offset.to_be_bytes());
         bytes.extend_from_slice(&binding.accessible_bytes.to_be_bytes());
     }
     bytes.extend_from_slice(&entry.launch.grid_threads.to_be_bytes());

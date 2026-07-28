@@ -61,7 +61,7 @@ fn expressions_are_reachable(data: &ArtifactProgramData) -> bool {
                 entry
                     .bindings
                     .iter()
-                    .map(|binding| binding.accessible_bytes),
+                    .flat_map(|binding| [binding.accessible_offset, binding.accessible_bytes]),
             );
             work.push(entry.launch.grid_threads);
             work.push(entry.launch.threads_per_workgroup);

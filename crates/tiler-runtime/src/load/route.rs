@@ -98,6 +98,13 @@ impl RoutedLaunch {
 /// types here would give this crate a direct `tiler-ir` edge, and its dependency
 /// closure is a decided property under ADR 0081 rather than an accident of
 /// ordering.
+///
+/// The published range always starts at byte zero, and by refusal rather than
+/// by silence: an artifact binding may start elsewhere, and `place_bindings`
+/// rejects one that does as `UnpublishedBindingOffset`, because a host that
+/// never learns an offset existed cannot tell that it defaulted.
+/// `carry-the-binding-offset-through-the-runtime-route` owns publishing and
+/// honouring it instead.
 #[derive(Clone, Copy, Debug)]
 pub struct RoutedBinding<'a> {
     pub(super) binding: DecodedBinding<'a>,

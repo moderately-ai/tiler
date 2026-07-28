@@ -979,6 +979,7 @@ fn project_entries(
                 .bindings
                 .iter()
                 .map(|binding| BindingData {
+                    accessible_offset: expression_of[position(binding.accessible_offset)],
                     accessible_bytes: expression_of[position(binding.accessible_bytes)],
                     ..binding.clone()
                 })

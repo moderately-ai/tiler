@@ -41,9 +41,9 @@ use super::super::model::{
     element_type_tag, permission_from_tag, permission_tag, subnormal_from_tag, subnormal_tag,
 };
 use super::super::tests::{
-    Formulas, OTHER_SCALE_BITS, SCALE_BITS, build_artifact, default_artifact, formulas,
-    fused_program, lowering_provider, payload, profile, selection, semantic_program,
-    spare_provider, variant,
+    ELEMENT_BYTES, Formulas, OTHER_SCALE_BITS, SCALE_BITS, SCRATCH_OFFSET, build_artifact,
+    default_artifact, formulas, fused_program, lowering_provider, partial_window_artifact, payload,
+    profile, selection, semantic_program, spare_provider, variant,
 };
 use super::super::{
     ArtifactProgramBuilder, CompilationEnvironment, MAX_VARIANT_ENTRIES, VerifiedArtifactProgram,
@@ -58,8 +58,8 @@ use super::error::{
     ArtifactCodecError, CodecLimitKind, OrderedSubject, ReferenceSubject, TagSubject,
 };
 use super::model::{
-    ArtifactEnvelope, FEATURE_MULTI_VARIANT_ROUTING, Section, SectionDisposition, SectionKind,
-    position,
+    ArtifactEnvelope, FEATURE_MULTI_STAGE_PROGRAM, FEATURE_MULTI_VARIANT_ROUTING, Section,
+    SectionDisposition, SectionKind, position,
 };
 use super::payload::{
     PayloadContent, PayloadEntryMapping, PayloadMetadata, PayloadProvenance, PayloadSdkIdentity,
@@ -1032,6 +1032,7 @@ fn swap_expression_references(envelope: &mut ArtifactEnvelope, left: u32, right:
         }
         for entry in &mut variant.entries {
             for binding in &mut entry.bindings {
+                swap(&mut binding.accessible_offset);
                 swap(&mut binding.accessible_bytes);
             }
             swap(&mut entry.launch.grid_threads);
@@ -1160,6 +1161,78 @@ fn a_guard_that_is_not_a_predicate_is_rejected() {
             }),
         },
     );
+}
+
+/// A decoded binding's offset is re-proven at its own use site, not trusted.
+///
+/// The forgery points the slot's accessible offset at the boolean guard the
+/// fixture already reaches from a second use site, so the arena stays closed and
+/// what rejects is the use-site type rule rather than an orphaned node.
+#[test]
+fn a_binding_offset_that_is_not_a_byte_count_is_rejected() {
+    assert_eq!(
+        reject_guarded_forgery(|envelope| {
+            let guard = envelope.variants[0].guard;
+            envelope.variants[0].entries[0].bindings[0].accessible_offset = guard;
+        }),
+        ArtifactCodecError::ModelRule {
+            cause: Box::new(ArtifactBuildError::ExpressionType {
+                use_site: AbiExprUse::AccessibleOffset,
+                expected: AbiType::Unsigned,
+                actual: AbiType::Boolean,
+            }),
+        },
+    );
+}
+
+/// A nonzero binding offset survives the trip from producer bytes to consumer.
+///
+/// This is the positive end-to-end case the offset row exists for, and it is
+/// only writable because `carry-the-stage-execution-order-in-the-envelope`
+/// made a two-stage envelope readable: the smallest plan carrying a nonzero
+/// offset has two stages, since a partial window needs a temporary and the two
+/// region refinements naming one live in different regions. The fixture binds
+/// one program-owned scratch value at byte 24 of 48 in both stages, and what a
+/// consumer holding only bytes must see is exactly that placement — a decoded
+/// record carrying the extent and not the start would leave a loader binding
+/// the right buffer at byte zero, a silently wrong dispatch rather than a
+/// rejection.
+#[test]
+fn a_partial_binding_window_survives_encode_and_decode() {
+    let artifact = partial_window_artifact();
+    let envelope = envelope_of(&artifact);
+    assert!(
+        envelope
+            .features()
+            .iter()
+            .any(|feature| feature == FEATURE_MULTI_STAGE_PROGRAM)
+    );
+    let bytes = encode(&envelope).expect("a two-stage artifact encodes");
+    let decoded = super::view::decode_artifact(&bytes).expect("a two-stage artifact decodes");
+
+    let inputs: Vec<_> = decoded.inputs().collect();
+    let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
+    binder
+        .bind_input_shape(inputs[0].key(), inputs[0].shape())
+        .expect("the decoded interface binds its own declared shape");
+    let facts = binder.build();
+
+    let variant = decoded.variants().next().expect("one packaged variant");
+    let entries: Vec<_> = variant.entries().collect();
+    assert_eq!(entries.len(), 2);
+    // The scratch slot of each stage: written by the first, read by the
+    // second, and placed at the same nonzero byte in both.
+    for (entry, slot) in [(&entries[0], 1), (&entries[1], 0)] {
+        let bindings: Vec<_> = entry.bindings().collect();
+        assert_eq!(
+            bindings[slot].accessible_offset().evaluate(&facts),
+            Ok(AbiValue::Unsigned(SCRATCH_OFFSET)),
+        );
+        assert_eq!(
+            bindings[slot].accessible_bytes().evaluate(&facts),
+            Ok(AbiValue::Unsigned(ELEMENT_BYTES * 6)),
+        );
+    }
 }
 
 #[test]

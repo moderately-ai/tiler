@@ -884,6 +884,7 @@ fn parse_entry(
                 access: cursor.buffer_access()?,
                 alignment: cursor.u32()?,
                 target: cursor.binding_target()?,
+                accessible_offset: cursor.expression_ref(expressions)?,
                 accessible_bytes: cursor.expression_ref(expressions)?,
             })
         },

@@ -1,11 +1,11 @@
 ---
 id: carry-the-byte-offset-of-a-partial-binding-view
 title: Carry a binding's byte offset so a partial view is packageable
-status: todo
+status: done
 priority: p2
 dependencies: []
-related: [expose-the-dispatch-record-on-a-decoded-artifact, carry-reconstructable-kernel-programs-in-the-neutral-envelope]
-scopes: [implementation/artifact]
+related: [expose-the-dispatch-record-on-a-decoded-artifact, carry-reconstructable-kernel-programs-in-the-neutral-envelope, carry-the-binding-offset-through-the-runtime-route]
+scopes: [implementation/artifact, contracts/artifacts, implementation/runtime, implementation/metal-aot]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, abi]
@@ -38,27 +38,24 @@ the ticket to historical version numbers.
 fixture may make it convenient to test, but that regression is not required to
 make partial offsets packageable and should not expand this ticket's outcome.
 
+## Outcome
+
+Done as specified, with the offset's *source* reshaped by a decision that landed on `main` while this work was stranded, and with the corrections below.
+
+**Implemented.** An ABI binding row carries `accessible_offset` beside `accessible_bytes`, with its own `AbiExprUse::AccessibleOffset`: folded into artifact identity beside the extent in `push_entry` and `identity_use_sites`; encoded in the manifest binding row; re-proven at its use site by the decoder's `check_entry`; reached by both reachability closures; and published as `BindingRef::accessible_offset` and `DecodedBinding::accessible_offset`. `PartialBindingView` is gone. `MANIFEST_SCHEMA` moved to `5.0` and `ARTIFACT_DOMAIN` to `tiler.artifact-program.v7`, both recomputed on the merged tree.
+
+**Reshaped at landing — the offset is derived, not declared.** This ticket predates `bind-the-artifact-variant-abi-to-the-program-abi` (the `v6` identity step), which removed every caller-restated ABI field: the guard, launch geometry, and accessible extent are taken from the bound program. The offset follows the same rule. The program states an *expression* for the extent and only a concrete `ByteWindow` for where it starts, so `ArtifactProgramBuilder::adopt_offsets` mints each access's window offset as its canonical literal; `BindingSpec` gained no field, and the originally specified `AccessibleOffsetDisagreement` refusal does not exist because there is no producer statement left to disagree. The row keeps an expression reference rather than a plain number so a program that one day computes its window offset carries that formula without a schema step.
+
+**Correction — `AliasedInternalBinding` cannot be given a regression test, because it is unreachable rather than merely unfixtured.** Two bindings of one entry are two accesses of one stage, and `push_stage` pins each access's mode to its buffer parameter's, so of any two one reads and the other writes. A stage both defining and reading one value needs a data dependency from its defining stage to its reading stage, which `verify_dependencies` requires and `push_data_dependency` refuses to create for a stage naming itself. So the two accesses of one stage always address different values, whatever their tensor roles. The variant is retained for the reason `UnnameableBindingTarget` is — the guarantee is another crate's builder rule — and its doc comment states that derivation.
+
+**Correction — the smallest partial-window plan is two stages, and that is no longer a decode boundary.** A verified kernel refines the canonical lowering of a scheduled region, a region has exactly two accesses, and of the three admitted refinements the only two naming an intermediate role are the pointwise write and the reduction read, which are different regions — so the fixture is two stages. When this work was written, a two-stage envelope was refused through `tiler.artifact.feature.multi-stage-program` and the offset had no positive nonzero end-to-end case. `carry-the-stage-execution-order-in-the-envelope` landed while the work was stranded, so the boundary test this ticket originally pinned flipped into the payoff: `codec::tests::a_partial_binding_window_survives_encode_and_decode` decodes the two-stage plan and reads `SCRATCH_OFFSET` back out of bytes, and `program::tests::a_binding_may_address_part_of_the_value_it_names` proves the offset at build.
+
+**Consequence closed fail-closed at landing, honouring still owned by the follow-up.** With the multi-stage refusal gone, a partial-window artifact decodes and routes, and `tiler-runtime`'s `RoutedBinding` publishes an extent and no offset — the silently-wrong-dispatch hazard this ticket's own text predicted, with no other layer's refusal left standing in front of it. The landing therefore added `LoadRejection::UnpublishedBindingOffset`: `place_bindings` evaluates every binding's offset and refuses a nonzero one by name. [`carry-the-binding-offset-through-the-runtime-route`](carry-the-binding-offset-through-the-runtime-route.md) owns replacing that refusal with a published, honoured offset — and owes the two-stage loader fixture the refusal's unit test records as missing.
+
+## Landed 2026-07-28
+
+Rescued from the stranded worktree `agent-a0eb91e9c8f485c11` (324 commits behind), per `rebase-and-land-the-stranded-numerical-policies-worktree`'s sibling protocol: preserved verbatim as `30595f3` on `tkt/carry-the-byte-offset-of-a-partial-binding-view`, then squash-merged with every conflict resolved toward `main`'s structure — the derived-ABI builder (`v6`), the split `serial-sum-run` prototype, the readable multi-stage envelope — and the branch's intent re-applied in that shape. The manifest schema and identity domain were recomputed on the merged tree (`5.0`, `v7`), not taken from the branch's `5.0`/`v4`.
+
 ## Closes when
 
-A binding may address a partial window, its offset is carried and proven against
-the packaged program, `PartialBindingView` is gone, identity/schema versions
-state the change, and `make full` passes.
-
-## Work in flight — recorded 2026-07-28
-
-**Fact — the work exists and has not landed.** It is uncommitted in the harness worktree `.claude/worktrees/agent-a0eb91e9c8f485c11`, on branch `tkt/carry-the-byte-offset-of-a-partial-binding-view` at HEAD `06af0c6`. That HEAD is **319 commits behind `main`** as of this record (`git rev-list --count HEAD..main`), so the branch base predates the audit-fix and Makefile-gate commits and the diff will not apply cleanly as-is. `git status --short` reports **17 modified files, 913 insertions / 111 deletions**, plus one untracked ticket.
-
-**Fact — what the diff touches.** Six codec files, not four: `codec/decode.rs`, `codec/encode.rs`, `codec/model.rs`, `codec/tests.rs`, `codec/validate.rs`, `codec/view.rs`. Alongside them, `program/builder.rs`, `program/error.rs`, `program/mod.rs`, `program/model.rs`, `program/tests.rs`, `program/verify.rs`, `proof/mod.rs`, `docs/artifact-abi.md`, `prototypes/serial-sum-compile/src/bundle.rs`, `prototypes/serial-sum-run/src/main.rs`, and this ticket's own copy.
-
-**Fact — the worktree carries a stale copy of this ticket.** Its version of `tickets/carry-the-byte-offset-of-a-partial-binding-view.md` was edited against that 319-commit-stale base and states an Outcome citing `MANIFEST_SCHEMA` at `3.0`/`v2`. The current ticket text contains no such citation, so **the worker's ticket edit will not merge cleanly onto this file** and must be reconciled by hand rather than taken from either side — the version numbers in particular have to be recomputed on the merged tree rather than picked from a branch.
-
-**Fact — a well-specified follow-up exists and is untracked.** `tickets/carry-the-binding-offset-through-the-runtime-route.md` in the same worktree. Its substantive finding, which is the part worth keeping whatever happens to the rest: `RoutedBinding` (`crates/tiler-runtime/src/load/route.rs:102-107` on `main` today — the follow-up cites `:100-107`, which is off by two) publishes `binding`, `transport`, and `accessible_bytes` and no offset, and `place_bindings` evaluates only the extent, so `DecodedBinding::accessible_offset` exists and nothing reads it. A host given a `RoutedBinding` binds storage at byte zero whatever the artifact says. That is unreachable today only because `decode_artifact` refuses a multi-stage envelope through `tiler.artifact.feature.multi-stage-program` — a refusal owned by another layer — so on the day `carry-the-stage-execution-order-in-the-envelope` lifts it, this loader becomes silently wrong. The follow-up's `## Closes when` cites the retired Python gate (`uv run --locked python scripts/check_repository.py`) and needs updating to `make full` before it is filed.
-
-**Status.** Frontmatter is not this record's to change; the ticket remains `in-progress` and the request to move it to `done` is left for the coordinator, which is correct in any case while the diff is unlanded and 319 commits stale.
-
-## Graph maintenance
-
-- **Start from the worktree diff, not from scratch** — see Work in flight above. Reconcile its stale ticket copy by hand; recompute any manifest/identity version numbers on the *merged* tree, never by picking a branch's number.
-- **When this lands**: file the follow-up `carry-the-binding-offset-through-the-runtime-route` from the worktree's untracked draft (fixing its stale gate citation to `make full` and its `route.rs` line numbers, which are off by two). That follow-up is load-bearing: `RoutedBinding` publishes no offset and `place_bindings` evaluates only the extent, so the day `carry-the-stage-execution-order-in-the-envelope` lifts the multi-stage refusal, the loader becomes silently wrong without it. State that dependency on the follow-up explicitly.
-- **Do not fold `AliasedInternalBinding` work in** — the body marks it a separate refusal; if you find yourself touching it, stop and file a separate ticket instead.
-- **When the schema version advances**: record the reason at both the manifest-major site and the identity-domain site, and expect the producer determinism test and serial-sum artifact identity to move exactly once — a second movement means something else changed.
+A binding may address a partial window, its offset is carried and proven against the packaged program, `PartialBindingView` is gone, identity/schema versions state the change, the loader-side consequence is tracked by a live ticket, and `make full` passes.

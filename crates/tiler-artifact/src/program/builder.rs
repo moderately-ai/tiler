@@ -174,6 +174,18 @@ pub struct VariantSpec {
     pub entries: Vec<EntrySpec>,
 }
 
+/// The variant ABI derived from the bound program.
+///
+/// `adopted` maps each program arena position to the handle `adopt_abi`
+/// replayed it as; `offsets` holds the per-stage, per-access window-offset
+/// literals `adopt_offsets` minted. They are one value because they answer one
+/// question — what the program's own ABI says — and every entry check reads
+/// both.
+struct DerivedAbi {
+    adopted: Vec<Option<AbiExprId>>,
+    offsets: Vec<Vec<AbiExprId>>,
+}
+
 /// A transactional artifact-program builder with private storage.
 #[derive(Clone, Debug)]
 pub struct ArtifactProgramBuilder {
@@ -456,6 +468,32 @@ impl ArtifactProgramBuilder {
         Ok(minted)
     }
 
+    /// Mints each stage access's window offset as its canonical literal.
+    ///
+    /// The program states an *expression* for the accessible extent and only a
+    /// concrete [`ByteWindow`] for where the range starts, so the offset a
+    /// binding row carries is derived from the bound program the way the
+    /// guard, launch, and extent are — a producer cannot restate it. It stays
+    /// an expression on the row rather than a plain number so a program that
+    /// one day computes its window offset can carry that formula without a
+    /// schema step.
+    ///
+    /// [`ByteWindow`]: tiler_ir::program::ByteWindow
+    fn adopt_offsets(
+        &mut self,
+        program: &VerifiedKernelProgram,
+    ) -> Result<Vec<Vec<AbiExprId>>, ArtifactBuildError> {
+        let mut offsets = Vec::with_capacity(program.stages().len());
+        for stage in program.stages() {
+            let mut row = Vec::new();
+            for access in stage.accesses() {
+                row.push(self.push_root(AbiRoot::UnsignedLiteral(access.view().window().offset))?);
+            }
+            offsets.push(row);
+        }
+        Ok(offsets)
+    }
+
     /// Marks every arena position reachable from a set of use sites.
     fn reachable_from(arena: &[ExprNode], roots: &[u32]) -> Result<Vec<bool>, ArtifactBuildError> {
         let mut reached = vec![false; arena.len()];
@@ -638,8 +676,12 @@ impl ArtifactProgramBuilder {
             false,
         )?;
         let deferred = self.check_deferred(&spec.deferred_predicates)?;
+        let derived = DerivedAbi {
+            offsets: self.adopt_offsets(program)?,
+            adopted,
+        };
         let facts = static_facts(program);
-        let entries = self.check_entries(program, &spec.entries, &facts, &adopted)?;
+        let entries = self.check_entries(program, &spec.entries, &facts, &derived)?;
         let subject = self.check_subject(program, &spec)?;
         let id = VariantId::from_len(self.owner, self.variants.len()).ok_or(
             ArtifactBuildError::StructuralLimit {
@@ -861,12 +903,12 @@ impl ArtifactProgramBuilder {
         program: &VerifiedKernelProgram,
         specs: &[EntrySpec],
         facts: &AbiFacts,
-        adopted: &[Option<AbiExprId>],
+        derived: &DerivedAbi,
     ) -> Result<Vec<EntryData>, ArtifactBuildError> {
         let mut resolved = Vec::with_capacity(specs.len());
         for (index, (spec, stage)) in specs.iter().zip(program.stages()).enumerate() {
-            let bindings = self.check_bindings(program, index, spec, stage, facts, adopted)?;
-            let launch = self.check_launch(index, &spec.launch, stage, facts, adopted)?;
+            let bindings = self.check_bindings(program, index, spec, stage, facts, derived)?;
+            let launch = self.check_launch(index, &spec.launch, stage, facts, &derived.adopted)?;
             let payload = self.resolve_payload(spec.implementation.payload)?;
             resolved.push(EntryData {
                 bindings,
@@ -887,7 +929,7 @@ impl ArtifactProgramBuilder {
         spec: &EntrySpec,
         stage: StageRef<'_>,
         facts: &AbiFacts,
-        adopted: &[Option<AbiExprId>],
+        derived: &DerivedAbi,
     ) -> Result<Vec<BindingData>, ArtifactBuildError> {
         let buffers: Vec<_> = stage.kernel().buffers().collect();
         if buffers.len() != spec.bindings.len() {
@@ -914,20 +956,30 @@ impl ArtifactProgramBuilder {
             .zip(stage.accesses())
             .enumerate()
         {
+            let window = access.view().window();
+            // Minted by `adopt_offsets` from this access's own window, so
+            // unlike the extent below there is no producer statement to prove
+            // against it — the check resolves the handle and types the use.
+            let offset = self.check_use(
+                derived.offsets[entry][slot],
+                AbiExprUse::AccessibleOffset,
+                AbiType::Unsigned,
+                AvailabilityPhase::LiveDevicePreflight,
+                true,
+            )?;
             let node = self.check_use(
-                Self::resolve(adopted, access.accessible_bytes())?,
+                Self::resolve(&derived.adopted, access.accessible_bytes())?,
                 AbiExprUse::AccessibleBytes,
                 AbiType::Unsigned,
                 AvailabilityPhase::LiveDevicePreflight,
                 true,
             )?;
             let computed = self.evaluate_static(node, AbiExprUse::AccessibleBytes, facts)?;
-            let expected = access.view().window().length;
-            if computed != expected {
+            if computed != window.length {
                 return Err(ArtifactBuildError::AccessibleBytesDisagreement {
                     entry,
                     binding: slot,
-                    expected,
+                    expected: window.length,
                     actual: computed,
                 });
             }
@@ -952,6 +1004,7 @@ impl ArtifactProgramBuilder {
                 access: buffer.access,
                 alignment: value.alignment(),
                 target,
+                accessible_offset: offset,
                 accessible_bytes: node,
             });
         }
@@ -1219,12 +1272,15 @@ fn project_interface(
 /// and alignment already come from, so a producer cannot state a correspondence
 /// its own plan contradicts.
 ///
+/// The target names the whole addressed value; *where in it* the slot reaches is
+/// the binding's own accessible offset and extent, so a slot addressing part of
+/// a value is packageable rather than refused.
+///
 /// # Errors
 ///
-/// Returns [`ArtifactBuildError::PartialBindingView`] when the access addresses
-/// part of its value, or [`ArtifactBuildError::UnnameableBindingTarget`] when
-/// the addressed value's role and origin disagree about whether its bytes cross
-/// the program interface.
+/// Returns [`ArtifactBuildError::UnnameableBindingTarget`] when the addressed
+/// value's role and origin disagree about whether its bytes cross the program
+/// interface.
 fn binding_target(
     program: &VerifiedKernelProgram,
     entry: usize,
@@ -1232,16 +1288,6 @@ fn binding_target(
     view: tiler_ir::program::ViewRef<'_>,
 ) -> Result<BindingTargetData, ArtifactBuildError> {
     let value = view.value();
-    let window = view.window();
-    if window.offset != 0 || window.length != value.required_bytes() {
-        return Err(ArtifactBuildError::PartialBindingView {
-            entry,
-            binding,
-            offset: window.offset,
-            length: window.length,
-            value_bytes: value.required_bytes(),
-        });
-    }
     let unnameable = |role| ArtifactBuildError::UnnameableBindingTarget {
         entry,
         binding,

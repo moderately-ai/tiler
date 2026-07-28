@@ -124,6 +124,8 @@ impl fmt::Display for ArtifactKeyKind {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum AbiExprUse {
+    /// The first addressed byte of one ABI binding, within the value it binds.
+    AccessibleOffset,
     /// The accessible byte range of one ABI binding.
     AccessibleBytes,
     /// The total launch thread count of one executable entry.
@@ -285,38 +287,6 @@ pub enum ArtifactBuildError {
         /// Declared ABI binding count.
         actual: usize,
     },
-    /// A binding addresses part of a value rather than the whole of it.
-    ///
-    /// The artifact carries a binding's target as an interface reference and
-    /// its extent as one accessible-byte expression. Neither says *where* in the
-    /// addressed value the range starts, so a partial window would leave a
-    /// loader binding the right buffer at the wrong offset — a silently wrong
-    /// result rather than a refusal. Refusing to package it is the fail-closed
-    /// form until an offset expression is carried; `tiler_ir`'s `push_view`
-    /// admits an arbitrary window, so this is a real narrowing rather than a
-    /// restatement of what the program layer already forbids.
-    ///
-    /// Not covered by a test in this crate, and the reason is exact rather than
-    /// an oversight. Only a `ValueRole::Temporary` value can be larger than what
-    /// one stage addresses: `check_origin` pins an input value's shape to the
-    /// declared interface shape and `push_output` pins an output value's, while
-    /// `push_stage` requires each access to address exactly its buffer's element
-    /// count. Binding a temporary needs a kernel declaring a
-    /// `TensorRole::Intermediate` buffer, and no fixture in this crate builds
-    /// one — `grep -rn "TensorRole::Intermediate" crates/tiler-artifact` is
-    /// empty. `tiler-compiler`'s multi-stage plans do produce them.
-    PartialBindingView {
-        /// Ordered entry position.
-        entry: usize,
-        /// Ordered binding position within that entry.
-        binding: usize,
-        /// First addressed byte of the view.
-        offset: u64,
-        /// Addressed byte count of the view.
-        length: u64,
-        /// Byte count the addressed value requires in total.
-        value_bytes: u64,
-    },
     /// A binding's addressed value has no interface reference the artifact can carry.
     ///
     /// The program role and the value's origin disagree about whether the bytes
@@ -359,15 +329,26 @@ pub enum ArtifactBuildError {
     /// record cannot distinguish.
     ///
     /// Scoped to one entry deliberately. Two *entries* sharing a temporary is
-    /// what a temporary is for, and refusing it would make every multi-stage
-    /// plan unpackageable; that case is already fail-closed on the reading side,
-    /// because such an artifact requires
-    /// `tiler.artifact.feature.multi-stage-program` and this build's reader
-    /// refuses it.
+    /// what a temporary is for — the two-stage partial-window fixture packages
+    /// and decodes exactly that — and refusing it would make every multi-stage
+    /// plan unpackageable.
     ///
-    /// Not covered by a test in this crate, for the reason recorded on
-    /// [`Self::PartialBindingView`]: binding a temporary needs an intermediate
-    /// tensor role no fixture here declares.
+    /// Unreachable for a verified program at this maturity, and therefore not
+    /// covered by a test. Two bindings of one entry are two accesses of one
+    /// stage, and `KernelProgramBuilder::push_stage` pins each access's mode to
+    /// its buffer parameter's, so of any two one reads and the other writes. A
+    /// stage that both defined and read one value would need a data dependency
+    /// from its defining stage to its reading stage — `verify_dependencies`
+    /// rejects a read without one as `MissingDataDependency` — and
+    /// `push_data_dependency` rejects a stage naming itself as
+    /// `SelfDependency`. So the two accesses of one stage always address
+    /// different values.
+    ///
+    /// It is retained rather than deleted for the reason
+    /// [`Self::UnnameableBindingTarget`] is: the guarantee is another crate's
+    /// builder rule rather than something this crate's types express, and an
+    /// entry whose slots a loader cannot tell apart must fail closed if that
+    /// rule ever moves.
     AliasedInternalBinding {
         /// Ordered entry position.
         entry: usize,
@@ -487,7 +468,6 @@ impl Error for ArtifactBuildError {
             | Self::TargetProfileMismatch
             | Self::EntryCardinality { .. }
             | Self::BindingCardinality { .. }
-            | Self::PartialBindingView { .. }
             | Self::UnnameableBindingTarget { .. }
             | Self::AliasedInternalBinding { .. }
             | Self::AccessibleBytesDisagreement { .. }

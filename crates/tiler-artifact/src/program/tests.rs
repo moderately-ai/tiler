@@ -11,7 +11,7 @@ use tiler_ir::kernel::{
     KernelType, MAX_KERNEL_IDENTITY_BYTES, VerifiedKernel, lower_scheduled_region,
 };
 use tiler_ir::program::{
-    AllocationOwnership, AllocationSpec, KernelProgramBuilder, MaterializedOrigin,
+    AllocationOwnership, AllocationSpec, ByteWindow, KernelProgramBuilder, MaterializedOrigin,
     MaterializedValueSpec, MemorySpace, RoutingCommitState, RoutingCommitTransition,
     SemanticOccurrence, StageAccess, StageAccessMode, StageLaunch, ValueRole,
     VerifiedKernelProgram, ViewId,
@@ -38,14 +38,14 @@ use tiler_ir::semantic::{
 use tiler_ir::shape::{Axis, Shape};
 
 use super::{
-    AbiBinaryOp, AbiEvaluationError, AbiExprId, AbiFactBinder, AbiRoot, AbiType, AbiUnaryOp,
-    AbiValue, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind, ArtifactExecutionPolicy,
-    ArtifactKeyKind, ArtifactProgramBuilder, AvailabilityPhase, BackendEntryKey, BackendEntryRef,
-    BackendKey, BackendPayloadDescriptor, BindingKind, BindingSpec, CapabilityKey,
-    CompilationEnvironment, DeferredPredicateSpec, EntrySpec, FeasibilityRuleSetKey,
-    FeasibilityRuleSetRef, LaunchSpec, PayloadDigest, PayloadId, RepresentationKey, SchemaVersion,
-    SelectedProvider, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
-    TargetPropertyKey, VariantSpec, VerifiedArtifactProgram,
+    AbiBinaryOp, AbiEvaluationError, AbiExprId, AbiFactBinder, AbiFacts, AbiRoot, AbiType,
+    AbiUnaryOp, AbiValue, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind,
+    ArtifactExecutionPolicy, ArtifactKeyKind, ArtifactProgramBuilder, AvailabilityPhase,
+    BackendEntryKey, BackendEntryRef, BackendKey, BackendPayloadDescriptor, BindingKind,
+    BindingSpec, CapabilityKey, CompilationEnvironment, DeferredPredicateSpec, EntrySpec,
+    FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec, PayloadDigest, PayloadId,
+    RepresentationKey, SchemaVersion, SelectedProvider, TargetProfileDescriptorDigest,
+    TargetProfileKey, TargetProfileRef, TargetPropertyKey, VariantSpec, VerifiedArtifactProgram,
 };
 
 // The seven items this suite shares with `crate::proof::tests` are `pub(crate)`
@@ -428,6 +428,422 @@ pub(crate) fn fused_program(semantic: &SemanticProgram, scale_bits: u32) -> Veri
 }
 
 // -------------------------------------------------------------------------
+// The two-stage intermediate-role fixture
+// -------------------------------------------------------------------------
+//
+// Everything below exists because a *partial* binding window is not reachable
+// through the single-stage fixtures above, and the reason is exact rather than
+// an omission. `check_origin` pins a program input value's shape to the declared
+// interface shape and `push_output` pins a published output value's, while
+// `push_stage` requires each access to address exactly its buffer's element
+// count — so an input or output value is always addressed whole. Only a
+// `ValueRole::Temporary` value can be larger than what one stage addresses, and
+// a stage binding one needs a kernel declaring a `TensorRole::Intermediate`
+// buffer. A verified kernel refines the canonical lowering of a scheduled
+// region, and of the three admitted region refinements the only two that name
+// an intermediate role are the pointwise write and the reduction read, which
+// live in different regions. So the smallest plan that can address part of a
+// value is two stages, and these are those two stages.
+
+/// The scratch shape a partial binding window addresses part of.
+///
+/// Twice the `[2, 3]` working set the stages exchange, so the plan can place
+/// that working set in the upper half of one program-owned buffer. Nothing about
+/// a temporary requires a stage to address the whole of it, and `push_view`
+/// admits any window inside the value, so this is a plan the shared IR accepts
+/// rather than one contrived to defeat a check.
+fn scratch_shape() -> Shape {
+    Shape::from_dims([4, 3])
+}
+
+/// First byte of the scratch buffer the two stages exchange their values through.
+pub(super) const SCRATCH_OFFSET: u64 = ELEMENT_BYTES * 6;
+
+/// Builds the pointwise region's kernel: one program input to one temporary.
+fn pointwise_kernel() -> VerifiedKernel {
+    let elements = 6;
+    let mut region = ScheduledRegionBuilder::new(RegionId::new(0));
+    region.iteration_shape(input_shape()).unwrap();
+    region
+        .push_access(Access {
+            tensor: TensorRole::Input,
+            mode: AccessMode::Read,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(0),
+            ownership: None,
+        })
+        .unwrap();
+    region
+        .push_access(Access {
+            tensor: TensorRole::Intermediate,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(1),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        })
+        .unwrap();
+    for (witness, tensor) in [(0, TensorRole::Input), (1, TensorRole::Intermediate)] {
+        region
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(witness),
+                tensor,
+                kind: BoundsProofKind::LinearRange {
+                    element_count: elements,
+                },
+            })
+            .unwrap();
+    }
+    region
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Intermediate,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                output_count: elements,
+            },
+        })
+        .unwrap();
+    region
+        .scalar_program(ScalarProgram::MultiplyThenAdd {
+            scale_bits: SCALE_BITS,
+            bias_bits: BIAS_BITS,
+            canonical_nan_bits: CANONICAL_NAN,
+            contraction: false,
+        })
+        .unwrap();
+    region.numerical(strict()).unwrap();
+    region
+        .schedule(KernelSchedule {
+            binding: ExecutionBinding::GlobalLinearInvocation,
+            work_items: elements,
+            threads_per_workgroup: 1,
+            tail: TailPolicy::Exact,
+            output_owner: OwnershipWitnessId::new(0),
+            reduction: ReductionTopology::None,
+            launch: LaunchPlan {
+                grid_threads: elements,
+                threads_per_workgroup: 1,
+                zero_work_skips_dispatch: true,
+            },
+        })
+        .unwrap();
+    lower_scheduled_region(&region.build().unwrap()).unwrap()
+}
+
+/// Builds the reduction region's kernel: one temporary to one program output.
+fn reduction_kernel() -> VerifiedKernel {
+    let axes = vec![Axis::new(1)];
+    let mut region = ScheduledRegionBuilder::new(RegionId::new(1));
+    region.iteration_shape(output_shape()).unwrap();
+    region
+        .push_access(Access {
+            tensor: TensorRole::Intermediate,
+            mode: AccessMode::Read,
+            map: LogicalAccess::ReductionContributor {
+                input_shape: input_shape(),
+                output_shape: output_shape(),
+                axes: axes.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+            },
+            bounds: BoundsWitnessId::new(0),
+            ownership: None,
+        })
+        .unwrap();
+    region
+        .push_access(Access {
+            tensor: TensorRole::Output,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(1),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        })
+        .unwrap();
+    region
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(0),
+            tensor: TensorRole::Intermediate,
+            kind: BoundsProofKind::ReductionDomain {
+                input_shape: input_shape(),
+                output_shape: output_shape(),
+                axes: axes.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+            },
+        })
+        .unwrap();
+    region
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(1),
+            tensor: TensorRole::Output,
+            kind: BoundsProofKind::LinearRange { element_count: 2 },
+        })
+        .unwrap();
+    region
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 2 },
+        })
+        .unwrap();
+    region
+        .scalar_program(ScalarProgram::StrictSerialSum {
+            axes: axes.clone(),
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: CANONICAL_NAN,
+            empty_identity_bits: 0,
+        })
+        .unwrap();
+    region.numerical(strict()).unwrap();
+    region
+        .schedule(KernelSchedule {
+            binding: ExecutionBinding::GlobalLinearInvocation,
+            work_items: 2,
+            threads_per_workgroup: 1,
+            tail: TailPolicy::Exact,
+            output_owner: OwnershipWitnessId::new(0),
+            reduction: ReductionTopology::Serial {
+                axes,
+                order: ContributorOrder::OriginalAxisLexicographic,
+                permits_reassociation: false,
+                permits_permutation: false,
+            },
+            launch: LaunchPlan {
+                grid_threads: 2,
+                threads_per_workgroup: 1,
+                zero_work_skips_dispatch: true,
+            },
+        })
+        .unwrap();
+    lower_scheduled_region(&region.build().unwrap()).unwrap()
+}
+
+/// The program-level ABI quantities the two-stage fixture's stages name.
+///
+/// These are handles on the *kernel program*'s own arena, which the artifact's
+/// same-named handle type is deliberately not interchangeable with; the artifact
+/// declares its own expressions for the same quantities and each is proven
+/// against the program separately.
+struct TwoStageAbi {
+    /// Byte count of the `[2, 3]` working set both stages address.
+    working_bytes: tiler_ir::program::AbiExprId,
+    /// Byte count of the whole `[2]` program output.
+    output_bytes: tiler_ir::program::AbiExprId,
+    /// Launch extent of the stage iterating the `[2, 3]` shape.
+    pointwise_threads: tiler_ir::program::AbiExprId,
+    /// Launch extent of the stage iterating the `[2]` shape.
+    reduction_threads: tiler_ir::program::AbiExprId,
+    /// Workgroup width both fixture kernels require.
+    one: tiler_ir::program::AbiExprId,
+}
+
+/// Declares the ABI, applicability guard, and routing-commit contract of the
+/// two-stage fixture.
+fn declare_two_stage_contract(plan: &mut KernelProgramBuilder) -> TwoStageAbi {
+    let mut literal = |value: u64| {
+        plan.push_abi_root(AbiRoot::UnsignedLiteral(value))
+            .expect("abi literal")
+    };
+    let abi = TwoStageAbi {
+        working_bytes: literal(ELEMENT_BYTES * 6),
+        output_bytes: literal(ELEMENT_BYTES * 2),
+        pointwise_threads: literal(6),
+        reduction_threads: literal(2),
+        one: literal(1),
+    };
+    let guard = plan
+        .push_abi_root(AbiRoot::BooleanLiteral(true))
+        .expect("guard predicate");
+    plan.applicability_guard(guard).unwrap();
+    for (from, to, fallback_permitted) in [
+        (
+            RoutingCommitState::Preflight,
+            RoutingCommitState::Committed,
+            true,
+        ),
+        (
+            RoutingCommitState::Committed,
+            RoutingCommitState::Executing,
+            false,
+        ),
+        (
+            RoutingCommitState::Executing,
+            RoutingCommitState::Published,
+            false,
+        ),
+    ] {
+        plan.push_routing_commit_transition(RoutingCommitTransition {
+            from,
+            to,
+            fallback_permitted,
+        })
+        .unwrap();
+    }
+    abi
+}
+
+/// The storage the two-stage fixture's stages exchange values through.
+struct TwoStageStorage {
+    /// The scratch value both stages address part of.
+    temporary: tiler_ir::program::MaterializedValueId,
+    /// The published program output.
+    result: tiler_ir::program::MaterializedValueId,
+    /// Whole view of the externally bound program input.
+    read: ViewId,
+    /// The partial view: the upper half of a scratch buffer sized for two.
+    scratch_view: ViewId,
+    /// Whole view of the published program output.
+    write: ViewId,
+}
+
+/// Declares the input, the oversized scratch temporary, and the program output.
+fn wire_two_stage_storage(plan: &mut KernelProgramBuilder) -> TwoStageStorage {
+    let device = |capacity_bytes, ownership| AllocationSpec {
+        capacity_bytes,
+        alignment: 4,
+        memory_space: MemorySpace::Device,
+        ownership,
+    };
+    let external = plan
+        .push_allocation(device(24, AllocationOwnership::External))
+        .unwrap();
+    // Twice the working set: the scratch value is what makes a partial window
+    // expressible, so its allocation is sized for the value and not the window.
+    let scratch = plan
+        .push_allocation(device(48, AllocationOwnership::Program))
+        .unwrap();
+    let owned = plan
+        .push_allocation(device(8, AllocationOwnership::Program))
+        .unwrap();
+    let value = |origin, role, shape| MaterializedValueSpec {
+        origin,
+        role,
+        shape,
+        element_type: KernelType::F32,
+        alignment: 4,
+        memory_space: MemorySpace::Device,
+    };
+    let source = plan
+        .push_value(
+            value(
+                MaterializedOrigin::ProgramInput {
+                    key: InputKey::new("input").unwrap(),
+                },
+                ValueRole::Input,
+                input_shape(),
+            ),
+            external,
+        )
+        .unwrap();
+    let temporary = plan
+        .push_value(
+            value(
+                MaterializedOrigin::Internal,
+                ValueRole::Temporary,
+                scratch_shape(),
+            ),
+            scratch,
+        )
+        .unwrap();
+    let result = plan
+        .push_value(
+            value(
+                MaterializedOrigin::Internal,
+                ValueRole::Output,
+                output_shape(),
+            ),
+            owned,
+        )
+        .unwrap();
+    TwoStageStorage {
+        temporary,
+        result,
+        read: plan.push_whole_view(source).unwrap(),
+        scratch_view: plan
+            .push_view(
+                temporary,
+                ByteWindow {
+                    offset: SCRATCH_OFFSET,
+                    length: ELEMENT_BYTES * 6,
+                },
+            )
+            .unwrap(),
+        write: plan.push_whole_view(result).unwrap(),
+    }
+}
+
+/// Builds the two-stage plan whose temporary is addressed at a nonzero offset.
+///
+/// The scratch buffer holds twice the working set and both stages address its
+/// upper half through one shared view, so every binding of that value carries an
+/// offset of [`SCRATCH_OFFSET`] rather than zero.
+pub(super) fn partial_window_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
+    let pointwise = pointwise_kernel();
+    let reduction = reduction_kernel();
+    let mut plan = KernelProgramBuilder::new(semantic).unwrap();
+    let TwoStageAbi {
+        working_bytes,
+        output_bytes,
+        pointwise_threads,
+        reduction_threads,
+        one,
+    } = declare_two_stage_contract(&mut plan);
+    let TwoStageStorage {
+        temporary,
+        result,
+        read,
+        scratch_view,
+        write,
+    } = wire_two_stage_storage(&mut plan);
+
+    let first = plan
+        .push_stage(
+            &pointwise,
+            &(0..4).map(SemanticOccurrence::new).collect::<Vec<_>>(),
+            &[
+                StageAccess {
+                    view: read,
+                    mode: StageAccessMode::Read,
+                    accessible_bytes: working_bytes,
+                },
+                StageAccess {
+                    view: scratch_view,
+                    mode: StageAccessMode::Write,
+                    accessible_bytes: working_bytes,
+                },
+            ],
+            StageLaunch {
+                grid_threads: pointwise_threads,
+                threads_per_workgroup: one,
+            },
+        )
+        .unwrap();
+    let second = plan
+        .push_stage(
+            &reduction,
+            &[SemanticOccurrence::new(4)],
+            &[
+                StageAccess {
+                    view: scratch_view,
+                    mode: StageAccessMode::Read,
+                    accessible_bytes: working_bytes,
+                },
+                StageAccess {
+                    view: write,
+                    mode: StageAccessMode::Write,
+                    accessible_bytes: output_bytes,
+                },
+            ],
+            StageLaunch {
+                grid_threads: reduction_threads,
+                threads_per_workgroup: one,
+            },
+        )
+        .unwrap();
+    plan.push_data_dependency(first, second, temporary).unwrap();
+    plan.push_output(OutputKey::new("result").unwrap(), result)
+        .unwrap();
+    plan.build().unwrap()
+}
+
+// -------------------------------------------------------------------------
 // Artifact fixtures
 // -------------------------------------------------------------------------
 
@@ -539,6 +955,54 @@ pub(crate) fn build_artifact(
     draft.build().unwrap()
 }
 
+/// The two-stage variant whose scratch bindings start at a nonzero offset.
+///
+/// Nothing here states that offset. The guard, launch geometry, and accessible
+/// ranges — the offset included — are derived from the bound program, so the
+/// spec only pairs each stage with its backend entry; a producer has no field
+/// through which it could restate the placement, honestly or otherwise.
+fn partial_window_variant(payload: PayloadId) -> VariantSpec {
+    let entry = |key: &[u8]| EntrySpec {
+        bindings: vec![
+            BindingSpec {
+                kind: BindingKind::Buffer,
+            },
+            BindingSpec {
+                kind: BindingKind::Buffer,
+            },
+        ],
+        launch: LaunchSpec {
+            zero_work_skips_dispatch: true,
+            preconditions: Vec::new(),
+        },
+        implementation: BackendEntryRef {
+            payload,
+            entry_key: BackendEntryKey::from_bytes(key).unwrap(),
+        },
+    };
+    VariantSpec {
+        target_profile: profile(),
+        feasibility_rules: rules(),
+        deferred_predicates: Vec::new(),
+        entries: vec![entry(b"pointwise"), entry(b"reduction")],
+    }
+}
+
+/// Assembles the two-stage artifact whose temporary is bound at a nonzero offset.
+pub(super) fn partial_window_artifact() -> VerifiedArtifactProgram {
+    let semantic = semantic_program();
+    let program = partial_window_program(&semantic);
+    let provider = lowering_provider(1);
+    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+    draft.select_provider(selection(provider)).unwrap();
+    let descriptor = draft.push_payload(payload(0xa1)).unwrap();
+    draft
+        .push_variant(&program, partial_window_variant(descriptor))
+        .unwrap();
+    draft.build().unwrap()
+}
+
 pub(crate) fn default_artifact() -> VerifiedArtifactProgram {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
@@ -646,6 +1110,67 @@ fn a_value_published_under_two_names_carries_both_in_its_binding_target() {
         ["copy", "result"],
     );
     assert_eq!(bindings[1].value_role(), ValueRole::Output);
+}
+
+/// A slot may address part of the value it names, and it says where.
+///
+/// The plan sizes one program-owned scratch buffer for two working sets and puts
+/// the one its two stages exchange in the upper half. Both stages therefore bind
+/// the *same* internal value at byte 24 of 48. What this excludes is the failure
+/// the refusal it replaces existed to prevent: a record carrying an extent and no
+/// placement leaves a loader binding the right buffer at byte zero, which is a
+/// silently wrong dispatch rather than a rejection.
+#[test]
+fn a_binding_may_address_part_of_the_value_it_names() {
+    let artifact = partial_window_artifact();
+    let facts = bound_facts();
+    let entries: Vec<_> = artifact
+        .variants()
+        .next()
+        .expect("one variant")
+        .entries()
+        .collect();
+    assert_eq!(entries.len(), 2);
+    let pointwise: Vec<_> = entries[0].bindings().collect();
+    let reduction: Vec<_> = entries[1].bindings().collect();
+
+    // The scratch slot of each entry: written by the first stage, read by the
+    // second, and the same materialized value in both.
+    for scratch in [pointwise[1], reduction[0]] {
+        assert_eq!(scratch.target(), super::BindingTarget::Internal);
+        assert_eq!(scratch.value_role(), ValueRole::Temporary);
+        // Partial in the exact sense that matters: the window is shorter than
+        // the value, and starts inside it.
+        assert_eq!(scratch.value().required_bytes(), ELEMENT_BYTES * 12);
+        assert_eq!(scratch.window().offset, SCRATCH_OFFSET);
+        assert_eq!(scratch.window().length, ELEMENT_BYTES * 6);
+        assert_eq!(
+            scratch.accessible_offset().evaluate(&facts).unwrap(),
+            AbiValue::Unsigned(SCRATCH_OFFSET),
+        );
+        assert_eq!(
+            scratch.accessible_bytes().evaluate(&facts).unwrap(),
+            AbiValue::Unsigned(ELEMENT_BYTES * 6),
+        );
+    }
+
+    // The interface slots address their values whole, and say that too.
+    for whole in [pointwise[0], reduction[1]] {
+        assert_eq!(whole.window().offset, 0);
+        assert_eq!(
+            whole.accessible_offset().evaluate(&facts).unwrap(),
+            AbiValue::Unsigned(0),
+        );
+    }
+}
+
+/// Binds the fixture interface's declared shapes as an evaluation environment.
+fn bound_facts() -> AbiFacts {
+    let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
+    binder
+        .bind_input_shape(&InputKey::new("input").unwrap(), &input_shape())
+        .unwrap();
+    binder.build()
 }
 
 #[test]

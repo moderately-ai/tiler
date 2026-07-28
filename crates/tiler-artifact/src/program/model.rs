@@ -101,7 +101,18 @@ use super::keys::{
 /// `UnsignedLiteral(24)` where another wrote `rows * columns * 4` over the same
 /// program are now one artifact — a change in what the identity means, not only
 /// in how it is spelled.
-const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v6\0";
+///
+/// # Why this is a `v7` step
+///
+/// Raised to `v7` when each ABI binding gained the accessible *offset* beside
+/// its extent, so a slot addressing part of a value states where in it the range
+/// starts. The same argument as `v2`: the field landed inside the per-binding
+/// record, and a `v6` encoding of one artifact could otherwise equal a `v7`
+/// encoding of another. Every artifact's identity bytes move at this step, which
+/// is the intended consequence — a `v6` identity described a record that could
+/// not express a placement, so an artifact carrying one is not the same subject
+/// as the artifact carrying its `v7` restatement.
+const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v7\0";
 const STAGE_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.stage.v1\0";
 const PAYLOAD_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.payload.v1\0";
 /// Versioned domain separator of one selected provider's canonical key.
@@ -556,8 +567,10 @@ pub enum BindingTarget<'a> {
     ProgramOutput(&'a [OutputKey]),
     /// Storage the program produced for itself.
     ///
-    /// A loader allocates it rather than binding host data, sized by the
-    /// binding's own accessible-byte expression. It carries no name, for the
+    /// A loader allocates it rather than binding host data. The binding's own
+    /// accessible offset and extent bound what the entry reaches, so the
+    /// allocation must span at least their sum; the value's total size is a
+    /// program fact the envelope does not carry. It carries no name, for the
     /// reason above, so two `Internal` slots are indistinguishable — which is
     /// why [`ArtifactBuildError::AliasedInternalBinding`] refuses to package an
     /// entry whose two bindings address one internal value rather than encode
@@ -575,6 +588,7 @@ pub(super) struct BindingData {
     pub(super) access: BufferAccess,
     pub(super) alignment: u32,
     pub(super) target: BindingTargetData,
+    pub(super) accessible_offset: u32,
     pub(super) accessible_bytes: u32,
 }
 
@@ -1167,6 +1181,19 @@ impl<'a> BindingRef<'a> {
         self.data().target.value_role()
     }
 
+    /// Returns the first addressed byte of the bound value, as an expression.
+    ///
+    /// Together with [`Self::accessible_bytes`] this is the exact range the
+    /// entry reaches. A slot may address part of its value, so the offset is a
+    /// placement a loader must honour rather than a field that is always zero.
+    #[must_use]
+    pub fn accessible_offset(self) -> AbiExprRef<'a> {
+        AbiExprRef {
+            artifact: self.artifact,
+            node: position(self.data().accessible_offset),
+        }
+    }
+
     /// Returns the minimum accessible byte range expression.
     #[must_use]
     pub fn accessible_bytes(self) -> AbiExprRef<'a> {
@@ -1718,7 +1745,7 @@ fn identity_use_sites(envelope: &ArtifactEnvelope, orders: &[VariantOrder]) -> V
                 entry
                     .bindings
                     .iter()
-                    .map(|binding| binding.accessible_bytes),
+                    .flat_map(|binding| [binding.accessible_offset, binding.accessible_bytes]),
             );
             sites.push(entry.launch.grid_threads);
             sites.push(entry.launch.threads_per_workgroup);
@@ -1887,6 +1914,7 @@ fn push_entry(
         bytes.push(buffer_access_tag(binding.access));
         bytes.extend_from_slice(&binding.alignment.to_be_bytes());
         push_binding_target(bytes, &binding.target);
+        push_abi_reference(bytes, arena, binding.accessible_offset);
         push_abi_reference(bytes, arena, binding.accessible_bytes);
     }
     push_abi_reference(bytes, arena, entry.launch.grid_threads);

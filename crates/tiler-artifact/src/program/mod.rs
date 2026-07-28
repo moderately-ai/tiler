@@ -280,6 +280,8 @@
 //!
 //! // The ABI's accessible ranges are formulas over the bound interface, not
 //! // constants: `rows * columns * 4` input bytes and `rows * 4` output bytes.
+//! // Both slots address their value from its first byte, so both offsets are
+//! // the literal zero this plan's byte windows actually state.
 //! let key = InputKey::new("input")?;
 //!
 //! artifact.push_variant(

@@ -14,10 +14,10 @@
 //! # What cannot be re-proven here, and why it is still pinned
 //!
 //! Three of the builder's obligations tie the ABI to the *program* rather than
-//! to the manifest: a binding's accessible byte range must equal the exact byte
-//! window its stage access addresses, an entry's bindings must correspond
-//! one-to-one with its kernel's buffer parameters, and each binding's carried
-//! interface reference must be the one its stage access actually resolves to.
+//! to the manifest: a binding's accessible offset and byte range must equal the
+//! exact byte window its stage access addresses, an entry's bindings must
+//! correspond one-to-one with its kernel's buffer parameters, and each binding's
+//! carried interface reference must be the one its stage access resolves to.
 //! Neither the byte windows, the kernel signature, nor the program's value table
 //! travel in this profile, so a decoder cannot recompute them. They are not
 //! therefore unguarded: all three are folded into the artifact's canonical
@@ -371,7 +371,7 @@ fn check_expression_closure(envelope: &ArtifactEnvelope) -> Result<(), ArtifactC
                 entry
                     .bindings
                     .iter()
-                    .map(|binding| binding.accessible_bytes),
+                    .flat_map(|binding| [binding.accessible_offset, binding.accessible_bytes]),
             );
             work.push(entry.launch.grid_threads);
             work.push(entry.launch.threads_per_workgroup);
@@ -482,6 +482,13 @@ fn check_entry(
     static_facts: &AbiFacts,
 ) -> Result<(), ArtifactCodecError> {
     for binding in &entry.bindings {
+        facts.check_use(
+            binding.accessible_offset,
+            AbiExprUse::AccessibleOffset,
+            AbiType::Unsigned,
+            AvailabilityPhase::LiveDevicePreflight,
+            true,
+        )?;
         facts.check_use(
             binding.accessible_bytes,
             AbiExprUse::AccessibleBytes,

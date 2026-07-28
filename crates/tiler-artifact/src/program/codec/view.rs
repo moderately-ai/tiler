@@ -809,11 +809,23 @@ impl<'a> DecodedBinding<'a> {
         self.data().alignment
     }
 
+    /// Returns the first addressed byte of the bound value, as an expression.
+    ///
+    /// A slot may address part of its value, so this is a placement a loader
+    /// must honour rather than a field that is always zero. Together with
+    /// [`Self::accessible_bytes`] it is the exact range the entry reaches.
+    #[must_use]
+    pub fn accessible_offset(self) -> DecodedExpr<'a> {
+        DecodedExpr {
+            artifact: self.artifact,
+            node: self.data().accessible_offset,
+        }
+    }
+
     /// Returns the minimum accessible byte range expression.
     ///
-    /// The whole of the addressed value: an artifact whose binding addressed
-    /// part of one is refused at construction, because the record carries an
-    /// extent and no offset to place it at.
+    /// Counted from [`Self::accessible_offset`], not from the start of the
+    /// addressed value.
     #[must_use]
     pub fn accessible_bytes(self) -> DecodedExpr<'a> {
         DecodedExpr {

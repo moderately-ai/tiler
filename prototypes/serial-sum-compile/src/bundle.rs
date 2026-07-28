@@ -17,7 +17,16 @@
 //! [`super::payload`] from the emission and the toolchain, and its content digest
 //! is *derived by the artifact layer* from those bytes rather than supplied.
 //!
-//! The one thing this module computes is the transliteration of the compiler's
+//! One value is spelled here rather than handed over, and the reason is that its
+//! owning authority states it in a form that is not an expression. A binding's
+//! accessible *offset* is `tiler_ir::program::ByteWindow::offset`, a constant on
+//! the packaged program's own view, and `tiler_compiler::session::AbiEntry`
+//! exposes arena positions only. So this module reads that constant from the
+//! program it is packaging and mints the literal naming it. That is a
+//! transcription of the plan and not a choice: `push_variant` re-derives the same
+//! window and refuses a binding whose declared offset differs from it.
+//!
+//! The other thing this module computes is the transliteration of the compiler's
 //! expression arena onto the builder's own arena, and that is mechanical: the
 //! decision about what each expression *says* was made in the compiler.
 //!
