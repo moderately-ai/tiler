@@ -1578,17 +1578,23 @@ fn derive_call_boundary_contract(
         }
         seen.push(*role);
 
-        let bound = |wants_write: bool| {
+        // Selected by what the parameter *does*, not by the negation of the
+        // other direction. An `InOut` both reads and writes, so selecting the
+        // read side with `!writes()` silently dropped its read requirement —
+        // the contract then guaranteed a role the call also reads, with no
+        // requirement at all, and a producer of that tensor was never asked to
+        // satisfy anything.
+        let bound = |selects: fn(crate::call_abi::ParameterRole) -> bool| {
             bindings
                 .iter()
                 .filter(|(_, bound_role)| bound_role == role)
                 .find_map(|(name, _)| {
                     let parameter = declaration.abi().parameter(name)?;
-                    (parameter.role().writes() == wants_write).then_some(parameter)
+                    selects(parameter.role()).then_some(parameter)
                 })
         };
 
-        if let Some(parameter) = bound(false)
+        if let Some(parameter) = bound(crate::call_abi::ParameterRole::reads)
             && let Some(properties) =
                 crate::call_declaration::required_properties_for(parameter, declaration.placement())
         {
@@ -1598,7 +1604,7 @@ fn derive_call_boundary_contract(
                 properties,
             });
         }
-        if let Some(parameter) = bound(true) {
+        if let Some(parameter) = bound(crate::call_abi::ParameterRole::writes) {
             let properties = crate::call_declaration::guaranteed_properties_for(
                 parameter,
                 declaration.effects(),
@@ -2749,6 +2755,82 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    /// An `InOut` parameter's role carries both a requirement and a guarantee.
+    ///
+    /// The regression this pins: selecting the read parameter by `!writes()`
+    /// silently excluded `InOut` (which writes), so its read requirement was
+    /// dropped and a producer of that tensor was never asked to satisfy
+    /// anything. Both halves are asserted, and the declaration uses
+    /// `MayAliasInputs` because an in-place parameter beside `Distinct` is
+    /// refused by the coherence check.
+    #[test]
+    fn an_in_out_binding_yields_both_a_requirement_and_a_guarantee() {
+        use crate::boundary::{
+            AdmittedMemoryDomains, ByteAlignment, ExecutionAffinity, LayoutGuarantee,
+            LayoutRequirement, MemoryDomainClass, StorageEncoding,
+        };
+        use crate::call_abi::{CallAbi, ParameterLayout, ParameterRole, ParameterSpec};
+        use crate::call_declaration::{OpaqueCallDeclaration, WorkScaling};
+        use crate::call_placement::CallPlacement;
+        use crate::effects::{Aliasing, CallEffects, Elimination, Motion};
+        use tiler_ir::schedule::{NumericalPermission, SubnormalMode};
+
+        let declaration = OpaqueCallDeclaration::check(
+            CallAbi::declare([ParameterSpec {
+                name: "buffer",
+                role: ParameterRole::InOut,
+                layout: ParameterLayout::Both {
+                    requires: LayoutRequirement::DenseRowMajor,
+                    guarantees: LayoutGuarantee::DenseRowMajor,
+                },
+                encoding: StorageEncoding::Unpacked,
+                alignment: ByteAlignment::F32_NATURAL,
+            }])
+            .expect("well formed"),
+            CallEffects::declared(
+                Elimination::Required,
+                Motion::Ordered,
+                Aliasing::MayAliasInputs,
+            ),
+            CallPlacement::declare(
+                ExecutionAffinity::PRIMARY,
+                AdmittedMemoryDomains::new([MemoryDomainClass::Device]).expect("non-empty"),
+                &[MemoryDomainClass::Device],
+            )
+            .expect("supported"),
+            tiler_ir::schedule::ResourceRequirements {
+                buffer_bindings: 1,
+                threads_per_workgroup: 1,
+                local_memory_bytes: 0,
+                barriers: 0,
+                requires_device_memory: true,
+                input_subnormals: SubnormalMode::Preserve,
+                result_subnormals: SubnormalMode::Preserve,
+                contraction: NumericalPermission::Forbidden,
+                reassociation: NumericalPermission::Forbidden,
+            },
+            WorkScaling::Fixed(1),
+        )
+        .expect("coherent");
+
+        let contract =
+            super::derive_call_boundary_contract(&declaration, &[("buffer", TensorRole::Input)])
+                .expect("one admitted domain");
+
+        assert_eq!(
+            contract.requirements.len(),
+            1,
+            "the in-out parameter's read requirement was dropped"
+        );
+        assert_eq!(contract.requirements[0].tensor(), TensorRole::Input);
+        assert_eq!(
+            contract.guarantees.len(),
+            1,
+            "the in-out parameter's write guarantee was dropped"
+        );
+        assert_eq!(contract.guarantees[0].tensor(), TensorRole::Input);
     }
 
     /// A call whose declared numerics differ from the request's contract is
