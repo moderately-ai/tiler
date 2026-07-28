@@ -86,3 +86,24 @@ More than one group means the caller chooses *within* a group on cost and *betwe
 ## What remains for this ticket
 
 Call the engine at `pipeline.rs:420` in place of `normalize_semantics`, readmit through `readmit_alternatives`, group through `group_by_resolved_contract`, and carry the result into planning. Every piece that step needs now exists and is tested; what is left is the wiring and the behaviour change it causes — the explain census, and whether the serial-sum artifact identity moves.
+
+## The wiring is not a drop-in, and here is exactly why (2026-07-28)
+
+I expected to swap the call at `pipeline.rs:420` for a behaviour-preserving first step — only the common-subexpression rule is registered, so the engine yields at most one alternative and the pin guarantees it is the same program. That swap does not work, and the reason is worth having before someone attempts it.
+
+**`NormalizationOutcome` is not a local variable; it flows three levels down and emits the explain record itself.** Tracing every mention in `pipeline.rs`:
+
+- `420` — produced by `normalize_semantics`.
+- `422`, `445` — passed to `compile_verified` on both the rewrote and did-not-rewrite paths.
+- `451`, `459` — threaded through to `compile_target`.
+- `468`, `471` — threaded through to `compile_target_with_explain`.
+- `797–798` — **`normalization.record(explain, ...)`** produces the normalization explain record, and `815`, `820`, `825` make that record the *cause* of the region-candidate enumeration records that follow.
+
+So the outcome is not a result the pipeline consumes and discards. It is the head of the explain causal chain for everything downstream of normalization.
+
+**The engine returns `Vec<RewriteProposal<SemanticProgram>>` and has no such record.** Wiring it in therefore requires the outcome type to be generalized to carry rule identities and, eventually, more than one alternative — which is what will move the explain census, and now with the mechanism named rather than predicted.
+
+*The check, reproducible in one line:* `grep -n 'normalization' crates/tiler-compiler/src/pipeline.rs` returns the eleven sites above; read line 797 and the causal wiring at 815–825.
+
+**Suggested order, revised.** Generalize `NormalizationOutcome` first — give it the rule identity and let it hold zero or more alternatives, keeping its `record` method as the explain head. Then the swap at `420` is small, and the census moves once, in that change, for a reason that is written down. Attempting the swap first means discovering this with a half-migrated pipeline.
+
