@@ -59,6 +59,7 @@ use tiler_ir::program::{StageRef, VerifiedKernelProgram};
 use tiler_ir::semantic::{ProviderIdentity, SemanticProgram};
 
 use crate::capability::FrozenLoweringCapabilityRegistry;
+pub use crate::explain::VerifiedCompilationExplain;
 use crate::explain::VerifiedExplainTrace;
 use crate::feasibility::FeasibilityRuleSetIdentity;
 use crate::pipeline::{
@@ -218,7 +219,7 @@ pub struct Compilation {
     feasibility_rule_set: FeasibilityRuleSetIdentity,
     alternatives: Vec<ProgramAlternative>,
     selected_alternative_id: String,
-    explain: VerifiedExplainTrace,
+    explain: VerifiedCompilationExplain,
 }
 
 impl Compilation {
@@ -344,10 +345,15 @@ impl Compilation {
             })
     }
 
-    /// Returns the compilation's typed explain trace.
+    /// Returns the compilation's verified composite explanation.
+    ///
+    /// The value binds the top-level selection to every independently sealed
+    /// semantic-candidate trace. The bounded profile currently has one semantic
+    /// candidate, but callers use the same boundary once algebraic exploration
+    /// contributes several.
     #[must_use]
-    pub fn explain(&self) -> ExplainReport<'_> {
-        ExplainReport(&self.explain)
+    pub const fn explain(&self) -> &VerifiedCompilationExplain {
+        &self.explain
     }
 }
 
@@ -953,7 +959,7 @@ fn into_compilations(
             feasibility_rule_set: target.feasibility_rule_set,
             selected_alternative_id: target.portfolio.selection.selected_alternative_id,
             alternatives: target.portfolio.alternatives,
-            explain: target.explain,
+            explain: VerifiedCompilationExplain::one_candidate(target.explain),
         })
         .collect()
 }
@@ -1065,16 +1071,17 @@ mod tests {
         );
     }
 
-    /// A successful compilation carries a renderable trace.
+    /// A successful compilation carries a renderable composite explanation.
     #[test]
     fn a_compilation_renders_its_explain_trace() {
         let program = semantic_program();
         let compilations = compile_governed(&program, NumericalContract::StrictF32)
             .expect("the governed program compiles");
+        assert_eq!(compilations[0].explain().semantic_candidate_count(), 1);
         let rendered = compilations[0].explain().render();
         assert!(
-            rendered.starts_with("tiler-explain-v2 "),
-            "the trace renders in its deterministic form",
+            rendered.starts_with("tiler-compilation-explain-v1 "),
+            "the composite explanation renders in its deterministic form",
         );
     }
 

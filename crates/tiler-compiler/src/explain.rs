@@ -15,6 +15,10 @@ use crate::request::{LoweringProviderIdentity, VerifiedTargetRequest};
 
 pub(crate) const EXPLAIN_SCHEMA_VERSION: u32 = 2;
 pub(crate) const EXPLAIN_RENDERER_VERSION: u32 = 2;
+const COMPILATION_EXPLAIN_SCHEMA_VERSION: u32 = 1;
+const COMPILATION_EXPLAIN_RENDERER_VERSION: u32 = 1;
+const MAX_COMPILATION_EXPLAIN_CANDIDATES: usize = 256;
+const MAX_COMPILATION_EXPLAIN_CANONICAL_BYTES: usize = 256 * 1024 * 1024;
 const MAX_KEY_BYTES: usize = 255;
 const MAX_RECORDS: u32 = 4_096;
 const MAX_CANONICAL_BYTES: u32 = 1024 * 1024;
@@ -30,6 +34,8 @@ pub(crate) const MAX_TERMINAL_CAUSES: u32 = 16;
 const MAX_CAUSES_PER_RECORD: u32 = MAX_TERMINAL_CAUSES;
 const MAX_FACTS_PER_ASSESSMENT: u32 = 32;
 const MAX_COST_TERMS: u32 = 32;
+const PHYSICAL_SELECTION_POLICY: &str = "tiler.selection.structural-pareto.v1";
+const SEMANTIC_PORTFOLIO_SELECTION_POLICY: &str = "tiler.selection.semantic-portfolio.v1";
 static NEXT_WRITER_AUTHORITY: AtomicU64 = AtomicU64::new(1);
 
 macro_rules! key_type {
@@ -1194,9 +1200,33 @@ impl ExplainWriter {
     }
 
     pub(crate) fn finish_success(
+        self,
+        alternatives: &[&str],
+        selected: &str,
+    ) -> Result<VerifiedExplainTrace, ExplainError> {
+        self.finish_success_with_policy(alternatives, selected, PHYSICAL_SELECTION_POLICY)
+    }
+
+    /// Seals a top-level selection over independently readmitted semantic
+    /// candidates.
+    ///
+    /// Its dedicated policy keeps these entries distinguishable from the
+    /// physical-alternative ledger sealed by [`Self::finish_success`]. The
+    /// composite explanation validates this ledger against its keyed candidate
+    /// traces before accepting it.
+    pub(crate) fn finish_semantic_portfolio(
+        self,
+        candidates: &[&str],
+        selected: &str,
+    ) -> Result<VerifiedExplainTrace, ExplainError> {
+        self.finish_success_with_policy(candidates, selected, SEMANTIC_PORTFOLIO_SELECTION_POLICY)
+    }
+
+    fn finish_success_with_policy(
         mut self,
         alternatives: &[&str],
         selected: &str,
+        selection_policy: &str,
     ) -> Result<VerifiedExplainTrace, ExplainError> {
         check_terminal_ledger_bound(alternatives.len(), alternatives.iter().map(|key| key.len()))?;
         let mut expected = BTreeSet::new();
@@ -1235,10 +1265,10 @@ impl ExplainWriter {
                 .transpose()?;
             let subject = self.subject(SubjectKind::Alternative, key.as_str())?;
             self.push_terminal(
-                RuleRef::builtin("tiler.selection.structural-pareto.v1")?,
+                RuleRef::builtin(selection_policy)?,
                 vec![subject],
                 ExplainEvent::Selection {
-                    policy: SelectionPolicyKey::new("tiler.selection.structural-pareto.v1")?,
+                    policy: SelectionPolicyKey::new(selection_policy)?,
                     outcome: pending.outcome,
                 },
                 cause.into_iter().collect(),
@@ -1542,6 +1572,367 @@ impl VerifiedExplainTrace {
         Ok(())
     }
 }
+
+/// The verified explanation of one compilation-wide semantic portfolio.
+///
+/// Opaque because the record vocabulary remains compiler-private. The value
+/// binds one top-level selection trace, qualified by the original request, to
+/// every per-semantic-candidate trace that selection compared. Each candidate
+/// trace remains sealed under its own readmitted request, so a sound proof is
+/// never transplanted into the original request's writer merely to make the
+/// portfolio look like one trace.
+///
+/// Candidate order is canonical correlation-key then request-subject order. The
+/// canonical identity embeds each candidate's bounded correlation key, full
+/// request subject, and collision-free trace identity beside the selection
+/// trace, with length framing at every boundary. The key connects a
+/// semantic-selection entry to its sealed trace only inside this composite; it
+/// is not a standalone identity and must never be used in place of the full
+/// request subject. A digest is never used for equality.
+#[derive(Clone, Eq, PartialEq)]
+pub struct VerifiedCompilationExplain {
+    selection: std::sync::Arc<VerifiedExplainTrace>,
+    candidates: Box<[SemanticCandidateExplain]>,
+    binding: SelectionBinding,
+    canonical_identity: Box<[u8]>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SemanticCandidateExplain {
+    key: SubjectKey,
+    trace: std::sync::Arc<VerifiedExplainTrace>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SelectionBinding {
+    Singleton,
+    SemanticPortfolio,
+}
+
+impl VerifiedCompilationExplain {
+    /// Adapts the current one-semantic-candidate pipeline without weakening the
+    /// future portfolio boundary.
+    ///
+    /// The one sealed trace is shared rather than cloned: today it contains
+    /// both the target's selection and the sole semantic candidate's complete
+    /// planning evidence. Once semantic alternatives are wired, the general
+    /// constructor supplies a distinct top-level trace and one trace per
+    /// readmitted candidate.
+    pub(crate) fn one_candidate(trace: VerifiedExplainTrace) -> Self {
+        let trace = std::sync::Arc::new(trace);
+        let key = selected_candidate_key(&trace)
+            .expect("a successful verified trace has one selected alternative");
+        Self::assemble(
+            std::sync::Arc::clone(&trace),
+            vec![SemanticCandidateExplain { key, trace }],
+            SelectionBinding::Singleton,
+        )
+        .expect("one verified trace fits the compilation-explain bounds")
+    }
+
+    /// Binds a top-level selection trace to the readmitted semantic candidates
+    /// it selected among.
+    ///
+    /// The original request must also occur as one candidate — the unchanged
+    /// baseline — or the selection trace would be rooted in a request absent
+    /// from the portfolio it claims to summarize. Each bounded key is a
+    /// correlation handle local to this sealed composite, not an identity:
+    /// construction requires its exact equality with the dedicated semantic
+    /// selection ledger and still encodes the full request subject beside it.
+    /// Duplicate keys and duplicate request subjects are refused rather than
+    /// silently deduplicated.
+    pub(crate) fn from_traces(
+        selection: VerifiedExplainTrace,
+        candidates: Vec<(SubjectKey, VerifiedExplainTrace)>,
+    ) -> Result<Self, CompilationExplainError> {
+        Self::assemble(
+            std::sync::Arc::new(selection),
+            candidates
+                .into_iter()
+                .map(|(key, trace)| SemanticCandidateExplain {
+                    key,
+                    trace: std::sync::Arc::new(trace),
+                })
+                .collect(),
+            SelectionBinding::SemanticPortfolio,
+        )
+    }
+
+    fn assemble(
+        selection: std::sync::Arc<VerifiedExplainTrace>,
+        mut candidates: Vec<SemanticCandidateExplain>,
+        binding: SelectionBinding,
+    ) -> Result<Self, CompilationExplainError> {
+        if candidates.is_empty() {
+            return Err(CompilationExplainError::Empty);
+        }
+        if candidates.len() > MAX_COMPILATION_EXPLAIN_CANDIDATES {
+            return Err(CompilationExplainError::CandidateCapacity);
+        }
+        candidates.sort_by(|left, right| {
+            (&left.key, &left.trace.compilation_subject.canonical)
+                .cmp(&(&right.key, &right.trace.compilation_subject.canonical))
+        });
+        if candidates.windows(2).any(|pair| pair[0].key == pair[1].key) {
+            return Err(CompilationExplainError::DuplicateCandidateKey);
+        }
+        if has_duplicate_candidate_subjects(&candidates) {
+            return Err(CompilationExplainError::DuplicateCandidate);
+        }
+        let candidate_keys = candidates
+            .iter()
+            .map(|candidate| candidate.key.clone())
+            .collect::<BTreeSet<_>>();
+        let selection_keys = match binding {
+            SelectionBinding::Singleton => {
+                let key = selected_candidate_key(&selection)?;
+                BTreeSet::from([key])
+            }
+            SelectionBinding::SemanticPortfolio => semantic_selection_keys(&selection)?,
+        };
+        if selection_keys != candidate_keys {
+            return Err(CompilationExplainError::CandidateKeyMismatch);
+        }
+        if !candidates
+            .iter()
+            .any(|candidate| candidate.trace.compilation_subject == selection.compilation_subject)
+        {
+            return Err(CompilationExplainError::UnboundSelection);
+        }
+        let candidates = candidates.into_boxed_slice();
+        let canonical_identity = encode_compilation_explain(&selection, &candidates, binding)?;
+        Ok(Self {
+            selection,
+            candidates,
+            binding,
+            canonical_identity,
+        })
+    }
+
+    /// Returns how many independently sealed semantic candidates participate.
+    #[must_use]
+    pub fn semantic_candidate_count(&self) -> usize {
+        self.candidates.len()
+    }
+
+    /// Renders the complete compilation explanation deterministically.
+    ///
+    /// The spelling is diagnostic rather than a parse contract. The top-level
+    /// selection appears first, followed by candidates in canonical key then
+    /// request-subject order; each nested trace retains its own renderer header
+    /// and request qualifier.
+    #[must_use]
+    pub fn render(&self) -> String {
+        use fmt::Write as _;
+
+        let mut output = format!(
+            "tiler-compilation-explain-v{COMPILATION_EXPLAIN_RENDERER_VERSION} semantic-candidates={}\n",
+            self.candidates.len()
+        );
+        output.push_str("top-level-selection\n");
+        output.push_str(&self.selection.render());
+        for (index, candidate) in self.candidates.iter().enumerate() {
+            let _ = writeln!(
+                output,
+                "semantic-candidate {index} key={}",
+                candidate.key.as_str()
+            );
+            output.push_str(&candidate.trace.render());
+        }
+        output
+    }
+
+    #[cfg(test)]
+    fn identity(&self) -> &[u8] {
+        &self.canonical_identity
+    }
+
+    #[cfg(test)]
+    fn verify(&self) -> Result<(), CompilationExplainError> {
+        let selection_keys = match self.binding {
+            SelectionBinding::Singleton => {
+                selected_candidate_key(&self.selection).map(|key| BTreeSet::from([key]))
+            }
+            SelectionBinding::SemanticPortfolio => semantic_selection_keys(&self.selection),
+        }
+        .map_err(|_| CompilationExplainError::StaleIdentity)?;
+        let candidate_keys = self
+            .candidates
+            .iter()
+            .map(|candidate| candidate.key.clone())
+            .collect::<BTreeSet<_>>();
+        if self.candidates.is_empty()
+            || self.candidates.len() > MAX_COMPILATION_EXPLAIN_CANDIDATES
+            || selection_keys != candidate_keys
+            || !self.candidates.iter().any(|candidate| {
+                candidate.trace.compilation_subject == self.selection.compilation_subject
+            })
+            || self.candidates.windows(2).any(|pair| {
+                (&pair[0].key, &pair[0].trace.compilation_subject.canonical)
+                    >= (&pair[1].key, &pair[1].trace.compilation_subject.canonical)
+            })
+            || self
+                .candidates
+                .windows(2)
+                .any(|pair| pair[0].key == pair[1].key)
+            || has_duplicate_candidate_subjects(&self.candidates)
+            || self.selection.verify().is_err()
+            || self
+                .candidates
+                .iter()
+                .any(|candidate| candidate.trace.verify().is_err())
+            || encode_compilation_explain(&self.selection, &self.candidates, self.binding)?.as_ref()
+                != self.canonical_identity.as_ref()
+        {
+            return Err(CompilationExplainError::StaleIdentity);
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Debug for VerifiedCompilationExplain {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("VerifiedCompilationExplain")
+            .field("semantic_candidates", &self.candidates.len())
+            .field("selection_records", &self.selection.records().len())
+            .finish_non_exhaustive()
+    }
+}
+
+fn encode_compilation_explain(
+    selection: &VerifiedExplainTrace,
+    candidates: &[SemanticCandidateExplain],
+    binding: SelectionBinding,
+) -> Result<Box<[u8]>, CompilationExplainError> {
+    encode_compilation_explain_with_capacity(
+        selection,
+        candidates,
+        binding,
+        MAX_COMPILATION_EXPLAIN_CANONICAL_BYTES,
+    )
+}
+
+fn encode_compilation_explain_with_capacity(
+    selection: &VerifiedExplainTrace,
+    candidates: &[SemanticCandidateExplain],
+    binding: SelectionBinding,
+    maximum_bytes: usize,
+) -> Result<Box<[u8]>, CompilationExplainError> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"tiler.explain.compilation.v1\0");
+    bytes.extend_from_slice(&COMPILATION_EXPLAIN_SCHEMA_VERSION.to_be_bytes());
+    bytes.push(match binding {
+        SelectionBinding::Singleton => 1,
+        SelectionBinding::SemanticPortfolio => 2,
+    });
+    push_slice(&mut bytes, selection.identity().as_bytes());
+    push_len(&mut bytes, candidates.len());
+    for candidate in candidates {
+        push_slice(&mut bytes, candidate.key.as_str().as_bytes());
+        push_slice(&mut bytes, &candidate.trace.compilation_subject.canonical);
+        push_slice(&mut bytes, candidate.trace.identity().as_bytes());
+        check_compilation_explain_capacity(bytes.len(), maximum_bytes)?;
+    }
+    check_compilation_explain_capacity(bytes.len(), maximum_bytes)?;
+    Ok(bytes.into_boxed_slice())
+}
+
+fn has_duplicate_candidate_subjects(candidates: &[SemanticCandidateExplain]) -> bool {
+    let mut subjects = BTreeSet::new();
+    candidates
+        .iter()
+        .any(|candidate| !subjects.insert(candidate.trace.compilation_subject.canonical.as_ref()))
+}
+
+fn selected_candidate_key(
+    trace: &VerifiedExplainTrace,
+) -> Result<SubjectKey, CompilationExplainError> {
+    let mut selected = None;
+    for record in trace.records() {
+        match record.event() {
+            ExplainEvent::Selection {
+                outcome: SelectionOutcome::Selected,
+                ..
+            } => {
+                let [subject] = record.subjects() else {
+                    return Err(CompilationExplainError::InvalidSelectionTrace);
+                };
+                if subject.kind() != SubjectKind::Alternative || selected.is_some() {
+                    return Err(CompilationExplainError::InvalidSelectionTrace);
+                }
+                selected = Some(subject.key().clone());
+            }
+            ExplainEvent::CompilerFailure { .. } => {
+                return Err(CompilationExplainError::InvalidSelectionTrace);
+            }
+            _ => {}
+        }
+    }
+    selected.ok_or(CompilationExplainError::InvalidSelectionTrace)
+}
+
+fn semantic_selection_keys(
+    trace: &VerifiedExplainTrace,
+) -> Result<BTreeSet<SubjectKey>, CompilationExplainError> {
+    let mut keys = BTreeSet::new();
+    let mut selected = 0_usize;
+    for record in trace.records() {
+        match record.event() {
+            ExplainEvent::Selection { policy, outcome }
+                if policy.as_str() == SEMANTIC_PORTFOLIO_SELECTION_POLICY =>
+            {
+                let [subject] = record.subjects() else {
+                    return Err(CompilationExplainError::InvalidSelectionTrace);
+                };
+                if subject.kind() != SubjectKind::Alternative || !keys.insert(subject.key().clone())
+                {
+                    return Err(CompilationExplainError::InvalidSelectionTrace);
+                }
+                selected += usize::from(*outcome == SelectionOutcome::Selected);
+            }
+            ExplainEvent::CompilerFailure { .. } => {
+                return Err(CompilationExplainError::InvalidSelectionTrace);
+            }
+            _ => {}
+        }
+    }
+    if keys.is_empty() || selected != 1 {
+        return Err(CompilationExplainError::InvalidSelectionTrace);
+    }
+    Ok(keys)
+}
+
+fn check_compilation_explain_capacity(
+    actual: usize,
+    maximum: usize,
+) -> Result<(), CompilationExplainError> {
+    if actual > maximum {
+        return Err(CompilationExplainError::CanonicalCapacity);
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CompilationExplainError {
+    InvalidSelectionTrace,
+    Empty,
+    DuplicateCandidateKey,
+    CandidateKeyMismatch,
+    DuplicateCandidate,
+    UnboundSelection,
+    CandidateCapacity,
+    CanonicalCapacity,
+    StaleIdentity,
+}
+
+impl fmt::Display for CompilationExplainError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "compilation explain: {self:?}")
+    }
+}
+
+impl Error for CompilationExplainError {}
 
 fn render_event(output: &mut String, event: &ExplainEvent) {
     use fmt::Write as _;
@@ -2337,6 +2728,20 @@ mod tests {
         writer
             .finish_success(&["alternative:test"], "alternative:test")
             .unwrap()
+    }
+
+    fn finish_semantic_selection_trace(
+        request: &VerifiedTargetRequest,
+        candidates: &[(&str, SelectionOutcome)],
+        selected: &str,
+    ) -> VerifiedExplainTrace {
+        let mut writer = ExplainWriter::new(request).unwrap();
+        for (key, outcome) in candidates {
+            let subject = writer.subject(SubjectKind::Alternative, key).unwrap();
+            writer.note_selection(subject, *outcome, None).unwrap();
+        }
+        let keys = candidates.iter().map(|(key, _)| *key).collect::<Vec<_>>();
+        writer.finish_semantic_portfolio(&keys, selected).unwrap()
     }
 
     #[test]
@@ -3213,5 +3618,181 @@ mod tests {
             .unwrap();
         let rendered = finish_test_trace(writer).render();
         assert!(rendered.contains("disproved:shape-mismatch:checked-invariant:facts=rank:count=3"));
+    }
+
+    #[test]
+    fn compilation_explain_canonically_binds_selection_and_candidate_traces() {
+        let first = finish_test_trace(ExplainWriter::new(&request(2.0)).unwrap());
+        let second = finish_test_trace(ExplainWriter::new(&request(3.0)).unwrap());
+        let selection_request = request(2.0);
+        let selection = finish_semantic_selection_trace(
+            &selection_request,
+            &[
+                ("semantic:first", SelectionOutcome::Selected),
+                ("semantic:second", SelectionOutcome::Dominated),
+            ],
+            "semantic:first",
+        );
+        let forward = VerifiedCompilationExplain::from_traces(
+            selection.clone(),
+            vec![
+                (SubjectKey::new("semantic:first").unwrap(), first.clone()),
+                (SubjectKey::new("semantic:second").unwrap(), second.clone()),
+            ],
+        )
+        .unwrap();
+        let reversed = VerifiedCompilationExplain::from_traces(
+            selection,
+            vec![
+                (SubjectKey::new("semantic:second").unwrap(), second),
+                (SubjectKey::new("semantic:first").unwrap(), first),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(forward.semantic_candidate_count(), 2);
+        assert_eq!(forward.identity(), reversed.identity());
+        assert_eq!(forward.render(), reversed.render());
+        assert!(forward.verify().is_ok());
+        assert!(
+            forward
+                .render()
+                .starts_with("tiler-compilation-explain-v1 semantic-candidates=2\n")
+        );
+        assert_eq!(
+            forward
+                .render()
+                .matches("tiler-explain-v2 request=")
+                .count(),
+            3,
+            "the top-level selection and both complete candidate traces render",
+        );
+    }
+
+    #[test]
+    fn compilation_explain_rejects_incomplete_or_ambiguous_bindings() {
+        let first = finish_test_trace(ExplainWriter::new(&request(2.0)).unwrap());
+        let second = finish_test_trace(ExplainWriter::new(&request(3.0)).unwrap());
+        let third = finish_test_trace(ExplainWriter::new(&request(4.0)).unwrap());
+        let selection_request = request(2.0);
+        let selection = finish_semantic_selection_trace(
+            &selection_request,
+            &[
+                ("semantic:a", SelectionOutcome::Selected),
+                ("semantic:b", SelectionOutcome::Dominated),
+            ],
+            "semantic:a",
+        );
+        let failure = ExplainWriter::new(&request(2.0))
+            .unwrap()
+            .finish_failure(
+                FailureDescriptor::new(
+                    ExplainStage::Selection,
+                    "selection-failed",
+                    SubjectKind::Alternative,
+                    "alternative:failed",
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            VerifiedCompilationExplain::from_traces(
+                failure.clone(),
+                vec![(SubjectKey::new("semantic:a").unwrap(), failure)],
+            ),
+            Err(CompilationExplainError::InvalidSelectionTrace),
+        );
+        assert_eq!(
+            VerifiedCompilationExplain::from_traces(selection.clone(), Vec::new()),
+            Err(CompilationExplainError::Empty),
+        );
+        assert_eq!(
+            VerifiedCompilationExplain::from_traces(
+                selection.clone(),
+                vec![
+                    (SubjectKey::new("semantic:a").unwrap(), first.clone()),
+                    (SubjectKey::new("semantic:a").unwrap(), second.clone()),
+                ],
+            ),
+            Err(CompilationExplainError::DuplicateCandidateKey),
+        );
+        assert_eq!(
+            VerifiedCompilationExplain::from_traces(
+                selection.clone(),
+                vec![
+                    (SubjectKey::new("semantic:a").unwrap(), first.clone()),
+                    (SubjectKey::new("semantic:b").unwrap(), first.clone()),
+                ],
+            ),
+            Err(CompilationExplainError::DuplicateCandidate),
+        );
+        assert_eq!(
+            VerifiedCompilationExplain::from_traces(
+                selection.clone(),
+                vec![
+                    (SubjectKey::new("semantic:a").unwrap(), first.clone()),
+                    (SubjectKey::new("semantic:c").unwrap(), second.clone()),
+                ],
+            ),
+            Err(CompilationExplainError::CandidateKeyMismatch),
+        );
+        assert_eq!(
+            VerifiedCompilationExplain::from_traces(
+                selection,
+                vec![
+                    (SubjectKey::new("semantic:a").unwrap(), second),
+                    (SubjectKey::new("semantic:b").unwrap(), third),
+                ],
+            ),
+            Err(CompilationExplainError::UnboundSelection),
+        );
+
+        let shared = std::sync::Arc::new(first);
+        let candidate = SemanticCandidateExplain {
+            key: SubjectKey::new("semantic:a").unwrap(),
+            trace: std::sync::Arc::clone(&shared),
+        };
+        assert_eq!(
+            VerifiedCompilationExplain::assemble(
+                std::sync::Arc::clone(&shared),
+                vec![candidate.clone(); MAX_COMPILATION_EXPLAIN_CANDIDATES.saturating_add(1)],
+                SelectionBinding::Singleton,
+            ),
+            Err(CompilationExplainError::CandidateCapacity),
+        );
+        assert!(
+            matches!(
+                encode_compilation_explain_with_capacity(
+                    &shared,
+                    &[candidate],
+                    SelectionBinding::Singleton,
+                    0,
+                ),
+                Err(CompilationExplainError::CanonicalCapacity),
+            ),
+            "canonical encoding itself enforces the byte ceiling",
+        );
+        assert!(
+            check_compilation_explain_capacity(
+                MAX_COMPILATION_EXPLAIN_CANONICAL_BYTES,
+                MAX_COMPILATION_EXPLAIN_CANONICAL_BYTES,
+            )
+            .is_ok(),
+            "the exact canonical byte ceiling is admitted",
+        );
+    }
+
+    #[test]
+    fn compilation_explain_identity_detects_tampering() {
+        let trace = finish_test_trace(ExplainWriter::new(&request(2.0)).unwrap());
+        let mut explain = VerifiedCompilationExplain::one_candidate(trace);
+        assert!(explain.verify().is_ok());
+        explain.canonical_identity[0] ^= 1;
+        assert_eq!(
+            explain.verify(),
+            Err(CompilationExplainError::StaleIdentity),
+        );
     }
 }
