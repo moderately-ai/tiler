@@ -172,5 +172,13 @@ Attempting the pipeline edit surfaces the final entanglement, and it is worth ha
 
 `NormalizationOutcome::merges()` is `#[cfg(test)]`-only, so the test surface shrinks with it.
 
-**Order for the edit, so the census moves exactly once:** shed `merges` from the outcome and route the per-merge records through the payload in the same change as the `pipeline.rs:420` swap. Doing the shed first leaves a build where nothing emits per-merge records; doing the swap first leaves a build where two things do.
+**Done 2026-07-28, and the ordering worry turned out to be avoidable.** I expected the shed and the swap to be inseparable — the shed alone leaving nothing to emit per-merge records. A third option avoids that: the outcome sheds `merges` and gains `rule_explains: Vec<Arc<dyn RuleExplain>>` plus a `rewrite_count`. `normalize_semantics` still builds it, supplying a `SharedValueExplain`, so **nothing about the pipeline changed and the census did not move**.
 
+That is the structural step that was actually blocking. The outcome now holds what any rule can supply and reads none of it, so an engine driving arbitrary rules can produce one — which is what `compile_verified` requires and what the merge field made impossible.
+
+Two consequences worth having recorded:
+
+- **`rewrite-count` is now the adopted-rewrite count, not the merge count.** The same number today with one rule; a different quantity the moment a second is registered.
+- **The merge-contents assertion moved to the rule.** `NormalizationOutcome` could assert exactly which operations merged; it no longer can, because the payloads are opaque to it *by design*. That assertion now runs against `detect_shared_values` directly, which is the level that still owns the vocabulary. This is a real relocation rather than a deletion, and the coverage is the same.
+
+**What remains is now genuinely small:** at `pipeline.rs:420`, build the outcome from `run_rewrite_engine`'s adopted alternatives instead of from the congruence — readmitting through `readmit_alternatives`, grouping through `group_by_resolved_contract`, and taking each alternative's `explain()` as the outcome's `rule_explains`. The census moves in that change, once, when more than one alternative can survive.

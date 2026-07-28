@@ -189,7 +189,17 @@ impl RuleExplain for SharedValueExplain {
 #[derive(Clone, Debug)]
 pub(crate) struct NormalizationOutcome {
     normalized: Option<SemanticProgram>,
-    merges: Vec<SharedValueMerge>,
+    /// The adopted rewrites' own explain records, opaque to this type.
+    ///
+    /// Holding payloads rather than `SharedValueMerge`s is what lets this stage
+    /// be produced by the rewrite engine: merges are the common-subexpression
+    /// rule's own vocabulary, and an engine driving arbitrary rules has none.
+    /// A rule hands over what it wants recorded; this emits it and never reads
+    /// it.
+    rule_explains: Vec<Arc<dyn RuleExplain>>,
+    /// Rewrites adopted. Equal to the merge count while one rule is registered,
+    /// and a different quantity as soon as a second is.
+    rewrite_count: usize,
     operations_before: usize,
     operations_after: usize,
     budget_stop: Option<(u64, u64)>,
@@ -204,10 +214,10 @@ impl NormalizationOutcome {
         self.normalized.as_ref()
     }
 
-    /// Returns the committed merges in deterministic traversal order.
+    /// Returns how many rewrites were adopted.
     #[cfg(test)]
-    pub(crate) fn merges(&self) -> &[SharedValueMerge] {
-        &self.merges
+    pub(crate) const fn rewrite_count(&self) -> usize {
+        self.rewrite_count
     }
 
     /// Returns the declared budget and the demand that stopped the rewrite.
@@ -240,14 +250,16 @@ impl NormalizationOutcome {
                 vec![cause],
             )?;
         }
-        cause = SharedValueExplain::new(self.merges.clone()).record(explain, cause)?;
+        for records in &self.rule_explains {
+            cause = records.record(explain, cause)?;
+        }
         let assessment = PredicateAssessment::proven(
             "normalize.canonical-fixpoint",
             EvidenceBasis::CheckedInvariant,
         )?
         .with_fact(ExplainFact::new(
             "rewrite-count",
-            FactValue::Count(count(self.merges.len())),
+            FactValue::Count(count(self.rewrite_count)),
         )?)?
         .with_fact(ExplainFact::new(
             "operations-before",
@@ -306,7 +318,8 @@ pub(crate) fn normalize_semantics(
         // abandoned and the verified input stays authoritative.
         return Ok(NormalizationOutcome {
             normalized: None,
-            merges: Vec::new(),
+            rule_explains: Vec::new(),
+            rewrite_count: 0,
             operations_before,
             operations_after: operations_before,
             budget_stop: Some((limit, demand)),
@@ -317,7 +330,8 @@ pub(crate) fn normalize_semantics(
     if congruence.merges.is_empty() {
         return Ok(NormalizationOutcome {
             normalized: None,
-            merges: Vec::new(),
+            rule_explains: Vec::new(),
+            rewrite_count: 0,
             operations_before,
             operations_after: operations_before,
             budget_stop: None,
@@ -327,10 +341,12 @@ pub(crate) fn normalize_semantics(
     }
     let normalized = rebuild(program, &congruence)?;
     verify_normalized(program, &normalized, &congruence)?;
+    let rewrite_count = congruence.merges.len();
     Ok(NormalizationOutcome {
         operations_before,
         operations_after: normalized.operation_count(),
-        merges: congruence.merges,
+        rule_explains: vec![Arc::new(SharedValueExplain::new(congruence.merges))],
+        rewrite_count,
         budget_stop: None,
         numerical_contract_key: numerical_contract.key,
         canonical_graph_digest: digest(&normalized),
@@ -1094,7 +1110,7 @@ mod tests {
         let outcome = normalize(&distinct);
 
         assert!(outcome.normalized_program().is_none());
-        assert!(outcome.merges().is_empty());
+        assert_eq!(outcome.rewrite_count(), 0);
         assert_eq!(outcome.budget_stop(), None);
         assert_eq!(outcome.operations_before, outcome.operations_after);
     }
@@ -1108,13 +1124,19 @@ mod tests {
             .normalized_program()
             .expect("a redundant constant is rewritten");
 
+        // The merge *contents* are now the rule's, not the stage's: the outcome
+        // carries opaque payloads so an engine driving arbitrary rules can
+        // produce one. Asserted at the level that still owns the vocabulary.
         assert_eq!(
-            outcome.merges(),
+            detect_shared_values(&duplicated)
+                .expect("detection succeeds")
+                .merges,
             [SharedValueMerge {
                 canonical: 0,
                 merged: 1,
             }]
         );
+        assert_eq!(outcome.rewrite_count(), 1);
         assert_eq!(normalized.operation_count(), 4);
         assert_eq!(normalized.value_count(), duplicated.value_count() - 1);
         // The surviving constant feeds both pointwise operations.
@@ -1177,7 +1199,7 @@ mod tests {
             repeated.normalized_program().unwrap().semantic_identity(),
             normalized.semantic_identity()
         );
-        assert_eq!(repeated.merges(), outcome.merges());
+        assert_eq!(repeated.rewrite_count(), outcome.rewrite_count());
         assert_eq!(
             repeated.canonical_graph_digest,
             outcome.canonical_graph_digest
@@ -1218,7 +1240,7 @@ mod tests {
 
         let nan = program(f32::NAN, f32::NAN, false);
         let outcome = normalize(&nan);
-        assert_eq!(outcome.merges().len(), 1);
+        assert_eq!(outcome.rewrite_count(), 1);
         assert_eq!(
             evaluate(&nan, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]),
             evaluate(
@@ -1644,7 +1666,7 @@ mod tests {
                 .unwrap();
 
         assert!(outcome.normalized_program().is_none());
-        assert!(outcome.merges().is_empty());
+        assert_eq!(outcome.rewrite_count(), 0);
         assert_eq!(outcome.budget_stop(), Some((0, 1)));
         assert_eq!(outcome.operations_after, duplicated.operation_count());
     }
