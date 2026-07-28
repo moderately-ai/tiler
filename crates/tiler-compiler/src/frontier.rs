@@ -54,9 +54,7 @@ use std::error::Error;
 use std::fmt;
 
 use tiler_ir::identity::{push_len, push_slice};
-use tiler_ir::schedule::{
-    AccessMode, CanonicalScheduledRegionIdentity, ResourceRequirements, ScheduledRegion, TensorRole,
-};
+use tiler_ir::schedule::{AccessMode, ResourceRequirements, ScheduledRegion, TensorRole};
 use tiler_ir::semantic::ProviderIdentity;
 
 use crate::boundary::{
@@ -1376,9 +1374,17 @@ pub(crate) fn enumerate_frontier(
                         });
                         continue;
                     }
-                    // Admitting a registered, well-bound call still needs its
-                    // boundary contract and identity derived from the
-                    // declaration; until then it is an unsupported variant.
+                    // Admitting needs feasibility evidence, and the only
+                    // producer is `verify_schedule_with_feasibility`, which
+                    // bundles it with verifying a schedule an opaque call does
+                    // not have. Until a resource-only feasibility check exists,
+                    // a well-bound registered call is still unsupported — and
+                    // fabricating `ProvenEvidence` here would tell feasibility a
+                    // call was proven when nothing proved it.
+                    let _ = derive_call_boundary_contract(
+                        registered.declaration(),
+                        proposed.bindings(),
+                    );
                     rejections.push(FrontierRejection::UnsupportedVariant {
                         provider: provenance.provider().clone(),
                         kind,
@@ -1533,6 +1539,43 @@ fn derive_call_boundary_contract(
     })
 }
 
+/// The canonical bytes an opaque call proposal is identified over.
+///
+/// The analogue of a scheduled region's `CanonicalScheduledRegionIdentity`, and
+/// it must include the **bindings**, not only the call. The same registered call
+/// bound to different tensor roles is a different implementation — it computes a
+/// different thing — so two such proposals must not share an identity. Omitting
+/// the bindings would make them collide, and the collision would surface as one
+/// silently shadowing the other in the admitted set.
+///
+/// Bindings are encoded in their given order, which the frontier does not sort:
+/// a provider that emits them in a varying order gets varying identities, which
+/// is its own defect to fix and not something a canonical form can paper over
+/// without deciding that binding order carries no meaning.
+#[allow(
+    dead_code,
+    reason = "the opaque proposal's canonical bytes; lands with the contract derivation, ahead of the admission that will pair them"
+)]
+fn encode_call_subject(proposed: &OpaqueCallProposal) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    let call = proposed.call();
+    push_slice(&mut bytes, call.provider().as_bytes());
+    push_slice(&mut bytes, call.call().as_bytes());
+    bytes.extend_from_slice(&call.revision().to_be_bytes());
+    for (name, role) in proposed.bindings() {
+        push_slice(&mut bytes, name.as_bytes());
+        // Written as an exhaustive match rather than read from the discriminant,
+        // so adding or reordering a role is a build error here instead of a
+        // silent change to every opaque proposal identity ever encoded.
+        bytes.push(match role {
+            TensorRole::Input => 0x01,
+            TensorRole::Intermediate => 0x02,
+            TensorRole::Output => 0x03,
+        });
+    }
+    bytes
+}
+
 /// Turns one region that passed checked verification into an admitted
 /// implementation, deriving its boundary contract and its canonical identity.
 ///
@@ -1560,7 +1603,7 @@ fn admit_verified(
         }
     })?;
     let identity = encode_proposal_identity(
-        verified.canonical_identity(),
+        verified.canonical_identity().as_bytes(),
         provider,
         kind,
         applicability,
@@ -1669,14 +1712,14 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
 }
 
 fn encode_proposal_identity(
-    region_identity: &CanonicalScheduledRegionIdentity,
+    subject_bytes: &[u8],
     provider: &ProviderIdentity,
     kind: PhysicalProposalKind,
     applicability: &TargetApplicability,
     boundary: &BoundaryContract,
 ) -> ImplementationProposalIdentity {
     let mut bytes = PROPOSAL_IDENTITY_TAG.to_vec();
-    push_slice(&mut bytes, region_identity.as_bytes());
+    push_slice(&mut bytes, subject_bytes);
     encode_provider(&mut bytes, provider);
     bytes.push(kind.tag());
     applicability.encode(&mut bytes);

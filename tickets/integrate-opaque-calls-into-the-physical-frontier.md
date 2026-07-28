@@ -328,4 +328,18 @@ Ownership is `TotalRaceFreeWrite`: a call that writes a tensor owns that write c
 
 **The test binds the same two parameters to swapped roles** and requires the contract to move with them. That is what confirms the derivation reads the *binding* rather than the parameter's position or its own role name — the distinction the whole named-parameter design exists to preserve, checked at the point it finally matters.
 
-**Remaining:** encode the identity from the `OpaqueCallIdentity` and admit — construct the `AdmittedImplementation` with `ImplementationBody::Opaque`, replacing the `UnsupportedVariant` fallthrough in `enumerate_frontier`. Then lowering rejection, numerical guarantees, and explain records for the three rejections.
+## The identity encoder is generalized; admission is blocked on feasibility (2026-07-28)
+
+`encode_proposal_identity` now takes the subject's canonical **bytes** rather than a `CanonicalScheduledRegionIdentity`, so both paths supply their own. `encode_call_subject` produces them for an opaque proposal.
+
+**The bindings are part of the identity, not only the call.** The same registered call bound to different tensor roles is a different implementation — it computes a different thing — so omitting them would let two such proposals collide, and the collision would surface as one silently shadowing the other in the admitted set. Roles are encoded by exhaustive match rather than from the discriminant, so reordering `TensorRole` is a build error rather than a silent change to every opaque identity ever encoded.
+
+**Admission is blocked, and on something real.** An `AdmittedImplementation` needs `ProvenEvidence`, and its only producer is `physical::verify_schedule_with_feasibility` — which bundles the feasibility decision with *verifying a schedule*. An opaque call has no schedule to verify, so there is no way to obtain evidence for one without either fabricating it or splitting that function.
+
+**Fabricating it is the failure this whole ticket has been avoiding.** `ProvenEvidence` for a call nothing proved would tell hard feasibility a call was admissible on no evidence — the same substitution `resources()` refused when it declined to default the opaque arm, and the same one the absent `ResourceEstimate` → `ResourceRequirements` conversion exists to prevent. The admission block was written and then **reverted** rather than landed with a fabricated proof; the contract derivation is wired and its result discarded, so the code path is exercised and nothing is claimed.
+
+**So the next step is: split a resource-only feasibility check out of `verify_schedule_with_feasibility`.** It already proves resources against a target profile; what an opaque call needs is that half, without the schedule verification. Both callers then get evidence from one authority, which is what keeps a single hard-feasibility decision (ADR 0043) actually single.
+
+*The check, reproducible in one line:* `grep -n 'ProvenEvidence' crates/tiler-compiler/src/frontier.rs` — it is a field and an accessor here, produced only by that one call.
+
+**Then:** admit, lowering rejection, numerical guarantees, and explain records for the three rejections.
