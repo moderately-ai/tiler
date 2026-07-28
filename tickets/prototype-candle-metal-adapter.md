@@ -10,6 +10,10 @@ shared_scopes: [project/tickets, implementation/cargo-lock]
 paths: []
 tags: [implementation, integration, candle]
 ---
+## User-visible outcome
+
+A Candle user can run a supported (contiguous, no-autograd) op through Tiler as a custom op — with storage validation, preflight before commit, and wrapper-level fallback — without any Candle type or behaviour leaking into compiler semantics. This is the first external consumer, so it is also the first real test of the consumer-agnostic claim.
+
 Implement the first consumer adapter without contaminating compiler semantics: storage/layout validation, output allocation, device-scoped runtime cache identity, ABI binding, asynchronous lifetimes, preflight before custom-op application, and wrapper-level fallback. Start with the explicit contiguous/no-autograd subset and reject unsupported cases.
 
 ## Workspace admission — current facts (2026-07-28)
@@ -32,3 +36,9 @@ The correctness priorities this adapter sits on are the ones `AGENTS.md` singles
 6. **The contiguous / no-autograd subset is enforced with typed refusals, and everything outside it is refused by name.** An affine-strided layout, a non-contiguous view, an autograd-tracked tensor, or an unsupported dtype produces a typed error naming what was unsupported — never a silent copy, a relayout, or an approximation. `docs/open-questions.md` Q-RUNTIME-002 tracks affine-strided support as explicitly beyond this first profile.
 7. **No Candle type reaches `tiler-compiler` or `tiler-ir`.** Reproduce with a dependency check, not by inspection: neither crate's manifest may gain a Candle dependency, direct or transitive through the adapter. This is the guardrail the ticket's first sentence names as "without contaminating compiler semantics", and it is the one that a working prototype most easily violates.
 8. **`make full` passes**, with the new member and its lockfile change in the same commit.
+
+## Graph maintenance
+
+- **When the adapter crate first resolves Candle**: `repin-candle-numerical-scope-citation-at-adapter-admission` (p3, depends on this) becomes actionable — do its re-pin as part of your landing or tell the coordinator it is ready. If the resolved revision differs from the Metal provenance contract's citation, that is a separately scoped `contracts/artifacts` correction, not an edit from here.
+- **Workspace admission is yours** (see the facts above): member + lockfile in one commit, and remember `make lint` skips `prototypes/` for Clippy only — the gate still builds and tests it.
+- **Every unsupported case you reject**: record the rejection class list on this ticket as you go; that list is the seed for the adapter's second iteration and prevents the next worker rediscovering the boundary empirically.

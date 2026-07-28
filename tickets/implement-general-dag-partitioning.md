@@ -10,6 +10,10 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, optimizer, partitioning, mature-product]
 ---
+## User-visible outcome
+
+The planner can partition a real DAG — fan-out, multi-result outputs, deliberate duplication, materialization as a modelled per-edge choice — instead of the current single-chain covers, verified against exhaustive small-graph oracles.
+
 Extend partition planning to realistic DAGs with fan-out, named/multi-result outputs, legal shared-work duplication, materialization choices, and budgeted memoized search. Verify complete coverage and boundaries against exhaustive small-graph oracles and explain pruning.
 
 ## Dependency note (2026-07-28)
@@ -27,3 +31,9 @@ The consequence for *this* ticket is specific: a general DAG partition search in
 5. The search is budgeted and memoized, and exhausting the budget yields an explainable partial result — the best plan found plus the statement that the space was not exhausted — never a silently truncated one presented as complete.
 6. Coverage and boundaries are verified against exhaustive small-graph oracles: for every graph up to a stated size, the search's admitted set equals the oracle's, and each rejected candidate carries a feasibility reason rather than an absence.
 7. Explain output names every pruned candidate and the reason it was pruned, distinguishing infeasible from dominated, and `make full` passes.
+
+## Graph maintenance
+
+- **Legal shared-work duplication requires relaxing `verify_cover`'s exactly-once check** (`CoverError::IllegalDuplication`) behind the reserved `CoverDuplication` policy — and the moment you do, `component_cost`'s `RedundantWork` arm becomes genuinely exercisable: its comment names this exact contract change as the trigger and asks you to check the value moves. Add that assertion when you relax the contract.
+- **Materialization choices likely fire the enforcers trigger** — same protocol as `implement-parallel-reduction-strategies`: the failing constant test is the signal, its mismatch is the enforcer's first case, and the property sets are not to be widened.
+- **The `Intermediate` work-scaling decline** in `resolve_work_items` (frontier.rs) declines because an intermediate's element count is a property of the cover — your cover edges will finally carry that shape, so resolve it here (the falsified-premise history is recorded at the arm; read it before re-resolving).

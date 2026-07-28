@@ -10,6 +10,10 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, physical-planning, testing]
 ---
+## User-visible outcome
+
+The claim "an opaque call is a first-class alternative to a scheduled kernel" becomes *tested* below the frontier instead of asserted: selection composes or refuses it correctly, plan identity distinguishes it, cost arms report `Unknown` rather than zero, and an unlowerable plan refuses instead of silently omitting the call's work. Today all of that is unexercised — green tests stop at admission.
+
 The frontier admits a registered, well-bound, feasible opaque call, and everything downstream of that admission is untested with an opaque body: selection composition, plan identity encoding, the component-cost `Unknown` arms (`scheduled()?`), the lowering refusal (`unlowerable-opaque-body`), and `pipeline/verify.rs`'s `None` arm. The last two are additionally unreachable in the compile path because no production provider proposes an opaque call (`pipeline/planning.rs` hardcodes the one governed provider and passes an empty registry).
 
 The audit's framing: untested-but-claimed levels are findings. The integrate ticket's closing section now states what is tested at which level; this ticket closes the gap.
@@ -27,3 +31,10 @@ Do not fabricate a production provider to make paths reachable in the compile pa
 ## Closes when
 
 - Each bullet above has a test that can fail (perturb once and watch it fire), and the integrate ticket's tested-at-which-level table is updated to match.
+
+## Graph maintenance
+
+- **The AliasView-vs-MaterializedBuffer refusal test is the important one**: it is the first *reachable* instance of the mismatch `implement-boundary-property-enforcers` is deferred on. When it exists and refuses correctly, append that fact to the enforcers ticket's trigger section — its startable condition explicitly waits on this evidence — and re-evaluate whether the deferral still holds. Do not un-defer it yourself; record the evidence and leave the status to the coordinator.
+- **When each bullet lands**: update the tested-at-which-level table in `integrate-opaque-calls-into-the-physical-frontier`'s closing corrections in the same commit — that table is the honest boundary this ticket exists to move.
+- **If a downstream layer turns out to mishandle an opaque body** (wrong result rather than typed refusal): that is a p1 fix ticket, filed immediately with the failing test attached, not a note here.
+- **Keep the compile-path boundary honest**: test-level providers only. If you need a production provider to reach a path, the path is out of this ticket's scope — it belongs to the caller-supplied-providers work, and forcing it here would hide that boundary.

@@ -10,6 +10,10 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, reduction, scheduling, numerics]
 ---
+## User-visible outcome
+
+A reduction can be scheduled as a single-workgroup or multi-pass strategy — not only the serial order — with the numerical legality of each order checked against the declared realization, so larger reductions stop being serialized by default.
+
 Add single-workgroup and multi-pass reductions beyond the serial schedule. Define empty identities, accumulation dtype, deterministic/relaxed orders, synchronization, partial storage, feasibility and numerical evidence; selection may deliberately choose multiple kernels.
 
 ## Dependency notes (2026-07-28)
@@ -27,3 +31,9 @@ Add single-workgroup and multi-pass reductions beyond the serial schedule. Defin
 5. Synchronization and partial storage are explicit physical contracts of the multi-pass strategy: which pass writes what, where it lives, and what barrier or dispatch boundary makes it visible — never implied by the pass count.
 6. Feasibility is separate from cost: a strategy the target cannot honour (threads per workgroup, local memory, barrier availability, a permission the contract withholds) is rejected with an explainable reason rather than costed to infinity, and numerical evidence for each admitted strategy is recorded at its own evidence class.
 7. Selection may deliberately return multiple kernels for one reduction, the explain output says why the multi-kernel plan won, and `make full` passes.
+
+## Graph maintenance
+
+- **You will probably fire the enforcers trigger, on purpose.** A multi-pass reduction writes partials one pass consumes — a per-region boundary variation the bounded profile has never produced. When `the_bounded_profile_admits_no_undischarged_boundary` fails under your change, that is the designed signal (its message names the mismatch): append the mismatch to `implement-boundary-property-enforcers` as its first real case and tell the coordinator it is startable. Do NOT repair the test by widening the property sets.
+- **The permutation-permission asymmetry (criterion 4) must be resolved, not defaulted.** If you give `NumericalRealization` a permutation permission, that widens a type the whole physical path carries — coordinate with whatever `rebase-and-land-the-stranded-numerical-policies-worktree` lands first, since its worktree already widens the dimension vocabulary 4→11.
+- **Accumulation-dtype rejection** (criterion 3) is a new typed refusal: give it an explain record and update the census in the same commit.

@@ -10,6 +10,10 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [research, semantics, shapes, transformer, language-model, breadth]
 ---
+## User-visible outcome
+
+We know, per operation and per shape, exactly what the selected LM workload requires of Tiler — the workload-backed delivery graph that replaces "transformers need matmul and softmax" with an evidence-backed inventory of every semantic operation, dtype, extent class, and state surface between model inputs and logits.
+
 Trace the selected workload from model inputs through logits and derive the
 exact tensor operation, dtype, shape, layout, and state surface it requires.
 This ticket turns the general operation-family matrix into a workload-backed
@@ -52,3 +56,9 @@ graph agree.
 **Rests on:** L1.
 
 Do not start this before its trigger fires. Each rung's scope is derived from the rung below it, so beginning early means deriving a surface from an assumption rather than from delivered evidence — which is how a discovery ticket turns into a rewrite.
+
+## Graph maintenance (applies to every LM-ladder rung)
+
+- **These rungs consume Tom's workload selection** (`define-first-metal-lm-workload`, awaiting-decision). If the workload changes after this analysis starts, the analysis is re-derived, not patched — say which parts survived and which did not.
+- **Every requirement this analysis finds that Tiler cannot express today becomes a capability ticket**, filed with the exact operation/shape/dtype evidence from the trace, linked here and to the roadmap rung. Do not widen this ticket to implement any of them.
+- **On close, update the ladder table in `docs/roadmap.md`** — its rung for this ticket currently reads "none", and nothing updates it automatically (the docs have no gate; a reader is the only check).

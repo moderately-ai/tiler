@@ -10,6 +10,10 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, abi]
 ---
+## User-visible outcome
+
+A frontend can package a kernel whose binding addresses a *window* of a buffer — a slice, a sub-tensor, an offset view — and a loader binds it at the right byte. Today the artifact layer refuses any partial view outright (`PartialBindingView`), so every binding must cover its whole value; that refusal is the fail-closed placeholder this ticket replaces with a carried, proven offset.
+
 Split from `expose-the-dispatch-record-on-a-decoded-artifact`, which encoded *which* buffer each ABI binding slot addresses and deliberately did not encode *where in it*.
 
 **Fact — what the record carries today.** A binding row carries `BindingTarget` (a program input's `InputKey`, the `OutputKey` set publishing an output value, or `Internal`) and `accessible_bytes`, an ABI expression the builder proves equals `access.view().window().length`. The window's `offset` is not carried anywhere.
@@ -51,3 +55,10 @@ state the change, and `make full` passes.
 **Fact — a well-specified follow-up exists and is untracked.** `tickets/carry-the-binding-offset-through-the-runtime-route.md` in the same worktree. Its substantive finding, which is the part worth keeping whatever happens to the rest: `RoutedBinding` (`crates/tiler-runtime/src/load/route.rs:102-107` on `main` today — the follow-up cites `:100-107`, which is off by two) publishes `binding`, `transport`, and `accessible_bytes` and no offset, and `place_bindings` evaluates only the extent, so `DecodedBinding::accessible_offset` exists and nothing reads it. A host given a `RoutedBinding` binds storage at byte zero whatever the artifact says. That is unreachable today only because `decode_artifact` refuses a multi-stage envelope through `tiler.artifact.feature.multi-stage-program` — a refusal owned by another layer — so on the day `carry-the-stage-execution-order-in-the-envelope` lifts it, this loader becomes silently wrong. The follow-up's `## Closes when` cites the retired Python gate (`uv run --locked python scripts/check_repository.py`) and needs updating to `make full` before it is filed.
 
 **Status.** Frontmatter is not this record's to change; the ticket remains `in-progress` and the request to move it to `done` is left for the coordinator, which is correct in any case while the diff is unlanded and 319 commits stale.
+
+## Graph maintenance
+
+- **Start from the worktree diff, not from scratch** — see Work in flight above. Reconcile its stale ticket copy by hand; recompute any manifest/identity version numbers on the *merged* tree, never by picking a branch's number.
+- **When this lands**: file the follow-up `carry-the-binding-offset-through-the-runtime-route` from the worktree's untracked draft (fixing its stale gate citation to `make full` and its `route.rs` line numbers, which are off by two). That follow-up is load-bearing: `RoutedBinding` publishes no offset and `place_bindings` evaluates only the extent, so the day `carry-the-stage-execution-order-in-the-envelope` lifts the multi-stage refusal, the loader becomes silently wrong without it. State that dependency on the follow-up explicitly.
+- **Do not fold `AliasedInternalBinding` work in** — the body marks it a separate refusal; if you find yourself touching it, stop and file a separate ticket instead.
+- **When the schema version advances**: record the reason at both the manifest-major site and the identity-domain site, and expect the producer determinism test and serial-sum artifact identity to move exactly once — a second movement means something else changed.

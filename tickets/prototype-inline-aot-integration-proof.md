@@ -10,6 +10,10 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, integration, inline-dx, milestone-0b]
 ---
+## User-visible outcome
+
+One ordinary inline Rust invocation — no build script, no registry, no scan, no prepare step, no runtime JIT — constructs a program, shares its external compilation through the validated cache, embeds the bytes, and runs with guarded selection and pre-commit fallback. This is the end-to-end proof of the accepted inline developer experience; every absence in that list is checkable by reading the consumer crate.
+
 Demonstrate one ordinary inline Rust invocation constructing and optimizing a program, sharing external compilation through the validated cache, embedding manifest/metallib bytes directly, and emitting guarded runtime selection with fallback authority before commit. Require no build script, registry, scan, prepare command, or runtime source compilation.
 
 ## Closes when

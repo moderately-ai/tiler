@@ -10,6 +10,10 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [research, numerics, transformer, normalization, softmax, language-model]
 ---
+## User-visible outcome
+
+Every nonlinear/normalization/reduction family the workload needs has an exact formula, dtype signature, and accuracy-or-order contract — with lookalikes separated (exact vs tanh-GELU, LayerNorm vs RMSNorm are different semantic operations), so a kernel author implements the operation the model actually uses.
+
 Define the exact activation, normalization, softmax, masking, and reduction
 families required by the selected workload. Similar names are not sufficient:
 for example, exact and approximate GELU are different semantic operations, as
@@ -52,3 +56,11 @@ dependency-ordered tickets.
 **Rests on:** L2.
 
 Do not start this before its trigger fires. Each rung's scope is derived from the rung below it, so beginning early means deriving a surface from an assumption rather than from delivered evidence — which is how a discovery ticket turns into a rewrite.
+
+## Graph maintenance (applies to every LM-ladder rung)
+
+- **These rungs consume Tom's workload selection** (`define-first-metal-lm-workload`, awaiting-decision). If the workload changes after this analysis starts, the analysis is re-derived, not patched — say which parts survived and which did not.
+- **Every requirement this analysis finds that Tiler cannot express today becomes a capability ticket**, filed with the exact operation/shape/dtype evidence from the trace, linked here and to the roadmap rung. Do not widen this ticket to implement any of them.
+- **On close, update the ladder table in `docs/roadmap.md`** — its rung for this ticket currently reads "none", and nothing updates it automatically (the docs have no gate; a reader is the only check).
+
+- **Softmax and normalization are reductions** — their order/accuracy contracts feed `implement-parallel-reduction-strategies` (accumulation dtype, deterministic vs relaxed order). Cross-link findings there rather than duplicating the contract in two places.

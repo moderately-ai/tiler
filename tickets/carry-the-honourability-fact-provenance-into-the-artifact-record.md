@@ -10,6 +10,10 @@ shared_scopes: []
 paths: []
 tags: [implementation, artifact, compiler, numerics, provenance]
 ---
+## User-visible outcome
+
+An artifact reader can see *which compiler build and execution environment* each numerical honourability claim was measured on — not just "Metal on Apple silicon", which the recorded measurement shows names three independently-versioned compilers on one host. Until then, a delivered-realization record is not readable in the sense ADR 0076 item 4 requires.
+
 ADR 0076 item 3 fixes a numerical honourability declaration as "a stated, versioned profile fact with the same provenance discipline `CapabilityFact` already carries — an availability phase, a validity scope, an authority, and the declaring profile's identity", and adds that the validity scope "must identify which compiler build and which execution environment the declared behaviour was measured on". Item 4 states that the artifact record "inherits that requirement rather than adding one": a record naming a delivered realization without naming the compiler that produced it is not readable in the sense item 4 requires.
 
 `record-delivered-numerical-realization`'s draft carries two of the four. `HonouredDimensionFact` holds the means and the availability phase; `DeliveredNumericalRealization` holds the declaring profile identity. The authority and the validity scope are absent, and so is the compiler-and-environment identification the scope must supply.
@@ -25,3 +29,9 @@ ADR 0076 item 3 fixes a numerical honourability declaration as "a stated, versio
 ## What closes this
 
 The declaring authority mints an opaque key for the fact's authority and validity scope, and the validity scope identifies the compiler build and execution environment measured. The artifact record carries them per dimension beside the means it already carries, and encodes them into the record's canonical bytes. No field is reserved before its producer exists: a field a producer cannot fill is the producer-less placeholder this repository has repeatedly had to retract, which is exactly why the draft omits them rather than defaulting them.
+
+## Graph maintenance
+
+- The key-minting API lands on the compiler side (`FactAuthority`/`FactValidityScope` are unreachable from the sibling crate — see the Facts above); when it lands, update `record-delivered-numerical-realization`'s draft note that two of four provenance parts were absent.
+- If you find yourself adding a field the producer cannot fill yet, stop — this ticket's own closing text forbids producer-less placeholders. Record what the producer would need instead, on this ticket.
+- When the compiler-build/environment fact type first exists, tell `record-metal-runtime-compiler-provenance-gap` (related) — its gap is the same fact from the runtime side.

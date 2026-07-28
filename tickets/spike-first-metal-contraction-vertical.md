@@ -10,6 +10,10 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [spike, research, contraction, matmul, metal, language-model]
 ---
+## User-visible outcome
+
+The first contraction profile is *bounded and measured* — which matmul/batched-matmul shapes and dtypes, under which realization (direct, tiled, simdgroup, or library call), at what measured cost on the bench host — instead of an attempt at general einsum. The measurements are the evidence `scope-first-quantized-lm-profile` and the cost calibration consume.
+
 Use the selected workload to bound and measure the first tensor-contraction
 profile rather than attempting general einsum support.
 
@@ -53,3 +57,10 @@ tickets with explicit user-visible outcomes.
 **Rests on:** L2, plus the milestone 6 open question.
 
 Do not start this before its trigger fires. Each rung's scope is derived from the rung below it, so beginning early means deriving a surface from an assumption rather than from delivered evidence — which is how a discovery ticket turns into a rewrite.
+
+## Graph maintenance
+
+- **This is a spike**: it lives under `spikes/`, runs from its own directory with the invocation its README records, and no `make` target reaches it. Keep the harness, inputs, and result fixtures checked in; `.gitignore` only regenerable outputs.
+- **An opaque/library realization candidate is an opaque physical call** — if the spike shows the library route wins, the admission machinery already exists (declaration, registration, frontier admission) and the gap is caller-supplied providers plus lowering; record that on `exercise-opaque-admissions-downstream-of-the-frontier` and the enforcers ticket rather than inventing a separate integration path.
+- **Measurements happen on the M3 bench host, serially** — never in parallel agents; interleave A/B; record exact environment per row.
+- **On close, update the roadmap ladder rung** and hand the shape/dtype profile to `derive-transformer-operation-and-shape-surface` if it is still open.

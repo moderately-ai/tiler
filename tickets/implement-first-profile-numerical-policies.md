@@ -10,6 +10,12 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, numerics, mature-product]
 ---
+## User-visible outcome
+
+A caller's numerical contract can state strict/relaxed positions on eleven dimensions (reassociation, reciprocal transforms, approximations, exceptional values, signed zero, contraction, materialization rounding, reduction order, …) with per-operation/per-dtype conformance — instead of today's four dimensions — failing closed wherever evidence is Unknown.
+
+**Do not start this from scratch: a functionally complete implementation exists and `rebase-and-land-the-stranded-numerical-policies-worktree` (p1) owns landing it.** Work here only if that ticket concludes re-implementation is cheaper than the rebase, and then start from its recorded conflict analysis.
+
 Implement typed strict/relaxed numerical dimensions and per-operation/per-dtype conformance for reassociation, reciprocal transforms, approximations, exceptional values, signed zero, contraction, materialization rounding, and reduction order. Preserve compound/quantized seams and fail closed where evidence is Unknown.
 
 ## Work in flight — recorded 2026-07-28

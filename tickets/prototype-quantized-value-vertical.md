@@ -10,6 +10,10 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, quantization, dtype, vertical-slice]
 ---
+## User-visible outcome
+
+A quantized value is a typed compound contract — storage plus inseparable metadata, with layout/conversion/materialization stated as three separate contracts — proven end to end on one scheme, with every unsupported scheme refused by name. This is the vertical that decides whether quantization is a dtype or a contract, before any LM work depends on the answer.
+
 Prove quantized values as typed compound storage/metadata contracts rather than integer dtypes alone. Cover metadata association, validation, reference semantics, layout/access lowering, conversion/materialization, identity and ABI binding while explicitly rejecting unsupported schemes and preserving future block/group formats.
 
 ## Closes when (2026-07-28)
@@ -29,3 +33,9 @@ Prove quantized values as typed compound storage/metadata contracts rather than 
 `implement-first-profile-numerical-policies` is `status: in-progress` with completed but **uncommitted** work in the harness worktree `.claude/worktrees/agent-ad2893b1fba4d7f5b`. Its Outcome already states this ticket's seam explicitly, and states it as an *absence* rather than a stub: "Preserved by absence rather than by a placeholder. `ArithmeticType` names scalar float formats; a compound or quantized value is a scheme-typed `ResolvedValueType::encoded_numeric` whose conversion behaviour is its own typed contract, and `operation_capabilities` enumerates only the scalar `f32` operations this build admits, so an operation outside that table has no capability entry and therefore no effective permission to compute."
 
 Two consequences for this ticket. The seam it must build on is `ResolvedValueType::encoded_numeric`, already named — do not introduce a second spelling for a compound value type. And the fail-closed property is currently supplied by `operation_capabilities` having no entry for a quantized operation, which means **admitting one is what removes the current protection**: every capability entry added here must arrive with its conversion contract, or the absence that was doing the work is gone and nothing replaces it.
+
+## Graph maintenance
+
+- **State which of the four maturity claims you delivered for block/group formats** (criterion 6) on this ticket at close — reservation, seam, implemented, or tested — and file the broadening ticket only if you can name its first consumer.
+- **Scheme-into-identity** (criterion 4) advances the artifact identity domain: reason recorded at the site, and expect the determinism pins to move exactly once.
+- **The compound/quantized seams in the numerical-policy work are preserved by absence** (its worktree Outcome says so explicitly) — when `rebase-and-land-the-stranded-numerical-policies-worktree` lands, check whether its eleven-dimension vocabulary gives your conversion contract a home before inventing one.

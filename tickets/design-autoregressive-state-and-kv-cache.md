@@ -10,6 +10,10 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [design, runtime, kv-cache, prefill, decode, language-model]
 ---
+## User-visible outcome
+
+Prefill-then-decode has a designed execution contract: KV state with stated identity, layout, growth, aliasing, and lifetime — kept strictly apart from the immutable artifact and compilation caches, so mutable inference state never contaminates cache identity.
+
 Design the state and execution contract required to run prefill followed by
 repeated token decoding. Do not conflate mutable model execution state with the
 immutable artifact and compilation caches already owned elsewhere.
@@ -50,3 +54,9 @@ dependency ordered.
 **Rests on:** L4.
 
 Do not start this before its trigger fires. Each rung's scope is derived from the rung below it, so beginning early means deriving a surface from an assumption rather than from delivered evidence — which is how a discovery ticket turns into a rewrite.
+
+## Graph maintenance (applies to every LM-ladder rung)
+
+- **These rungs consume Tom's workload selection** (`define-first-metal-lm-workload`, awaiting-decision). If the workload changes after this analysis starts, the analysis is re-derived, not patched — say which parts survived and which did not.
+- **Every requirement this analysis finds that Tiler cannot express today becomes a capability ticket**, filed with the exact operation/shape/dtype evidence from the trace, linked here and to the roadmap rung. Do not widen this ticket to implement any of them.
+- **On close, update the ladder table in `docs/roadmap.md`** — its rung for this ticket currently reads "none", and nothing updates it automatically (the docs have no gate; a reader is the only check).

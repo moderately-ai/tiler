@@ -10,6 +10,10 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, optimizer, cost-model, explain]
 ---
+## User-visible outcome
+
+A reader of the explain trace can tell a **measured-exact** cost from a **modelled bound** at the type level, and a calibration pass can trust what it compares against: today every analytical cost is stamped `proven`/`checked-invariant`, so a bound that explicitly does not model cache reuse renders with the same evidence class as an exact count. This is the prerequisite `calibrate-device-cost-models` consumes.
+
 Every analytical component cost is written into the explain trace as `PredicateAssessment::proven(..., EvidenceBasis::CheckedInvariant)` via `record_count_step` (`pipeline/trace.rs`, `record_analytical_costs`), so a `Bounded` estimate whose own doc says it does not model cache reuse is stamped a checked invariant, `Exact` and `Bounded` share one evidence basis (distinguishable only by a `.low`/`.high` key suffix), and a Bytes-unit value is carried under `FactValue::Count` while `FactValue::Bytes` exists. The typed cost event `ExplainEvent::CostAssessment { model, basis, terms, disposition }` exists and the structural model already uses it; the analytical model bypasses it.
 
 ## Why the cheap fix is impossible (verified, not assumed)
@@ -33,3 +37,11 @@ No reachable consumer misreads today — `ExplainEvent` is `pub(crate)` and the 
 - Frontier rejection reasons reach explain as typed records.
 - No `PredicateAssessment` in the trace claims `CheckedInvariant` for a modelled bound.
 - The retained plan set is unchanged: nothing here enters dominance.
+
+## Graph maintenance
+
+- **Read the verified analysis in the body first** — the cheap fix was *proven impossible* (constructor rejects the basis; event rejected at the stage), so if you find yourself changing only `EvidenceBasis` at one call site, you are re-walking a refuted path.
+- **When the `Quantity` and `CostDisposition` extensions land**: they touch `explain.rs`'s validation matrix — check `validate` accepts the new disposition at `Costing` and *only* there, and add the rejection test alongside the existing `EvidenceEscalation` pin.
+- **The census will move exactly once, in this change.** Update `every_wired_authority_emits_its_typed_explain_records` in the same commit with the mechanism named in its comment; if it moves again later, that is a finding.
+- **When done**: update `calibrate-device-cost-models` to state its input now exists (it currently gates on this), remove the `dead_code` allow on `CostValue::class` (its reason names this ticket), and update `model-the-eight-unmodelled-cost-components`' note that evidence classes were collapsed in output.
+- **If you discover the frontier rejection reasons cannot ride this vocabulary** (they are refusals, not costs): file a separate ticket for typed rejection records rather than widening `CostAssessment` to carry them — say why on both.

@@ -10,6 +10,10 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [candle, numerics, contracts, provenance]
 ---
+## User-visible outcome
+
+A reader of `docs/integration/candle.md` can trust that its numerical-scope claims describe the Candle revision this workspace *actually resolves*, not an upstream revision inspected before any dependency existed.
+
 `docs/integration/candle.md` cites `huggingface/candle` `31f35b147389700ed2a178ee66a91c3cc25cc80d` (0.11.0) for the runtime-compilation and compile-option facts under **Numerical scope across the Candle kernel boundary**.
 
 **Fact — that is an inspected upstream revision, not a resolved pin.** No

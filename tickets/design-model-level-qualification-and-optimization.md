@@ -10,6 +10,10 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [design, testing, performance, conformance, language-model, metal]
 ---
+## User-visible outcome
+
+"This model is correct and optimized on this Metal target" becomes four separately-supported claims — correctness against reference outputs, feasibility, estimated cost, measured performance — with comparison tolerances derived from the effective numerical contract *before* results are observed, never after.
+
 Define how Tiler will establish that a supported language model is both correct
 and optimized on its declared Metal target. Correctness, feasibility, estimated
 cost, and measured performance remain separate claims.
@@ -53,3 +57,11 @@ follow-up work is represented by scoped tickets.
 **Rests on:** L1 and L6.
 
 Do not start this before its trigger fires. Each rung's scope is derived from the rung below it, so beginning early means deriving a surface from an assumption rather than from delivered evidence — which is how a discovery ticket turns into a rewrite.
+
+## Graph maintenance (applies to every LM-ladder rung)
+
+- **These rungs consume Tom's workload selection** (`define-first-metal-lm-workload`, awaiting-decision). If the workload changes after this analysis starts, the analysis is re-derived, not patched — say which parts survived and which did not.
+- **Every requirement this analysis finds that Tiler cannot express today becomes a capability ticket**, filed with the exact operation/shape/dtype evidence from the trace, linked here and to the roadmap rung. Do not widen this ticket to implement any of them.
+- **On close, update the ladder table in `docs/roadmap.md`** — its rung for this ticket currently reads "none", and nothing updates it automatically (the docs have no gate; a reader is the only check).
+
+- **Measured-performance claims are M3-host measurements** — the qualification design must name the bench host discipline (serial runs, interleaved A/B), and its measured rows are `Measurement`s tied to exact environments, per the research standards.

@@ -10,6 +10,10 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, measurement, proc-macro, inline-dx]
 ---
+## User-visible outcome
+
+We know — as recorded measurements with exact environments, not as belief — that byte-literal embedding is genuinely self-contained (a consumer builds and runs with every Tiler file deleted), and how Cargo and rust-analyzer behave cold/warm across edits, toolchain changes, and repeated/unique artifacts. This is the evidence the inline-macro frontend decision consumes.
+
 Prove direct byte-literal embedding is self-contained and cache deletion cannot break expanded code. Measure Cargo/rust-analyzer cold and warm behavior, edits and toolchain changes, repeated/unique artifacts across crates, and bounded sizes with exact environments and explicit diagnostic/size gates.
 
 ## Closes when (2026-07-28)
@@ -25,3 +29,8 @@ Prove direct byte-literal embedding is self-contained and cache deletion cannot 
 **A neighbouring spike answers part of axis 3 and should be read before re-measuring it.** `docs/research/cache/build-tool-exercise.md`, with its recorded results at `spikes/cache/results/build-tool-exercise-macos-27.0-2026-07-25.tsv` (12 rows) and its driver `spikes/cache/build_tool_exercise.py`. Both are currently **uncommitted** in the harness worktree `.claude/worktrees/agent-a9c032913d1ed60e0` and land with `exercise-the-expansion-cache-under-cargo-and-rust-analyzer`. What it already establishes: `cargo` expands in `rustc`, one short-lived process per crate; `rust-analyzer` expands in the long-lived `rust-analyzer-proc-macro-srv`; they share a working directory in every recorded row; and `CARGO_PKG_NAME` does **not** distinguish the two drivers — the analyzer populates it from the crate graph, so a macro reading it reports "cargo" under both. `std::env::current_exe()` is the signal that works. What it does *not* cover, and this ticket must: a carried compiled payload (that spike's envelope declares its payload by descriptor, so no backend object travelled through a cache entry), a real LSP session with incremental edits, and any embedding or size question at all.
 
 **The family-`cfg` probe is checked in and is a golden, with the caveat that implies.** `spikes/macro-environment/run-family-cfg.sh` exists and is executable, and demonstrates on the measured macOS host that a nonmatching iOS family removes its `compile_error!` and executes fallback while the matching macOS family produces the retained diagnostic. **No `make` target reaches `spikes/`** — confirmed by `grep -n "spikes" Makefile`, which returns nothing. So that probe's retained output is a positive claim about what a compiler emitted on the day it was captured, it outlives whatever produced it, and nothing compares it to the source beside it until someone runs the script by hand from its own directory. Re-run it before citing it as current, and treat its result as evidence of what was measured rather than as a live check.
+
+## Graph maintenance
+
+- **The reuse evidence in the body is uncommitted** — it lands with `exercise-the-expansion-cache-under-cargo-and-rust-analyzer` (currently blocked, its results sit in worktree `agent-a9c032913d1ed60e0`). If that has not landed when you start, read the worktree TSV directly and say so in your measurement record; do not re-measure axis 3's already-answered half without noting why.
+- **Findings about macro-frontend ergonomics belong on `prototype-inline-proc-macro-frontend`** (awaiting Tom's decision on syntax) — feed measurements there, do not pre-empt the decision here.

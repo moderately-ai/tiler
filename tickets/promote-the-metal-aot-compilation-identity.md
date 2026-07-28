@@ -10,6 +10,10 @@ shared_scopes: []
 paths: []
 tags: [api, review, cache, identity]
 ---
+## User-visible outcome
+
+The expansion cache's second subject facet becomes producible: a caller outside `tiler-metal-aot` can obtain a compilation identity's canonical bytes, which is the difference between a cache that is *composable* in principle and one a frontend can actually use. A real consumer now exists to shape the promotion against (`tiler-metal` depends on the crate).
+
 The expansion cache frames a subject over two facets. One now has a producer and the other is unreachable, which is the whole of what keeps the cache composable rather than usable.
 
 **Fact — refreshed at `01264be`.** `crates/tiler-metal-aot/src/lib.rs:91` declares `mod identity;` — not `pub mod`. `CompilationIdentity` (`identity.rs:220`) and its `as_bytes` (`identity.rs:245`) are still `pub(crate)`. No crate outside `tiler-metal-aot` can obtain those bytes. The earlier citations (`lib.rs:74`, `identity.rs:211`, `:236`) named the same constructs before surrounding edits moved them.
@@ -35,3 +39,9 @@ The expansion cache frames a subject over two facets. One now has a producer and
 ## Closes when
 
 A caller outside `tiler-metal-aot` can obtain the compilation identity bytes, the promoted surface is exactly what Tom accepted **and is visible on `main` where he was asked to accept it**, the crate's dependency closure is unchanged, and the full gate passes.
+
+## Graph maintenance
+
+- **This is an ADR 0075 owner-reserved promotion**: stage the surface privately, append it to the acceptance ticket for Tom's ratification, and do not publish `pub` ahead of his record — `pair-verified-buffer-handles-with-signature-ordinals` documents exactly what it looks like when a promotion ships un-ratified, and it is now an awkward ratify-after-the-fact item on his queue. Do not create a second one.
+- **Work in flight exists on an unmerged branch** (`4f8ce90` — see the body): read it before re-deriving; it appended the surface to the acceptance ticket on the branch only, so `main` has none of it.
+- **When the facet becomes producible**: update `accept-the-tiler-cache-public-boundary`'s ratification checklist (the composed-subject item assumes both facets can be filled) and tell `prototype-inline-aot-integration-proof`, whose cache-sharing criterion needs this facet.

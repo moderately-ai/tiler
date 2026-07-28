@@ -10,6 +10,10 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [design, frontend, model, weights, integration, language-model]
 ---
+## User-visible outcome
+
+A consumer can hand Tiler a supported model (architecture, config, weights) and inputs, and receive logits — through a typed boundary that keeps every consumer format and Candle type out of compiler semantics.
+
 Define how a consumer supplies a supported model architecture, configuration,
 weights, and inference inputs and receives logits without making a consumer
 format or Candle type part of compiler semantics.
@@ -52,3 +56,9 @@ represented by scoped, dependency-ordered tickets.
 **Rests on:** L2 and L5.
 
 Do not start this before its trigger fires. Each rung's scope is derived from the rung below it, so beginning early means deriving a surface from an assumption rather than from delivered evidence — which is how a discovery ticket turns into a rewrite.
+
+## Graph maintenance (applies to every LM-ladder rung)
+
+- **These rungs consume Tom's workload selection** (`define-first-metal-lm-workload`, awaiting-decision). If the workload changes after this analysis starts, the analysis is re-derived, not patched — say which parts survived and which did not.
+- **Every requirement this analysis finds that Tiler cannot express today becomes a capability ticket**, filed with the exact operation/shape/dtype evidence from the trace, linked here and to the roadmap rung. Do not widen this ticket to implement any of them.
+- **On close, update the ladder table in `docs/roadmap.md`** — its rung for this ticket currently reads "none", and nothing updates it automatically (the docs have no gate; a reader is the only check).

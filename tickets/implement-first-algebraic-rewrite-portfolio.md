@@ -10,6 +10,10 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, optimizer, rewrites, numerics]
 ---
+## User-visible outcome
+
+The optimizer can offer *legal algebraic alternatives* — each a named, versioned rule with stated semantic and numerical preconditions, oracle-compared, individually disableable, and explained whether it fired or declined. Today the engine drives exactly one rule (CSE), so "portfolio" is a capability the machinery has and no rule exercises.
+
 Add the first separately reviewed algebraic alternatives with named rules,
 explicit semantic and numerical preconditions, reference-oracle comparison,
 positive/negative tests, stable explain, and bounded search. Do not fold this
@@ -32,3 +36,13 @@ Do not fold any of this into canonical normalization or fusion-region formation 
 `implement-first-profile-numerical-policies` is `status: in-progress` with completed but **uncommitted** work in the harness worktree `.claude/worktrees/agent-ad2893b1fba4d7f5b`. Its `crates/tiler-compiler/src/policy.rs` defines `NumericalPolicyPreset` with three members — `Strict` (`:409`), `FlushSubnormalsToZero` (`:421`), and `Relaxed` (`:441`) — and widens `crate::honourability::NumericalDimension` from four dimensions to eleven. Two of those eleven are directly this ticket's subject: **reciprocal transform** and **approximate intrinsics**, the latter resolving to a governed `ApproximationEnvelope` rather than a boolean, because the normative contract requires a maximum accuracy envelope and `Permitted` would state no bound.
 
 **Do not invent a parallel permission vocabulary here.** A rewrite in this portfolio asks whether the request's contract grants a named dimension; that question already has a type and a preset vocabulary answering it. A second spelling of "may I reassociate" would give two authorities for one fact, and the failure mode is the one `declare-metal-numerical-honourability` already recorded: two checkpoints reading one declaration cannot diverge, and two declarations can. Wait for that work to land, or build against its types, but do not restate them.
+
+## Graph maintenance — read this first: you are "the second rule"
+
+Half the rewrite machinery was deliberately left idle until a second rule exists, and this ticket is that rule. The map of what you inherit and what you must wire is in `route-the-compile-path-through-the-rewrite-engine` under "Assessment corrections"; do not re-derive it. Concretely:
+
+- **The stage currently rejects more than one alternative.** `normalize_semantics` returns `InvalidRewrite { rule: "multiple-alternatives" }` when the engine adopts two — a deliberate refusal because choosing among alternatives is a cost decision with no cost model in scope at that stage. Your first structural task is deciding where multiple alternatives are consumed (the pipeline's alternative path, not a silent first-wins), and that refusal is your tripwire: your first two-rule program will hit it.
+- **Wire the idle seam as you go**: `readmit_alternatives` (per-alternative readmission — then delete the inline duplicate in `pipeline.rs`, which duplicates its fault policy with nothing keeping them in sync), `group_by_resolved_contract` (alternatives resolving to different numerical contracts are not comparable on cost — the guard exists, unconsumed), `record_adopted_alternatives` (survivor-only emission), and `RewriteRuleIdentity` into explain records (today the emitted rule keys are the stage's own constants and the provider identity reaches no record — your criterion 1 is unsatisfiable until you wire it).
+- **The budget is already per-alternative** (fixed 2026-07-28, two-rule regression test exists) — do not re-add summing.
+- **When the first second rule lands**: update the seam reasons (`grep -rn 'second-rule seam' crates/tiler-compiler/src` lists them), widen `NormalizeError` or its mapping so `EngineFailure::Revalidation`'s rule identity stops being discarded (the drop is annotated at the mapping site), and note on `generalize-the-normalize-transaction-to-alternatives` that its "what remains" is consumed.
+- **File, don't fold**: if a rule needs a numerical dimension the realization does not carry, that is `implement-first-profile-numerical-policies`' vocabulary (see `rebase-and-land-the-stranded-numerical-policies-worktree` — it may land eleven dimensions before you start; check).
