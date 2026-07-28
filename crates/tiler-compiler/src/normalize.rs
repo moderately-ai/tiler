@@ -57,8 +57,9 @@ use crate::explain::{
 use crate::request::{DeterministicBudgets, StrictF32NumericalContract};
 use crate::rewrite::{
     COMMON_SUBEXPRESSION_RULE, ProviderDefect, RewriteProposal, RewriteRuleIdentity,
-    RewriteRuleProvider, RuleRegistry, collect_proposals,
+    RewriteRuleProvider, RuleExplain, RuleRegistry, collect_proposals,
 };
+use std::sync::Arc;
 
 /// Stable identity of the normalization stage rule.
 pub(crate) const NORMALIZE_STAGE_RULE: &str = "normalize.semantics.v1";
@@ -123,6 +124,67 @@ pub(crate) struct SharedValueMerge {
     merged: usize,
 }
 
+/// The common-subexpression rule's own explain records.
+///
+/// One [`RuleExplain`] implementation with two callers: [`NormalizationOutcome`]
+/// emits it as part of the existing stage, and the rewrite engine emits it for
+/// an adopted proposal. Extracted rather than duplicated because two code paths
+/// writing the same governed records under the same rule key would drift, and
+/// the drift would be invisible — an explain reader cannot tell which path
+/// produced a record.
+///
+/// The facts are the rule's, not the stage's: `canonical-operation` and
+/// `merged-operation` are graph-local ordinals of the *original* program, which
+/// is why the engine cannot reconstruct them from a candidate and why the rule
+/// hands them over instead.
+#[derive(Clone, Debug)]
+pub(crate) struct SharedValueExplain {
+    merges: Vec<SharedValueMerge>,
+}
+
+impl SharedValueExplain {
+    /// Captures the merges a rewrite committed.
+    pub(crate) const fn new(merges: Vec<SharedValueMerge>) -> Self {
+        Self { merges }
+    }
+}
+
+impl RuleExplain for SharedValueExplain {
+    fn record(
+        &self,
+        explain: &mut ExplainWriter,
+        mut cause: ExplainRecordId,
+    ) -> Result<ExplainRecordId, ExplainError> {
+        for merge in &self.merges {
+            let key = format!("normalization:shared-value/operation:{}", merge.merged);
+            let subject = explain.subject(SubjectKind::Normalization, &key)?;
+            let assessment = PredicateAssessment::proven(
+                "normalize.shared-value-identity",
+                EvidenceBasis::CheckedInvariant,
+            )?
+            .with_fact(ExplainFact::new(
+                "canonical-operation",
+                FactValue::Count(count(merge.canonical)),
+            )?)?
+            .with_fact(ExplainFact::new(
+                "merged-operation",
+                FactValue::Count(count(merge.merged)),
+            )?)?;
+            cause = explain.push_detail(
+                RuleRef::builtin(NORMALIZE_SHARED_VALUE_RULE)?,
+                vec![subject],
+                ExplainEvent::Check {
+                    stage: ExplainStage::Normalization,
+                    assessment,
+                    rejection: RejectionClass::IntrinsicInvalid,
+                },
+                vec![cause],
+            )?;
+        }
+        Ok(cause)
+    }
+}
+
 /// The deterministic result of running `NormalizeSemantics` once.
 #[derive(Clone, Debug)]
 pub(crate) struct NormalizationOutcome {
@@ -178,32 +240,7 @@ impl NormalizationOutcome {
                 vec![cause],
             )?;
         }
-        for merge in &self.merges {
-            let key = format!("normalization:shared-value/operation:{}", merge.merged);
-            let subject = explain.subject(SubjectKind::Normalization, &key)?;
-            let assessment = PredicateAssessment::proven(
-                "normalize.shared-value-identity",
-                EvidenceBasis::CheckedInvariant,
-            )?
-            .with_fact(ExplainFact::new(
-                "canonical-operation",
-                FactValue::Count(count(merge.canonical)),
-            )?)?
-            .with_fact(ExplainFact::new(
-                "merged-operation",
-                FactValue::Count(count(merge.merged)),
-            )?)?;
-            cause = explain.push_detail(
-                RuleRef::builtin(NORMALIZE_SHARED_VALUE_RULE)?,
-                vec![subject],
-                ExplainEvent::Check {
-                    stage: ExplainStage::Normalization,
-                    assessment,
-                    rejection: RejectionClass::IntrinsicInvalid,
-                },
-                vec![cause],
-            )?;
-        }
+        cause = SharedValueExplain::new(self.merges.clone()).record(explain, cause)?;
         let assessment = PredicateAssessment::proven(
             "normalize.canonical-fixpoint",
             EvidenceBasis::CheckedInvariant,
@@ -388,7 +425,12 @@ impl RewriteRuleProvider<SemanticProgram> for CommonSubexpressionRule {
         // revalidates structurally; that is a different question from whether
         // the rule did what it claims.
         verify_normalized(program, &candidate, &congruence).map_err(failed)?;
-        Ok(vec![RewriteProposal::new(self.identity(), candidate)])
+        // The rule's own records travel with the proposal and are emitted only
+        // if it is adopted; see `RuleExplain`.
+        Ok(vec![
+            RewriteProposal::new(self.identity(), candidate)
+                .with_explain(Arc::new(SharedValueExplain::new(congruence.merges))),
+        ])
     }
 }
 

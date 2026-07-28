@@ -149,5 +149,12 @@ The payload is `Option<Arc<dyn RuleExplain>>`. `Arc` because `RewriteProposal` d
 
 **One honest gap, recorded rather than implied.** `record_adopted_alternatives` itself is **untested**: constructing an `ExplainWriter` needs a `VerifiedTargetRequest`, which `rewrite.rs` has no fixture for and should not grow one for. The emission loop belongs to the routing change and is covered there, against a real writer. What is pinned here is what routing depends on — that a rule's payload reaches its own proposal and does not leak to a sibling.
 
-**Remaining, and now genuinely just the wiring:** have `CommonSubexpressionRule` capture its merges and implement `RuleExplain`; move `NormalizationOutcome`'s per-merge records behind it, keeping the stage-level ones; call the engine at `pipeline.rs:420`; readmit; group; record adopted. The census moves in that change.
+## The rule's explain moved behind the trait (2026-07-28)
 
+`normalize::SharedValueExplain` holds the committed merges and implements `RuleExplain`. `CommonSubexpressionRule::propose` attaches it to its proposal, so the records travel with the rewrite and are emitted only if it is adopted.
+
+**One implementation, two callers.** `NormalizationOutcome::record` now calls it rather than carrying its own copy of the loop. Extracted rather than duplicated because two code paths writing the same governed records under the same rule key would drift, and an explain reader cannot tell which path produced a record — the drift would be invisible.
+
+**The extraction is byte-identical, and the existing census proves it.** `pipeline/tests.rs::every_wired_authority_emits_its_typed_explain_records` counts records per rule and is unchanged; a moved emission that altered a count, a key, or a fact would have failed it. That is a stronger check than any test written for the extraction would have been, because it was written by someone who did not know the extraction was coming.
+
+**Remaining, and now only the pipeline edit:** call the engine at `pipeline.rs:420`, readmit through `readmit_alternatives`, group through `group_by_resolved_contract`, emit through `record_adopted_alternatives`, and have `NormalizationOutcome` shed the per-merge call once the engine owns it. The census moves in that change — and only then, since everything up to here left it untouched.
