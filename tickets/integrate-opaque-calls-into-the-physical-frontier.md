@@ -304,4 +304,16 @@ Every other property transfers directly: layout and encoding and alignment from 
 
 **Note for whoever admits these:** `MaterializationForm::AliasView` is now constructible, and it is one of the eight `Reserved` values holding `implement-boundary-property-enforcers` closed. An opaque call declaring `MayAliasInputs` will reach it.
 
-**Remaining:** assemble both halves into a `BoundaryContract` keyed by tensor role — grouping the bindings by role, which is where `check_bindings`' storage-agreement rule pays off, since parameters sharing a role now provably agree — encode the identity from the `OpaqueCallIdentity`, and admit.
+## Where the assembly must live, and why (2026-07-28)
+
+`BoundaryRequirement` and `BoundaryGuarantee` have private fields and **no constructors** — they are built with struct literals inside `frontier.rs` (`frontier.rs:564` and its neighbour), which is the only module that can. So the assembly cannot live in `call_declaration` beside the two halves.
+
+**Put it in `frontier.rs`, next to `derive_boundary_contract`.** That is where the scheduled path already assembles a contract from a verified region, and the opaque path assembling one from a declaration belongs beside it — the two are the same operation over different evidence, and a reader comparing them should not have to cross a module. The alternative, giving the contract parts public constructors, widens a type's surface to serve one caller and lets anything build a contract from anything.
+
+**The two halves stay where they are.** `required_properties_for` and `guaranteed_properties_for` read only the declaration, so they belong with it; `frontier.rs` calls them and does the construction. That split is the same one `derive_boundary_contract` already has — it reads a region and constructs here.
+
+**What the assembly does:** group the bindings by tensor role; for each role, derive a requirement from any bound parameter that reads and a guarantee from any that writes. **Parameters sharing a role provably agree** on layout, encoding, and alignment — that is what `check_bindings`' `RoleStorageDisagreement` rule guarantees — so the grouping cannot produce a contract that contradicts itself, and picking "any" bound parameter is well defined rather than arbitrary. That rule was forced by writing the binding check and turns out to be this step's precondition.
+
+Then encode the identity from the `OpaqueCallIdentity` and admit.
+
+*The check, reproducible in one line:* `grep -n 'impl BoundaryRequirement' -A 6 crates/tiler-compiler/src/frontier.rs` — accessors only, no constructor.
