@@ -3,7 +3,7 @@ id: calibrate-device-cost-models
 title: Calibrate analytical costs for selected device profiles
 status: deferred
 priority: p2
-dependencies: [implement-analytical-component-cost-model]
+dependencies: [implement-analytical-component-cost-model, emit-analytical-costs-through-the-typed-cost-vocabulary]
 related: []
 scopes: [implementation/compiler, research/cost-model]
 shared_scopes: [project/tickets]
@@ -28,6 +28,8 @@ Any consequential public or cross-crate crate, module, trait, type, or call-site
 **What the model reports meanwhile is honest and checkable in one line.** `grep -n 'CostComponent::ResourcePressure | CostComponent::CompileTime' crates/tiler-compiler/src/component_cost.rs` prints `567`, the single arm where both components evaluate to `CostValue::Unknown` for every plan. That is the shape the repository's evidence rules require — an unmeasured component is `Unknown`, not a fabricated number — and it also means the two components cannot currently break a tie between candidates, because they are constant across them.
 
 **Only prose holds this ticket shut.** Its one dependency, `implement-analytical-component-cost-model`, is **`done`**. There is no unmet graph edge; what keeps it deferred is the activation paragraph above — representative kernels, exact target profiles, devices, and a reproducible benchmark protocol — none of which exists yet.
+
+**The typed analytical input now exists.** `emit-analytical-costs-through-the-typed-cost-vocabulary` moved every modelled component into `CostAssessment`: exact derivations carry `CheckedInvariant`, modelled bounds carry `Assumption`, units use the matching `Quantity` variant, and the `Reported` disposition states that none of these records entered dominance. Calibration may trust those distinctions rather than parsing `.low`/`.high` suffixes or treating every value as proven.
 
 **Trigger — whichever of these three arrives first.**
 

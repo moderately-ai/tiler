@@ -227,10 +227,6 @@ pub(crate) enum CostValue {
 
 impl CostValue {
     /// The stable code naming this evidence class.
-    #[allow(
-        dead_code,
-        reason = "unconsumed until the typed cost-vocabulary work emits evidence classes into explain (emit-analytical-costs-through-the-typed-cost-vocabulary); the class strings are the governed names that work will report"
-    )]
     pub(crate) const fn class(self) -> &'static str {
         match self {
             Self::Exact(_) => "exact",

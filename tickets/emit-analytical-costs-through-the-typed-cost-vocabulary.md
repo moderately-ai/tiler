@@ -1,7 +1,7 @@
 ---
 id: emit-analytical-costs-through-the-typed-cost-vocabulary
 title: Emit analytical costs through the typed cost vocabulary
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [model-the-eight-unmodelled-cost-components, calibrate-device-cost-models]
@@ -45,3 +45,9 @@ No reachable consumer misreads today — `ExplainEvent` is `pub(crate)` and the 
 - **The census will move exactly once, in this change.** Update `every_wired_authority_emits_its_typed_explain_records` in the same commit with the mechanism named in its comment; if it moves again later, that is a finding.
 - **When done**: update `calibrate-device-cost-models` to state its input now exists (it currently gates on this), remove the `dead_code` allow on `CostValue::class` (its reason names this ticket), and update `model-the-eight-unmodelled-cost-components`' note that evidence classes were collapsed in output.
 - **If you discover the frontier rejection reasons cannot ride this vocabulary** (they are refusals, not costs): file a separate ticket for typed rejection records rather than widening `CostAssessment` to carry them — say why on both.
+
+## Implemented outcome
+
+The seven modelled analytical components now emit through `CostAssessment` with typed quantities and the non-pruning `Reported` disposition. Each plan emits the minimum two records because an assessment carries one evidence basis for all its terms: exact values and the exact unmodelled-component count share `CheckedInvariant`, while both endpoints of the memory-traffic bound share `Assumption`. Combining them into one record would either overstate the bound or understate the exact derivations. The component keys carry `CostValue::class()`, so exact and bounded values remain distinguishable without inferring evidence from `.low` and `.high`.
+
+The frontier remainder is split into `emit-typed-opaque-call-frontier-rejection-records`. Those refusals cannot truthfully ride `CostAssessment`, and the existing target-feasibility event cannot be constructed from `CallNotAdmissible("target-infeasible")` because the frontier currently discards its required and available quantities. Inventing them or classing a target refusal as intrinsic would be a correctness defect.

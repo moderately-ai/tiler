@@ -440,9 +440,14 @@ pub(super) fn record_plan_selection(
 /// a dominance comparison — see `crate::component_cost` for why admitting a
 /// second key into dominance would silently turn Pareto pruning off.
 ///
-/// An `Unknown` component is deliberately *not* emitted as a zero. It is counted
-/// instead, so a reader can tell how much of the model is unmodelled rather than
-/// reading an unmodelled component as a free one.
+/// Terms are grouped by evidence class because [`ExplainEvent::CostAssessment`]
+/// carries one basis for every term it contains. Exact derivations therefore
+/// share one checked-invariant record and modelled bounds share one assumption
+/// record; putting both in one record would overstate the bound or understate
+/// the exact values. An `Unknown` component is deliberately *not* emitted as a
+/// zero. It is counted in the exact record instead, so a reader can tell how
+/// much of the model is unmodelled rather than reading an unmodelled component
+/// as a free one.
 fn record_analytical_costs(
     explain: &mut ExplainWriter,
     portfolio: &SelectedPortfolio,
@@ -484,55 +489,97 @@ fn record_analytical_costs(
             );
         }
         let subject_key = plan.identity().label();
-        for component in analytical.components() {
-            match component.value() {
-                CostValue::Exact(value) => {
-                    cause = record_count_step(
-                        explain,
-                        ANALYTICAL_MODEL_KEY,
-                        SubjectKind::KernelProgram,
-                        &subject_key,
-                        ExplainStage::CandidateEnumeration,
-                        component.component().key(),
-                        component.unit().key(),
-                        usize::try_from(value).unwrap_or(usize::MAX),
-                        cause,
-                    )?;
-                }
-                // Both ends are reported rather than a midpoint: a bound is the
-                // claim, and a midpoint would present a modelled range as a
-                // point estimate nobody derived.
-                CostValue::Bounded { low, high } => {
-                    for (suffix, value) in [("low", low), ("high", high)] {
-                        cause = record_count_step(
-                            explain,
-                            ANALYTICAL_MODEL_KEY,
-                            SubjectKind::KernelProgram,
-                            &subject_key,
-                            ExplainStage::CandidateEnumeration,
-                            &format!("{}.{suffix}", component.component().key()),
-                            component.unit().key(),
-                            usize::try_from(value).unwrap_or(usize::MAX),
-                            cause,
-                        )?;
+        let (exact_terms, bounded_terms) = explain_step(
+            (|| -> Result<_, CompileError> {
+                let mut exact_terms = Vec::new();
+                let mut bounded_terms = Vec::new();
+                for component in analytical.components() {
+                    match component.value() {
+                        CostValue::Exact(value) => {
+                            exact_terms.push(CostTerm::new(
+                                format!(
+                                    "{}.{}",
+                                    component.component().key(),
+                                    component.value().class()
+                                ),
+                                analytical_quantity(component.unit(), value),
+                            )?);
+                        }
+                        // Both ends are reported rather than a midpoint: a
+                        // bound is the claim, and a midpoint would present a
+                        // modelled range as a point estimate nobody derived.
+                        CostValue::Bounded { low, high } => {
+                            for (suffix, value) in [("low", low), ("high", high)] {
+                                bounded_terms.push(CostTerm::new(
+                                    format!(
+                                        "{}.{}.{suffix}",
+                                        component.component().key(),
+                                        component.value().class()
+                                    ),
+                                    analytical_quantity(component.unit(), value),
+                                )?);
+                            }
+                        }
+                        CostValue::Unknown => {}
                     }
                 }
-                CostValue::Unknown => {}
-            }
-        }
-        cause = record_count_step(
-            explain,
-            ANALYTICAL_MODEL_KEY,
+                exact_terms.push(CostTerm::new(
+                    "cost.unmodelled-components",
+                    Quantity::Count(
+                        u64::try_from(CANONICAL_COMPONENTS.len() - analytical.known_count())
+                            .unwrap_or(u64::MAX),
+                    ),
+                )?);
+                Ok((exact_terms, bounded_terms))
+            })(),
+            ExplainStage::Costing,
             SubjectKind::KernelProgram,
             &subject_key,
-            ExplainStage::CandidateEnumeration,
-            "cost.unmodelled-components",
-            "count",
-            CANONICAL_COMPONENTS.len() - analytical.known_count(),
-            cause,
+            record_cause(cause),
         )?;
+        for (basis, terms) in [
+            (EvidenceBasis::CheckedInvariant, exact_terms),
+            (EvidenceBasis::Assumption, bounded_terms),
+        ] {
+            if terms.is_empty() {
+                continue;
+            }
+            cause = explain_step(
+                (|| -> Result<_, CompileError> {
+                    let subject = explain.subject(SubjectKind::KernelProgram, &subject_key)?;
+                    Ok(explain.push_detail(
+                        RuleRef::builtin(ANALYTICAL_MODEL_KEY)?,
+                        vec![subject],
+                        ExplainEvent::CostAssessment {
+                            model: CostModelKey::new(ANALYTICAL_MODEL_KEY)?,
+                            basis,
+                            terms,
+                            disposition: CostDisposition::Reported,
+                        },
+                        vec![cause],
+                    )?)
+                })(),
+                ExplainStage::Costing,
+                SubjectKind::KernelProgram,
+                &subject_key,
+                record_cause(cause),
+            )?;
+        }
     }
     Ok(cause)
+}
+
+/// Carries one analytical value through the quantity variant fixed by its
+/// component. The exhaustive match keeps `CostUnit` and `Quantity` from
+/// silently drifting when either vocabulary grows.
+const fn analytical_quantity(unit: CostUnit, value: u64) -> Quantity {
+    match unit {
+        CostUnit::Bytes => Quantity::Bytes(value),
+        CostUnit::Count => Quantity::Count(value),
+        CostUnit::Operations => Quantity::Operations(value),
+        CostUnit::Registers => Quantity::Registers(value),
+        CostUnit::Nanoseconds => Quantity::Nanoseconds(value),
+    }
 }
 
 /// Records one region subject's hard-infeasible target rejection.
@@ -895,4 +942,31 @@ pub(super) fn record_cost_and_selection(
         )?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CostUnit, Quantity, analytical_quantity};
+
+    /// Every analytical unit maps to its namesake typed quantity.
+    ///
+    /// This includes the two currently unmodelled components, so producing
+    /// their first value cannot fall back to a dimensionless count.
+    #[test]
+    fn every_analytical_unit_has_a_typed_quantity() {
+        assert_eq!(analytical_quantity(CostUnit::Bytes, 1), Quantity::Bytes(1));
+        assert_eq!(analytical_quantity(CostUnit::Count, 2), Quantity::Count(2));
+        assert_eq!(
+            analytical_quantity(CostUnit::Operations, 3),
+            Quantity::Operations(3)
+        );
+        assert_eq!(
+            analytical_quantity(CostUnit::Registers, 4),
+            Quantity::Registers(4)
+        );
+        assert_eq!(
+            analytical_quantity(CostUnit::Nanoseconds, 5),
+            Quantity::Nanoseconds(5)
+        );
+    }
 }

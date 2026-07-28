@@ -100,6 +100,7 @@ pub(crate) enum ExplainDisposition {
     RejectedTarget,
     DeferredUnsupported,
     BudgetStopped,
+    Reported,
     Retained,
     DominancePruned,
     HigherCost,
@@ -450,6 +451,9 @@ pub(crate) enum Quantity {
     Bytes(u64),
     Threads(u64),
     Bindings(u64),
+    Operations(u64),
+    Registers(u64),
+    Nanoseconds(u64),
 }
 
 impl Quantity {
@@ -459,6 +463,9 @@ impl Quantity {
             Self::Bytes(_) => 2,
             Self::Threads(_) => 3,
             Self::Bindings(_) => 4,
+            Self::Operations(_) => 5,
+            Self::Registers(_) => 6,
+            Self::Nanoseconds(_) => 7,
         }
     }
 
@@ -467,7 +474,10 @@ impl Quantity {
             Self::Count(value)
             | Self::Bytes(value)
             | Self::Threads(value)
-            | Self::Bindings(value) => value,
+            | Self::Bindings(value)
+            | Self::Operations(value)
+            | Self::Registers(value)
+            | Self::Nanoseconds(value) => value,
         }
     }
 }
@@ -489,6 +499,7 @@ impl CostTerm {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CostDisposition {
+    Reported,
     Retained,
     Dominated,
     HigherCost,
@@ -657,6 +668,10 @@ impl ExplainEvent {
                 ..
             } => ExplainDisposition::DeferredUnsupported,
             Self::BudgetStop { .. } => ExplainDisposition::BudgetStopped,
+            Self::CostAssessment {
+                disposition: CostDisposition::Reported,
+                ..
+            } => ExplainDisposition::Reported,
             Self::Feasibility {
                 outcome: FeasibilityOutcome::Rejected(_),
                 ..
@@ -1722,6 +1737,7 @@ const fn disposition_name(disposition: ExplainDisposition) -> &'static str {
         ExplainDisposition::RejectedTarget => "rejected-target",
         ExplainDisposition::DeferredUnsupported => "deferred-unsupported",
         ExplainDisposition::BudgetStopped => "budget-stopped",
+        ExplainDisposition::Reported => "reported",
         ExplainDisposition::Retained => "retained",
         ExplainDisposition::DominancePruned => "dominance-pruned",
         ExplainDisposition::HigherCost => "higher-cost",
@@ -1782,11 +1798,15 @@ const fn quantity_name(quantity: Quantity) -> &'static str {
         Quantity::Bytes(_) => "bytes",
         Quantity::Threads(_) => "threads",
         Quantity::Bindings(_) => "bindings",
+        Quantity::Operations(_) => "operations",
+        Quantity::Registers(_) => "registers",
+        Quantity::Nanoseconds(_) => "nanoseconds",
     }
 }
 
 const fn cost_disposition_name(disposition: CostDisposition) -> &'static str {
     match disposition {
+        CostDisposition::Reported => "reported",
         CostDisposition::Retained => "retained",
         CostDisposition::Dominated => "dominated",
         CostDisposition::HigherCost => "higher-cost",
@@ -2052,6 +2072,7 @@ fn encode_cost(
     push_slice(bytes, model.as_str().as_bytes());
     encode_basis(bytes, basis);
     bytes.push(match disposition {
+        CostDisposition::Reported => 4,
         CostDisposition::Retained => 1,
         CostDisposition::Dominated => 2,
         CostDisposition::HigherCost => 3,
@@ -2226,6 +2247,7 @@ const fn disposition_tag(disposition: ExplainDisposition) -> u8 {
         ExplainDisposition::RejectedTarget => 4,
         ExplainDisposition::DeferredUnsupported => 5,
         ExplainDisposition::BudgetStopped => 6,
+        ExplainDisposition::Reported => 13,
         ExplainDisposition::Retained => 7,
         ExplainDisposition::DominancePruned => 8,
         ExplainDisposition::HigherCost => 9,
@@ -2518,6 +2540,44 @@ mod tests {
                 Vec::new()
             ),
             Err(ExplainError::InvalidStageEvent)
+        );
+        let subject = writer
+            .subject(SubjectKind::KernelProgram, "plan:reported")
+            .unwrap();
+        assert_eq!(
+            writer.push_detail(
+                RuleRef::builtin("test.rule").unwrap(),
+                vec![subject.clone()],
+                ExplainEvent::Check {
+                    stage: ExplainStage::Costing,
+                    assessment: PredicateAssessment::proven(
+                        "cost.reported",
+                        EvidenceBasis::CheckedInvariant
+                    )
+                    .unwrap(),
+                    rejection: RejectionClass::IntrinsicInvalid
+                },
+                Vec::new()
+            ),
+            Err(ExplainError::InvalidStageEvent)
+        );
+        assert!(
+            writer
+                .push_detail(
+                    RuleRef::builtin("cost.reported").unwrap(),
+                    vec![subject],
+                    ExplainEvent::CostAssessment {
+                        model: CostModelKey::new("cost.reported").unwrap(),
+                        basis: EvidenceBasis::Assumption,
+                        terms: vec![
+                            CostTerm::new("compile-time", Quantity::Nanoseconds(1)).unwrap()
+                        ],
+                        disposition: CostDisposition::Reported,
+                    },
+                    Vec::new(),
+                )
+                .is_ok(),
+            "a non-pruning report is admitted through the costing event only"
         );
         let alternative = writer
             .subject(SubjectKind::Alternative, "alternative:invalid-detail")

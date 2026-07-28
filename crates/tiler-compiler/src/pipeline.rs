@@ -1208,7 +1208,7 @@ fn optional_cause(cause: Option<ExplainRecordId>) -> Vec<ExplainRecordId> {
 }
 
 use crate::component_cost::{
-    ANALYTICAL_MODEL_KEY, CANONICAL_COMPONENTS, ComponentCost, CostComponent, CostValue,
+    ANALYTICAL_MODEL_KEY, CANONICAL_COMPONENTS, ComponentCost, CostComponent, CostUnit, CostValue,
     analytical_plan_cost,
 };
 

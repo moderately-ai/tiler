@@ -586,19 +586,70 @@ fn every_wired_authority_emits_its_typed_explain_records() {
             ("target.numerics.reassociation", 3),
             ("target.numerics.result-subnormals", 3),
             ("target.threads-per-workgroup", 3),
-            // Two retained plans, nine records each: six `Exact` components
-            // (allocation, dispatch, synchronization, indexing, redundant work,
-            // threadgroup memory — the last two exactly zero, forced by the
-            // cover and requirements derivations respectively), memory traffic
-            // as a `Bounded` pair contributing *two* records, and the
-            // unmodelled-count record. The two `Unknown` components
-            // (resource pressure, compile time) are deliberately not emitted
-            // as zeros, so this number grows as components become modelled.
-            ("tiler.cost.analytical.v1", 18),
+            // Two retained plans, two records each: exact terms share one
+            // checked-invariant assessment, while the memory-traffic bound
+            // shares one assumption assessment. Grouping by evidence class is
+            // the mechanism that moved this census: one assessment has one
+            // basis, so mixing the terms would make one class lie.
+            ("tiler.cost.analytical.v1", 4),
             ("tiler.cost.structural.v1", 2),
             ("tiler.selection.structural-pareto.v1", 2),
         ])
     );
+    let analytical = trace
+        .records()
+        .iter()
+        .filter(|record| record.rule().key().as_str() == ANALYTICAL_MODEL_KEY)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        analytical
+            .iter()
+            .filter(|record| matches!(
+                record.event(),
+                ExplainEvent::CostAssessment {
+                    basis: EvidenceBasis::CheckedInvariant,
+                    terms,
+                    disposition: CostDisposition::Reported,
+                    ..
+                } if terms.len() == 7
+            ))
+            .count(),
+        2,
+        "each plan reports six exact components and its exact unknown count"
+    );
+    assert_eq!(
+        analytical
+            .iter()
+            .filter(|record| matches!(
+                record.event(),
+                ExplainEvent::CostAssessment {
+                    basis: EvidenceBasis::Assumption,
+                    terms,
+                    disposition: CostDisposition::Reported,
+                    ..
+                } if terms.len() == 2
+            ))
+            .count(),
+        2,
+        "each plan reports both endpoints of its modelled memory bound"
+    );
+    assert!(
+        analytical
+            .iter()
+            .all(|record| record.event().disposition() == ExplainDisposition::Reported)
+    );
+    let rendered = trace.render();
+    for typed_term in [
+        "cost.memory-traffic.bounded.low:bytes=",
+        "cost.indexing.exact:operations=",
+        "cost.dispatch.exact:count=",
+        "cost.threadgroup-memory.exact:bytes=",
+    ] {
+        assert!(
+            rendered.contains(typed_term),
+            "missing typed analytical term {typed_term}"
+        );
+    }
     for (rule, fact_key, expected) in [
         ("normalize.semantics.v1", "rewrite-count", 0),
         ("region.formation.v1", "candidate-count", 17),
