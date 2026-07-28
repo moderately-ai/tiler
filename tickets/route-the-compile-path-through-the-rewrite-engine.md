@@ -124,3 +124,18 @@ Three attempts to generalize this stage have each found the same division, and n
 The engine's column is built and tested. The rule's column is what `normalize.rs` currently does inline for its one rule, and generalizing the stage means moving those three things behind the provider trait — not widening a struct.
 
 **Revised order:** give `RewriteRuleProvider` an explain-emitting method and move `NormalizationOutcome`'s per-merge records behind it, keeping the stage-level records (budget stop, summary) with the engine. Then the outcome type generalizes to a thin carrier, and the swap at `420` is small. The census moves once, in that change.
+
+## How the rule emits explain, derived (2026-07-28)
+
+The revised order above says "give `RewriteRuleProvider` an explain-emitting method". Working out what that method looks like eliminates the obvious form.
+
+**Rejected: emit during `propose`.** Pass `&mut ExplainWriter` and a cause into `propose`, and let the rule record as it works. It is the smallest change and it is wrong: a proposal may be **abandoned by the budget** or **rejected by structural revalidation** after `propose` returns. Records emitted during proposal would claim a rewrite that never happened, and the abandoned-run case is exactly where the explain output matters most. Today `normalize_semantics` records *after* adopting, and that ordering is load-bearing rather than incidental.
+
+**Rejected: reconstruct the facts from the candidate.** The engine holds only the candidate program, and a `SharedValueMerge` names graph-local ordinals of the *original*. Recovering them means re-running detection, which is both wasteful and a second authority over what the rule already decided.
+
+**What survives: the proposal carries a rule-supplied explain payload the engine emits only for survivors.** A `RewriteProposal` gains something like a `Box<dyn RuleExplain>`, where `RuleExplain::record(&self, explain, cause) -> Result<ExplainRecordId, ExplainError>` is implemented by the rule over facts it captured while proposing. The engine threads it opaquely — it never interprets the payload, which is what keeps rule-specific facts out of a generic type — and calls it only for alternatives that survived revalidation and the budget.
+
+That preserves the record-after-adopting order, keeps `canonical-operation`/`merged-operation` in CSE's hands, and gives the engine exactly one new obligation: do not emit for a proposal you discarded.
+
+**Blast radius, so it is budgeted rather than discovered:** `RewriteProposal` gains a field, so its constructor and the four test providers in `rewrite.rs` change; `collect_proposals` and `run_rewrite_engine` thread the payload; `CommonSubexpressionRule` captures its merges and implements `RuleExplain`; `NormalizationOutcome` sheds its per-merge records and keeps the stage-level ones. The pin and the readmission tests are unaffected — they compare programs, not records.
+
