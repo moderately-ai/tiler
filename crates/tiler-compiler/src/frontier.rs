@@ -1670,16 +1670,24 @@ fn encode_call_subject(proposed: &OpaqueCallProposal) -> Vec<u8> {
 /// `input_elements` and `output_elements`, which is exactly the count a call
 /// over that tensor performs work proportional to.
 ///
-/// # Why `Intermediate` returns `None`
+/// # `Intermediate`, and the profile assumption that makes it exact
 ///
-/// The normalized request states element counts for the program's input and
-/// output. An intermediate is a cover-level artefact — it exists because a
-/// particular cover chose to materialize between two regions — and its element
-/// count is a property of that cover, which the frontier does not hold when it
-/// enumerates for a subject. Returning a count derived from the input's would be
-/// right for the pointwise case and wrong for any cover that materializes
-/// something smaller, so it declines instead. A shape-dependent call bound to an
-/// intermediate is refused rather than mis-sized.
+/// An intermediate is a cover-level artefact — it exists because a cover chose
+/// to materialize between two regions — and in general its element count is a
+/// property of that cover, which the frontier does not hold when enumerating for
+/// a subject.
+///
+/// **The bounded profile has exactly one materialization**: the two-region cover
+/// materializes the pointwise result, which is elementwise over the input and
+/// therefore has the input's element count. So `input_elements` is exact here,
+/// not an approximation, and declining would refuse calls this profile can
+/// perfectly well size.
+///
+/// **This is a profile assumption and it is stated because it will expire.** A
+/// cover that materializes a reduced or tiled intermediate has a different count,
+/// and this would then be silently wrong rather than visibly unsupported — which
+/// is the worse failure. `implement-general-dag-partitioning` is where covers
+/// stop being two, and this must be revisited there rather than inherited.
 #[allow(
     dead_code,
     reason = "the work-count resolution; lands with its tests ahead of the admission that consumes it"
@@ -1694,10 +1702,14 @@ fn resolve_work_items(
         WorkScaling::PerElementOf(name) => {
             let (_, role) = bindings.iter().find(|(bound, _)| *bound == name)?;
             let normalized = request.serial_sum();
+            #[allow(
+                clippy::match_same_arms,
+                reason = "the input and intermediate arms are equal by a profile assumption, not by definition: this profile's only materialization is the elementwise pointwise result. Merging them would erase the seam where that assumption lives, and it is the assumption that expires when covers stop being two"
+            )]
             match role {
                 TensorRole::Input => Some(normalized.input_elements),
                 TensorRole::Output => Some(normalized.output_elements),
-                TensorRole::Intermediate => None,
+                TensorRole::Intermediate => Some(normalized.input_elements),
             }
         }
     }
@@ -2584,10 +2596,11 @@ mod tests {
         );
     }
 
-    /// An unbound name and an intermediate binding both decline.
+    /// An unbound name declines; an intermediate resolves.
     ///
-    /// Declining is the point: a work count nothing supports would produce a
-    /// feasibility verdict that is confidently wrong in either direction.
+    /// Declining for the unbound case is the point: a work count nothing
+    /// supports would produce a feasibility verdict that is confidently wrong in
+    /// either direction.
     #[test]
     fn an_unresolvable_scaling_declines_rather_than_guessing() {
         use super::{WorkScaling, resolve_work_items};
@@ -2600,10 +2613,16 @@ mod tests {
             None,
             "a scaling naming an unbound parameter produced a count"
         );
+        // An intermediate resolves to the input's count, exact for the bounded
+        // profile's single materialization — the pointwise result, which is
+        // elementwise over the input. Asserted against `input_elements` rather
+        // than a literal so it moves with the fixture, and separately from the
+        // input case so a resolution collapsing the two roles still passes only
+        // by being right about both.
         assert_eq!(
             resolve_work_items(WorkScaling::PerElementOf("z"), &bindings, &request),
-            None,
-            "an intermediate binding produced a count the request cannot state"
+            Some(request.serial_sum().input_elements),
+            "an intermediate binding did not resolve to the materialized count"
         );
     }
 

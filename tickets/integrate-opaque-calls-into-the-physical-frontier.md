@@ -434,4 +434,8 @@ The cause is already a type — `RejectionCause` with `Numerical` and `Capabilit
 
   The test declares a call permitting contraction where the governed contract forbids it and requires that exact reason — so a refusal for any *other* cause fails it. The positive admission test passing unchanged confirms its own numerics do match the governed contract, which is what makes the negative test meaningful rather than vacuous.
 - ~~**Explain records**~~ — done; see above.
-- **`Intermediate` work scaling** still declines, for the reason recorded above.
+- ~~**`Intermediate` work scaling**~~ — **resolved 2026-07-28.** I had it declining on the grounds that an intermediate's element count is a property of the cover, which the frontier does not hold. True in general and not true here: **the bounded profile has exactly one materialization**, the two-region cover's pointwise result, which is elementwise over the input and therefore has the input's element count. So `input_elements` is *exact*, not an approximation, and declining refused calls this profile can perfectly well size.
+
+  **The assumption is stated at the site because it will expire.** A cover materializing a reduced or tiled intermediate has a different count, and this would then be silently wrong rather than visibly unsupported — the worse failure. `implement-general-dag-partitioning` is where covers stop being two, and this must be revisited there rather than inherited.
+
+  Clippy flagged the `Input` and `Intermediate` arms as identical and wanted them merged. Refused with a `reason`: they are equal by that profile assumption rather than by definition, and merging them erases the seam where the assumption lives — which is precisely the line a later reader needs to find.
