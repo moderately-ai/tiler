@@ -550,6 +550,116 @@ fn rebuild(
     })
 }
 
+/// Rebuilds a program through the checked semantic builder, changing nothing.
+///
+/// The engine's half of revalidation. Every operation is re-applied through the
+/// frozen authority, so result types and shapes are **re-inferred rather than
+/// copied**, and a candidate whose structure does not survive that inference is
+/// rejected here rather than adopted.
+///
+/// # Why this is not `rebuild` with an identity congruence
+///
+/// It could be, and it deliberately is not. `rebuild` reads `congruence.retained`
+/// to drop operations and `congruence.operation_results` to remap values; an
+/// identity congruence is a `Congruence` whose fields all say "change nothing",
+/// which is a value only this call site would ever construct and which the
+/// congruence's own invariants do not describe. Passing one would mean the
+/// generic path's correctness depended on a CSE-shaped structure being filled
+/// in a way CSE never fills it.
+///
+/// The duplication is one loop, and it is the honest cost of the two paths
+/// answering different questions: `rebuild` asks what the rewrite produces, and
+/// this asks whether an arbitrary program still validates.
+///
+/// # Where this belongs long term
+///
+/// It uses only `tiler-ir`'s builder and program, so that crate is its natural
+/// home — but adding it there is a public API change on the semantic authority,
+/// which ADR 0075 reserves. It stays private here until a second consumer
+/// justifies the promotion.
+#[allow(
+    dead_code,
+    reason = "the engine half of revalidation, landed with its round-trip tests ahead of the transaction that drives it"
+)]
+pub(crate) fn revalidate_structurally(
+    program: &SemanticProgram,
+) -> Result<SemanticProgram, NormalizeError> {
+    let ordinals: HashMap<ValueId, usize> = program
+        .values()
+        .enumerate()
+        .map(|(ordinal, value)| (value.id(), ordinal))
+        .collect();
+    let mut builder = SemanticProgramBuilder::try_new(program.semantic_registry().clone())
+        .map_err(|_| NormalizeError::Rebuild {
+            rule: "builder-create",
+        })?;
+    let mut mapped: Vec<Option<ValueId>> = vec![None; program.value_count()];
+
+    let lookup = |mapped: &[Option<ValueId>], position: usize| -> Result<ValueId, NormalizeError> {
+        mapped
+            .get(position)
+            .copied()
+            .flatten()
+            .ok_or(NormalizeError::InvalidRewrite {
+                rule: "unmapped-value",
+            })
+    };
+
+    for input in program.inputs() {
+        let position = ordinal(&ordinals, input.value())?;
+        let value = program
+            .value(input.value())
+            .map_err(|_| NormalizeError::Structure {
+                rule: "input-value",
+            })?;
+        let rebuilt = builder
+            .input_resolved(
+                input.key().clone(),
+                value.shape().clone(),
+                value.resolved_type().clone(),
+            )
+            .map_err(|_| NormalizeError::Rebuild { rule: "input" })?;
+        mapped[position] = Some(rebuilt);
+    }
+
+    for operation in program.operations() {
+        let mut operands = Vec::with_capacity(operation.operands().len());
+        for operand in operation.operands() {
+            operands.push(lookup(&mapped, ordinal(&ordinals, operand)?)?);
+        }
+        let results = builder
+            .apply(
+                operation.key().clone(),
+                operation.attributes().clone(),
+                &operands,
+            )
+            .map_err(|_| NormalizeError::Rebuild { rule: "operation" })?;
+        // Re-inference must produce the same number of results the input
+        // carried. A mismatch means the frozen authority disagrees with the
+        // program's own structure, which is a rejection rather than something
+        // to reconcile.
+        if results.len() != operation.results().len() {
+            return Err(NormalizeError::InvalidRewrite {
+                rule: "result-arity",
+            });
+        }
+        for (result, original) in results.into_iter().zip(operation.results()) {
+            mapped[ordinal(&ordinals, original)?] = Some(result);
+        }
+    }
+
+    for output in program.outputs() {
+        let value = lookup(&mapped, ordinal(&ordinals, output.value())?)?;
+        builder
+            .output_resolved(output.key().clone(), value)
+            .map_err(|_| NormalizeError::Rebuild { rule: "output" })?;
+    }
+
+    builder.build().map_err(|_| NormalizeError::Rebuild {
+        rule: "semantic-verification",
+    })
+}
+
 fn resolve(
     congruence: &Congruence,
     mapped: &[Option<ValueId>],
@@ -964,6 +1074,62 @@ mod tests {
                 .is_empty(),
             "a rule with nothing to do proposed a candidate"
         );
+    }
+
+    /// Structural revalidation preserves a program's identity exactly.
+    ///
+    /// This is the property the engine relies on: round-tripping a candidate
+    /// must not change it, or every alternative would differ from itself and
+    /// the pin above could never hold. Compared on canonical identity bytes,
+    /// for the same reason the pin is.
+    #[test]
+    fn structural_revalidation_preserves_the_program() {
+        for original in [program(2.0, 2.0, false), program(2.0, 3.0, false)] {
+            let round_tripped =
+                revalidate_structurally(&original).expect("a valid program revalidates");
+            assert_eq!(
+                round_tripped.semantic_identity().graph().as_bytes(),
+                original.semantic_identity().graph().as_bytes(),
+                "revalidation changed the program"
+            );
+        }
+    }
+
+    /// Revalidation is a real rebuild, not a clone.
+    ///
+    /// A `revalidate_structurally` that returned its input would pass the test
+    /// above and would revalidate nothing. This drives it against a program the
+    /// *rewrite* produced — one built by a different path than the fixture — and
+    /// requires the round trip to reach the same identity, which a clone would
+    /// also do, so the discriminating part is that the operation and value
+    /// counts survive re-inference rather than being copied.
+    #[test]
+    fn revalidation_re_infers_rather_than_copying() {
+        let duplicated = program(2.0, 2.0, false);
+        let normalized = normalize(&duplicated);
+        let rewritten = normalized
+            .normalized_program()
+            .expect("the duplicated program normalizes");
+
+        let round_tripped =
+            revalidate_structurally(rewritten).expect("the rewritten program revalidates");
+        assert_eq!(
+            round_tripped.operation_count(),
+            rewritten.operation_count(),
+            "re-inference changed the operation count"
+        );
+        assert_eq!(
+            round_tripped.value_count(),
+            rewritten.value_count(),
+            "re-inference changed the value count"
+        );
+        assert_eq!(
+            round_tripped.semantic_identity().graph().as_bytes(),
+            rewritten.semantic_identity().graph().as_bytes(),
+        );
+        // The rewritten program is genuinely smaller than its input, so this
+        // test is not silently running on the unrewritten fixture.
+        assert!(rewritten.operation_count() < duplicated.operation_count());
     }
 
     #[test]
