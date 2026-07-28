@@ -91,9 +91,13 @@ What is genuinely absent is narrower than claimed: **registers per thread**, and
 
 **Measured: `Exact(0)` on every input**, since the bounded profile stages no local memory — verified by asserting zero across the suite and watching it never fire. **The peak-versus-sum choice is therefore correct but untested**: with every region at zero, `max` and a sum are indistinguishable and a fault would still report zero with a green suite. The first region that stages threadgroup memory exercises it.
 
-**`ArtifactSize` — an ordering problem, not a data problem.** Encoded bytes exist only after encoding, and this cost is computed during planning, which precedes it. Nothing in the plan can be summed to get it.
+**`ArtifactSize` — the one original blocker that survived scrutiny, and checking it makes it worse rather than better.** The ordering claim holds: `record_plan_selection` runs at `pipeline/planning.rs:304` and `build_artifact_plan` at `planning.rs:453`, so analytical costs are reported ~150 lines before any artifact exists.
 
-*Trigger: either this component moves to a post-encode reporting point, or the artifact program model gains a size estimate derivable before encoding.*
+But the real problem is not ordering. **Only the selected plan is ever built into an artifact.** `record_analytical_costs` iterates `portfolio.plans()` — every retained plan — and at most one of them is encoded. So artifact size can never be populated for the plans this cost model exists to *compare*; it could only ever be `Exact` for the one already chosen, and `Unknown` for every alternative. Moving the reporting point later does not fix that, because the alternatives are never encoded at all.
+
+That makes this a category error in the accepted component list rather than a missing input. Artifact size is a property of a produced artifact, not a cost comparable across candidate plans. A cost component that is structurally `Unknown` for every plan except the winner cannot inform a choice between them, and calibrating it would mean calibrating against a single self-selected sample.
+
+*Recommendation: drop `ArtifactSize` from the governed cost vocabulary and report artifact size where the artifact is produced. Leaving it here means carrying a tenth of the model that is `Unknown` by construction. **I have not made this change** — adding `ThreadgroupMemory` was additive and visible, but deleting a component the accepted ticket explicitly named is a scope reduction, and given how often my negative claims this session have been wrong, this derivation deserves a second reader before something is removed on it.*
 
 **`CompileTime` — belongs to `calibrate-device-cost-models`, not here.** It is a measurement rather than an analysis. The only honest form is `Bounded` from observed compiles, and this ticket's parent states in its own body that `calibrate-device-cost-models` "owns later device measurements and activation". Modelling it here would mean inventing a compile-time formula, which is the failure this ticket exists to avoid.
 
