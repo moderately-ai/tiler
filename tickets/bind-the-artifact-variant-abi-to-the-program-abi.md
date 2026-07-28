@@ -5,7 +5,7 @@ status: done
 priority: p1
 dependencies: [complete-program-identity-with-abi-guards-and-routing]
 related: [prototype-artifact-program-model]
-scopes: [implementation/artifact, implementation/metal-aot]
+scopes: [implementation/artifact, implementation/metal-aot, implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, abi, identity]
