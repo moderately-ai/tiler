@@ -87,6 +87,14 @@ What is refuted:
 
 This changes the size of the next slice materially, which is why it is recorded here rather than left for someone to discover mid-implementation. The CSE pin is unaffected — the engine with CSE alone must still reproduce `normalize.rs`'s `SemanticIdentity` — but reaching it now requires designing the proposal type first.
 
-**Still not included:** the proposal type, the trait, a registry, and the engine.
+**Proposal type landed 2026-07-27**, which was the blocker the correction above identified. `RewriteProposal<Program>` pairs a `RewriteRuleIdentity` with a whole candidate program.
+
+*Why a whole candidate program rather than a structured edit script.* An edit vocabulary is more expressive to reason about and is refused for two reasons that compound. It would need a closed vocabulary covering every edit any rule might make, and this engine exists to admit rules from *outside* — so it would either constrain external rules to what was imagined when it was written, or grow an escape hatch that puts unchecked structure back into the graph, which is exactly what "unknown provider behaviour is never optimizable merely because it is registered" forbids. And it would need its own validator, whereas a candidate program needs none: the normalize stage already revalidates by rebuilding through the checked `SemanticProgramBuilder`, so a malformed candidate is rejected by the authority that already owns that judgement instead of by a second one written for edits.
+
+*The cost, stated rather than hidden.* The engine cannot see **what** a rule changed, only that the result is valid and what it costs. That suffices for what the engine does — revalidate, compare identity, choose — and a rule that wants to explain itself does so through its own typed explain records rather than handing the engine a diff to interpret.
+
+It is generic over the program type so this module does not depend on the semantic IR before the engine does; the engine instantiates it at `SemanticProgram`. Tests cover that a proposal always names its rule, and that two rules proposing an identical candidate stay distinct — if the rule were dropped or defaulted, excluding one provider that turned out to be wrong would silently exclude another's work.
+
+**Still not included:** the provider trait, a registry, and the engine. With identity and proposal settled, the trait is now the small piece; the engine's transaction generalization is the large one.
 
 **Next step, unchanged:** generalize the normalize transaction to take rules from a provider and to yield alternatives, with the pin already stated above — CSE alone must reproduce `normalize.rs`'s `SemanticIdentity` exactly.

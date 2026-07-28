@@ -131,6 +131,83 @@ impl fmt::Display for RewriteRuleIdentity {
 pub(crate) const COMMON_SUBEXPRESSION_RULE: Option<RewriteRuleIdentity> =
     RewriteRuleIdentity::new("tiler.normalize", "common-subexpression.v1", 1);
 
+/// One rewrite a provider proposes: the rule that proposed it, and the whole
+/// program it would produce.
+///
+/// # Why a whole candidate program rather than an edit script
+///
+/// A structured edit vocabulary — delete this operation, replace that operand —
+/// is more expressive to reason about, and it is refused here for two reasons
+/// that compound.
+///
+/// It would need a closed vocabulary covering every kind of edit any rule might
+/// ever make, and this engine's whole purpose is to admit rules from *outside*.
+/// A closed edit vocabulary either constrains external rules to what was
+/// imagined when it was written, or it grows an escape hatch that puts unchecked
+/// structure back into the graph — which is the thing the ticket forbids when it
+/// says unknown provider behaviour is never optimizable merely because it is
+/// registered.
+///
+/// And it would need its own validator. A candidate program does not: the
+/// normalize stage already revalidates by rebuilding through the checked
+/// [`SemanticProgramBuilder`], so the frozen semantic authority re-infers and
+/// re-validates every operation, and a malformed candidate is rejected by the
+/// authority that already owns that judgement rather than by a second one
+/// written for edits. `AGENTS.md` calls a second authority over an encoding a
+/// defect rather than a design, and this is the same shape.
+///
+/// The cost is real and worth stating: the engine cannot see *what* a rule
+/// changed, only that the result is valid and what it costs. That is enough for
+/// what the engine does — revalidate, compare identity, and choose — and a rule
+/// that wants to explain itself does so through its own typed explain records,
+/// not by handing the engine a diff to interpret.
+///
+/// [`SemanticProgramBuilder`]: tiler_ir::semantic::SemanticProgramBuilder
+#[derive(Clone, Debug)]
+#[allow(
+    dead_code,
+    reason = "the proposal shape the engine will consume; landed with its derivation before the engine that reads it"
+)]
+pub(crate) struct RewriteProposal<Program> {
+    rule: RewriteRuleIdentity,
+    candidate: Program,
+}
+
+#[allow(
+    dead_code,
+    reason = "see the type's own allow: accessors for a reviewed draft proposal whose consumer is the not-yet-written engine"
+)]
+impl<Program> RewriteProposal<Program> {
+    /// Pairs a candidate program with the rule that proposed it.
+    ///
+    /// Generic over the program type so this module does not depend on the
+    /// semantic IR before the engine does. The engine instantiates it at
+    /// `SemanticProgram`; the tests below at a stand-in, which is what lets the
+    /// pairing be tested without building a program.
+    pub(crate) const fn new(rule: RewriteRuleIdentity, candidate: Program) -> Self {
+        Self { rule, candidate }
+    }
+
+    /// The rule that proposed this rewrite.
+    ///
+    /// Always present. A proposal that could not name its rule would be
+    /// unattributable, and an unattributable rewrite cannot be explained,
+    /// reproduced, or excluded — which is why this is a field rather than an
+    /// `Option` the engine would have to handle.
+    pub(crate) const fn rule(&self) -> RewriteRuleIdentity {
+        self.rule
+    }
+
+    /// The program this rewrite would produce, before revalidation.
+    ///
+    /// Named `candidate` rather than `program` because it is not yet trusted:
+    /// nothing may adopt it until it has been rebuilt through the checked
+    /// builder and has passed every postcondition.
+    pub(crate) const fn candidate(&self) -> &Program {
+        &self.candidate
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,6 +277,42 @@ mod tests {
         assert_eq!(
             rule.to_string(),
             "tiler.normalize/common-subexpression.v1@1"
+        );
+    }
+
+    /// A proposal carries its rule, and the rule is not optional.
+    ///
+    /// The stand-in program type is what keeps this test independent of the
+    /// semantic IR: the property under test is the pairing, and using a real
+    /// program would test the IR's constructors instead.
+    #[test]
+    fn a_proposal_names_the_rule_that_made_it() {
+        let rule = COMMON_SUBEXPRESSION_RULE.expect("the normalize rule is named");
+        let proposal = RewriteProposal::new(rule, "candidate-program-stand-in");
+        assert_eq!(proposal.rule(), rule);
+        assert_eq!(*proposal.candidate(), "candidate-program-stand-in");
+    }
+
+    /// Two rules proposing the same candidate remain distinguishable.
+    ///
+    /// If the rule were dropped or defaulted, two providers proposing an
+    /// identical program would become one proposal, and excluding a provider
+    /// that turned out to be wrong would silently exclude the other's work too.
+    #[test]
+    fn identical_candidates_from_different_rules_stay_distinct() {
+        let left = RewriteProposal::new(
+            RewriteRuleIdentity::new("p", "a", 1).expect("named"),
+            "same",
+        );
+        let right = RewriteProposal::new(
+            RewriteRuleIdentity::new("p", "b", 1).expect("named"),
+            "same",
+        );
+        assert_eq!(*left.candidate(), *right.candidate());
+        assert_ne!(
+            left.rule(),
+            right.rule(),
+            "two providers' proposals collapsed into one"
         );
     }
 }
