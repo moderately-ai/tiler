@@ -213,3 +213,16 @@ Note that `is_compatible_with` now compares whole specs rather than name and rol
 **The boundary derivation is now writable end to end:** every property in `CANONICAL_PROPERTIES` has an authority in the declaration.
 
 *The check, reproducible in one line:* read `admit_verified` and `derive_boundary_contract` in `frontier.rs`, and `CANONICAL_PROPERTIES` in `boundary.rs`, against `OpaqueCallDeclaration`'s four parts.
+
+## The derivation needs a parameter-to-tensor-role mapping, which nothing supplies (2026-07-28)
+
+Writing the boundary derivation: `BoundaryRequirement` is keyed by `tensor: TensorRole` (`frontier.rs:364`), not by parameter. A contract says what is required *of the region's input tensor*, not *of binding slot 2*.
+
+An opaque call's ABI names parameters; the boundary vocabulary names tensor roles. **Nothing maps between them.** A call with two inputs and one output has three parameters and the region has some number of tensors in each role, and the correspondence is a fact only the *proposal* knows — the provider is claiming "this call implements this region, with parameter `x` bound to that tensor".
+
+**Guessing it is exactly the failure this ticket's own ABI work exists to prevent.** The module header for `call_abi` records why parameters are named rather than positional: a positional ABI is checkable only for arity, so swapping an input for an output passes every check a position can support. Inferring a parameter's tensor role from its `ParameterRole` or its slot would reintroduce that, one level up — `In` does not tell you *which* input.
+
+**So the proposal must carry the binding.** `ProposalBody::OpaqueCall(OpaqueCallIdentity)` is one field short: it needs a mapping from parameter name to the region tensor it binds, supplied by the provider and validated at admission against both the ABI (every parameter bound exactly once) and the region subject (every tensor the region exposes accounted for). That validation is the analogue of the coherence check, and it is the last piece before the derivation is mechanical.
+
+*The check, reproducible in one line:* `grep -n 'struct BoundaryRequirement' -A 6 crates/tiler-compiler/src/frontier.rs` — keyed by `TensorRole`, with no parameter or slot anywhere in the boundary vocabulary.
+
