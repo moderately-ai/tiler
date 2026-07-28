@@ -1,14 +1,17 @@
 ---
 id: implement-first-algebraic-rewrite-portfolio
 title: Implement the first algebraic rewrite portfolio
-status: todo
+status: in-progress
 priority: p1
 dependencies: [implement-transactional-rewrite-engine, implement-first-profile-numerical-policies]
 related: []
-scopes: [implementation/compiler, implementation/reference]
+scopes: [implementation/compiler, implementation/reference, implementation/ir, contracts/numerics, contracts/optimizer, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, optimizer, rewrites, numerics]
+claimed_from: todo
+assignee: codex
+lease_expires_at: 1785272321
 ---
 ## User-visible outcome
 

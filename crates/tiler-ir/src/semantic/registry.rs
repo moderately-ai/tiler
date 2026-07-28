@@ -9,12 +9,13 @@ use crate::identity::{push_len, push_slice};
 use crate::shape::Axis;
 
 use super::operation::{
-    CanonicalValueKind, F32_CONSTANT_BITS_ATTRIBUTE, OpKey, OperationArity,
-    OperationAttributeSchema, OperationAttributes, OperationConformance, OperationDefinition,
-    OperationDefinitionFacts, OperationEffect, OperationInferenceError, OperationInferenceOutputs,
-    OperationInferenceRequest, OperationInferencer, OperationSchema, ProviderDiagnosticCode,
-    ProviderDiagnosticError, REDUCTION_AXES_ATTRIBUTE, ValueFact, add_f32_op, constant_f32_op,
-    multiply_f32_op, strict_serial_sum_f32_op, validate_provider_diagnostic_message,
+    CanonicalValueKind, F32_CONSTANT_BITS_ATTRIBUTE, OpKey, OperationAlgebraicCapabilities,
+    OperationArity, OperationAttributeSchema, OperationAttributes, OperationConformance,
+    OperationDefinition, OperationDefinitionFacts, OperationEffect, OperationInferenceError,
+    OperationInferenceOutputs, OperationInferenceRequest, OperationInferencer, OperationSchema,
+    ProviderDiagnosticCode, ProviderDiagnosticError, REDUCTION_AXES_ATTRIBUTE, ValueFact,
+    add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
+    validate_provider_diagnostic_message,
 };
 use super::types::{
     AttributeFieldId, CanonicalField, CanonicalValue, CanonicalValueView, QuantSchemeKey,
@@ -1507,7 +1508,7 @@ impl FrozenSemanticRegistry {
         &self,
         closure: &SemanticAuthorityClosure,
     ) -> SemanticDefinitionProjectionIdentity {
-        let mut bytes = b"tiler.semantic-definition-projection.v3\0".to_vec();
+        let mut bytes = b"tiler.semantic-definition-projection.v4\0".to_vec();
         push_len(&mut bytes, closure.type_keys.len());
         for key in &closure.type_keys {
             let registered = self
@@ -1925,7 +1926,7 @@ struct StandardSemantics;
 
 impl SemanticRegistryProvider for StandardSemantics {
     fn identity(&self) -> ProviderIdentity {
-        ProviderIdentity::new("tiler", "standard-semantics", 4)
+        ProviderIdentity::new("tiler", "standard-semantics", 5)
             .expect("the governed standard provider identity is valid")
     }
 
@@ -1976,24 +1977,30 @@ impl SemanticRegistryProvider for StandardSemantics {
             OperationEffect::Pure,
             Arc::new(ConstantF32),
         ))?;
-        registrar.register_operation(OperationDefinition::new(
-            multiply_f32_op(),
-            exact_schema(2, 1, []),
-            NormativeDefinitionRef::new("tiler::multiply-f32@1; separate binary32 multiply")?,
-            OperationDefinitionFacts::new(arithmetic_f32_facts()),
-            standard_conformance("multiply-f32"),
-            OperationEffect::Pure,
-            Arc::new(BinaryF32),
-        ))?;
-        registrar.register_operation(OperationDefinition::new(
-            add_f32_op(),
-            exact_schema(2, 1, []),
-            NormativeDefinitionRef::new("tiler::add-f32@1; separate binary32 addition")?,
-            OperationDefinitionFacts::new(arithmetic_f32_facts()),
-            standard_conformance("add-f32"),
-            OperationEffect::Pure,
-            Arc::new(BinaryF32),
-        ))?;
+        registrar.register_operation(
+            OperationDefinition::new(
+                multiply_f32_op(),
+                exact_schema(2, 1, []),
+                NormativeDefinitionRef::new("tiler::multiply-f32@1; separate binary32 multiply")?,
+                OperationDefinitionFacts::new(arithmetic_f32_facts()),
+                standard_conformance("multiply-f32"),
+                OperationEffect::Pure,
+                Arc::new(BinaryF32),
+            )
+            .with_algebraic_capabilities(arithmetic_f32_algebraic_capabilities()),
+        )?;
+        registrar.register_operation(
+            OperationDefinition::new(
+                add_f32_op(),
+                exact_schema(2, 1, []),
+                NormativeDefinitionRef::new("tiler::add-f32@1; separate binary32 addition")?,
+                OperationDefinitionFacts::new(arithmetic_f32_facts()),
+                standard_conformance("add-f32"),
+                OperationEffect::Pure,
+                Arc::new(BinaryF32),
+            )
+            .with_algebraic_capabilities(arithmetic_f32_algebraic_capabilities()),
+        )?;
         registrar.register_operation(OperationDefinition::new(
             strict_serial_sum_f32_op(),
             exact_schema(
@@ -2080,6 +2087,10 @@ fn arithmetic_f32_facts() -> CanonicalValue {
         ),
     ])
     .expect("the governed f32 arithmetic facts are canonical")
+}
+
+const fn arithmetic_f32_algebraic_capabilities() -> OperationAlgebraicCapabilities {
+    OperationAlgebraicCapabilities::none().with_ordered_associativity()
 }
 
 struct ConstantF32;
@@ -2260,7 +2271,7 @@ fn compute_identity(
     definitions: &BTreeMap<ValueTypeDefinitionKey, RegisteredValueType>,
     operations: &BTreeMap<OpKey, RegisteredOperation>,
 ) -> SemanticRegistrySnapshotIdentity {
-    let mut bytes = b"tiler.semantic-registry.v5\0".to_vec();
+    let mut bytes = b"tiler.semantic-registry.v6\0".to_vec();
     push_len(&mut bytes, definitions.len());
     for (key, registered) in definitions {
         encode_registered_type(&mut bytes, key, registered);
@@ -2426,6 +2437,7 @@ fn encode_operation_definition(
     );
     definition.schema().encode(output);
     definition.canonical_facts().value().encode(output);
+    definition.algebraic_capabilities().encode(output);
     definition.conformance().value().encode(output);
     output.push(match definition.effect() {
         OperationEffect::Pure => 1,
@@ -2444,11 +2456,117 @@ mod tests {
     use crate::semantic::{EncodedNumericContract, TypeArguments};
     use std::sync::atomic::{AtomicBool, Ordering};
 
+    #[test]
+    fn standard_algebraic_capabilities_are_operation_owned_and_conservative() {
+        let registry = FrozenSemanticRegistry::standard().unwrap();
+        for key in [add_f32_op(), multiply_f32_op()] {
+            assert!(
+                registry
+                    .operation_definition(&key)
+                    .unwrap()
+                    .algebraic_capabilities()
+                    .declares_ordered_associativity()
+            );
+        }
+        for key in [constant_f32_op(), strict_serial_sum_f32_op()] {
+            assert!(
+                !registry
+                    .operation_definition(&key)
+                    .unwrap()
+                    .algebraic_capabilities()
+                    .declares_ordered_associativity()
+            );
+        }
+    }
+
     struct TestProvider {
         name: &'static str,
         revision: u32,
         definitions: Vec<ValueTypeDefinition>,
         operations: Vec<OperationDefinition>,
+    }
+
+    struct AlgebraicProvider {
+        ordered_associativity: bool,
+    }
+
+    impl SemanticRegistryProvider for AlgebraicProvider {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("test", "algebraic-operation", 1).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), RegistryError> {
+            let mut definition = OperationDefinition::new(
+                OpKey::new("test", "algebraic-operation", 1).unwrap(),
+                exact_schema(2, 1, []),
+                NormativeDefinitionRef::new("test algebraic operation v1")?,
+                OperationDefinitionFacts::new(CanonicalValue::boolean(true)),
+                OperationConformance::new(CanonicalValue::boolean(true)),
+                OperationEffect::Pure,
+                Arc::new(BinaryF32),
+            );
+            if self.ordered_associativity {
+                definition = definition.with_algebraic_capabilities(
+                    OperationAlgebraicCapabilities::none().with_ordered_associativity(),
+                );
+            }
+            registrar.register_operation(definition)
+        }
+    }
+
+    #[test]
+    fn extension_algebraic_declaration_is_typed_and_identity_bearing() {
+        let build = |ordered_associativity| {
+            let mut builder = SemanticRegistryBuilder::standard().unwrap();
+            builder
+                .register_provider(&AlgebraicProvider {
+                    ordered_associativity,
+                })
+                .unwrap();
+            builder.freeze().unwrap()
+        };
+        let absent = build(false);
+        let declared = build(true);
+        let key = OpKey::new("test", "algebraic-operation", 1).unwrap();
+
+        assert!(
+            !absent
+                .operation_definition(&key)
+                .unwrap()
+                .algebraic_capabilities()
+                .declares_ordered_associativity()
+        );
+        assert!(
+            declared
+                .operation_definition(&key)
+                .unwrap()
+                .algebraic_capabilities()
+                .declares_ordered_associativity()
+        );
+
+        let absent = absent
+            .project_operation_authority(
+                &key,
+                [&F32::resolved_type(), &F32::resolved_type()],
+                [&F32::resolved_type()],
+            )
+            .unwrap();
+        let declared = declared
+            .project_operation_authority(
+                &key,
+                [&F32::resolved_type(), &F32::resolved_type()],
+                [&F32::resolved_type()],
+            )
+            .unwrap();
+        assert_ne!(absent.reached_definitions(), declared.reached_definitions());
+        assert_eq!(
+            absent.admission_provenance(),
+            declared.admission_provenance()
+        );
+        assert_ne!(absent.registry_snapshot(), declared.registry_snapshot());
     }
 
     impl SemanticRegistryProvider for TestProvider {
@@ -3845,7 +3963,7 @@ mod tests {
     /// order, so these bytes pin both that order and the record encoding.
     /// Change them only together with a deliberate identity-version bump.
     const FAMILY_ORDER_IDENTITY_FIXTURE: &str = concat!(
-        "74696c65722e73656d616e7469632d72656769737472792e76350000000000000000030100000000",
+        "74696c65722e73656d616e7469632d72656769737472792e76360000000000000000030100000000",
         "000000047465737400000000000000037a7a7a00000001000000000000000b74657374207a7a7a20",
         "7631042000000001000000000000000474657374000000000000000b6f72642d6669787475726500",
         "0000010200000000000000047465737400000000000000036d6d6d00000001000000000000000b74",

@@ -807,6 +807,46 @@ impl OperationDefinitionFacts {
     }
 }
 
+/// Algebraic laws one operation definition promises for every admitted signature.
+///
+/// A missing declaration is unknown, never evidence that the inverse law holds.
+/// These capabilities describe algebraic structure only: consuming one still
+/// requires the independently resolved numerical permission for the rewrite.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct OperationAlgebraicCapabilities {
+    ordered_associativity: bool,
+}
+
+impl OperationAlgebraicCapabilities {
+    /// Creates a capability set with no declared algebraic laws.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            ordered_associativity: false,
+        }
+    }
+
+    /// Declares that regrouping preserves operand order for every admitted signature.
+    #[must_use]
+    pub const fn with_ordered_associativity(mut self) -> Self {
+        self.ordered_associativity = true;
+        self
+    }
+
+    /// Returns whether ordered associativity is declared.
+    #[must_use]
+    pub const fn declares_ordered_associativity(&self) -> bool {
+        self.ordered_associativity
+    }
+
+    pub(super) fn encode(self, output: &mut Vec<u8>) {
+        push_len(output, usize::from(self.ordered_associativity));
+        if self.ordered_associativity {
+            output.push(0x01);
+        }
+    }
+}
+
 /// Bounded canonical identity of required operation conformance evidence.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct OperationConformance(CanonicalValue);
@@ -1239,6 +1279,7 @@ pub struct OperationDefinition {
     schema: OperationSchema,
     normative_definition: NormativeDefinitionRef,
     canonical_facts: OperationDefinitionFacts,
+    algebraic_capabilities: OperationAlgebraicCapabilities,
     conformance: OperationConformance,
     effect: OperationEffect,
     inferencer: Arc<dyn OperationInferencer>,
@@ -1252,6 +1293,7 @@ impl fmt::Debug for OperationDefinition {
             .field("schema", &self.schema)
             .field("normative_definition", &self.normative_definition)
             .field("canonical_facts", &self.canonical_facts)
+            .field("algebraic_capabilities", &self.algebraic_capabilities)
             .field("conformance", &self.conformance)
             .field("effect", &self.effect)
             .field("inferencer", &"OperationInferencer(..)")
@@ -1276,10 +1318,21 @@ impl OperationDefinition {
             schema,
             normative_definition,
             canonical_facts,
+            algebraic_capabilities: OperationAlgebraicCapabilities::none(),
             conformance,
             effect,
             inferencer,
         }
+    }
+
+    /// Adds the algebraic laws this definition promises for all admitted signatures.
+    #[must_use]
+    pub fn with_algebraic_capabilities(
+        mut self,
+        algebraic_capabilities: OperationAlgebraicCapabilities,
+    ) -> Self {
+        self.algebraic_capabilities = algebraic_capabilities;
+        self
     }
 
     /// Returns the stable operation-family key.
@@ -1304,6 +1357,12 @@ impl OperationDefinition {
     #[must_use]
     pub const fn canonical_facts(&self) -> &OperationDefinitionFacts {
         &self.canonical_facts
+    }
+
+    /// Returns the operation-owned algebraic declarations.
+    #[must_use]
+    pub const fn algebraic_capabilities(&self) -> &OperationAlgebraicCapabilities {
+        &self.algebraic_capabilities
     }
 
     /// Returns required conformance-evidence identity.
@@ -1508,6 +1567,19 @@ impl OperationRef<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn algebraic_capabilities_have_a_canonical_positive_tag() {
+        let mut none = Vec::new();
+        OperationAlgebraicCapabilities::none().encode(&mut none);
+        assert_eq!(none, 0_u64.to_be_bytes());
+
+        let mut ordered = Vec::new();
+        OperationAlgebraicCapabilities::none()
+            .with_ordered_associativity()
+            .encode(&mut ordered);
+        assert_eq!(ordered, [1_u64.to_be_bytes().as_slice(), &[0x01]].concat());
+    }
 
     #[test]
     fn schema_defaults_have_one_canonical_identity_and_resolve_for_inference() {
