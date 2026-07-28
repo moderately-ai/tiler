@@ -71,4 +71,10 @@ Hardcoding 4 bytes would work today and is refused: it silently repeats an assum
 
 *Trigger: none here. Consider reassigning it to `calibrate-device-cost-models` rather than leaving it as work this ticket cannot honestly do.*
 
-**`RedundantWork` — not re-derived.** I ran out of room to check this one against the source, and the original note said it "needs a model of what fusion recomputes, which needs the access relations rather than the cover shape". **That note is unverified and two of its siblings turned out to be wrong.** Do not treat it as settled; check `LogicalAccess` and the fusion legality machinery before accepting it.
+**`RedundantWork` — the note was wrong again; what remains is a definitional choice, not a missing input.** The original said it "needs a model of what fusion recomputes, which needs the access relations rather than the cover shape". The access relations turn out not to be where the signal is. `LogicalAccess` has exactly two variants — `LinearIdentity`, one coordinate to one element, and `ReductionContributor`, a fan-in that *is* the reduction's real work rather than redundancy. Neither expresses recomputation.
+
+Recomputation shows up one level up, as **member multiplicity across the cover's regions**: a semantic member appearing in more than one region of a cover is computed more than once, which is exactly what this component means. That is reachable today — `verified().semantic_members()` is already read at `selection.rs:1101` and `selection.rs:1260` for identity checks.
+
+So the blocker is not a missing input. It is a definitional question I could not settle from the code: **how to weight a member that appears in regions with different iteration domains.** Counting bare occurrences (`total occurrences − distinct members`) is exact but not comparable with `Indexing`, which is weighted by element count; weighting by each region's own domain double-counts differently depending on which region is treated as the original. Both are defensible and they give different numbers, so this needs a stated definition before it is implemented, not more reading.
+
+*Trigger: none — this is startable now. It needs the weighting defined at the match arm, in the same style as the `Synchronization` arm's per-consumer note, so the choice can be refuted.*
