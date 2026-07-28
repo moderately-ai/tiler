@@ -282,6 +282,120 @@ impl CallAbi {
     }
 }
 
+/// Why a parameter-to-tensor binding was refused.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "binding outcome for the opaque-call admission that will validate one"
+)]
+pub(crate) enum BindingError {
+    /// A parameter the ABI declares is not bound.
+    UnboundParameter(&'static str),
+    /// A binding names a parameter the ABI does not declare.
+    UnknownParameter(&'static str),
+    /// A parameter is bound more than once.
+    ParameterBoundTwice(&'static str),
+    /// Two parameters bound to one tensor role disagree about its storage.
+    ///
+    /// A boundary contract states **one** answer per role, so two parameters
+    /// sharing a role must agree on layout, encoding, and alignment. Two inputs
+    /// wanting different layouts is a coherent thing for a call to want and an
+    /// incoherent thing for one contract to say, so it is refused here rather
+    /// than silently resolved by whichever parameter was seen first.
+    RoleStorageDisagreement {
+        /// The first parameter bound to the role.
+        first: &'static str,
+        /// The parameter that disagreed with it.
+        second: &'static str,
+    },
+}
+
+impl fmt::Display for BindingError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnboundParameter(name) => {
+                write!(formatter, "binding.unbound-parameter: {name} is not bound")
+            }
+            Self::UnknownParameter(name) => {
+                write!(
+                    formatter,
+                    "binding.unknown-parameter: {name} is not declared"
+                )
+            }
+            Self::ParameterBoundTwice(name) => {
+                write!(
+                    formatter,
+                    "binding.bound-twice: {name} is bound more than once"
+                )
+            }
+            Self::RoleStorageDisagreement { first, second } => write!(
+                formatter,
+                "binding.role-storage-disagreement: {first} and {second} share a role \
+                 but declare different storage"
+            ),
+        }
+    }
+}
+
+/// Checks a parameter-to-role binding against the ABI that declares the
+/// parameters.
+///
+/// # Why this is not inferred
+///
+/// A boundary contract is keyed by tensor role, and an ABI names parameters.
+/// Nothing connects them but the provider's claim that *this* call implements
+/// *that* region with *this* parameter on that tensor. Inferring it from a
+/// parameter's role or slot would reintroduce exactly what this module's named
+/// parameters exist to prevent — `In` does not tell you which input.
+#[allow(
+    dead_code,
+    reason = "the binding check, landed with its tests ahead of the admission that calls it"
+)]
+pub(crate) fn check_bindings<Role: Copy + Eq>(
+    abi: &CallAbi,
+    bindings: &[(&'static str, Role)],
+) -> Result<(), BindingError> {
+    let mut seen: Vec<&'static str> = Vec::with_capacity(bindings.len());
+    for (name, _) in bindings {
+        if abi.parameter(name).is_none() {
+            return Err(BindingError::UnknownParameter(name));
+        }
+        if seen.contains(name) {
+            return Err(BindingError::ParameterBoundTwice(name));
+        }
+        seen.push(name);
+    }
+    for parameter in abi.parameters() {
+        if !seen.contains(&parameter.name()) {
+            return Err(BindingError::UnboundParameter(parameter.name()));
+        }
+    }
+
+    // One contract answer per role, so parameters sharing a role must agree on
+    // storage. Compared against the first parameter seen for the role, and the
+    // *first* is named in the error so the report is stable rather than
+    // dependent on iteration order.
+    let mut by_role: Vec<(Role, &'static str, ParameterSpec)> = Vec::new();
+    for (name, role) in bindings {
+        let spec = *abi.parameter(name).expect("checked above").spec();
+        match by_role.iter().find(|(seen_role, _, _)| *seen_role == *role) {
+            Some((_, first, first_spec)) => {
+                if first_spec.layout != spec.layout
+                    || first_spec.encoding != spec.encoding
+                    || first_spec.alignment != spec.alignment
+                {
+                    return Err(BindingError::RoleStorageDisagreement {
+                        first,
+                        second: name,
+                    });
+                }
+            }
+            None => by_role.push((*role, name, spec)),
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -383,5 +497,80 @@ mod tests {
         assert!(ParameterRole::In.reads() && !ParameterRole::In.writes());
         assert!(!ParameterRole::Out.reads() && ParameterRole::Out.writes());
         assert!(ParameterRole::InOut.reads() && ParameterRole::InOut.writes());
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum Role {
+        In,
+        Out,
+    }
+
+    /// A complete, agreeing binding is accepted.
+    ///
+    /// Without this the rejection tests below would pass against a check that
+    /// refused everything.
+    #[test]
+    fn a_complete_binding_is_accepted() {
+        let abi = abi([("a", ParameterRole::In), ("b", ParameterRole::Out)]);
+        assert_eq!(
+            check_bindings(&abi, &[("a", Role::In), ("b", Role::Out)]),
+            Ok(())
+        );
+    }
+
+    /// Every declared parameter must be bound, and only declared ones may be.
+    #[test]
+    fn an_incomplete_or_unknown_binding_is_refused() {
+        let abi = abi([("a", ParameterRole::In), ("b", ParameterRole::Out)]);
+        assert_eq!(
+            check_bindings(&abi, &[("a", Role::In)]),
+            Err(BindingError::UnboundParameter("b"))
+        );
+        assert_eq!(
+            check_bindings(&abi, &[("a", Role::In), ("b", Role::Out), ("c", Role::In)]),
+            Err(BindingError::UnknownParameter("c"))
+        );
+        assert_eq!(
+            check_bindings(&abi, &[("a", Role::In), ("a", Role::Out), ("b", Role::Out)]),
+            Err(BindingError::ParameterBoundTwice("a"))
+        );
+    }
+
+    /// Two parameters on one role must agree about storage.
+    ///
+    /// A boundary contract states one answer per role. Two inputs wanting
+    /// different layouts is coherent for a call and incoherent for one contract,
+    /// so it is refused rather than resolved by whichever was seen first.
+    #[test]
+    fn parameters_sharing_a_role_must_agree_about_storage() {
+        let abi = CallAbi::declare([
+            spec("a", ParameterRole::In),
+            ParameterSpec {
+                name: "b",
+                role: ParameterRole::In,
+                layout: LayoutGuarantee::DenseRowMajor,
+                encoding: StorageEncoding::Unpacked,
+                alignment: ByteAlignment::new(16).expect("a power of two"),
+            },
+            spec("c", ParameterRole::Out),
+        ])
+        .expect("well formed");
+
+        assert_eq!(
+            check_bindings(&abi, &[("a", Role::In), ("b", Role::In), ("c", Role::Out)]),
+            Err(BindingError::RoleStorageDisagreement {
+                first: "a",
+                second: "b",
+            })
+        );
+        // The same two parameters on *different* roles are fine: the contract
+        // states one answer per role, not one answer overall.
+        assert_eq!(
+            check_bindings(&abi, &[("a", Role::In), ("b", Role::Out), ("c", Role::Out)]),
+            Err(BindingError::RoleStorageDisagreement {
+                first: "b",
+                second: "c",
+            })
+        );
     }
 }

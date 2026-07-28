@@ -222,7 +222,12 @@ An opaque call's ABI names parameters; the boundary vocabulary names tensor role
 
 **Guessing it is exactly the failure this ticket's own ABI work exists to prevent.** The module header for `call_abi` records why parameters are named rather than positional: a positional ABI is checkable only for arity, so swapping an input for an output passes every check a position can support. Inferring a parameter's tensor role from its `ParameterRole` or its slot would reintroduce that, one level up — `In` does not tell you *which* input.
 
-**So the proposal must carry the binding.** `ProposalBody::OpaqueCall(OpaqueCallIdentity)` is one field short: it needs a mapping from parameter name to the region tensor it binds, supplied by the provider and validated at admission against both the ABI (every parameter bound exactly once) and the region subject (every tensor the region exposes accounted for). That validation is the analogue of the coherence check, and it is the last piece before the derivation is mechanical.
+**The binding check landed 2026-07-28.** `call_abi::check_bindings(abi, bindings)` validates a parameter-to-role mapping: every declared parameter bound, no undeclared one bound, none bound twice.
+
+**And one rule the shape forced, which is the interesting part.** A boundary contract states **one** answer per tensor role, while an ABI states storage per *parameter*. So two parameters bound to the same role must agree on layout, encoding, and alignment — two inputs wanting different layouts is a coherent thing for a call to want and an incoherent thing for one contract to say. `RoleStorageDisagreement` refuses it rather than resolving it by whichever parameter was seen first, and it names the *first* parameter so the report is stable rather than iteration-order dependent.
+
+The test covers the accepting case (without which the three rejections would pass against a check that refused everything) and confirms the same two parameters on *different* roles are judged separately — one answer per role, not one answer overall.
+
+It is generic over the role type, so it does not drag `TensorRole` into `call_abi`; the admission supplies it. What remains for the derivation is threading the binding onto `ProposalBody::OpaqueCall` and calling this at admission.
 
 *The check, reproducible in one line:* `grep -n 'struct BoundaryRequirement' -A 6 crates/tiler-compiler/src/frontier.rs` — keyed by `TensorRole`, with no parameter or slot anywhere in the boundary vocabulary.
-
