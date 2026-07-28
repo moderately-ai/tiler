@@ -220,15 +220,22 @@ mod tests {
 
     use crate::boundary::{
         AdmittedMemoryDomains, ByteAlignment, ExecutionAffinity, LayoutGuarantee,
-        MemoryDomainClass, StorageEncoding,
+        LayoutRequirement, MemoryDomainClass, StorageEncoding,
     };
-    use crate::call_abi::ParameterSpec;
+    use crate::call_abi::{ParameterLayout, ParameterSpec};
     /// A spec carrying the bounded profile's storage answers.
     fn spec(name: &'static str, role: ParameterRole) -> ParameterSpec {
         ParameterSpec {
             name,
             role,
-            layout: LayoutGuarantee::DenseRowMajor,
+            layout: match role {
+                ParameterRole::In => ParameterLayout::Required(LayoutRequirement::DenseRowMajor),
+                ParameterRole::Out => ParameterLayout::Guaranteed(LayoutGuarantee::DenseRowMajor),
+                ParameterRole::InOut => ParameterLayout::Both {
+                    requires: LayoutRequirement::DenseRowMajor,
+                    guarantees: LayoutGuarantee::DenseRowMajor,
+                },
+            },
             encoding: StorageEncoding::Unpacked,
             alignment: ByteAlignment::F32_NATURAL,
         }

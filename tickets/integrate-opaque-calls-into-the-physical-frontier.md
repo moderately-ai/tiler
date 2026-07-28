@@ -263,3 +263,8 @@ Prefer the first: an `Option` pair admits all four combinations and three of the
 
 *The check, reproducible in one line:* `grep -n 'enum LayoutRequirement' -A 16 crates/tiler-compiler/src/boundary.rs` — two variants against `LayoutGuarantee`'s one.
 
+**Fixed 2026-07-28** with the role-validated sum, as recommended. `ParameterLayout` is `Required` / `Guaranteed` / `Both`, and `declare` refuses a parameter whose layout states a direction its role does not have. `matches` is an exhaustive match over the pairing rather than a pair of boolean tests, so a fourth role or a fourth layout shape is a build error instead of a combination nobody considered being silently admitted.
+
+Two tests. The first drives all three roles accepting *and* both wrong-direction rejections, so a check that refused everything — or that only understood `In` — fails. The second pins that an input may require `UnitStrideOnAxis`: that is exactly what the single guarantee-typed field silently forbade, so it is asserted rather than left implied by the enum's existence.
+
+**Encoding and alignment were left alone**, as noted above — they are used unchanged on both sides of the boundary relation, and applying the fix to all three by reflex would have added two enums that state nothing.

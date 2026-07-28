@@ -20,7 +20,7 @@
 //! declaration rather than being the declaration. Nothing here matches two
 //! parameters by comparing slots.
 
-use crate::boundary::{ByteAlignment, LayoutGuarantee, StorageEncoding};
+use crate::boundary::{ByteAlignment, LayoutGuarantee, LayoutRequirement, StorageEncoding};
 use core::fmt;
 
 /// What a parameter is for.
@@ -83,6 +83,55 @@ impl fmt::Display for ParameterRole {
     }
 }
 
+/// The layout a parameter states, typed by the direction it states it in.
+///
+/// `crate::boundary` types the two directions differently and the asymmetry is
+/// load-bearing: `LayoutGuarantee` has one variant, the only layout the bounded
+/// profile produces, while `LayoutRequirement` adds `UnitStrideOnAxis` because a
+/// consumer can ask for something a producer does not volunteer.
+///
+/// So an `In` parameter *requires* a layout and an `Out` parameter *guarantees*
+/// one, and a single type for both would silently forbid one direction. A sum
+/// rather than a pair of `Option`s because a pair admits four combinations of
+/// which three are malformed, leaving the constructor to re-check what the type
+/// should have made unrepresentable.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "the layout direction; lands with the spec that carries it"
+)]
+pub(crate) enum ParameterLayout {
+    /// The call requires this of the tensor bound to the parameter.
+    Required(LayoutRequirement),
+    /// The call guarantees this of what it writes.
+    Guaranteed(LayoutGuarantee),
+    /// An in-place parameter, which does both.
+    Both {
+        /// What the call requires of the incoming value.
+        requires: LayoutRequirement,
+        /// What it guarantees of the value it leaves behind.
+        guarantees: LayoutGuarantee,
+    },
+}
+
+impl ParameterLayout {
+    /// Whether this layout states the directions `role` needs.
+    ///
+    /// An exhaustive match rather than a pair of boolean tests, so a fourth
+    /// role or a fourth layout shape is a build error here instead of silently
+    /// admitting a combination nobody considered.
+    const fn matches(self, role: ParameterRole) -> bool {
+        match (self, role) {
+            (Self::Required(_), ParameterRole::In)
+            | (Self::Guaranteed(_), ParameterRole::Out)
+            | (Self::Both { .. }, ParameterRole::InOut) => true,
+            (Self::Required(_), ParameterRole::Out | ParameterRole::InOut)
+            | (Self::Guaranteed(_), ParameterRole::In | ParameterRole::InOut)
+            | (Self::Both { .. }, ParameterRole::In | ParameterRole::Out) => false,
+        }
+    }
+}
+
 /// What a provider states about one parameter.
 ///
 /// Layout, encoding, and alignment are here rather than on the declaration as a
@@ -103,8 +152,8 @@ pub(crate) struct ParameterSpec {
     pub(crate) name: &'static str,
     /// What the parameter is for.
     pub(crate) role: ParameterRole,
-    /// The storage layout the call guarantees or requires of this binding.
-    pub(crate) layout: LayoutGuarantee,
+    /// The storage layout this binding states, in the direction its role needs.
+    pub(crate) layout: ParameterLayout,
     /// How one element is represented at the position layout assigns it.
     pub(crate) encoding: StorageEncoding,
     /// Byte alignment of this binding's first element.
@@ -177,6 +226,11 @@ pub(crate) enum AbiError {
     /// An unnamed parameter can only be matched positionally, which is the
     /// whole thing this ABI exists to avoid.
     UnnamedParameter(u32),
+    /// A parameter's layout states the wrong direction for its role.
+    ///
+    /// An `In` parameter that guarantees a layout, or an `Out` that requires
+    /// one, has said something about a direction it does not have.
+    LayoutDirectionMismatch(&'static str),
     /// The call declares no parameter it writes.
     ///
     /// A call that writes nothing produces nothing observable, so admitting one
@@ -195,6 +249,10 @@ impl fmt::Display for AbiError {
             Self::UnnamedParameter(slot) => {
                 write!(formatter, "abi.unnamed-parameter: slot {slot} has no name")
             }
+            Self::LayoutDirectionMismatch(name) => write!(
+                formatter,
+                "abi.layout-direction-mismatch: {name} states a layout its role does not have"
+            ),
             Self::NoWrittenParameter => {
                 formatter.write_str("abi.no-written-parameter: the call writes nothing")
             }
@@ -235,6 +293,9 @@ impl CallAbi {
                 .any(|existing| existing.spec.name == spec.name)
             {
                 return Err(AbiError::DuplicateName(spec.name));
+            }
+            if !spec.layout.matches(spec.role) {
+                return Err(AbiError::LayoutDirectionMismatch(spec.name));
             }
             declared.push(CallParameter { spec, slot });
         }
@@ -402,11 +463,22 @@ mod tests {
 
     /// A spec with the bounded profile's storage answers, so tests that care
     /// about names and roles do not have to restate the other three.
+    fn layout_for(role: ParameterRole) -> ParameterLayout {
+        match role {
+            ParameterRole::In => ParameterLayout::Required(LayoutRequirement::DenseRowMajor),
+            ParameterRole::Out => ParameterLayout::Guaranteed(LayoutGuarantee::DenseRowMajor),
+            ParameterRole::InOut => ParameterLayout::Both {
+                requires: LayoutRequirement::DenseRowMajor,
+                guarantees: LayoutGuarantee::DenseRowMajor,
+            },
+        }
+    }
+
     fn spec(name: &'static str, role: ParameterRole) -> ParameterSpec {
         ParameterSpec {
             name,
             role,
-            layout: LayoutGuarantee::DenseRowMajor,
+            layout: layout_for(role),
             encoding: StorageEncoding::Unpacked,
             alignment: ByteAlignment::F32_NATURAL,
         }
@@ -548,7 +620,7 @@ mod tests {
             ParameterSpec {
                 name: "b",
                 role: ParameterRole::In,
-                layout: LayoutGuarantee::DenseRowMajor,
+                layout: layout_for(ParameterRole::In),
                 encoding: StorageEncoding::Unpacked,
                 alignment: ByteAlignment::new(16).expect("a power of two"),
             },
@@ -571,6 +643,68 @@ mod tests {
                 first: "b",
                 second: "c",
             })
+        );
+    }
+
+    /// A layout stating the wrong direction for its role is refused.
+    ///
+    /// The accepting cases are driven for all three roles, so a check that
+    /// refused everything — or that only understood `In` — fails here.
+    #[test]
+    fn a_layout_must_state_the_direction_its_role_has() {
+        for role in [ParameterRole::In, ParameterRole::Out, ParameterRole::InOut] {
+            assert!(
+                CallAbi::declare([spec("a", role), spec("w", ParameterRole::Out)]).is_ok(),
+                "a correctly-directed layout was refused for {role}"
+            );
+        }
+
+        let guaranteeing_input = ParameterSpec {
+            name: "a",
+            role: ParameterRole::In,
+            layout: ParameterLayout::Guaranteed(LayoutGuarantee::DenseRowMajor),
+            encoding: StorageEncoding::Unpacked,
+            alignment: ByteAlignment::F32_NATURAL,
+        };
+        assert_eq!(
+            CallAbi::declare([guaranteeing_input, spec("w", ParameterRole::Out)]),
+            Err(AbiError::LayoutDirectionMismatch("a")),
+            "an input guaranteeing a layout was admitted"
+        );
+
+        let requiring_output = ParameterSpec {
+            name: "w",
+            role: ParameterRole::Out,
+            layout: ParameterLayout::Required(LayoutRequirement::DenseRowMajor),
+            encoding: StorageEncoding::Unpacked,
+            alignment: ByteAlignment::F32_NATURAL,
+        };
+        assert_eq!(
+            CallAbi::declare([requiring_output]),
+            Err(AbiError::LayoutDirectionMismatch("w")),
+            "an output requiring a layout was admitted"
+        );
+    }
+
+    /// An input may require unit stride — the reason the two types differ.
+    ///
+    /// This is what the single-guarantee-typed field silently forbade, so it is
+    /// pinned rather than left implied by the enum's existence.
+    #[test]
+    fn an_input_may_require_a_strided_layout() {
+        let strided = ParameterSpec {
+            name: "a",
+            role: ParameterRole::In,
+            layout: ParameterLayout::Required(LayoutRequirement::UnitStrideOnAxis {
+                axis: tiler_ir::shape::Axis::new(0),
+                rank: 2,
+            }),
+            encoding: StorageEncoding::Unpacked,
+            alignment: ByteAlignment::F32_NATURAL,
+        };
+        assert!(
+            CallAbi::declare([strided, spec("w", ParameterRole::Out)]).is_ok(),
+            "an input requiring unit stride was refused"
         );
     }
 }
