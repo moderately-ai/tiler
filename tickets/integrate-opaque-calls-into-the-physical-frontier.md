@@ -368,7 +368,7 @@ The test drives both accepting forms plus the rejection, so a check refusing eve
 **Two honest ways forward, and they differ in scope:**
 
 - **Admit `Fixed` scalings now, reject `PerElementOf` with a typed rejection** naming shapes-unavailable-at-this-seam. Small, lands real admission, and leaves shape-dependent calls — most real ones — refused for a stated reason rather than mis-admitted.
-- **Give the frontier the shapes.** `enumerate_frontier` takes a `VerifiedTargetRequest`, which holds the program; whether a subject's members can be resolved to tensor shapes there is the question to answer first. If they can, both scalings work and this is the better answer.
+- **Give the frontier the shapes.** `enumerate_frontier` already takes a `VerifiedTargetRequest`, and that type exposes `serial_sum() -> &NormalizedSerialSum` (`request.rs:820`) — the normalized program, which carries the tensors and therefore their shapes. **So no new parameter is needed**; resolving a `SemanticMemberId` to a tensor shape through that program is the work, and it is a lookup rather than a plumbing change. If it resolves, both scalings evaluate and this is the better answer.
 
 The `RegionId` is separable from that choice: `assess_region`'s first argument is used only to attribute errors, so it should become something both callers can supply — a subject identifier rather than a region one. That is a small change to one signature with two callers.
 
