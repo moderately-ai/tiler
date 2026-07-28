@@ -1,0 +1,5 @@
+# Regenerable products of a local run. The sources, the driver, and any result
+# fixture a document cites are preserved.
+target/
+exercise-state/
+Cargo.lock

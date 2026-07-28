@@ -255,8 +255,15 @@ The implementation graph now maps these contracts to bounded coding tickets:
 ### Q-ART-006 — rust-analyzer cold and warm expansion costs
 
 - Owner/track: [Frontend integration](integration/frontends.md), Milestone 0B.
-- Close: exact cold/warm/edit/cache/compiler-invocation matrix when a real
-  rust-analyzer binary, rather than only the rustup proxy, is available.
+- Close: exact cold/warm/edit/cache/compiler-invocation matrix.
+- The availability blocker is resolved. The
+  [build-tool exercise](research/cache/build-tool-exercise.md) drove real
+  expansions through the pinned toolchain's own
+  `rust-analyzer-proc-macro-srv` — which is the process that expands, and ships
+  with the pin even though the LSP binary is not a pinned component — and
+  recorded cold and warm cache resolutions under both drivers. What remains is
+  the *edit* column: that needs a real language-server session rather than
+  `analysis-stats`, which loads a project and expands once.
 
 ### Q-ART-007 — Apple cross-machine, patch-toolchain, and runtime-compiler evidence
 

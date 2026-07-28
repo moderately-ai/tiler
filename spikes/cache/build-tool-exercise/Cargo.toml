@@ -1,0 +1,33 @@
+[workspace]
+members = ["envelope", "expansion-macro", "consumer"]
+resolver = "3"
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+exercise-envelope = { path = "envelope" }
+exercise-macro = { path = "expansion-macro" }
+tiler-artifact = { path = "../../../crates/tiler-artifact" }
+tiler-cache = { path = "../../../crates/tiler-cache" }
+tiler-compiler = { path = "../../../crates/tiler-compiler" }
+tiler-ir = { path = "../../../crates/tiler-ir" }
+
+# The spike mirrors the repository dev profile rather than inheriting it: this is
+# a separate workspace, so the root profile does not reach it.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+[profile.dev.package."*"]
+opt-level = 1
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }

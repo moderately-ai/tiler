@@ -7,8 +7,8 @@ topics: ["cache", "concurrency", "durability"]
 experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["executable-model", "bounded-measurement"]
-supports: ["tiler.research.cache.crash-race-protocol", "tiler.research.cache.bounded-collection", "tiler.research.cache.supported-filesystems"]
-entrypoints: ["spikes/cache/cache_harness.rs", "spikes/cache/filesystem_probe.rs", "crates/tiler-cache/src/expansion/harness.rs"]
+supports: ["tiler.research.cache.crash-race-protocol", "tiler.research.cache.bounded-collection", "tiler.research.cache.supported-filesystems", "tiler.research.cache.build-tool-exercise"]
+entrypoints: ["spikes/cache/cache_harness.rs", "spikes/cache/filesystem_probe.rs", "spikes/cache/build_tool_exercise.py", "crates/tiler-cache/src/expansion/harness.rs"]
 last_verified: "2026-07-25"
 ticket: "port-the-cache-harness-to-the-production-bundle"
 ---
@@ -103,9 +103,66 @@ which needs `tiler-ir`, which ADR 0082 item 2 decides `tiler-cache` does not
 depend on. Every byte of the bundle frame and every filesystem operation is real;
 the substituted validator sits strictly inside an envelope the frame has already
 delimited, so it changes how long the pre-rename window is and not what a killed
-writer leaves at a content path. A positive end-to-end hit carrying a real
-compiled artifact is therefore still unmeasured and belongs to the orchestrator
-holding both crates.
+writer leaves at a content path.
+
+That substitution is lifted by the build-tool exercise below, which is an
+orchestrator holding both crates and drives the public `get_or_publish`. One
+narrower gap remains and is stated there: its payload is *declared* rather than
+*carried*, so no compiled backend object has yet travelled through a cache entry.
+
+## Under Cargo and rust-analyzer
+
+Everything above drives the cache from a harness. `build-tool-exercise/` is a
+Cargo workspace whose proc macro resolves a real artifact through the real public
+[`ExpansionCache`], so the processes driving the protocol are the ones ADR 0050's
+context sentence names — `cargo` and a `rust-analyzer` proc-macro server — rather
+than workers a harness spawned.
+
+```sh
+python3 spikes/cache/build_tool_exercise.py --skip-analyzer --concurrency 3
+python3 spikes/cache/build_tool_exercise.py --concurrency 3 \
+  --analyzer "$(rustup which --toolchain nightly rust-analyzer)" \
+  --record macos-27.0-2026-07-25
+```
+
+The build closure is a genuine `tiler-compiler` session encoded through
+`tiler-artifact`, deliberately not memoized in-process: a `OnceLock` would make
+repeat expansions cheap and would hide the exact quantity being measured.
+
+Two properties keep a pass from being vacuous, and both are checks that have
+failed during development rather than decorations.
+
+**The population is counted.** Each scenario declares how many expansion events
+must exist and fails when the count differs, so a scenario that expanded nothing
+cannot report success. Events are one file per expansion rather than appended
+lines, because several uncoordinated processes write at once and an interleaved
+append can lose a record with no reader noticing.
+
+**Concurrency is observed, not assumed.** Each event carries its wall-clock
+window, and the concurrent scenarios fail unless expansions in *different*
+processes genuinely intersect. Three builds that happened to serialize and three
+that raced produce identical outcome counts, so without this the scenario would
+claim a workload it never reached — and at first it did not reach it, because the
+compile was a few milliseconds wide.
+
+**`negative-control-x3` is the reason the other rows mean anything.** It runs the
+same race with the cache root pointed at a file, so no namespace can be created:
+every resolution falls open to `uncached` and every process compiles every key.
+It is what proves the driver can *see* duplicate compilation, which is what makes
+"one compile per key" in `cargo-concurrent-x3` evidence rather than an artifact of
+a counter that never moves.
+
+Ordering, where a scenario needs it, is established by observed state: an
+expansion writes a marker file before it waits and removes it after, and a driver
+that wants to kill a lock holder waits for that file. No scenario rests on a
+wall-clock margin.
+
+The tracked
+[2026-07-25 result](results/build-tool-exercise-macos-27.0-2026-07-25.tsv) is the
+recorded command's output. See
+[the build-tool exercise](../../docs/research/cache/build-tool-exercise.md).
+
+[`ExpansionCache`]: ../../crates/tiler-cache/src/expansion/store.rs
 
 ## Deciding whether a directory can hold a cache
 

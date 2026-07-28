@@ -1,0 +1,12 @@
+[package]
+name = "exercise-consumer"
+description = "Crate whose compilation drives expansion-cache resolutions"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+exercise-macro.workspace = true
+
+[lints]
+workspace = true
