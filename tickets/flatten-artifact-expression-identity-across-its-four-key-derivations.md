@@ -1,17 +1,14 @@
 ---
 id: flatten-artifact-expression-identity-across-its-four-key-derivations
 title: Flatten artifact expression identity across its four key derivations
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: []
 scopes: [implementation/artifact]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [performance]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785205343
 ---
 
 Split from `encode-artifact-abi-identity-in-linear-space`, whose builder half landed; read that ticket's Outcome section first.
