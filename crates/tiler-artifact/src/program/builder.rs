@@ -12,13 +12,7 @@
 //! [`SemanticProgram`]: its four-subject identity bundle and its ordered named
 //! interface. Every packaged variant must realize that exact graph.
 //!
-//! The **ABI's derived facts** come from the variant's own verified program and
-//! kernels: a binding's element type, address space, access mode, alignment,
-//! and program role are read from the kernel signature and the materialized
-//! value it addresses, never taken from the producer. A producer supplies only
-//! the expressions — accessible ranges, launch geometry, guards, preconditions,
-//! and deferred predicates — and each is proven against the program it claims
-//! to describe.
+//! The **program ABI** comes from the variant's own verified program and kernels: the builder replays the program's expression arena and derives the applicability guard, launch geometry, accessible byte offset and extent, binding target, element type, address space, access mode, alignment, and program role. A producer supplies only artifact-owned choices: deferred predicates, launch preconditions and zero-work policy, binding transport kinds, target and feasibility references, and backend entry selection.
 
 use tiler_ir::program::{
     MaterializedOrigin, MaterializedValueRef, StageRef, ValueRole, VerifiedKernelProgram,
@@ -420,11 +414,7 @@ impl ArtifactProgramBuilder {
     /// artifact's expression is the one a runtime evaluates while the program's
     /// is the one identity folds.
     ///
-    /// Moving the replay here is the first half of closing that. It does not
-    /// yet *require* a variant to use the result —
-    /// `bind-the-artifact-variant-abi-to-the-program-abi` owns removing the
-    /// caller-supplied guard, launch, and accessible-range fields, which is a
-    /// public API removal and ADR 0075 reserves the interface.
+    /// `bind-the-artifact-variant-abi-to-the-program-abi` completed the move: [`Self::push_variant`] always uses this replay for the guard, launch, and accessible extents, while offsets are minted from the program's byte windows. No caller-supplied field can restate those facts.
     ///
     /// # Errors
     ///
@@ -1084,10 +1074,7 @@ impl ArtifactProgramBuilder {
 
     /// Evaluates one interface-only expression against the declared static shapes.
     ///
-    /// This is a compile-time consistency check, not a runtime evaluation: the
-    /// facts are the program's own declared input shapes, so a producer cannot
-    /// declare an accessible range or a launch geometry that its own program
-    /// contradicts.
+    /// This is a compile-time consistency check, not a runtime evaluation: the facts are the program's own declared input shapes, and the derived accessible range or launch geometry must agree with the same program's static byte window or resource requirement.
     fn evaluate_static(
         &self,
         node: u32,

@@ -8,14 +8,7 @@
 //!
 //! # Why the implementation is local
 //!
-//! The workspace has no cryptographic dependency and the research contract
-//! records the production algorithm choice as an open bounded decision
-//! (`tiler.research.artifacts.target-neutral-envelope`, "Remaining bounded
-//! decisions"). Depending on an external hash crate would answer that decision
-//! by accident. The wire contract commits only to the governed tag, so swapping
-//! this implementation for an audited crate is an internal change that leaves
-//! every encoded envelope byte identical. The ticket
-//! `select-the-governed-artifact-digest-implementation` owns that comparison.
+//! The wire contract governs FIPS 180-4 SHA-256 as `tiler.digest.sha-256.v1` with tag `0x01`; the envelope, manifest, section, and sidecar domains are likewise governed constants. `select-the-governed-artifact-digest-implementation` separately measured the implementation choice and adopted `sha2` 0.11.0. Keeping that implementation behind this module leaves the wire algorithm and every encoded envelope byte independent of the dependency that computes them.
 //!
 //! The implementation is FIPS 180-4 SHA-256. It is pinned by the standard
 //! published test vectors, by the message lengths that exercise every padding

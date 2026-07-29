@@ -30,8 +30,10 @@ to `crates/tiler-ir/src/program/abi.rs`; `tiler_artifact::program::expr` is now
 a re-export of it. `complete-program-identity-with-abi-guards-and-routing` then
 moved the *uses* down as well: a `VerifiedKernelProgram` owns its own
 expression arena, applicability guard, per-stage launch geometry, and
-per-access accessible range, and folds each into `tiler.kernel-program.v2`
-identity. Binding live facts and enforcing the phase at which each could
+per-access accessible range, and folds each into the complete program
+identity. That step established historical `tiler.kernel-program.v2`; later
+encoding and ABI-completeness changes moved the current domain to
+`tiler.kernel-program.v5`. Binding live facts and enforcing the phase at which each could
 legally be queried stayed in `tiler_artifact::program::facts`, which is the
 half ADR 0068 assigns to that crate.
 

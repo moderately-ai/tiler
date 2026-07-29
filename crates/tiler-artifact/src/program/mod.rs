@@ -7,7 +7,7 @@
 //! neutral ABI, launch and guard expressions, declared target requirements,
 //! reached provenance, and backend payload descriptors.
 //!
-//! Every public item here is a reviewed **draft** boundary (ADR 0074 §7).
+//! The artifact model is a reviewed **draft** boundary (ADR 0074 §7). The narrower codec capability — encoding a verified artifact and decoding bytes into a validated read view — is accepted; its envelope, row, encoder, decoder, identity-derivation, and wire-layout machinery remains private.
 //!
 //! # Consumable without optimizer internals
 //!
@@ -61,22 +61,9 @@
 //!
 //! ADR 0068 and ADR 0070 place `AbiExpr` in `tiler_ir::program`, and ADR 0072
 //! says complete program identity covers buffers, ABI, guards, and routing.
-//! `complete-program-identity-with-abi-guards-and-routing` moved the entry ABI,
-//! the applicability guard, and the routing-commit lifecycle down: a
-//! [`tiler_ir::program::VerifiedKernelProgram`] now carries its own expression
-//! arena, guard, per-stage launch, and per-access accessible range, and folds
-//! each into `tiler.kernel-program.v2` identity.
+//! `complete-program-identity-with-abi-guards-and-routing` moved the entry ABI, the applicability guard, and the routing-commit lifecycle down: a [`tiler_ir::program::VerifiedKernelProgram`] carries its own expression arena, guard, per-stage launch, and per-access accessible byte range. Historical v2 first folded those facts; later encoding and ABI-completeness changes moved the current domain to `tiler.kernel-program.v5`.
 //!
-//! This crate still declares its own [`VariantSpec`](crate::program::VariantSpec)
-//! ABI on its own arena,
-//! under the separately versioned `guard_and_routing` schema, and validates it
-//! against the same program facts. The two are not yet bound to each other:
-//! nothing checks that a variant's accessible-byte *expression* is the one the
-//! program states, only that both agree with the program's declared shapes. The
-//! ticket `bind-the-artifact-variant-abi-to-the-program-abi` owns closing that,
-//! and the reason it is separate is that the artifact layer additionally owns
-//! launch preconditions, deferred predicates, and a portfolio's variant
-//! priority — none of which a single target-neutral program can carry.
+//! Artifact construction now replays that exact program ABI onto the artifact arena and derives the guard, launch geometry, accessible byte offset and extent, binding target, component role, storage scalar and encoding, kernel access type, access mode, address space, and alignment from the verified program. [`VariantSpec`](crate::program::VariantSpec) supplies only artifact-owned facts: target and feasibility references, deferred predicates, binding transport kinds, launch preconditions and zero-work policy, and backend entry selection. This is one authority, not two ABIs kept in agreement; the artifact layer still owns portfolio priority and the predicates no single target-neutral program can carry.
 //!
 //! ```
 //! use tiler_artifact::program::{

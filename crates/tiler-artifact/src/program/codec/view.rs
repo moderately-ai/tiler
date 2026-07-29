@@ -23,8 +23,9 @@
 //! entries, read every binding's transport category and what it addresses,
 //! evaluate the accessible ranges, guards, preconditions and launch geometry,
 //! and resolve each entry to the backend symbol and transport slots the carried
-//! payload maps it to. That is what a dispatch needs and it is now reachable
-//! without the producer's code.
+//! payload maps it to. For a multi-stage variant it can also walk the proven
+//! execution order and its typed dependency edges. That is what a dispatch
+//! needs and it is now reachable without the producer's code.
 //!
 //! It is still **not** a [`VerifiedArtifactProgram`]. A variant's program
 //! reaches the envelope as its canonical identity bytes alone (`super::model`'s
@@ -69,11 +70,6 @@
 //! a decoded artifact exists yet. Adding one is additive; guessing its shape now
 //! would commit the boundary to it.
 //!
-//! The **stage execution order** of a multi-stage program. The neutral program
-//! section carries a program's canonical identity, not its dependency graph, so
-//! declaration order is not execution order and this build refuses such an
-//! envelope outright through `tiler.artifact.feature.multi-stage-program`.
-
 use super::super::expr::{
     AbiEvaluationError, AbiFacts, AbiType, AbiValue, AvailabilityPhase, evaluate, node_type,
 };

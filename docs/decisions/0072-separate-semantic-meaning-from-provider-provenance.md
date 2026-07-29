@@ -118,19 +118,9 @@ artifact + live device/context/specialization -> runtime cache
   preserves a typed registry-error source;
   compiler requests and artifact-construction plans retain their non-forgeable
   four-subject bundle atomically. Region occurrence, semantic checked refinement,
-  schedule/KIR, and artifact identities remain obligations of their owning
-  implementation tickets.
-- The complete-program identity of this decision's list is implemented for the
-  bounded profile. `CanonicalKernelProgramIdentity` folds the semantic graph,
-  every stage's bound implementation, complete coverage, materializations,
-  buffers, the entry ABI, the applicability guard, and the routing-commit
-  lifecycle, under the domain tag `tiler.kernel-program.v2`. The tag was bumped
-  from `v1` by `complete-program-identity-with-abi-guards-and-routing` because
-  the last three subjects were previously invisible to it — a cache keyed on a
-  `v1` identity could not tell two programs apart by their guard. The
-  portfolio-level sense of "routing" is a different subject and is not folded
-  in: a variant's priority rank orders variants against each other, and one
-  program in isolation has no rank to carry.
+  schedule, structured-kernel, complete-program, and artifact identities are now
+  implemented for the bounded profiles, with each retaining its distinct subject.
+- The complete-program identity of this decision's list is implemented for the bounded profile. `CanonicalKernelProgramIdentity` folds the semantic graph, every stage's bound implementation, complete coverage, materializations, buffers, the entry ABI, the applicability guard, and the routing-commit lifecycle. `complete-program-identity-with-abi-guards-and-routing` moved the domain from `tiler.kernel-program.v1` to historical v2 because the last three subjects were previously invisible; later encoding and ABI-completeness changes moved the same subject through v3 and v4 to the current `tiler.kernel-program.v5`. The portfolio-level sense of "routing" is a different subject and is not folded in: a variant's priority rank orders variants against each other, and one program in isolation has no rank to carry.
 
 ## Alternatives considered
 

@@ -1,7 +1,7 @@
 #![allow(
     dead_code,
     unused_imports,
-    reason = "the neutral artifact codec is a crate-private draft authority (ADR 0074 convention 7). It reserves the envelope framing, canonical manifest encoding, section digests, governed feature and schema compatibility, the decoder's re-proven obligations, and the carried-payload compilation subject. `unused_imports` covers the same reservation one level up: the payload vocabulary is re-exported to the crate so a backend assembler can name it, and until that assembler exists the re-export has no non-test consumer. Promoting the surface to `pub` is Tom's call under ADR 0075 and has not been made."
+    reason = "the neutral artifact codec exposes only its accepted encode/decode capability, validated read view, governed digest, and payload-construction vocabulary. Its envelope framing, rows, canonical encoder and decoder, identity derivation, and wire-layout machinery remain crate-private under ADR 0074 convention 7; those reserved internals and their crate-level re-exports are not all used outside tests."
 )]
 
 //! The bounded canonical lockstep codec for the target-neutral artifact envelope.
@@ -51,24 +51,9 @@
 //! bytes, which is what makes an envelope digest usable as a cache key. Variant
 //! order, interface order, and ABI binding order are meaning and are retained.
 //!
-//! **Backend payload bytes.** A payload is named by governed backend and
-//! representation keys, its own schema version, its opaque content digest, and
-//! its execution policy — exactly as the artifact model names it. Whether a
-//! bundle's identity is content-addressed over its compilation inputs or over
-//! the emitted payload bytes is `prototype-metal-bundle-assembly`'s decision,
-//! and this codec does not pre-empt it. The section machinery it will need
-//! exists and is exercised; the governed section purposes it will add are its
-//! own versioned extension.
+//! **Backend payload semantics.** A carried payload includes canonical metadata and opaque code bytes in governed sections. Artifact identity covers the compilation subject recorded by the metadata and deliberately excludes the emitted object's bytes; section and envelope digests bind the exact transported bytes for integrity. The neutral codec validates that structure without parsing backend code.
 //!
-//! **A reconstructable kernel program.** A section carries one packaged
-//! variant's *canonical kernel-program identity*, not the program. A decoder
-//! cannot rebuild a `VerifiedKernelProgram`: `KernelProgramBuilder::new` needs a
-//! `SemanticProgram`, which needs a frozen registry holding live inferencer
-//! implementations, and neither is representable as bytes. The consequence is
-//! stated rather than approximated — a decoded envelope proves *which* program
-//! an artifact names and cannot resurrect it, and the stage execution order of
-//! a multi-stage program is not recoverable, which is why an envelope that
-//! needs one declares a required feature this reader refuses.
+//! **A reconstructable kernel program.** The manifest carries one packaged variant's canonical kernel-program identity and its validated dispatch record, including ordered stages and dependencies; it does not serialize a `VerifiedKernelProgram`. The decoded record gives a runtime what it needs to route and execute the carried entries without optimizer or semantic-registry internals, including a multi-stage program, but cannot resurrect the compiler-side verified program object.
 //!
 //! # Lockstep
 //!

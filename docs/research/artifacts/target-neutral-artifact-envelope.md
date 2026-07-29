@@ -15,7 +15,7 @@ ticket: "artifact-envelope-model"
 
 # Target-neutral artifact and backend payload envelope
 
-**Status:** completed research adopted by the artifact contract; a bounded canonical envelope codec is implemented behind an unaccepted crate-private facade
+**Status:** completed research adopted by the artifact contract; a bounded canonical envelope codec is implemented behind an accepted public capability and read-view facade while its wire-layout machinery remains crate-private
 **Ticket:** `artifact-envelope-model`
 
 ## Outcome
@@ -257,10 +257,7 @@ BackendEntryRef {
 }
 ```
 
-The full canonical `KernelProgram` is carried in a neutral program section, not
-reconstructed from abbreviated manifest fields. The manifest duplicates only
-the fields necessary for bounded discovery and cross-reference roots. Any
-duplicated value must match the canonical program section or validation fails.
+**Superseded proposal — the accepted dispatch-record design rejected reconstruction.** This record originally proposed carrying the full canonical `KernelProgram` in a neutral program section and validating duplicated manifest fields against it. The implemented envelope instead carries the program's canonical identity plus the entries, bindings, launch expressions, ordered stages, and dependencies a validated dispatch record needs. A runtime can execute that record without compiler internals, but a decoder cannot reconstruct or whole-program verify the compiler-side `VerifiedKernelProgram`; the artifact ABI is the current authority for that boundary.
 
 ### ABI contract
 
@@ -465,9 +462,7 @@ outside the envelope; embedding it inside the bytes it hashes would create a
 recursive definition. Signatures, if later required, sign a domain-separated
 root statement and live in a separately defined attestation layer.
 
-All digest uses include an explicit governed algorithm key and domain
-separator. The initial algorithm remains a product/version decision; a parser
-must never infer one from digest width.
+All digest uses include an explicit governed algorithm key and domain separator, and a parser must never infer one from digest width. The initial proposal left the algorithm open; the implemented wire contract now governs FIPS 180-4 SHA-256 as `tiler.digest.sha-256.v1` with tag `0x01`, separately from its selected `sha2` 0.11.0 implementation.
 
 The derived aggregate identities avoid self-reference:
 
@@ -577,7 +572,7 @@ closed.
 | `ScheduledRegionDigest` | index-region digest, normalized schedule, numerical realization, target policy needed by the schedule | graph occurrence, provider provenance, payload bytes, live device observations |
 | `RefinementDigest` | region occurrence and exact boundary/access binding, index-region digest, reached definitions, selected providers and evidence | unused registered providers, unrelated graph occurrences |
 | `KernelProgramDigest` | semantic digest, bound refinements and scheduled entries, complete coverage, program DAG, buffers/materializations, ABI, expressions, guards, routing, and target requirements | unused registered providers, live/prepared fact values |
-| `BackendPayloadDigest` | exact backend metadata/code section bytes, target representation, backend entry mappings | neutral program equality, live runtime state |
+| backend payload descriptor digest | exact canonical compilation-subject metadata, including source, target, flags, toolchain provenance, target representation, and backend entry mappings | emitted code bytes, neutral program equality, live runtime state; section and envelope digests bind transported code bytes for integrity instead |
 | `ManifestDigest` | exact canonical neutral manifest bytes, including section descriptors and selected provenance | section bodies except through descriptors |
 | `EnvelopeDigest` | every exact byte of the framed envelope | external cache path, embedding location |
 
@@ -597,7 +592,7 @@ selected plan to record and which is independent of the provider's. See
 [the artifact contract](../../artifact-abi.md#canonical-manifest) for the
 implemented record and
 `name-the-capability-api-version-authority-or-retire-the-requirement` for the
-open half. The rest of this proposal is unaffected.
+completed retirement and its trigger for reconsideration. The rest of this proposal is unaffected.
 
 Compiler provenance includes normalized frontend/optimizer/scheduler/codegen
 versions, selected providers, generated-source/helper digests, compiler/linker
@@ -612,11 +607,13 @@ are runtime cache/provenance concerns. A runtime pipeline cache key is at least:
 
 ```text
 live device/context identity
-+ EnvelopeDigest or BackendPayloadDigest
++ EnvelopeDigest or the BackendPayloadCode section's governed SectionDigest
 + BackendEntryKey
 + specialization values
 + pipeline descriptor and runtime translation/archive mode
 ```
+
+The compilation-subject digest is insufficient for this cache: two non-reproducible links of one subject deliberately share artifact identity while carrying different object bytes. A loaded-library or pipeline key must therefore include an identity that binds the exact emitted object.
 
 ## Validation boundaries
 
@@ -624,10 +621,7 @@ Validation is monotonic and fail-closed:
 
 1. **Framing/integrity, device-free:** bounds, canonical manifest, exact section
    lengths/digests, no duplicate/unreferenced/trailing content.
-2. **Neutral schema, device-free:** component versions/features, program and
-   entry references, semantic/numerical equality across portfolio variants,
-   complete outputs, guards/routing, selected providers, and `KernelProgram`
-   whole-program verification.
+2. **Neutral schema, device-free:** component versions/features, program and entry references, semantic/numerical equality across portfolio variants, complete outputs, guards/routing, selected providers, and structural verification of the dispatch record. Re-derived artifact identity binds that record and the opaque canonical kernel-program identity into one subject; it does not prove the record agrees with a program the decoder does not hold, so a consumer must compare the artifact identity it expected.
 3. **Backend payload, backend-provider but device-free where possible:** parse
    governed backend metadata; verify every backend entry and ABI/launch/
    specialization mapping; inspect executable symbols/reflection when the
@@ -672,10 +666,7 @@ exist and map every neutral binding.
 
 ### Multi-dispatch reduction
 
-The neutral program section contains partial and final stages, the partials
-temporary, its buffer lifetime, and the dependency edge. Two executable
-entries reference one backend payload. The payload owns the two symbols; it
-does not own or obscure the program dependency or scratch lifetime.
+The validated dispatch record contains ordered partial and final entries plus the dependency edge between them. Their binding targets identify the shared internal storage, and the bounded loader prepares every entry, maps the matching internal targets to one shared allocation, and retains it through terminal command-buffer status. Both entries reference one backend payload. The payload owns the two symbols; it does not own or obscure execution order, dependency, binding targets, or runtime resource retention.
 
 ### Future Metal and CUDA images
 
@@ -724,13 +715,7 @@ unsupported schemas as plan-applicability misses.
 - a Metal payload represented only as typed opaque metadata/code sections to
   the neutral validator.
 
-The spike intentionally abbreviates `KernelProgram`, ABI, launch, guards, and
-requirements as their already-validated canonical digests. Production loading
-must parse and invoke their component verifiers rather than trusting digests
-alone. It does not choose the production Rust serialization library or freeze
-the final field tags. Its version-1 positional manifest admits no unknown
-fields; it therefore does not claim the proposed optional-field evolution
-behavior.
+The spike intentionally abbreviates `KernelProgram`, ABI, launch, guards, and requirements as their already-validated canonical digests. Its original conclusion required production loading to parse and invoke those component verifiers; the accepted dispatch-record decision superseded that reconstruction requirement. The implemented reader instead validates the dispatch facts and binds them with the opaque program-identity bytes through re-derived artifact identity, without rebuilding compiler IR or re-proving writer-side agreement. The spike does not choose the production Rust serialization library or freeze the final field tags. Its version-1 positional manifest admits no unknown fields; it therefore does not claim the proposed optional-field evolution behavior.
 
 Run it with:
 
@@ -743,27 +728,22 @@ rustc --edition 2021 --test \
 
 ## Remaining bounded decisions and experiments
 
+**Resolved after adoption:** the wire algorithm is governed as FIPS 180-4 SHA-256 under `tiler.digest.sha-256.v1` and tag `0x01`, and the envelope, manifest, section, and proof-sidecar domains are fixed constants checked for prefix separation. `select-the-governed-artifact-digest-implementation` subsequently measured the independent implementation choice and adopted `sha2` 0.11.0 without changing those bytes. `prototype-metal-bundle-assembly` and `carry-the-metal-payload-in-an-artifact-envelope` also completed the proposed Metal reconciliation: the outer container is the neutral envelope, while backend compilation-subject metadata and opaque code bytes travel in governed payload sections.
+
 1. Select the production canonical codec after cross-language byte-vector,
    parser-budget, unknown-field, compile-time, and binary-size measurements.
    Compare a narrow deterministic-CBOR profile, a small owned tagged codec, and
    schema-generated alternatives; ordinary Protobuf output is excluded.
-2. Select and govern the initial cryptographic digest algorithm and domain
-   separators. Measure hashing during proc-macro expansion and runtime loading.
-3. Decide whether an invocation embeds one envelope per target family or one
+2. Decide whether an invocation embeds one envelope per target family or one
    fat envelope. This is distribution policy; the neutral model supports both.
-4. Define optional/debug-section retention and stripping so that changing
+3. Define optional/debug-section retention and stripping so that changing
    diagnostics predictably changes `EnvelopeDigest` without changing
    `KernelProgramDigest`.
-5. Design signatures/attestations only if authenticity beyond embedded-build
+4. Design signatures/attestations only if authenticity beyond embedded-build
    trust is required. Digests provide integrity and content identity, not
    publisher authenticity.
-6. Reconcile the existing Metal-specific `docs/artifact-abi.md` schema with
-   this separation in a later contract/ADR ticket: rename the outer bundle to
-   the neutral envelope and move all Metal-only fields into
-   `MetalPayloadMetadata` without changing accepted inline-AOT behavior.
-
 ## Traceability
 
 The result is adopted by the [artifact ABI](../../artifact-abi.md) and exercised by the [artifact envelope spike](../../../spikes/artifacts/README.md).
 
-Canonical serialization, canonical form, and integrity validation are implemented; authenticity and version-skew policy remain unimplemented. The implemented subset is bounded in exactly the way the artifact ABI records under "Implemented envelope profile": every item of `crates/tiler-artifact/src/program/codec/` is `pub(crate)` behind a private module under ADR 0074 convention 7, so no crate outside `tiler-artifact` can encode or decode an artifact and no consumer surface has been accepted. This record therefore says `partial` rather than implemented, and must not out-run that contract.
+Canonical serialization, canonical form, integrity validation, carried Metal payloads, and the accepted encode/decode capability are implemented; authenticity and version-skew policy remain unimplemented. The bounded public surface is exactly the one the artifact ABI records under "Implemented envelope profile": outside callers encode through `VerifiedArtifactProgram::encode`, decode through `decode_artifact`, and consume the validated `DecodedArtifact` read view, while the envelope, encoder, decoder, row types, and governed layout constants remain crate-private. This record therefore stays `partial` because the wire layout is lockstep and the broader compatibility policy is unimplemented, not because the codec is unreachable.
