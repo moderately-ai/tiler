@@ -4,7 +4,7 @@ title: Scope the first workload-backed quantized language-model profile
 status: todo
 priority: p2
 dependencies: [define-first-metal-lm-workload, spike-first-metal-contraction-vertical, prototype-quantized-value-vertical]
-related: [implement-first-quantized-backend-profile, define-initial-affine-quantization-semantics, define-quantized-value-binding-contract, implement-workload-selected-quantized-parameter-maps]
+related: [implement-first-quantized-backend-profile, define-initial-affine-quantization-semantics, define-quantized-value-binding-contract, implement-workload-selected-quantized-parameter-maps, own-the-dtype-support-maturity-matrix]
 scopes: [research/numerics, research/scheduling, research/apple-targets, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
@@ -31,6 +31,9 @@ choice meaningful.
   criteria, artifact identity, weight validation, and runtime binding.
 - Measure memory and performance against the non-quantized baseline on the
   selected target where feasible.
+- Classify every selected logical type, compound scheme, component, storage carrier/encoding, kernel access/arithmetic type, and target-family dispatch fact in the dtype maturity ledger. A selected code width, packed layout, or native instruction cannot stand in for the other two.
+- Name the exact physical-vocabulary widening required by the surviving profile. File it as a separate dependency of backend implementation with signature verification, KIR identity, ABI compatibility, target dispatchability, lowering/emission, and negative unsupported-combination tests; adding a carrier enum variant alone is not executable support.
+- Separate a correctness-only execution proof from a device-optimal claim. Activate profile-specific analytical and measured cost work for packed/unpacked, explicit-dequantize, and fused candidates, keep unmeasured components `Unknown`, and make calibrated evidence a structural dependency before the selected route is described as optimal.
 
 Eliminate any profile that cannot be validated or whose numerical realization
 is unknown. A smaller artifact is not by itself evidence of a correct or faster
@@ -64,6 +67,8 @@ Do not start this before its trigger fires. Each rung's scope is derived from th
 
 - **These rungs consume Tom's workload selection** (`define-first-metal-lm-workload`, awaiting-decision). If the workload changes after this analysis starts, the analysis is re-derived, not patched — say which parts survived and which did not.
 - **Every requirement this analysis finds that Tiler cannot express today becomes a capability ticket**, filed with the exact operation/shape/dtype evidence from the trace, linked here and to the roadmap rung. Do not widen this ticket to implement any of them.
+- **The selected backend graph must be complete before activation.** Link the exact physical-vocabulary ticket, `admit-a-dtype-dispatchability-capability-axis`, `group-internal-compound-materializations-by-logical-value`, `implement-workload-selected-quantized-parameter-maps` when the profile is non-per-tensor, `implement-first-runtime-semantic-value-precondition-enforcement` when the valid domain has runtime value predicates, and profile-specific cost calibration before any device-optimal claim.
+- **Update `own-the-dtype-support-maturity-matrix` from evidence.** Advance only the cells the selected profile actually implements or tests; leave neighbouring widths, schemes, layouts, operations, targets, and runtime paths absent or reserved.
 - **On close, update the ladder table in `docs/roadmap.md`** — its rung for this ticket currently reads "none", and nothing updates it automatically (the docs have no gate; a reader is the only check).
 
 - **This consumes `prototype-quantized-value-vertical`'s answer** (is quantization a dtype or a compound contract) and `spike-first-metal-contraction-vertical`'s measurements — check both closed before starting, and cite their results rather than re-arguing them.

@@ -23,6 +23,28 @@
 use crate::boundary::{ByteAlignment, LayoutGuarantee, LayoutRequirement, StorageEncoding};
 use core::fmt;
 
+/// Maximum bytes in one exactly reportable ABI parameter name.
+pub(crate) const MAX_PARAMETER_NAME_BYTES: usize = 255;
+
+/// Whether a parameter name is an unambiguous governed identity component.
+pub(crate) const fn valid_parameter_name(name: &str) -> bool {
+    if name.is_empty() || name.len() > MAX_PARAMETER_NAME_BYTES {
+        return false;
+    }
+    let bytes = name.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if !matches!(
+            bytes[index],
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'.' | b'_' | b'-'
+        ) {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
 /// What a parameter is for.
 ///
 /// Closed, and the distinctions are the ones a binding must not blur. An
@@ -226,6 +248,22 @@ pub(crate) enum AbiError {
     /// An unnamed parameter can only be matched positionally, which is the
     /// whole thing this ABI exists to avoid.
     UnnamedParameter(u32),
+    /// A parameter name is not a delimiter-safe governed identity component.
+    InvalidParameterName {
+        /// The parameter's derived slot.
+        slot: u32,
+        /// The refused name.
+        name: &'static str,
+    },
+    /// A parameter name cannot fit exactly in an explain identity value.
+    ParameterNameTooLong {
+        /// The parameter's derived slot.
+        slot: u32,
+        /// Bytes the exact name requires.
+        actual: usize,
+        /// Bytes the explain vocabulary admits.
+        maximum: usize,
+    },
     /// A parameter's layout states the wrong direction for its role.
     ///
     /// An `In` parameter that guarantees a layout, or an `Out` that requires
@@ -249,6 +287,18 @@ impl fmt::Display for AbiError {
             Self::UnnamedParameter(slot) => {
                 write!(formatter, "abi.unnamed-parameter: slot {slot} has no name")
             }
+            Self::InvalidParameterName { slot, name } => write!(
+                formatter,
+                "abi.invalid-parameter-name: slot {slot} name {name:?} is not governed"
+            ),
+            Self::ParameterNameTooLong {
+                slot,
+                actual,
+                maximum,
+            } => write!(
+                formatter,
+                "abi.parameter-name-too-long: slot {slot} requires {actual} bytes, maximum {maximum}"
+            ),
             Self::LayoutDirectionMismatch(name) => write!(
                 formatter,
                 "abi.layout-direction-mismatch: {name} states a layout its role does not have"
@@ -287,6 +337,19 @@ impl CallAbi {
             let slot = u32::try_from(slot).unwrap_or(u32::MAX);
             if spec.name.is_empty() {
                 return Err(AbiError::UnnamedParameter(slot));
+            }
+            if spec.name.len() > MAX_PARAMETER_NAME_BYTES {
+                return Err(AbiError::ParameterNameTooLong {
+                    slot,
+                    actual: spec.name.len(),
+                    maximum: MAX_PARAMETER_NAME_BYTES,
+                });
+            }
+            if !valid_parameter_name(spec.name) {
+                return Err(AbiError::InvalidParameterName {
+                    slot,
+                    name: spec.name,
+                });
             }
             if declared
                 .iter()
@@ -513,6 +576,22 @@ mod tests {
                     .map(|(name, role)| spec(name, role))
             ),
             Err(AbiError::UnnamedParameter(1)),
+        );
+        assert_eq!(
+            CallAbi::declare([("x/y", ParameterRole::Out)].map(|(name, role)| spec(name, role))),
+            Err(AbiError::InvalidParameterName {
+                slot: 0,
+                name: "x/y",
+            }),
+        );
+        let too_long = Box::leak("x".repeat(MAX_PARAMETER_NAME_BYTES + 1).into_boxed_str());
+        assert_eq!(
+            CallAbi::declare([spec(too_long, ParameterRole::Out)]),
+            Err(AbiError::ParameterNameTooLong {
+                slot: 0,
+                actual: MAX_PARAMETER_NAME_BYTES + 1,
+                maximum: MAX_PARAMETER_NAME_BYTES,
+            }),
         );
         assert_eq!(
             CallAbi::declare([("x", ParameterRole::In)].map(|(name, role)| spec(name, role))),

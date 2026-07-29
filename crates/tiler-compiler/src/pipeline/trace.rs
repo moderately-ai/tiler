@@ -415,7 +415,7 @@ pub(super) fn record_frontier(
     cause: ExplainRecordId,
 ) -> Result<ExplainRecordId, TargetFailure> {
     let key = format!("region:{role}");
-    let cause = record_count_step(
+    let mut cause = record_count_step(
         explain,
         "frontier.enumeration.v1",
         SubjectKind::Schedule,
@@ -426,23 +426,19 @@ pub(super) fn record_frontier(
         frontier.admitted().len(),
         cause,
     )?;
-    // Rejections were previously not recorded at all — only the admitted count
-    // was. That was survivable while every rejection was either a reserved
-    // variant or an inapplicable target, both of which a reader could infer from
-    // an empty frontier. It stops being survivable once a proposal can be
-    // refused for a reason specific to *it*: an opaque call refused for a
-    // numerical mismatch and one refused because nothing registered it are
-    // indistinguishable from "no provider proposed", and the fix is different in
-    // each case.
-    //
-    // A count rather than a record per rejection. What the count delivers is
-    // "something was refused here"; what it does NOT deliver is *why* — the
-    // typed rejection and its stable reason code live only on the in-memory
-    // `ImplementationFrontier` and never reach explain output, so the
-    // unregistered-versus-mismatch distinction above is recoverable from the
-    // frontier object, not from the trace. Carrying the reasons into typed
-    // records is part of the explain cost-vocabulary work
-    // (`emit-analytical-costs-through-the-typed-cost-vocabulary`).
+    for rejection in frontier.rejections() {
+        if let crate::frontier::FrontierRejection::OpaqueCall {
+            provider,
+            proposal,
+            cause: rejection,
+        } = rejection
+        {
+            cause = record_opaque_call_rejection(explain, provider, proposal, rejection, cause)?;
+        }
+    }
+    // The summaries remain present beside the detail records: consumers can
+    // answer "how many?" without reconstructing it from event classes, while
+    // each opaque-call refusal above retains the typed answer to "why?".
     record_count_step(
         explain,
         "frontier.enumeration.v1",
@@ -454,6 +450,243 @@ pub(super) fn record_frontier(
         frontier.rejections().len(),
         cause,
     )
+}
+
+/// Records one exact opaque-call refusal without reclassifying it as cost.
+///
+/// Both subjects are governed identities. The proposal spelling includes the
+/// exact call and ordered bindings and is bounded at construction; provider
+/// provenance uses the semantic provider's complete namespace, name, and
+/// output-affecting revision rather than the rule provider's presentation key.
+fn record_opaque_call_rejection(
+    explain: &mut ExplainWriter,
+    provider: &crate::frontier::PhysicalProviderProvenance,
+    proposal: &crate::call_registry::OpaqueCallProposal,
+    rejection: &crate::frontier::OpaqueCallRejectionCause,
+    cause: ExplainRecordId,
+) -> Result<ExplainRecordId, TargetFailure> {
+    let call_key = proposal.subject();
+    let provider_key = provider.explain_subject();
+    let (rule_key, event) = opaque_call_rejection_event(rejection);
+    let stage = event
+        .as_ref()
+        .map_or(ExplainStage::IntrinsicScheduling, ExplainEvent::stage);
+    explain_step(
+        (|| -> Result<_, CompileError> {
+            let subjects = vec![
+                explain.subject(SubjectKind::OpaqueCall, &call_key)?,
+                explain.subject(SubjectKind::Provider, provider_key)?,
+            ];
+            Ok(explain.push_detail(RuleRef::builtin(rule_key?)?, subjects, event?, vec![cause])?)
+        })(),
+        stage,
+        SubjectKind::OpaqueCall,
+        &call_key,
+        record_cause(cause),
+    )
+}
+
+/// Maps every typed opaque-call cause to its truthful explain event.
+fn opaque_call_rejection_event(
+    rejection: &crate::frontier::OpaqueCallRejectionCause,
+) -> (
+    Result<String, ExplainError>,
+    Result<ExplainEvent, CompileError>,
+) {
+    use crate::frontier::OpaqueCallRejectionCause;
+
+    match rejection {
+        OpaqueCallRejectionCause::NotApplicable { target_profile_key } => (
+            Ok("opaque-call.applicability.v1".to_owned()),
+            (|| {
+                Ok(ExplainEvent::Check {
+                    stage: ExplainStage::CandidateEnumeration,
+                    assessment: PredicateAssessment::disproved(
+                        "opaque-call.applicable",
+                        ReasonCode::new("opaque-call.not-applicable")?,
+                        EvidenceBasis::CheckedInvariant,
+                    )?
+                    .with_fact(ExplainFact::new(
+                        "target-profile",
+                        FactValue::Identity(crate::explain::SubjectKey::new(target_profile_key)?),
+                    )?)?,
+                    rejection: RejectionClass::NotApplicable,
+                })
+            })(),
+        ),
+        OpaqueCallRejectionCause::Unregistered => (
+            Ok("opaque-call.registration.v1".to_owned()),
+            opaque_call_check_event(
+                PredicateAssessment::disproved(
+                    "opaque-call.registered",
+                    ReasonCode::new("opaque-call.unregistered").expect("governed reason"),
+                    EvidenceBasis::CheckedInvariant,
+                ),
+                ExplainStage::CapabilityResolution,
+            ),
+        ),
+        OpaqueCallRejectionCause::MalformedBinding(fault) => (
+            Ok("opaque-call.binding.v1".to_owned()),
+            opaque_call_check_event(
+                binding_assessment(*fault),
+                ExplainStage::IntrinsicScheduling,
+            ),
+        ),
+        OpaqueCallRejectionCause::ContractUnderivable(fault) => (
+            Ok("opaque-call.contract.v1".to_owned()),
+            opaque_call_check_event(
+                PredicateAssessment::disproved(
+                    "opaque-call.contract-derivable",
+                    ReasonCode::new(guarantee_reason(*fault)).expect("governed reason"),
+                    EvidenceBasis::CheckedInvariant,
+                ),
+                ExplainStage::IntrinsicScheduling,
+            ),
+        ),
+        OpaqueCallRejectionCause::NumericalContractMismatch => (
+            Ok("opaque-call.numerical-contract.v1".to_owned()),
+            opaque_call_check_event(
+                PredicateAssessment::disproved(
+                    "opaque-call.numerical-contract-matches",
+                    ReasonCode::new("opaque-call.numerical-contract-mismatch")
+                        .expect("governed reason"),
+                    EvidenceBasis::CheckedInvariant,
+                ),
+                ExplainStage::NumericalLegality,
+            ),
+        ),
+        OpaqueCallRejectionCause::WorkUnresolvable(fault) => {
+            let (assessment, stage) = work_resolution_assessment(*fault);
+            (
+                Ok("opaque-call.work-resolution.v1".to_owned()),
+                opaque_call_check_event(assessment, stage),
+            )
+        }
+        OpaqueCallRejectionCause::TargetInfeasible(predicate) => (
+            Ok(format!("target.{}", predicate.axis().key())),
+            (|| {
+                Ok(ExplainEvent::Feasibility {
+                    predicate: PredicateKey::new(predicate.axis().key())?,
+                    outcome: crate::explain::FeasibilityOutcome::Rejected(ReasonCode::new(
+                        "target-infeasible",
+                    )?),
+                    required: predicate.required(),
+                    available: predicate.available(),
+                })
+            })(),
+        ),
+        OpaqueCallRejectionCause::TargetUnhonourable(cause) => (
+            Ok(format!("target.{}", cause.dimension().key())),
+            (|| {
+                Ok(ExplainEvent::NumericalHonourability {
+                    dimension: PredicateKey::new(cause.dimension().key())?,
+                    arithmetic: cause.arithmetic(),
+                    required: ReasonCode::new(cause.required().key())?,
+                    outcome: crate::explain::HonourabilityOutcome::Unhonourable {
+                        means: ReasonCode::new(cause.means().key())?,
+                        honoured: cause
+                            .honoured()
+                            .map(|honoured| ReasonCode::new(honoured.key()))
+                            .transpose()?,
+                    },
+                    profile: crate::explain::SubjectKey::new(cause.profile().key())?,
+                })
+            })(),
+        ),
+    }
+}
+
+fn opaque_call_check_event(
+    assessment: Result<PredicateAssessment, ExplainError>,
+    stage: ExplainStage,
+) -> Result<ExplainEvent, CompileError> {
+    Ok(ExplainEvent::Check {
+        stage,
+        assessment: assessment?,
+        rejection: if stage == ExplainStage::NumericalLegality {
+            RejectionClass::NumericalIllegal
+        } else {
+            RejectionClass::IntrinsicInvalid
+        },
+    })
+}
+
+fn binding_assessment(
+    fault: crate::call_abi::BindingError,
+) -> Result<PredicateAssessment, ExplainError> {
+    match fault {
+        crate::call_abi::BindingError::UnboundParameter(parameter) => {
+            binding_parameter_assessment("opaque-call.binding.unbound-parameter", parameter)
+        }
+        crate::call_abi::BindingError::UnknownParameter(parameter) => {
+            binding_parameter_assessment("opaque-call.binding.unknown-parameter", parameter)
+        }
+        crate::call_abi::BindingError::ParameterBoundTwice(parameter) => {
+            binding_parameter_assessment("opaque-call.binding.parameter-bound-twice", parameter)
+        }
+        crate::call_abi::BindingError::RoleStorageDisagreement { first, second } => {
+            PredicateAssessment::disproved(
+                "opaque-call.binding-valid",
+                ReasonCode::new("opaque-call.binding.role-storage-disagreement")?,
+                EvidenceBasis::CheckedInvariant,
+            )?
+            .with_fact(parameter_fact("first-parameter", first)?)?
+            .with_fact(parameter_fact("second-parameter", second)?)
+        }
+    }
+}
+
+fn binding_parameter_assessment(
+    reason: &'static str,
+    parameter: &'static str,
+) -> Result<PredicateAssessment, ExplainError> {
+    PredicateAssessment::disproved(
+        "opaque-call.binding-valid",
+        ReasonCode::new(reason)?,
+        EvidenceBasis::CheckedInvariant,
+    )?
+    .with_fact(parameter_fact("parameter", parameter)?)
+}
+
+fn parameter_fact(key: &'static str, parameter: &'static str) -> Result<ExplainFact, ExplainError> {
+    ExplainFact::new(
+        key,
+        FactValue::Identity(crate::explain::SubjectKey::new(parameter)?),
+    )
+}
+
+const fn guarantee_reason(fault: crate::call_declaration::GuaranteeError) -> &'static str {
+    match fault {
+        crate::call_declaration::GuaranteeError::NotAWrite => "opaque-call.contract.not-a-write",
+        crate::call_declaration::GuaranteeError::AmbiguousWriteDomain => {
+            "opaque-call.contract.ambiguous-write-domain"
+        }
+    }
+}
+
+fn work_resolution_assessment(
+    fault: crate::frontier::WorkResolutionError,
+) -> (Result<PredicateAssessment, ExplainError>, ExplainStage) {
+    match fault {
+        crate::frontier::WorkResolutionError::UnknownParameter(parameter) => (
+            PredicateAssessment::disproved(
+                "opaque-call.work-resolvable",
+                ReasonCode::new("opaque-call.work.unknown-parameter").expect("governed reason"),
+                EvidenceBasis::CheckedInvariant,
+            )
+            .and_then(|assessment| assessment.with_fact(parameter_fact("parameter", parameter)?)),
+            ExplainStage::CapabilityResolution,
+        ),
+        crate::frontier::WorkResolutionError::IntermediateShapeUnavailable { parameter } => (
+            PredicateAssessment::deferred(
+                "opaque-call.work-resolvable",
+                ReasonCode::new("opaque-call.work.intermediate-shape-unavailable")
+                    .expect("governed reason"),
+            )
+            .and_then(|assessment| assessment.with_fact(parameter_fact("parameter", parameter)?)),
+            ExplainStage::CapabilityResolution,
+        ),
+    }
 }
 
 /// Records the complete-plan join: how many valid plans the portfolio retained.
@@ -685,6 +918,7 @@ pub(super) fn record_target_rejection(
             (|| -> Result<_, CompileError> {
                 Ok(ExplainEvent::NumericalHonourability {
                     dimension: PredicateKey::new(cause.dimension().key())?,
+                    arithmetic: cause.arithmetic(),
                     required: ReasonCode::new(cause.required().key())?,
                     outcome: crate::explain::HonourabilityOutcome::Unhonourable {
                         means: ReasonCode::new(cause.means().key())?,
@@ -800,6 +1034,7 @@ pub(super) fn record_target_admissions(
                         vec![subject],
                         ExplainEvent::NumericalHonourability {
                             dimension: PredicateKey::new(honoured.dimension().key())?,
+                            arithmetic: honoured.arithmetic(),
                             required: ReasonCode::new(honoured.behaviour().key())?,
                             outcome: crate::explain::HonourabilityOutcome::Honoured {
                                 means: ReasonCode::new(honoured.means().key())?,
@@ -1012,7 +1247,12 @@ pub(super) fn record_cost_and_selection(
 
 #[cfg(test)]
 mod tests {
-    use super::{CostUnit, Quantity, analytical_quantity};
+    use super::{
+        CostUnit, ExplainEvent, ExplainStage, FactValue, Quantity, analytical_quantity,
+        opaque_call_rejection_event,
+    };
+    use crate::explain::ExplainDisposition;
+    use crate::frontier::{OpaqueCallRejectionCause, WorkResolutionError};
 
     /// Every analytical unit maps to its namesake typed quantity.
     ///
@@ -1034,5 +1274,225 @@ mod tests {
             analytical_quantity(CostUnit::Nanoseconds, 5),
             Quantity::Nanoseconds(5)
         );
+    }
+
+    #[test]
+    fn every_non_target_opaque_call_cause_has_one_typed_event() {
+        let cases = [
+            (
+                OpaqueCallRejectionCause::NotApplicable {
+                    target_profile_key: "tiler.target.test",
+                },
+                "opaque-call.applicability.v1",
+                ExplainStage::CandidateEnumeration,
+                ExplainDisposition::NotApplicable,
+            ),
+            (
+                OpaqueCallRejectionCause::Unregistered,
+                "opaque-call.registration.v1",
+                ExplainStage::CapabilityResolution,
+                ExplainDisposition::RejectedIntrinsic,
+            ),
+            (
+                OpaqueCallRejectionCause::MalformedBinding(
+                    crate::call_abi::BindingError::UnboundParameter("x"),
+                ),
+                "opaque-call.binding.v1",
+                ExplainStage::IntrinsicScheduling,
+                ExplainDisposition::RejectedIntrinsic,
+            ),
+            (
+                OpaqueCallRejectionCause::MalformedBinding(
+                    crate::call_abi::BindingError::UnknownParameter("unknown"),
+                ),
+                "opaque-call.binding.v1",
+                ExplainStage::IntrinsicScheduling,
+                ExplainDisposition::RejectedIntrinsic,
+            ),
+            (
+                OpaqueCallRejectionCause::MalformedBinding(
+                    crate::call_abi::BindingError::ParameterBoundTwice("x"),
+                ),
+                "opaque-call.binding.v1",
+                ExplainStage::IntrinsicScheduling,
+                ExplainDisposition::RejectedIntrinsic,
+            ),
+            (
+                OpaqueCallRejectionCause::MalformedBinding(
+                    crate::call_abi::BindingError::RoleStorageDisagreement {
+                        first: "x",
+                        second: "y",
+                    },
+                ),
+                "opaque-call.binding.v1",
+                ExplainStage::IntrinsicScheduling,
+                ExplainDisposition::RejectedIntrinsic,
+            ),
+            (
+                OpaqueCallRejectionCause::ContractUnderivable(
+                    crate::call_declaration::GuaranteeError::AmbiguousWriteDomain,
+                ),
+                "opaque-call.contract.v1",
+                ExplainStage::IntrinsicScheduling,
+                ExplainDisposition::RejectedIntrinsic,
+            ),
+            (
+                OpaqueCallRejectionCause::NumericalContractMismatch,
+                "opaque-call.numerical-contract.v1",
+                ExplainStage::NumericalLegality,
+                ExplainDisposition::RejectedNumerical,
+            ),
+            (
+                OpaqueCallRejectionCause::WorkUnresolvable(WorkResolutionError::UnknownParameter(
+                    "count",
+                )),
+                "opaque-call.work-resolution.v1",
+                ExplainStage::CapabilityResolution,
+                ExplainDisposition::RejectedIntrinsic,
+            ),
+            (
+                OpaqueCallRejectionCause::WorkUnresolvable(
+                    WorkResolutionError::IntermediateShapeUnavailable {
+                        parameter: "scratch",
+                    },
+                ),
+                "opaque-call.work-resolution.v1",
+                ExplainStage::CapabilityResolution,
+                ExplainDisposition::DeferredUnsupported,
+            ),
+        ];
+
+        for (cause, expected_rule, expected_stage, expected_disposition) in cases {
+            let (rule, event) = opaque_call_rejection_event(&cause);
+            let event = event.expect("the typed cause maps without loss");
+            assert_eq!(rule.unwrap(), expected_rule);
+            assert_eq!(event.stage(), expected_stage);
+            assert_eq!(event.disposition(), expected_disposition);
+            assert!(
+                !matches!(event, ExplainEvent::CostAssessment { .. }),
+                "a rejection never becomes cost evidence"
+            );
+        }
+    }
+
+    #[test]
+    fn binding_and_work_fault_payloads_are_typed_facts() {
+        let (_, event) = opaque_call_rejection_event(&OpaqueCallRejectionCause::MalformedBinding(
+            crate::call_abi::BindingError::RoleStorageDisagreement {
+                first: "left",
+                second: "right",
+            },
+        ));
+        let ExplainEvent::Check { assessment, .. } = event.expect("reportable") else {
+            panic!("binding fault was not a checked refusal");
+        };
+        assert_eq!(
+            assessment.reason().map(crate::explain::ReasonCode::as_str),
+            Some("opaque-call.binding.role-storage-disagreement")
+        );
+        assert_eq!(assessment.facts().len(), 2);
+        assert!(matches!(
+            assessment.facts()[0].value(),
+            FactValue::Identity(value) if value.as_str() == "left"
+        ));
+        assert!(matches!(
+            assessment.facts()[1].value(),
+            FactValue::Identity(value) if value.as_str() == "right"
+        ));
+
+        let (_, event) = opaque_call_rejection_event(&OpaqueCallRejectionCause::WorkUnresolvable(
+            WorkResolutionError::UnknownParameter("count"),
+        ));
+        let ExplainEvent::Check { assessment, .. } = event.expect("reportable") else {
+            panic!("work fault was not a checked refusal");
+        };
+        assert_eq!(
+            assessment.reason().map(crate::explain::ReasonCode::as_str),
+            Some("opaque-call.work.unknown-parameter")
+        );
+        assert!(matches!(
+            assessment.facts()[0].value(),
+            FactValue::Identity(value) if value.as_str() == "count"
+        ));
+    }
+
+    #[test]
+    fn target_opaque_call_causes_preserve_the_authority_payloads() {
+        use crate::feasibility::RejectionCause;
+        use crate::honourability::{
+            DimensionBehaviour, HonouringMeans, NumericalDimension, UnhonouredDimension,
+        };
+        use crate::physical::ResourceVerdict;
+        use crate::request::{PrototypeTargetProfile, StrictF32NumericalContract};
+        use tiler_ir::schedule::{ArithmeticType, NumericalPermission, ResourceRequirements};
+
+        let realization = StrictF32NumericalContract::governed().realization();
+        let capability = match crate::physical::assess_resources(
+            ResourceRequirements {
+                buffer_bindings: u32::MAX,
+                threads_per_workgroup: 1,
+                local_memory_bytes: 0,
+                barriers: 0,
+                requires_device_memory: true,
+                input_subnormals: realization.input_subnormals,
+                result_subnormals: realization.result_subnormals,
+                contraction: realization.contraction,
+                reassociation: realization.reassociation,
+                permutation: realization.permutation,
+                signed_zero: realization.signed_zero,
+                nan_assumptions: realization.nan_assumptions,
+                infinity_assumptions: realization.infinity_assumptions,
+            },
+            ArithmeticType::F32,
+            1,
+            &PrototypeTargetProfile::governed(),
+        )
+        .expect_err("the binding requirement exceeds the governed profile")
+        {
+            ResourceVerdict::Rejected(RejectionCause::Capability(predicate)) => predicate,
+            other => panic!("expected a typed capability refusal, got {other:?}"),
+        };
+        let (_, event) =
+            opaque_call_rejection_event(&OpaqueCallRejectionCause::TargetInfeasible(capability));
+        let event = event.expect("reportable");
+        assert!(matches!(
+            &event,
+            ExplainEvent::Feasibility {
+                required: Quantity::Bindings(required),
+                available: Quantity::Bindings(available),
+                ..
+            } if *required == u64::from(u32::MAX) && *available == 2
+        ));
+
+        let unhonourable = UnhonouredDimension::new(
+            NumericalDimension::Contraction,
+            ArithmeticType::F16,
+            DimensionBehaviour::Transform(NumericalPermission::Permitted),
+            HonouringMeans::Unsupported,
+            Some(DimensionBehaviour::Transform(
+                NumericalPermission::Forbidden,
+            )),
+            crate::feasibility::TargetProfileIdentity::new("tiler.test.profile.v1"),
+        );
+        let (_, event) = opaque_call_rejection_event(
+            &OpaqueCallRejectionCause::TargetUnhonourable(unhonourable),
+        );
+        assert!(matches!(
+            event.expect("reportable"),
+            ExplainEvent::NumericalHonourability {
+                dimension,
+                arithmetic: ArithmeticType::F16,
+                required,
+                outcome: crate::explain::HonourabilityOutcome::Unhonourable {
+                    means,
+                    honoured: Some(honoured),
+                },
+                profile,
+            } if dimension.as_str() == "numerics.contraction"
+                && required.as_str() == "permitted"
+                && means.as_str() == "unsupported"
+                && honoured.as_str() == "forbidden"
+                && profile.as_str() == "tiler.test.profile.v1"
+        ));
     }
 }

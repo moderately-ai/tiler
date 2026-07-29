@@ -4,7 +4,7 @@ title: Admit a dtype-dispatchability capability axis
 status: awaiting-decision
 priority: p2
 dependencies: []
-related: []
+related: [register-the-accepted-built-in-dtype-catalog, own-the-dtype-support-maturity-matrix]
 scopes: [implementation/compiler]
 shared_scopes: []
 paths: []

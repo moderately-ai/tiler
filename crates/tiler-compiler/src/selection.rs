@@ -1733,7 +1733,7 @@ mod tests {
     use crate::frontier::{
         BoundaryOwnership, FrontierRegionSubject, ImplementationContext, ImplementationProposal,
         PhysicalCostEstimate, PhysicalImplementationProvider, PhysicalProviderProvenance,
-        ProposalBody, TargetApplicability, enumerate_frontier,
+        PhysicalProviderProvenanceError, ProposalBody, TargetApplicability, enumerate_frontier,
     };
     use crate::physical::{ScheduledRegion, build_fused_scheduled_region, build_scheduled_regions};
     use crate::request::{
@@ -1796,16 +1796,21 @@ mod tests {
     }
 
     impl PhysicalImplementationProvider for FixedCallProvider {
-        fn provenance(&self) -> PhysicalProviderProvenance {
+        fn provenance(
+            &self,
+        ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
             PhysicalProviderProvenance::new(provider_identity("opaque", 1))
         }
 
         fn propose(&self, _: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
             vec![ImplementationProposal::new(
-                ProposalBody::OpaqueCall(Box::new(crate::call_registry::OpaqueCallProposal::new(
-                    self.identity,
-                    self.bindings.clone(),
-                ))),
+                ProposalBody::OpaqueCall(Box::new(
+                    crate::call_registry::OpaqueCallProposal::new(
+                        self.identity,
+                        self.bindings.clone(),
+                    )
+                    .expect("fixture proposal is exactly reportable"),
+                )),
                 governed_applicability(),
                 self.cost,
             )]
@@ -1921,7 +1926,9 @@ mod tests {
     }
 
     impl PhysicalImplementationProvider for FixedRegionProvider {
-        fn provenance(&self) -> PhysicalProviderProvenance {
+        fn provenance(
+            &self,
+        ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
             PhysicalProviderProvenance::new(self.provider.clone())
         }
 

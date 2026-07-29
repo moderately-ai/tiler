@@ -25,6 +25,15 @@ use crate::call_declaration::OpaqueCallDeclaration;
 use core::fmt;
 use tiler_ir::schedule::TensorRole;
 
+/// Maximum bytes in the exact textual subject of one opaque call.
+///
+/// Explain subject keys are bounded to 255 bytes. The longest decimal `u32`
+/// revision is ten bytes, and the two delimiters occupy two more, so
+/// construction reserves those bytes and rejects an identity whose exact
+/// `provider/call@revision` spelling could not be carried without hashing or
+/// truncation.
+pub(crate) const MAX_OPAQUE_CALL_SUBJECT_BYTES: usize = 255;
+
 /// The governed identity of one opaque call.
 ///
 /// Provider, call name, and an output-affecting revision — the revision changes
@@ -46,7 +55,8 @@ pub(crate) struct OpaqueCallIdentity {
     reason = "see the type's own allow: reviewed draft accessors whose consumer is the not-yet-written frontier integration"
 )]
 impl OpaqueCallIdentity {
-    /// Builds a call identity, refusing an unnamed provider or call.
+    /// Builds a call identity, refusing a component outside the governed
+    /// delimiter-safe ASCII grammar or an identity too long for explain.
     ///
     /// An empty name would make two distinct calls render identically, which is
     /// the failure a reader of explain output cannot see.
@@ -55,7 +65,10 @@ impl OpaqueCallIdentity {
         call: &'static str,
         revision: u32,
     ) -> Option<Self> {
-        if provider.is_empty() || call.is_empty() {
+        if !valid_identity_component(provider) || !valid_identity_component(call) {
+            return None;
+        }
+        if call_subject_len(provider, call, revision) > MAX_OPAQUE_CALL_SUBJECT_BYTES {
             return None;
         }
         Some(Self {
@@ -79,6 +92,62 @@ impl OpaqueCallIdentity {
     pub(crate) const fn revision(&self) -> u32 {
         self.revision
     }
+
+    /// The exact delimiter-safe explain subject for this call.
+    ///
+    /// Construction proves this is at most
+    /// [`MAX_OPAQUE_CALL_SUBJECT_BYTES`]. No digest or truncation is needed, so
+    /// a reader can recover the complete governed identity from the subject.
+    pub(crate) fn subject(&self) -> String {
+        format!("{self}")
+    }
+}
+
+const fn valid_identity_component(component: &str) -> bool {
+    if component.is_empty() {
+        return false;
+    }
+    let bytes = component.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if !matches!(
+            byte,
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'.' | b'_' | b'-'
+        ) {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
+const fn decimal_digits(value: u32) -> usize {
+    if value < 10 {
+        1
+    } else if value < 100 {
+        2
+    } else if value < 1_000 {
+        3
+    } else if value < 10_000 {
+        4
+    } else if value < 100_000 {
+        5
+    } else if value < 1_000_000 {
+        6
+    } else if value < 10_000_000 {
+        7
+    } else if value < 100_000_000 {
+        8
+    } else if value < 1_000_000_000 {
+        9
+    } else {
+        10
+    }
+}
+
+const fn call_subject_len(provider: &str, call: &str, revision: u32) -> usize {
+    provider.len() + call.len() + decimal_digits(revision) + 2
 }
 
 impl fmt::Display for OpaqueCallIdentity {
@@ -221,19 +290,53 @@ pub(crate) struct OpaqueCallProposal {
     bindings: Vec<(&'static str, TensorRole)>,
 }
 
+/// Why an opaque-call proposal could not be represented exactly in explain.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OpaqueCallProposalError {
+    /// A binding name is outside the delimiter-safe governed component grammar.
+    InvalidBindingName {
+        /// The zero-based binding position.
+        index: usize,
+        /// The refused name.
+        name: &'static str,
+    },
+    /// The exact call-and-ordered-bindings subject exceeds the explain bound.
+    SubjectTooLong {
+        /// Bytes the exact subject requires.
+        actual: usize,
+        /// Bytes the explain vocabulary admits.
+        maximum: usize,
+    },
+}
+
 #[allow(
     dead_code,
     reason = "see the type's own allow: accessors read by the frontier admission"
 )]
 impl OpaqueCallProposal {
-    /// Builds a proposal. Validation happens at admission, not here: a provider
-    /// may construct a proposal the registry will reject, and the rejection is
-    /// what the caller needs to see.
-    pub(crate) const fn new(
+    /// Builds a proposal whose complete ordered claim is exactly reportable.
+    ///
+    /// Semantic validation still happens at admission: an unknown, repeated, or
+    /// absent ABI parameter remains a typed frontier refusal. Construction only
+    /// rejects lexical ambiguity and a proposal whose exact explain subject
+    /// would require truncation or hashing.
+    pub(crate) fn new(
         call: OpaqueCallIdentity,
         bindings: Vec<(&'static str, TensorRole)>,
-    ) -> Self {
-        Self { call, bindings }
+    ) -> Result<Self, OpaqueCallProposalError> {
+        let actual = proposal_subject_len(call, &bindings);
+        if actual > MAX_OPAQUE_CALL_SUBJECT_BYTES {
+            return Err(OpaqueCallProposalError::SubjectTooLong {
+                actual,
+                maximum: MAX_OPAQUE_CALL_SUBJECT_BYTES,
+            });
+        }
+        for (index, (name, _)) in bindings.iter().enumerate() {
+            if !crate::call_abi::valid_parameter_name(name) {
+                return Err(OpaqueCallProposalError::InvalidBindingName { index, name });
+            }
+        }
+        Ok(Self { call, bindings })
     }
 
     /// The registered call this proposal names.
@@ -244,6 +347,50 @@ impl OpaqueCallProposal {
     /// Which tensor role each parameter binds.
     pub(crate) fn bindings(&self) -> &[(&'static str, TensorRole)] {
         &self.bindings
+    }
+
+    /// Exact delimiter-safe subject covering the call and ordered bindings.
+    ///
+    /// Construction proves this fits [`MAX_OPAQUE_CALL_SUBJECT_BYTES`]. Binding
+    /// order is rendered rather than canonicalized away because it is part of
+    /// the provider's proposal identity.
+    pub(crate) fn subject(&self) -> String {
+        let mut subject = self.call.subject();
+        subject.push('[');
+        for (index, (name, role)) in self.bindings.iter().enumerate() {
+            if index != 0 {
+                subject.push(',');
+            }
+            subject.push_str(name);
+            subject.push('=');
+            subject.push_str(tensor_role_name(*role));
+        }
+        subject.push(']');
+        debug_assert_eq!(
+            subject.len(),
+            proposal_subject_len(self.call, &self.bindings)
+        );
+        subject
+    }
+}
+
+fn proposal_subject_len(call: OpaqueCallIdentity, bindings: &[(&str, TensorRole)]) -> usize {
+    call_subject_len(call.provider, call.call, call.revision)
+        + 2
+        + bindings
+            .iter()
+            .enumerate()
+            .map(|(index, (name, role))| {
+                name.len() + 1 + tensor_role_name(*role).len() + usize::from(index != 0)
+            })
+            .sum::<usize>()
+}
+
+const fn tensor_role_name(role: TensorRole) -> &'static str {
+    match role {
+        TensorRole::Input => "input",
+        TensorRole::Intermediate => "intermediate",
+        TensorRole::Output => "output",
     }
 }
 
@@ -331,6 +478,45 @@ mod tests {
         assert!(OpaqueCallIdentity::new("p", "c", 0).is_some());
         assert!(OpaqueCallIdentity::new("", "c", 0).is_none());
         assert!(OpaqueCallIdentity::new("p", "", 0).is_none());
+        assert!(OpaqueCallIdentity::new("p/c", "c", 0).is_none());
+        assert!(OpaqueCallIdentity::new("p", "c@1", 0).is_none());
+        assert_eq!(
+            OpaqueCallIdentity::new("provider", "call", u32::MAX)
+                .expect("bounded")
+                .subject(),
+            "provider/call@4294967295"
+        );
+        let too_long = "x".repeat(MAX_OPAQUE_CALL_SUBJECT_BYTES);
+        let leaked = Box::leak(too_long.into_boxed_str());
+        assert!(OpaqueCallIdentity::new(leaked, "c", 0).is_none());
+    }
+
+    #[test]
+    fn proposal_subject_is_exact_ordered_and_bounded() {
+        let call = identity("c");
+        let proposal = OpaqueCallProposal::new(
+            call,
+            vec![("x", TensorRole::Input), ("y", TensorRole::Output)],
+        )
+        .expect("bounded");
+        assert_eq!(proposal.subject(), "p/c@1[x=input,y=output]");
+        assert_eq!(
+            OpaqueCallProposal::new(call, vec![("x/y", TensorRole::Input)]),
+            Err(OpaqueCallProposalError::InvalidBindingName {
+                index: 0,
+                name: "x/y",
+            })
+        );
+
+        let long = Box::leak("x".repeat(250).into_boxed_str());
+        let actual = "p/c@1[]".len() + long.len() + "=output".len();
+        assert_eq!(
+            OpaqueCallProposal::new(call, vec![(long, TensorRole::Output)]),
+            Err(OpaqueCallProposalError::SubjectTooLong {
+                actual,
+                maximum: MAX_OPAQUE_CALL_SUBJECT_BYTES,
+            })
+        );
     }
 
     /// A duplicate identity is refused; a distinct one is not.

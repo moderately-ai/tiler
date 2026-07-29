@@ -454,7 +454,7 @@ fn product_is_deterministic_and_preserves_the_materialized_boundary() {
     assert_eq!(first, second);
     let target = &first.targets[0];
     let rendered = target.explain.render();
-    assert!(rendered.starts_with("tiler-explain-v3 request="));
+    assert!(rendered.starts_with("tiler-explain-v4 request="));
     assert!(rendered.contains("feasibility:threads-per-workgroup:admitted"));
     assert!(rendered.contains("feasibility:buffer-bindings:admitted"));
     assert!(rendered.contains("event=selection:tiler.selection.structural-pareto.v1:selected"));
@@ -578,10 +578,10 @@ fn every_wired_authority_emits_its_typed_explain_records() {
             ("cover.enumeration.v1", 1),
             ("fusion.legality.v1", 12),
             ("fusion.strict-f32-equivalence", 1),
-            // Two records per region subject: the admitted count and the rejected
-            // count. The second is new — rejections were previously not recorded
-            // at all, which made "refused for a reason specific to this proposal"
-            // indistinguishable from "nobody proposed".
+            // Two summary records remain per region subject: admitted count and
+            // rejected count. Typed per-opaque-rejection detail records accompany
+            // them when present; this governed compile fixture has no opaque
+            // rejection, so its four region subjects still contribute eight.
             ("frontier.enumeration.v1", 8),
             ("selection.complete-plan.v1", 1),
             ("compile.region.verified", 3),
@@ -740,7 +740,7 @@ fn every_wired_authority_emits_its_typed_explain_records() {
         .find(|record| record.rule().key().as_str() == "fusion.legality.v1")
         .expect("a fusion-legality record");
     assert_eq!(legality.event().disposition(), ExplainDisposition::Admitted);
-    assert!(trace.render().starts_with("tiler-explain-v3 request="));
+    assert!(trace.render().starts_with("tiler-explain-v4 request="));
 }
 
 /// Asserts the honourability half of the end-to-end explain conformance.
@@ -756,6 +756,7 @@ fn assert_honoured_dimensions_are_exhaustive(trace: &crate::explain::VerifiedExp
     for record in trace.records() {
         let ExplainEvent::NumericalHonourability {
             dimension,
+            arithmetic,
             required,
             outcome,
             profile,
@@ -773,6 +774,7 @@ fn assert_honoured_dimensions_are_exhaustive(trace: &crate::explain::VerifiedExp
             profile.as_str(),
             "tiler.prototype-target-neutral-baseline.v1"
         );
+        assert_eq!(*arithmetic, tiler_ir::schedule::ArithmeticType::F32);
         *honoured
             .entry((dimension.as_str(), required.as_str()))
             .or_insert(0_usize) += 1;
@@ -787,7 +789,7 @@ fn assert_honoured_dimensions_are_exhaustive(trace: &crate::explain::VerifiedExp
         ])
     );
     assert!(trace.render().contains(
-            "honourability:numerics.input-subnormals:preserve:honoured:supported-exactly:profile=tiler.prototype-target-neutral-baseline.v1"
+            "honourability:numerics.input-subnormals:tiler::f32@1:preserve:honoured:supported-exactly:profile=tiler.prototype-target-neutral-baseline.v1"
         ));
 }
 
@@ -893,7 +895,7 @@ fn normalization_converges_duplicated_and_shared_constants_on_one_portfolio() {
     let rendered = from_duplicated.targets[0].compilation_explain.render();
     let request_headers = rendered
         .lines()
-        .filter(|line| line.starts_with("tiler-explain-v3 request="))
+        .filter(|line| line.starts_with("tiler-explain-v4 request="))
         .collect::<Vec<_>>();
     assert_eq!(request_headers.len(), 2);
     assert_ne!(
@@ -2151,4 +2153,167 @@ fn intrinsic_physical_failures_are_invalid_output_not_empty_frontiers() {
             PhysicalError::Intrinsic { .. }
         ))
     ));
+}
+
+struct UnregisteredOpaqueProvider {
+    identity: tiler_ir::semantic::ProviderIdentity,
+    call: crate::call_registry::OpaqueCallIdentity,
+    bindings: Vec<(&'static str, TensorRole)>,
+}
+
+impl PhysicalImplementationProvider for UnregisteredOpaqueProvider {
+    fn provenance(
+        &self,
+    ) -> Result<
+        crate::frontier::PhysicalProviderProvenance,
+        crate::frontier::PhysicalProviderProvenanceError,
+    > {
+        crate::frontier::PhysicalProviderProvenance::new(self.identity.clone())
+    }
+
+    fn propose(
+        &self,
+        context: &crate::frontier::ImplementationContext<'_>,
+    ) -> Vec<crate::frontier::ImplementationProposal> {
+        vec![crate::frontier::ImplementationProposal::new(
+            crate::frontier::ProposalBody::OpaqueCall(Box::new(
+                crate::call_registry::OpaqueCallProposal::new(self.call, self.bindings.clone())
+                    .expect("fixture proposal is exactly reportable"),
+            )),
+            crate::frontier::TargetApplicability::for_targets([
+                crate::request::TargetProfileKey::governed(context.target_profile_key()),
+            ]),
+            crate::frontier::PhysicalCostEstimate::structural(1, 2, 0),
+        )]
+    }
+}
+
+fn mixed_frontier_trace(
+    provider_revision: u32,
+    call_revision: u32,
+    reverse_providers: bool,
+    reverse_bindings: bool,
+) -> VerifiedExplainTrace {
+    let semantic = semantic(false);
+    let verified = verify_request(CompilationRequest::governed(&semantic)).unwrap();
+    let request = verified.for_target(verified.target_profiles()[0]).unwrap();
+    let subject = FrontierRegionSubject::new("fused", request.serial_sum().members.all());
+    let governed = GovernedPhysicalProvider;
+    let opaque = UnregisteredOpaqueProvider {
+        identity: tiler_ir::semantic::ProviderIdentity::new(
+            "tiler.test.physical",
+            "opaque",
+            provider_revision,
+        )
+        .unwrap(),
+        call: crate::call_registry::OpaqueCallIdentity::new("call-owner", "mystery", call_revision)
+            .unwrap(),
+        bindings: if reverse_bindings {
+            vec![("output", TensorRole::Output), ("input", TensorRole::Input)]
+        } else {
+            vec![("input", TensorRole::Input), ("output", TensorRole::Output)]
+        },
+    };
+    let providers: Vec<&dyn PhysicalImplementationProvider> = if reverse_providers {
+        vec![&opaque, &governed]
+    } else {
+        vec![&governed, &opaque]
+    };
+    let frontier = enumerate_frontier(
+        &request,
+        &subject,
+        &providers,
+        &crate::call_registry::OpaqueCallRegistry::new(),
+    )
+    .unwrap();
+    assert_eq!(frontier.admitted().len(), 1);
+    assert_eq!(frontier.rejections().len(), 1);
+
+    let mut explain = ExplainWriter::new(&request).unwrap();
+    let root = test_root(&mut explain);
+    let cause = record_frontier(&mut explain, "fused", &frontier, root).unwrap();
+    let alternative = explain
+        .subject(SubjectKind::Alternative, "alternative:test")
+        .unwrap();
+    explain
+        .note_selection(
+            alternative,
+            SelectionOutcome::Selected,
+            Some(TerminalCause::from_record(cause)),
+        )
+        .unwrap();
+    explain
+        .finish_success(&["alternative:test"], "alternative:test")
+        .unwrap()
+}
+
+#[test]
+fn mixed_frontier_records_exact_opaque_call_rejection_detail() {
+    let trace = mixed_frontier_trace(7, 3, false, false);
+    let rejection = trace
+        .records()
+        .iter()
+        .find(|record| record.rule().key().as_str() == "opaque-call.registration.v1")
+        .expect("one unregistered-call detail");
+    assert!(matches!(
+        rejection.event(),
+        ExplainEvent::Check {
+            stage: ExplainStage::CapabilityResolution,
+            assessment,
+            rejection: RejectionClass::IntrinsicInvalid,
+        } if assessment.predicate().as_str() == "opaque-call.registered"
+            && assessment.reason().is_some_and(|reason| reason.as_str() == "opaque-call.unregistered")
+    ));
+    assert_eq!(
+        rejection.event().disposition(),
+        ExplainDisposition::RejectedIntrinsic
+    );
+    let subjects = rejection
+        .subjects()
+        .iter()
+        .map(|subject| (subject.kind(), subject.key().as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        subjects,
+        [
+            (
+                SubjectKind::OpaqueCall,
+                "call-owner/mystery@3[input=input,output=output]",
+            ),
+            (SubjectKind::Provider, "tiler.test.physical::opaque@7"),
+        ]
+    );
+    assert!(
+        trace
+            .records()
+            .iter()
+            .all(|record| !matches!(record.event(), ExplainEvent::CostAssessment { .. })),
+        "a local rejection is never cost evidence"
+    );
+    let rendered = trace.render();
+    assert!(rendered.starts_with("tiler-explain-v4 "));
+    assert!(rendered.contains("opaque-call:call-owner/mystery@3[input=input,output=output]"));
+    assert!(rendered.contains("provider:tiler.test.physical::opaque@7"));
+    assert!(rendered.contains("admitted-count:count=1"));
+    assert!(rendered.contains("rejected-count:count=1"));
+}
+
+#[test]
+fn opaque_call_trace_identity_is_order_independent_and_identity_sensitive() {
+    let forward = mixed_frontier_trace(7, 3, false, false);
+    let reversed = mixed_frontier_trace(7, 3, true, false);
+    assert_eq!(forward.identity(), reversed.identity());
+    assert_ne!(
+        forward.identity(),
+        mixed_frontier_trace(7, 4, false, false).identity()
+    );
+    assert_ne!(
+        forward.identity(),
+        mixed_frontier_trace(8, 3, false, false).identity()
+    );
+    assert_ne!(
+        forward.identity(),
+        mixed_frontier_trace(7, 3, false, true).identity(),
+        "ordered named bindings were absent from explain identity"
+    );
 }

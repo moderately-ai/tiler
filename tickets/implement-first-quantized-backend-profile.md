@@ -4,7 +4,7 @@ title: Implement the first selected quantized backend profile
 status: deferred
 priority: p2
 dependencies: [prototype-quantized-value-vertical, group-internal-compound-materializations-by-logical-value]
-related: [implement-workload-selected-quantized-parameter-maps]
+related: [implement-workload-selected-quantized-parameter-maps, own-the-dtype-support-maturity-matrix, admit-a-dtype-dispatchability-capability-axis]
 scopes: [implementation/compiler, implementation/artifact, implementation/reference, implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
@@ -33,11 +33,16 @@ Any consequential public or cross-crate crate, module, trait, type, or call-site
 - Compare exact codes and exact reference bits where the contract is exact. Any tolerance or model-level error criterion must be derived from the selected scheme and domain, with saturation and exceptional cases tested separately.
 - Refuse every unselected scheme, code dtype, map, storage encoding, operation signature, accumulator, output dtype, and target realization with a typed diagnostic naming the missing capability.
 - Keep future boolean, integer, complex, decimal, codebook, hierarchical-scale, MX, sparse, and ragged support outside this profile unless the selected workload makes one a real producer and consumer. Generic seams are not support claims.
+- Consume an exact profile-driven physical-vocabulary ticket for every new `StorageScalar`, `StorageEncoding`, and `KernelType` the backend needs. A storage carrier without signature verification, kernel identity, ABI compatibility, target dispatchability, lowering/emission, and typed unsupported-combination tests is not an executable path.
+- Update the dtype maturity ledger only for the exact `(logical type, scheme, operation, storage, target, runtime path)` cells this profile implements or tests. Do not promote neighbouring widths or formats from a shared enum arm, helper, intrinsic, or nominal fixture.
 
 ## Graph maintenance
 
 - Consume the selection and elimination record from `scope-first-quantized-lm-profile`; do not repeat format selection here.
 - Add a dependency on `implement-workload-selected-quantized-parameter-maps` only if the chosen profile uses a non-per-tensor map.
 - Add a dependency on `implement-first-runtime-semantic-value-precondition-enforcement` for any selected scheme whose valid execution domain requires runtime tensor-value validation.
+- Add a dependency on `admit-a-dtype-dispatchability-capability-axis` before claiming target-family executability and on the exact profile-driven physical-vocabulary ticket before adding a carrier or kernel type.
+- Add profile-specific analytical and calibrated cost dependencies before claiming the selected implementation is device-optimal; a correctness-only spike may proceed while unmeasured costs remain `Unknown`, but it cannot select itself as optimal.
+- Update `own-the-dtype-support-maturity-matrix` with construction-site evidence and bounded conformance results when this profile closes.
 - Split weight ingestion, packing/repacking, native contraction, runtime binding, and model-level comparison when their scopes or evidence can move independently. Each split ticket must name its exact scheme, target, operation, and corpus.
 - Advance versioned identities only for fields the selected producers actually fill, then recompute pins on the merged tree.

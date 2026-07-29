@@ -9,15 +9,17 @@ use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tiler_ir::identity::{push_len, push_slice};
+use tiler_ir::schedule::ArithmeticType;
 
 use crate::fusion::FusionNumericalProof;
 use crate::request::{LoweringProviderIdentity, VerifiedTargetRequest};
 
-// Schema v4 adds the semantic-discharge stage and binds a sound-proof receipt
-// to its typed subject kind. The diagnostic renderer grammar itself is
-// unchanged, so its independent presentation version remains v3.
-pub(crate) const EXPLAIN_SCHEMA_VERSION: u32 = 4;
-pub(crate) const EXPLAIN_RENDERER_VERSION: u32 = 3;
+// Schema v5 appends opaque-call and provider subject kinds, the NotApplicable
+// check class and disposition, and the arithmetic dtype to numerical
+// honourability. Every earlier tag retains its v4 value. Renderer v4 publishes
+// the new names, disposition, and dtype-qualified honourability spelling.
+pub(crate) const EXPLAIN_SCHEMA_VERSION: u32 = 5;
+pub(crate) const EXPLAIN_RENDERER_VERSION: u32 = 4;
 const COMPILATION_EXPLAIN_SCHEMA_VERSION: u32 = 1;
 const COMPILATION_EXPLAIN_RENDERER_VERSION: u32 = 1;
 const MAX_COMPILATION_EXPLAIN_CANDIDATES: usize = 256;
@@ -118,6 +120,8 @@ pub(crate) enum ExplainDisposition {
     NotSelectedTradeoff,
     Selected,
     CompilerFailure,
+    /// A candidate-enumeration predicate proved this proposal does not apply.
+    NotApplicable,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -134,6 +138,10 @@ pub(crate) enum SubjectKind {
     KernelProgram,
     ArtifactPlan,
     Alternative,
+    /// One exact governed opaque-call identity.
+    OpaqueCall,
+    /// One exact governed proposal-provider identity.
+    Provider,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -450,6 +458,19 @@ impl PredicateAssessment {
         })
     }
 
+    /// Records a predicate whose deciding evidence belongs to a later phase.
+    pub(crate) fn deferred(
+        predicate: impl AsRef<str>,
+        reason: ReasonCode,
+    ) -> Result<Self, ExplainError> {
+        Ok(Self {
+            predicate: PredicateKey::new(predicate)?,
+            assessment: Assessment::Deferred(reason),
+            basis: EvidenceBasis::Unknown,
+            facts: Vec::new(),
+        })
+    }
+
     pub(crate) fn with_fact(mut self, fact: ExplainFact) -> Result<Self, ExplainError> {
         check_bound(
             BoundKind::Facts,
@@ -583,6 +604,8 @@ pub(crate) enum HonourabilityOutcome {
 pub(crate) enum RejectionClass {
     IntrinsicInvalid,
     NumericalIllegal,
+    /// The proposal's applicability predicate was disproved.
+    NotApplicable,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -608,12 +631,14 @@ pub(crate) enum ExplainEvent {
     ///
     /// This is the rejection shape ADR 0076 item 5 requires and the record that
     /// replaces `feasibility:strict-f32:rejected:count=1:0`. It names the
-    /// dimension, the behaviour the caller's contract required, the means the
-    /// profile declares, the behaviour the target does honour, and the declaring
-    /// profile — none of which fits [`Self::Feasibility`], whose required and
-    /// available fields are quantities compared by magnitude.
+    /// dimension, arithmetic dtype, behaviour the caller's contract required,
+    /// means the profile declares, behaviour the target does honour, and
+    /// declaring profile — none of which fits [`Self::Feasibility`], whose
+    /// required and available fields are quantities compared by magnitude.
     NumericalHonourability {
         dimension: PredicateKey,
+        /// Arithmetic dtype in which the behaviour must be honoured.
+        arithmetic: ArithmeticType,
         required: ReasonCode,
         outcome: HonourabilityOutcome,
         profile: SubjectKey,
@@ -700,6 +725,15 @@ impl ExplainEvent {
                 rejection: RejectionClass::NumericalIllegal,
                 ..
             } => ExplainDisposition::RejectedNumerical,
+            Self::Check {
+                assessment:
+                    PredicateAssessment {
+                        assessment: Assessment::Disproved(_),
+                        ..
+                    },
+                rejection: RejectionClass::NotApplicable,
+                ..
+            } => ExplainDisposition::NotApplicable,
             Self::Check {
                 assessment:
                     PredicateAssessment {
@@ -808,6 +842,9 @@ impl ExplainEvent {
                     (
                         ExplainStage::NumericalLegality,
                         RejectionClass::NumericalIllegal
+                    ) | (
+                        ExplainStage::CandidateEnumeration,
+                        RejectionClass::NotApplicable
                     ) | (
                         ExplainStage::RequestVerification
                             | ExplainStage::Normalization
@@ -2143,10 +2180,11 @@ fn render_event(output: &mut String, event: &ExplainEvent) {
         }
         ExplainEvent::NumericalHonourability {
             dimension,
+            arithmetic,
             required,
             outcome,
             profile,
-        } => render_honourability(output, dimension, required, outcome, profile),
+        } => render_honourability(output, dimension, *arithmetic, required, outcome, profile),
         ExplainEvent::DeferredCapability { predicate, reason } => {
             let _ = write!(
                 output,
@@ -2231,12 +2269,13 @@ fn render_cost(
 
 /// Renders one numerical-honourability record.
 ///
-/// Every part is written, including the declaring profile, because a reader that
-/// saw only the dimension and the outcome could not tell which profile made the
-/// claim — and a rejection whose declarer is unnamed is not explainable.
+/// Every part is written, including arithmetic dtype and declaring profile,
+/// because honourability can differ by dtype and a rejection whose declarer is
+/// unnamed is not explainable.
 fn render_honourability(
     output: &mut String,
     dimension: &PredicateKey,
+    arithmetic: ArithmeticType,
     required: &ReasonCode,
     outcome: &HonourabilityOutcome,
     profile: &SubjectKey,
@@ -2244,8 +2283,9 @@ fn render_honourability(
     use fmt::Write as _;
     let _ = write!(
         output,
-        "honourability:{}:{}:",
+        "honourability:{}:{}:{}:",
         dimension.as_str(),
+        arithmetic.canonical_type_key(),
         required.as_str()
     );
     match outcome {
@@ -2322,6 +2362,7 @@ const fn disposition_name(disposition: ExplainDisposition) -> &'static str {
         ExplainDisposition::NotSelectedTradeoff => "not-selected-tradeoff",
         ExplainDisposition::Selected => "selected",
         ExplainDisposition::CompilerFailure => "compiler-failure",
+        ExplainDisposition::NotApplicable => "not-applicable",
     }
 }
 
@@ -2339,6 +2380,8 @@ const fn subject_kind_name(kind: SubjectKind) -> &'static str {
         SubjectKind::KernelProgram => "kernel-program",
         SubjectKind::ArtifactPlan => "artifact-plan",
         SubjectKind::Alternative => "alternative",
+        SubjectKind::OpaqueCall => "opaque-call",
+        SubjectKind::Provider => "provider",
     }
 }
 
@@ -2570,6 +2613,7 @@ fn encode_event(bytes: &mut Vec<u8>, event: &ExplainEvent) {
                 match rejection {
                     RejectionClass::IntrinsicInvalid => 1,
                     RejectionClass::NumericalIllegal => 2,
+                    RejectionClass::NotApplicable => 3,
                 },
             ]);
             encode_assessment(bytes, assessment);
@@ -2605,10 +2649,11 @@ fn encode_event(bytes: &mut Vec<u8>, event: &ExplainEvent) {
         }
         ExplainEvent::NumericalHonourability {
             dimension,
+            arithmetic,
             required,
             outcome,
             profile,
-        } => encode_honourability(bytes, dimension, required, outcome, profile),
+        } => encode_honourability(bytes, dimension, *arithmetic, required, outcome, profile),
         ExplainEvent::DeferredCapability { predicate, reason } => {
             bytes.push(4);
             push_slice(bytes, predicate.as_str().as_bytes());
@@ -2687,19 +2732,21 @@ fn encode_cost(
 
 /// Canonically encodes one numerical-honourability record.
 ///
-/// Event tag `10`, then the dimension, the required behaviour, a one-byte
-/// outcome discriminant with its payload, and the declaring profile. The
-/// declarer is inside the encoding because two traces that differ only in which
-/// profile made a claim are different traces.
+/// Event tag `10`, then the dimension, arithmetic dtype, required behaviour, a
+/// one-byte outcome discriminant with its payload, and the declaring profile.
+/// Arithmetic and declarer are inside the encoding because changing either
+/// changes the claim.
 fn encode_honourability(
     bytes: &mut Vec<u8>,
     dimension: &PredicateKey,
+    arithmetic: ArithmeticType,
     required: &ReasonCode,
     outcome: &HonourabilityOutcome,
     profile: &SubjectKey,
 ) {
     bytes.push(10);
     push_slice(bytes, dimension.as_str().as_bytes());
+    bytes.push(arithmetic.tag());
     push_slice(bytes, required.as_str().as_bytes());
     match outcome {
         HonourabilityOutcome::Honoured { means } => {
@@ -2821,6 +2868,8 @@ const fn subject_kind_tag(kind: SubjectKind) -> u8 {
         SubjectKind::KernelProgram => 10,
         SubjectKind::ArtifactPlan => 11,
         SubjectKind::Alternative => 12,
+        SubjectKind::OpaqueCall => 13,
+        SubjectKind::Provider => 14,
     }
 }
 
@@ -2859,6 +2908,7 @@ const fn disposition_tag(disposition: ExplainDisposition) -> u8 {
         ExplainDisposition::NotSelectedTradeoff => 10,
         ExplainDisposition::Selected => 11,
         ExplainDisposition::CompilerFailure => 12,
+        ExplainDisposition::NotApplicable => 15,
     }
 }
 
@@ -2923,6 +2973,90 @@ mod tests {
             },
             causes: Vec::new(),
         }
+    }
+
+    #[test]
+    fn opaque_call_vocabulary_is_append_only_and_versioned() {
+        assert_eq!(EXPLAIN_SCHEMA_VERSION, 5);
+        assert_eq!(EXPLAIN_RENDERER_VERSION, 4);
+        assert_eq!(subject_kind_tag(SubjectKind::Alternative), 12);
+        assert_eq!(subject_kind_tag(SubjectKind::OpaqueCall), 13);
+        assert_eq!(subject_kind_tag(SubjectKind::Provider), 14);
+        assert_eq!(disposition_tag(ExplainDisposition::PreferencePruned), 14);
+        assert_eq!(disposition_tag(ExplainDisposition::NotApplicable), 15);
+        assert_eq!(subject_kind_name(SubjectKind::OpaqueCall), "opaque-call");
+        assert_eq!(subject_kind_name(SubjectKind::Provider), "provider");
+        assert_eq!(
+            disposition_name(ExplainDisposition::NotApplicable),
+            "not-applicable"
+        );
+    }
+
+    #[test]
+    fn not_applicable_is_only_a_candidate_enumeration_disproof() {
+        let event = |stage| ExplainEvent::Check {
+            stage,
+            assessment: PredicateAssessment::disproved(
+                "opaque-call.applicable",
+                ReasonCode::new("opaque-call.not-applicable").unwrap(),
+                EvidenceBasis::CheckedInvariant,
+            )
+            .unwrap(),
+            rejection: RejectionClass::NotApplicable,
+        };
+        let valid = event(ExplainStage::CandidateEnumeration);
+        assert_eq!(valid.disposition(), ExplainDisposition::NotApplicable);
+        assert_eq!(valid.validate(), Ok(()));
+        assert_eq!(
+            event(ExplainStage::IntrinsicScheduling).validate(),
+            Err(ExplainError::InvalidStageEvent)
+        );
+    }
+
+    #[test]
+    fn honourability_arithmetic_type_is_canonical_identity() {
+        let event = |arithmetic| ExplainEvent::NumericalHonourability {
+            dimension: PredicateKey::new("numerics.contraction").unwrap(),
+            arithmetic,
+            required: ReasonCode::new("forbidden").unwrap(),
+            outcome: HonourabilityOutcome::Unhonourable {
+                means: ReasonCode::new("unsupported").unwrap(),
+                honoured: Some(ReasonCode::new("permitted").unwrap()),
+            },
+            profile: SubjectKey::new("tiler.test.profile.v1").unwrap(),
+        };
+        let f16 = event(ArithmeticType::F16);
+        let f32 = event(ArithmeticType::F32);
+        let mut f16_bytes = Vec::new();
+        let mut f32_bytes = Vec::new();
+        encode_event(&mut f16_bytes, &f16);
+        encode_event(&mut f32_bytes, &f32);
+        assert_ne!(
+            f16_bytes, f32_bytes,
+            "two dtype-specific honourability claims shared canonical identity"
+        );
+        let mut rendered = String::new();
+        render_event(&mut rendered, &f16);
+        assert!(rendered.contains("tiler::f16@1"));
+    }
+
+    #[test]
+    fn rejected_typed_feasibility_requires_a_strictly_exceeded_bound() {
+        let event = |required, available| ExplainEvent::Feasibility {
+            predicate: PredicateKey::new("buffer-bindings").unwrap(),
+            outcome: FeasibilityOutcome::Rejected(ReasonCode::new("target-infeasible").unwrap()),
+            required: Quantity::Bindings(required),
+            available: Quantity::Bindings(available),
+        };
+        assert_eq!(event(u64::from(u32::MAX), 2).validate(), Ok(()));
+        assert_eq!(
+            event(2, u64::from(u32::MAX)).validate(),
+            Err(ExplainError::InvalidQuantityRelation)
+        );
+        assert_eq!(
+            event(2, 2).validate(),
+            Err(ExplainError::InvalidQuantityRelation)
+        );
     }
 
     struct ExplainRecordParts {
@@ -3015,7 +3149,7 @@ mod tests {
                 //   cargo nextest run -p tiler-compiler -E \
                 //     'test(deterministic_trace_is_sealed_and_rendered_separately)'
                 // and read the `left` value the assertion reports.
-                "tiler-explain-v3 request=1ef2b4a86acde919\n",
+                "tiler-explain-v4 request=1ef2b4a86acde919\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )
@@ -3924,7 +4058,7 @@ mod tests {
         assert_eq!(
             forward
                 .render()
-                .matches("tiler-explain-v3 request=")
+                .matches("tiler-explain-v4 request=")
                 .count(),
             3,
             "the top-level selection and both complete candidate traces render",

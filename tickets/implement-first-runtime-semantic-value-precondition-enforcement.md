@@ -4,7 +4,7 @@ title: Implement first runtime semantic value-precondition enforcement
 status: todo
 priority: p2
 dependencies: [prototype-quantized-value-vertical]
-related: []
+related: [own-the-dtype-support-maturity-matrix]
 scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/runtime, contracts/foundation, contracts/numerics, contracts/artifacts, research/runtime]
 shared_scopes: [project/tickets]
 paths: []

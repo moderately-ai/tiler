@@ -271,13 +271,11 @@ pub(super) fn enumerate_complete_plans(
                         // An unregistered call is a provider naming something
                         // that does not exist, which is the provider's fault
                         // rather than this target's limitation.
-                        crate::frontier::FrontierRejection::UnregisteredCall { .. }
-                        | crate::frontier::FrontierRejection::MalformedBinding { .. }
-                        // A call this target cannot admit is a per-target
-                        // verdict, but its subject is the call rather than a
-                        // region, so it carries no rejection to attribute to
-                        // this region — the frontier's own record names it.
-                        | crate::frontier::FrontierRejection::CallNotAdmissible { .. }
+                        // An opaque refusal retains the exact call proposal and
+                        // its own typed cause. Even target-derived causes belong
+                        // to that call rather than to a scheduled region, so the
+                        // frontier record owns their attribution.
+                        crate::frontier::FrontierRejection::OpaqueCall { .. }
                         | crate::frontier::FrontierRejection::UnsupportedVariant { .. }
                         | crate::frontier::FrontierRejection::NotApplicable { .. } => None,
                     };

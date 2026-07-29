@@ -64,12 +64,12 @@ use crate::boundary::{
     RequiredProperty, StorageEncoding, VisibilityGuarantee, VisibilityRequirement,
 };
 use crate::call_declaration::{GuaranteeError, OpaqueCallDeclaration, WorkScaling};
-use crate::call_registry::{
-    OpaqueCallIdentity, OpaqueCallProposal, OpaqueCallRegistry, RegisteredCall,
-};
-use crate::feasibility::ProvenEvidence;
+use crate::call_registry::{OpaqueCallProposal, OpaqueCallRegistry, RegisteredCall};
+use crate::feasibility::{FeasibilityError, ProvenEvidence, RejectionCause, ResolvedPredicate};
 use crate::honourability::UnhonouredDimension;
-use crate::physical::{PhysicalError, VerifiedScheduledRegion, verify_schedule_with_feasibility};
+use crate::physical::{
+    PhysicalError, ResourceVerdict, VerifiedScheduledRegion, verify_schedule_with_feasibility,
+};
 use crate::region::SemanticMemberId;
 use crate::request::{TargetProfileKey, VerifiedTargetRequest};
 
@@ -621,6 +621,9 @@ fn bounded_guarantees() -> GuaranteedProperties {
     .expect("the bounded profile's guarantee set is well formed")
 }
 
+/// Maximum bytes in a physical provider's exact explain subject.
+const MAX_PHYSICAL_PROVIDER_EXPLAIN_SUBJECT_BYTES: usize = 255;
+
 /// The provenance of one physical implementation provider.
 ///
 /// It reuses the governed [`ProviderIdentity`] (namespace, name, output-affecting
@@ -629,24 +632,64 @@ fn bounded_guarantees() -> GuaranteedProperties {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PhysicalProviderProvenance {
     provider: ProviderIdentity,
+    explain_subject: String,
+}
+
+/// Why a physical provider's complete provenance could not be retained.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PhysicalProviderProvenanceError {
+    provider: ProviderIdentity,
+    actual: usize,
+    maximum: usize,
 }
 
 impl PhysicalProviderProvenance {
-    /// Records that proposals were produced by `provider`.
-    pub(crate) const fn new(provider: ProviderIdentity) -> Self {
-        Self { provider }
+    /// Records that proposals were produced by `provider`, refusing an identity
+    /// whose exact explain subject cannot be retained.
+    pub(crate) fn new(provider: ProviderIdentity) -> Result<Self, PhysicalProviderProvenanceError> {
+        let explain_subject = provider.to_string();
+        let actual = explain_subject.len();
+        let maximum = MAX_PHYSICAL_PROVIDER_EXPLAIN_SUBJECT_BYTES;
+        if actual > maximum {
+            return Err(PhysicalProviderProvenanceError {
+                provider,
+                actual,
+                maximum,
+            });
+        }
+        Ok(Self {
+            provider,
+            explain_subject,
+        })
     }
 
     /// Returns the provider identity.
     pub(crate) const fn provider(&self) -> &ProviderIdentity {
         &self.provider
     }
+
+    /// Returns the complete exact provider identity in explain-subject form.
+    pub(crate) fn explain_subject(&self) -> &str {
+        &self.explain_subject
+    }
 }
+
+impl fmt::Display for PhysicalProviderProvenanceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "physical-provider.provenance-too-long: provider {} needs {} bytes, exceeding {}",
+            self.provider, self.actual, self.maximum
+        )
+    }
+}
+
+impl Error for PhysicalProviderProvenanceError {}
 
 /// The complete provenance of one admitted implementation: provider and kind.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ImplementationProvenance {
-    provider: ProviderIdentity,
+    provider: PhysicalProviderProvenance,
     kind: PhysicalProposalKind,
 }
 
@@ -657,7 +700,12 @@ pub(crate) struct ImplementationProvenance {
 impl ImplementationProvenance {
     /// Returns the provider that produced the implementation.
     pub(crate) const fn provider(&self) -> &ProviderIdentity {
-        &self.provider
+        self.provider.provider()
+    }
+
+    /// Returns the provider's exact bounded explain subject.
+    pub(crate) fn provider_explain_subject(&self) -> &str {
+        self.provider.explain_subject()
     }
 
     /// Returns the additive proposal kind of the implementation.
@@ -737,7 +785,7 @@ impl ImplementationContext<'_> {
 /// ordinary checked verification path before admitting it.
 pub(crate) trait PhysicalImplementationProvider {
     /// Returns this provider's provenance.
-    fn provenance(&self) -> PhysicalProviderProvenance;
+    fn provenance(&self) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError>;
 
     /// Proposes physical implementations for the region in `context`.
     ///
@@ -995,7 +1043,7 @@ pub(crate) enum FrontierRejection {
     /// cost.
     Infeasible {
         /// The provider whose proposal was rejected.
-        provider: ProviderIdentity,
+        provider: PhysicalProviderProvenance,
         /// The canonical key of the disproved capability axis.
         axis: &'static str,
         /// The amount the proposal required on that axis.
@@ -1012,70 +1060,61 @@ pub(crate) enum FrontierRejection {
     /// cannot compute what the caller asked for at all. Neither is ever a cost.
     Unhonourable {
         /// The provider whose proposal was rejected.
-        provider: ProviderIdentity,
+        provider: PhysicalProviderProvenance,
         /// The dimension, required behaviour, declared means, honoured
         /// alternative, and declaring profile.
         cause: UnhonouredDimension,
     },
-    /// A registered, well-bound call could not be admitted for this target.
-    ///
-    /// Covers both halves of what can go wrong after the bindings check: the
-    /// declaration could not produce a boundary contract, its work scaling could
-    /// not be resolved, or the target refused its resources. Each carries a
-    /// stable reason so the rejection says which — and all three are *this
-    /// proposal on this target*, which is what distinguishes them from a
-    /// malformed binding, which is wrong everywhere.
-    CallNotAdmissible {
-        /// The provider whose proposal was rejected.
-        provider: ProviderIdentity,
-        /// The call that could not be admitted.
-        call: OpaqueCallIdentity,
-        /// A stable reason code.
-        reason: &'static str,
-    },
-    /// The proposal's parameter bindings do not match the call's own ABI.
-    ///
-    /// Distinct from an unregistered call: the call exists, and the provider
-    /// described how to bind it wrongly. Carries the ABI's own typed fault so
-    /// the rejection says which parameter and how.
-    MalformedBinding {
-        /// The provider whose proposal was rejected.
-        provider: ProviderIdentity,
-        /// The call whose bindings did not match.
-        call: OpaqueCallIdentity,
-        /// What the ABI said was wrong.
-        fault: crate::call_abi::BindingError,
-    },
-    /// The proposal names an opaque call no registry entry claims.
-    ///
-    /// Distinct from [`Self::UnsupportedVariant`] because it says something
-    /// different and is actionable in a different way: an unsupported variant is
-    /// this compiler's limitation, while an unregistered identity is the
-    /// provider naming something that does not exist. Reporting the second as
-    /// the first would tell a caller to wait for a feature when the fix is to
-    /// register the call.
-    UnregisteredCall {
-        /// The provider whose proposal named it.
-        provider: ProviderIdentity,
-        /// The identity no entry claims.
-        call: OpaqueCallIdentity,
+    /// An opaque call proposal was refused, retaining its complete identity,
+    /// ordered bindings, and typed cause.
+    OpaqueCall {
+        /// The physical provider that emitted the proposal.
+        provider: PhysicalProviderProvenance,
+        /// The exact proposal, including ordered parameter-to-tensor bindings.
+        proposal: OpaqueCallProposal,
+        /// The typed stage-local refusal.
+        cause: OpaqueCallRejectionCause,
     },
     /// The proposal body is a reserved variant the P0 frontier does not implement.
     UnsupportedVariant {
         /// The provider whose proposal was rejected.
-        provider: ProviderIdentity,
+        provider: PhysicalProviderProvenance,
         /// The reserved proposal kind.
         kind: PhysicalProposalKind,
     },
     /// The proposal's applicability predicate excludes this target profile.
     NotApplicable {
         /// The provider whose proposal did not apply.
-        provider: ProviderIdentity,
+        provider: PhysicalProviderProvenance,
         /// The proposal kind that did not apply.
         kind: PhysicalProposalKind,
         /// The assessed target profile key the proposal did not target.
         target_profile_key: &'static str,
     },
+}
+
+/// Why one exact opaque call proposal did not enter the frontier.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum OpaqueCallRejectionCause {
+    /// The proposal's applicability excludes the assessed target.
+    NotApplicable {
+        /// The target profile assessed.
+        target_profile_key: &'static str,
+    },
+    /// No registered call owns the proposed identity.
+    Unregistered,
+    /// The ordered parameter bindings do not satisfy the call ABI.
+    MalformedBinding(crate::call_abi::BindingError),
+    /// The declaration cannot derive a complete boundary contract.
+    ContractUnderivable(GuaranteeError),
+    /// The declaration's numerical requirements differ from the request.
+    NumericalContractMismatch,
+    /// The work-scaling declaration cannot be resolved from this proposal.
+    WorkUnresolvable(WorkResolutionError),
+    /// A target capability bound rejects the call.
+    TargetInfeasible(ResolvedPredicate),
+    /// The target cannot honour one required numerical dimension.
+    TargetUnhonourable(UnhonouredDimension),
 }
 
 impl FrontierRejection {
@@ -1088,14 +1127,14 @@ impl FrontierRejection {
                 available,
             } => {
                 output.push(1);
-                encode_provider(output, provider);
+                encode_provider(output, provider.provider());
                 push_slice(output, axis.as_bytes());
                 output.extend_from_slice(&required.to_be_bytes());
                 output.extend_from_slice(&available.to_be_bytes());
             }
             Self::Unhonourable { provider, cause } => {
                 output.push(4);
-                encode_provider(output, provider);
+                encode_provider(output, provider.provider());
                 output.push(cause.dimension().tag());
                 output.push(cause.arithmetic().tag());
                 cause.required().encode(output);
@@ -1109,36 +1148,19 @@ impl FrontierRejection {
                 }
                 push_slice(output, cause.profile().key().as_bytes());
             }
-            Self::CallNotAdmissible {
+            Self::OpaqueCall {
                 provider,
-                call,
-                reason,
+                proposal,
+                cause,
             } => {
-                output.push(7);
-                encode_provider(output, provider);
-                push_slice(output, call.call().as_bytes());
-                push_slice(output, reason.as_bytes());
-            }
-            Self::MalformedBinding {
-                provider,
-                call,
-                fault,
-            } => {
-                output.push(6);
-                encode_provider(output, provider);
-                push_slice(output, call.call().as_bytes());
-                push_slice(output, format!("{fault}").as_bytes());
-            }
-            Self::UnregisteredCall { provider, call } => {
                 output.push(5);
-                encode_provider(output, provider);
-                push_slice(output, call.provider().as_bytes());
-                push_slice(output, call.call().as_bytes());
-                output.extend_from_slice(&call.revision().to_be_bytes());
+                encode_provider(output, provider.provider());
+                encode_opaque_call_proposal(output, proposal);
+                encode_opaque_call_cause(output, cause);
             }
             Self::UnsupportedVariant { provider, kind } => {
                 output.push(2);
-                encode_provider(output, provider);
+                encode_provider(output, provider.provider());
                 output.push(kind.tag());
             }
             Self::NotApplicable {
@@ -1147,7 +1169,7 @@ impl FrontierRejection {
                 target_profile_key,
             } => {
                 output.push(3);
-                encode_provider(output, provider);
+                encode_provider(output, provider.provider());
                 output.push(kind.tag());
                 push_slice(output, target_profile_key.as_bytes());
             }
@@ -1242,6 +1264,12 @@ impl ImplementationFrontier {
 /// proposal is a bug that must not be silently dropped.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FrontierError {
+    /// A provider identity cannot be retained exactly in the bounded explain
+    /// vocabulary.
+    UnrepresentableProviderProvenance {
+        /// The typed provenance-construction fault.
+        source: PhysicalProviderProvenanceError,
+    },
     /// A provider emitted a scheduled-kernel body that failed intrinsic
     /// verification, the request-subject binding, or shape validity — a
     /// non-feasibility [`PhysicalError`].
@@ -1270,15 +1298,36 @@ pub(crate) enum FrontierError {
         /// A stable rule code naming the undetermined property.
         rule: &'static str,
     },
+    /// The shared feasibility authority rejected an opaque call's profile or
+    /// proposal as malformed.
+    MalformedOpaqueCallAssessment {
+        /// The provider that emitted the call proposal.
+        provider: ProviderIdentity,
+        /// The exact proposal being assessed.
+        proposal: Box<OpaqueCallProposal>,
+        /// The shared authority's intrinsic fault.
+        source: FeasibilityError,
+    },
+    /// The shared feasibility authority could neither prove nor reject an
+    /// opaque call at the compile-profile phase.
+    UnresolvedOpaqueCallAssessment {
+        /// The provider that emitted the call proposal.
+        provider: ProviderIdentity,
+        /// The exact proposal whose proof path was incomplete.
+        proposal: Box<OpaqueCallProposal>,
+    },
 }
 
 impl FrontierError {
     /// Returns the stable reason code of the fault.
     pub(crate) const fn reason(&self) -> &'static str {
         match self {
+            Self::UnrepresentableProviderProvenance { .. } => "unrepresentable-provider-provenance",
             Self::MalformedProposal { .. } => "malformed-proposal",
             Self::MalformedCostProvenance { .. } => "malformed-cost-provenance",
             Self::UndeterminedBoundaryProperty { .. } => "undetermined-boundary-property",
+            Self::MalformedOpaqueCallAssessment { .. } => "malformed-opaque-call-assessment",
+            Self::UnresolvedOpaqueCallAssessment { .. } => "unresolved-opaque-call-assessment",
         }
     }
 }
@@ -1286,6 +1335,10 @@ impl FrontierError {
 impl fmt::Display for FrontierError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::UnrepresentableProviderProvenance { source } => write!(
+                formatter,
+                "frontier.unrepresentable-provider-provenance: {source}"
+            ),
             Self::MalformedProposal { provider, source } => write!(
                 formatter,
                 "frontier.malformed-proposal: provider {provider} emitted invalid IR: {source}"
@@ -1301,6 +1354,16 @@ impl fmt::Display for FrontierError {
                 formatter,
                 "frontier.undetermined-boundary-property: provider {provider} emitted a region whose boundary property {rule} is undetermined"
             ),
+            Self::MalformedOpaqueCallAssessment {
+                provider, source, ..
+            } => write!(
+                formatter,
+                "frontier.malformed-opaque-call-assessment: provider {provider} produced an invalid opaque-call feasibility assessment: {source:?}"
+            ),
+            Self::UnresolvedOpaqueCallAssessment { provider, .. } => write!(
+                formatter,
+                "frontier.unresolved-opaque-call-assessment: provider {provider} did not resolve at compile-profile feasibility"
+            ),
         }
     }
 }
@@ -1308,10 +1371,12 @@ impl fmt::Display for FrontierError {
 impl Error for FrontierError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::UnrepresentableProviderProvenance { source } => Some(source),
             Self::MalformedProposal { source, .. } => Some(source),
-            Self::MalformedCostProvenance { .. } | Self::UndeterminedBoundaryProperty { .. } => {
-                None
-            }
+            Self::MalformedCostProvenance { .. }
+            | Self::UndeterminedBoundaryProperty { .. }
+            | Self::MalformedOpaqueCallAssessment { .. }
+            | Self::UnresolvedOpaqueCallAssessment { .. } => None,
         }
     }
 }
@@ -1321,13 +1386,15 @@ impl Error for FrontierError {
 /// Each provider is asked for proposals over the region subject; every proposal
 /// is processed in this fixed order:
 ///
-/// 1. applicability — a proposal not targeting this profile is recorded as
+/// 1. provenance — the provider's complete governed identity must fit the exact
+///    explain subject retained on every outcome;
+/// 2. applicability — a proposal not targeting this profile is recorded as
 ///    [`FrontierRejection::NotApplicable`] and skipped;
-/// 2. cost provenance — a proposal attributing its cost estimate to an ungoverned
+/// 3. cost provenance — a proposal attributing its cost estimate to an ungoverned
 ///    model fails closed as [`FrontierError::MalformedCostProvenance`];
-/// 3. body variant — a reserved (non-scheduled-kernel) body is recorded as
+/// 4. body variant — a reserved (non-scheduled-kernel) body is recorded as
 ///    [`FrontierRejection::UnsupportedVariant`] and skipped, preserving the seam;
-/// 4. checked verification — a scheduled-kernel body is resubmitted through
+/// 5. checked verification — a scheduled-kernel body is resubmitted through
 ///    [`verify_schedule_with_feasibility`]. A [`FeasibilityOutcome::Proven`] verdict
 ///    admits it with derived resources, boundary contract, and feasibility
 ///    evidence; a [`PhysicalError::Target`] records [`FrontierRejection::Infeasible`];
@@ -1360,16 +1427,31 @@ pub(crate) fn enumerate_frontier(
     let mut admitted = Vec::new();
     let mut rejections = Vec::new();
     for provider in providers {
-        let provenance = provider.provenance();
+        let provenance = provider
+            .provenance()
+            .map_err(|source| FrontierError::UnrepresentableProviderProvenance { source })?;
         let context = ImplementationContext { request, subject };
         for proposal in provider.propose(&context) {
             let kind = proposal.body.kind();
             if !proposal.applicability.applies_to(&applicable_key) {
-                rejections.push(FrontierRejection::NotApplicable {
-                    provider: provenance.provider().clone(),
-                    kind,
-                    target_profile_key,
-                });
+                match &proposal.body {
+                    ProposalBody::OpaqueCall(proposed) => {
+                        rejections.push(FrontierRejection::OpaqueCall {
+                            provider: provenance.clone(),
+                            proposal: (**proposed).clone(),
+                            cause: OpaqueCallRejectionCause::NotApplicable { target_profile_key },
+                        });
+                    }
+                    ProposalBody::ScheduledKernel(_)
+                    | ProposalBody::KernelSubprogram(_)
+                    | ProposalBody::View(_) => {
+                        rejections.push(FrontierRejection::NotApplicable {
+                            provider: provenance.clone(),
+                            kind,
+                            target_profile_key,
+                        });
+                    }
+                }
                 continue;
             }
             if proposal.declared_cost.model_key != COST_MODEL_KEY {
@@ -1382,9 +1464,10 @@ pub(crate) fn enumerate_frontier(
                 ProposalBody::ScheduledKernel(region) => *region,
                 ProposalBody::OpaqueCall(ref proposed) => {
                     let Some(registered) = calls.get(proposed.call()) else {
-                        rejections.push(FrontierRejection::UnregisteredCall {
-                            provider: provenance.provider().clone(),
-                            call: proposed.call(),
+                        rejections.push(FrontierRejection::OpaqueCall {
+                            provider: provenance.clone(),
+                            proposal: (**proposed).clone(),
+                            cause: OpaqueCallRejectionCause::Unregistered,
                         });
                         continue;
                     };
@@ -1394,26 +1477,26 @@ pub(crate) fn enumerate_frontier(
                         registered.declaration().abi(),
                         proposed.bindings(),
                     ) {
-                        rejections.push(FrontierRejection::MalformedBinding {
-                            provider: provenance.provider().clone(),
-                            call: proposed.call(),
-                            fault,
+                        rejections.push(FrontierRejection::OpaqueCall {
+                            provider: provenance.clone(),
+                            proposal: (**proposed).clone(),
+                            cause: OpaqueCallRejectionCause::MalformedBinding(fault),
                         });
                         continue;
                     }
-                    let mut refuse = |reason| {
-                        rejections.push(FrontierRejection::CallNotAdmissible {
-                            provider: provenance.provider().clone(),
-                            call: proposed.call(),
-                            reason,
-                        });
-                    };
-                    let Ok(boundary) = derive_call_boundary_contract(
+                    let boundary = match derive_call_boundary_contract(
                         registered.declaration(),
                         proposed.bindings(),
-                    ) else {
-                        refuse("contract-underivable");
-                        continue;
+                    ) {
+                        Ok(boundary) => boundary,
+                        Err(fault) => {
+                            rejections.push(FrontierRejection::OpaqueCall {
+                                provider: provenance.clone(),
+                                proposal: (**proposed).clone(),
+                                cause: OpaqueCallRejectionCause::ContractUnderivable(fault),
+                            });
+                            continue;
+                        }
                     };
                     // The call's declared numerics must match the request's
                     // resolved contract, not merely be feasible on the target.
@@ -1435,21 +1518,32 @@ pub(crate) fn enumerate_frontier(
                         || declared.nan_assumptions != contract.nan_assumptions
                         || declared.infinity_assumptions != contract.infinity_assumptions
                     {
-                        refuse("numerical-contract-mismatch");
+                        rejections.push(FrontierRejection::OpaqueCall {
+                            provider: provenance.clone(),
+                            proposal: (**proposed).clone(),
+                            cause: OpaqueCallRejectionCause::NumericalContractMismatch,
+                        });
                         continue;
                     }
-                    let Some(work_items) = resolve_work_items(
+                    let work_items = match resolve_work_items(
                         registered.declaration().work(),
                         proposed.bindings(),
                         request,
-                    ) else {
-                        refuse("work-unresolvable");
-                        continue;
+                    ) {
+                        Ok(work_items) => work_items,
+                        Err(fault) => {
+                            rejections.push(FrontierRejection::OpaqueCall {
+                                provider: provenance.clone(),
+                                proposal: (**proposed).clone(),
+                                cause: OpaqueCallRejectionCause::WorkUnresolvable(fault),
+                            });
+                            continue;
+                        }
                     };
                     // The same feasibility verdict a scheduled region gets,
                     // attributed to this call rather than to a region it does
                     // not have.
-                    let Ok(feasibility) = crate::physical::assess_resources(
+                    let feasibility = match crate::physical::assess_resources(
                         *registered.declaration().resources(),
                         // The admission has already required the call's declared
                         // numerics to match the request's resolved contract, so
@@ -1458,9 +1552,16 @@ pub(crate) fn enumerate_frontier(
                         request.numerical_contract().arithmetic,
                         work_items,
                         &request.target_profile(),
-                    ) else {
-                        refuse("target-infeasible");
-                        continue;
+                    ) {
+                        Ok(feasibility) => feasibility,
+                        Err(verdict) => {
+                            rejections.push(classify_opaque_resource_verdict(
+                                &provenance,
+                                proposed,
+                                verdict,
+                            )?);
+                            continue;
+                        }
                     };
                     let identity = encode_proposal_identity(
                         &encode_call_subject(proposed),
@@ -1471,7 +1572,7 @@ pub(crate) fn enumerate_frontier(
                     );
                     admitted.push(AdmittedImplementation {
                         provenance: ImplementationProvenance {
-                            provider: provenance.provider().clone(),
+                            provider: provenance.clone(),
                             kind,
                         },
                         semantic_members: subject.semantic_members.clone(),
@@ -1486,7 +1587,7 @@ pub(crate) fn enumerate_frontier(
                 }
                 ProposalBody::KernelSubprogram(_) | ProposalBody::View(_) => {
                     rejections.push(FrontierRejection::UnsupportedVariant {
-                        provider: provenance.provider().clone(),
+                        provider: provenance.clone(),
                         kind,
                     });
                     continue;
@@ -1501,7 +1602,7 @@ pub(crate) fn enumerate_frontier(
                     admitted.push(admit_verified(
                         verified,
                         feasibility,
-                        provenance.provider(),
+                        &provenance,
                         kind,
                         &proposal.applicability,
                         proposal.declared_cost,
@@ -1514,7 +1615,7 @@ pub(crate) fn enumerate_frontier(
                     ..
                 }) => {
                     rejections.push(FrontierRejection::Infeasible {
-                        provider: provenance.provider().clone(),
+                        provider: provenance.clone(),
                         axis: rule,
                         required,
                         available,
@@ -1522,7 +1623,7 @@ pub(crate) fn enumerate_frontier(
                 }
                 Err(PhysicalError::Numerical { cause, .. }) => {
                     rejections.push(FrontierRejection::Unhonourable {
-                        provider: provenance.provider().clone(),
+                        provider: provenance.clone(),
                         cause,
                     });
                 }
@@ -1546,6 +1647,39 @@ pub(crate) fn enumerate_frontier(
         region_role: subject.role,
         admitted,
         rejections,
+    })
+}
+
+fn classify_opaque_resource_verdict(
+    provider: &PhysicalProviderProvenance,
+    proposal: &OpaqueCallProposal,
+    verdict: ResourceVerdict,
+) -> Result<FrontierRejection, FrontierError> {
+    let cause = match verdict {
+        ResourceVerdict::Rejected(RejectionCause::Capability(predicate)) => {
+            OpaqueCallRejectionCause::TargetInfeasible(predicate)
+        }
+        ResourceVerdict::Rejected(RejectionCause::Numerical(cause)) => {
+            OpaqueCallRejectionCause::TargetUnhonourable(cause)
+        }
+        ResourceVerdict::Intrinsic(source) => {
+            return Err(FrontierError::MalformedOpaqueCallAssessment {
+                provider: provider.provider().clone(),
+                proposal: Box::new(proposal.clone()),
+                source,
+            });
+        }
+        ResourceVerdict::Unresolved => {
+            return Err(FrontierError::UnresolvedOpaqueCallAssessment {
+                provider: provider.provider().clone(),
+                proposal: Box::new(proposal.clone()),
+            });
+        }
+    };
+    Ok(FrontierRejection::OpaqueCall {
+        provider: provider.clone(),
+        proposal: proposal.clone(),
+        cause,
     })
 }
 
@@ -1667,6 +1801,109 @@ fn encode_call_subject(proposed: &OpaqueCallProposal) -> Vec<u8> {
     bytes
 }
 
+fn encode_opaque_call_proposal(output: &mut Vec<u8>, proposal: &OpaqueCallProposal) {
+    let call = proposal.call();
+    push_slice(output, call.provider().as_bytes());
+    push_slice(output, call.call().as_bytes());
+    output.extend_from_slice(&call.revision().to_be_bytes());
+    push_len(output, proposal.bindings().len());
+    for (name, role) in proposal.bindings() {
+        push_slice(output, name.as_bytes());
+        output.push(tensor_role_tag(*role));
+    }
+}
+
+fn encode_opaque_call_cause(output: &mut Vec<u8>, cause: &OpaqueCallRejectionCause) {
+    match cause {
+        OpaqueCallRejectionCause::NotApplicable { target_profile_key } => {
+            output.push(0x01);
+            push_slice(output, target_profile_key.as_bytes());
+        }
+        OpaqueCallRejectionCause::Unregistered => output.push(0x02),
+        OpaqueCallRejectionCause::MalformedBinding(fault) => {
+            output.push(0x03);
+            encode_binding_error(output, *fault);
+        }
+        OpaqueCallRejectionCause::ContractUnderivable(fault) => {
+            output.push(0x04);
+            output.push(match fault {
+                GuaranteeError::NotAWrite => 0x01,
+                GuaranteeError::AmbiguousWriteDomain => 0x02,
+            });
+        }
+        OpaqueCallRejectionCause::NumericalContractMismatch => output.push(0x05),
+        OpaqueCallRejectionCause::WorkUnresolvable(fault) => {
+            output.push(0x06);
+            match fault {
+                WorkResolutionError::UnknownParameter(parameter) => {
+                    output.push(0x01);
+                    push_slice(output, parameter.as_bytes());
+                }
+                WorkResolutionError::IntermediateShapeUnavailable { parameter } => {
+                    output.push(0x02);
+                    push_slice(output, parameter.as_bytes());
+                }
+            }
+        }
+        OpaqueCallRejectionCause::TargetInfeasible(predicate) => {
+            output.push(0x07);
+            push_slice(output, predicate.axis().key().as_bytes());
+            output.extend_from_slice(&predicate.required().value().to_be_bytes());
+            output.extend_from_slice(&predicate.available().value().to_be_bytes());
+        }
+        OpaqueCallRejectionCause::TargetUnhonourable(cause) => {
+            output.push(0x08);
+            output.push(cause.dimension().tag());
+            output.push(cause.arithmetic().tag());
+            cause.required().encode(output);
+            push_slice(output, cause.means().key().as_bytes());
+            match cause.honoured() {
+                Some(honoured) => {
+                    output.push(1);
+                    honoured.encode(output);
+                }
+                None => output.push(0),
+            }
+            push_slice(output, cause.profile().key().as_bytes());
+        }
+    }
+}
+
+fn encode_binding_error(output: &mut Vec<u8>, fault: crate::call_abi::BindingError) {
+    match fault {
+        crate::call_abi::BindingError::UnboundParameter(parameter) => {
+            output.push(0x01);
+            push_slice(output, parameter.as_bytes());
+        }
+        crate::call_abi::BindingError::UnknownParameter(parameter) => {
+            output.push(0x02);
+            push_slice(output, parameter.as_bytes());
+        }
+        crate::call_abi::BindingError::ParameterBoundTwice(parameter) => {
+            output.push(0x03);
+            push_slice(output, parameter.as_bytes());
+        }
+        crate::call_abi::BindingError::RoleStorageDisagreement { first, second } => {
+            output.push(0x04);
+            push_slice(output, first.as_bytes());
+            push_slice(output, second.as_bytes());
+        }
+    }
+}
+
+/// Why a call's declared work scaling could not be resolved.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WorkResolutionError {
+    /// The scaling names a parameter absent from this proposal's bindings.
+    UnknownParameter(&'static str),
+    /// The parameter is bound to an intermediate whose cover-specific shape is
+    /// unavailable during local frontier enumeration.
+    IntermediateShapeUnavailable {
+        /// The parameter whose tensor shape is unavailable.
+        parameter: &'static str,
+    },
+}
+
 /// Evaluates an opaque call's declared work scaling against the request.
 ///
 /// `assess_region` needs a work-item count, and a scheduled region reads one
@@ -1698,15 +1935,20 @@ fn resolve_work_items(
     work: WorkScaling,
     bindings: &[(&'static str, TensorRole)],
     request: &VerifiedTargetRequest,
-) -> Option<u64> {
+) -> Result<u64, WorkResolutionError> {
     match work {
-        WorkScaling::Fixed(count) => Some(count),
+        WorkScaling::Fixed(count) => Ok(count),
         WorkScaling::PerElementOf(name) => {
-            let (_, role) = bindings.iter().find(|(bound, _)| *bound == name)?;
+            let (_, role) = bindings
+                .iter()
+                .find(|(bound, _)| *bound == name)
+                .ok_or(WorkResolutionError::UnknownParameter(name))?;
             match role {
-                TensorRole::Input => Some(request.normalized().input_elements()),
-                TensorRole::Output => Some(request.normalized().output_elements()),
-                TensorRole::Intermediate => None,
+                TensorRole::Input => Ok(request.normalized().input_elements()),
+                TensorRole::Output => Ok(request.normalized().output_elements()),
+                TensorRole::Intermediate => {
+                    Err(WorkResolutionError::IntermediateShapeUnavailable { parameter: name })
+                }
             }
         }
     }
@@ -1727,20 +1969,20 @@ fn resolve_work_items(
 fn admit_verified(
     verified: VerifiedScheduledRegion,
     feasibility: ProvenEvidence,
-    provider: &ProviderIdentity,
+    provider: &PhysicalProviderProvenance,
     kind: PhysicalProposalKind,
     applicability: &TargetApplicability,
     cost: PhysicalCostEstimate,
 ) -> Result<AdmittedImplementation, FrontierError> {
     let boundary = derive_boundary_contract(&verified).map_err(|rule| {
         FrontierError::UndeterminedBoundaryProperty {
-            provider: provider.clone(),
+            provider: provider.provider().clone(),
             rule,
         }
     })?;
     let identity = encode_proposal_identity(
         verified.canonical_identity().as_bytes(),
-        provider,
+        provider.provider(),
         kind,
         applicability,
         &boundary,
@@ -1800,7 +2042,7 @@ impl GovernedPhysicalProvider {
 }
 
 impl PhysicalImplementationProvider for GovernedPhysicalProvider {
-    fn provenance(&self) -> PhysicalProviderProvenance {
+    fn provenance(&self) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
         PhysicalProviderProvenance::new(Self::identity())
     }
 
@@ -1908,9 +2150,10 @@ mod tests {
     use super::{
         AdmittedImplementation, BoundaryOwnership, FrontierError, FrontierRegionSubject,
         FrontierRejection, GovernedPhysicalProvider, ImplementationBody, ImplementationContext,
-        ImplementationProposal, PhysicalCostEstimate, PhysicalImplementationProvider,
-        PhysicalProposalKind, PhysicalProviderProvenance, ProposalBody, ReservedProposalSeam,
-        TargetApplicability, bounded_guarantees, bounded_requirements, enumerate_frontier,
+        ImplementationProposal, OpaqueCallRejectionCause, PhysicalCostEstimate,
+        PhysicalImplementationProvider, PhysicalProposalKind, PhysicalProviderProvenance,
+        PhysicalProviderProvenanceError, ProposalBody, ReservedProposalSeam, TargetApplicability,
+        bounded_guarantees, bounded_requirements, enumerate_frontier,
     };
     use crate::boundary::{
         BoundaryProperty, GuaranteedProperty, LayoutRequirement, MaterializationForm,
@@ -1985,7 +2228,9 @@ mod tests {
     }
 
     impl PhysicalImplementationProvider for FusedScheduledKernelProvider {
-        fn provenance(&self) -> PhysicalProviderProvenance {
+        fn provenance(
+            &self,
+        ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
             PhysicalProviderProvenance::new(self.provider.clone())
         }
 
@@ -1996,6 +2241,45 @@ mod tests {
                 self.cost,
             )]
         }
+    }
+
+    #[test]
+    fn oversized_provider_provenance_fails_before_proposal_enumeration() {
+        struct OversizedProvider {
+            identity: ProviderIdentity,
+        }
+
+        impl PhysicalImplementationProvider for OversizedProvider {
+            fn provenance(
+                &self,
+            ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
+                PhysicalProviderProvenance::new(self.identity.clone())
+            }
+
+            fn propose(&self, _: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
+                panic!("unrepresentable provenance must fail before proposals are requested")
+            }
+        }
+
+        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let identity = ProviderIdentity::new("n".repeat(128), "p".repeat(128), 1)
+            .expect("each provider component is individually governed");
+        let provider = OversizedProvider {
+            identity: identity.clone(),
+        };
+        let error = enumerate_frontier(
+            &request,
+            &fused_subject(&request),
+            &[&provider],
+            &OpaqueCallRegistry::new(),
+        )
+        .expect_err("the complete provider subject exceeds explain's bound");
+        assert!(matches!(
+            error,
+            FrontierError::UnrepresentableProviderProvenance {
+                source: PhysicalProviderProvenanceError { provider, .. }
+            } if provider == identity
+        ));
     }
 
     #[test]
@@ -2218,16 +2502,21 @@ mod tests {
         // additive sum-type seam the opaque-call ticket will implement.
         struct OpaqueProvider;
         impl PhysicalImplementationProvider for OpaqueProvider {
-            fn provenance(&self) -> PhysicalProviderProvenance {
+            fn provenance(
+                &self,
+            ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
                 PhysicalProviderProvenance::new(provider_identity("opaque", 1))
             }
             fn propose(&self, _: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
                 vec![
                     ImplementationProposal::new(
-                        ProposalBody::OpaqueCall(Box::new(OpaqueCallProposal::new(
-                            OpaqueCallIdentity::new("test", "mystery", 1).expect("named"),
-                            Vec::new(),
-                        ))),
+                        ProposalBody::OpaqueCall(Box::new(
+                            OpaqueCallProposal::new(
+                                OpaqueCallIdentity::new("test", "mystery", 1).expect("named"),
+                                Vec::new(),
+                            )
+                            .expect("fixture proposal is exactly reportable"),
+                        )),
                         governed_applicability(),
                         PhysicalCostEstimate::structural(1, 2, 0),
                     ),
@@ -2273,7 +2562,7 @@ mod tests {
         assert!(rejected_kinds.contains(&PhysicalProposalKind::View));
 
         // The opaque proposal names an identity no entry claims, so it is
-        // rejected *earlier* and differently: `UnregisteredCall`, not
+        // rejected *earlier* and differently: an opaque `Unregistered`, not
         // `UnsupportedVariant`. The two say different things — one is the
         // provider naming something that does not exist, the other this
         // compiler's limitation — and reporting the second would tell a caller
@@ -2285,8 +2574,11 @@ mod tests {
         assert!(
             frontier.rejections().iter().any(|rejection| matches!(
                 rejection,
-                FrontierRejection::UnregisteredCall { call, .. }
-                    if call.call() == "mystery"
+                FrontierRejection::OpaqueCall {
+                    proposal,
+                    cause: OpaqueCallRejectionCause::Unregistered,
+                    ..
+                } if proposal.call().call() == "mystery"
             )),
             "the unregistered opaque call was not reported by name"
         );
@@ -2300,7 +2592,9 @@ mod tests {
         // admitted. Cost never gates feasibility in either direction.
         struct InfeasibleProvider;
         impl PhysicalImplementationProvider for InfeasibleProvider {
-            fn provenance(&self) -> PhysicalProviderProvenance {
+            fn provenance(
+                &self,
+            ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
                 PhysicalProviderProvenance::new(provider_identity("infeasible", 1))
             }
             fn propose(&self, context: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
@@ -2373,7 +2667,9 @@ mod tests {
         // from a valid empty no-plan result.
         struct MalformedProvider;
         impl PhysicalImplementationProvider for MalformedProvider {
-            fn provenance(&self) -> PhysicalProviderProvenance {
+            fn provenance(
+                &self,
+            ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
                 PhysicalProviderProvenance::new(provider_identity("malformed", 1))
             }
             fn propose(&self, context: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
@@ -2400,7 +2696,9 @@ mod tests {
     fn an_ungoverned_cost_model_is_malformed_output() {
         struct WrongCostModelProvider;
         impl PhysicalImplementationProvider for WrongCostModelProvider {
-            fn provenance(&self) -> PhysicalProviderProvenance {
+            fn provenance(
+                &self,
+            ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
                 PhysicalProviderProvenance::new(provider_identity("wrong-cost", 1))
             }
             fn propose(&self, context: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
@@ -2442,7 +2740,9 @@ mod tests {
     fn an_analytical_cost_key_is_refused_by_the_frontier() {
         struct AnalyticalCostProvider;
         impl PhysicalImplementationProvider for AnalyticalCostProvider {
-            fn provenance(&self) -> PhysicalProviderProvenance {
+            fn provenance(
+                &self,
+            ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
                 PhysicalProviderProvenance::new(provider_identity("analytical", 1))
             }
             fn propose(&self, context: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
@@ -2592,15 +2892,15 @@ mod tests {
         let bindings = [("x", TensorRole::Input), ("y", TensorRole::Output)];
         assert_eq!(
             resolve_work_items(WorkScaling::PerElementOf("x"), &bindings, &request),
-            Some(normalized.input_elements)
+            Ok(normalized.input_elements)
         );
         assert_eq!(
             resolve_work_items(WorkScaling::PerElementOf("y"), &bindings, &request),
-            Some(normalized.output_elements)
+            Ok(normalized.output_elements)
         );
         assert_eq!(
             resolve_work_items(WorkScaling::Fixed(7), &bindings, &request),
-            Some(7),
+            Ok(7),
             "a fixed scaling was not taken directly"
         );
     }
@@ -2611,14 +2911,14 @@ mod tests {
     /// feasibility verdict that is confidently wrong in either direction.
     #[test]
     fn an_unresolvable_scaling_declines_rather_than_guessing() {
-        use super::{WorkScaling, resolve_work_items};
+        use super::{WorkResolutionError, WorkScaling, resolve_work_items};
 
         let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
         let bindings = [("x", TensorRole::Input), ("z", TensorRole::Intermediate)];
 
         assert_eq!(
             resolve_work_items(WorkScaling::PerElementOf("absent"), &bindings, &request),
-            None,
+            Err(WorkResolutionError::UnknownParameter("absent")),
             "a scaling naming an unbound parameter produced a count"
         );
         // An intermediate declines. A previous revision resolved it to the
@@ -2629,7 +2929,7 @@ mod tests {
         // shape is in hand.
         assert_eq!(
             resolve_work_items(WorkScaling::PerElementOf("z"), &bindings, &request),
-            None,
+            Err(WorkResolutionError::IntermediateShapeUnavailable { parameter: "z" }),
             "an intermediate binding produced a count the subject cannot support"
         );
     }
@@ -2697,12 +2997,17 @@ mod tests {
     );
 
     impl PhysicalImplementationProvider for CallProvider {
-        fn provenance(&self) -> PhysicalProviderProvenance {
+        fn provenance(
+            &self,
+        ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
             PhysicalProviderProvenance::new(provider_identity("opaque", 1))
         }
         fn propose(&self, _context: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
             vec![ImplementationProposal::new(
-                ProposalBody::OpaqueCall(Box::new(OpaqueCallProposal::new(self.0, self.1.clone()))),
+                ProposalBody::OpaqueCall(Box::new(
+                    OpaqueCallProposal::new(self.0, self.1.clone())
+                        .expect("fixture proposal is exactly reportable"),
+                )),
                 governed_applicability(),
                 PhysicalCostEstimate::structural(1, 2, 0),
             )]
@@ -2974,8 +3279,10 @@ mod tests {
         assert!(
             frontier.rejections().iter().any(|rejection| matches!(
                 rejection,
-                FrontierRejection::CallNotAdmissible { reason, .. }
-                    if *reason == "numerical-contract-mismatch"
+                FrontierRejection::OpaqueCall {
+                    cause: OpaqueCallRejectionCause::NumericalContractMismatch,
+                    ..
+                }
             )),
             "the refusal did not name the numerical mismatch: {:?}",
             frontier.rejections()
@@ -3081,15 +3388,204 @@ mod tests {
         );
         assert_eq!(
             resolve_work_items(WorkScaling::PerElementOf("x"), &bindings, &request),
-            Some(request.serial_sum().input_elements)
+            Ok(request.serial_sum().input_elements)
         );
+    }
+
+    /// Every opaque refusal has a distinct typed canonical spelling, and that
+    /// spelling retains the complete call identity and ordered bindings.
+    #[test]
+    fn opaque_rejection_identity_and_all_causes_are_canonical() {
+        use super::{WorkResolutionError, classify_opaque_resource_verdict, encode_rejection};
+        use crate::call_abi::BindingError;
+        use crate::call_declaration::GuaranteeError;
+        use crate::feasibility::{RejectionCause, TargetProfileIdentity};
+        use crate::honourability::{
+            DimensionBehaviour, HonouringMeans, NumericalDimension, UnhonouredDimension,
+        };
+        use crate::physical::ResourceVerdict;
+        use tiler_ir::schedule::{ArithmeticType, NumericalPermission};
+
+        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let provider = PhysicalProviderProvenance::new(provider_identity("opaque-causes", 7))
+            .expect("fixture provider is exactly reportable");
+        let call = OpaqueCallIdentity::new("owner", "call", 9).expect("canonical");
+        let proposal = OpaqueCallProposal::new(
+            call,
+            vec![("x", TensorRole::Input), ("y", TensorRole::Output)],
+        )
+        .expect("fixture proposal is exactly reportable");
+
+        let mut excessive = strict_call_resources();
+        excessive.buffer_bindings = u32::MAX;
+        let capability = match crate::physical::assess_resources(
+            excessive,
+            request.numerical_contract().arithmetic,
+            1,
+            &request.target_profile(),
+        )
+        .expect_err("the buffer requirement exceeds the target")
+        {
+            ResourceVerdict::Rejected(RejectionCause::Capability(predicate)) => predicate,
+            other => panic!("expected a capability rejection, got {other:?}"),
+        };
+        let unhonourable = UnhonouredDimension::new(
+            NumericalDimension::Contraction,
+            ArithmeticType::F32,
+            DimensionBehaviour::Transform(NumericalPermission::Permitted),
+            HonouringMeans::Unsupported,
+            Some(DimensionBehaviour::Transform(
+                NumericalPermission::Forbidden,
+            )),
+            TargetProfileIdentity::new("tiler.test.profile.v1"),
+        );
+
+        let causes = [
+            OpaqueCallRejectionCause::NotApplicable {
+                target_profile_key: "tiler.test.other.v1",
+            },
+            OpaqueCallRejectionCause::Unregistered,
+            OpaqueCallRejectionCause::MalformedBinding(BindingError::UnboundParameter("x")),
+            OpaqueCallRejectionCause::ContractUnderivable(GuaranteeError::AmbiguousWriteDomain),
+            OpaqueCallRejectionCause::NumericalContractMismatch,
+            OpaqueCallRejectionCause::WorkUnresolvable(
+                WorkResolutionError::IntermediateShapeUnavailable { parameter: "x" },
+            ),
+            OpaqueCallRejectionCause::TargetInfeasible(capability),
+            OpaqueCallRejectionCause::TargetUnhonourable(unhonourable),
+        ];
+        let encodings: Vec<Vec<u8>> = causes
+            .into_iter()
+            .map(|cause| {
+                encode_rejection(&FrontierRejection::OpaqueCall {
+                    provider: provider.clone(),
+                    proposal: proposal.clone(),
+                    cause,
+                })
+            })
+            .collect();
+        for (index, encoding) in encodings.iter().enumerate() {
+            assert!(
+                encodings[..index].iter().all(|seen| seen != encoding),
+                "opaque cause {index} collided with an earlier cause"
+            );
+        }
+
+        let variants = [
+            OpaqueCallProposal::new(
+                OpaqueCallIdentity::new("other", "call", 9).unwrap(),
+                proposal.bindings().to_vec(),
+            )
+            .expect("fixture proposal is exactly reportable"),
+            OpaqueCallProposal::new(
+                OpaqueCallIdentity::new("owner", "other", 9).unwrap(),
+                proposal.bindings().to_vec(),
+            )
+            .expect("fixture proposal is exactly reportable"),
+            OpaqueCallProposal::new(
+                OpaqueCallIdentity::new("owner", "call", 10).unwrap(),
+                proposal.bindings().to_vec(),
+            )
+            .expect("fixture proposal is exactly reportable"),
+            OpaqueCallProposal::new(
+                call,
+                vec![("y", TensorRole::Output), ("x", TensorRole::Input)],
+            )
+            .expect("fixture proposal is exactly reportable"),
+            OpaqueCallProposal::new(
+                call,
+                vec![("x", TensorRole::Output), ("y", TensorRole::Input)],
+            )
+            .expect("fixture proposal is exactly reportable"),
+        ];
+        let baseline = encode_rejection(&FrontierRejection::OpaqueCall {
+            provider: provider.clone(),
+            proposal: proposal.clone(),
+            cause: OpaqueCallRejectionCause::Unregistered,
+        });
+        for variant in variants {
+            assert_ne!(
+                baseline,
+                encode_rejection(&FrontierRejection::OpaqueCall {
+                    provider: provider.clone(),
+                    proposal: variant,
+                    cause: OpaqueCallRejectionCause::Unregistered,
+                }),
+                "a call identity or ordered-binding distinction was erased"
+            );
+        }
+
+        let binding_faults = [
+            BindingError::UnboundParameter("x"),
+            BindingError::UnknownParameter("x"),
+            BindingError::ParameterBoundTwice("x"),
+            BindingError::RoleStorageDisagreement {
+                first: "x",
+                second: "y",
+            },
+        ];
+        let fault_encodings: Vec<Vec<u8>> = binding_faults
+            .into_iter()
+            .map(|fault| {
+                encode_rejection(&FrontierRejection::OpaqueCall {
+                    provider: provider.clone(),
+                    proposal: proposal.clone(),
+                    cause: OpaqueCallRejectionCause::MalformedBinding(fault),
+                })
+            })
+            .collect();
+        for (index, encoding) in fault_encodings.iter().enumerate() {
+            assert!(
+                fault_encodings[..index].iter().all(|seen| seen != encoding),
+                "binding fault {index} collided with an earlier fault"
+            );
+        }
+
+        assert!(matches!(
+            classify_opaque_resource_verdict(
+                &provider,
+                &proposal,
+                ResourceVerdict::Rejected(RejectionCause::Capability(capability)),
+            ),
+            Ok(FrontierRejection::OpaqueCall {
+                cause: OpaqueCallRejectionCause::TargetInfeasible(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            classify_opaque_resource_verdict(
+                &provider,
+                &proposal,
+                ResourceVerdict::Rejected(RejectionCause::Numerical(unhonourable)),
+            ),
+            Ok(FrontierRejection::OpaqueCall {
+                cause: OpaqueCallRejectionCause::TargetUnhonourable(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            classify_opaque_resource_verdict(
+                &provider,
+                &proposal,
+                ResourceVerdict::Intrinsic(
+                    crate::feasibility::FeasibilityError::MalformedProposal { rule: "test" },
+                ),
+            ),
+            Err(FrontierError::MalformedOpaqueCallAssessment { .. })
+        ));
+        assert!(matches!(
+            classify_opaque_resource_verdict(&provider, &proposal, ResourceVerdict::Unresolved),
+            Err(FrontierError::UnresolvedOpaqueCallAssessment { .. })
+        ));
     }
 
     #[test]
     fn a_proposal_for_another_target_is_not_applicable() {
         struct ForeignTargetProvider;
         impl PhysicalImplementationProvider for ForeignTargetProvider {
-            fn provenance(&self) -> PhysicalProviderProvenance {
+            fn provenance(
+                &self,
+            ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
                 PhysicalProviderProvenance::new(provider_identity("foreign", 1))
             }
             fn propose(&self, context: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
