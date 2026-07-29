@@ -9,122 +9,47 @@ related: ["tiler.questions.open", "tiler.roadmap"]
 
 # Project status
 
-Tiler has entered a bounded prototype phase. The semantic, optimizer,
-scheduling, numerical, artifact, cache, and runtime boundaries have substantial
-accepted decisions and bounded executable evidence. An initial untyped
-semantic/reference draft exposed incorrect provisional public boundaries; the
-dependency-ordered v2 correction is now implemented through the semantic and
-reference crate boundary. Graph ownership, recoverable commitment,
-output-reachable compaction, origin-bound output selectors, independent type
-authority, open operation registration, generic typed values, and exact
-reference-capability dispatch are compile-checked for the bounded profile.
-The dependent-array shape conformance gate, exact nightly migration, checked
-shaped-value implementation, and assembled semantic/reference integration gate
-are now complete. A downstream-style test constructs and evaluates the bounded
-strict-`f32` program through public APIs, while malformed drafts and malformed
-reference results fail closed. The private target-neutral proof now constructs
-both a verified two-stage materialized plan and a verified one-stage fused
-plan, retains both in a deterministic portfolio, and selects fusion only as a
-strict structural Pareto improvement. An adversarial follow-up audit
-established that this remains a graph-specific conformance fixture: occurrence
-construction, region enumeration, legality evidence, KIR, and artifact-facing
-program types are not yet a generic backend-consumable compiler path. Metal
-AOT and device execution remain unimplemented, and no compiler API is public
-or stabilized. Shared target-neutral IR ownership and checked-construction
-boundaries are now accepted by ADRs 0070 and 0071. The compiler's bounded proof
-pipeline is compiled as ordinary library code, and the unused backwards
-compiler-to-artifact dependency has been removed. The proof-specific structs
-remain private until their dedicated generic IR/verifier tickets replace them.
-ADR 0072 defines separate graph meaning, reached provider-independent
-definitions, admission-provider provenance, and complete registry snapshot
-subjects. The corrected semantic implementation computes one deterministic,
-iterative, cycle-safe, incrementally bounded authority closure across retained
-types, operations, occurrence attributes, definition facts, defaults, and
-conformance requirements. Root ingestion and unique discovered authority have
-separate governed bounds. Borrowed validation runs the same reachable closure
-as commitment and preserves authority failures as typed diagnostics. Completed
-programs own one non-forgeable `SemanticIdentity` bundle with named accessors
-for graph meaning, definitions, admission provenance, and the registry snapshot;
-compiler requests and artifact-construction plans retain it atomically. Region occurrence,
-checked refinement,
-structural schedule/KIR, and artifact identities remain explicit
-obligations of their owning tickets rather than implemented support. The
-complete-plan identity is implemented for the bounded profile:
-`tiler.kernel-program.v2` folds the semantic graph, bound implementations,
-coverage, materializations, buffers, the entry ABI, the applicability guard,
-and the routing-commit lifecycle. The first
-public static-extent `tiler_ir::index` builder/verifier is implemented, audited,
-and accepted. Its scalar-provider and authority boundary was explicitly
-reviewed at implementation commit `32e190f`; it uses generic typed scalar SSA,
-canonical attributes, optional static fact views, complete semantic
-type-authority evidence, and a separate region-bound scalar-authority receipt.
-Semantic lowering equivalence remains a separate checked
-capability/refinement obligation. The private compiler proof still has
-graph-specific occurrence, normalization, fusion, scheduling, KIR, and explain
-structures; those are evidence fixtures, not the public compiler. Its program
-layer is no longer among them: it retains a verified `tiler_ir::program`
-product and the target profile it was assessed under, and owns no second copy
-of that program's ABI, guard, or routing contract.
+Tiler is an alpha-stage, bounded architectural prototype. It has an executable compiler-to-Metal value proof and reviewed experimental public boundaries, not a production tensor compiler, a general Metal runtime, or a stabilized API.
+
+## Delivered bounded vertical
+
+- **Fact — semantic and reference:** `tiler-ir` exposes a typed, multi-result semantic graph with checked construction, governed operation and type authority, canonical identity, shaped-value evidence, and a downstream reference-evaluation path. The implemented standard profile remains deliberately narrow; the [operation-family matrix](roadmap.md#operation-family-support-matrix) and [dtype maturity ledger](dtype-support.md) own its exact breadth.
+- **Fact — compiler:** the ordinary `tiler-compiler` path reaches checked normalization, capability resolution, semantic-to-index refinement, fusion legality and covers, target feasibility, scheduling, physical-plan selection, structured KIR, verified kernel-program construction, and artifact construction for the bounded governed profile. `tiler_compiler::session::{compile, compile_governed}` is a public reviewed-draft facade through which a caller can install index-access lowering capabilities and select an ordered numerical-contract preference. This is a usable alpha boundary, not a stable or workload-general API; target-profile authoring, shape-environment choice, and planning budgets remain internal.
+- **Fact — identity and schema:** the current source-derived artifact ledger is resolved value type v3, scheduled region v2, structured kernel v3, verified kernel program v5, artifact program v9, and neutral manifest schema 7.0. The envelope format and canonical encoding remain 1.0, and each of the four component schemas remains 1.0. These are separate subjects rather than one global version; [Artifact ABI](artifact-abi.md) owns the complete ledger and evolution rationale.
+- **Fact — Metal artifact-to-proof path:** `tiler-metal` deterministically lowers the bounded structured KIR to MSL, `tiler-metal-aot` invokes the selected Apple offline toolchain and records provenance, and `tiler-build` assembles the carried Metal payload into the neutral artifact. The device-free `tiler-runtime` validates, preflights, and commits routing once; the retained `serial-sum-run` prototype then binds resources, dispatches, waits for exact command-buffer success, and validates readback.
+- **Measurement — offline AOT:** the retained [Metal AOT proof](../tickets/prototype-metal-aot-slice.md) produced the selected fused and materialized programs on one Apple M4 Max with macOS 27.0 build 26A5388g, Xcode 26.6 build 17F113, Metal/AIR-LLD 32023.883, and macOS SDK 26.5 build 25F70; two independent links produced byte-identical 3,843-byte metallibs. This is deterministic construction evidence for that measured row, not runtime compatibility evidence.
+- **Measurement — device execution:** the retained [runtime proof](../tickets/prototype-metal-runtime-proof.md) bit-compared 30 cases on one Apple M4 Max under `FlushSubnormalsToZeroF32`, covering three reduction classes, both selected-fused and materialized roles, and five cases per class/role. The selected route used one dispatch and no shared allocation; the materialized route used two dispatches and one shared allocation. This establishes that exact host, toolchain, program shape, numerical realization, and corpus only; it is neither a portable Apple-family guarantee nor a production runtime qualification.
+- **Fact — artifact and cache infrastructure:** `tiler-artifact` exposes the reviewed public neutral codec/capability boundary, including carried compilation-subject and object bytes, and `tiler-cache` implements the immutable self-validating cross-process expansion cache. The complete inline orchestration that composes those pieces remains open.
 
 ## Authorized prototype
 
-Tom selected and authorized the bounded strict serial `f32` `Sum` Metal value
-proof in [ADR 0055](decisions/0055-use-a-serial-sum-for-the-first-metal-value-proof.md).
-The prototype must pass through the documented semantic, reference, optimizer,
-schedule, structured-kernel, artifact, and guarded-runtime boundaries; a
-handwritten standalone Metal kernel is insufficient. ADR 0065 supersedes ADR
-0056's four-crate count by extracting `tiler-reference`; ADR 0067 supersedes
-the stable Rust 1.89 floor and selects the exact `nightly-2026-07-19` pin plus
-one dependent-array `StaticShape<RANK, EXTENTS>` family. The retained
-[nightly shape conformance
-harness](../spikes/shapes/nightly-dependent-static-shapes/README.md) now passes
-on the governed and adjacent compilers. The checked shaped-value layer now adds
-sealed exact/rank evidence, graph-owned same-shape witnesses, and transactional
-evidence propagation through the existing builder admission path. The
-assembled
-[`semantic/reference slice`](../tickets/prototype-semantic-reference-slice.md),
-[`materialized target-neutral baseline`](../tickets/prototype-target-neutral-baseline-slice.md)
-and
-[`target-neutral fusion selection`](../tickets/prototype-target-neutral-fusion-slice.md)
-are complete for their bounded claims. The
-[`shared compiler IR ownership`](../tickets/prototype-shared-compiler-ir-ownership.md)
-slice establishes the accepted module, verifier, builder, and dependency
-direction without publishing the graph-specific proof structs.
-The semantic identity, canonical index-region, and verifier subject-binding
-corrections are integrated, and the target-neutral compiler path has begun
-landing its authorities: typed explain, the generic index-region reference
-oracle, bounded semantic normalization with common-subexpression elimination,
-and generic fusion-region formation are merged. That path continues through
-checked semantic-to-index refinement, fusion legality and region covers,
-target feasibility and scheduling, physical-implementation planning and
-complete-plan selection, structured kernel IR, and artifact-facing programs,
-closed by an optimizer conformance gate and the reviewed
-[`public compiler boundary`](../tickets/prototype-public-compiler-api.md), which
-the inline frontend consumes. Which of those authorities is dispatchable is the
-board's to report, not this page's: `tkt ready` shows the current frontier and
-`tkt rollup` the complete and blocked sets. Backend feasibility spikes may
-proceed when their actual verifier and IR prerequisites exist; they do not
-depend on that ergonomic facade merely for ordering.
+Tom authorized the bounded serial `f32` `Sum` Metal value proof in [ADR 0055](decisions/0055-use-a-serial-sum-for-the-first-metal-value-proof.md). The proof passes through the documented semantic, reference, optimizer, schedule, structured-kernel, artifact, cacheable-build, and guarded-runtime boundaries; a handwritten standalone kernel would not satisfy it. ADR 0067 selects the exact `nightly-2026-07-19` toolchain and dependent-array `StaticShape<RANK, EXTENTS>` family, with a retained [shape conformance harness](../spikes/shapes/nightly-dependent-static-shapes/README.md).
 
-This chain is an architectural value proof. The neutral artifact codec has
-landed as a bounded lockstep codec behind an unaccepted crate-private facade,
-and carries a backend payload's compilation subject and object bytes; separate
-tickets track Metal payload assembly, Metal lowering and offline driver,
-runtime validation and one-way commit, inline proc macro and expansion cache,
-artifact-family delivery, embedding measurements, and Candle integration. Completion of the
-serial Metal proof still does not by itself complete the inline-DX exit for
-Milestone 0B or the broader Milestone 2 product profile.
+The delivered path recognizes two one-input/one-output bounded F32 shapes: a four-operation pointwise add or multiply over one input plus constants, and a four- or five-operation scale-bias-strict-serial-sum program with a deterministic fused candidate and a deliberately materialized comparison candidate. Its generic authorities are real and reusable, but their current admitted workload is not representative of broad tensor compilation. Quantized U4 construction has later-layer structural fixtures but still fails closed before executable support; the dtype ledger records that non-monotone evidence without promoting it to a vertical guarantee.
+
+## Not yet delivered
+
+- **Fact — inline developer experience:** the inline proc-macro frontend remains awaiting decision, and the complete cold/warm inline AOT and embedding workflow remains open. Implemented cache and AOT components do not by themselves satisfy the Milestone 0B exit; no default cache-root chooser or accepted cache-maintenance boundary has landed.
+- **Fact — consumer integration:** no Candle adapter, einops-derived workload, or other production consumer path exists.
+- **Fact — runtime product:** the device-execution code is retained in `prototypes/serial-sum-run`; there is no reusable live-device runtime, general pipeline cache, product fallback integration, broad buffer/shape handling, or production compatibility matrix.
+- **Fact — breadth:** the compiler request recognizer, semantic operation set, dtype support, schedules, Metal lowering, and execution corpus are narrow. General backend support, wider dtypes and operations, dynamic workloads, parallel reductions, contractions, and optimized model inference remain separately tracked work.
+- **Fact — stability:** reviewed public draft boundaries may still change during the alpha phase. Implemented canonical identities and lockstep schemas prevent accidental subject confusion; they do not promise long-term backward compatibility.
+
+The workspace-member absence claims above are reproducible from the repository root:
+
+```sh
+test ! -d crates/tiler-macros
+test ! -d crates/tiler-candle
+! rg -n 'proc-macro\s*=\s*true' crates --glob Cargo.toml
+! rg -n -i 'metal|objc|MTL' crates/tiler-runtime/Cargo.toml
+```
 
 ## Evidence boundary
 
-- Executable spikes validate specific representations, protocols, numerical
-  cases, and toolchain behavior.
-- Apple compatibility is bounded to measured toolchains and hosts; old-OS and
-  device-family runtime coverage is not universal.
-- Sound region-accuracy analysis is feasible for a narrow trusted-analyzer
-  profile; independent certificate checking remains deferred.
-- Multi-device, external-storage, and richer transfer work is deliberately
-  deferred, not silently ready.
+- Executable spikes and prototypes validate only their recorded representations, protocols, numerical cases, hosts, and toolchains.
+- Apple compatibility remains bounded to measured toolchains and hosts; old-OS and device-family runtime coverage is not universal.
+- Sound region-accuracy analysis exists for a narrow trusted-analyzer profile; independent certificate checking remains deferred.
+- Multi-device, external-storage, and richer transfer work is deliberately deferred, not silently ready.
 
 ## Live work state
 
@@ -137,5 +62,4 @@ tkt tracks
 tkt reconcile
 ```
 
-See the [work-tracking guide](work-tracking.md) before claiming work. The
-[roadmap](roadmap.md) describes proposed progression, not completed support.
+See the [work-tracking guide](work-tracking.md) before claiming work. The [roadmap](roadmap.md) describes proposed progression, while its operation matrix and the dtype ledger record bounded delivered support.

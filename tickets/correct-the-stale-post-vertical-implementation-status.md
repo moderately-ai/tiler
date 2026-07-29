@@ -1,14 +1,17 @@
 ---
 id: correct-the-stale-post-vertical-implementation-status
 title: Correct the stale post-vertical implementation status
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
-related: [own-the-dtype-support-maturity-matrix, prototype-metal-aot-slice, prototype-metal-runtime-proof, prototype-public-compiler-api, prototype-structured-kir-slice, prototype-kernel-program-ir, prototype-artifact-program-model, prototype-metal-kir-lowering, prototype-apple-aot-driver, prototype-metal-bundle-assembly, prototype-runtime-artifact-validation, prototype-runtime-routing-commit, prototype-metal-runtime-execution]
+related: [own-the-dtype-support-maturity-matrix, prototype-metal-aot-slice, prototype-metal-runtime-proof, prototype-public-compiler-api, prototype-structured-kir-slice, prototype-kernel-program-ir, prototype-artifact-program-model, prototype-metal-kir-lowering, prototype-apple-aot-driver, prototype-metal-bundle-assembly, prototype-runtime-artifact-validation, prototype-runtime-routing-commit, prototype-metal-runtime-execution, correct-stale-public-compiler-boundary-authorities, correct-stale-artifact-identity-and-delivery-authorities, correct-stale-post-vertical-integration-inventories]
 scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, status, correctness]
+claimed_from: todo
+assignee: codex
+lease_expires_at: 1785337612
 ---
 
 ## User-visible outcome

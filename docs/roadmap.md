@@ -35,16 +35,9 @@ downstream-style public construction and evaluation test. The bounded
 Milestone 0A integration proof is complete; production stabilization and the
 broader operation/dtype surface remain future work.
 
-ADR 0072 corrects the prototype identity boundary before generic compilation:
-graph meaning, reached provider-independent definitions, admission-provider
-provenance, and the full registry environment now have independent identities.
-The later region/index/schedule/KIR/program/artifact tickets must preserve that
-layering rather than nesting whole-program or provider identity into reusable
-structural content.
+ADR 0072 corrects the prototype identity boundary before generic compilation: graph meaning, reached provider-independent definitions, admission-provider provenance, and the full registry environment have independent identities. The implemented region/index/schedule/KIR/program/artifact layers preserve that separation rather than nesting whole-program or provider identity into reusable structural content.
 
-The bullets below are the implementation scope authorized only after the
-research-readiness decision; they are not claims that the implementations
-already exist.
+The bullets below describe Milestone 0A's authorized scope. Some are now delivered for the bounded profile; the [status page](status.md) and live ticket graph, rather than this proposed progression, own current implementation state.
 
 - Define axes, reindexing, broadcasting, dtype, reduction, empty-domain,
   overflow, alias, and numerical policies.
@@ -80,13 +73,10 @@ artifact/cache/runtime spikes fix the AOT, inline-DX, family-selection,
 publication, and fallback boundaries. The actual Tiler macro-to-dispatch
 vertical remains implementation work.
 
-The bullets below are remaining vertical implementation and integration checks,
-not completed production capabilities.
+The bullets below describe the Milestone 0B exit rather than the state of every component. The offline Metal producer, expansion cache, neutral artifact path, and bounded device proof now exist; inline composition and consumer integration do not.
 
-- Build a proc-macro spike that compiles fixed deterministic MSL with `xcrun`
-  and emits manifest/metallib byte-string literals without consumer setup.
-- Implement the accepted immutable self-validating content-addressed cache and
-  reproduce the completed process-level crash/race harness against it.
+- Compose the proposed proc macro with the implemented deterministic `xcrun` producer and emit manifest/metallib byte-string literals without consumer setup.
+- Integrate the implemented immutable self-validating content-addressed cache into that complete inline workflow.
 - Retain the completed embedding, Cargo freshness, cache deletion, and Apple
   family/toolchain probes. Measure rust-analyzer cold/warm behavior when the
   component is available, plus the actual native macOS and non-Apple fallback
@@ -97,10 +87,7 @@ equivalent expansions invoke no external compiler, and the proposed Rust DX
 works without build scripts or prebuild commands. Failure does not invalidate
 Milestone 0A's consumer-independent compiler boundary.
 
-The currently authorized Metal AOT and runtime tickets prove backend artifact
-and device-execution boundaries but intentionally exclude the proc macro,
-generalized cache, and consumer integration. They are prerequisites and
-evidence for this milestone, not its complete exit.
+The completed Metal AOT and runtime proof establishes bounded backend artifact and device-execution evidence but intentionally excludes the proc macro, complete inline orchestration, and consumer integration. It is a prerequisite and evidence for this milestone, not its complete exit.
 
 The live ticket graph deliberately gates those proofs on a backend-consumable
 target-neutral compiler path. That path lowers a verified semantic program
@@ -110,7 +97,7 @@ scheduling, physical-implementation planning and complete-plan selection,
 structured kernel IR, and artifact-facing programs, closed by the
 [optimizer conformance gate](../tickets/prototype-optimizer-conformance-gate.md)
 and the reviewed [public compiler API](../tickets/prototype-public-compiler-api.md)
-that the inline frontend consumes. These are independent authorities with real
+that the intended inline frontend will consume. These are independent authorities with real
 dependencies, not a single linear pipeline, and their dependency-satisfied
 ordering shifts as work lands. `tkt rollup` and `tkt ready` — not a chain
 enumerated here — report which authorities are complete, dispatchable, or
@@ -121,16 +108,7 @@ Opaque physical calls are not part of this bounded compiler path. Their reviewed
 deferred behind the optimizer conformance gate and the mature boundary-property
 and analytical-cost authorities.
 
-Metal is then split into independently verifiable KIR lowering, strict
-numerical realization, Apple offline compilation, bundle assembly, and
-proof-evidence work before the existing Metal AOT integration ticket. The
-neutral artifact codec half of that split has landed, behind an unaccepted
-crate-private facade; filling its carried-payload shape from a real emission
-and a real compilation has not. Runtime validation, preflight, one-way routing commit, and execution
-mechanics similarly precede the device integration proof. The inline proc
-macro, cache, artifact-family delivery, embedding measurements, complete inline
-workflow, and Candle adapter remain explicit downstream tickets rather than
-implicit promises of the Metal proof.
+The bounded Metal path now includes independently verified KIR lowering, numerical-realization refusal, Apple offline compilation, bundle assembly, a public reviewed-draft neutral artifact codec carrying real emitted and compiled payloads, runtime validation and preflight, one-way routing commit, and device execution. The inline proc macro, complete inline cache/AOT/embedding orchestration, artifact-family delivery, and Candle adapter remain explicit downstream tickets rather than implicit promises of that proof.
 
 ## Milestone 1: canonical semantic graph and index IR
 
@@ -181,18 +159,7 @@ path before this broader milestone. It intentionally does not claim the Candle
 adapter, inline macro, general fallback, or einops-derived workload required by
 the milestone exit.
 
-The target-neutral portion of that proof is now implemented as a private
-graph-specific conformance fixture: the same verified request produces a
-two-stage materialized program and a one-stage fused program, the fused
-structured kernel preserves atomic multiply/add and strict contributor order,
-and a fixed structural policy selects it while retaining the baseline. It does
-not yet establish generic occurrence lowering, region enumeration, legality
-derivation, complete partition search, a public compiler boundary, Metal
-source, artifacts, or runtime execution. ADRs 0070 and 0071 now establish the
-shared `tiler-ir` ownership and checked-builder/verified-wrapper lifecycle into
-which the dependency-ordered implementation tickets lower. The ordinary
-compiler library target is active, but proof-specific structures remain
-private until replaced rather than being promoted as provisional public IR.
+The target-neutral portion of that proof is now integrated into the ordinary compiler path: the same verified request produces a two-stage materialized program and a one-stage fused program, checked generic authorities carry it through refinement, legality, scheduling, KIR, verified program, and artifact construction, and a public reviewed-draft session facade exposes compilation and caller-installed index-access lowering capabilities. Complete cover enumeration is proved for the bounded recognized profile. The request recognizer and candidate corpus remain graph-specific; this does not establish general occurrence discovery, unbounded partition search, or workload breadth. The Metal producer and retained runtime prototype carry the selected path through source, artifact, guarded routing, and device execution for the measured corpus.
 
 ## Milestone 2Q: quantized-value vertical proof
 
@@ -275,7 +242,7 @@ The four bullets above are physical-planning intent. They presuppose a semantic 
 
 **Fact.** [IR](ir.md) models an operation as an `OpKey` (dialect, name, semantic version), ordered operands, canonical attributes, and ordered results; canonical identity uses that content and never arena handles. A contraction is therefore identified by whatever the chosen `OpKey` and attribute schema encode, and by nothing else.
 
-**Inference — a contraction is not one operation in the way `Add` is one operation.** `matmul` over `[M, K] × [K, N]`, batched `matmul` over `[B, M, K] × [B, K, N]`, and an attention-shaped einsum `bhqk,bhkd->bhqd` differ in rank, in which axes are batched, in which are contracted, and in the output axis order. They are one family only if a canonical attribute carries that index structure. If instead each shape class takes its own key, the standard registry grows one governed key per rank-and-batching combination and semantic normalization must relate them; the registry admits exactly four operations today, so this is a real growth decision rather than a bookkeeping one.
+**Inference — a contraction is not one operation in the way `Add` is one operation.** `matmul` over `[M, K] × [K, N]`, batched `matmul` over `[B, M, K] × [B, K, N]`, and an attention-shaped einsum `bhqk,bhkd->bhqd` differ in rank, in which axes are batched, in which are contracted, and in the output axis order. They are one family only if a canonical attribute carries that index structure. If instead each shape class takes its own key, the standard registry grows one governed key per rank-and-batching combination and semantic normalization must relate them; the registry currently admits four F32 operation identities plus three strict-affine quantization operation identities, so this is a real growth decision rather than a bookkeeping one.
 
 **Fact — an index-notation attribute is not automatically canonical.** [IR](ir.md) fixes the attribute data model: `CanonicalValue::Utf8String` holds "exact valid UTF-8 bytes with no implicit Unicode normalization", `Sequence` order is semantic, and `Record` fields are sorted by unique ID. **Inference.** Storing an authored subscript string therefore makes `ij,jk->ik` and `ab,bc->ac` two different operations with different semantic graph identities, different artifact identities, and no cache reuse between them, even though they denote the same computation. ADR 0074's conventions bind the fix as well as the hazard: the encoder writes a versioned NUL-terminated `tiler.<subject>.v<N>` domain tag before any content, a fixed-width length before every variable-length run, excludes transient identifiers "wherever the represented semantics are equivalent without them", and matches every encoded enum exhaustively. An author's choice of index letters is exactly such a transient identifier. **Proposal.** The canonical attribute is a *structure* — which operand positions each index visits, which indices are free, which are summed, and the output index order — rather than the authored labelling, and the operation definition normalizes to that structure before storing or hashing, in the same way the schema already normalizes a field equal to its declared default.
 
@@ -435,7 +402,7 @@ Every row carries a trigger. A row without one is a note; a row with one is a tr
 | Operation family | Rung | Evidence | Reconsideration trigger |
 | --- | --- | --- | --- |
 | Pointwise `f32` constants and separate-rounding arithmetic: `constant-f32`, `add-f32`, `multiply-f32` | R6, with R7 bounded to checked target-neutral layers and one prototype execution row | **Fact.** `StandardSemantics` in `crates/tiler-ir/src/semantic/registry.rs` registers these three operations plus `strict-serial-sum-f32`; `StandardReferenceProvider` in `crates/tiler-reference/src/standard.rs` registers an evaluator for each; `FusionNumericalCapabilities::governed` gives them `ValueSource` and `ElementwiseArithmetic` roles; `BinaryOp::F32Add` and `BinaryOp::F32Multiply` are emitted by `tiler-metal`. **Measurement.** The retained runtime proof dispatched thirty bit-compared cases on one Apple M4 Max host. The governed Metal profile still rejects strict subnormal-preserving arithmetic where the measured target flushes F32 subnormals, so that execution row is bounded to the proof's exact realization, host, toolchain, program, and corpus. | Revisit per target and numerical realization when a production runtime or a second device family enters; neither inherits the prototype's R7 boundary. |
-| Strict serial `f32` `Sum` reduction | R6, with R7 bounded to the target-neutral layers | **Fact.** `tiler::strict-serial-sum-f32@1` is registered, reference-evaluated, and carries the sole `OrderedReduction` fusion role; ADR 0055 selects it as the first Metal value proof. Its lexicographic contributor order and result-boundary NaN canonicalization are part of its registered definition facts. | Milestone 4 broadens the exact serial baseline; revisit with [`implement-parallel-reduction-strategies`](../tickets/implement-parallel-reduction-strategies.md), which must not reuse this row's rung for a tree topology. |
+| Strict serial `f32` `Sum` reduction | R6, with R7 bounded to checked target-neutral layers and one prototype execution row | **Fact.** `tiler::strict-serial-sum-f32@1` is registered, reference-evaluated, and carries the sole `OrderedReduction` fusion role; ADR 0055 selects it as the first Metal value proof. Its lexicographic contributor order and result-boundary NaN canonicalization are part of its registered definition facts. **Measurement.** The retained runtime proof executed the strict sum in all thirty bit-compared cases on one Apple M4 Max host under `FlushSubnormalsToZeroF32`; that row is bounded to the proof's exact realization, host, toolchain, program, and corpus. | Milestone 4 broadens the exact serial baseline; revisit with [`implement-parallel-reduction-strategies`](../tickets/implement-parallel-reduction-strategies.md), which must not reuse this row's rung for a tree topology. |
 | Remaining pointwise float algebra: `Subtract`, `Divide`, negation, required `Fma` | R2 | **Fact.** ADR 0024 fixes round-to-nearest ties-to-even for `Add`, `Subtract`, `Multiply`, and `Divide`, and ADR 0015 makes `Fma` a dedicated single-rounding operation that may not be lowered to separate roundings. ADR 0024 is `partial` and ADR 0015 is `not-started`; no key for `Subtract`, `Divide`, negation, or `Fma` exists in the standard registry. | A named workload or frontend lowering that needs one. Each entering operation requires a key, an evaluator, a fusion role, and a backend realization before it may be claimed above R2; `Divide` additionally needs its reciprocal permission resolved under Q-SEM-001. |
 | Reductions beyond strict sum: product, logical `any` and `all`, extrema reductions, seeded and empty-domain forms, tree and multi-pass topologies | R2 | **Fact.** ADRs 0012, 0022, 0023, and 0025 accept physical reduction topology, reduction identities and initial values, the extrema families, and the empty-result-versus-padding split; all four are `implementation_status: not-started`. The only registered reduction is `tiler::strict-serial-sum-f32@1`, and `OrderedReduction` is the only reduction fusion role, so any other reduction resolves to no fusion legality at all. | Milestone 4, via [`implement-parallel-reduction-strategies`](../tickets/implement-parallel-reduction-strategies.md). Q-PLAN-004 must close before two reductions may coexist in one kernel. A non-identity seed and an identity-less extrema reduction are separate obligations from a new scalar family. |
 | Pointwise transcendentals: `Exp`, `Log`, `Sin`, `Gelu`, and similar | R2 | **Fact.** ADR 0016 and ADR 0042 accept a complete typed accuracy-contract vocabulary, exact rational tolerances, a versioned ULP metric, and a refinement relation; both are `implementation_status: not-started` and no ticket implements one. No transcendental operation, evaluator, or structured-kernel construct exists; see absence check 1 below. `docs/ir.md` names `Gelu` illustratively and requires an admitted key to pin its exact formula, so erf-GELU and a tanh approximation are not interchangeable. | Q-SEM-004 selects the first operation, dtype, and accuracy tuples. Milestone 1 forbids admitting any such operation before its accuracy contract is canonically serialized and reference-evaluated end to end, so the first transcendental is a vertical slice rather than one more pointwise key. |
@@ -469,7 +436,7 @@ grep -rniE '\breindex\b|\bbroadcast\b|\bcast\b' crates/ --include='*.rs'
 rg -n 'register_standard_quantization|register_integer|register_marked_value_type::<|register_operation\(' crates/tiler-ir/src/semantic/{registry.rs,quantization.rs}
 ```
 
-Two structural limits bound every rung above R4 and are easy to overstate. First, the compilation request path in `crates/tiler-compiler/src/request.rs` recognizes exactly one F32 program shape — one input, one output, one strict serial `Sum` over an add-of-multiply-by-constants chain — and explicitly refuses the strict-affine U4 scalar program, so admitted semantic operations are not compilable in arbitrary combinations. Second, `crates/tiler-compiler/src/lowering.rs` resolves an index-access lowering capability for every recognized occurrence, so a program whose occurrences no installed capability covers fails closed rather than compiling. The first limit is owned by the [optimizer conformance gate](../tickets/prototype-optimizer-conformance-gate.md). **Corrected by `draft-public-extension-seam-ownership-adr`.** This previously read that the registry had no in-crate production caller and that no governed provider registered a capability. Both were true when this matrix was written and were falsified by `wire-capability-and-refinement-into-compile-path`, which put `resolve_lowering` on the ordinary `compile()` path and shipped four governed index-access providers. The rungs above are unaffected: capability resolution constrains which programs compile, not how far any operation family was built.
+Two structural limits bound every rung above R4 and are easy to overstate. First, the compilation request path in `crates/tiler-compiler/src/request.rs` recognizes exactly two one-input/one-output F32 shapes — a four-operation pointwise add or multiply over one input plus constants, and a four- or five-operation strict serial `Sum` over a scale-bias prologue — and explicitly refuses the strict-affine U4 scalar program, so admitted semantic operations are not compilable in arbitrary combinations. Second, `crates/tiler-compiler/src/lowering.rs` resolves an index-access lowering capability for every recognized occurrence, so a program whose occurrences no installed capability covers fails closed rather than compiling. The first limit is owned by the [optimizer conformance gate](../tickets/prototype-optimizer-conformance-gate.md). **Corrected by `draft-public-extension-seam-ownership-adr`.** This previously read that the registry had no in-crate production caller and that no governed provider registered a capability. Both were true when this matrix was written and were falsified by `wire-capability-and-refinement-into-compile-path`, which put `resolve_lowering` on the ordinary `compile()` path and shipped four governed index-access providers. The rungs above are unaffected: capability resolution constrains which programs compile, not how far any operation family was built.
 
 ## Deferred until justified
 
