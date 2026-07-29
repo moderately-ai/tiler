@@ -74,7 +74,7 @@ explain reason on the selected plan, not this failure class. A verifier failure
 is invalid compiler output and remains a hard error rather than a costed
 rejection.
 
-An exhausted *proof* budget is a sixth thing, and it is deliberately not a failure class. When an analysis cannot afford to decide a predicate, nothing about its subject has been disproved: the analysis stopped. Compilation therefore continues, and the trace carries a typed budget stop naming the exhausted resource beside an explicit `Unknown` assessment of the predicate that stayed unproven. Reporting that as an infeasible plan would confuse hard feasibility with an exhausted analysis, which is the confusion the separation of feasibility from cost exists to prevent; admitting it silently would report an absent proof as a proof. [Index-region refinement](#refinement-is-exhaustive-finite-evidence-with-an-explicit-gap) is the implemented instance.
+An exhausted index proof budget is not itself any failure class: the structurally verified index region retains the exact residual predicate and typed `ResourceLimit` reason because the subject was not disproved. The current compiler still cannot continue to executable planning without refinement evidence. After independently checking scalar authority and the occurrence interface so a harder provider defect cannot be masked, stage 6 reports the unresolved predicate as a missing compilation capability and stops before cover or frontier construction. [Index-region refinement](#refinement-requires-discharged-index-domain-evidence) owns that boundary.
 
 ## Planning model
 
@@ -174,20 +174,17 @@ Both stop the compilation with a typed missing-compilation-capability failure at
 
 **Fact — lowering provenance is a registry resolution, not a compile-time table.** An artifact construction plan's `lowering_providers` is the set of `{provider identity, capability revision}` pairs resolution returned, deduplicated in canonical ascending order. `crates/tiler-compiler/src/program.rs` re-derives that set from the request's own installed registry when the plan is built and again when the portfolio is re-verified, and refuses a plan whose recorded provenance differs, so a receipt cannot name a provider the registry never resolved. Several occurrences of one family contribute one entry; one provider owning two capabilities at different revisions contributes two. ADR 0072 is why both halves are retained: a provider revision is the admitting authority's own output-affecting revision, and a capability revision covers the exact lowering that provider registered for one family and signature.
 
-### Refinement is exhaustive finite evidence with an explicit gap
+### Refinement requires discharged index-domain evidence
 
 **Fact.** `legality::refine_index_region` drives the resolved provider through the canonical `tiler-ir` index builder and then proves, independently of the provider, that the emitted region realizes the occurrence: the ordered operand and result interface agrees in type, shape, arity, and aliasing; the reached scalar authority stays inside what the capability declared it may emit; the capability's and the region's semantic type authorities agree; and every ordinary write carries complete unique-ownership evidence. A refined occurrence's explain record carries exhaustive finite evidence, which is the strongest class this stage can produce and is weaker than a sound proof.
 
 A malformed region, or a well-formed region that does not realize its occurrence, is a genuine rejection and fails closed. The artifact plan names the resolved provider as that occurrence's lowering authority, and that claim has to be true.
 
-**An exhausted proof budget is neither an admission nor a rejection.** `tiler_ir::index` charges an exhaustive access proof against `MAX_EXHAUSTIVE_PROOF_CELLS`, and a region whose proof exceeds that budget has not been disproved — the enumeration stopped before it could decide. The stage records two things and leaves the plan standing:
+**A structurally verified residual is neither refinement evidence nor a target rejection.** `tiler_ir::index` retains each unresolved read-bounds atom with an exact `InsufficientFacts`, `UnsupportedFragment`, or `ResourceLimit` reason. The last names the exhausted proof resource, governed limit, and required amount. The region is valid analysis state because nothing disproved the predicate, but no later stage may treat it as refined, insert an unattributed physical guard, or allow it into an executable frontier.
 
-- a typed budget stop at the refinement stage naming the exhausted proof resource, its governed limit, and the amount the proof would have required; and
-- an explicit `Unknown` assessment of the refinement predicate, naming the predicate that stayed unproven and the reason it did.
+`legality::refine_index_region` revalidates scalar authority and binds the complete operand/result interface before inspecting residuals, so an unresolved bound cannot mask an independent provider defect. If the provider otherwise conforms but any residual remains, refinement returns `IndexRefinementOutcome::Pending`, not an error or refinement evidence. The pending state owns the exact verified region, semantic occurrence, frozen authorities, and checked bindings; it does not copy region-local predicates away from the region that gives their handles meaning, re-run the provider, or mint a refinement identity. The current compiler converts that pending state into an explicit missing lowering capability before cover enumeration. The failure trace emits one provider-attributed `Unknown` assessment per canonical obligation, carrying its exact region-local key, predicate kind, reason, and resource fields; a `u128` required amount is retained without narrowing as named upper and lower 64-bit halves. The follow-up semantic-discharge stage may replace that refusal only by consuming the pending state and producing named evidence for the exact predicates before program work. Sound proof and exact exhaustive finite evidence can authorize refinement; empirical measurement cannot.
 
-Read that pair as exactly what it says and nothing more. The occurrence carries no refinement evidence, so no later stage may treat it as refined or cite it as one. Nothing about the emitted region was disproved, so the plan that contains it stays valid and is still costed, selected, verified, and returned on the same terms as any other. Rejecting here would report an exhausted analysis budget as hard infeasibility; admitting here would report an absent proof as a proof; and either reading loses the one fact the records exist to carry, which is that the question is open.
-
-A budget stop found beside any other verification diagnostic is not a budget stop. The region was independently refused, and reporting the pair as an open question would hide a real refusal behind an exhausted analysis, so the refusal is what fails closed.
+A proof-resource limit found beside any hard structural, disproval, or write-ownership diagnostic cannot turn the result into a verified region. The independent refusal remains the build result, with the resource stop retained as secondary typed evidence.
 
 **Measurement.** Cells are charged only where the cheaper interval proof fails or a write is not a proved coordinate permutation. Every governed lowering's writes are coordinate permutations and its reads are bounded by its own dimensions, so the governed profile charges nothing at any recognized size — measured at `[70_000, 2]` in `pipeline::conformance::governed_lowerings_never_charge_the_exhaustive_proof_budget`. That is why refinement is attempted for every occurrence rather than gated on a size threshold, and it bounds the claim to the governed lowerings: a registered provider whose emitted access is neither interval-provable nor a proved permutation can and does trip the budget.
 
@@ -247,7 +244,7 @@ stops only that growth path, emits an explain reason, and never removes
 singleton/unfused coverage. These defaults are calibration inputs, not
 correctness constants.
 
-Every budget above bounds a *search*, so exhausting one costs an alternative while complete coverage survives. `tiler_ir::index::MAX_EXHAUSTIVE_PROOF_CELLS` is not one of them and is not a request field: it bounds a *proof*, and exhausting it costs neither an alternative nor a plan but leaves one predicate about one occurrence open. [Refinement](#refinement-is-exhaustive-finite-evidence-with-an-explicit-gap) states what the compiler records in that case. Both reach the trace as typed budget stops, and a reader must not treat a lost proof as a lost alternative or the reverse.
+Every budget above bounds a *search*, so exhausting one costs an alternative while complete coverage survives. `tiler_ir::index::MAX_EXHAUSTIVE_PROOF_CELLS` is not one of them and is not a request field: it bounds a *proof*. Exhausting it retains one exact predicate as structurally verified `Unknown`, but the current compiler has no semantic discharge and therefore stops before any alternative containing that occurrence can be formed. [Refinement](#refinement-requires-discharged-index-domain-evidence) states the boundary. A reader must not treat a lost proof as a target rejection, a lost search alternative, or execution permission.
 
 ## Rule classes
 
@@ -558,7 +555,7 @@ logical input
 normalization rules fired
 equivalent alternatives retained
 resolved lowering capability per occurrence
-index-region refinement evidence or its recorded gap
+index-region refinement evidence or its typed residual refusal
 fusion regions considered
 boundary requirements/guarantees
 enforcers inserted

@@ -13,12 +13,14 @@ be restated on every change"
 //! from draft position.
 
 use super::*;
+use crate::index::predicate::IndexDomainPredicateContext;
 
 impl IndexRegionBuilder {
     pub(super) fn compact(
         &self,
         reachable_values: BTreeSet<u32>,
         reachable_accesses: BTreeSet<u32>,
+        mut index_domain_predicates: Vec<PendingIndexDomainPredicate>,
     ) -> Result<VerifiedIndexRegion, IndexRegionDiagnostic> {
         let order = self.compaction_order(reachable_values, reachable_accesses);
         let CompactionOrder {
@@ -47,16 +49,89 @@ impl IndexRegionBuilder {
             .collect();
         let accesses: Vec<_> = access_order
             .iter()
-            .map(|old| self.remap_access(*old, &tensor_map, &expr_map, &dimension_map))
-            .collect();
-        let owner = self.owner.verified_owner();
-        let index_domain_evidence = accesses
-            .iter()
-            .enumerate()
-            .flat_map(|(index, access)| {
-                Self::retain_access_index_domain_evidence(owner, bounded_index(index), access)
+            .map(|old| {
+                self.remap_access(
+                    *old,
+                    &tensor_map,
+                    &expr_map,
+                    &dimension_map,
+                    &index_domain_predicates,
+                )
             })
             .collect();
+        let tensors = tensor_order
+            .iter()
+            .map(|index| self.tensors[*index as usize].clone())
+            .collect::<Vec<_>>();
+        let dimensions = dimension_order
+            .iter()
+            .map(|index| self.dimensions[*index as usize].clone())
+            .collect::<Vec<_>>();
+        let owner = self.owner.verified_owner();
+        let predicate_context = IndexDomainPredicateContext::new(
+            owner,
+            &accesses,
+            &tensors,
+            expressions.len(),
+            dimensions.len(),
+        );
+        index_domain_predicates.sort_by_key(|predicate| {
+            (
+                access_map[&predicate.access],
+                predicate.axis,
+                match predicate.bound {
+                    PendingIndexDomainBound::NonNegative => 1,
+                    PendingIndexDomainBound::LessThanAxis => 2,
+                },
+            )
+        });
+        let mut index_domain_evidence = Vec::new();
+        let mut unknown_index_domain_predicates = Vec::new();
+        for pending in index_domain_predicates {
+            let access = &self.accesses[pending.access as usize];
+            let subject = VerifiedTensorAccessId::from_verified(owner, access_map[&pending.access]);
+            let expression = VerifiedIndexExprId::from_verified(
+                owner,
+                expr_map[&access.coordinates[pending.axis as usize]],
+            );
+            let predicate = match pending.bound {
+                PendingIndexDomainBound::NonNegative => {
+                    IndexDomainPredicate::NonNegative { expression }
+                }
+                PendingIndexDomainBound::LessThanAxis => IndexDomainPredicate::LessThanExtent {
+                    expression,
+                    extent: IndexExtentRef::TensorAxis {
+                        tensor: VerifiedTensorId::from_verified(owner, tensor_map[&access.tensor]),
+                        axis: pending.axis,
+                    },
+                },
+            };
+            match pending.disposition {
+                PendingIndexDomainDisposition::Discharged(evidence) => {
+                    index_domain_evidence.push(
+                        DischargedIndexDomainPredicate::checked(
+                            predicate_context,
+                            subject,
+                            predicate,
+                            evidence,
+                        )
+                        .expect("compaction mints every evidence handle from one owner")
+                        .expect("a discharged predicate carries evidence"),
+                    );
+                }
+                PendingIndexDomainDisposition::Unknown(reason) => {
+                    unknown_index_domain_predicates.push(
+                        UnknownIndexDomainPredicate::checked(
+                            predicate_context,
+                            subject,
+                            predicate,
+                            reason,
+                        )
+                        .expect("compaction derives every obligation from its subject access"),
+                    );
+                }
+            }
+        }
         let operations: Vec<_> = op_order
             .iter()
             .map(|old| {
@@ -103,20 +178,13 @@ impl IndexRegionBuilder {
                 value: value_map[&output.value],
             })
             .collect::<Vec<_>>();
-        let tensors = tensor_order
-            .iter()
-            .map(|index| self.tensors[*index as usize].clone())
-            .collect::<Vec<_>>();
-        let dimensions = dimension_order
-            .iter()
-            .map(|index| self.dimensions[*index as usize].clone())
-            .collect();
         self.finish_compaction(CompactedRegion {
             dimensions,
             tensors,
             expressions,
             accesses,
             index_domain_evidence,
+            unknown_index_domain_predicates,
             operations,
             values,
             outputs,
@@ -233,6 +301,7 @@ impl IndexRegionBuilder {
             expressions,
             accesses,
             index_domain_evidence,
+            unknown_index_domain_predicates,
             operations,
             values,
             outputs,
@@ -246,6 +315,7 @@ impl IndexRegionBuilder {
                 expressions,
                 accesses,
                 index_domain_evidence,
+                unknown_index_domain_predicates,
                 operations,
                 values,
                 outputs,
@@ -260,6 +330,7 @@ impl IndexRegionBuilder {
         tensor_map: &BTreeMap<u32, u32>,
         expression_map: &BTreeMap<u32, u32>,
         dimension_map: &BTreeMap<u32, u32>,
+        index_domain_predicates: &[PendingIndexDomainPredicate],
     ) -> VerifiedAccessData {
         let access = &self.accesses[old as usize];
         let shape = &self.tensors[access.tensor as usize].shape;
@@ -291,16 +362,24 @@ impl IndexRegionBuilder {
                 .iter()
                 .map(|expression| expression_map[expression])
                 .collect(),
-            bounds_proof: if points == Some(0) {
-                BoundsProof::VacuousEmptyDomain
+            bounds_proof: if index_domain_predicates.iter().any(|predicate| {
+                predicate.access == old
+                    && matches!(
+                        predicate.disposition,
+                        PendingIndexDomainDisposition::Unknown(_)
+                    )
+            }) {
+                None
+            } else if points == Some(0) {
+                Some(BoundsProof::VacuousEmptyDomain)
             } else if interval {
-                BoundsProof::Interval
+                Some(BoundsProof::Interval)
             } else if extent_equality {
-                BoundsProof::ProvedExtentEquality
+                Some(BoundsProof::ProvedExtentEquality)
             } else {
-                BoundsProof::Exhaustive {
+                Some(BoundsProof::Exhaustive {
                     points: enumerated_points(points),
-                }
+                })
             },
             ownership_proof: (access.mode == AccessMode::Write).then(|| {
                 if self.write_is_permutation(access, shape) {
@@ -312,48 +391,6 @@ impl IndexRegionBuilder {
                 }
             }),
         }
-    }
-
-    fn retain_access_index_domain_evidence(
-        owner: super::super::handles::VerifiedRegionOwner,
-        access_index: u32,
-        access: &VerifiedAccessData,
-    ) -> Vec<DischargedIndexDomainPredicate> {
-        let subject = VerifiedTensorAccessId::from_verified(owner, access_index);
-        let tensor = VerifiedTensorId::from_verified(owner, access.tensor);
-        let evidence = match access.bounds_proof {
-            BoundsProof::VacuousEmptyDomain => {
-                IndexDomainEvidence::SoundProof(IndexDomainSoundProof::VacuousEmptyDomain)
-            }
-            BoundsProof::Interval => {
-                IndexDomainEvidence::SoundProof(IndexDomainSoundProof::Interval)
-            }
-            BoundsProof::ProvedExtentEquality => {
-                IndexDomainEvidence::SoundProof(IndexDomainSoundProof::ProvedExtentEquality)
-            }
-            BoundsProof::Exhaustive { points } => IndexDomainEvidence::ExhaustiveFinite { points },
-        };
-        let mut records = Vec::with_capacity(access.coordinates.len().saturating_mul(2));
-        for (axis, expression) in access.coordinates.iter().copied().enumerate() {
-            let expression = VerifiedIndexExprId::from_verified(owner, expression);
-            for predicate in [
-                IndexDomainPredicate::NonNegative { expression },
-                IndexDomainPredicate::LessThanExtent {
-                    expression,
-                    extent: IndexExtentRef::TensorAxis {
-                        tensor,
-                        axis: bounded_index(axis),
-                    },
-                },
-            ] {
-                let record =
-                    DischargedIndexDomainPredicate::checked(owner, subject, predicate, evidence)
-                        .expect("compaction mints every evidence handle from one owner")
-                        .expect("verified accesses retain only discharging evidence");
-                records.push(record);
-            }
-        }
-        records
     }
 
     pub(super) fn reachable_values(&self) -> BTreeSet<u32> {

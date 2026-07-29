@@ -522,12 +522,12 @@ mod tests {
     use super::{EXTENT_PHASE_CEILING, ExtentSourceError, SymbolicExtentError};
     use super::{ExtentSources, SourcedExtent, SourcedShape};
     use crate::index::{
-        AccessMode, BoundsProofView, DomainRole, FrozenScalarRegistry, IndexRegionBuildError,
-        IndexRegionBuilder, IndexRegionDiagnostic, ScalarArity, ScalarAttributeSchema,
-        ScalarAttributes, ScalarEffect, ScalarInferenceError, ScalarInferenceOutputs,
-        ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract, ScalarOperationDefinition,
-        ScalarOperationInferencer, ScalarRegistryBuilder, TensorRole, VerifiedIndexRegion,
-        WriteOwnershipProofView,
+        AccessMode, BoundsProofView, DomainRole, FrozenScalarRegistry, IndexDomainPredicate,
+        IndexDomainUnknownReason, IndexExtentRef, IndexRegionBuildError, IndexRegionBuilder,
+        IndexRegionDiagnostic, ScalarArity, ScalarAttributeSchema, ScalarAttributes, ScalarEffect,
+        ScalarInferenceError, ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey,
+        ScalarOperationContract, ScalarOperationDefinition, ScalarOperationInferencer,
+        ScalarRegistryBuilder, TensorRole, VerifiedIndexRegion, WriteOwnershipProofView,
     };
     use crate::program::abi::AvailabilityPhase;
     use crate::semantic::{
@@ -748,66 +748,53 @@ mod tests {
         assert!(
             bounded
                 .accesses()
-                .any(|access| access.bounds_proof() == BoundsProofView::Interval),
+                .any(|access| access.bounds_proof() == Some(BoundsProofView::Interval)),
             "the symbolic read is proved by the environment's interval",
         );
 
-        // One larger admissible extent is one too many, and the same region is
-        // refused. Nothing else about it changed.
+        // One larger admissible extent leaves only the upper-bound atom unresolved.
         let too_wide = environment(
             EXTENT_PHASE_CEILING,
             &[ExtentRelation::interval(term("n"), 1, 5).unwrap()],
         );
-        let error = region(Some(too_wide), 4).unwrap_err();
-        assert!(
-            reports(&error, |diagnostic| matches!(
-                diagnostic,
-                IndexRegionDiagnostic::BoundsNotProven { .. }
-            )),
-            "an admissible extent of 5 can index a 4-element axis out of bounds: {error}",
+        let too_wide = region(Some(too_wide), 4).expect("an unknown read bound is retained");
+        let read = too_wide
+            .accesses()
+            .find(|access| access.mode() == AccessMode::Read)
+            .unwrap();
+        let expression = read.coordinates().next().unwrap();
+        let predicate = IndexDomainPredicate::LessThanExtent {
+            expression,
+            extent: IndexExtentRef::TensorAxis {
+                tensor: read.tensor(),
+                axis: 0,
+            },
+        };
+        let unknown = too_wide
+            .index_domain_unknown(read.id(), predicate)
+            .unwrap()
+            .expect("only the upper bound is unknown");
+        assert_eq!(
+            unknown.reason(),
+            IndexDomainUnknownReason::InsufficientFacts
         );
-        // The negative neighbour of `an_unbounded_symbolic_extent_is_refused_rather_than_enumerated`,
-        // and what makes that diagnostic mean something. Here the environment
-        // *did* bound `n` — to `1..=5` — and the proof still did not close, so
-        // the refusal is the generic one. Reporting the named diagnostic here
-        // would tell a frontend to state a constraint it has already stated.
-        assert!(
-            !reports(&error, |diagnostic| matches!(
-                diagnostic,
-                IndexRegionDiagnostic::ExtentBoundNotStated { .. }
-            )),
-            "a bounded extent that simply is not provable is not an unstated bound: {error}",
-        );
+        assert_eq!(too_wide.unknown_index_domain_predicates().count(), 1);
     }
 
-    /// An unbounded symbolic extent is refused, never enumerated or assumed.
-    ///
-    /// `docs/ir.md` requires that "unsupported dynamic cases must reject rather
-    /// than entering an index-local symbol or untyped predicate escape hatch".
-    /// The refusal must also not be the proof-resource diagnostic, which the
-    /// same contract defines as meaning "the enumeration stopped — not that the
-    /// region was disproved". Those are the two ways this could have gone
-    /// wrong, so both are asserted.
+    /// An unbounded symbolic extent is retained as an exact semantic obligation.
     #[test]
-    fn an_unbounded_symbolic_extent_is_refused_rather_than_enumerated() {
-        let error = region(Some(environment(EXTENT_PHASE_CEILING, &[])), 4).unwrap_err();
-        // Named, not generic. `BoundsNotProven` would be sound here and would
-        // not say why; only this diagnostic tells a frontend that the remedy is
-        // a constraint on `n` rather than a different region.
-        assert!(
-            reports(&error, |diagnostic| matches!(
-                diagnostic,
-                IndexRegionDiagnostic::ExtentBoundNotStated { symbol, .. }
-                    if symbol.ends_with("::n")
-            )),
-            "an extent with no admitted bound names the symbol to constrain: {error}",
-        );
-        assert!(
-            !reports(&error, |diagnostic| matches!(
-                diagnostic,
-                IndexRegionDiagnostic::ProofResourceLimit { .. }
-            )),
-            "this is a refusal, not an enumeration that ran out of budget: {error}",
+    fn an_unbounded_symbolic_extent_is_retained_without_enumeration() {
+        let region = region(Some(environment(EXTENT_PHASE_CEILING, &[])), 4)
+            .expect("missing facts are not a disproval");
+        let unknown = region.unknown_index_domain_predicates().collect::<Vec<_>>();
+        assert_eq!(unknown.len(), 1);
+        assert!(matches!(
+            unknown[0].predicate(),
+            IndexDomainPredicate::LessThanExtent { .. }
+        ));
+        assert_eq!(
+            unknown[0].reason(),
+            IndexDomainUnknownReason::InsufficientFacts
         );
     }
 
@@ -1188,31 +1175,28 @@ mod tests {
         assert!(
             roomy
                 .accesses()
-                .any(|access| access.bounds_proof() == BoundsProofView::Interval),
+                .any(|access| access.bounds_proof() == Some(BoundsProofView::Interval)),
             "the read into a symbolic axis is proved by the environment's interval",
         );
 
-        // One admissible extent below the domain is one too few, and the same
-        // region is refused. Nothing else about it changed.
+        // One admissible extent below the domain leaves the upper-bound atom unresolved.
         let too_short = read_from_symbolic_axis(environment_over(
             EXTENT_PHASE_CEILING,
             &["m"],
             &[ExtentRelation::interval(term("m"), 3, 16).unwrap()],
         ))
-        .unwrap_err();
-        assert!(
-            reports(&too_short, |diagnostic| matches!(
-                diagnostic,
-                IndexRegionDiagnostic::BoundsNotProven { .. }
-            )),
-            "an admissible extent of 3 cannot hold coordinate 3: {too_short}",
-        );
-        assert!(
-            !reports(&too_short, |diagnostic| matches!(
-                diagnostic,
-                IndexRegionDiagnostic::ProofResourceLimit { .. }
-            )),
-            "this is a refusal, not an enumeration that ran out of budget: {too_short}",
+        .expect("an unknown read bound remains a semantic obligation");
+        let unknown = too_short
+            .unknown_index_domain_predicates()
+            .collect::<Vec<_>>();
+        assert_eq!(unknown.len(), 1);
+        assert!(matches!(
+            unknown[0].predicate(),
+            IndexDomainPredicate::LessThanExtent { .. }
+        ));
+        assert_eq!(
+            unknown[0].reason(),
+            IndexDomainUnknownReason::InsufficientFacts
         );
     }
 
@@ -1444,9 +1428,9 @@ mod tests {
         .expect("`i` is a dimension sized `n`, and the environment proves `m == n`");
 
         assert!(
-            region
-                .accesses()
-                .all(|access| access.bounds_proof() == BoundsProofView::ProvedExtentEquality),
+            region.accesses().all(|access| {
+                access.bounds_proof() == Some(BoundsProofView::ProvedExtentEquality)
+            }),
             "neither interval propagation nor an enumeration closed this; the equality did",
         );
         assert!(
@@ -1459,30 +1443,18 @@ mod tests {
         );
     }
 
-    /// The neighbour whose environment never says the two extents are one.
-    ///
-    /// `m` is declared and available, and nothing bounds it at all. The
-    /// structural argument needs the equality and has none, interval
-    /// propagation has no interval to compare, and there is no finite domain to
-    /// walk — so both accesses are refused. The refusal must stay *explicit*
-    /// and must not be the proof-resource diagnostic, which `docs/ir.md`
-    /// defines as meaning "the enumeration stopped — not that the region was
-    /// disproved".
+    /// The neighbour whose environment never proves write ownership.
     #[test]
     fn an_undetermined_copy_whose_extents_are_never_proved_equal_is_still_refused() {
         let error =
             undetermined_dynamic_copy(environment_over(EXTENT_PHASE_CEILING, &["m", "n"], &[]))
                 .unwrap_err();
-        // Both accesses rest on the unproved equality, and both name the extent
-        // that was never bounded rather than reporting the mode-specific
-        // refusal: nothing here is a proof that failed to close, so neither
-        // access can be reported as one.
         assert!(
             reports(&error, |diagnostic| matches!(
                 diagnostic,
-                IndexRegionDiagnostic::ExtentBoundNotStated { .. }
+                IndexRegionDiagnostic::WriteOwnershipNotProven { .. }
             )),
-            "an unproved equality over unbounded extents names them: {error}",
+            "residual bounds cannot substitute for total, injective write ownership: {error}",
         );
         assert!(
             !reports(&error, |diagnostic| matches!(

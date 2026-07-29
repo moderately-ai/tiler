@@ -63,8 +63,8 @@ use super::sourced::{
 use super::{
     AccessMode, CanonicalIndexRegionIdentity, DimensionId, DischargedIndexDomainPredicate,
     DomainRole, FrozenScalarRegistry, IndexBuildError, IndexDomainEvidence, IndexDomainPredicate,
-    IndexDomainSoundProof, IndexEntityKind, IndexExprClass, IndexExprId, IndexExtentRef,
-    IndexInteger, IndexLimitKind, IndexRegionBuildError, IndexRegionDiagnostic,
+    IndexDomainSoundProof, IndexDomainUnknownReason, IndexEntityKind, IndexExprClass, IndexExprId,
+    IndexExtentRef, IndexInteger, IndexLimitKind, IndexRegionBuildError, IndexRegionDiagnostic,
     MAX_ACCESS_CANONICAL_BYTES, MAX_BOUNDARY_CANONICAL_BYTES, MAX_BOUNDARY_TENSORS,
     MAX_DOMAIN_DIMENSIONS, MAX_EXHAUSTIVE_PROOF_BYTES, MAX_EXHAUSTIVE_PROOF_CELLS,
     MAX_INDEX_CANONICAL_BYTES, MAX_INDEX_EXPRESSION_DEPTH, MAX_INDEX_EXPRESSION_OPERANDS,
@@ -72,14 +72,15 @@ use super::{
     MAX_OUTPUT_ROOTS, MAX_SCALAR_CANONICAL_BYTES, MAX_SCALAR_EXPRESSION_DEPTH,
     MAX_SCALAR_EXPRESSIONS, MAX_SCALAR_OPERANDS, MAX_TENSOR_ACCESSES, MAX_TENSOR_RANK,
     ProofResource, ReductionTraversal, ScalarAttributes, ScalarOpKey, ScalarOperationId,
-    ScalarResultIndex, ScalarValueId, TensorAccessId, TensorId, TensorRole, VerifiedIndexExprId,
-    VerifiedIndexRegion, VerifiedTensorAccessId, VerifiedTensorId,
+    ScalarResultIndex, ScalarValueId, TensorAccessId, TensorId, TensorRole,
+    UnknownIndexDomainPredicate, VerifiedIndexExprId, VerifiedIndexRegion, VerifiedTensorAccessId,
+    VerifiedTensorId,
 };
 use crate::shape::env::constraint::ExtentInterval;
 use crate::shape::env::{ShapeEnv, ShapeSymbol};
 
 /// The domain separator of one verified index region's canonical identity.
-const INDEX_REGION_DOMAIN: &[u8] = b"tiler.index-region.v7\0";
+const INDEX_REGION_DOMAIN: &[u8] = b"tiler.index-region.v8\0";
 
 /// What interval propagation concluded about one access's coordinates.
 #[derive(Clone, Copy, Debug)]
@@ -145,9 +146,30 @@ struct CompactedRegion {
     expressions: Vec<IndexExprData>,
     accesses: Vec<VerifiedAccessData>,
     index_domain_evidence: Vec<DischargedIndexDomainPredicate>,
+    unknown_index_domain_predicates: Vec<UnknownIndexDomainPredicate>,
     operations: Vec<ScalarOperationData>,
     values: Vec<ScalarValueData>,
     outputs: Vec<OutputData>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PendingIndexDomainBound {
+    NonNegative,
+    LessThanAxis,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PendingIndexDomainDisposition {
+    Discharged(IndexDomainEvidence),
+    Unknown(IndexDomainUnknownReason),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PendingIndexDomainPredicate {
+    access: u32,
+    axis: u32,
+    bound: PendingIndexDomainBound,
+    disposition: PendingIndexDomainDisposition,
 }
 
 struct ReductionInputs {
@@ -2045,6 +2067,21 @@ impl ProofBudgetExcess {
             },
         }
     }
+
+    const fn unknown_reason(self) -> IndexDomainUnknownReason {
+        match self {
+            Self::Cells { required, limit } => IndexDomainUnknownReason::ResourceLimit {
+                resource: ProofResource::Cells,
+                required,
+                limit,
+            },
+            Self::IntegerBytes { required, limit } => IndexDomainUnknownReason::ResourceLimit {
+                resource: ProofResource::IntegerBytes,
+                required,
+                limit,
+            },
+        }
+    }
 }
 
 fn with_admitted_proof_budget<T>(
@@ -2220,14 +2257,7 @@ fn map_order(order: &[u32]) -> BTreeMap<u32, u32> {
         .map(|(new, old)| (*old, bounded_index(new)))
         .collect()
 }
-/// Returns the point count an enumeration actually walked.
-///
-/// Compaction runs only after `verify_accesses` admitted every access, and an
-/// access it neither bounded by interval nor enumerated is refused there. A
-/// retained `Exhaustive` proof therefore always has a determined domain, and
-/// this states that invariant rather than substituting a plausible count into a
-/// proof record — a retained proof claiming zero enumerated points would be a
-/// false statement about evidence.
+/// Returns the point count an admitted enumeration actually walked.
 fn enumerated_points(points: Option<u64>) -> u64 {
     points.expect("a retained exhaustive proof enumerated a determined domain")
 }

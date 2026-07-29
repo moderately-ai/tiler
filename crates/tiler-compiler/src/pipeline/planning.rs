@@ -330,21 +330,133 @@ pub(super) fn enumerate_complete_plans(
 
 /// Records why one occurrence's lowering could not be established.
 ///
-/// The three classes stay distinct. An absent capability is a deferred
-/// capability: the installed authority was never extended to this occurrence. A
-/// contended capability is a disproved checked predicate: two extensions
-/// contradict each other, which is a defect in the installed authority rather
-/// than a gap in it. A refused refinement is a disproved refinement predicate at
-/// the kernel stage: a provider was resolved, drove the canonical builder, and
-/// the emitted region does not realize the occurrence.
+/// The four classes stay distinct. An absent capability is deferred; a
+/// contended capability is disproved; a residual index predicate is unknown;
+/// and every other refused refinement is disproved.
+fn record_unresolved_index_domain(
+    explain: &mut ExplainWriter,
+    source: &LoweringError,
+    provider: &crate::request::LoweringProviderIdentity,
+    pending: &crate::legality::PendingIndexRefinement,
+    mut cause: ExplainRecordId,
+) -> Result<ExplainRecordId, TargetFailure> {
+    use std::fmt::Write as _;
+
+    let key = format!("occurrence:{}", source.member().0);
+    for (ordinal, obligation) in pending.obligations().enumerate() {
+        let (reason, resource) = match obligation.reason() {
+            tiler_ir::index::IndexDomainUnknownReason::InsufficientFacts => {
+                ("index-domain-insufficient-facts", None)
+            }
+            tiler_ir::index::IndexDomainUnknownReason::UnsupportedFragment => {
+                ("index-domain-unsupported-fragment", None)
+            }
+            tiler_ir::index::IndexDomainUnknownReason::ResourceLimit {
+                resource,
+                required,
+                limit,
+            } => (
+                "index-domain-proof-resource-limit",
+                Some((resource, required, limit)),
+            ),
+        };
+        let predicate_kind = match obligation.predicate() {
+            tiler_ir::index::IndexDomainPredicate::NonNegative { .. } => {
+                "index-domain.non-negative"
+            }
+            tiler_ir::index::IndexDomainPredicate::LessThanExtent { .. } => {
+                "index-domain.less-than-extent"
+            }
+        };
+        let mut obligation_key = String::from("obligation:");
+        for byte in obligation.canonical_local_key().as_bytes() {
+            write!(obligation_key, "{byte:02x}").expect("writing to a String cannot fail");
+        }
+        let ordinal = u64::try_from(ordinal).expect("index-region obligations are host bounded");
+        cause = explain_step(
+            (|| -> Result<_, CompileError> {
+                let provider_ref = ProviderRef::lowering(provider)?;
+                let rule = RuleRef::provided(
+                    "kernel.index-region-refinement.v1",
+                    provider.capability_revision().get(),
+                    provider_ref,
+                )?;
+                let subject = explain.subject(SubjectKind::Kernel, &key)?;
+                let mut assessment = PredicateAssessment::unknown(
+                    format!("kernel.index-domain-obligation.{ordinal}"),
+                    ReasonCode::new(reason)?,
+                )?
+                .with_fact(ExplainFact::new(
+                    "obligation-ordinal",
+                    FactValue::Count(ordinal),
+                )?)?
+                .with_fact(ExplainFact::new(
+                    "obligation-key",
+                    FactValue::Identity(crate::explain::SubjectKey::new(&obligation_key)?),
+                )?)?
+                .with_fact(ExplainFact::new(
+                    "predicate-kind",
+                    FactValue::Identity(crate::explain::SubjectKey::new(predicate_kind)?),
+                )?)?;
+                if let Some((resource, required, limit)) = resource {
+                    let resource = match resource {
+                        tiler_ir::index::ProofResource::Cells => "index-proof-cells",
+                        tiler_ir::index::ProofResource::IntegerBytes => "index-proof-integer-bytes",
+                    };
+                    assessment = assessment
+                        .with_fact(ExplainFact::new(
+                            "proof-resource",
+                            FactValue::Identity(crate::explain::SubjectKey::new(resource)?),
+                        )?)?
+                        .with_fact(ExplainFact::new(
+                            "proof-required-upper-64",
+                            FactValue::Count(
+                                u64::try_from(required >> 64)
+                                    .expect("the upper half of u128 fits u64"),
+                            ),
+                        )?)?
+                        .with_fact(ExplainFact::new(
+                            "proof-required-lower-64",
+                            FactValue::Count(
+                                u64::try_from(required & u128::from(u64::MAX))
+                                    .expect("the lower half of u128 fits u64"),
+                            ),
+                        )?)?
+                        .with_fact(ExplainFact::new("proof-limit", FactValue::Count(limit))?)?;
+                }
+                Ok(explain.push_detail(
+                    rule,
+                    vec![subject],
+                    ExplainEvent::Check {
+                        stage: ExplainStage::KernelRefinement,
+                        assessment,
+                        rejection: RejectionClass::IntrinsicInvalid,
+                    },
+                    vec![cause],
+                )?)
+            })(),
+            ExplainStage::KernelRefinement,
+            SubjectKind::Kernel,
+            &key,
+            record_cause(cause),
+        )?;
+    }
+    Ok(cause)
+}
+
 pub(super) fn record_lowering_failure(
     explain: &mut ExplainWriter,
     source: &LoweringError,
     cause: ExplainRecordId,
 ) -> Result<ExplainRecordId, TargetFailure> {
+    if let Some((provider, pending)) = source.unresolved_index_domain() {
+        return record_unresolved_index_domain(explain, source, provider, pending, cause);
+    }
     let key = format!("occurrence:{}", source.member().0);
     let (stage, subject_kind) = match source {
-        LoweringError::Refine { .. } => (ExplainStage::KernelRefinement, SubjectKind::Kernel),
+        LoweringError::Refine { .. } | LoweringError::Unresolved { .. } => {
+            (ExplainStage::KernelRefinement, SubjectKind::Kernel)
+        }
         LoweringError::Occurrence { .. } | LoweringError::Resolve { .. } => {
             (ExplainStage::CapabilityResolution, SubjectKind::Capability)
         }
@@ -397,7 +509,9 @@ pub(super) fn record_lowering_failure(
 /// installed authority is what could not lower the program.
 pub(super) fn lowering_failure(source: &LoweringError, cause: ExplainRecordId) -> TargetFailure {
     let stage = match source {
-        LoweringError::Refine { .. } => ExplainStage::KernelRefinement,
+        LoweringError::Refine { .. } | LoweringError::Unresolved { .. } => {
+            ExplainStage::KernelRefinement
+        }
         LoweringError::Occurrence { .. } | LoweringError::Resolve { .. } => {
             ExplainStage::CapabilityResolution
         }

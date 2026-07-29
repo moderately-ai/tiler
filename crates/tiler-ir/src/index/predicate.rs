@@ -4,10 +4,29 @@
 //! second index-expression or extent language.
 
 use super::handles::VerifiedRegionOwner;
+use super::model::{TensorData, VerifiedAccessData};
 use super::{
-    IndexEntityKind, IndexExprClass, VerifiedDimensionId, VerifiedIndexExprId,
+    IndexEntityKind, IndexExprClass, ProofResource, VerifiedDimensionId, VerifiedIndexExprId,
     VerifiedIndexHandleError, VerifiedTensorAccessId, VerifiedTensorId,
 };
+
+const INDEX_DOMAIN_OBLIGATION_KEY_DOMAIN: &[u8] = b"tiler.index-domain-obligation-key.v1\0";
+
+/// Opaque canonical bytes for one obligation within its owning region.
+///
+/// This key is region-local because verified handle positions are local. Pair it
+/// with the owning region or a refinement occurrence when using it for
+/// correlation.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct CanonicalIndexDomainObligationKey(Vec<u8>);
+
+impl CanonicalIndexDomainObligationKey {
+    /// Returns canonical region-local key bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
 
 /// A region-owned extent named by a residual index-domain predicate.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -88,6 +107,28 @@ pub enum IndexDomainEvidence {
     Unknown,
 }
 
+/// Why neither an index-domain predicate nor its negation was established.
+///
+/// These are proof outcomes, not evidence classes, confidence levels, or
+/// permission to insert a physical guard.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum IndexDomainUnknownReason {
+    /// The admitted facts permit models on both sides of the predicate.
+    InsufficientFacts,
+    /// The current proof engine does not decide this admitted expression
+    /// fragment.
+    UnsupportedFragment,
+    /// A deterministic proof lane stopped at its governed resource limit.
+    ResourceLimit {
+        /// Exact exhausted proof resource.
+        resource: ProofResource,
+        /// Amount the proof would have required.
+        required: u128,
+        /// Configured maximum amount.
+        limit: u64,
+    },
+}
+
 /// One region-minted record that an exact predicate over an exact access was
 /// discharged.
 ///
@@ -99,6 +140,34 @@ pub struct DischargedIndexDomainPredicate {
     pub(super) subject: VerifiedTensorAccessId,
     pub(super) predicate: IndexDomainPredicate,
     pub(super) evidence: IndexDomainEvidence,
+}
+
+/// Structural authority used while minting region-owned predicate records.
+#[derive(Clone, Copy)]
+pub(super) struct IndexDomainPredicateContext<'a> {
+    owner: VerifiedRegionOwner,
+    accesses: &'a [VerifiedAccessData],
+    tensors: &'a [TensorData],
+    expression_count: usize,
+    dimension_count: usize,
+}
+
+impl<'a> IndexDomainPredicateContext<'a> {
+    pub(super) const fn new(
+        owner: VerifiedRegionOwner,
+        accesses: &'a [VerifiedAccessData],
+        tensors: &'a [TensorData],
+        expression_count: usize,
+        dimension_count: usize,
+    ) -> Self {
+        Self {
+            owner,
+            accesses,
+            tensors,
+            expression_count,
+            dimension_count,
+        }
+    }
 }
 
 impl DischargedIndexDomainPredicate {
@@ -122,49 +191,221 @@ impl DischargedIndexDomainPredicate {
     }
 
     pub(super) fn checked(
-        owner: VerifiedRegionOwner,
+        context: IndexDomainPredicateContext<'_>,
         subject: VerifiedTensorAccessId,
         predicate: IndexDomainPredicate,
         evidence: IndexDomainEvidence,
     ) -> Result<Option<Self>, VerifiedIndexHandleError> {
-        if subject.owner != owner {
-            return Err(VerifiedIndexHandleError::ForeignRegion {
-                entity: IndexEntityKind::TensorAccess,
-            });
-        }
-        let expression = match predicate {
-            IndexDomainPredicate::NonNegative { expression }
-            | IndexDomainPredicate::LessThanExtent { expression, .. } => expression,
-        };
-        if expression.owner != owner {
-            return Err(VerifiedIndexHandleError::ForeignRegion {
-                entity: IndexEntityKind::IndexExpression,
-            });
-        }
-        if let IndexDomainPredicate::LessThanExtent { extent, .. } = predicate {
-            let (extent_owner, entity) = match extent {
-                IndexExtentRef::Dimension(dimension) => {
-                    (dimension.owner, IndexEntityKind::Dimension)
-                }
-                IndexExtentRef::TensorAxis { tensor, .. } => {
-                    (tensor.owner, IndexEntityKind::Tensor)
-                }
-            };
-            if extent_owner != owner {
-                return Err(VerifiedIndexHandleError::ForeignRegion { entity });
-            }
-        }
+        check_predicate_handles(context, subject, predicate)?;
         match evidence {
-            IndexDomainEvidence::SoundProof(_)
-            | IndexDomainEvidence::ExhaustiveFinite { .. }
-            | IndexDomainEvidence::Empirical => Ok(Some(Self {
-                subject,
-                predicate,
-                evidence,
-            })),
-            IndexDomainEvidence::Unknown => Ok(None),
+            IndexDomainEvidence::SoundProof(_) | IndexDomainEvidence::ExhaustiveFinite { .. } => {
+                Ok(Some(Self {
+                    subject,
+                    predicate,
+                    evidence,
+                }))
+            }
+            IndexDomainEvidence::Empirical | IndexDomainEvidence::Unknown => Ok(None),
         }
     }
+}
+
+/// One region-minted residual predicate requiring semantic discharge.
+///
+/// The record carries no physical-guard or runtime-check representation.
+/// Downstream code must either establish the predicate or perform a named
+/// semantic discharge before program work.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct UnknownIndexDomainPredicate {
+    pub(super) subject: VerifiedTensorAccessId,
+    pub(super) predicate: IndexDomainPredicate,
+    pub(super) reason: IndexDomainUnknownReason,
+}
+
+impl UnknownIndexDomainPredicate {
+    /// Returns the verified access whose iteration domain owns the obligation.
+    #[must_use]
+    pub const fn subject(self) -> VerifiedTensorAccessId {
+        self.subject
+    }
+
+    /// Returns the exact unresolved predicate.
+    #[must_use]
+    pub const fn predicate(self) -> IndexDomainPredicate {
+        self.predicate
+    }
+
+    /// Returns why the verifier established neither the predicate nor its
+    /// negation.
+    #[must_use]
+    pub const fn reason(self) -> IndexDomainUnknownReason {
+        self.reason
+    }
+
+    /// Returns a canonical region-local key over the exact predicate and reason.
+    #[must_use]
+    pub fn canonical_local_key(self) -> CanonicalIndexDomainObligationKey {
+        let mut output = INDEX_DOMAIN_OBLIGATION_KEY_DOMAIN.to_vec();
+        encode_index_domain_subject_predicate(&mut output, self.subject, self.predicate);
+        encode_index_domain_unknown_reason(&mut output, self.reason);
+        CanonicalIndexDomainObligationKey(output)
+    }
+
+    pub(super) fn checked(
+        context: IndexDomainPredicateContext<'_>,
+        subject: VerifiedTensorAccessId,
+        predicate: IndexDomainPredicate,
+        reason: IndexDomainUnknownReason,
+    ) -> Result<Self, VerifiedIndexHandleError> {
+        check_predicate_handles(context, subject, predicate)?;
+        Ok(Self {
+            subject,
+            predicate,
+            reason,
+        })
+    }
+}
+
+pub(super) fn encode_index_domain_subject_predicate(
+    output: &mut Vec<u8>,
+    subject: VerifiedTensorAccessId,
+    predicate: IndexDomainPredicate,
+) {
+    output.extend_from_slice(&subject.index.to_be_bytes());
+    match predicate {
+        IndexDomainPredicate::NonNegative { expression } => {
+            output.push(1);
+            output.extend_from_slice(&expression.index.to_be_bytes());
+        }
+        IndexDomainPredicate::LessThanExtent { expression, extent } => {
+            output.push(2);
+            output.extend_from_slice(&expression.index.to_be_bytes());
+            match extent {
+                IndexExtentRef::Dimension(dimension) => {
+                    output.push(1);
+                    output.extend_from_slice(&dimension.index.to_be_bytes());
+                }
+                IndexExtentRef::TensorAxis { tensor, axis } => {
+                    output.push(2);
+                    output.extend_from_slice(&tensor.index.to_be_bytes());
+                    output.extend_from_slice(&axis.to_be_bytes());
+                }
+            }
+        }
+    }
+}
+
+pub(super) fn encode_index_domain_unknown_reason(
+    output: &mut Vec<u8>,
+    reason: IndexDomainUnknownReason,
+) {
+    match reason {
+        IndexDomainUnknownReason::InsufficientFacts => output.push(1),
+        IndexDomainUnknownReason::UnsupportedFragment => output.push(2),
+        IndexDomainUnknownReason::ResourceLimit {
+            resource,
+            required,
+            limit,
+        } => {
+            output.push(3);
+            output.push(match resource {
+                ProofResource::Cells => 1,
+                ProofResource::IntegerBytes => 2,
+            });
+            output.extend_from_slice(&required.to_be_bytes());
+            output.extend_from_slice(&limit.to_be_bytes());
+        }
+    }
+}
+
+fn check_predicate_handles(
+    context: IndexDomainPredicateContext<'_>,
+    subject: VerifiedTensorAccessId,
+    predicate: IndexDomainPredicate,
+) -> Result<(), VerifiedIndexHandleError> {
+    let IndexDomainPredicateContext {
+        owner,
+        accesses,
+        tensors,
+        expression_count,
+        dimension_count,
+    } = context;
+    if subject.owner != owner {
+        return Err(VerifiedIndexHandleError::ForeignRegion {
+            entity: IndexEntityKind::TensorAccess,
+        });
+    }
+    let access =
+        accesses
+            .get(subject.as_usize())
+            .ok_or(VerifiedIndexHandleError::InvalidHandle {
+                entity: IndexEntityKind::TensorAccess,
+            })?;
+    let expression = match predicate {
+        IndexDomainPredicate::NonNegative { expression }
+        | IndexDomainPredicate::LessThanExtent { expression, .. } => expression,
+    };
+    if expression.owner != owner {
+        return Err(VerifiedIndexHandleError::ForeignRegion {
+            entity: IndexEntityKind::IndexExpression,
+        });
+    }
+    if expression.as_usize() >= expression_count
+        || !access
+            .coordinates
+            .contains(&u32::try_from(expression.as_usize()).expect("verified handles fit u32"))
+    {
+        return Err(VerifiedIndexHandleError::InvalidHandle {
+            entity: IndexEntityKind::IndexExpression,
+        });
+    }
+    if let IndexDomainPredicate::LessThanExtent { extent, .. } = predicate {
+        match extent {
+            IndexExtentRef::Dimension(dimension) => {
+                if dimension.owner != owner {
+                    return Err(VerifiedIndexHandleError::ForeignRegion {
+                        entity: IndexEntityKind::Dimension,
+                    });
+                }
+                let dimension_index =
+                    u32::try_from(dimension.as_usize()).expect("verified handles fit u32");
+                if dimension.as_usize() >= dimension_count
+                    || !access.domain.contains(&dimension_index)
+                {
+                    return Err(VerifiedIndexHandleError::InvalidHandle {
+                        entity: IndexEntityKind::Dimension,
+                    });
+                }
+            }
+            IndexExtentRef::TensorAxis { tensor, axis } => {
+                if tensor.owner != owner {
+                    return Err(VerifiedIndexHandleError::ForeignRegion {
+                        entity: IndexEntityKind::Tensor,
+                    });
+                }
+                let tensor_data = tensors.get(tensor.as_usize()).ok_or(
+                    VerifiedIndexHandleError::InvalidHandle {
+                        entity: IndexEntityKind::Tensor,
+                    },
+                )?;
+                let axis =
+                    usize::try_from(axis).map_err(|_| VerifiedIndexHandleError::InvalidHandle {
+                        entity: IndexEntityKind::Tensor,
+                    })?;
+                let expression_index =
+                    u32::try_from(expression.as_usize()).expect("verified handles fit u32");
+                if tensor.as_usize() != access.tensor as usize
+                    || axis >= tensor_data.shape.rank()
+                    || access.coordinates.get(axis) != Some(&expression_index)
+                {
+                    return Err(VerifiedIndexHandleError::InvalidHandle {
+                        entity: IndexEntityKind::Tensor,
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Confirms that every admitted expression class can be referenced without
@@ -186,10 +427,36 @@ const fn expression_class_is_stateable(class: IndexExprClass) -> bool {
 mod tests {
     use super::super::handles::{VerifiedDimensionId, VerifiedIndexExprId, VerifiedTensorAccessId};
     use super::super::handles::{VerifiedTensorId, next_builder_id};
+    use super::super::model::{TensorData, VerifiedAccessData};
+    use super::super::sourced::SourcedShape;
     use super::{
         DischargedIndexDomainPredicate, IndexDomainEvidence, IndexDomainPredicate,
-        IndexDomainSoundProof, IndexExprClass, IndexExtentRef, expression_class_is_stateable,
+        IndexDomainPredicateContext, IndexDomainSoundProof, IndexExprClass, IndexExtentRef,
+        expression_class_is_stateable,
     };
+    use crate::index::TensorRole;
+    use crate::semantic::{ResolvedValueType, TypeKey};
+    use crate::shape::Shape;
+
+    fn records_fixture() -> (Vec<VerifiedAccessData>, Vec<TensorData>) {
+        (
+            vec![VerifiedAccessData {
+                tensor: 0,
+                mode: crate::index::AccessMode::Read,
+                domain: vec![0],
+                coordinates: vec![0],
+                bounds_proof: None,
+                ownership_proof: None,
+            }],
+            vec![TensorData {
+                role: TensorRole::Input,
+                value_type: ResolvedValueType::nominal(
+                    TypeKey::new("test", "predicate-value", 1).unwrap(),
+                ),
+                shape: SourcedShape::from_shape(Shape::from_dims([1])),
+            }],
+        )
+    }
 
     #[test]
     fn every_admitted_expression_class_is_stateable() {
@@ -200,6 +467,7 @@ mod tests {
     #[test]
     fn every_evidence_class_has_an_explicit_discharge_disposition() {
         let owner = next_builder_id().expect("test owner").verified_owner();
+        let (accesses, tensors) = records_fixture();
         let subject = VerifiedTensorAccessId::from_verified(owner, 0);
         let expression = VerifiedIndexExprId::from_verified(owner, 0);
         let predicate = IndexDomainPredicate::LessThanExtent {
@@ -215,12 +483,13 @@ mod tests {
                 true,
             ),
             (IndexDomainEvidence::ExhaustiveFinite { points: 7 }, true),
-            (IndexDomainEvidence::Empirical, true),
+            (IndexDomainEvidence::Empirical, false),
             (IndexDomainEvidence::Unknown, false),
         ];
+        let context = IndexDomainPredicateContext::new(owner, &accesses, &tensors, 1, 1);
         for (evidence, discharged) in cases {
             assert_eq!(
-                DischargedIndexDomainPredicate::checked(owner, subject, predicate, evidence)
+                DischargedIndexDomainPredicate::checked(context, subject, predicate, evidence,)
                     .expect("every handle belongs to the named region")
                     .is_some(),
                 discharged
@@ -231,6 +500,7 @@ mod tests {
     #[test]
     fn evidence_construction_refuses_every_foreign_handle_position() {
         let owner = next_builder_id().expect("test owner").verified_owner();
+        let (accesses, tensors) = records_fixture();
         let foreign = next_builder_id()
             .expect("foreign test owner")
             .verified_owner();
@@ -238,9 +508,10 @@ mod tests {
         let local_expression = VerifiedIndexExprId::from_verified(owner, 0);
         let local_tensor = VerifiedTensorId::from_verified(owner, 0);
         let evidence = IndexDomainEvidence::SoundProof(IndexDomainSoundProof::Interval);
+        let context = IndexDomainPredicateContext::new(owner, &accesses, &tensors, 1, 1);
 
         let foreign_subject = DischargedIndexDomainPredicate::checked(
-            owner,
+            context,
             VerifiedTensorAccessId::from_verified(foreign, 0),
             IndexDomainPredicate::NonNegative {
                 expression: local_expression,
@@ -250,7 +521,7 @@ mod tests {
         assert!(foreign_subject.is_err());
 
         let foreign_expression = DischargedIndexDomainPredicate::checked(
-            owner,
+            context,
             local_subject,
             IndexDomainPredicate::NonNegative {
                 expression: VerifiedIndexExprId::from_verified(foreign, 0),
@@ -260,7 +531,7 @@ mod tests {
         assert!(foreign_expression.is_err());
 
         let foreign_tensor = DischargedIndexDomainPredicate::checked(
-            owner,
+            context,
             local_subject,
             IndexDomainPredicate::LessThanExtent {
                 expression: local_expression,
@@ -274,7 +545,7 @@ mod tests {
         assert!(foreign_tensor.is_err());
 
         let foreign_dimension = DischargedIndexDomainPredicate::checked(
-            owner,
+            context,
             local_subject,
             IndexDomainPredicate::LessThanExtent {
                 expression: local_expression,
@@ -285,7 +556,7 @@ mod tests {
         assert!(foreign_dimension.is_err());
 
         let local = DischargedIndexDomainPredicate::checked(
-            owner,
+            context,
             local_subject,
             IndexDomainPredicate::LessThanExtent {
                 expression: local_expression,
@@ -297,5 +568,49 @@ mod tests {
             evidence,
         );
         assert!(local.expect("local handles are accepted").is_some());
+    }
+
+    #[test]
+    fn evidence_construction_refuses_handles_unrelated_to_the_subject_access() {
+        let owner = next_builder_id().expect("test owner").verified_owner();
+        let (accesses, mut tensors) = records_fixture();
+        tensors.push(TensorData {
+            role: TensorRole::Input,
+            value_type: ResolvedValueType::nominal(
+                TypeKey::new("test", "other-predicate-value", 1).unwrap(),
+            ),
+            shape: SourcedShape::from_shape(Shape::from_dims([1])),
+        });
+        let subject = VerifiedTensorAccessId::from_verified(owner, 0);
+        let unrelated_expression = VerifiedIndexExprId::from_verified(owner, 1);
+        let unrelated_tensor = VerifiedTensorId::from_verified(owner, 1);
+        let evidence = IndexDomainEvidence::SoundProof(IndexDomainSoundProof::Interval);
+
+        assert!(
+            DischargedIndexDomainPredicate::checked(
+                IndexDomainPredicateContext::new(owner, &accesses, &tensors, 2, 1),
+                subject,
+                IndexDomainPredicate::NonNegative {
+                    expression: unrelated_expression,
+                },
+                evidence,
+            )
+            .is_err()
+        );
+        assert!(
+            DischargedIndexDomainPredicate::checked(
+                IndexDomainPredicateContext::new(owner, &accesses, &tensors, 1, 1),
+                subject,
+                IndexDomainPredicate::LessThanExtent {
+                    expression: VerifiedIndexExprId::from_verified(owner, 0),
+                    extent: IndexExtentRef::TensorAxis {
+                        tensor: unrelated_tensor,
+                        axis: 0,
+                    },
+                },
+                evidence,
+            )
+            .is_err()
+        );
     }
 }

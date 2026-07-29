@@ -17,7 +17,9 @@ use crate::capability::{
     LoweringCapabilityRevision, LoweringEmitError, LoweringSignature,
 };
 use crate::cover::RegionCover;
-use crate::explain::{EvidenceBasis, ExplainDisposition, ExplainEvent, ExplainStage, ProviderRef};
+use crate::explain::{
+    EvidenceBasis, ExplainDisposition, ExplainEvent, ExplainStage, FactValue, ProviderRef,
+};
 use crate::region::form_region_candidates;
 use crate::request::{
     CompilationRequest, CompilerCapabilitySnapshot, RequestError, verify_request,
@@ -723,18 +725,19 @@ fn contended_lowering_capabilities_fail_closed_with_a_distinct_error() {
     }));
 }
 
-/// An out-of-crate lowering whose write the interval proof cannot settle.
+/// An out-of-crate lowering whose read interval proof cannot settle.
 ///
-/// The write coordinate is a chain of `wraps` moduli, so it is neither a
-/// coordinate permutation nor interval-provable in one step. Verification
-/// therefore has to enumerate the access domain, at `points × plan_len`
-/// evaluated cells — which is exactly the budget
+/// Each reconstruction round computes `2 * floor(i / 2) + (i mod 2)`. It is
+/// exactly `i`, but interval propagation treats the two terms independently and
+/// includes the exclusive upper bound. Verification therefore has to enumerate
+/// the access domain, at `points × plan_len` evaluated cells, which is exactly
+/// the budget
 /// `tiler_ir::index::MAX_EXHAUSTIVE_PROOF_CELLS` governs.
-struct WrappedWriteMultiplyLowering {
-    wraps: usize,
+struct ConservativeReadMultiplyLowering {
+    rounds: usize,
 }
 
-impl IndexAccessLoweringProvider for WrappedWriteMultiplyLowering {
+impl IndexAccessLoweringProvider for ConservativeReadMultiplyLowering {
     fn lower(&self, context: &mut IndexAccessLoweringContext<'_>) -> Result<(), LoweringEmitError> {
         let shape = context.occurrence().results()[0].shape().clone();
         let value_type = context.occurrence().results()[0].value_type().clone();
@@ -748,6 +751,15 @@ impl IndexAccessLoweringProvider for WrappedWriteMultiplyLowering {
         for dimension in &dimensions {
             coordinates.push(context.dimension_expr(*dimension)?);
         }
+        let mut read_coordinates = coordinates.clone();
+        for _ in 0..self.rounds {
+            let modulo = context.modulo(read_coordinates[0], 2)?;
+            let quotient = context.floor_div(read_coordinates[0], 2)?;
+            read_coordinates[0] = context.linear_combination(
+                0_i128.into(),
+                &[(2_i128.into(), quotient), (1_i128.into(), modulo)],
+            )?;
+        }
         let mut tensors = Vec::new();
         for input in &inputs {
             tensors.push(context.input_tensor(input.value_type().clone(), input.shape().clone())?);
@@ -757,7 +769,7 @@ impl IndexAccessLoweringProvider for WrappedWriteMultiplyLowering {
             let value = if inputs[*position].shape().rank() == 0 {
                 context.read(tensors[*position], &[], &[])?
             } else {
-                context.read(tensors[*position], &dimensions, &coordinates)?
+                context.read(tensors[*position], &dimensions, &read_coordinates)?
             };
             values.push(value);
         }
@@ -767,13 +779,8 @@ impl IndexAccessLoweringProvider for WrappedWriteMultiplyLowering {
             &values,
         )?;
         let product = product.get(0).expect("multiply yields one result");
-        let output = context.output_tensor(value_type, shape.clone())?;
-        let mut written = coordinates.clone();
-        let leading = shape.extents()[0].get();
-        for _ in 0..self.wraps {
-            written[0] = context.modulo(written[0], leading)?;
-        }
-        let write = context.write(output, &dimensions, &written)?;
+        let output = context.output_tensor(value_type, shape)?;
+        let write = context.write(output, &dimensions, &coordinates)?;
         context.output(write, product)
     }
 }
@@ -794,72 +801,87 @@ fn governed_lowerings_never_charge_the_exhaustive_proof_budget() {
     }));
 }
 
-/// A refinement the proof budget cannot afford is a recorded `Unknown` gap.
+/// A residual read obligation cannot enter an executable compilation.
 ///
-/// The compilation is otherwise valid and must stand: nothing about the
-/// emitted region was disproved, the exhaustive access proof simply stopped.
-/// Rejecting the plan here would report an exhausted analysis budget as hard
-/// infeasibility, so the trace instead carries the typed budget stop naming
-/// the resource, its limit, and the required amount, beside an explicit
-/// unknown assessment of the refinement predicate.
+/// The index region itself remains structurally verified and retains the exact
+/// `Unknown` reason. Refinement is stronger evidence: until a semantic discharge
+/// proves the residual, compilation fails before producing a portfolio or
+/// artifact rather than treating an analysis stop as execution permission.
 #[test]
-fn a_refinement_the_proof_budget_cannot_afford_is_recorded_not_rejected() {
-    // 65_535 domain points and an eighteen-expression evaluation plan need
-    // 1_179_630 cells, above the 1_048_576 the exhaustive proof admits.
+fn a_residual_index_obligation_fails_before_executable_plan_construction() {
     let program = external_program(1, Shape::from_dims([65_535, 1]), &[Axis::new(1)], false);
     let mut request = CompilationRequest::governed(&program);
-    request.capabilities =
-        registry_with_external_multiply(true, Arc::new(WrappedWriteMultiplyLowering { wraps: 16 }));
-    let product = compile(request).unwrap();
-    let trace = &product.targets[0].explain;
-
-    let stop = trace
-        .records()
-        .iter()
-        .find(|record| matches!(record.event(), ExplainEvent::BudgetStop { .. }))
-        .expect("the stopped refinement is recorded as a typed budget stop");
-    assert!(matches!(
-        stop.event(),
-        ExplainEvent::BudgetStop {
-            stage: ExplainStage::KernelRefinement,
-            resource,
-            limit: 1_048_576,
-            actual: 1_179_630,
-        } if resource.as_str() == "index-proof-cells"
-    ));
-
-    // The unproven predicate is recorded as unknown, never as admitted.
-    let unknown = trace
-        .records()
-        .iter()
-        .find(|record| {
-            record.rule().key().as_str() == "kernel.index-region-refinement.v1"
-                && matches!(
-                    record.event(),
-                    ExplainEvent::Check {
-                        assessment,
-                        ..
-                    } if assessment.basis() == &EvidenceBasis::Unknown
-                )
+    request.capabilities = registry_with_external_multiply(
+        true,
+        Arc::new(ConservativeReadMultiplyLowering { rounds: 5 }),
+    );
+    let CompileError::Explained { source, explain } = compile(request).unwrap_err() else {
+        panic!("target compilation failures retain their explain trace");
+    };
+    assert_eq!(
+        *source,
+        CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
+            phase: "lowering",
+            rule: "unresolved-index-domain",
         })
-        .expect("the absent refinement is recorded as an unknown gap");
-    assert_eq!(
-        unknown.event().disposition(),
-        ExplainDisposition::DeferredUnsupported
     );
-
-    // The remaining occurrences still carry exhaustive finite evidence, and
-    // the plan the budget stop applies to is still retained.
+    let residuals = explain
+        .records()
+        .iter()
+        .filter(|record| {
+            record.event().stage() == ExplainStage::KernelRefinement
+                && record.event().disposition() == ExplainDisposition::DeferredUnsupported
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(residuals.len(), 1);
+    let residual = residuals[0];
     assert_eq!(
-        trace
-            .records()
+        residual.rule().key().as_str(),
+        "kernel.index-region-refinement.v1"
+    );
+    assert_eq!(
+        residual.rule().provider(),
+        &ProviderRef::registered(&external_lowering_provider()).unwrap()
+    );
+    let ExplainEvent::Check { assessment, .. } = residual.event() else {
+        panic!("the residual is a predicate assessment");
+    };
+    assert_eq!(assessment.basis(), &EvidenceBasis::Unknown);
+    let fact = |key| {
+        assessment
+            .facts()
             .iter()
-            .filter(|record| {
-                record.rule().key().as_str() == "kernel.index-region-refinement.v1"
-                    && record.event().disposition() == ExplainDisposition::Admitted
-            })
-            .count(),
-        4
+            .find(|fact| fact.key().as_str() == key)
+            .map_or_else(
+                || panic!("residual assessment carries {key}"),
+                crate::explain::ExplainFact::value,
+            )
+    };
+    assert_eq!(fact("obligation-ordinal"), &FactValue::Count(0));
+    assert_eq!(
+        fact("predicate-kind"),
+        &FactValue::Identity(
+            crate::explain::SubjectKey::new("index-domain.less-than-extent").unwrap()
+        )
     );
-    assert_eq!(product.targets[0].portfolio.alternatives.len(), 2);
+    assert_eq!(
+        fact("proof-resource"),
+        &FactValue::Identity(crate::explain::SubjectKey::new("index-proof-cells").unwrap())
+    );
+    let FactValue::Count(required_upper) = fact("proof-required-upper-64") else {
+        panic!("the exact required upper half is a count");
+    };
+    let FactValue::Count(required_lower) = fact("proof-required-lower-64") else {
+        panic!("the exact required lower half is a count");
+    };
+    let FactValue::Count(limit) = fact("proof-limit") else {
+        panic!("the proof limit is a count");
+    };
+    let required = (u128::from(*required_upper) << 64) | u128::from(*required_lower);
+    assert!(required > u128::from(*limit));
+    assert!(matches!(fact("obligation-key"), FactValue::Identity(_)));
+    assert!(!explain.records().iter().any(|record| {
+        record.rule().key().as_str() == "kernel.index-region-refinement.v1"
+            && record.event().disposition() == ExplainDisposition::Admitted
+    }));
 }

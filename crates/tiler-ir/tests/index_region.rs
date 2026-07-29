@@ -6,12 +6,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tiler_ir::CheckedBuildError;
 use tiler_ir::index::{
-    BoundsProofView, DomainRole, IndexBuildError, IndexInteger, IndexIntegerSign, IndexLimitKind,
-    IndexRegionBuilder, IndexRegionDiagnostic, MAX_INDEX_EXPRESSION_DEPTH, MAX_INDEX_INTEGER_BYTES,
-    MAX_TENSOR_RANK, ScalarArity, ScalarAttributeField, ScalarAttributeSchema, ScalarAttributes,
-    ScalarEffect, ScalarInferenceError, ScalarInferenceOutputs, ScalarInferenceRequest,
-    ScalarOpKey, ScalarOperationContract, ScalarOperationDefinition, ScalarOperationInferencer,
-    ScalarRegistryBuilder, ScalarRegistryError, TensorRole, WriteOwnershipProofView,
+    BoundsProofView, DomainRole, IndexBuildError, IndexDomainPredicate, IndexDomainUnknownReason,
+    IndexInteger, IndexIntegerSign, IndexLimitKind, IndexRegionBuilder, IndexRegionDiagnostic,
+    MAX_EXHAUSTIVE_PROOF_BYTES, MAX_EXHAUSTIVE_PROOF_CELLS, MAX_INDEX_EXPRESSION_DEPTH,
+    MAX_INDEX_INTEGER_BYTES, MAX_TENSOR_RANK, ProofResource, ScalarArity, ScalarAttributeField,
+    ScalarAttributeSchema, ScalarAttributes, ScalarEffect, ScalarInferenceError,
+    ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract,
+    ScalarOperationDefinition, ScalarOperationInferencer, ScalarRegistryBuilder,
+    ScalarRegistryError, TensorRole, WriteOwnershipProofView,
 };
 use tiler_ir::semantic::{
     AttributeFieldId, CanonicalField, CanonicalValue, CanonicalValueKind, FrozenSemanticRegistry,
@@ -1377,11 +1379,9 @@ fn conservative_interval_overlap_uses_finite_proof() {
     let write = builder.write(output, &[dimension], &[expression]).unwrap();
     builder.output(write, value).unwrap();
     let region = builder.build().unwrap();
-    assert!(
-        region
-            .accesses()
-            .any(|access| { access.bounds_proof() == BoundsProofView::Exhaustive { points: 5 } })
-    );
+    assert!(region.accesses().any(|access| {
+        access.bounds_proof() == Some(BoundsProofView::Exhaustive { points: 5 })
+    }));
 }
 
 #[test]
@@ -1487,7 +1487,7 @@ fn empty_reduction_read_is_vacuous_and_parallel_write_is_proved() {
     let mut accesses = region.accesses();
     assert_eq!(
         accesses.next().unwrap().bounds_proof(),
-        BoundsProofView::VacuousEmptyDomain
+        Some(BoundsProofView::VacuousEmptyDomain)
     );
     assert_eq!(
         accesses.next().unwrap().write_ownership_proof(),
@@ -1597,21 +1597,20 @@ fn exhaustive_ownership_obeys_proof_cell_budget() {
     let value = builder.read(input, &[dimension], &[expression]).unwrap();
     let write = builder.write(output, &[dimension], &[reversed]).unwrap();
     builder.output(write, value).unwrap();
+    let error = builder.build().unwrap_err();
+    assert!(error.diagnostics().iter().any(|diagnostic| matches!(
+        diagnostic,
+        IndexRegionDiagnostic::WriteOwnershipNotProven { .. }
+    )));
     assert!(
-        builder
-            .build()
-            .unwrap_err()
-            .diagnostics()
-            .iter()
-            .any(|diagnostic| matches!(
-                diagnostic,
-                IndexRegionDiagnostic::ProofResourceLimit { .. }
-            ))
+        error.diagnostics().iter().any(|diagnostic| matches!(
+            diagnostic,
+            IndexRegionDiagnostic::ProofResourceLimit { .. }
+        ))
     );
 }
 
-#[test]
-fn individually_admissible_accesses_share_one_aggregate_proof_budget() {
+fn aggregate_read_budget_builder(include_unrooted_output: bool) -> IndexRegionBuilder {
     let extent = 199_999;
     let (_, registry) = registries();
     let mut builder = IndexRegionBuilder::new(registry).unwrap();
@@ -1624,6 +1623,11 @@ fn individually_admissible_accesses_share_one_aggregate_proof_budget() {
     let output = builder
         .tensor(TensorRole::Output, test_type(), Shape::from_dims([extent]))
         .unwrap();
+    if include_unrooted_output {
+        builder
+            .tensor(TensorRole::Output, test_type(), Shape::from_dims([]))
+            .unwrap();
+    }
     let dimension = builder
         .dimension(DomainRole::Parallel, Extent::new(extent))
         .unwrap();
@@ -1653,19 +1657,89 @@ fn individually_admissible_accesses_share_one_aggregate_proof_budget() {
         .unwrap();
     let write = builder.write(output, &[dimension], &[expression]).unwrap();
     builder.output(write, combined).unwrap();
-    assert!(
-        builder
-            .build()
-            .unwrap_err()
-            .diagnostics()
-            .iter()
-            .any(|diagnostic| matches!(
-                diagnostic,
-                IndexRegionDiagnostic::ProofResourceLimit {
-                    resource: tiler_ir::index::ProofResource::Cells,
-                    ..
-                }
-            ))
+    builder
+}
+
+#[test]
+fn individually_admissible_accesses_share_one_aggregate_proof_budget() {
+    let region = aggregate_read_budget_builder(false)
+        .build()
+        .expect("a read-only proof-budget stop becomes a semantic obligation");
+    let unknown = region.unknown_index_domain_predicates().collect::<Vec<_>>();
+    assert_eq!(unknown.len(), 2);
+    assert!(unknown.iter().all(|record| matches!(
+        record.predicate(),
+        IndexDomainPredicate::LessThanExtent { .. }
+    )));
+    assert!(unknown.iter().all(|record| record.reason()
+        == IndexDomainUnknownReason::ResourceLimit {
+            resource: ProofResource::Cells,
+            required: 1_599_992,
+            limit: MAX_EXHAUSTIVE_PROOF_CELLS,
+        }));
+    assert!(unknown.iter().all(|record| {
+        region
+            .index_domain_evidence(record.subject(), record.predicate())
+            .unwrap()
+            .is_none()
+    }));
+}
+
+#[test]
+fn a_hard_diagnostic_is_not_upgraded_by_a_read_budget_stop() {
+    let error = aggregate_read_budget_builder(true).build().unwrap_err();
+    assert!(error.diagnostics().iter().any(|diagnostic| matches!(
+        diagnostic,
+        IndexRegionDiagnostic::MissingOutputTensor { .. }
+    )));
+    assert!(error.diagnostics().iter().any(|diagnostic| matches!(
+        diagnostic,
+        IndexRegionDiagnostic::ProofResourceLimit {
+            resource: ProofResource::Cells,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn read_integer_storage_budget_retains_the_exact_resource() {
+    let (_, registry) = registries();
+    let mut builder = IndexRegionBuilder::new(registry).unwrap();
+    let input = builder
+        .tensor(TensorRole::Input, test_type(), Shape::from_dims([1]))
+        .unwrap();
+    let output = builder
+        .tensor(TensorRole::Output, test_type(), Shape::from_dims([65]))
+        .unwrap();
+    let dimension = builder
+        .dimension(DomainRole::Parallel, Extent::new(65))
+        .unwrap();
+    let write_coordinate = builder.dimension_expr(dimension).unwrap();
+    let mut magnitude = vec![0xff; MAX_INDEX_INTEGER_BYTES];
+    magnitude[0] = 0x7f;
+    magnitude[MAX_INDEX_INTEGER_BYTES - 1] = 0xfe;
+    let huge_even = IndexInteger::from_sign_magnitude(IndexIntegerSign::Positive, &magnitude)
+        .expect("the fixture sits exactly at the admitted integer size");
+    let constant = builder.constant(huge_even).unwrap();
+    let coordinate = builder.modulo(constant, 2).unwrap();
+    let value = builder.read(input, &[dimension], &[coordinate]).unwrap();
+    let write = builder
+        .write(output, &[dimension], &[write_coordinate])
+        .unwrap();
+    builder.output(write, value).unwrap();
+
+    let region = builder
+        .build()
+        .expect("integer-storage exhaustion on a read is retained");
+    let unknown = region.unknown_index_domain_predicates().collect::<Vec<_>>();
+    assert_eq!(unknown.len(), 1);
+    assert_eq!(
+        unknown[0].reason(),
+        IndexDomainUnknownReason::ResourceLimit {
+            resource: ProofResource::IntegerBytes,
+            required: 68_157_505,
+            limit: MAX_EXHAUSTIVE_PROOF_BYTES,
+        }
     );
 }
 
@@ -1754,7 +1828,7 @@ fn late_zero_domain_is_vacuous_before_cardinality_overflow() {
     assert!(
         region
             .accesses()
-            .all(|access| access.bounds_proof() == BoundsProofView::VacuousEmptyDomain)
+            .all(|access| { access.bounds_proof() == Some(BoundsProofView::VacuousEmptyDomain) })
     );
 }
 

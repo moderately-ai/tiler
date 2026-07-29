@@ -8,10 +8,10 @@ use super::handles::VerifiedRegionOwner;
 use super::sourced::{ExtentSources, SourcedExtent, SourcedShape};
 use super::{
     DischargedIndexDomainPredicate, IndexDomainPredicate, IndexEntityKind, IndexExtentRef,
-    IndexInteger, ScalarAttributes, ScalarOpKey, ScalarResultIndex, VerifiedDimensionId,
-    VerifiedIndexExprId, VerifiedIndexHandleError, VerifiedReducerBodyOperationId,
-    VerifiedReducerBodyValueId, VerifiedScalarOperationId, VerifiedScalarValueId,
-    VerifiedTensorAccessId, VerifiedTensorId,
+    IndexInteger, ScalarAttributes, ScalarOpKey, ScalarResultIndex, UnknownIndexDomainPredicate,
+    VerifiedDimensionId, VerifiedIndexExprId, VerifiedIndexHandleError,
+    VerifiedReducerBodyOperationId, VerifiedReducerBodyValueId, VerifiedScalarOperationId,
+    VerifiedScalarValueId, VerifiedTensorAccessId, VerifiedTensorId,
 };
 
 /// Whether one boundary tensor is consumed or produced.
@@ -117,7 +117,7 @@ pub(super) struct VerifiedAccessData {
     pub mode: AccessMode,
     pub domain: Vec<u32>,
     pub coordinates: Vec<u32>,
-    pub bounds_proof: BoundsProof,
+    pub bounds_proof: Option<BoundsProof>,
     pub ownership_proof: Option<WriteOwnershipProof>,
 }
 
@@ -230,6 +230,7 @@ pub(super) struct VerifiedIndexRegionData {
     pub expressions: Vec<IndexExprData>,
     pub accesses: Vec<VerifiedAccessData>,
     pub index_domain_evidence: Vec<DischargedIndexDomainPredicate>,
+    pub unknown_index_domain_predicates: Vec<UnknownIndexDomainPredicate>,
     pub operations: Vec<ScalarOperationData>,
     pub values: Vec<ScalarValueData>,
     pub outputs: Vec<OutputData>,
@@ -325,33 +326,40 @@ impl VerifiedIndexRegion {
         subject: VerifiedTensorAccessId,
         predicate: IndexDomainPredicate,
     ) -> Result<Option<DischargedIndexDomainPredicate>, VerifiedIndexHandleError> {
-        self.access(subject)?;
-        let expression = match predicate {
-            IndexDomainPredicate::NonNegative { expression }
-            | IndexDomainPredicate::LessThanExtent { expression, .. } => expression,
-        };
-        self.index_expression(expression)?;
-        if let IndexDomainPredicate::LessThanExtent { extent, .. } = predicate {
-            match extent {
-                IndexExtentRef::Dimension(dimension) => {
-                    self.dimension(dimension)?;
-                }
-                IndexExtentRef::TensorAxis { tensor, axis } => {
-                    let tensor = self.tensor(tensor)?;
-                    if usize::try_from(axis)
-                        .ok()
-                        .is_none_or(|axis| axis >= tensor.data.shape.rank())
-                    {
-                        return Err(VerifiedIndexHandleError::InvalidHandle {
-                            entity: IndexEntityKind::Tensor,
-                        });
-                    }
-                }
-            }
-        }
+        self.validate_index_domain_predicate(subject, predicate)?;
         Ok(self
             .data
             .index_domain_evidence
+            .iter()
+            .copied()
+            .find(|record| record.subject == subject && record.predicate == predicate))
+    }
+    /// Returns every unresolved index-domain predicate in canonical order.
+    ///
+    /// These are semantic obligations, not physical guards. A consumer must
+    /// discharge every record before program work.
+    #[must_use]
+    pub fn unknown_index_domain_predicates(
+        &self,
+    ) -> impl ExactSizeIterator<Item = UnknownIndexDomainPredicate> + '_ {
+        self.data.unknown_index_domain_predicates.iter().copied()
+    }
+    /// Looks up one exact unresolved access/predicate pair.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the subject or any predicate handle belongs to a
+    /// different region, names no retained entity, or names a tensor axis that
+    /// does not exist.
+    pub fn index_domain_unknown(
+        &self,
+        subject: VerifiedTensorAccessId,
+        predicate: IndexDomainPredicate,
+    ) -> Result<Option<UnknownIndexDomainPredicate>, VerifiedIndexHandleError> {
+        self.validate_index_domain_predicate(subject, predicate)?;
+        Ok(self
+            .data
+            .unknown_index_domain_predicates
             .iter()
             .copied()
             .find(|record| record.subject == subject && record.predicate == predicate))
@@ -540,6 +548,53 @@ impl VerifiedIndexRegion {
         } else {
             Err(VerifiedIndexHandleError::ForeignRegion { entity })
         }
+    }
+    fn validate_index_domain_predicate(
+        &self,
+        subject: VerifiedTensorAccessId,
+        predicate: IndexDomainPredicate,
+    ) -> Result<(), VerifiedIndexHandleError> {
+        let access = self.access(subject)?;
+        let expression = match predicate {
+            IndexDomainPredicate::NonNegative { expression }
+            | IndexDomainPredicate::LessThanExtent { expression, .. } => expression,
+        };
+        self.index_expression(expression)?;
+        let expression_index =
+            u32::try_from(expression.as_usize()).expect("verified handles fit u32");
+        if !access.data.coordinates.contains(&expression_index) {
+            return Err(VerifiedIndexHandleError::InvalidHandle {
+                entity: IndexEntityKind::IndexExpression,
+            });
+        }
+        if let IndexDomainPredicate::LessThanExtent { extent, .. } = predicate {
+            match extent {
+                IndexExtentRef::Dimension(dimension) => {
+                    self.dimension(dimension)?;
+                    let dimension_index =
+                        u32::try_from(dimension.as_usize()).expect("verified handles fit u32");
+                    if !access.data.domain.contains(&dimension_index) {
+                        return Err(VerifiedIndexHandleError::InvalidHandle {
+                            entity: IndexEntityKind::Dimension,
+                        });
+                    }
+                }
+                IndexExtentRef::TensorAxis { tensor, axis } => {
+                    let tensor = self.tensor(tensor)?;
+                    if tensor.id.as_usize() != access.data.tensor as usize
+                        || usize::try_from(axis).ok().is_none_or(|axis| {
+                            axis >= tensor.data.shape.rank()
+                                || access.data.coordinates.get(axis) != Some(&expression_index)
+                        })
+                    {
+                        return Err(VerifiedIndexHandleError::InvalidHandle {
+                            entity: IndexEntityKind::Tensor,
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
     }
     /// Resolves a reducer-body value in constant time.
     ///
@@ -856,13 +911,13 @@ impl<'a> TensorAccessRef<'a> {
     }
     /// Returns retained bounds evidence.
     #[must_use]
-    pub fn bounds_proof(self) -> BoundsProofView {
-        match self.data.bounds_proof {
+    pub fn bounds_proof(self) -> Option<BoundsProofView> {
+        self.data.bounds_proof.map(|proof| match proof {
             BoundsProof::VacuousEmptyDomain => BoundsProofView::VacuousEmptyDomain,
             BoundsProof::Interval => BoundsProofView::Interval,
             BoundsProof::ProvedExtentEquality => BoundsProofView::ProvedExtentEquality,
             BoundsProof::Exhaustive { points } => BoundsProofView::Exhaustive { points },
-        }
+        })
     }
     /// Returns retained complete-write evidence when this is a write.
     #[must_use]

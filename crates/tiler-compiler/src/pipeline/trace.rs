@@ -136,12 +136,10 @@ pub(super) fn record_fusion_legality(
 /// classes. The [`ExplainStage::CapabilityResolution`] record is an admitted
 /// checked invariant attributed to the resolved provider: the installed registry
 /// resolved exactly one index-access capability for this occurrence. The
-/// [`ExplainStage::KernelRefinement`] record is either the exhaustive finite
-/// evidence that the provider's region realizes the occurrence, or — when the
-/// exhaustive access proof could not afford the region — a typed budget stop
-/// naming the resource, its limit, and the required amount, plus an explicit
-/// `Unknown` assessment. The budget stop is never a rejection: nothing about the
-/// region was disproved, the analysis stopped.
+/// [`ExplainStage::KernelRefinement`] record is the exhaustive finite evidence
+/// that the provider's region realizes the occurrence. An unresolved semantic
+/// predicate fails before a `ResolvedLowering` exists and therefore cannot be
+/// recorded here as if it supported an executable plan.
 pub(super) fn record_lowering(
     explain: &mut ExplainWriter,
     lowering: &ResolvedLowering,
@@ -182,11 +180,11 @@ pub(super) fn record_lowering(
     Ok(cause)
 }
 
-/// Records one occurrence's refinement evidence or its recorded proof gap.
+/// Records one occurrence's refinement evidence.
 pub(super) fn record_refinement(
     explain: &mut ExplainWriter,
     occurrence: &crate::lowering::OccurrenceLowering,
-    mut cause: ExplainRecordId,
+    cause: ExplainRecordId,
 ) -> Result<ExplainRecordId, TargetFailure> {
     let key = occurrence.subject_key();
     match occurrence.evidence() {
@@ -214,50 +212,6 @@ pub(super) fn record_refinement(
                                 "refinement-identity",
                                 FactValue::Identity(crate::explain::SubjectKey::new(identity)?),
                             )?)?,
-                            rejection: RejectionClass::IntrinsicInvalid,
-                        },
-                        vec![cause],
-                    )?)
-                })(),
-                ExplainStage::KernelRefinement,
-                SubjectKind::Kernel,
-                &key,
-                record_cause(cause),
-            )
-        }
-        OccurrenceEvidence::BudgetStopped(stop) => {
-            cause = explain_step(
-                (|| -> Result<_, CompileError> {
-                    let subject = explain.subject(SubjectKind::Kernel, &key)?;
-                    Ok(explain.push_detail(
-                        RuleRef::builtin("kernel.index-region-refinement.v1")?,
-                        vec![subject],
-                        ExplainEvent::BudgetStop {
-                            stage: ExplainStage::KernelRefinement,
-                            resource: crate::explain::ResourceKey::new(stop.resource_key())?,
-                            limit: stop.limit,
-                            actual: u64::try_from(stop.required).unwrap_or(u64::MAX),
-                        },
-                        vec![cause],
-                    )?)
-                })(),
-                ExplainStage::KernelRefinement,
-                SubjectKind::Kernel,
-                &key,
-                record_cause(cause),
-            )?;
-            explain_step(
-                (|| -> Result<_, CompileError> {
-                    let subject = explain.subject(SubjectKind::Kernel, &key)?;
-                    Ok(explain.push_detail(
-                        RuleRef::builtin("kernel.index-region-refinement.v1")?,
-                        vec![subject],
-                        ExplainEvent::Check {
-                            stage: ExplainStage::KernelRefinement,
-                            assessment: PredicateAssessment::unknown(
-                                "kernel.index-region-refines-occurrence",
-                                ReasonCode::new("proof-budget-exhausted")?,
-                            )?,
                             rejection: RejectionClass::IntrinsicInvalid,
                         },
                         vec![cause],

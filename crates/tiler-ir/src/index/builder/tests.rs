@@ -18,11 +18,12 @@ use crate::index::model::{
 use crate::index::scalar::{ScalarApplyError, ScalarInferenceHostFailure};
 use crate::index::{
     DomainRole, FrozenScalarRegistry, IndexBuildError, IndexDomainEvidence, IndexDomainPredicate,
-    IndexDomainSoundProof, IndexExtentRef, IndexLimitKind, IndexRegionBuilder,
-    MAX_SCALAR_CANONICAL_BYTES, ScalarArity, ScalarAttributeSchema, ScalarAttributes, ScalarEffect,
-    ScalarInferenceError, ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey,
-    ScalarOperationContract, ScalarOperationDefinition, ScalarOperationInferencer,
-    ScalarRegistryBuilder, ScalarResultIndex, TensorRole, VerifiedIndexRegion,
+    IndexDomainSoundProof, IndexDomainUnknownReason, IndexExtentRef, IndexLimitKind,
+    IndexRegionBuilder, MAX_SCALAR_CANONICAL_BYTES, ProofResource, ScalarArity,
+    ScalarAttributeSchema, ScalarAttributes, ScalarEffect, ScalarInferenceError,
+    ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract,
+    ScalarOperationDefinition, ScalarOperationInferencer, ScalarRegistryBuilder, ScalarResultIndex,
+    TensorRole, UnknownIndexDomainPredicate, VerifiedIndexRegion,
 };
 use crate::semantic::{
     CanonicalValue, NormativeDefinitionRef, ProviderIdentity, RegistryError, ResolvedValueType,
@@ -348,7 +349,7 @@ fn every_coordinate_predicate_retains_exact_inspectable_evidence() {
 }
 
 #[test]
-fn evidence_subject_predicate_and_basis_each_enter_region_identity() {
+fn index_domain_subject_predicate_outcome_and_basis_each_enter_region_identity() {
     let region = verified_copy();
     let data = &region.data;
     let compacted = || CompactedRegion {
@@ -357,6 +358,7 @@ fn evidence_subject_predicate_and_basis_each_enter_region_identity() {
         expressions: data.expressions.clone(),
         accesses: data.accesses.clone(),
         index_domain_evidence: data.index_domain_evidence.clone(),
+        unknown_index_domain_predicates: data.unknown_index_domain_predicates.clone(),
         operations: data.operations.clone(),
         values: data.values.clone(),
         outputs: data.outputs.clone(),
@@ -397,8 +399,76 @@ fn evidence_subject_predicate_and_basis_each_enter_region_identity() {
     };
     assert_ne!(identity(&baseline), identity(&changed_predicate));
 
-    let mut changed_basis = compacted();
-    changed_basis.index_domain_evidence[0].evidence =
-        IndexDomainEvidence::SoundProof(IndexDomainSoundProof::ProvedExtentEquality);
-    assert_ne!(identity(&baseline), identity(&changed_basis));
+    let evidence_cases = [
+        IndexDomainEvidence::SoundProof(IndexDomainSoundProof::VacuousEmptyDomain),
+        IndexDomainEvidence::SoundProof(IndexDomainSoundProof::Interval),
+        IndexDomainEvidence::SoundProof(IndexDomainSoundProof::ProvedExtentEquality),
+        IndexDomainEvidence::ExhaustiveFinite { points: 7 },
+        IndexDomainEvidence::Empirical,
+    ];
+    let mut evidence_identities = Vec::new();
+    for evidence in evidence_cases {
+        let mut changed_basis = compacted();
+        changed_basis.index_domain_evidence[0].evidence = evidence;
+        evidence_identities.push(identity(&changed_basis));
+    }
+    evidence_identities.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+    evidence_identities.dedup();
+    assert_eq!(evidence_identities.len(), evidence_cases.len());
+
+    let unknown = |reason| {
+        let mut changed_outcome = compacted();
+        let discharged = changed_outcome.index_domain_evidence.remove(0);
+        changed_outcome
+            .unknown_index_domain_predicates
+            .push(UnknownIndexDomainPredicate {
+                subject: discharged.subject,
+                predicate: discharged.predicate,
+                reason,
+            });
+        changed_outcome
+    };
+    let unknown_cases = [
+        IndexDomainUnknownReason::InsufficientFacts,
+        IndexDomainUnknownReason::UnsupportedFragment,
+        IndexDomainUnknownReason::ResourceLimit {
+            resource: ProofResource::Cells,
+            required: 11,
+            limit: 7,
+        },
+        IndexDomainUnknownReason::ResourceLimit {
+            resource: ProofResource::IntegerBytes,
+            required: 11,
+            limit: 7,
+        },
+        IndexDomainUnknownReason::ResourceLimit {
+            resource: ProofResource::Cells,
+            required: 12,
+            limit: 7,
+        },
+        IndexDomainUnknownReason::ResourceLimit {
+            resource: ProofResource::Cells,
+            required: 11,
+            limit: 8,
+        },
+    ];
+    let mut unknown_keys = unknown_cases
+        .iter()
+        .copied()
+        .map(|reason| unknown(reason).unknown_index_domain_predicates[0].canonical_local_key())
+        .collect::<Vec<_>>();
+    unknown_keys.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+    unknown_keys.dedup();
+    assert_eq!(unknown_keys.len(), unknown_cases.len());
+    let mut unknown_identities = unknown_cases
+        .into_iter()
+        .map(|reason| identity(&unknown(reason)))
+        .collect::<Vec<_>>();
+    unknown_identities.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+    unknown_identities.dedup();
+    assert_eq!(unknown_identities.len(), unknown_cases.len());
+    assert_ne!(
+        identity(&baseline),
+        identity(&unknown(IndexDomainUnknownReason::InsufficientFacts))
+    );
 }

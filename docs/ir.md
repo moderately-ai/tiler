@@ -1072,12 +1072,7 @@ scalar model is complete:
   multi-result operations, and exact serial reduction without dtype branches;
   the downstream initial executable profile remains strict `f32`, which is a
   capability limit rather than an intrinsic limit of scalar IR;
-- interval bounds proofs, a structural proved-extent-equality bounds proof for
-  a coordinate that *is* a domain dimension whose extent the environment proves
-  equal to its axis, resource-bounded finite fallback when neither closes,
-  structural permutation proofs for large ordinary writes, resource-bounded
-  exhaustive ownership fallback, zero/rank-zero behavior, and access-owned
-  bounds/write-ownership evidence with inspectable proof kinds; and
+- interval bounds proofs, a structural proved-extent-equality bounds proof for a coordinate that *is* a domain dimension whose extent the environment proves equal to its axis, resource-bounded finite fallback when neither closes, structural permutation proofs for large ordinary writes, resource-bounded exhaustive ownership fallback, zero/rank-zero behavior, and access-owned discharged or residual predicate records with inspectable proof kinds and `Unknown` reasons; and
 - reachable compaction plus canonical structural identity that excludes draft
   ownership, raw semantic handles, dead builder history, semantic-region
   identity, proof caches, provider addresses, and target choices.
@@ -1088,14 +1083,15 @@ They return `Some` throughout this bounded profile. A future symbolic profile
 can return `None` and expose its `ShapeEnv` expression through an additive
 borrowed view instead of changing the meaning of an existing accessor.
 
-The structural verifier proves only structural well-formedness, bounds,
-lexical reduction closure, and ordinary write ownership. It does not claim
-semantic sourceability or operation equivalence. A relation such as
-`y[i] = x[0]` can be structurally valid and in bounds while being an incorrect
-lowering of semantic `y[i] = x[i]`; later legality evidence must reject that
-mismatch.
+The structural verifier proves structural well-formedness, lexical reduction closure, and ordinary write ownership, and it classifies each logical read-bounds atom as discharged or residual. It does not claim semantic sourceability or operation equivalence. A relation such as `y[i] = x[0]` can be structurally valid and in bounds while being an incorrect lowering of semantic `y[i] = x[i]`; later legality evidence must reject that mismatch.
 
-The finite fallbacks above are resource-bounded, and exceeding a bound is reported as a distinct diagnostic rather than folded into a refusal. A proof-resource diagnostic names the exhausted resource, the amount the proof would have required, and the governed limit, and it means that the enumeration stopped — not that the region was disproved. Every other diagnostic in the same result *is* a refusal. A consumer must therefore distinguish the two before deciding anything: a result carrying only proof-resource diagnostics leaves its predicates open, while one carrying any other diagnostic is a rejection whatever else accompanies it. [The optimizer contract](compiler/optimizer.md#refinement-is-exhaustive-finite-evidence-with-an-explicit-gap) owns what the compiler does with each.
+Each access contributes exact logical-coordinate atoms—nonnegativity and strict upper bounds sourced from its tensor axes—independently of the tensor's `ResolvedValueType`. The same predicate vocabulary therefore applies to nominal booleans and integers, parameterized complex values, and encoded-numeric or quantized values. This establishes no physical bit, byte, component-buffer, packing, alignment, or masked-execution safety: those remain separate storage, ABI, schedule, and KIR obligations.
+
+The finite fallbacks are resource-bounded. When a read predicate cannot be decided because facts are insufficient, the admitted expression fragment is unsupported, or a governed proof resource is exhausted, a structurally verified region retains the exact access-owned predicate with `IndexDomainUnknownReason::{InsufficientFacts, UnsupportedFragment, ResourceLimit}`. A resource-limit reason names the exact resource, required amount, and governed limit. It is neither a proof nor a physical guard. Genuine disproval, malformed structure, unresolved ordinary-write ownership, or any other hard diagnostic still rejects; a proof-resource limit beside such a diagnostic cannot upgrade the rejection into a verified region.
+
+Discharged and residual predicates share one canonical assessment sequence in region identity, including exact subject, predicate, outcome, proof basis or unknown reason, exhausted resource, required amount, and limit. A residual also exposes an opaque canonical region-local key over that exact tuple; it must be paired with the owning region or refinement occurrence rather than treated as a global identity. A bounds-proof view is absent when an access retains residual bounds. The checked record lifecycle validates region ownership, handle existence, the expression's membership in the subject access, the tensor-axis association, and dimension-domain membership before minting either outcome.
+
+Only a `SoundProof` or an exact `ExhaustiveFinite` result can mint a discharged predicate. `Empirical` remains a distinct reserved evidence class for measurements, but it is non-discharging and grants no execution permission. Compiler refinement returns a typed pending state for an otherwise-conforming region with residuals. That state owns the exact region that resolves its local handles, the full semantic occurrence, frozen scalar and capability authorities, and the already-checked operand/result bindings; it mints no refinement identity and cannot be consumed as an executable `IndexRefinement`.
 
 The first access profile remains out-of-place: input boundaries may be read but
 not written, output boundaries may be written but not read, and every declared
@@ -1237,16 +1233,7 @@ output/scratch acquisition or encoding. Later allocation and launch invariants
 fail closed. Estimates may guide search and dominance but cannot prove
 feasibility.
 
-An `Unknown` *feasibility* verdict keeps its candidate in explain and search
-state only; such a candidate cannot enter an executable `ImplementationFrontier`
-or manifest. This rule is about this assessment and does not generalize to every
-`Unknown` in the corpus. An unproven predicate elsewhere may be an explicit gap
-recorded against a subject that remains valid — an [index-region refinement the
-proof budget could not
-afford](compiler/optimizer.md#refinement-is-exhaustive-finite-evidence-with-an-explicit-gap)
-is one, and its plan is retained. What makes the feasibility verdict different is
-that it is a *hard* predicate over a target: an implementation admitted without
-one could be dispatched to a device that cannot run it.
+An `Unknown` *feasibility* verdict keeps its candidate in explain and search state only; such a candidate cannot enter an executable `ImplementationFrontier` or manifest. This rule is about target feasibility and does not erase `Unknown` elsewhere: a structurally verified index region may retain an exact unresolved logical predicate. That region remains valid analysis state, but it is not executable refinement evidence. The current compiler [fails closed before cover or frontier construction](compiler/optimizer.md#refinement-requires-discharged-index-domain-evidence) until a semantic-discharge stage proves every residual predicate.
 
 Cross-kernel materialized buffers, dependencies, and lifetime intervals belong
 to `KernelSubprogram` or `KernelProgram`, not an individual kernel schedule.

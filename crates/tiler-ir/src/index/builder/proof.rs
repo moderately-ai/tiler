@@ -83,14 +83,18 @@ impl IndexRegionBuilder {
                 });
             }
         }
-        self.verify_accesses(&reachable_accesses, &mut diagnostics);
+        let index_domain_predicates = self.verify_accesses(&reachable_accesses, &mut diagnostics);
         if !diagnostics.is_empty() {
             diagnostics.sort_by_key(|d| format!("{d:?}"));
             diagnostics.dedup();
             return Err(diagnostics);
         }
-        self.compact(reachable_values, reachable_accesses)
-            .map_err(|diagnostic| vec![diagnostic])
+        self.compact(
+            reachable_values,
+            reachable_accesses,
+            index_domain_predicates,
+        )
+        .map_err(|diagnostic| vec![diagnostic])
     }
 
     pub(super) fn verify_output_tensors(&self, diagnostics: &mut Vec<IndexRegionDiagnostic>) {
@@ -137,79 +141,26 @@ impl IndexRegionBuilder {
             }
         }
     }
-    /// Returns the refusal that fits this access's mode.
-    ///
-    /// A write left unproved has not been shown to own its output; a read left
-    /// unproved has not been shown to stay in bounds. Both are refusals in
-    /// `docs/ir.md`'s taxonomy, and neither is the proof-resource diagnostic,
-    /// which the same contract defines as meaning an enumeration stopped.
-    ///
-    /// Matched exhaustively rather than tested against `Write`, so a third
-    /// access mode is a build error here instead of silently inheriting the
-    /// read's refusal.
-    pub(super) fn unproved(&self, access_index: u32, mode: AccessMode) -> IndexRegionDiagnostic {
-        let access = TensorAccessId {
-            owner: self.owner,
-            index: access_index,
-        };
-        match mode {
-            AccessMode::Write => IndexRegionDiagnostic::WriteOwnershipNotProven { access },
-            AccessMode::Read => IndexRegionDiagnostic::BoundsNotProven { access },
-        }
-    }
-
-    /// Returns the first extent this access depends on that the environment
-    /// bounds nowhere, rendered as its symbol.
-    ///
-    /// **The discriminator is the upper bound, not determinacy, and not a
-    /// missing interval.** An extent the environment confines to `[2, 8]` is
-    /// not *determined*, so no enumeration can walk it — but it is bounded, and
-    /// the refusal that follows is a proof that did not close rather than a
-    /// fact nobody stated. An extent nothing constrains is the second case, and
-    /// only that one is fixed by adding a constraint.
-    ///
-    /// Testing for a *missing* interval would never fire: the constraint solver
-    /// seeds every symbol at the whole extent domain and narrows from there, so
-    /// an unconstrained symbol has an interval reaching the domain ceiling
-    /// rather than no interval at all. `ExtentInterval::states_no_upper_bound`
-    /// owns that condition, beside the constant that defines the ceiling.
-    ///
-    /// Both the boundary axes and the iterated domain's extents are consulted,
-    /// because either can be the unbounded one and a caller told about the
-    /// wrong half would constrain the wrong symbol. Boundary first, matching
-    /// the order the interval verdict walks them in.
-    pub(super) fn unbounded_extent_symbol(
-        &self,
-        access: &AccessData,
-        shape: &SourcedShape,
-    ) -> Option<String> {
-        let boundary = shape.extents().collect::<Vec<_>>();
-        let domain = access
-            .domain
-            .iter()
-            .map(|dimension| self.dimensions[*dimension as usize].extent.clone());
-        boundary
-            .into_iter()
-            .chain(domain)
-            .filter(|extent| extent.symbol().is_some())
-            .find(|extent| {
-                self.extent_interval(extent)
-                    .is_none_or(|interval| interval.states_no_upper_bound())
-            })
-            .and_then(|extent| extent.symbol().map(ToString::to_string))
-    }
-
     pub(super) fn verify_accesses(
         &self,
         accesses: &BTreeSet<u32>,
         diagnostics: &mut Vec<IndexRegionDiagnostic>,
-    ) {
+    ) -> Vec<PendingIndexDomainPredicate> {
         let mut cells = 0_u128;
         let mut integer_bytes = 0_u128;
+        let mut predicates = Vec::new();
+        let mut exhaustive_accesses = Vec::new();
         for access_index in accesses {
             let access = &self.accesses[*access_index as usize];
             let shape = &self.tensors[access.tensor as usize].shape;
             let points = self.domain_points(&access.domain);
+            let predicate_start = predicates.len();
+            predicates.extend(self.cheap_index_domain_predicates(
+                *access_index,
+                access,
+                shape,
+                points,
+            ));
             if points == Some(0) {
                 if access.mode == AccessMode::Write && self.boundary_element_count(shape) != Some(0)
                 {
@@ -223,8 +174,7 @@ impl IndexRegionBuilder {
                 continue;
             }
             let IntervalVerdict {
-                interval_proved,
-                definitely_outside,
+                definitely_outside, ..
             } = self.interval_verdict(access, shape);
             // A coordinate outside every axis is only a refutation over a
             // domain that is visited. A symbolic extent whose environment
@@ -240,45 +190,36 @@ impl IndexRegionBuilder {
                 });
                 continue;
             }
-            // A proven permutation implies the structural bounds argument —
-            // both require every coordinate to be a domain dimension whose
-            // extent the environment proves equal to its axis, and the
-            // permutation additionally requires those dimensions distinct — so
-            // a write that owns its boundary no longer has to satisfy the
-            // interval conjunct separately. That is a subsumption rather than a
-            // relaxation: the bounds obligation is still discharged, by the
-            // argument that actually holds.
-            if !(interval_proved || self.coordinates_are_bounded_dimensions(access, shape))
-                || (access.mode == AccessMode::Write && !self.write_is_permutation(access, shape))
-            {
+            let unresolved_bounds = predicates[predicate_start..].iter().any(|predicate| {
+                matches!(
+                    predicate.disposition,
+                    PendingIndexDomainDisposition::Unknown(_)
+                )
+            });
+            let unresolved_ownership =
+                access.mode == AccessMode::Write && !self.write_is_permutation(access, shape);
+            if unresolved_bounds || unresolved_ownership {
                 // The finite fallback walks the domain point by point and checks
                 // each coordinate against a boundary axis, so it needs an exact
                 // size on both sides. An environment that determines neither
                 // leaves no enumeration to budget for and no interval that
-                // closed the question. Refusing here is what keeps a symbolic
-                // extent from becoming an unproved escape hatch; it is a
-                // refusal, deliberately not the proof-resource diagnostic,
-                // which `docs/ir.md` defines as meaning an enumeration stopped.
+                // closed the question. A read retains its exact residual
+                // predicates; a write still refuses unresolved ownership. This
+                // is deliberately not a proof-resource outcome because no
+                // finite enumeration was available to stop.
                 let enumerable = points.is_some() && self.boundary_extents(shape).is_some();
                 let Some(points) = points.filter(|_| enumerable) else {
-                    // An extent the environment bounds nowhere says why the
-                    // proof was unavailable rather than only that it failed,
-                    // and it is the one case a frontend can act on. An extent
-                    // that is bounded but undetermined falls through to the
-                    // generic refusal, because there the region is as stated
-                    // and it is the proof that did not reach it.
-                    diagnostics.push(self.unbounded_extent_symbol(access, shape).map_or_else(
-                        || self.unproved(*access_index, access.mode),
-                        |symbol| IndexRegionDiagnostic::ExtentBoundNotStated {
+                    if unresolved_ownership {
+                        diagnostics.push(IndexRegionDiagnostic::WriteOwnershipNotProven {
                             access: TensorAccessId {
                                 owner: self.owner,
                                 index: *access_index,
                             },
-                            symbol,
-                        },
-                    ));
+                        });
+                    }
                     continue;
                 };
+                exhaustive_accesses.push(*access_index);
                 let (plan_len, bytes_per_point) = self.proof_plan_size(&access.coordinates);
                 cells = cells.saturating_add(u128::from(points).saturating_mul(plan_len as u128));
                 let coordinate_bytes = u128::from(points).saturating_mul(bytes_per_point.max(1));
@@ -303,12 +244,12 @@ impl IndexRegionBuilder {
             MAX_EXHAUSTIVE_PROOF_CELLS,
             MAX_EXHAUSTIVE_PROOF_BYTES,
             || {
-                for access_index in accesses {
+                for access_index in &exhaustive_accesses {
                     let access = &self.accesses[*access_index as usize];
                     let shape = &self.tensors[access.tensor as usize].shape;
-                    // An undetermined domain or boundary was already refused
-                    // above; neither has an extent vector to walk, so both are
-                    // skipped rather than enumerated with a substituted size.
+                    // An undetermined domain or boundary has no extent vector
+                    // to walk. Its exact read predicates remain unknown; a
+                    // write still fails the separate ownership requirement.
                     let Some(extents) = self.domain_extents(&access.domain) else {
                         continue;
                     };
@@ -323,19 +264,137 @@ impl IndexRegionBuilder {
                         self.mark_expr(*coordinate, &mut reached);
                     }
                     let plan = reached.into_iter().collect::<Vec<_>>();
-                    self.verify_access_exhaustively(
+                    let discharged = self.verify_access_exhaustively(
                         *access_index,
                         &plan,
                         &extents,
                         &axes,
                         diagnostics,
                     );
+                    if discharged {
+                        let evidence = IndexDomainEvidence::ExhaustiveFinite {
+                            points: enumerated_points(self.domain_points(&access.domain)),
+                        };
+                        for predicate in predicates
+                            .iter_mut()
+                            .filter(|predicate| predicate.access == *access_index)
+                        {
+                            if matches!(
+                                predicate.disposition,
+                                PendingIndexDomainDisposition::Unknown(_)
+                            ) {
+                                predicate.disposition =
+                                    PendingIndexDomainDisposition::Discharged(evidence);
+                            }
+                        }
+                    }
                 }
             },
         );
         if let Err(excess) = admitted {
-            diagnostics.push(excess.diagnostic());
+            for predicate in predicates.iter_mut().filter(|predicate| {
+                exhaustive_accesses.contains(&predicate.access)
+                    && matches!(
+                        predicate.disposition,
+                        PendingIndexDomainDisposition::Unknown(_)
+                    )
+            }) {
+                predicate.disposition =
+                    PendingIndexDomainDisposition::Unknown(excess.unknown_reason());
+            }
+            let mut blocked_write = false;
+            for access_index in &exhaustive_accesses {
+                let access = &self.accesses[*access_index as usize];
+                if access.mode == AccessMode::Write
+                    && !self
+                        .write_is_permutation(access, &self.tensors[access.tensor as usize].shape)
+                {
+                    blocked_write = true;
+                    diagnostics.push(IndexRegionDiagnostic::WriteOwnershipNotProven {
+                        access: TensorAccessId {
+                            owner: self.owner,
+                            index: *access_index,
+                        },
+                    });
+                }
+            }
+            if blocked_write || !diagnostics.is_empty() {
+                diagnostics.push(excess.diagnostic());
+            }
         }
+        predicates
+    }
+
+    fn cheap_index_domain_predicates(
+        &self,
+        access_index: u32,
+        access: &AccessData,
+        shape: &SourcedShape,
+        points: Option<u64>,
+    ) -> Vec<PendingIndexDomainPredicate> {
+        let mut predicates = Vec::with_capacity(access.coordinates.len().saturating_mul(2));
+        for (axis, (coordinate, extent)) in access
+            .coordinates
+            .iter()
+            .copied()
+            .zip(shape.extents())
+            .enumerate()
+        {
+            let vacuous = points == Some(0);
+            let interval = self.expressions[coordinate as usize].interval.as_ref();
+            let axis_interval = self.extent_interval(&extent);
+            let domain_dimension = match *self.expressions[coordinate as usize].node {
+                IndexNode::Dimension(dimension) if access.domain.contains(&dimension) => {
+                    Some(dimension)
+                }
+                IndexNode::Constant(_)
+                | IndexNode::Dimension(_)
+                | IndexNode::LinearCombination { .. }
+                | IndexNode::FloorDiv { .. }
+                | IndexNode::Modulo { .. } => None,
+            };
+            let structural = domain_dimension.is_some_and(|dimension| {
+                self.extents_proved_equal(&self.dimensions[dimension as usize].extent, &extent)
+            });
+            let nonnegative = if vacuous {
+                IndexDomainEvidence::SoundProof(IndexDomainSoundProof::VacuousEmptyDomain)
+            } else if interval.is_some_and(|(minimum, _)| minimum >= &BigInt::zero()) {
+                IndexDomainEvidence::SoundProof(IndexDomainSoundProof::Interval)
+            } else if structural {
+                IndexDomainEvidence::SoundProof(IndexDomainSoundProof::ProvedExtentEquality)
+            } else {
+                IndexDomainEvidence::Unknown
+            };
+            let less_than = if vacuous {
+                IndexDomainEvidence::SoundProof(IndexDomainSoundProof::VacuousEmptyDomain)
+            } else if interval
+                .zip(axis_interval)
+                .is_some_and(|((_, maximum), axis)| maximum < &BigInt::from(axis.lower))
+            {
+                IndexDomainEvidence::SoundProof(IndexDomainSoundProof::Interval)
+            } else if structural {
+                IndexDomainEvidence::SoundProof(IndexDomainSoundProof::ProvedExtentEquality)
+            } else {
+                IndexDomainEvidence::Unknown
+            };
+            for (bound, evidence) in [
+                (PendingIndexDomainBound::NonNegative, nonnegative),
+                (PendingIndexDomainBound::LessThanAxis, less_than),
+            ] {
+                predicates.push(PendingIndexDomainPredicate {
+                    access: access_index,
+                    axis: bounded_index(axis),
+                    bound,
+                    disposition: match evidence {
+                        IndexDomainEvidence::Unknown => PendingIndexDomainDisposition::Unknown(
+                            IndexDomainUnknownReason::InsufficientFacts,
+                        ),
+                        evidence => PendingIndexDomainDisposition::Discharged(evidence),
+                    },
+                });
+            }
+        }
+        predicates
     }
 
     /// Reads one access's coordinate intervals against its tensor's axes.
@@ -548,12 +607,19 @@ impl IndexRegionBuilder {
         extents: &[u64],
         axes: &[u64],
         diagnostics: &mut Vec<IndexRegionDiagnostic>,
-    ) {
+    ) -> bool {
         let access = &self.accesses[access_index as usize];
         let shape = &self.tensors[access.tensor as usize].shape;
         let Some(elements) = self.boundary_element_count(shape) else {
-            diagnostics.push(self.unproved(access_index, access.mode));
-            return;
+            if access.mode == AccessMode::Write {
+                diagnostics.push(IndexRegionDiagnostic::WriteOwnershipNotProven {
+                    access: TensorAccessId {
+                        owner: self.owner,
+                        index: access_index,
+                    },
+                });
+            }
+            return false;
         };
         let mut seen =
             (access.mode == AccessMode::Write).then(|| vec![0_u64; elements.div_ceil(64)]);
@@ -597,7 +663,7 @@ impl IndexRegionBuilder {
                         index: access_index,
                     },
                 });
-                return;
+                return false;
             }
             if let Some(bits) = &mut seen {
                 let word = linear / 64;
@@ -609,7 +675,7 @@ impl IndexRegionBuilder {
                             index: access_index,
                         },
                     });
-                    return;
+                    return false;
                 }
                 bits[word] |= mask;
             }
@@ -626,7 +692,9 @@ impl IndexRegionBuilder {
                     index: access_index,
                 },
             });
+            return false;
         }
+        true
     }
 
     pub(super) fn evaluate_expressions(

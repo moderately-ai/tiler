@@ -37,8 +37,9 @@ pub use model::{
     TensorRole, VerifiedIndexRegion, WriteOwnershipProofView,
 };
 pub use predicate::{
-    DischargedIndexDomainPredicate, IndexDomainEvidence, IndexDomainPredicate,
-    IndexDomainSoundProof, IndexExtentRef,
+    CanonicalIndexDomainObligationKey, DischargedIndexDomainPredicate, IndexDomainEvidence,
+    IndexDomainPredicate, IndexDomainSoundProof, IndexDomainUnknownReason, IndexExtentRef,
+    UnknownIndexDomainPredicate,
 };
 pub use scalar::{
     CanonicalScalarDefinitionProjection, CanonicalScalarRegistrySnapshotIdentity,

@@ -57,8 +57,8 @@ use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::index::{
     CanonicalIndexRegionIdentity, FrozenScalarRegistry, IndexRegionBuildError,
     IndexRegionDiagnostic, ScalarAuthorityEvidence, ScalarRegistryError, TensorRole,
-    VerifiedIndexHandleError, VerifiedIndexRegion, VerifiedScalarValueId, VerifiedTensorAccessId,
-    VerifiedTensorId,
+    UnknownIndexDomainPredicate, VerifiedIndexHandleError, VerifiedIndexRegion,
+    VerifiedScalarValueId, VerifiedTensorAccessId, VerifiedTensorId,
 };
 use tiler_ir::semantic::{
     OpKey, OperationAttributes, OperationEffect, ProviderIdentity, ResolvedValueType,
@@ -66,8 +66,9 @@ use tiler_ir::semantic::{
 use tiler_ir::shape::Shape;
 
 use crate::capability::{
-    IndexAccessLoweringContext, LoweredOccurrence, LoweringCapabilityRevision, LoweringEmitError,
-    LoweringFamily, LoweringRegistryError, OccurrenceBoundary, ResolvedLoweringCapability,
+    IndexAccessLoweringContext, LoweredOccurrence, LoweringCapabilityAuthority,
+    LoweringCapabilityRevision, LoweringEmitError, LoweringFamily, LoweringRegistryError,
+    OccurrenceBoundary, ResolvedLoweringCapability,
 };
 
 /// Canonical domain-separation tag for reusable refinement content.
@@ -570,6 +571,151 @@ impl IndexRefinement {
     }
 }
 
+/// A structurally and interface-checked realization awaiting semantic discharge.
+///
+/// This state owns the exact verified region whose region-local residual
+/// predicates it exposes. It also retains the occurrence, scalar-authority
+/// receipt, and ordered bindings already checked before the residual was found,
+/// so a discharge stage never needs to drive the provider a second time.
+///
+/// Holding this value is not execution permission and is not an
+/// [`IndexRefinement`]. Every value returned by [`Self::obligations`] must first
+/// receive named semantic evidence.
+#[derive(Clone, Debug)]
+pub struct PendingIndexRefinement {
+    occurrence: SemanticOccurrence,
+    provider: ProviderIdentity,
+    revision: LoweringCapabilityRevision,
+    capability_authority: LoweringCapabilityAuthority,
+    scalars: FrozenScalarRegistry,
+    operand_bindings: Vec<OperandBinding>,
+    result_bindings: Vec<ResultBinding>,
+    scalar_authority: ScalarAuthorityEvidence,
+    region: VerifiedIndexRegion,
+}
+
+impl PendingIndexRefinement {
+    /// Returns the exact semantic occurrence this realization is checked against.
+    #[must_use]
+    pub const fn occurrence(&self) -> &SemanticOccurrence {
+        &self.occurrence
+    }
+
+    /// Returns the selected lowering provider.
+    #[must_use]
+    pub const fn provider(&self) -> &ProviderIdentity {
+        &self.provider
+    }
+
+    /// Returns the selected capability's output-affecting revision.
+    #[must_use]
+    pub const fn revision(&self) -> LoweringCapabilityRevision {
+        self.revision
+    }
+
+    /// Returns the authority the resolved capability was admitted against.
+    #[must_use]
+    pub const fn capability_authority(&self) -> &LoweringCapabilityAuthority {
+        &self.capability_authority
+    }
+
+    /// Returns the frozen scalar authority required to revalidate a discharged region.
+    #[must_use]
+    pub const fn scalar_registry(&self) -> &FrozenScalarRegistry {
+        &self.scalars
+    }
+
+    /// Returns the already-checked ordered operand bindings.
+    #[must_use]
+    pub fn operand_bindings(&self) -> &[OperandBinding] {
+        &self.operand_bindings
+    }
+
+    /// Returns the already-checked ordered result bindings.
+    #[must_use]
+    pub fn result_bindings(&self) -> &[ResultBinding] {
+        &self.result_bindings
+    }
+
+    /// Returns the scalar-authority receipt bound to the exact retained region.
+    #[must_use]
+    pub const fn scalar_authority(&self) -> &ScalarAuthorityEvidence {
+        &self.scalar_authority
+    }
+
+    /// Returns the exact structurally verified region awaiting discharge.
+    #[must_use]
+    pub const fn region(&self) -> &VerifiedIndexRegion {
+        &self.region
+    }
+
+    /// Returns every exact residual predicate in canonical region order.
+    #[must_use]
+    pub fn obligations(&self) -> impl ExactSizeIterator<Item = UnknownIndexDomainPredicate> + '_ {
+        self.region.unknown_index_domain_predicates()
+    }
+}
+
+impl PartialEq for PendingIndexRefinement {
+    fn eq(&self, other: &Self) -> bool {
+        self.occurrence == other.occurrence
+            && self.provider == other.provider
+            && self.revision == other.revision
+            && self.capability_authority == other.capability_authority
+            && self.scalars.snapshot_identity() == other.scalars.snapshot_identity()
+            && self.operand_bindings == other.operand_bindings
+            && self.result_bindings == other.result_bindings
+            && self.scalar_authority == other.scalar_authority
+            && self.region.canonical_identity() == other.region.canonical_identity()
+    }
+}
+
+impl Eq for PendingIndexRefinement {}
+
+/// Result of checking one provider emission against one semantic occurrence.
+///
+/// A pending result is valid checked analysis state, not a refinement failure
+/// and not execution evidence. Callers must route it through the named semantic
+/// discharge stage before any program work.
+#[derive(Clone, Debug)]
+#[must_use]
+pub enum IndexRefinementOutcome {
+    /// Every index-domain predicate was discharged and refinement is complete.
+    Refined(Box<IndexRefinement>),
+    /// Structural, authority, and interface checks passed, but exact residual
+    /// predicates still require semantic discharge.
+    Pending(Box<PendingIndexRefinement>),
+}
+
+impl IndexRefinementOutcome {
+    /// Returns completed refinement evidence, when every predicate was discharged.
+    #[must_use]
+    pub const fn refined(&self) -> Option<&IndexRefinement> {
+        match self {
+            Self::Refined(refinement) => Some(refinement),
+            Self::Pending(_) => None,
+        }
+    }
+
+    /// Returns exact pending state, when semantic discharge is still required.
+    #[must_use]
+    pub const fn pending(&self) -> Option<&PendingIndexRefinement> {
+        match self {
+            Self::Refined(_) => None,
+            Self::Pending(pending) => Some(pending),
+        }
+    }
+
+    /// Consumes this outcome and returns completed refinement evidence.
+    #[must_use]
+    pub fn into_refined(self) -> Option<IndexRefinement> {
+        match self {
+            Self::Refined(refinement) => Some(*refinement),
+            Self::Pending(_) => None,
+        }
+    }
+}
+
 /// A failure to refine a resolved lowering capability against an occurrence.
 ///
 /// Every variant is a refusal to certify a realization. A build failure is the
@@ -775,8 +921,10 @@ impl From<VerifiedIndexHandleError> for RefinementError {
 /// the emitted region is structurally verified, and the region is then proved to
 /// realize the occurrence. A successful build alone is never accepted: the
 /// ordered value interface, reached scalar authority, semantic type authority,
-/// and unique-write evidence are all checked before an [`IndexRefinement`] is
-/// returned.
+/// and unique-write evidence are all checked before an
+/// [`IndexRefinementOutcome`] is returned. Exact residual predicates produce
+/// [`IndexRefinementOutcome::Pending`], never false refinement evidence or a
+/// provider failure.
 ///
 /// `scalars` is both the authority the region is built under and the authority
 /// that revalidates it; it must be the same frozen scalar snapshot the
@@ -792,7 +940,7 @@ pub fn refine_index_region(
     capability: &ResolvedLoweringCapability,
     occurrence: &SemanticOccurrence,
     scalars: &FrozenScalarRegistry,
-) -> Result<IndexRefinement, RefinementError> {
+) -> Result<IndexRefinementOutcome, RefinementError> {
     bind_capability_to_occurrence(capability, occurrence)?;
 
     if occurrence.effect != OperationEffect::Pure {
@@ -802,7 +950,6 @@ pub fn refine_index_region(
     }
 
     let region = emit_region(capability, occurrence, scalars)?;
-
     // Registration and a successful build are not refinement evidence. Everything
     // below independently proves the emitted region realizes the occurrence.
     let scalar_authority = scalars
@@ -813,9 +960,36 @@ pub fn refine_index_region(
     let operand_bindings = bind_operands(occurrence, &region)?;
     let result_bindings = bind_results(occurrence, &region)?;
 
+    // A residual domain obligation is not permission to skip independent
+    // authority and interface checks. Report those harder provider defects
+    // first, then retain the otherwise-conforming region as pending checked
+    // state rather than misclassifying it as refinement evidence or a provider
+    // defect.
+    if region.unknown_index_domain_predicates().len() != 0 {
+        return Ok(IndexRefinementOutcome::Pending(Box::new(
+            PendingIndexRefinement {
+                occurrence: occurrence.clone(),
+                provider: capability.provider().clone(),
+                revision: capability.revision(),
+                capability_authority: capability.authority().clone(),
+                scalars: scalars.clone(),
+                operand_bindings,
+                result_bindings,
+                scalar_authority,
+                region,
+            },
+        )));
+    }
+
     let content = assemble_content(occurrence, &region, scalar_authority);
-    let identity = encode_occurrence_identity(&content, capability, occurrence);
-    Ok(IndexRefinement {
+    let identity = encode_occurrence_identity(
+        &content,
+        capability.provider(),
+        capability.revision(),
+        capability.authority(),
+        occurrence,
+    );
+    Ok(IndexRefinementOutcome::Refined(Box::new(IndexRefinement {
         content,
         occurrence: occurrence.identity.clone(),
         provider: capability.provider().clone(),
@@ -824,7 +998,7 @@ pub fn refine_index_region(
         result_bindings,
         region,
         identity,
-    })
+    })))
 }
 
 /// Proves the resolved capability was resolved for exactly this occurrence.
@@ -1123,15 +1297,16 @@ fn encode_content_identity(
 
 fn encode_occurrence_identity(
     content: &RefinementContent,
-    capability: &ResolvedLoweringCapability,
+    provider: &ProviderIdentity,
+    revision: LoweringCapabilityRevision,
+    authority: &LoweringCapabilityAuthority,
     occurrence: &SemanticOccurrence,
 ) -> IndexRefinementIdentity {
     let mut bytes = OCCURRENCE_IDENTITY_TAG.to_vec();
     push_slice(&mut bytes, content.identity.as_bytes());
     push_slice(&mut bytes, occurrence.identity.as_bytes());
-    encode_provider(&mut bytes, capability.provider());
-    bytes.extend_from_slice(&capability.revision().get().to_be_bytes());
-    let authority = capability.authority();
+    encode_provider(&mut bytes, provider);
+    bytes.extend_from_slice(&revision.get().to_be_bytes());
     push_slice(
         &mut bytes,
         authority
@@ -1322,6 +1497,42 @@ mod tests {
         }
     }
 
+    /// Emits a square whose read is equal to `i` but interval-conservative.
+    struct ConservativeReadSquare {
+        length: u64,
+        rounds: usize,
+    }
+    impl IndexAccessLoweringProvider for ConservativeReadSquare {
+        fn lower(
+            &self,
+            context: &mut IndexAccessLoweringContext<'_>,
+        ) -> Result<(), LoweringEmitError> {
+            let shape = Shape::from_dims([self.length]);
+            let i = context.dimension(DomainRole::Parallel, Extent::new(self.length))?;
+            let input = context.input_tensor(f32_type(), shape.clone())?;
+            let output = context.output_tensor(f32_type(), shape)?;
+            let row = context.dimension_expr(i)?;
+            let mut read = row;
+            for _ in 0..self.rounds {
+                let modulo = context.modulo(read, 2)?;
+                let quotient = context.floor_div(read, 2)?;
+                read = context.linear_combination(
+                    0_i128.into(),
+                    &[(2_i128.into(), quotient), (1_i128.into(), modulo)],
+                )?;
+            }
+            let value = context.read(input, &[i], &[read])?;
+            let product = context.apply(
+                scalar_key("multiply"),
+                ScalarAttributes::empty(),
+                &[value, value],
+            )?;
+            let squared = product.get(0).expect("multiply yields one result");
+            let write = context.write(output, &[i], &[row])?;
+            context.output(write, squared)
+        }
+    }
+
     /// Emits a well-formed `out[i] = add(in[i], in[i])`, reaching `add` only.
     struct PointwiseAdd {
         length: u64,
@@ -1425,7 +1636,11 @@ mod tests {
     }
 
     fn square_occurrence(site: &[u8]) -> SemanticOccurrence {
-        let shape = Shape::from_dims([LENGTH]);
+        square_occurrence_with_length(site, LENGTH)
+    }
+
+    fn square_occurrence_with_length(site: &[u8], length: u64) -> SemanticOccurrence {
+        let shape = Shape::from_dims([length]);
         let v = OccurrenceValueId(0);
         SemanticOccurrence::new(
             multiply_f32_op(),
@@ -1450,7 +1665,10 @@ mod tests {
             .unwrap();
         let occurrence = square_occurrence(b"occurrence-a");
 
-        let refinement = refine_index_region(&resolved, &occurrence, &scalars).unwrap();
+        let refinement = refine_index_region(&resolved, &occurrence, &scalars)
+            .unwrap()
+            .into_refined()
+            .expect("the fixture discharges every index-domain predicate");
 
         // Both aliased operands bind to the one input boundary; the single result
         // binds to the one output root with a complete unique write.
@@ -1475,10 +1693,14 @@ mod tests {
             .resolve_index_access(&multiply_f32_op(), &binary_signature())
             .unwrap();
 
-        let first =
-            refine_index_region(&resolved, &square_occurrence(b"site-1"), &scalars).unwrap();
-        let second =
-            refine_index_region(&resolved, &square_occurrence(b"site-2"), &scalars).unwrap();
+        let first = refine_index_region(&resolved, &square_occurrence(b"site-1"), &scalars)
+            .unwrap()
+            .into_refined()
+            .expect("the fixture discharges every index-domain predicate");
+        let second = refine_index_region(&resolved, &square_occurrence(b"site-2"), &scalars)
+            .unwrap()
+            .into_refined()
+            .expect("the fixture discharges every index-domain predicate");
 
         // Same operation, interface, and region: identical reusable content.
         assert_eq!(first.content().identity(), second.content().identity());
@@ -1499,7 +1721,10 @@ mod tests {
             .resolve_index_access(&multiply_f32_op(), &binary_signature())
             .unwrap();
         let occurrence = square_occurrence(b"occurrence-oracle");
-        let refinement = refine_index_region(&resolved, &occurrence, &scalars).unwrap();
+        let refinement = refine_index_region(&resolved, &occurrence, &scalars)
+            .unwrap()
+            .into_refined()
+            .expect("the fixture discharges every index-domain predicate");
 
         // Independently execute the refined region on concrete inputs, feeding the
         // one input boundary that both operands bound to.
@@ -1545,7 +1770,10 @@ mod tests {
             .resolve_index_access(&multiply_f32_op(), &binary_signature())
             .unwrap();
         let occurrence = square_occurrence(&site);
-        let refinement = refine_index_region(&resolved, &occurrence, &scalars).unwrap();
+        let refinement = refine_index_region(&resolved, &occurrence, &scalars)
+            .unwrap()
+            .into_refined()
+            .expect("the fixture discharges every index-domain predicate");
         assert_eq!(refinement.occurrence().as_bytes(), site.as_slice());
     }
 
@@ -1565,6 +1793,72 @@ mod tests {
             error,
             RefinementError::OperandInterface { position: 0 }
         ));
+    }
+
+    #[test]
+    fn a_residual_bound_does_not_mask_a_wrong_provider_interface() {
+        // The conservative read exceeds the proof-cell budget, but the emitted
+        // length-65_535 interface is independently wrong for the length-4
+        // occurrence. The harder provider defect must remain the diagnosis.
+        let scalars = scalar_registry();
+        let resolved = index_registry(
+            Arc::new(ConservativeReadSquare {
+                length: 65_535,
+                rounds: 8,
+            }),
+            &[scalar_key("multiply")],
+        )
+        .resolve_index_access(&multiply_f32_op(), &binary_signature())
+        .unwrap();
+        let error =
+            refine_index_region(&resolved, &square_occurrence(b"site"), &scalars).unwrap_err();
+        assert!(matches!(
+            error,
+            RefinementError::OperandInterface { position: 0 }
+        ));
+    }
+
+    #[test]
+    fn a_residual_outcome_retains_the_exact_checked_region_and_bindings() {
+        let scalars = scalar_registry();
+        let length = 65_535;
+        let resolved = index_registry(
+            Arc::new(ConservativeReadSquare { length, rounds: 8 }),
+            &[scalar_key("multiply")],
+        )
+        .resolve_index_access(&multiply_f32_op(), &binary_signature())
+        .unwrap();
+        let occurrence = square_occurrence_with_length(b"pending-site", length);
+
+        let outcome = refine_index_region(&resolved, &occurrence, &scalars).unwrap();
+        let pending = outcome
+            .pending()
+            .expect("the conservative read exceeds the governed proof budget");
+        assert_eq!(pending.occurrence(), &occurrence);
+        assert_eq!(pending.provider(), resolved.provider());
+        assert_eq!(pending.revision(), resolved.revision());
+        assert_eq!(pending.capability_authority(), resolved.authority());
+        assert_eq!(
+            pending.scalar_registry().snapshot_identity(),
+            scalars.snapshot_identity()
+        );
+        assert_eq!(pending.operand_bindings().len(), 2);
+        assert_eq!(pending.result_bindings().len(), 1);
+        assert_eq!(
+            pending.scalar_authority().region(),
+            pending.region().canonical_identity()
+        );
+        let obligations = pending.obligations().collect::<Vec<_>>();
+        assert!(!obligations.is_empty());
+        for obligation in obligations {
+            assert_eq!(
+                pending
+                    .region()
+                    .index_domain_unknown(obligation.subject(), obligation.predicate())
+                    .unwrap(),
+                Some(obligation)
+            );
+        }
     }
 
     #[test]

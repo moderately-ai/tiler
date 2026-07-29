@@ -14,6 +14,15 @@ be restated on every change"
 //! than silently moving an identity.
 
 use super::*;
+use crate::index::predicate::{
+    encode_index_domain_subject_predicate, encode_index_domain_unknown_reason,
+};
+
+#[derive(Clone, Copy)]
+enum IndexDomainAssessment {
+    Discharged(DischargedIndexDomainPredicate),
+    Unknown(UnknownIndexDomainPredicate),
+}
 
 pub(super) fn interval_linear(
     constant: &BigInt,
@@ -359,15 +368,15 @@ pub(super) fn encode_region(
         expressions,
         accesses,
         index_domain_evidence,
+        unknown_index_domain_predicates,
         operations,
         values,
         outputs,
     } = compacted;
     let mut out = Vec::with_capacity(exact_capacity);
-    // `v7`: every discharged index-domain predicate now enters identity with
-    // its exact access subject and evidence. `v6` retained one access-wide
-    // proof summary beside identity, so two consumers could rely on different
-    // predicate evidence while comparing the same bytes.
+    // `v8`: discharged and unresolved index-domain predicates share one
+    // canonical assessment sequence. `v7` encoded only discharged evidence,
+    // so a region's residual semantic obligations were absent from identity.
     out.extend_from_slice(INDEX_REGION_DOMAIN);
     // The environment a symbolic extent resolves against is part of what this
     // region is. Two regions spelling the same symbol against differently bound
@@ -411,9 +420,21 @@ pub(super) fn encode_region(
         encode_u32s(&mut out, &a.domain);
         encode_u32s(&mut out, &a.coordinates);
     }
-    push_len(&mut out, index_domain_evidence.len());
-    for evidence in index_domain_evidence {
-        encode_index_domain_evidence(&mut out, *evidence);
+    let mut assessments = index_domain_evidence
+        .iter()
+        .copied()
+        .map(IndexDomainAssessment::Discharged)
+        .chain(
+            unknown_index_domain_predicates
+                .iter()
+                .copied()
+                .map(IndexDomainAssessment::Unknown),
+        )
+        .collect::<Vec<_>>();
+    assessments.sort_by_key(index_domain_assessment_key);
+    push_len(&mut out, assessments.len());
+    for assessment in assessments {
+        encode_index_domain_assessment(&mut out, assessment);
     }
     push_len(&mut out, operations.len());
     for op in operations {
@@ -459,6 +480,7 @@ pub(super) fn encoded_region_len(
         expressions,
         accesses,
         index_domain_evidence,
+        unknown_index_domain_predicates,
         operations,
         values,
         outputs,
@@ -498,7 +520,15 @@ pub(super) fn encoded_region_len(
     bytes = bytes.saturating_add(8).saturating_add(
         index_domain_evidence
             .iter()
-            .map(|evidence| encoded_index_domain_evidence_len(*evidence))
+            .copied()
+            .map(IndexDomainAssessment::Discharged)
+            .chain(
+                unknown_index_domain_predicates
+                    .iter()
+                    .copied()
+                    .map(IndexDomainAssessment::Unknown),
+            )
+            .map(encoded_index_domain_assessment_len)
             .fold(0_usize, usize::saturating_add),
     );
     bytes = bytes.saturating_add(8);
@@ -525,61 +555,79 @@ pub(super) fn encoded_region_len(
         .saturating_add(outputs.len().saturating_mul(8))
 }
 
-fn encode_index_domain_evidence(output: &mut Vec<u8>, record: DischargedIndexDomainPredicate) {
-    output.extend_from_slice(&record.subject.index.to_be_bytes());
-    match record.predicate {
-        IndexDomainPredicate::NonNegative { expression } => {
-            output.push(1);
-            output.extend_from_slice(&expression.index.to_be_bytes());
-        }
-        IndexDomainPredicate::LessThanExtent { expression, extent } => {
-            output.push(2);
-            output.extend_from_slice(&expression.index.to_be_bytes());
-            match extent {
-                IndexExtentRef::Dimension(dimension) => {
-                    output.push(1);
-                    output.extend_from_slice(&dimension.index.to_be_bytes());
-                }
-                IndexExtentRef::TensorAxis { tensor, axis } => {
-                    output.push(2);
-                    output.extend_from_slice(&tensor.index.to_be_bytes());
-                    output.extend_from_slice(&axis.to_be_bytes());
-                }
-            }
-        }
-    }
-    match record.evidence {
-        IndexDomainEvidence::SoundProof(proof) => {
-            output.push(1);
-            output.push(match proof {
-                IndexDomainSoundProof::VacuousEmptyDomain => 1,
-                IndexDomainSoundProof::Interval => 2,
-                IndexDomainSoundProof::ProvedExtentEquality => 3,
-            });
-        }
-        IndexDomainEvidence::ExhaustiveFinite { points } => {
-            output.push(2);
-            output.extend_from_slice(&points.to_be_bytes());
-        }
-        IndexDomainEvidence::Empirical => output.push(3),
-        IndexDomainEvidence::Unknown => output.push(4),
+fn index_domain_assessment_key(
+    assessment: &IndexDomainAssessment,
+) -> (VerifiedTensorAccessId, IndexDomainPredicate) {
+    match assessment {
+        IndexDomainAssessment::Discharged(record) => (record.subject, record.predicate),
+        IndexDomainAssessment::Unknown(record) => (record.subject, record.predicate),
     }
 }
 
-fn encoded_index_domain_evidence_len(record: DischargedIndexDomainPredicate) -> usize {
-    let predicate = match record.predicate {
+fn encode_index_domain_assessment(output: &mut Vec<u8>, assessment: IndexDomainAssessment) {
+    match assessment {
+        IndexDomainAssessment::Discharged(record) => {
+            encode_index_domain_subject_predicate(output, record.subject, record.predicate);
+            output.push(1);
+            match record.evidence {
+                IndexDomainEvidence::SoundProof(proof) => {
+                    output.push(1);
+                    output.push(match proof {
+                        IndexDomainSoundProof::VacuousEmptyDomain => 1,
+                        IndexDomainSoundProof::Interval => 2,
+                        IndexDomainSoundProof::ProvedExtentEquality => 3,
+                    });
+                }
+                IndexDomainEvidence::ExhaustiveFinite { points } => {
+                    output.push(2);
+                    output.extend_from_slice(&points.to_be_bytes());
+                }
+                IndexDomainEvidence::Empirical => output.push(3),
+                IndexDomainEvidence::Unknown => output.push(4),
+            }
+        }
+        IndexDomainAssessment::Unknown(record) => {
+            encode_index_domain_subject_predicate(output, record.subject, record.predicate);
+            output.push(2);
+            encode_index_domain_unknown_reason(output, record.reason);
+        }
+    }
+}
+
+fn encoded_index_domain_subject_predicate_len(predicate: IndexDomainPredicate) -> usize {
+    let predicate = match predicate {
         IndexDomainPredicate::NonNegative { .. } => 5,
         IndexDomainPredicate::LessThanExtent { extent, .. } => match extent {
             IndexExtentRef::Dimension(_) => 10,
             IndexExtentRef::TensorAxis { .. } => 14,
         },
     };
-    let evidence = match record.evidence {
-        IndexDomainEvidence::SoundProof(_) => 2,
-        IndexDomainEvidence::ExhaustiveFinite { .. } => 9,
-        IndexDomainEvidence::Empirical | IndexDomainEvidence::Unknown => 1,
-    };
-    4_usize.saturating_add(predicate).saturating_add(evidence)
+    4_usize.saturating_add(predicate)
+}
+
+fn encoded_index_domain_assessment_len(assessment: IndexDomainAssessment) -> usize {
+    match assessment {
+        IndexDomainAssessment::Discharged(record) => {
+            let evidence = match record.evidence {
+                IndexDomainEvidence::SoundProof(_) => 2,
+                IndexDomainEvidence::ExhaustiveFinite { .. } => 9,
+                IndexDomainEvidence::Empirical | IndexDomainEvidence::Unknown => 1,
+            };
+            encoded_index_domain_subject_predicate_len(record.predicate)
+                .saturating_add(1)
+                .saturating_add(evidence)
+        }
+        IndexDomainAssessment::Unknown(record) => {
+            let reason = match record.reason {
+                IndexDomainUnknownReason::InsufficientFacts
+                | IndexDomainUnknownReason::UnsupportedFragment => 1,
+                IndexDomainUnknownReason::ResourceLimit { .. } => 26,
+            };
+            encoded_index_domain_subject_predicate_len(record.predicate)
+                .saturating_add(1)
+                .saturating_add(reason)
+        }
+    }
 }
 
 pub(super) fn encoded_index_node_len(node: &IndexNode) -> usize {

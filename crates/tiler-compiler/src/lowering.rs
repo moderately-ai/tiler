@@ -10,15 +10,11 @@
 //!   capability means the installed authority cannot lower a program it was
 //!   handed, which is a typed compile error with an explainable cause. There is
 //!   no approximate provider and no silent default.
-//! - **Refinement is exhaustive finite evidence, attached when the proof budget
-//!   affords it.** `IndexRegionBuilder::build` proves bounds and write ownership
-//!   by enumerating the access domain whenever the cheaper interval proof fails
-//!   or a write is not a proved coordinate permutation, charged against
-//!   `tiler_ir::index::MAX_EXHAUSTIVE_PROOF_CELLS`. A region that exceeds it has
-//!   not been disproved; the analysis simply stopped. Reporting that as a
-//!   rejection would confuse an exhausted analysis budget with hard
-//!   infeasibility, so the stage records a typed budget stop and an explicit
-//!   `Unknown` gap and leaves the plan standing.
+//! - **Refinement requires complete evidence.** `IndexRegionBuilder::build` may
+//!   return a structurally verified region with exact residual semantic
+//!   predicates, but such a region is not refinement evidence. Until a later
+//!   semantic-discharge stage proves those predicates, lowering fails closed
+//!   before an executable frontier or artifact can be formed.
 //!
 //! An emitted region that is malformed, or that is well formed but does not
 //! realize the occurrence, is a genuine rejection and does fail closed: the
@@ -29,53 +25,22 @@ use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
-use tiler_ir::index::{IndexRegionDiagnostic, ProofResource};
 use tiler_ir::semantic::{OpKey, SemanticProgram};
 
 use crate::capability::{LoweringResolveError, LoweringSignature, ResolvedLoweringCapability};
 use crate::legality::{
-    IndexRefinement, NumericalContractIdentity, OccurrenceOperand, OccurrenceResult,
-    OccurrenceValueId, RefinementError, SemanticOccurrence, SemanticOccurrenceIdentity,
-    refine_index_region,
+    IndexRefinement, IndexRefinementOutcome, NumericalContractIdentity, OccurrenceOperand,
+    OccurrenceResult, OccurrenceValueId, PendingIndexRefinement, RefinementError,
+    SemanticOccurrence, SemanticOccurrenceIdentity, refine_index_region,
 };
 use crate::region::{RegionFormationOutcome, SemanticMemberId};
 use crate::request::{LoweringProviderIdentity, VerifiedTargetRequest};
-
-/// The proof budget one occurrence's refinement exhausted.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct RefinementBudgetStop {
-    /// The exhausted exhaustive-proof resource.
-    pub(crate) resource: ProofResource,
-    /// The governed limit that stopped the proof.
-    pub(crate) limit: u64,
-    /// The amount the proof would have required.
-    pub(crate) required: u128,
-}
-
-impl RefinementBudgetStop {
-    /// Returns the stable explain resource key of the exhausted resource.
-    pub(crate) const fn resource_key(self) -> &'static str {
-        match self.resource {
-            ProofResource::Cells => "index-proof-cells",
-            ProofResource::IntegerBytes => "index-proof-integer-bytes",
-            // `ProofResource` is `#[non_exhaustive]`; an unrecognized resource
-            // still names a real stop, so it is reported under a stable generic
-            // key rather than being dropped from the trace.
-            _ => "index-proof-resource",
-        }
-    }
-}
 
 /// The evidence one recognized occurrence's lowering rests on.
 #[derive(Clone, Debug)]
 pub(crate) enum OccurrenceEvidence {
     /// The provider's emitted region was proved to realize the occurrence.
     Refined(Box<IndexRefinement>),
-    /// The exhaustive access proof stopped before the region could be verified.
-    ///
-    /// This is an `Unknown` gap, not a pass and not a rejection: no refinement
-    /// evidence exists for the occurrence and none was disproved.
-    BudgetStopped(RefinementBudgetStop),
 }
 
 /// One recognized occurrence, its resolved capability, and its evidence.
@@ -156,12 +121,23 @@ pub(crate) enum LoweringError {
         /// Typed registry cause.
         source: Box<LoweringResolveError>,
     },
-    /// The resolved provider's region does not realize the occurrence.
+    /// The resolved provider's region could not establish refinement evidence.
     Refine {
         /// Recognized member whose refinement was refused.
         member: SemanticMemberId,
+        /// Resolved provider and capability revision that emitted the region.
+        provider: LoweringProviderIdentity,
         /// Typed refinement cause.
         source: Arc<RefinementError>,
+    },
+    /// The provider emitted conforming checked state with residual predicates.
+    Unresolved {
+        /// Recognized member whose realization awaits semantic discharge.
+        member: SemanticMemberId,
+        /// Resolved provider and capability revision that emitted the region.
+        provider: LoweringProviderIdentity,
+        /// Exact checked state retaining the region-local predicate authority.
+        pending: Box<PendingIndexRefinement>,
     },
 }
 
@@ -171,7 +147,8 @@ impl LoweringError {
         match self {
             Self::Occurrence { member, .. }
             | Self::Resolve { member, .. }
-            | Self::Refine { member, .. } => *member,
+            | Self::Refine { member, .. }
+            | Self::Unresolved { member, .. } => *member,
         }
     }
 
@@ -183,6 +160,7 @@ impl LoweringError {
                 LoweringResolveError::MissingCapability { .. } => "missing-capability",
                 LoweringResolveError::AmbiguousCapability { .. } => "ambiguous-capability",
             },
+            Self::Unresolved { .. } => "unresolved-index-domain",
             Self::Refine { .. } => "refinement-refused",
         }
     }
@@ -200,6 +178,19 @@ impl LoweringError {
                 if matches!(**source, LoweringResolveError::MissingCapability { .. })
         )
     }
+
+    /// Returns the exact checked pending state, when residuals stopped refinement.
+    pub(crate) fn unresolved_index_domain(
+        &self,
+    ) -> Option<(&LoweringProviderIdentity, &PendingIndexRefinement)> {
+        let Self::Unresolved {
+            provider, pending, ..
+        } = self
+        else {
+            return None;
+        };
+        Some((provider, pending))
+    }
 }
 
 impl fmt::Display for LoweringError {
@@ -215,10 +206,18 @@ impl fmt::Display for LoweringError {
                 "compile.lowering.capability: member {} did not resolve: {source}",
                 member.0
             ),
-            Self::Refine { member, source } => write!(
+            Self::Refine { member, source, .. } => write!(
                 formatter,
                 "compile.lowering.refinement: member {} was not realized: {source}",
                 member.0
+            ),
+            Self::Unresolved {
+                member, pending, ..
+            } => write!(
+                formatter,
+                "compile.lowering.refinement: member {} retains {} unresolved index-domain obligation(s)",
+                member.0,
+                pending.obligations().len()
             ),
         }
     }
@@ -227,7 +226,7 @@ impl fmt::Display for LoweringError {
 impl Error for LoweringError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Occurrence { .. } => None,
+            Self::Occurrence { .. } | Self::Unresolved { .. } => None,
             Self::Resolve { source, .. } => Some(source.as_ref()),
             Self::Refine { source, .. } => Some(source.as_ref()),
         }
@@ -252,12 +251,29 @@ impl PartialEq for LoweringError {
                 },
             ) => member == other_member && source == other_source,
             (
-                Self::Refine { member, source },
+                Self::Refine {
+                    member,
+                    provider,
+                    source,
+                },
                 Self::Refine {
                     member: other_member,
+                    provider: other_provider,
                     source: other_source,
                 },
-            ) => member == other_member && source == other_source,
+            ) => member == other_member && provider == other_provider && source == other_source,
+            (
+                Self::Unresolved {
+                    member,
+                    provider,
+                    pending,
+                },
+                Self::Unresolved {
+                    member: other_member,
+                    provider: other_provider,
+                    pending: other_pending,
+                },
+            ) => member == other_member && provider == other_provider && pending == other_pending,
             _ => false,
         }
     }
@@ -268,9 +284,9 @@ impl Eq for LoweringError {}
 /// Resolves and refines every recognized occurrence's index-access lowering.
 ///
 /// Resolution runs for all occurrences and fails closed. Refinement runs for
-/// each resolved capability and attaches occurrence-bound evidence, degrading to
-/// a recorded proof-budget stop — never to a rejection — when the exhaustive
-/// access proof cannot afford the region.
+/// each resolved capability and attaches occurrence-bound evidence. A
+/// structurally verified region with unresolved semantic predicates is not
+/// refinement evidence and fails closed.
 ///
 /// # Errors
 ///
@@ -289,15 +305,22 @@ pub(crate) fn resolve_lowering(
         let identity = singleton_occurrence_identity(formation, member)?;
         let occurrence = project_occurrence(semantic, member, &contract, identity)?;
         let resolved = resolve_occurrence(capabilities, &occurrence, member)?;
-        let evidence = refine(&resolved, &occurrence, capabilities.scalars(), member)?;
+        let provider = LoweringProviderIdentity::new(
+            resolved.provider().clone(),
+            governed_capability_key(&resolved),
+            resolved.revision(),
+        );
+        let evidence = refine(
+            &resolved,
+            &occurrence,
+            capabilities.scalars(),
+            member,
+            provider.clone(),
+        )?;
         occurrences.push(OccurrenceLowering {
             member,
             operation: occurrence.operation().clone(),
-            provider: LoweringProviderIdentity::new(
-                resolved.provider().clone(),
-                governed_capability_key(&resolved),
-                resolved.revision(),
-            ),
+            provider,
             evidence,
         });
     }
@@ -381,52 +404,28 @@ fn singleton_occurrence_identity(
         })
 }
 
-/// Refines one resolved capability, degrading a proof-budget stop to a gap.
+/// Refines one resolved capability.
 fn refine(
     resolved: &ResolvedLoweringCapability,
     occurrence: &SemanticOccurrence,
     scalars: &tiler_ir::index::FrozenScalarRegistry,
     member: SemanticMemberId,
+    provider: LoweringProviderIdentity,
 ) -> Result<OccurrenceEvidence, LoweringError> {
-    match refine_index_region(resolved, occurrence, scalars) {
-        Ok(refinement) => Ok(OccurrenceEvidence::Refined(Box::new(refinement))),
-        Err(RefinementError::Build { diagnostics }) => match proof_budget_stop(&diagnostics) {
-            Some(stop) => Ok(OccurrenceEvidence::BudgetStopped(stop)),
-            None => Err(LoweringError::Refine {
-                member,
-                source: Arc::new(RefinementError::Build { diagnostics }),
-            }),
-        },
-        Err(source) => Err(LoweringError::Refine {
+    match refine_index_region(resolved, occurrence, scalars).map_err(|source| {
+        LoweringError::Refine {
             member,
+            provider: provider.clone(),
             source: Arc::new(source),
+        }
+    })? {
+        IndexRefinementOutcome::Refined(refinement) => Ok(OccurrenceEvidence::Refined(refinement)),
+        IndexRefinementOutcome::Pending(pending) => Err(LoweringError::Unresolved {
+            member,
+            provider,
+            pending,
         }),
     }
-}
-
-/// Returns the proof-budget stop when that is the *only* thing verification found.
-///
-/// A budget stop next to any other diagnostic is not a budget stop: the region
-/// was independently rejected, and reporting the pair as an unknown gap would
-/// hide a real refusal behind an exhausted analysis.
-fn proof_budget_stop(diagnostics: &[IndexRegionDiagnostic]) -> Option<RefinementBudgetStop> {
-    let mut stop = None;
-    for diagnostic in diagnostics {
-        let IndexRegionDiagnostic::ProofResourceLimit {
-            resource,
-            required,
-            limit,
-        } = diagnostic
-        else {
-            return None;
-        };
-        stop.get_or_insert(RefinementBudgetStop {
-            resource: *resource,
-            limit: *limit,
-            required: *required,
-        });
-    }
-    stop
 }
 
 /// Projects one recognized member into the occurrence refinement is bound to.

@@ -812,6 +812,8 @@ mod tests {
             .unwrap();
         refine_index_region(&resolved, &occurrence, &scalars)
             .unwrap_or_else(|error| panic!("governed lowering must refine: {error:?}"))
+            .into_refined()
+            .expect("governed lowering discharges every index-domain predicate")
     }
 
     #[test]
