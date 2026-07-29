@@ -61,23 +61,25 @@ use super::sourced::{
     ExtentSourceError, ExtentSources, SourcedExtent, SourcedShape, SymbolicExtentError,
 };
 use super::{
-    AccessMode, CanonicalIndexRegionIdentity, DimensionId, DomainRole, FrozenScalarRegistry,
-    IndexBuildError, IndexEntityKind, IndexExprClass, IndexExprId, IndexInteger, IndexLimitKind,
-    IndexRegionBuildError, IndexRegionDiagnostic, MAX_ACCESS_CANONICAL_BYTES,
-    MAX_BOUNDARY_CANONICAL_BYTES, MAX_BOUNDARY_TENSORS, MAX_DOMAIN_DIMENSIONS,
-    MAX_EXHAUSTIVE_PROOF_BYTES, MAX_EXHAUSTIVE_PROOF_CELLS, MAX_INDEX_CANONICAL_BYTES,
-    MAX_INDEX_EXPRESSION_DEPTH, MAX_INDEX_EXPRESSION_OPERANDS, MAX_INDEX_EXPRESSIONS,
-    MAX_INDEX_INTEGER_BYTES, MAX_INDEX_REGION_IDENTITY_BYTES, MAX_OUTPUT_ROOTS,
-    MAX_SCALAR_CANONICAL_BYTES, MAX_SCALAR_EXPRESSION_DEPTH, MAX_SCALAR_EXPRESSIONS,
-    MAX_SCALAR_OPERANDS, MAX_TENSOR_ACCESSES, MAX_TENSOR_RANK, ProofResource, ReductionTraversal,
-    ScalarAttributes, ScalarOpKey, ScalarOperationId, ScalarResultIndex, ScalarValueId,
-    TensorAccessId, TensorId, TensorRole, VerifiedIndexRegion,
+    AccessMode, CanonicalIndexRegionIdentity, DimensionId, DischargedIndexDomainPredicate,
+    DomainRole, FrozenScalarRegistry, IndexBuildError, IndexDomainEvidence, IndexDomainPredicate,
+    IndexDomainSoundProof, IndexEntityKind, IndexExprClass, IndexExprId, IndexExtentRef,
+    IndexInteger, IndexLimitKind, IndexRegionBuildError, IndexRegionDiagnostic,
+    MAX_ACCESS_CANONICAL_BYTES, MAX_BOUNDARY_CANONICAL_BYTES, MAX_BOUNDARY_TENSORS,
+    MAX_DOMAIN_DIMENSIONS, MAX_EXHAUSTIVE_PROOF_BYTES, MAX_EXHAUSTIVE_PROOF_CELLS,
+    MAX_INDEX_CANONICAL_BYTES, MAX_INDEX_EXPRESSION_DEPTH, MAX_INDEX_EXPRESSION_OPERANDS,
+    MAX_INDEX_EXPRESSIONS, MAX_INDEX_INTEGER_BYTES, MAX_INDEX_REGION_IDENTITY_BYTES,
+    MAX_OUTPUT_ROOTS, MAX_SCALAR_CANONICAL_BYTES, MAX_SCALAR_EXPRESSION_DEPTH,
+    MAX_SCALAR_EXPRESSIONS, MAX_SCALAR_OPERANDS, MAX_TENSOR_ACCESSES, MAX_TENSOR_RANK,
+    ProofResource, ReductionTraversal, ScalarAttributes, ScalarOpKey, ScalarOperationId,
+    ScalarResultIndex, ScalarValueId, TensorAccessId, TensorId, TensorRole, VerifiedIndexExprId,
+    VerifiedIndexRegion, VerifiedTensorAccessId, VerifiedTensorId,
 };
 use crate::shape::env::constraint::ExtentInterval;
 use crate::shape::env::{ShapeEnv, ShapeSymbol};
 
 /// The domain separator of one verified index region's canonical identity.
-const INDEX_REGION_DOMAIN: &[u8] = b"tiler.index-region.v6\0";
+const INDEX_REGION_DOMAIN: &[u8] = b"tiler.index-region.v7\0";
 
 /// What interval propagation concluded about one access's coordinates.
 #[derive(Clone, Copy, Debug)]
@@ -142,6 +144,7 @@ struct CompactedRegion {
     tensors: Vec<TensorData>,
     expressions: Vec<IndexExprData>,
     accesses: Vec<VerifiedAccessData>,
+    index_domain_evidence: Vec<DischargedIndexDomainPredicate>,
     operations: Vec<ScalarOperationData>,
     values: Vec<ScalarValueData>,
     outputs: Vec<OutputData>,

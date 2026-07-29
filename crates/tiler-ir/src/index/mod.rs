@@ -36,7 +36,10 @@ pub use model::{
     ScalarReductionRef, ScalarValueDefinitionView, ScalarValueRef, TensorAccessRef, TensorRef,
     TensorRole, VerifiedIndexRegion, WriteOwnershipProofView,
 };
-pub use predicate::{IndexDomainPredicate, IndexExtentRef};
+pub use predicate::{
+    DischargedIndexDomainPredicate, IndexDomainEvidence, IndexDomainPredicate,
+    IndexDomainSoundProof, IndexExtentRef,
+};
 pub use scalar::{
     CanonicalScalarDefinitionProjection, CanonicalScalarRegistrySnapshotIdentity,
     FrozenScalarRegistry, ScalarAdmissionProvenanceIdentity, ScalarApplicationRejection,

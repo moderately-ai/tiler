@@ -7,10 +7,11 @@ use crate::shape::{Extent, Shape};
 use super::handles::VerifiedRegionOwner;
 use super::sourced::{ExtentSources, SourcedExtent, SourcedShape};
 use super::{
-    IndexEntityKind, IndexInteger, ScalarAttributes, ScalarOpKey, ScalarResultIndex,
-    VerifiedDimensionId, VerifiedIndexExprId, VerifiedIndexHandleError,
-    VerifiedReducerBodyOperationId, VerifiedReducerBodyValueId, VerifiedScalarOperationId,
-    VerifiedScalarValueId, VerifiedTensorAccessId, VerifiedTensorId,
+    DischargedIndexDomainPredicate, IndexDomainPredicate, IndexEntityKind, IndexExtentRef,
+    IndexInteger, ScalarAttributes, ScalarOpKey, ScalarResultIndex, VerifiedDimensionId,
+    VerifiedIndexExprId, VerifiedIndexHandleError, VerifiedReducerBodyOperationId,
+    VerifiedReducerBodyValueId, VerifiedScalarOperationId, VerifiedScalarValueId,
+    VerifiedTensorAccessId, VerifiedTensorId,
 };
 
 /// Whether one boundary tensor is consumed or produced.
@@ -228,6 +229,7 @@ pub(super) struct VerifiedIndexRegionData {
     pub tensors: Vec<TensorData>,
     pub expressions: Vec<IndexExprData>,
     pub accesses: Vec<VerifiedAccessData>,
+    pub index_domain_evidence: Vec<DischargedIndexDomainPredicate>,
     pub operations: Vec<ScalarOperationData>,
     pub values: Vec<ScalarValueData>,
     pub outputs: Vec<OutputData>,
@@ -299,6 +301,60 @@ impl VerifiedIndexRegion {
                 data,
                 region: self,
             })
+    }
+    /// Returns every discharged index-domain predicate in canonical order.
+    ///
+    /// Each record binds an exact predicate to the access whose iteration
+    /// domain it was proved over. Unknown obligations are absent because an
+    /// unknown is not evidence and cannot discharge a predicate.
+    #[must_use]
+    pub fn discharged_index_domain_predicates(
+        &self,
+    ) -> impl ExactSizeIterator<Item = DischargedIndexDomainPredicate> + '_ {
+        self.data.index_domain_evidence.iter().copied()
+    }
+    /// Looks up retained evidence for one exact access/predicate pair.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the subject or any predicate handle belongs to a
+    /// different region, names no retained entity, or names a tensor axis that
+    /// does not exist.
+    pub fn index_domain_evidence(
+        &self,
+        subject: VerifiedTensorAccessId,
+        predicate: IndexDomainPredicate,
+    ) -> Result<Option<DischargedIndexDomainPredicate>, VerifiedIndexHandleError> {
+        self.access(subject)?;
+        let expression = match predicate {
+            IndexDomainPredicate::NonNegative { expression }
+            | IndexDomainPredicate::LessThanExtent { expression, .. } => expression,
+        };
+        self.index_expression(expression)?;
+        if let IndexDomainPredicate::LessThanExtent { extent, .. } = predicate {
+            match extent {
+                IndexExtentRef::Dimension(dimension) => {
+                    self.dimension(dimension)?;
+                }
+                IndexExtentRef::TensorAxis { tensor, axis } => {
+                    let tensor = self.tensor(tensor)?;
+                    if usize::try_from(axis)
+                        .ok()
+                        .is_none_or(|axis| axis >= tensor.data.shape.rank())
+                    {
+                        return Err(VerifiedIndexHandleError::InvalidHandle {
+                            entity: IndexEntityKind::Tensor,
+                        });
+                    }
+                }
+            }
+        }
+        Ok(self
+            .data
+            .index_domain_evidence
+            .iter()
+            .copied()
+            .find(|record| record.subject == subject && record.predicate == predicate))
     }
     /// Returns scalar operation occurrences.
     #[must_use]

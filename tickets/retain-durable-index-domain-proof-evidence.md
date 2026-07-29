@@ -1,7 +1,7 @@
 ---
 id: retain-durable-index-domain-proof-evidence
 title: Retain durable index-domain proof evidence
-status: todo
+status: done
 priority: p1
 dependencies: [implement-index-domain-predicates]
 related: []
@@ -33,3 +33,11 @@ Verified regions retain inspectable typed evidence for discharged predicates; th
 - On completion, record the exact public types and identity consequence here.
 - Release `carry-unknown-index-domain-obligations`.
 - File any new proof lane separately rather than widening this evidence-custody ticket.
+
+## Outcome
+
+`tiler_ir::index` now exposes the closed, unordered `IndexDomainSoundProof` and `IndexDomainEvidence` enums plus the opaque `DischargedIndexDomainPredicate` record. A verified region returns its canonical evidence records through `VerifiedIndexRegion::discharged_index_domain_predicates` and validates exact subject/predicate lookups through `VerifiedIndexRegion::index_domain_evidence`; record construction remains private, checks every region-owned handle, and refuses `Unknown` as a discharge.
+
+Index-region canonical identity moved from `tiler.index-region.v6` to `tiler.index-region.v7`. The encoding includes each discharged record's exact access subject, predicate expression and extent, and evidence class or sound-proof method; solver search state and memoization remain excluded.
+
+The construction-site test exhaustively covers `SoundProof`, `ExhaustiveFinite`, `Empirical`, and `Unknown`. Deliberate perturbations proved failures for the `Unknown` disposition, every foreign-handle position, omission of an upper-bound predicate, and each identity component: subject, same-length predicate, and same-length proof method. After restoration, `cargo nextest run -p tiler-ir` passed 297 tests; `cargo clippy -p tiler-ir --all-targets -- -D warnings` and `cargo test -p tiler-ir --doc` passed. Downstream validation passed 386 `tiler-compiler` tests plus its Clippy and doc-test commands.

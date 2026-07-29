@@ -49,6 +49,14 @@ impl IndexRegionBuilder {
             .iter()
             .map(|old| self.remap_access(*old, &tensor_map, &expr_map, &dimension_map))
             .collect();
+        let owner = self.owner.verified_owner();
+        let index_domain_evidence = accesses
+            .iter()
+            .enumerate()
+            .flat_map(|(index, access)| {
+                Self::retain_access_index_domain_evidence(owner, bounded_index(index), access)
+            })
+            .collect();
         let operations: Vec<_> = op_order
             .iter()
             .map(|old| {
@@ -108,6 +116,7 @@ impl IndexRegionBuilder {
             tensors,
             expressions,
             accesses,
+            index_domain_evidence,
             operations,
             values,
             outputs,
@@ -223,6 +232,7 @@ impl IndexRegionBuilder {
             tensors,
             expressions,
             accesses,
+            index_domain_evidence,
             operations,
             values,
             outputs,
@@ -235,6 +245,7 @@ impl IndexRegionBuilder {
                 tensors,
                 expressions,
                 accesses,
+                index_domain_evidence,
                 operations,
                 values,
                 outputs,
@@ -301,6 +312,48 @@ impl IndexRegionBuilder {
                 }
             }),
         }
+    }
+
+    fn retain_access_index_domain_evidence(
+        owner: super::super::handles::VerifiedRegionOwner,
+        access_index: u32,
+        access: &VerifiedAccessData,
+    ) -> Vec<DischargedIndexDomainPredicate> {
+        let subject = VerifiedTensorAccessId::from_verified(owner, access_index);
+        let tensor = VerifiedTensorId::from_verified(owner, access.tensor);
+        let evidence = match access.bounds_proof {
+            BoundsProof::VacuousEmptyDomain => {
+                IndexDomainEvidence::SoundProof(IndexDomainSoundProof::VacuousEmptyDomain)
+            }
+            BoundsProof::Interval => {
+                IndexDomainEvidence::SoundProof(IndexDomainSoundProof::Interval)
+            }
+            BoundsProof::ProvedExtentEquality => {
+                IndexDomainEvidence::SoundProof(IndexDomainSoundProof::ProvedExtentEquality)
+            }
+            BoundsProof::Exhaustive { points } => IndexDomainEvidence::ExhaustiveFinite { points },
+        };
+        let mut records = Vec::with_capacity(access.coordinates.len().saturating_mul(2));
+        for (axis, expression) in access.coordinates.iter().copied().enumerate() {
+            let expression = VerifiedIndexExprId::from_verified(owner, expression);
+            for predicate in [
+                IndexDomainPredicate::NonNegative { expression },
+                IndexDomainPredicate::LessThanExtent {
+                    expression,
+                    extent: IndexExtentRef::TensorAxis {
+                        tensor,
+                        axis: bounded_index(axis),
+                    },
+                },
+            ] {
+                let record =
+                    DischargedIndexDomainPredicate::checked(owner, subject, predicate, evidence)
+                        .expect("compaction mints every evidence handle from one owner")
+                        .expect("verified accesses retain only discharging evidence");
+                records.push(record);
+            }
+        }
+        records
     }
 
     pub(super) fn reachable_values(&self) -> BTreeSet<u32> {

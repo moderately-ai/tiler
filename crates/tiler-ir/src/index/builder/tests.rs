@@ -6,22 +6,23 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::{
-    ProofBudgetExcess, ReducerBodyBudget, admit_reducer_body_append, encode_reducer_body,
-    encoded_reducer_body_len, encoded_reducer_operation_base_len,
-    encoded_reducer_operation_result_increment, encoded_reducer_operation_result_overhead,
-    encoded_reducer_parameter_len, map_scalar_apply_error, minimum_reducer_body,
-    with_admitted_proof_budget,
+    CompactedRegion, ProofBudgetExcess, ReducerBodyBudget, admit_reducer_body_append,
+    encode_reducer_body, encode_region, encoded_reducer_body_len,
+    encoded_reducer_operation_base_len, encoded_reducer_operation_result_increment,
+    encoded_reducer_operation_result_overhead, encoded_reducer_parameter_len, encoded_region_len,
+    map_scalar_apply_error, minimum_reducer_body, with_admitted_proof_budget,
 };
 use crate::index::model::{
     ReducerBodyOperationData, ReducerBodyValueData, ReducerBodyValueSource, ScalarReducerBodyData,
 };
 use crate::index::scalar::{ScalarApplyError, ScalarInferenceHostFailure};
 use crate::index::{
-    DomainRole, FrozenScalarRegistry, IndexBuildError, IndexLimitKind, IndexRegionBuilder,
+    DomainRole, FrozenScalarRegistry, IndexBuildError, IndexDomainEvidence, IndexDomainPredicate,
+    IndexDomainSoundProof, IndexExtentRef, IndexLimitKind, IndexRegionBuilder,
     MAX_SCALAR_CANONICAL_BYTES, ScalarArity, ScalarAttributeSchema, ScalarAttributes, ScalarEffect,
     ScalarInferenceError, ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey,
     ScalarOperationContract, ScalarOperationDefinition, ScalarOperationInferencer,
-    ScalarRegistryBuilder, ScalarResultIndex, TensorRole,
+    ScalarRegistryBuilder, ScalarResultIndex, TensorRole, VerifiedIndexRegion,
 };
 use crate::semantic::{
     CanonicalValue, NormativeDefinitionRef, ProviderIdentity, RegistryError, ResolvedValueType,
@@ -89,6 +90,33 @@ fn reducer_test_registry(calls: Arc<AtomicUsize>) -> FrozenScalarRegistry {
         )
         .unwrap();
     scalar.freeze()
+}
+
+fn verified_copy() -> VerifiedIndexRegion {
+    let mut builder =
+        IndexRegionBuilder::new(reducer_test_registry(Arc::new(AtomicUsize::new(0)))).unwrap();
+    let dimension = builder
+        .dimension(DomainRole::Parallel, Extent::new(5))
+        .unwrap();
+    let coordinate = builder.dimension_expr(dimension).unwrap();
+    let input = builder
+        .tensor(
+            TensorRole::Input,
+            reducer_test_type(),
+            Shape::new([Extent::new(5)]),
+        )
+        .unwrap();
+    let output = builder
+        .tensor(
+            TensorRole::Output,
+            reducer_test_type(),
+            Shape::new([Extent::new(5)]),
+        )
+        .unwrap();
+    let value = builder.read(input, &[dimension], &[coordinate]).unwrap();
+    let write = builder.write(output, &[dimension], &[coordinate]).unwrap();
+    builder.output(write, value).unwrap();
+    builder.build().unwrap()
 }
 
 #[test]
@@ -283,4 +311,94 @@ fn near_parent_limit_reducer_failure_leaves_the_outer_builder_unchanged() {
             builder.scalar_bytes,
         )
     );
+}
+
+#[test]
+fn every_coordinate_predicate_retains_exact_inspectable_evidence() {
+    let region = verified_copy();
+    let accesses = region.accesses().collect::<Vec<_>>();
+    let records = region
+        .discharged_index_domain_predicates()
+        .collect::<Vec<_>>();
+    assert_eq!(accesses.len(), 2);
+    assert_eq!(records.len(), 4);
+    for access in accesses {
+        let expression = access.coordinates().next().unwrap();
+        let tensor = access.tensor();
+        let expected = [
+            IndexDomainPredicate::NonNegative { expression },
+            IndexDomainPredicate::LessThanExtent {
+                expression,
+                extent: IndexExtentRef::TensorAxis { tensor, axis: 0 },
+            },
+        ];
+        for predicate in expected {
+            let record = region
+                .index_domain_evidence(access.id(), predicate)
+                .unwrap()
+                .expect("both coordinate obligations were discharged");
+            assert_eq!(record.subject(), access.id());
+            assert_eq!(record.predicate(), predicate);
+            assert_eq!(
+                record.evidence(),
+                IndexDomainEvidence::SoundProof(IndexDomainSoundProof::Interval)
+            );
+        }
+    }
+}
+
+#[test]
+fn evidence_subject_predicate_and_basis_each_enter_region_identity() {
+    let region = verified_copy();
+    let data = &region.data;
+    let compacted = || CompactedRegion {
+        dimensions: data.dimensions.clone(),
+        tensors: data.tensors.clone(),
+        expressions: data.expressions.clone(),
+        accesses: data.accesses.clone(),
+        index_domain_evidence: data.index_domain_evidence.clone(),
+        operations: data.operations.clone(),
+        values: data.values.clone(),
+        outputs: data.outputs.clone(),
+    };
+    let identity =
+        |region: &CompactedRegion| encode_region(region, None, encoded_region_len(region, None));
+    let baseline = compacted();
+    assert_eq!(
+        identity(&baseline).as_bytes(),
+        region.canonical_identity().as_bytes()
+    );
+
+    let mut changed_subject = compacted();
+    changed_subject.index_domain_evidence[0].subject =
+        changed_subject.index_domain_evidence[2].subject;
+    assert_ne!(identity(&baseline), identity(&changed_subject));
+
+    let mut changed_predicate = compacted();
+    let foreign_tensor = match changed_predicate.index_domain_evidence[3].predicate {
+        IndexDomainPredicate::LessThanExtent {
+            extent: IndexExtentRef::TensorAxis { tensor, .. },
+            ..
+        } => tensor,
+        IndexDomainPredicate::NonNegative { .. }
+        | IndexDomainPredicate::LessThanExtent {
+            extent: IndexExtentRef::Dimension(_),
+            ..
+        } => panic!("the neighbouring upper-bound record names its tensor"),
+    };
+    let IndexDomainPredicate::LessThanExtent { extent, .. } =
+        &mut changed_predicate.index_domain_evidence[1].predicate
+    else {
+        panic!("the first access's second record is its upper bound")
+    };
+    *extent = IndexExtentRef::TensorAxis {
+        tensor: foreign_tensor,
+        axis: 0,
+    };
+    assert_ne!(identity(&baseline), identity(&changed_predicate));
+
+    let mut changed_basis = compacted();
+    changed_basis.index_domain_evidence[0].evidence =
+        IndexDomainEvidence::SoundProof(IndexDomainSoundProof::ProvedExtentEquality);
+    assert_ne!(identity(&baseline), identity(&changed_basis));
 }

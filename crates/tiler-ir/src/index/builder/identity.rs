@@ -358,15 +358,16 @@ pub(super) fn encode_region(
         tensors,
         expressions,
         accesses,
+        index_domain_evidence,
         operations,
         values,
         outputs,
     } = compacted;
     let mut out = Vec::with_capacity(exact_capacity);
-    // `v6`: a tensor boundary now encodes extent by extent through
-    // `SourcedExtent`, which tags each axis as literal or symbolic, where `v5`
-    // wrote eight raw bytes per axis. The bytes of a wholly static boundary
-    // therefore changed even though its meaning did not, so the domain moves.
+    // `v7`: every discharged index-domain predicate now enters identity with
+    // its exact access subject and evidence. `v6` retained one access-wide
+    // proof summary beside identity, so two consumers could rely on different
+    // predicate evidence while comparing the same bytes.
     out.extend_from_slice(INDEX_REGION_DOMAIN);
     // The environment a symbolic extent resolves against is part of what this
     // region is. Two regions spelling the same symbol against differently bound
@@ -409,6 +410,10 @@ pub(super) fn encode_region(
         out.extend_from_slice(&a.tensor.to_be_bytes());
         encode_u32s(&mut out, &a.domain);
         encode_u32s(&mut out, &a.coordinates);
+    }
+    push_len(&mut out, index_domain_evidence.len());
+    for evidence in index_domain_evidence {
+        encode_index_domain_evidence(&mut out, *evidence);
     }
     push_len(&mut out, operations.len());
     for op in operations {
@@ -453,6 +458,7 @@ pub(super) fn encoded_region_len(
         tensors,
         expressions,
         accesses,
+        index_domain_evidence,
         operations,
         values,
         outputs,
@@ -489,6 +495,12 @@ pub(super) fn encoded_region_len(
             .saturating_add(encoded_u32s_len(access.domain.len()))
             .saturating_add(encoded_u32s_len(access.coordinates.len()));
     }
+    bytes = bytes.saturating_add(8).saturating_add(
+        index_domain_evidence
+            .iter()
+            .map(|evidence| encoded_index_domain_evidence_len(*evidence))
+            .fold(0_usize, usize::saturating_add),
+    );
     bytes = bytes.saturating_add(8);
     for operation in operations {
         bytes = bytes
@@ -511,6 +523,63 @@ pub(super) fn encoded_region_len(
     bytes
         .saturating_add(8)
         .saturating_add(outputs.len().saturating_mul(8))
+}
+
+fn encode_index_domain_evidence(output: &mut Vec<u8>, record: DischargedIndexDomainPredicate) {
+    output.extend_from_slice(&record.subject.index.to_be_bytes());
+    match record.predicate {
+        IndexDomainPredicate::NonNegative { expression } => {
+            output.push(1);
+            output.extend_from_slice(&expression.index.to_be_bytes());
+        }
+        IndexDomainPredicate::LessThanExtent { expression, extent } => {
+            output.push(2);
+            output.extend_from_slice(&expression.index.to_be_bytes());
+            match extent {
+                IndexExtentRef::Dimension(dimension) => {
+                    output.push(1);
+                    output.extend_from_slice(&dimension.index.to_be_bytes());
+                }
+                IndexExtentRef::TensorAxis { tensor, axis } => {
+                    output.push(2);
+                    output.extend_from_slice(&tensor.index.to_be_bytes());
+                    output.extend_from_slice(&axis.to_be_bytes());
+                }
+            }
+        }
+    }
+    match record.evidence {
+        IndexDomainEvidence::SoundProof(proof) => {
+            output.push(1);
+            output.push(match proof {
+                IndexDomainSoundProof::VacuousEmptyDomain => 1,
+                IndexDomainSoundProof::Interval => 2,
+                IndexDomainSoundProof::ProvedExtentEquality => 3,
+            });
+        }
+        IndexDomainEvidence::ExhaustiveFinite { points } => {
+            output.push(2);
+            output.extend_from_slice(&points.to_be_bytes());
+        }
+        IndexDomainEvidence::Empirical => output.push(3),
+        IndexDomainEvidence::Unknown => output.push(4),
+    }
+}
+
+fn encoded_index_domain_evidence_len(record: DischargedIndexDomainPredicate) -> usize {
+    let predicate = match record.predicate {
+        IndexDomainPredicate::NonNegative { .. } => 5,
+        IndexDomainPredicate::LessThanExtent { extent, .. } => match extent {
+            IndexExtentRef::Dimension(_) => 10,
+            IndexExtentRef::TensorAxis { .. } => 14,
+        },
+    };
+    let evidence = match record.evidence {
+        IndexDomainEvidence::SoundProof(_) => 2,
+        IndexDomainEvidence::ExhaustiveFinite { .. } => 9,
+        IndexDomainEvidence::Empirical | IndexDomainEvidence::Unknown => 1,
+    };
+    4_usize.saturating_add(predicate).saturating_add(evidence)
 }
 
 pub(super) fn encoded_index_node_len(node: &IndexNode) -> usize {
