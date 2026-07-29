@@ -1,7 +1,7 @@
 ---
 id: prototype-quantized-value-vertical
 title: Prove a quantized compound-value vertical
-status: review
+status: done
 priority: p2
 dependencies: [implement-first-profile-numerical-policies]
 related: [implement-workload-selected-quantized-parameter-maps, implement-first-runtime-semantic-value-precondition-enforcement, admit-a-dtype-dispatchability-capability-axis, scope-first-quantized-lm-profile, implement-first-quantized-backend-profile, group-internal-compound-materializations-by-logical-value]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/reference, implementation/compiler, i
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, quantization, dtype, vertical-slice]
-claimed_from: todo
-assignee: codex
-lease_expires_at: 1785296825
 ---
 ## User-visible outcome
 
