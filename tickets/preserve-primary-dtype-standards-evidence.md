@@ -4,8 +4,8 @@ title: Preserve primary dtype standards evidence
 status: todo
 priority: p2
 dependencies: []
-related: [own-the-dtype-support-maturity-matrix]
-scopes: [research/numerics]
+related: [own-the-dtype-support-maturity-matrix, enumerate-the-mature-tensor-dtype-taxonomy, define-dtype-namespace-admission-policy, register-the-accepted-built-in-dtype-catalog]
+scopes: [research/numerics, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, dtype, provenance, documentation]

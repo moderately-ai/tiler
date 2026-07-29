@@ -4,7 +4,7 @@ title: Correct the stale post-vertical implementation status
 status: todo
 priority: p1
 dependencies: []
-related: [own-the-dtype-support-maturity-matrix, prototype-metal-aot-slice, prototype-metal-runtime-proof, prototype-public-compiler-api]
+related: [own-the-dtype-support-maturity-matrix, prototype-metal-aot-slice, prototype-metal-runtime-proof, prototype-public-compiler-api, prototype-structured-kir-slice, prototype-kernel-program-ir, prototype-artifact-program-model, prototype-metal-kir-lowering, prototype-apple-aot-driver, prototype-metal-bundle-assembly, prototype-runtime-artifact-validation, prototype-runtime-routing-commit, prototype-metal-runtime-execution]
 scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
