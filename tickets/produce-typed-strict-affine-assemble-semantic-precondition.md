@@ -4,7 +4,7 @@ title: Produce the strict-affine Assemble scale precondition
 status: todo
 priority: p2
 dependencies: [produce-typed-strict-affine-quantize-semantic-preconditions]
-related: [enforce-resolved-encoded-value-binding-conformance]
+related: [enforce-resolved-encoded-value-binding-conformance, own-the-dtype-support-maturity-matrix]
 scopes: [implementation/ir, implementation/reference, contracts/foundation, contracts/numerics, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []

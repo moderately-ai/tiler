@@ -28,6 +28,7 @@ Use the [glossary](glossary.md) whenever a typed compiler term is unfamiliar.
 - **Understand semantic meaning:** [IR](ir.md),
   [operation extensions](operation-extensions.md), and
   [numerical semantics](numerical-semantics.md).
+- **Check delivered dtype and operation breadth:** [dtype support maturity](dtype-support.md) and the [operation-family support matrix](roadmap.md#operation-family-support-matrix).
 - **Understand optimization:** [optimizer](compiler/optimizer.md),
   [fusion and scheduling](compiler/fusion-and-scheduling.md), and
   [cost model](compiler/cost-model.md).
@@ -51,15 +52,16 @@ for locating one fact:
 3. [IR stack and invariants](ir.md)
 4. [Operation extensions](operation-extensions.md)
 5. [Numerical semantics](numerical-semantics.md)
-6. [Optimizer model](compiler/optimizer.md)
-7. [Fusion and scheduling](compiler/fusion-and-scheduling.md)
-8. [Cost model](compiler/cost-model.md)
-9. [Frontend integration](integration/frontends.md)
-10. [Metal AOT backend](backends/metal.md)
-11. [Artifact and kernel ABI](artifact-abi.md)
-12. [Candle integration](integration/candle.md)
-13. [Correctness and testing](correctness-and-testing.md)
-14. [Roadmap](roadmap.md)
+6. [Dtype support maturity](dtype-support.md)
+7. [Optimizer model](compiler/optimizer.md)
+8. [Fusion and scheduling](compiler/fusion-and-scheduling.md)
+9. [Cost model](compiler/cost-model.md)
+10. [Frontend integration](integration/frontends.md)
+11. [Metal AOT backend](backends/metal.md)
+12. [Artifact and kernel ABI](artifact-abi.md)
+13. [Candle integration](integration/candle.md)
+14. [Correctness and testing](correctness-and-testing.md)
+15. [Roadmap](roadmap.md)
 
 ## Authority model
 

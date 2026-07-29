@@ -3,8 +3,8 @@ id: admit-strict-affine-quantize-physical-candidate
 title: Admit strict-affine Quantize as a committed physical candidate
 status: todo
 priority: p2
-dependencies: [produce-typed-strict-affine-quantize-semantic-preconditions, group-internal-compound-materializations-by-logical-value, scope-first-quantized-lm-profile]
-related: [implement-first-quantized-backend-profile, implement-first-runtime-semantic-value-precondition-enforcement]
+dependencies: [produce-typed-strict-affine-quantize-semantic-preconditions, group-internal-compound-materializations-by-logical-value, scope-first-quantized-lm-profile, admit-a-dtype-dispatchability-capability-axis]
+related: [implement-first-quantized-backend-profile, implement-first-runtime-semantic-value-precondition-enforcement, own-the-dtype-support-maturity-matrix]
 scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/reference, implementation/metal, implementation/build, implementation/runtime, contracts/numerics, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []

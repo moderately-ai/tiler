@@ -3,7 +3,7 @@ id: implement-first-quantized-backend-profile
 title: Implement the first selected quantized backend profile
 status: deferred
 priority: p2
-dependencies: [prototype-quantized-value-vertical, group-internal-compound-materializations-by-logical-value, admit-strict-affine-quantize-physical-candidate, implement-first-runtime-semantic-value-precondition-enforcement]
+dependencies: [prototype-quantized-value-vertical, group-internal-compound-materializations-by-logical-value, admit-strict-affine-quantize-physical-candidate, implement-first-runtime-semantic-value-precondition-enforcement, admit-a-dtype-dispatchability-capability-axis, scope-first-quantized-lm-profile]
 related: [implement-workload-selected-quantized-parameter-maps, own-the-dtype-support-maturity-matrix, admit-a-dtype-dispatchability-capability-axis]
 scopes: [implementation/compiler, implementation/artifact, implementation/reference, implementation/runtime]
 shared_scopes: [project/tickets]

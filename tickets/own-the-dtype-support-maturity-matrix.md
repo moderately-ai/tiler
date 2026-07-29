@@ -1,14 +1,17 @@
 ---
 id: own-the-dtype-support-maturity-matrix
 title: Own the dtype support maturity matrix
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
-related: [enumerate-the-mature-tensor-dtype-taxonomy, own-operation-family-support-matrix, register-the-accepted-built-in-dtype-catalog, prototype-quantized-value-vertical, implement-first-runtime-semantic-value-precondition-enforcement, scope-first-quantized-lm-profile]
+related: [enumerate-the-mature-tensor-dtype-taxonomy, own-operation-family-support-matrix, register-the-accepted-built-in-dtype-catalog, prototype-quantized-value-vertical, implement-first-runtime-semantic-value-precondition-enforcement, scope-first-quantized-lm-profile, preserve-primary-dtype-standards-evidence, produce-typed-strict-affine-quantize-semantic-preconditions, admit-a-dtype-dispatchability-capability-axis, implement-workload-selected-quantized-parameter-maps, group-internal-compound-materializations-by-logical-value, implement-first-quantized-backend-profile, calibrate-device-cost-models]
 scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
-paths: []
+paths: [docs/dtype-support.md]
 tags: [documentation, roadmap, dtype, breadth]
+claimed_from: todo
+assignee: codex
+lease_expires_at: 1785335057
 ---
 ## User-visible outcome
 
@@ -22,8 +25,9 @@ A reader can tell, for every recognized dtype family, exactly which of identity,
 
 ## Required matrix
 
-- Rows cover logical bool; signed and unsigned exact-width integers; IEEE binary floats; BF16; OCP FP8/FP6/FP4/E8M0; decimal; parameterized complex; affine quantized; OCP MX/block-scaled; external/vendor formats; and explicitly unsupported sparse/ragged/non-tensor families where the taxonomy distinguishes them.
-- Columns separately state recognized identity, semantic operation signatures, reference evaluation, numerical contract/honourability, physical carrier and encoding, ABI/materialization, optimizer legality, kernel vocabulary, backend lowering, runtime semantic validation, target-family dispatchability, and conformance evidence.
+- Rows cover logical bool; signed and unsigned exact-width integers; bounded-width and wide integer extensions; IEEE binary floats; BF16; OCP FP8/FP6/FP4/E8M0 with E8M0 classified as scale data rather than ordinary arithmetic; decimal; parameterized complex; affine quantized; OCP MX/block-scaled; fixed-point, UNORM/SNORM, posit, and other reserved numeric families; execution-only formats such as TF32, PTX scale encodings, `x86_fp80`, and `ppc_fp128`; external/vendor formats; nonnumeric tensor domains; and non-tensor graph values.
+- Sparse and ragged appear only as explicitly out-of-dtype-axis container, shape, layout, or value-representation families. Their row must not imply that a scalar dtype reservation is the missing mechanism.
+- Columns separately state recognized identity, semantic operation signatures, reference evaluation, numerical contract/honourability, physical carrier and encoding, ABI/materialization, optimizer legality, kernel vocabulary, backend lowering, backend execution, runtime semantic validation, target-family dispatchability, and conformance evidence.
 - Every cell names one of: absent/unsupported, type-system reservation, architectural seam, implemented mechanism, or tested guarantee. An implemented generic mechanism is not family support; a tested nominal fixture is not arithmetic support; a target measurement is not a portable guarantee.
 - Link each non-absent cell to its construction site or accepted decision and each absent family to a live trigger. Negative source claims include a one-line reproducible check and are read at the construction site before publication.
 - Correct the stale quantization row in the operation-family support matrix and reconcile Q-SEM-003 so the operation and dtype axes agree without duplicating authorities.
@@ -41,5 +45,6 @@ The dtype matrix and question/navigation indexes have one durable owner; the ope
 ## Graph maintenance
 
 - Link `register-the-accepted-built-in-dtype-catalog`, `admit-a-dtype-dispatchability-capability-axis`, runtime semantic enforcement, quantized profile selection, selected map/grouping/backend work, and cost calibration from the exact cells they own.
+- Preserve the primary specifications behind the catalog through `preserve-primary-dtype-standards-evidence`; accepted Tiler identities remain authoritative while upstream provenance, redistribution permission, and immutable bytes or digests remain separate evidence claims.
 - Expand or file the first bool, integer, complex, generalized-packing, reduced-precision, decimal, MX, or vendor vertical only when its trigger names a real consumer; do not create one generic “support all dtypes” implementation ticket.
 - When a selected backend profile appears, make its dependency on the exact physical vocabulary, dispatchability, runtime, grouping/map, and cost work structural in the ticket graph rather than prose-only.

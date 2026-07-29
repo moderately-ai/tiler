@@ -79,13 +79,8 @@ The implementation graph now maps these contracts to bounded coding tickets:
 
 ### Q-SEM-003 — First-profile operation and dtype support
 
-- Owner/track: [Numerical semantics](numerical-semantics.md), Milestones 1 and
-  2Q. Dtype recognition itself is settled by ADRs 0026–0038. The bounded
-  strict-`f32` subset is exercised by the
-  [`semantic/reference`](../tickets/prototype-semantic-reference-slice.md),
-  target-neutral, and Metal proof tickets without closing the broader matrix.
-- Close: every admitted tuple has explicit reference, optimization, and backend
-  support state.
+- Owner/track: [Numerical semantics](numerical-semantics.md) owns tuple meaning; [dtype support maturity](dtype-support.md) owns delivered state by layer; Milestones 1 and 2Q own profile progression. Built-in recognition policy is settled by ADRs 0026–0038, while registration and execution remain separate implementation claims. The bounded strict-`f32` and strict-affine U4/U8 slices do not close the broader profile.
+- Close: every recognized family and admitted operation/dtype/signature tuple has an explicit state or trigger for identity, semantics, reference evaluation, numerical policy, storage, ABI, optimizer legality, kernel vocabulary, lowering, backend execution, runtime semantic validation, target dispatchability, and conformance. Closure means the state is visible, not that every layer is delivered.
 
 ### Q-SEM-004 — First-profile transcendental tuples
 
@@ -102,7 +97,7 @@ The implementation graph now maps these contracts to bounded coding tickets:
 
 ### Q-SEM-014 — Operation-family breadth
 
-- Owner/tracking: the [operation-family support matrix](roadmap.md#operation-family-support-matrix), [`own-operation-family-support-matrix`](../tickets/own-operation-family-support-matrix.md). The dtype axis is owned by [`enumerate-the-mature-tensor-dtype-taxonomy`](../tickets/enumerate-the-mature-tensor-dtype-taxonomy.md) and tensor contraction by Q-SEM-015. Q-SEM-003 covers the admitted tuples; this question covers the families that are not admitted.
+- Owner/tracking: the [operation-family support matrix](roadmap.md#operation-family-support-matrix), [`own-operation-family-support-matrix`](../tickets/own-operation-family-support-matrix.md). The [mature dtype taxonomy](research/numerics/mature-dtype-taxonomy.md) owns the dtype universe, while [dtype support maturity](dtype-support.md) owns its implementation axis; tensor contraction is Q-SEM-015. Q-SEM-003 covers admitted tuples, and this question covers operation families that are not admitted.
 - Close: every operation family the corpus names appears in that matrix at a rung justified by inspected source or an accepted decision, and carries a live reconsideration trigger. This closes when breadth is tracked, not when it is delivered; widening any family remains separate, explicitly scheduled work.
 
 ### Q-SEM-007 — Concrete transactional rewrite API

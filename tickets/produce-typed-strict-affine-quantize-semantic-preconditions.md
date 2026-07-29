@@ -4,7 +4,7 @@ title: Produce typed strict-affine Quantize semantic preconditions
 status: done
 priority: p2
 dependencies: [prototype-quantized-value-vertical]
-related: [implement-first-runtime-semantic-value-precondition-enforcement, produce-typed-strict-affine-assemble-semantic-precondition, enforce-resolved-encoded-value-binding-conformance]
+related: [implement-first-runtime-semantic-value-precondition-enforcement, produce-typed-strict-affine-assemble-semantic-precondition, enforce-resolved-encoded-value-binding-conformance, own-the-dtype-support-maturity-matrix]
 scopes: [implementation/ir, implementation/compiler, implementation/reference, contracts/foundation, contracts/numerics, contracts/decisions, research/numerics, research/runtime, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
