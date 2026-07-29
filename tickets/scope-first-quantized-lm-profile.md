@@ -4,7 +4,7 @@ title: Scope the first workload-backed quantized language-model profile
 status: todo
 priority: p2
 dependencies: [define-first-metal-lm-workload, spike-first-metal-contraction-vertical, prototype-quantized-value-vertical]
-related: [implement-first-quantized-backend-profile, define-initial-affine-quantization-semantics, define-quantized-value-binding-contract]
+related: [implement-first-quantized-backend-profile, define-initial-affine-quantization-semantics, define-quantized-value-binding-contract, implement-workload-selected-quantized-parameter-maps]
 scopes: [research/numerics, research/scheduling, research/apple-targets, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []

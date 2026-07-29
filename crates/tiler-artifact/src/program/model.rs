@@ -16,15 +16,17 @@
 
 use tiler_ir::kernel::{AddressSpace, BufferAccess, CanonicalKernelIdentity, KernelType};
 use tiler_ir::program::{
-    ByteWindow, MaterializedValueRef, StageRef, ValueRole, VerifiedKernelProgram,
+    ByteWindow, MaterializedValueRef, StageRef, StorageEncoding, StorageScalar, ValueRole,
+    VerifiedKernelProgram,
 };
 use tiler_ir::schedule::{
     ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, NumericalRealization,
     ResourceRequirements, SubnormalMode, ValueDomainProvenance,
 };
 use tiler_ir::semantic::{
-    InputKey, OutputKey, ProviderIdentity, SemanticAdmissionProvenanceIdentity,
-    SemanticDefinitionProjectionIdentity, SemanticGraphIdentity, SemanticIdentity,
+    EncodedComponentRole, InputKey, OutputKey, ProviderIdentity,
+    SemanticAdmissionProvenanceIdentity, SemanticDefinitionProjectionIdentity,
+    SemanticGraphIdentity, SemanticIdentity,
 };
 use tiler_ir::shape::Shape;
 
@@ -122,7 +124,15 @@ use super::keys::{
 /// numerical-realization records, so a `v7` encoding of one artifact could
 /// otherwise equal a `v8` encoding of another. Retagging makes the old,
 /// incomplete subject incomparable with the complete one.
-const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v8\0";
+///
+/// # Why this is a `v9` step
+///
+/// Raised to `v9` when interface entries became logical values with ordered
+/// producer-derived components and each binding gained its semantic component
+/// role, physical storage scalar, complete storage encoding, and kernel access
+/// type. A `v8` identity cannot distinguish schemes or physical encodings that
+/// require different runtime bindings.
+const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v9\0";
 const STAGE_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.stage.v1\0";
 const PAYLOAD_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.payload.v1\0";
 /// Versioned domain separator of one selected provider's canonical key.
@@ -593,7 +603,10 @@ pub enum BindingTarget<'a> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct BindingData {
     pub(super) kind: BindingKind,
-    pub(super) element_type: KernelType,
+    pub(super) storage_scalar: StorageScalar,
+    pub(super) access_type: KernelType,
+    pub(super) component_role: Option<EncodedComponentRole>,
+    pub(super) encoding: StorageEncoding,
     pub(super) address_space: AddressSpace,
     pub(super) access: BufferAccess,
     pub(super) alignment: u32,
@@ -638,7 +651,18 @@ pub(super) struct VariantData {
 pub(super) struct InterfaceEntryData<K> {
     pub(super) key: K,
     pub(super) shape: Shape,
-    pub(super) element_type: KernelType,
+    pub(super) logical_type: Vec<u8>,
+    pub(super) components: Vec<InterfaceComponentData>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct InterfaceComponentData {
+    pub(super) role: Option<EncodedComponentRole>,
+    pub(super) shape: Shape,
+    pub(super) resolved_type: Option<Vec<u8>>,
+    pub(super) storage_scalar: StorageScalar,
+    pub(super) access_type: KernelType,
+    pub(super) encoding: StorageEncoding,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -871,10 +895,19 @@ impl<'a> ArtifactInputRef<'a> {
         &self.artifact.data.inputs[self.input].shape
     }
 
-    /// Returns the storage element type of the input.
+    /// Returns the canonical logical resolved-type encoding.
     #[must_use]
-    pub fn element_type(self) -> KernelType {
-        self.artifact.data.inputs[self.input].element_type
+    pub fn resolved_type_encoding(self) -> &'a [u8] {
+        &self.artifact.data.inputs[self.input].logical_type
+    }
+
+    /// Returns the producer-owned physical components in semantic order.
+    #[must_use]
+    pub fn components(self) -> impl ExactSizeIterator<Item = InterfaceComponentRef<'a>> {
+        self.artifact.data.inputs[self.input]
+            .components
+            .iter()
+            .map(InterfaceComponentRef)
     }
 }
 
@@ -898,10 +931,61 @@ impl<'a> ArtifactOutputRef<'a> {
         &self.artifact.data.outputs[self.output].shape
     }
 
-    /// Returns the storage element type of the output.
+    /// Returns the canonical logical resolved-type encoding.
     #[must_use]
-    pub fn element_type(self) -> KernelType {
-        self.artifact.data.outputs[self.output].element_type
+    pub fn resolved_type_encoding(self) -> &'a [u8] {
+        &self.artifact.data.outputs[self.output].logical_type
+    }
+
+    /// Returns the producer-owned physical components in semantic order.
+    #[must_use]
+    pub fn components(self) -> impl ExactSizeIterator<Item = InterfaceComponentRef<'a>> {
+        self.artifact.data.outputs[self.output]
+            .components
+            .iter()
+            .map(InterfaceComponentRef)
+    }
+}
+
+/// One physical component of a logical artifact interface value.
+#[derive(Clone, Copy, Debug)]
+pub struct InterfaceComponentRef<'a>(&'a InterfaceComponentData);
+
+impl<'a> InterfaceComponentRef<'a> {
+    /// Returns the stable semantic role, or `None` for a dense singleton.
+    #[must_use]
+    pub fn role(self) -> Option<EncodedComponentRole> {
+        self.0.role
+    }
+
+    /// Returns the physical tensor shape.
+    #[must_use]
+    pub fn shape(self) -> &'a Shape {
+        &self.0.shape
+    }
+
+    /// Returns the semantic component type encoding, absent for a dense singleton.
+    #[must_use]
+    pub fn resolved_type_encoding(self) -> Option<&'a [u8]> {
+        self.0.resolved_type.as_deref()
+    }
+
+    /// Returns the scalar carrier stored in physical memory.
+    #[must_use]
+    pub fn storage_scalar(self) -> StorageScalar {
+        self.0.storage_scalar
+    }
+
+    /// Returns the type through which kernels access the stored component.
+    #[must_use]
+    pub fn access_type(self) -> KernelType {
+        self.0.access_type
+    }
+
+    /// Returns the complete storage encoding.
+    #[must_use]
+    pub fn storage_encoding(self) -> StorageEncoding {
+        self.0.encoding
     }
 }
 
@@ -1138,10 +1222,28 @@ impl<'a> BindingRef<'a> {
         self.data().kind
     }
 
-    /// Returns the storage element type addressed through the binding.
+    /// Returns the scalar carrier stored in physical memory.
     #[must_use]
-    pub fn element_type(self) -> KernelType {
-        self.data().element_type
+    pub fn storage_scalar(self) -> StorageScalar {
+        self.data().storage_scalar
+    }
+
+    /// Returns the type through which the kernel accesses this binding.
+    #[must_use]
+    pub fn access_type(self) -> KernelType {
+        self.data().access_type
+    }
+
+    /// Returns the addressed semantic component role, absent for a dense singleton.
+    #[must_use]
+    pub fn component_role(self) -> Option<EncodedComponentRole> {
+        self.data().component_role
+    }
+
+    /// Returns the complete physical storage encoding.
+    #[must_use]
+    pub fn storage_encoding(self) -> StorageEncoding {
+        self.data().encoding
     }
 
     /// Returns the logical address space the binding requires.
@@ -1374,6 +1476,8 @@ pub(super) const fn element_type_tag(element_type: KernelType) -> u8 {
         KernelType::Bool => 0x01,
         KernelType::Index => 0x02,
         KernelType::F32 => 0x03,
+        KernelType::U8 => 0x04,
+        KernelType::I32 => 0x05,
     }
 }
 
@@ -1382,6 +1486,23 @@ pub(super) const fn element_type_from_tag(tag: u8) -> Option<KernelType> {
         0x01 => Some(KernelType::Bool),
         0x02 => Some(KernelType::Index),
         0x03 => Some(KernelType::F32),
+        0x04 => Some(KernelType::U8),
+        0x05 => Some(KernelType::I32),
+        _ => None,
+    }
+}
+
+pub(super) const fn storage_scalar_tag(storage_scalar: StorageScalar) -> u8 {
+    match storage_scalar {
+        StorageScalar::U8 => 0x01,
+        StorageScalar::F32 => 0x02,
+    }
+}
+
+pub(super) const fn storage_scalar_from_tag(tag: u8) -> Option<StorageScalar> {
+    match tag {
+        0x01 => Some(StorageScalar::U8),
+        0x02 => Some(StorageScalar::F32),
         _ => None,
     }
 }
@@ -1440,6 +1561,33 @@ pub(super) fn push_binding_target(bytes: &mut Vec<u8>, target: &BindingTargetDat
             }
         }
         BindingTargetData::Internal => bytes.push(BINDING_TARGET_INTERNAL),
+    }
+}
+
+pub(super) fn push_component_role(bytes: &mut Vec<u8>, role: Option<EncodedComponentRole>) {
+    match role {
+        None => bytes.push(0x00),
+        Some(role) => {
+            bytes.push(0x01);
+            bytes.extend_from_slice(&role.get().to_be_bytes());
+        }
+    }
+}
+
+pub(super) fn push_storage_encoding(bytes: &mut Vec<u8>, encoding: StorageEncoding) {
+    match encoding {
+        StorageEncoding::Unpacked => bytes.push(0x01),
+        StorageEncoding::BitPacked(packed) => {
+            bytes.push(0x02);
+            bytes.push(packed.element_bits());
+            bytes.push(match packed.bit_order() {
+                tiler_ir::program::PackedBitOrder::LeastSignificantElementFirst => 0x01,
+                tiler_ir::program::PackedBitOrder::MostSignificantElementFirst => 0x02,
+            });
+            bytes.push(match packed.tail() {
+                tiler_ir::program::PackedTailRule::Zero => 0x01,
+            });
+        }
     }
 }
 
@@ -1843,13 +1991,32 @@ fn push_interface(bytes: &mut Vec<u8>, envelope: &ArtifactEnvelope) {
     for input in envelope.inputs() {
         push_slice(bytes, input.key.as_str().as_bytes());
         push_shape(bytes, &input.shape);
-        bytes.push(element_type_tag(input.element_type));
+        push_interface_components(bytes, input);
     }
     push_len(bytes, envelope.outputs().len());
     for output in envelope.outputs() {
         push_slice(bytes, output.key.as_str().as_bytes());
         push_shape(bytes, &output.shape);
-        bytes.push(element_type_tag(output.element_type));
+        push_interface_components(bytes, output);
+    }
+}
+
+fn push_interface_components<K>(bytes: &mut Vec<u8>, entry: &InterfaceEntryData<K>) {
+    push_slice(bytes, &entry.logical_type);
+    push_len(bytes, entry.components.len());
+    for component in &entry.components {
+        push_component_role(bytes, component.role);
+        push_shape(bytes, &component.shape);
+        match &component.resolved_type {
+            None => bytes.push(0x00),
+            Some(value_type) => {
+                bytes.push(0x01);
+                push_slice(bytes, value_type);
+            }
+        }
+        bytes.push(storage_scalar_tag(component.storage_scalar));
+        push_storage_encoding(bytes, component.encoding);
+        bytes.push(element_type_tag(component.access_type));
     }
 }
 
@@ -1971,7 +2138,10 @@ fn push_entry(
     push_len(bytes, entry.bindings.len());
     for binding in &entry.bindings {
         bytes.push(binding.kind.tag());
-        bytes.push(element_type_tag(binding.element_type));
+        bytes.push(storage_scalar_tag(binding.storage_scalar));
+        bytes.push(element_type_tag(binding.access_type));
+        push_component_role(bytes, binding.component_role);
+        push_storage_encoding(bytes, binding.encoding);
         bytes.push(address_space_tag(binding.address_space));
         bytes.push(buffer_access_tag(binding.access));
         bytes.extend_from_slice(&binding.alignment.to_be_bytes());

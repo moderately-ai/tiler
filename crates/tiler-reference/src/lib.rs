@@ -37,6 +37,7 @@ mod error;
 mod evaluate;
 mod identity;
 mod oracle;
+mod quantization;
 mod registry;
 mod standard;
 mod tensor;

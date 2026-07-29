@@ -3,6 +3,7 @@ use std::error::Error;
 use std::fmt;
 
 use crate::identity::{push_len, push_slice};
+use crate::shape::Shape;
 
 /// Maximum UTF-8 byte length of one canonical identity component.
 pub const MAX_IDENTITY_COMPONENT_BYTES: usize = 255;
@@ -260,6 +261,16 @@ pub enum TypeIdentityError {
         /// Duplicated field identifier.
         field_id: AttributeFieldId,
     },
+    /// Two encoded components used the same stable role.
+    DuplicateEncodedComponentRole {
+        /// Duplicated component role.
+        role: EncodedComponentRole,
+    },
+    /// An encoded value declared another encoded value as one physical component.
+    NestedEncodedComponentType {
+        /// Role whose component type was itself encoded.
+        role: EncodedComponentRole,
+    },
     /// A collection exceeded the per-collection item bound.
     TooManyItems {
         /// Actual item count.
@@ -306,6 +317,14 @@ impl fmt::Display for TypeIdentityError {
             Self::DuplicateFieldId { field_id } => {
                 write!(formatter, "duplicate canonical field ID {field_id}")
             }
+            Self::DuplicateEncodedComponentRole { role } => {
+                write!(formatter, "duplicate encoded-component role {}", role.get())
+            }
+            Self::NestedEncodedComponentType { role } => write!(
+                formatter,
+                "encoded component role {} cannot itself have an encoded value type",
+                role.get()
+            ),
             Self::TooManyItems { items } => write!(
                 formatter,
                 "collection has {items} items, exceeding {MAX_RESOLVED_TYPE_ITEMS}"
@@ -488,13 +507,13 @@ impl ResolvedValueType {
     /// Returns the collision-free versioned canonical identity bytes.
     #[must_use]
     pub fn canonical_encoding(&self) -> CanonicalResolvedValueType {
-        let mut bytes = b"tiler.resolved-value-type.v2\0".to_vec();
+        let mut bytes = b"tiler.resolved-value-type.v3\0".to_vec();
         self.encode(&mut bytes);
         CanonicalResolvedValueType(bytes)
     }
 
     pub(super) fn canonical_encoded_len(&self) -> usize {
-        b"tiler.resolved-value-type.v2\0"
+        b"tiler.resolved-value-type.v3\0"
             .len()
             .saturating_add(self.encoded_len())
     }
@@ -555,6 +574,10 @@ impl ResolvedValueType {
             ResolvedValueTypeData::EncodedNumeric { contract, .. } => {
                 for field in &contract.fields {
                     field.value.visit_referenced_types(visitor);
+                }
+                for component in &contract.components {
+                    visitor(&component.resolved_type);
+                    component.resolved_type.visit_referenced_types(visitor);
                 }
             }
         }
@@ -1090,6 +1113,7 @@ impl CanonicalField {
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct EncodedNumericContract {
     fields: Vec<CanonicalField>,
+    components: Vec<EncodedComponentDeclaration>,
 }
 
 impl EncodedNumericContract {
@@ -1105,7 +1129,46 @@ impl EncodedNumericContract {
         if fields.is_empty() {
             return Err(TypeIdentityError::EmptyEncodedNumericContract);
         }
-        Ok(Self { fields })
+        Ok(Self {
+            fields,
+            components: Vec::new(),
+        })
+    }
+
+    /// Creates a static contract with ordered typed component declarations.
+    ///
+    /// Component order is semantic and remains distinct from role identity.
+    /// Scheme authority validates which roles and shape relations are legal;
+    /// this constructor enforces only generic structural invariants.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TypeIdentityError`] for invalid fields, duplicate component
+    /// roles, or exceeded structural bounds.
+    pub fn with_components(
+        fields: impl IntoIterator<Item = CanonicalField>,
+        components: impl IntoIterator<Item = EncodedComponentDeclaration>,
+    ) -> Result<Self, TypeIdentityError> {
+        let mut contract = Self::new(fields)?;
+        let components: Vec<_> = components.into_iter().collect();
+        validate_items(components.len())?;
+        for (index, component) in components.iter().enumerate() {
+            if component.resolved_type.encoded_numeric_parts().is_some() {
+                return Err(TypeIdentityError::NestedEncodedComponentType {
+                    role: component.role,
+                });
+            }
+            if components[..index]
+                .iter()
+                .any(|prior| prior.role == component.role)
+            {
+                return Err(TypeIdentityError::DuplicateEncodedComponentRole {
+                    role: component.role,
+                });
+            }
+        }
+        contract.components = components;
+        Ok(contract)
     }
 
     /// Returns fields in canonical ascending ID order.
@@ -1114,21 +1177,201 @@ impl EncodedNumericContract {
         &self.fields
     }
 
+    /// Returns ordered typed component declarations.
+    #[must_use]
+    pub fn components(&self) -> &[EncodedComponentDeclaration] {
+        &self.components
+    }
+
     fn encode(&self, output: &mut Vec<u8>) {
         push_len(output, self.fields.len());
         for field in &self.fields {
             output.extend_from_slice(&field.id.get().to_be_bytes());
             field.value.encode(output);
         }
+        push_len(output, self.components.len());
+        for component in &self.components {
+            component.encode(output);
+        }
     }
 
     fn encoded_len(&self) -> usize {
-        std::mem::size_of::<u64>().saturating_add(
-            self.fields
-                .iter()
-                .map(|field| std::mem::size_of::<u32>().saturating_add(field.value.encoded_len()))
-                .fold(0_usize, usize::saturating_add),
-        )
+        std::mem::size_of::<u64>()
+            .saturating_add(
+                self.fields
+                    .iter()
+                    .map(|field| {
+                        std::mem::size_of::<u32>().saturating_add(field.value.encoded_len())
+                    })
+                    .fold(0_usize, usize::saturating_add),
+            )
+            .saturating_add(std::mem::size_of::<u64>())
+            .saturating_add(
+                self.components
+                    .iter()
+                    .map(EncodedComponentDeclaration::encoded_len)
+                    .fold(0_usize, usize::saturating_add),
+            )
+    }
+}
+
+/// Stable schema-local role of one component in an encoded logical value.
+///
+/// This is semantic schema data, not an ABI slot or graph operand position.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct EncodedComponentRole(u32);
+
+impl EncodedComponentRole {
+    /// Creates a stable encoded-component role.
+    #[must_use]
+    pub const fn new(value: u32) -> Self {
+        Self(value)
+    }
+
+    /// Returns the portable schema-local role number.
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+/// Bounded semantic map from a logical data coordinate to a parameter coordinate.
+///
+/// Only the producer-backed per-tensor form exists today. Future forms extend
+/// this typed interpreter when their first producer can supply and validate
+/// them; they are not represented by placeholder fields.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ParameterIndexMap(ParameterIndexMapKind);
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+enum ParameterIndexMapKind {
+    PerTensor,
+}
+
+impl ParameterIndexMap {
+    /// Creates the map selecting one rank-zero parameter for every data coordinate.
+    #[must_use]
+    pub const fn per_tensor() -> Self {
+        Self(ParameterIndexMapKind::PerTensor)
+    }
+
+    /// Derives the complete parameter tensor shape for a logical value shape.
+    #[must_use]
+    pub fn parameter_shape(&self, _: &Shape) -> Shape {
+        match self.0 {
+            ParameterIndexMapKind::PerTensor => Shape::new([]),
+        }
+    }
+
+    /// Returns the bounded canonical map form used by scheme facts and diagnostics.
+    #[must_use]
+    pub fn canonical_form(&self) -> CanonicalValue {
+        match self.0 {
+            ParameterIndexMapKind::PerTensor => {
+                CanonicalValue(CanonicalValueData::Sequence(Vec::new()))
+            }
+        }
+    }
+
+    fn encode(&self, output: &mut Vec<u8>) {
+        output.push(match self.0 {
+            ParameterIndexMapKind::PerTensor => 1,
+        });
+    }
+
+    const fn encoded_len() -> usize {
+        1
+    }
+}
+
+/// How one encoded component's tensor shape relates to the logical value.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum EncodedComponentShape {
+    /// The component has the logical value's shape.
+    LogicalValue,
+    /// The component shape is derived by a parameter-coordinate map.
+    ParameterMap(ParameterIndexMap),
+}
+
+impl EncodedComponentShape {
+    /// Derives the component shape for one logical value shape.
+    #[must_use]
+    pub fn component_shape(&self, logical_shape: &Shape) -> Shape {
+        match self {
+            Self::LogicalValue => logical_shape.clone(),
+            Self::ParameterMap(map) => map.parameter_shape(logical_shape),
+        }
+    }
+
+    fn encode(&self, output: &mut Vec<u8>) {
+        match self {
+            Self::LogicalValue => output.push(1),
+            Self::ParameterMap(map) => {
+                output.push(2);
+                map.encode(output);
+            }
+        }
+    }
+
+    fn encoded_len(&self) -> usize {
+        match self {
+            Self::LogicalValue => 1,
+            Self::ParameterMap(_) => 1_usize.saturating_add(ParameterIndexMap::encoded_len()),
+        }
+    }
+}
+
+/// One ordered typed component required by an encoded logical value.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct EncodedComponentDeclaration {
+    role: EncodedComponentRole,
+    resolved_type: ResolvedValueType,
+    shape: EncodedComponentShape,
+}
+
+impl EncodedComponentDeclaration {
+    /// Creates one ordered component declaration.
+    #[must_use]
+    pub const fn new(
+        role: EncodedComponentRole,
+        resolved_type: ResolvedValueType,
+        shape: EncodedComponentShape,
+    ) -> Self {
+        Self {
+            role,
+            resolved_type,
+            shape,
+        }
+    }
+
+    /// Returns the stable semantic role.
+    #[must_use]
+    pub const fn role(&self) -> EncodedComponentRole {
+        self.role
+    }
+
+    /// Returns the component's complete resolved value type.
+    #[must_use]
+    pub const fn resolved_type(&self) -> &ResolvedValueType {
+        &self.resolved_type
+    }
+
+    /// Returns the typed relationship used to derive its tensor shape.
+    #[must_use]
+    pub const fn shape_relation(&self) -> &EncodedComponentShape {
+        &self.shape
+    }
+
+    fn encode(&self, output: &mut Vec<u8>) {
+        output.extend_from_slice(&self.role.get().to_be_bytes());
+        self.resolved_type.encode(output);
+        self.shape.encode(output);
+    }
+
+    fn encoded_len(&self) -> usize {
+        std::mem::size_of::<u32>()
+            .saturating_add(self.resolved_type.encoded_len())
+            .saturating_add(self.shape.encoded_len())
     }
 }
 
@@ -1311,6 +1554,10 @@ fn validate_type_at(
             validate_items(contract.fields.len())?;
             for field in &contract.fields {
                 validate_argument_at(&field.value, depth + 1, budget)?;
+            }
+            validate_items(contract.components.len())?;
+            for component in &contract.components {
+                validate_type_at(&component.resolved_type, depth + 1, budget)?;
             }
             Ok(())
         }
@@ -1591,6 +1838,130 @@ mod tests {
         );
     }
 
+    #[test]
+    fn encoded_numeric_identity_distinguishes_every_component_contract_subject() {
+        fn component(
+            role: u32,
+            resolved_type: ResolvedValueType,
+            shape: EncodedComponentShape,
+        ) -> EncodedComponentDeclaration {
+            EncodedComponentDeclaration::new(EncodedComponentRole::new(role), resolved_type, shape)
+        }
+
+        fn encoded(
+            scheme: &str,
+            field: u32,
+            components: impl IntoIterator<Item = EncodedComponentDeclaration>,
+        ) -> ResolvedValueType {
+            ResolvedValueType::encoded_numeric(
+                QuantSchemeKey::new("test", scheme, 1).unwrap(),
+                EncodedNumericContract::with_components(
+                    [CanonicalField::new(
+                        AttributeFieldId::new(1),
+                        CanonicalValue::unsigned_u32(field),
+                    )],
+                    components,
+                )
+                .unwrap(),
+            )
+            .unwrap()
+        }
+
+        let code = ResolvedValueType::nominal(key("u4"));
+        let scale = ResolvedValueType::nominal(key("f32"));
+        let base_components = || {
+            [
+                component(1, code.clone(), EncodedComponentShape::LogicalValue),
+                component(
+                    2,
+                    scale.clone(),
+                    EncodedComponentShape::ParameterMap(ParameterIndexMap::per_tensor()),
+                ),
+            ]
+        };
+        let base = encoded("affine", 7, base_components());
+        let encodings = [
+            encoded("other-affine", 7, base_components()),
+            encoded("affine", 8, base_components()),
+            encoded(
+                "affine",
+                7,
+                [
+                    component(3, code.clone(), EncodedComponentShape::LogicalValue),
+                    component(
+                        2,
+                        scale.clone(),
+                        EncodedComponentShape::ParameterMap(ParameterIndexMap::per_tensor()),
+                    ),
+                ],
+            ),
+            encoded(
+                "affine",
+                7,
+                [
+                    component(
+                        2,
+                        scale.clone(),
+                        EncodedComponentShape::ParameterMap(ParameterIndexMap::per_tensor()),
+                    ),
+                    component(1, code.clone(), EncodedComponentShape::LogicalValue),
+                ],
+            ),
+            encoded(
+                "affine",
+                7,
+                [
+                    component(1, scale.clone(), EncodedComponentShape::LogicalValue),
+                    component(
+                        2,
+                        scale.clone(),
+                        EncodedComponentShape::ParameterMap(ParameterIndexMap::per_tensor()),
+                    ),
+                ],
+            ),
+            encoded(
+                "affine",
+                7,
+                [
+                    component(1, code, EncodedComponentShape::LogicalValue),
+                    component(2, scale, EncodedComponentShape::LogicalValue),
+                ],
+            ),
+        ];
+
+        for changed in encodings {
+            assert_ne!(base.canonical_encoding(), changed.canonical_encoding());
+        }
+    }
+
+    #[test]
+    fn encoded_components_reject_nested_encoded_value_types() {
+        let nested = ResolvedValueType::encoded_numeric(
+            QuantSchemeKey::new("test", "inner", 1).unwrap(),
+            EncodedNumericContract::new([CanonicalField::new(
+                AttributeFieldId::new(1),
+                CanonicalValue::boolean(true),
+            )])
+            .unwrap(),
+        )
+        .unwrap();
+        let role = EncodedComponentRole::new(9);
+        assert_eq!(
+            EncodedNumericContract::with_components(
+                [CanonicalField::new(
+                    AttributeFieldId::new(1),
+                    CanonicalValue::boolean(true),
+                )],
+                [EncodedComponentDeclaration::new(
+                    role,
+                    nested,
+                    EncodedComponentShape::LogicalValue,
+                )],
+            ),
+            Err(TypeIdentityError::NestedEncodedComponentType { role })
+        );
+    }
+
     /// The resolved-type family order is stated, not inherited from Rust.
     ///
     /// This ordering reaches a durable identity:
@@ -1621,7 +1992,7 @@ mod tests {
 
         // The rank is the encoded family tag, which is the byte the canonical
         // encoding writes immediately after its domain separator.
-        let separator = b"tiler.resolved-value-type.v2\0".len();
+        let separator = b"tiler.resolved-value-type.v3\0".len();
         for (value, tag) in [(&nominal, 1_u8), (&parameterized, 2), (&encoded, 3)] {
             assert_eq!(value.0.family_discriminant(), tag);
             assert_eq!(value.canonical_encoding().as_bytes()[separator], tag);

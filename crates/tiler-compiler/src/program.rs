@@ -28,7 +28,8 @@ use tiler_ir::program::{
     AbiExprId, AllocationOwnership, AllocationSpec, KernelProgramBuildError, KernelProgramBuilder,
     KernelProgramDiagnostic, MaterializedOrigin, MaterializedValueSpec, MemorySpace,
     RoutingCommitState, RoutingCommitTransition, SemanticOccurrence, StageAccess, StageAccessMode,
-    StageLaunch, StageRef, ValueRole, VerifiedKernelProgram, ViewId,
+    StageLaunch, StageRef, StorageEncoding, StorageScalar, ValueRole, VerifiedKernelProgram,
+    ViewId,
 };
 use tiler_ir::semantic::{F32, SemanticIdentity, SemanticProgram};
 use tiler_ir::shape::Shape;
@@ -578,6 +579,8 @@ fn program_input(key: tiler_ir::semantic::InputKey, shape: Shape) -> Materialize
         origin: MaterializedOrigin::ProgramInput { key },
         role: ValueRole::Input,
         shape,
+        storage_scalar: StorageScalar::F32,
+        encoding: StorageEncoding::Unpacked,
         element_type: KernelType::F32,
         alignment: ELEMENT_ALIGNMENT,
         memory_space: MemorySpace::Device,
@@ -589,6 +592,8 @@ fn internal(role: ValueRole, shape: Shape) -> MaterializedValueSpec {
         origin: MaterializedOrigin::Internal,
         role,
         shape,
+        storage_scalar: StorageScalar::F32,
+        encoding: StorageEncoding::Unpacked,
         element_type: KernelType::F32,
         alignment: ELEMENT_ALIGNMENT,
         memory_space: MemorySpace::Device,

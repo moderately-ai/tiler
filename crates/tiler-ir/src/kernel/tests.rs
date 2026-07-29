@@ -17,6 +17,9 @@ use crate::schedule::{
     RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
     VerifiedScheduledRegion,
 };
+use crate::semantic::{
+    STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
+};
 use crate::shape::{Axis, Shape};
 
 const NAN_BITS: u32 = 0x7fc0_0000;
@@ -54,6 +57,215 @@ fn linear_schedule(work_items: u64, owner: OwnershipWitnessId) -> KernelSchedule
     }
 }
 
+fn strict_affine_u4_dequantize_region() -> VerifiedScheduledRegion {
+    let logical_elements = 5;
+    let mut builder = ScheduledRegionBuilder::new(RegionId::new(17));
+    builder
+        .iteration_shape(Shape::from_dims([logical_elements]))
+        .unwrap();
+    for access in [
+        Access {
+            tensor: TensorRole::Input,
+            component_role: Some(STRICT_AFFINE_CODES_ROLE),
+            mode: AccessMode::Read,
+            map: LogicalAccess::PackedU4LsbZeroTail { logical_elements },
+            bounds: BoundsWitnessId::new(0),
+            ownership: None,
+        },
+        Access {
+            tensor: TensorRole::Input,
+            component_role: Some(STRICT_AFFINE_SCALE_ROLE),
+            mode: AccessMode::Read,
+            map: LogicalAccess::ScalarBroadcast,
+            bounds: BoundsWitnessId::new(1),
+            ownership: None,
+        },
+        Access {
+            tensor: TensorRole::Input,
+            component_role: Some(STRICT_AFFINE_ZERO_POINT_ROLE),
+            mode: AccessMode::Read,
+            map: LogicalAccess::ScalarBroadcast,
+            bounds: BoundsWitnessId::new(2),
+            ownership: None,
+        },
+        Access {
+            tensor: TensorRole::Output,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(3),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        },
+    ] {
+        builder.push_access(access).unwrap();
+    }
+    for (id, role, elements) in [
+        (
+            0,
+            Some(STRICT_AFFINE_CODES_ROLE),
+            logical_elements.div_ceil(2),
+        ),
+        (1, Some(STRICT_AFFINE_SCALE_ROLE), 1),
+        (2, Some(STRICT_AFFINE_ZERO_POINT_ROLE), 1),
+        (3, None, logical_elements),
+    ] {
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(id),
+                tensor: if id == 3 {
+                    TensorRole::Output
+                } else {
+                    TensorRole::Input
+                },
+                component_role: role,
+                kind: BoundsProofKind::LinearRange {
+                    element_count: elements,
+                },
+            })
+            .unwrap();
+    }
+    builder
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                output_count: logical_elements,
+            },
+        })
+        .unwrap();
+    builder
+        .scalar_program(ScalarProgram::StrictAffineU4Dequantize {
+            codes_role: STRICT_AFFINE_CODES_ROLE,
+            scale_role: STRICT_AFFINE_SCALE_ROLE,
+            zero_point_role: STRICT_AFFINE_ZERO_POINT_ROLE,
+        })
+        .unwrap();
+    builder.numerical(numerical()).unwrap();
+    builder
+        .schedule(linear_schedule(
+            logical_elements,
+            OwnershipWitnessId::new(0),
+        ))
+        .unwrap();
+    builder.build().unwrap()
+}
+
+#[test]
+fn strict_affine_u4_dequantize_lowers_role_addressed_packed_components() {
+    let scheduled = strict_affine_u4_dequantize_region();
+    let kernel = lower_scheduled_region(&scheduled).expect("exact target-neutral lowering");
+    let buffers: Vec<_> = kernel.buffers().collect();
+    assert_eq!(
+        buffers
+            .iter()
+            .map(|buffer| (
+                buffer.component_role,
+                buffer.element_type,
+                buffer.element_count
+            ))
+            .collect::<Vec<_>>(),
+        [
+            (Some(STRICT_AFFINE_CODES_ROLE), KernelType::U8, 3),
+            (Some(STRICT_AFFINE_SCALE_ROLE), KernelType::F32, 1),
+            (Some(STRICT_AFFINE_ZERO_POINT_ROLE), KernelType::U8, 1),
+            (None, KernelType::F32, 5),
+        ]
+    );
+    let guarded = kernel
+        .body()
+        .operations()
+        .find_map(|operation| match operation.view() {
+            OperationView::Predicated { body, .. } => Some(body),
+            _ => None,
+        })
+        .expect("schedule-derived guard");
+    let views: Vec<_> = guarded
+        .operations()
+        .map(super::model::OperationRef::view)
+        .collect();
+    assert!(views.iter().any(|view| matches!(
+        view,
+        OperationView::PackedExtract {
+            op: PackedExtractOp::U4LsbZeroTail,
+            ..
+        }
+    )));
+    assert!(views.iter().any(|view| matches!(
+        view,
+        OperationView::Binary {
+            op: BinaryOp::I32Subtract,
+            ..
+        }
+    )));
+    assert_eq!(
+        views
+            .iter()
+            .filter(|view| matches!(
+                view,
+                OperationView::Convert {
+                    op: ConvertOp::U8ToI32,
+                    ..
+                }
+            ))
+            .count(),
+        2
+    );
+    assert!(views.iter().any(|view| matches!(
+        view,
+        OperationView::Convert {
+            op: ConvertOp::I32ToF32,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn strict_affine_component_roles_cannot_swap() {
+    let verified = strict_affine_u4_dequantize_region();
+    let mut region = verified.region().clone();
+    region.index.accesses.swap(0, 2);
+    assert_eq!(
+        ScheduledRegionBuilder::from_region(region)
+            .build()
+            .unwrap_err()
+            .diagnostics(),
+        [crate::schedule::ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
+    );
+}
+
+#[test]
+fn strict_affine_dequantization_rejects_exceptional_value_absence_assumptions() {
+    let verified = strict_affine_u4_dequantize_region();
+    for assumption in [
+        ExceptionalValueAssumption::AssumeAbsent {
+            provenance: crate::schedule::ValueDomainProvenance::CompilerProven,
+        },
+        ExceptionalValueAssumption::AssumeAbsent {
+            provenance: crate::schedule::ValueDomainProvenance::RuntimeValidated,
+        },
+    ] {
+        let mut nan_absent = verified.region().clone();
+        nan_absent.index.numerical.nan_assumptions = assumption;
+        assert_eq!(
+            ScheduledRegionBuilder::from_region(nan_absent)
+                .build()
+                .unwrap_err()
+                .diagnostics(),
+            [crate::schedule::ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
+        );
+
+        let mut infinity_absent = verified.region().clone();
+        infinity_absent.index.numerical.infinity_assumptions = assumption;
+        assert_eq!(
+            ScheduledRegionBuilder::from_region(infinity_absent)
+                .build()
+                .unwrap_err()
+                .diagnostics(),
+            [crate::schedule::ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
+        );
+    }
+}
+
 fn scale_bias_expression(scale_bits: u32, bias_bits: u32) -> PointwiseF32Expression {
     let mut expression = PointwiseF32ExpressionBuilder::new();
     let input = expression.input().unwrap();
@@ -80,6 +292,7 @@ fn pointwise_expression_region(
     builder
         .push_access(Access {
             tensor: TensorRole::Input,
+            component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::LinearIdentity,
             bounds: BoundsWitnessId::new(0),
@@ -89,6 +302,7 @@ fn pointwise_expression_region(
     builder
         .push_access(Access {
             tensor: TensorRole::Intermediate,
+            component_role: None,
             mode: AccessMode::Write,
             map: LogicalAccess::LinearIdentity,
             bounds: BoundsWitnessId::new(1),
@@ -100,6 +314,7 @@ fn pointwise_expression_region(
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(witness),
                 tensor,
+                component_role: None,
                 kind: BoundsProofKind::LinearRange {
                     element_count: elements,
                 },
@@ -231,6 +446,7 @@ fn reduction_region(id: RegionId, input: &Shape, axes: &[Axis]) -> VerifiedSched
     builder
         .push_access(Access {
             tensor: TensorRole::Intermediate,
+            component_role: None,
             mode: AccessMode::Read,
             map: contributor_map,
             bounds: BoundsWitnessId::new(0),
@@ -240,6 +456,7 @@ fn reduction_region(id: RegionId, input: &Shape, axes: &[Axis]) -> VerifiedSched
     builder
         .push_access(Access {
             tensor: TensorRole::Output,
+            component_role: None,
             mode: AccessMode::Write,
             map: LogicalAccess::LinearIdentity,
             bounds: BoundsWitnessId::new(1),
@@ -250,6 +467,7 @@ fn reduction_region(id: RegionId, input: &Shape, axes: &[Axis]) -> VerifiedSched
         .push_bounds_proof(BoundsProof {
             id: BoundsWitnessId::new(0),
             tensor: TensorRole::Intermediate,
+            component_role: None,
             kind: BoundsProofKind::ReductionDomain {
                 input_shape: input.clone(),
                 output_shape: input.without_axes(axes),
@@ -262,6 +480,7 @@ fn reduction_region(id: RegionId, input: &Shape, axes: &[Axis]) -> VerifiedSched
         .push_bounds_proof(BoundsProof {
             id: BoundsWitnessId::new(1),
             tensor: TensorRole::Output,
+            component_role: None,
             kind: BoundsProofKind::LinearRange {
                 element_count: output_elements,
             },
@@ -308,6 +527,7 @@ fn pointwise_signature(
     let read = builder
         .declare_buffer(BufferParameter {
             tensor: TensorRole::Input,
+            component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
             access: BufferAccess::Read,
@@ -317,6 +537,7 @@ fn pointwise_signature(
     let write = builder
         .declare_buffer(BufferParameter {
             tensor: TensorRole::Intermediate,
+            component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
             access: BufferAccess::Write,
@@ -404,6 +625,7 @@ fn canonical_lowering_produces_a_verified_backend_consumable_kernel() {
         [
             BufferParameter {
                 tensor: TensorRole::Input,
+                component_role: None,
                 element_type: KernelType::F32,
                 address_space: AddressSpace::Device,
                 access: BufferAccess::Read,
@@ -411,6 +633,7 @@ fn canonical_lowering_produces_a_verified_backend_consumable_kernel() {
             },
             BufferParameter {
                 tensor: TensorRole::Intermediate,
+                component_role: None,
                 element_type: KernelType::F32,
                 address_space: AddressSpace::Device,
                 access: BufferAccess::Write,
@@ -482,6 +705,8 @@ fn body_shaping_vocabulary_is_closed(
         },
         match access {
             LogicalAccess::LinearIdentity => "linear-identity",
+            LogicalAccess::ScalarBroadcast => "scalar-broadcast",
+            LogicalAccess::PackedU4LsbZeroTail { .. } => "packed-u4-lsb-zero-tail",
             LogicalAccess::ReductionContributor { .. } => "reduction-contributor",
         },
         match topology {
@@ -490,6 +715,7 @@ fn body_shaping_vocabulary_is_closed(
         },
         match program {
             ScalarProgram::PointwiseF32(_) => "pointwise-f32",
+            ScalarProgram::StrictAffineU4Dequantize { .. } => "strict-affine-u4-dequantize",
             ScalarProgram::StrictSerialSum { .. } => "strict-serial-sum",
             ScalarProgram::FusedMultiplyAddSerialSum { .. } => "fused-multiply-add-serial-sum",
         },
@@ -680,6 +906,7 @@ fn buffer_contract_rejects_a_signature_that_misstates_the_scheduled_access() {
     let read = builder
         .declare_buffer(BufferParameter {
             tensor: TensorRole::Input,
+            component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
             access: BufferAccess::Read,
@@ -689,6 +916,7 @@ fn buffer_contract_rejects_a_signature_that_misstates_the_scheduled_access() {
     let write = builder
         .declare_buffer(BufferParameter {
             tensor: TensorRole::Intermediate,
+            component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
             access: BufferAccess::Write,
@@ -724,6 +952,7 @@ fn address_space_contract_rejects_a_space_the_schedule_does_not_provide() {
     let read = builder
         .declare_buffer(BufferParameter {
             tensor: TensorRole::Input,
+            component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Workgroup,
             access: BufferAccess::Read,
@@ -733,6 +962,7 @@ fn address_space_contract_rejects_a_space_the_schedule_does_not_provide() {
     let write = builder
         .declare_buffer(BufferParameter {
             tensor: TensorRole::Intermediate,
+            component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
             access: BufferAccess::Write,
@@ -771,6 +1001,7 @@ fn builtin_contract_rejects_a_kernel_that_never_admits_the_execution_binding() {
     let read = builder
         .declare_buffer(BufferParameter {
             tensor: TensorRole::Input,
+            component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
             access: BufferAccess::Read,
@@ -780,6 +1011,7 @@ fn builtin_contract_rejects_a_kernel_that_never_admits_the_execution_binding() {
     let write = builder
         .declare_buffer(BufferParameter {
             tensor: TensorRole::Intermediate,
+            component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
             access: BufferAccess::Write,
@@ -817,6 +1049,7 @@ fn numerical_and_resource_declarations_must_equal_the_schedule() {
     let read = drifted
         .declare_buffer(BufferParameter {
             tensor: TensorRole::Input,
+            component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
             access: BufferAccess::Read,
@@ -826,6 +1059,7 @@ fn numerical_and_resource_declarations_must_equal_the_schedule() {
     let write = drifted
         .declare_buffer(BufferParameter {
             tensor: TensorRole::Intermediate,
+            component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
             access: BufferAccess::Write,
@@ -862,6 +1096,7 @@ fn numerical_and_resource_declarations_must_equal_the_schedule() {
     let read = inflated
         .declare_buffer(BufferParameter {
             tensor: TensorRole::Input,
+            component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
             access: BufferAccess::Read,
@@ -871,6 +1106,7 @@ fn numerical_and_resource_declarations_must_equal_the_schedule() {
     let write = inflated
         .declare_buffer(BufferParameter {
             tensor: TensorRole::Intermediate,
+            component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
             access: BufferAccess::Write,
@@ -1105,6 +1341,7 @@ fn reduction_contract_requires_the_scheduled_contributor_loop() {
     let read = builder
         .declare_buffer(BufferParameter {
             tensor: TensorRole::Intermediate,
+            component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
             access: BufferAccess::Read,
@@ -1114,6 +1351,7 @@ fn reduction_contract_requires_the_scheduled_contributor_loop() {
     let write = builder
         .declare_buffer(BufferParameter {
             tensor: TensorRole::Output,
+            component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
             access: BufferAccess::Write,

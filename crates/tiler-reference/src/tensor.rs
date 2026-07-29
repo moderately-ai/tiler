@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use tiler_ir::semantic::{InputKey, ResolvedValueType};
+use tiler_ir::semantic::{EncodedComponentRole, InputKey, ResolvedValueType};
 use tiler_ir::shape::Shape;
 
 use super::error::{EvaluationError, ReferenceResource};
@@ -93,23 +93,8 @@ impl ReferenceElement {
     }
 }
 
-/// Stable schema-local role of one compound reference component.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct ReferenceComponentRole(u32);
-
-impl ReferenceComponentRole {
-    /// Creates a stable component role ID.
-    #[must_use]
-    pub const fn new(value: u32) -> Self {
-        Self(value)
-    }
-
-    /// Returns the portable role ID.
-    #[must_use]
-    pub const fn get(self) -> u32 {
-        self.0
-    }
-}
+/// Stable schema-local role shared with the semantic encoded-value contract.
+pub type ReferenceComponentRole = EncodedComponentRole;
 
 /// One stable-role tensor component of a compound logical reference value.
 #[derive(Clone, Debug, Eq, PartialEq)]

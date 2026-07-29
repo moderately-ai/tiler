@@ -32,6 +32,9 @@ use tiler_ir::schedule::{
     RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
     ValueDomainProvenance, VerifiedScheduledRegion, element_count,
 };
+use tiler_ir::semantic::{
+    STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
+};
 use tiler_ir::shape::{Axis, Shape};
 
 use crate::diagnostic::{BarrierRejection, MetalEmitError};
@@ -169,6 +172,7 @@ fn pointwise_region_under(
     builder
         .push_access(Access {
             tensor: TensorRole::Input,
+            component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::LinearIdentity,
             bounds: BoundsWitnessId::new(0),
@@ -178,6 +182,7 @@ fn pointwise_region_under(
     builder
         .push_access(Access {
             tensor: TensorRole::Intermediate,
+            component_role: None,
             mode: AccessMode::Write,
             map: LogicalAccess::LinearIdentity,
             bounds: BoundsWitnessId::new(1),
@@ -189,6 +194,7 @@ fn pointwise_region_under(
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(witness),
                 tensor,
+                component_role: None,
                 kind: BoundsProofKind::LinearRange {
                     element_count: elements,
                 },
@@ -214,6 +220,90 @@ fn pointwise_region_under(
     builder.build().unwrap()
 }
 
+fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
+    let logical_elements = 5;
+    let owner = OwnershipWitnessId::new(0);
+    let mut builder = ScheduledRegionBuilder::new(RegionId::new(17));
+    builder
+        .iteration_shape(Shape::from_dims([logical_elements]))
+        .unwrap();
+    for access in [
+        Access {
+            tensor: TensorRole::Input,
+            component_role: Some(STRICT_AFFINE_CODES_ROLE),
+            mode: AccessMode::Read,
+            map: LogicalAccess::PackedU4LsbZeroTail { logical_elements },
+            bounds: BoundsWitnessId::new(0),
+            ownership: None,
+        },
+        Access {
+            tensor: TensorRole::Input,
+            component_role: Some(STRICT_AFFINE_SCALE_ROLE),
+            mode: AccessMode::Read,
+            map: LogicalAccess::ScalarBroadcast,
+            bounds: BoundsWitnessId::new(1),
+            ownership: None,
+        },
+        Access {
+            tensor: TensorRole::Input,
+            component_role: Some(STRICT_AFFINE_ZERO_POINT_ROLE),
+            mode: AccessMode::Read,
+            map: LogicalAccess::ScalarBroadcast,
+            bounds: BoundsWitnessId::new(2),
+            ownership: None,
+        },
+        Access {
+            tensor: TensorRole::Output,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(3),
+            ownership: Some(owner),
+        },
+    ] {
+        builder.push_access(access).unwrap();
+    }
+    for (id, tensor, component_role, element_count) in [
+        (
+            0,
+            TensorRole::Input,
+            Some(STRICT_AFFINE_CODES_ROLE),
+            logical_elements.div_ceil(2),
+        ),
+        (1, TensorRole::Input, Some(STRICT_AFFINE_SCALE_ROLE), 1),
+        (2, TensorRole::Input, Some(STRICT_AFFINE_ZERO_POINT_ROLE), 1),
+        (3, TensorRole::Output, None, logical_elements),
+    ] {
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(id),
+                tensor,
+                component_role,
+                kind: BoundsProofKind::LinearRange { element_count },
+            })
+            .unwrap();
+    }
+    builder
+        .ownership_proof(OwnershipProof {
+            id: owner,
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                output_count: logical_elements,
+            },
+        })
+        .unwrap();
+    builder
+        .scalar_program(ScalarProgram::StrictAffineU4Dequantize {
+            codes_role: STRICT_AFFINE_CODES_ROLE,
+            scale_role: STRICT_AFFINE_SCALE_ROLE,
+            zero_point_role: STRICT_AFFINE_ZERO_POINT_ROLE,
+        })
+        .unwrap();
+    builder.numerical(numerical(NAN_BITS)).unwrap();
+    builder.schedule(linear_schedule(logical_elements)).unwrap();
+    lower_scheduled_region(&builder.build().unwrap()).unwrap()
+}
+
 /// A serial reduction region over `axes` of `input`, optionally fusing a
 /// scale-then-bias prologue into every contributor.
 fn reduction_region(
@@ -234,6 +324,7 @@ fn reduction_region(
     builder
         .push_access(Access {
             tensor: read_tensor,
+            component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::ReductionContributor {
                 input_shape: input.clone(),
@@ -248,6 +339,7 @@ fn reduction_region(
     builder
         .push_access(Access {
             tensor: TensorRole::Output,
+            component_role: None,
             mode: AccessMode::Write,
             map: LogicalAccess::LinearIdentity,
             bounds: BoundsWitnessId::new(1),
@@ -258,6 +350,7 @@ fn reduction_region(
         .push_bounds_proof(BoundsProof {
             id: BoundsWitnessId::new(0),
             tensor: read_tensor,
+            component_role: None,
             kind: BoundsProofKind::ReductionDomain {
                 input_shape: input.clone(),
                 output_shape: output.clone(),
@@ -270,6 +363,7 @@ fn reduction_region(
         .push_bounds_proof(BoundsProof {
             id: BoundsWitnessId::new(1),
             tensor: TensorRole::Output,
+            component_role: None,
             kind: BoundsProofKind::LinearRange {
                 element_count: output_elements,
             },
@@ -778,6 +872,21 @@ fn subnormal_preservation_is_recorded_as_an_unrealizable_gap() {
     assert!(unit.source().contains("//   f32: flushes-to-zero"));
 }
 
+#[test]
+fn strict_affine_u4_dequantization_is_refused_on_the_measured_apple_profile() {
+    let kernel = strict_affine_u4_dequantize_kernel();
+    let unit = emit_translation_unit(&[&kernel], &target()).expect("mechanical translation");
+    assert!(unit.source().contains("& 0x0fu"));
+    assert!(unit.source().contains("int("));
+    assert!(unit.source().contains("float("));
+    assert_eq!(
+        unit.require_declared_realization().unwrap_err(),
+        MetalEmitError::UnrealizableNumericalObligation {
+            gap: MetalNumericalGap::SubnormalFlushInArithmetic,
+        }
+    );
+}
+
 /// Every arithmetic type occupies its own slot in the facts record.
 ///
 /// The record is a fixed array keyed by [`MetalFloatArithmeticType::index`], so
@@ -1199,6 +1308,8 @@ fn emission_never_names_a_semantic_or_schedule_shape() {
 #[test]
 fn governed_types_map_to_their_metal_spellings() {
     assert_eq!(msl_type(KernelType::Bool), "bool");
+    assert_eq!(msl_type(KernelType::U8), "uchar");
+    assert_eq!(msl_type(KernelType::I32), "int");
     assert_eq!(msl_type(KernelType::Index), "ulong");
     assert_eq!(msl_type(KernelType::F32), "float");
 }

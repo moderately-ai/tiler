@@ -16,13 +16,13 @@ use std::fmt;
 
 use crate::kernel::KernelType;
 use crate::schedule::TensorRole;
-use crate::semantic::{InputKey, OutputKey};
+use crate::semantic::{EncodedComponentRole, InputKey, OutputKey};
 
 use super::KernelProgramBuilder;
 use super::abi::{AbiEvaluationError, AbiType, AvailabilityPhase};
 use super::model::{
     AllocationOwnership, MemorySpace, RoutingCommitState, SemanticOccurrence, StageAccessMode,
-    ValueRole,
+    StorageEncoding, StorageScalar, ValueRole,
 };
 
 /// One site at which a kernel program uses an ABI expression.
@@ -152,6 +152,36 @@ pub enum KernelProgramBuildError {
         /// Repeated interface key.
         key: InputKey,
     },
+    /// A dense or component declaration disagreed with the semantic value type.
+    UnexpectedComponentRole {
+        /// Rejected role; `None` denotes a dense singleton declaration.
+        role: Option<EncodedComponentRole>,
+    },
+    /// An internal temporary carried a component role without a logical-value group.
+    UngroupedInternalComponent {
+        /// Rejected stable component role.
+        role: EncodedComponentRole,
+    },
+    /// An encoded interface type declared no physical components.
+    EmptyEncodedComponentSet,
+    /// A storage encoding cannot represent the declared physical scalar.
+    StorageEncodingScalar {
+        /// Rejected physical scalar.
+        scalar: StorageScalar,
+        /// Rejected encoding.
+        encoding: StorageEncoding,
+    },
+    /// A kernel access type cannot address the declared physical storage.
+    StorageAccessType {
+        /// Physical scalar stored in the bytes.
+        scalar: StorageScalar,
+        /// Physical storage encoding.
+        encoding: StorageEncoding,
+        /// Kernel access type required by that physical contract.
+        expected: KernelType,
+        /// Kernel access type the producer declared.
+        actual: KernelType,
+    },
     /// A value's shape disagreed with the semantic interface entry it binds.
     InterfaceShapeMismatch {
         /// Entity whose declared shape was rejected.
@@ -212,6 +242,15 @@ pub enum KernelProgramBuildError {
         /// Bytes the base value requires.
         value_bytes: u64,
     },
+    /// A packed value was exposed through less than its complete byte range.
+    PartialPackedView {
+        /// First addressed byte.
+        offset: u64,
+        /// Addressed byte count.
+        length: u64,
+        /// Complete packed component byte count.
+        value_bytes: u64,
+    },
     /// A view with the same base value and byte window is already declared.
     ///
     /// Views are canonically deduplicated so consumers of one window share one
@@ -255,6 +294,15 @@ pub enum KernelProgramBuildError {
         expected: TensorRole,
         /// Tensor role implied by the bound value's role.
         actual: TensorRole,
+    },
+    /// A stage buffer targeted the wrong semantic component role.
+    StageComponentRole {
+        /// Ordered buffer position.
+        position: usize,
+        /// Role required by the kernel signature.
+        expected: Option<EncodedComponentRole>,
+        /// Role carried by the materialized value.
+        actual: Option<EncodedComponentRole>,
     },
     /// One stage access binds a value whose element type is not the buffer's.
     StageElementType {
@@ -429,6 +477,10 @@ pub enum KernelProgramDiagnostic {
     MissingNamedOutput,
     /// An output-role value is not published as a named program output.
     UnboundOutputValue,
+    /// A logical interface value did not materialize exactly its semantic components.
+    IncompleteComponentSet,
+    /// An encoded interface type declared no physical components.
+    EmptyEncodedComponentSet,
     /// Two entities produced the same canonical key, so identity is ambiguous.
     AmbiguousCanonicalKey {
         /// Category of the colliding entities.
@@ -480,6 +532,8 @@ impl KernelProgramDiagnostic {
             Self::UnusedAllocation => "unused-allocation",
             Self::MissingNamedOutput => "missing-named-output",
             Self::UnboundOutputValue => "unbound-output-value",
+            Self::IncompleteComponentSet => "incomplete-component-set",
+            Self::EmptyEncodedComponentSet => "empty-encoded-component-set",
             Self::AmbiguousCanonicalKey { .. } => "ambiguous-canonical-key",
             Self::MissingApplicabilityGuard => "missing-applicability-guard",
             Self::UnreferencedAbiExpression => "unreferenced-abi-expression",

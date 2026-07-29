@@ -66,6 +66,7 @@ pub(super) fn verify_program(
     verify_storage(data)?;
     verify_reuse(data, &accesses, &definitions, &execution_order, &successors)?;
     verify_outputs(data, subject)?;
+    verify_components(data, subject)?;
 
     // Last, because a program whose structure does not hold has a more basic
     // defect than an incomplete routing contract, and reporting the contract
@@ -504,7 +505,11 @@ fn verify_outputs(
     data: &KernelProgramData,
     subject: &SemanticSubject,
 ) -> Result<(), KernelProgramDiagnostic> {
-    if data.outputs.len() != subject.outputs.len() {
+    if subject
+        .outputs
+        .iter()
+        .any(|(key, _, _)| !data.outputs.iter().any(|output| &output.key == key))
+    {
         return Err(KernelProgramDiagnostic::MissingNamedOutput);
     }
     for (index, value) in data.values.iter().enumerate() {
@@ -520,4 +525,83 @@ fn verify_outputs(
         }
     }
     Ok(())
+}
+
+/// Proves every logical interface value carries exactly its semantic role set.
+fn verify_components(
+    data: &KernelProgramData,
+    subject: &SemanticSubject,
+) -> Result<(), KernelProgramDiagnostic> {
+    for (key, _, value_type) in &subject.inputs {
+        let expected = expected_roles(value_type)?;
+        let actual: BTreeSet<_> = data
+            .values
+            .iter()
+            .filter_map(|value| match &value.origin {
+                super::model::MaterializedOrigin::ProgramInput { key: bound } if bound == key => {
+                    Some(value.component_role)
+                }
+                super::model::MaterializedOrigin::ProgramInput { .. }
+                | super::model::MaterializedOrigin::Internal => None,
+            })
+            .collect();
+        if actual != expected {
+            return Err(KernelProgramDiagnostic::IncompleteComponentSet);
+        }
+    }
+    for (key, _, value_type) in &subject.outputs {
+        let expected = expected_roles(value_type)?;
+        let actual: BTreeSet<_> = data
+            .outputs
+            .iter()
+            .filter(|output| &output.key == key)
+            .map(|output| data.values[position(output.value)].component_role)
+            .collect();
+        if actual != expected {
+            return Err(KernelProgramDiagnostic::IncompleteComponentSet);
+        }
+    }
+    Ok(())
+}
+
+fn expected_roles(
+    value_type: &crate::semantic::ResolvedValueType,
+) -> Result<BTreeSet<Option<crate::semantic::EncodedComponentRole>>, KernelProgramDiagnostic> {
+    match value_type.encoded_numeric_parts() {
+        None => Ok([None].into_iter().collect()),
+        Some((_, contract)) if contract.components().is_empty() => {
+            Err(KernelProgramDiagnostic::EmptyEncodedComponentSet)
+        }
+        Some((_, contract)) => Ok(contract
+            .components()
+            .iter()
+            .map(|component| Some(component.role()))
+            .collect()),
+    }
+}
+
+#[cfg(test)]
+mod component_tests {
+    use super::*;
+    use crate::semantic::{
+        AttributeFieldId, CanonicalField, CanonicalValue, EncodedNumericContract, QuantSchemeKey,
+        ResolvedValueType,
+    };
+
+    #[test]
+    fn an_encoded_type_without_components_reaches_typed_rejection() {
+        let value_type = ResolvedValueType::encoded_numeric(
+            QuantSchemeKey::new("test", "empty-components", 1).unwrap(),
+            EncodedNumericContract::new([CanonicalField::new(
+                AttributeFieldId::new(1),
+                CanonicalValue::boolean(true),
+            )])
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            expected_roles(&value_type),
+            Err(KernelProgramDiagnostic::EmptyEncodedComponentSet)
+        );
+    }
 }

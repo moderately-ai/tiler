@@ -20,6 +20,8 @@ The private compiler proof constructs provisional program portfolios and artifac
 
 **Decided by Tom on 2026-07-25, and implemented: a decoded envelope is a *dispatch record*, never a reconstruction.** It publishes the named interface, each variant's guard and executable entries, each entry's bindings with the interface entry or internal allocation each addresses, each entry's launch contract and backend entry symbol, and each *carried* payload's compilation subject and exact object bytes — and it never rebuilds the shared-IR program it names. A consumer that needs that program holds the one it compiled, and the envelope binds the two by canonical artifact identity. The accurate statement is that a bounded lockstep codec with an accepted capability facade exists, not that the artifact format is stable.
 
+**Fact — one strict-affine u4 dequantization reaches the complete target-neutral structural boundary.** A verified semantic value with ordered code, scale, and zero-point components lowers through a role-addressed schedule and structured kernel, packages as a verified kernel program, projects into the artifact interface and entry bindings, encodes under the neutral envelope, decodes into the public dispatch view, and re-encodes byte-identically. This is structural ABI and identity evidence. The fixture carries a descriptor-only `tiler.test.target-neutral` payload and is not safely runnable: runtime preflight still has to validate positive finite scale, in-range zero point, and canonical packed tail bits before routing commit, and no such runtime enforcement is claimed here.
+
 ## Ownership boundary
 
 This document owns envelope framing, wire DTOs and encoding, compatibility,
@@ -98,13 +100,13 @@ Parse success never implies executable compatibility. See the
 
 ## Implemented envelope profile
 
-Everything in this section is a fact about `crates/tiler-artifact/src/program/codec/` as of commit `2da6f1d`. It records what one build writes and reads. It does not widen the normative contract above, and where the two differ the difference is named rather than resolved by rewriting either side.
+Everything in this section is a fact about the current `crates/tiler-artifact/src/program/codec/` implementation. It records what this build writes and reads. It does not widen the normative contract above, and where the two differ the difference is named rather than resolved by rewriting either side.
 
 ### Maturity of the implementation
 
-**Fact — the codec's capability is accepted and its layout is not.** `codec` is a private `mod` of `tiler_artifact::program`. Promoted on Tom's review of 2026-07-25 are the capability and the read view alone: `VerifiedArtifactProgram::encode`, `decode_artifact`, `DecodedArtifact` with the borrowed projections `DecodedInput`, `DecodedOutput`, `DecodedVariant`, `DecodedDeferredPredicate`, `DecodedEntry`, `DecodedBinding`, `DecodedNumerical` and `DecodedExpr`, `BindingTarget`, `SectionView`, `SectionPurpose`, the payload vocabulary, and `ArtifactCodecFailure`. `ArtifactEnvelope`, the encoder, the decoder, the row types those projections borrow from, and the governed constants — including the three digest domain separators — stay `pub(crate)`. Promoting any further item is named on ADR 0075's always-ask list and requires Tom's review before merge.
+**Fact — the codec's capability is accepted and its layout is not.** `codec` is a private `mod` of `tiler_artifact::program`. Promoted on Tom's review of 2026-07-25 are the capability and the read view alone: `VerifiedArtifactProgram::encode`, `decode_artifact`, `DecodedArtifact` with the borrowed projections `DecodedInput`, `DecodedOutput`, `DecodedComponent`, `DecodedVariant`, `DecodedDeferredPredicate`, `DecodedEntry`, `DecodedBinding`, `DecodedNumerical` and `DecodedExpr`, `BindingTarget`, `SectionView`, `SectionPurpose`, the payload vocabulary, and `ArtifactCodecFailure`. `ArtifactEnvelope`, the encoder, the decoder, the row types those projections borrow from, and the governed constants — including the three digest domain separators — stay `pub(crate)`. Promoting any further item is named on ADR 0075's always-ask list and requires Tom's review before merge.
 
-**What a consumer can do today.** Build a `VerifiedArtifactProgram` through `tiler_artifact::program` — itself a reviewed *draft* boundary rather than an accepted facade — read its canonical identity, encode it to bytes, decode bytes back into a fully validated `DecodedArtifact`, re-encode that decoded view, observe any typed codec rejection, and carry a backend payload. From the decoded view alone, and holding no program, registry, or producer code, it can also read the whole dispatch record: the named inputs and outputs with their declared shape and element type; each variant's applicability guard, declared target profile, feasibility rule set, and deferred predicates; each executable entry's stage key, proven resource requirements, declared numerical realization, launch contract, and launch preconditions; each binding's target, transport kind, element type, address space, access mode, alignment, and the accessible offset and byte range bounding what it reaches; and, for a payload whose object was carried rather than left pending, its compilation subject, backend entry symbol, transport slots, and exact object bytes. Every carried expression among those evaluates against bound `AbiFacts` through the shared IR's own evaluator.
+**What a consumer can do today.** Build a `VerifiedArtifactProgram` through `tiler_artifact::program` — itself a reviewed *draft* boundary rather than an accepted facade — read its canonical identity, encode it to bytes, decode bytes back into a fully validated `DecodedArtifact`, re-encode that decoded view, observe any typed codec rejection, and carry a backend payload. From the decoded view alone, and holding no program, registry, or producer code, it can also read the whole dispatch record: each named input and output's logical shape and canonical resolved-type encoding; its ordered components with semantic role, component shape and resolved type, storage scalar, kernel access type, and storage encoding; each variant's applicability guard, declared target profile, feasibility rule set, and deferred predicates; each executable entry's stage key, proven resource requirements, declared numerical realization, launch contract, and launch preconditions; each binding's target, transport kind, component role, storage scalar, kernel access type, storage encoding, address space, access mode, alignment, and accessible offset and extent; and, for a payload whose object was carried rather than left pending, its compilation subject, backend entry symbol, transport slots, and exact object bytes. Every carried expression among those evaluates against bound `AbiFacts` through the shared IR's own evaluator.
 
 **What a consumer cannot do today.** Reach an `ArtifactEnvelope`, an encoder, a decoder, one of the manifest row types those projections borrow from, or a governed digest domain; digest a subject under one of this crate's domains; or obtain a `VerifiedArtifactProgram` from bytes, which no decoder can produce for the structural reason recorded under "Deliberate exclusions" and which the dispatch-record decision makes deliberate rather than pending.
 
@@ -133,7 +135,7 @@ Total length, manifest length, and section count are read and checked against th
 
 ### Canonical manifest
 
-**Fact — the manifest opens with the versioned domain tag `tiler.artifact-envelope.manifest.v1\0` and its own `{major, minor}` schema**, then the four governed component schema versions — program, ABI expression, guard-and-routing, target-requirement — and then, in this order: the routing policy tag; the derived required-feature set; the three reached semantic subjects; the named inputs and outputs with declared shape and element type; the selected capability providers; the backend payload descriptors; the shared ABI expression arena; the plan variants, each with its guard, declared target profile and feasibility rule set, deferred predicates, and executable entries; the section descriptors; and the artifact's canonical identity.
+**Fact — the manifest opens with the versioned domain tag `tiler.artifact-envelope.manifest.v1\0` and its own `{major, minor}` schema**, then the four governed component schema versions — program, ABI expression, guard-and-routing, target-requirement — and then, in this order: the routing policy tag; the derived required-feature set; the three reached semantic subjects; the named inputs and outputs with logical shape, canonical logical resolved type, and ordered physical components; the selected capability providers; the backend payload descriptors; the shared ABI expression arena; the plan variants, each with its guard, declared target profile and feasibility rule set, deferred predicates, and executable entries; the section descriptors; and the artifact's canonical identity. Each component row carries its optional semantic role and resolved component type, physical shape, storage scalar, kernel access type, and complete storage encoding.
 
 Each executable entry carries its stage subject, proven resource requirements, declared numerical realization, ABI bindings, launch contract, and backend entry.
 
@@ -150,6 +152,10 @@ Adding it moved the manifest schema to **5.0** and the identity domain to `tiler
 **Fact — each entry's resource requirements and numerical realization carry every numerical dimension the bounded operation vocabulary can consume.** In addition to input and result subnormal treatment, contraction, and reassociation, both records carry operand permutation, signed-zero elimination, and separately provenanced NaN-absence and infinity-absence assumptions. The decoded `DecodedNumerical` view publishes the same complete record, so a consumer holding only bytes does not infer a compiler selection from a profile name or silently recover a strict default for a field the producer resolved differently.
 
 Adding those fields moved the manifest schema to **6.0** and the identity domain to `tiler.artifact-program.v8`. This is a major schema step because the fields occur inside each executable-entry record ahead of its bindings; a `5.0` reader would lose framing after the old numerical-record boundary. The identity domain moves because `v7` omitted facts that distinguish two executable contracts, so its subject is not interchangeable with the complete `v8` restatement.
+
+**Fact — logical component ABI rows moved the manifest schema to 7.0 and artifact identity to `tiler.artifact-program.v9`.** Interface entries now carry the complete logical resolved-type encoding and ordered component rows, while each binding carries its semantic component role, physical storage scalar, kernel access type, and complete storage encoding. This is a major schema step because the new fields occur inside repeated interface and binding records; a 6.0 reader would lose framing rather than skip an additive tail. A v8 identity could neither distinguish two schemes projected onto different role sets nor distinguish physical encodings and access types that require different runtime bindings, so v8 and v9 subjects are intentionally incomparable.
+
+**Fact — the current identity ledger is source-derived and each step has one owner.** The resolved value type is `tiler.resolved-value-type.v3`, the scheduled region is `tiler.schedule.v2`, the structured kernel is `tiler.kernel.v3`, the verified kernel program is `tiler.kernel-program.v5`, and the artifact is `tiler.artifact-program.v9`; the neutral manifest schema is 7.0. The envelope format and canonical encoding profile remain 1.0, all four component schemas remain 1.0, and the selected-provider key domain remains v2. These values describe different subjects and must not be collapsed into one global artifact version.
 
 **Fact — every variable-length run carries a fixed-width `u64` length before its content**, so no concatenation of fields is ambiguous, and **every encoded enumeration is written through the one governed tag table its vocabulary owns**, never through a Rust discriminant, so inserting a variant cannot silently renumber a value already on disk. Each table is a forward and inverse pair kept in one place and pinned by an exhaustive round-trip test.
 
@@ -250,14 +256,14 @@ A section descriptor is derived from its section's position and exact bytes at e
 | Framing and integrity | `Truncated`, `TrailingBytes`, `TrailingManifestBytes`, `BadMagic`, `BadManifestDomain`, `BadPayloadMetadataDomain`, `TotalLengthMismatch`, `ManifestDigestMismatch`, `SectionDigestMismatch`, `SectionLengthMismatch`, `SectionCountMismatch`, `NonCanonicalSectionId` |
 | Schema and feature compatibility | `UnsupportedEnvelopeFormat`, `UnsupportedCanonicalEncoding`, `UnsupportedManifestSchema`, `UnsupportedComponentSchema`, `UnsupportedSectionSchema`, `UnsupportedPayloadMetadataSchema`, `UnsupportedDigestAlgorithm`, `UnsupportedRequiredFeature` |
 | Canonical form | `NonCanonicalOrder`, `DuplicateItem`, `NonCanonicalManifest`, `DeclaredFeatureMismatch`, `UnreferencedSection` |
-| Structure and closure | `MissingReference`, `SectionPurposeMismatch`, `SectionDispositionMismatch`, `EmptyBindingTarget`, `UnknownBindingTargetKey`, `UnmappedBackendEntry`, `EntryTransportCardinality`, `ExpressionOperandOrder`, `ExpressionOperandType`, `ExpressionSelectBranchType`, `UnknownTag`, `InvalidText`, `InvalidGovernedKey`, `InvalidInterfaceKey`, `InvalidProviderIdentity`, `InvalidShape` |
+| Structure and closure | `MissingReference`, `SectionPurposeMismatch`, `SectionDispositionMismatch`, `EmptyBindingTarget`, `UnknownBindingTargetKey`, `MalformedInterfaceComponents`, `UnknownBindingTargetComponent`, `BindingComponentMismatch`, `BindingAccessTypeMismatch`, `UnmappedBackendEntry`, `EntryTransportCardinality`, `ExpressionOperandOrder`, `ExpressionOperandType`, `ExpressionSelectBranchType`, `UnknownTag`, `InvalidText`, `InvalidGovernedKey`, `InvalidInterfaceKey`, `InvalidProviderIdentity`, `InvalidShape` |
 | Governed budgets | `Limit` |
 | Re-proven model obligations | `ModelRule`, `ModelObligation` |
 | Identity | `ArtifactIdentityMismatch`, `PayloadIdentityMismatch`, `IdentityDerivation` |
 
 Each variant carries the structured data a caller reacts to rather than a message: which collection was out of order, which enumeration presented an unimplemented tag with the rejected tag byte, which table a reference missed with the rejected index, which resource was exhausted with its attempted and permitted quantities.
 
-**Fact — four of those decide the dispatch record, and each names a way an envelope could otherwise be wrong without being malformed.** `SectionPurposeMismatch` refuses a reference that resolves to a well-formed section of the wrong governed purpose, which would otherwise load an artifact whose executable half had been replaced by another section of its own envelope with no framing or integrity check failing. `UnknownBindingTargetKey` refuses a binding directed at an interface name the artifact does not declare. `UnmappedBackendEntry` refuses a payload that maps no symbol for an entry it realizes, and `EntryTransportCardinality` refuses a mapping whose transport slots do not correspond one-to-one with that entry's bindings — either of which would move the failure to a loader with less to say about it.
+**Fact — eight of those decide the dispatch record, and each names a way an envelope could otherwise be wrong without being malformed.** `SectionPurposeMismatch` refuses a reference that resolves to a well-formed section of the wrong governed purpose, which would otherwise load an artifact whose executable half had been replaced by another section of its own envelope with no framing or integrity check failing. `UnknownBindingTargetKey` refuses a binding directed at an interface name the artifact does not declare. `MalformedInterfaceComponents` refuses an empty component set or repeated semantic role; `UnknownBindingTargetComponent` refuses a role absent from the named interface value; `BindingComponentMismatch` refuses a binding whose carrier, encoding, or access type disagrees with that component; and `BindingAccessTypeMismatch` independently refuses a kernel access type incompatible with the physical storage. `UnmappedBackendEntry` refuses a payload that maps no symbol for an entry it realizes, and `EntryTransportCardinality` refuses a mapping whose transport slots do not correspond one-to-one with that entry's bindings — either of which would move the failure to a loader with less to say about it.
 
 **Measurement — the adversarial cases build a structurally invalid envelope and then encode it**, which stamps a correct manifest digest, correct section digests, and a correct identity for whatever the forgery now says, and require the decoder to reject it anyway by name. Corrupting bytes and watching a digest reject them proves comparatively little, because a forger recomputes digests.
 
@@ -483,7 +489,7 @@ The domain type, admitted root vocabulary, validation, canonical identity, and
 authoritative pure checked evaluation semantics belong to the executable
 program IR in `tiler-ir`, as do the program-level *uses* of that language: the
 applicability guard, each stage's launch geometry, and each access's accessible
-byte range, all folded into `tiler.kernel-program.v2` program identity. This
+byte range, all folded into `tiler.kernel-program.v5` program identity. This
 artifact contract owns their versioned wire encoding, runtime fact binding and
 phase checks, compatibility behavior, and failure classification, plus the two
 use sites no single program can carry — a variant's launch preconditions and
@@ -591,12 +597,12 @@ that property changes observable tensor semantics.
 
 Every kernel binding states:
 
-- stable plan-value identity and Metal buffer index;
+- stable plan-value identity, optional semantic component role, and Metal buffer index;
 - buffer, metadata block, or scalar role;
-- storage dtype and scalar width/signedness;
+- physical storage scalar, complete storage encoding, and kernel access type;
 - read, write, or read/write access;
 - address space and required alignment;
-- alias/access-range constraints;
+- alias constraints and separately evaluated accessible byte offset and extent;
 - explicit metadata layout and minimum accessible byte range.
 
 A first-class semantic tensor may lower to multiple physical bindings. A
@@ -612,6 +618,8 @@ interleaving, alignment, padding, and physical scale layout participate in
 storage/ABI and artifact identity. Runtime component bindings are validated as
 one logical value before any plan dispatch begins.
 
+**Fact — `BindingSpec` deliberately has only the transport `kind`.** The artifact builder derives the target, component role, physical storage scalar, complete storage encoding, kernel access type, access mode, address space, alignment, and accessible byte window from the verified bound program. Reintroducing any of those as caller-declared ABI facts would create two authorities for one executable contract and permit a producer to package a binding that disagrees with the program it names.
+
 Every metadata field states its `AbiExpr` source, byte offset, scalar type,
 size, alignment, and encoding. Host packing and MSL declarations are generated
 from the same layout; Rust `repr(C)` is not the cross-language contract.
@@ -620,17 +628,21 @@ explicit.
 
 The initial buffer convention is:
 
-- bind the Metal allocation buffer at byte offset zero;
+- evaluate each binding's accessible byte offset and extent before routing commits and reject overflow in their checked sum;
+- require the backing allocation to span through the evaluated end of that window;
+- bind the Metal allocation buffer at the evaluated accessible byte offset;
 - pass logical `start_element` as typed metadata;
 - physical address derivation composes each logical tensor access with the
   selected `BufferView`, adds `start_element` exactly once, and produces an
-  allocation-relative element offset;
+  offset relative to the bound byte window;
 - metadata strides are measured in elements;
-- validate the derived allocation-relative range against allocation bytes.
+- validate the derived range against the binding's accessible extent.
 
-There is no untyped integer “offset,” and the encoder does not also apply the
-view start as a byte offset. A future binding-offset variant is a distinct ABI
-convention. Negative-stride views are initially unsupported.
+There is no untyped integer “offset”: `accessible_offset` is a byte-count expression and `start_element` is element-count metadata. The loader evaluates and publishes the former on `RoutedBinding`, the backend applies it exactly once at the binding call, and the kernel applies the latter exactly once in logical address derivation. Negative-stride views are initially unsupported.
+
+**Fact — the strict-affine u4 fixture proves this contract structurally without claiming execution.** The interface exposes the logical encoded value as ordered codes, scale, and zero-point components; the code component is stored as `U8` with `PackedU4LsbZeroTail` and accessed as `U8`, the scalar scale is stored and accessed as `F32`, the scalar zero point is stored and accessed as `U8`, and the output is unpacked `F32`. The structured kernel extracts packed nibbles, widens code and zero point through `I32`, subtracts there, converts the difference to `F32`, and multiplies by scale. Component order, role, storage, access type, encoding, and binding target all survive neutral encode/decode and participate in identity.
+
+**Fact — safe execution remains narrower than structural packaging.** Before routing commits, a runtime still has to validate that scale is positive and finite, zero point is in the u4 domain, and unused packed tail bits are canonical; the descriptor-only target-neutral payload cannot perform that work. Mechanical Metal emission also does not make the artifact executable on the measured Apple profile: `require_declared_realization` refuses it as `MetalEmitError::UnrealizableNumericalObligation { gap: MetalNumericalGap::SubnormalFlushInArithmetic }`, because the strict contract requires subnormal-preserving f32 arithmetic and the measured Metal profile flushes it in every admitted math mode. That typed refusal is correctness, not a fallback license to weaken the contract.
 
 ## Plan execution and dispatch
 

@@ -657,15 +657,11 @@ mod tests {
             &self,
             registrar: &mut SemanticRegistryRegistrar<'_>,
         ) -> Result<(), RegistryError> {
-            for name in ["bool", "u4"] {
-                registrar.register_value_type(ValueTypeDefinition::structurally_valid(
-                    ValueTypeDefinitionKey::Nominal(TypeKey::new("tiler", name, 1).unwrap()),
-                    NormativeDefinitionRef::from_owned(format!(
-                        "test {name} type for index discharge"
-                    ))?,
-                    TypeDefinitionFacts::new(CanonicalValue::boolean(true)),
-                ))?;
-            }
+            registrar.register_value_type(ValueTypeDefinition::structurally_valid(
+                ValueTypeDefinitionKey::Nominal(TypeKey::new("tiler", "bool", 1).unwrap()),
+                NormativeDefinitionRef::new("test bool type for index discharge")?,
+                TypeDefinitionFacts::new(CanonicalValue::boolean(true)),
+            ))?;
             registrar.register_value_type(ValueTypeDefinition::structurally_valid(
                 ValueTypeDefinitionKey::Parameterized(TypeKey::new("tiler", "complex", 1).unwrap()),
                 NormativeDefinitionRef::new("test complex family for index discharge")?,

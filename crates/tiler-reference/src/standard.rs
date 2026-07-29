@@ -13,6 +13,7 @@ use tiler_ir::semantic::{
 
 use super::error::{ReferenceOperationError, ReferenceRegistryError, ReferenceValueError};
 use super::evaluate::{binary, reduction_axes, strict_sum};
+use super::quantization::register_standard_quantization;
 use super::registry::{
     ReferenceCapabilityRevision, ReferenceEvaluationRequest, ReferenceOperation, ReferenceOutputs,
     ReferenceRegistryProvider, ReferenceRegistryRegistrar, ReferenceSignature,
@@ -24,7 +25,7 @@ pub(crate) struct StandardReferenceProvider;
 
 impl ReferenceRegistryProvider for StandardReferenceProvider {
     fn identity(&self) -> ProviderIdentity {
-        ProviderIdentity::new("tiler", "standard-reference", 3)
+        ProviderIdentity::new("tiler", "standard-reference", 4)
             .expect("the governed reference provider identity is valid")
     }
 
@@ -32,7 +33,7 @@ impl ReferenceRegistryProvider for StandardReferenceProvider {
         &self,
         registrar: &mut ReferenceRegistryRegistrar<'_>,
     ) -> Result<(), ReferenceRegistryError> {
-        let revision = ReferenceCapabilityRevision::new(3)?;
+        let revision = ReferenceCapabilityRevision::new(4)?;
         registrar.register_value_type(
             F32::resolved_type(),
             revision,
@@ -65,7 +66,8 @@ impl ReferenceRegistryProvider for StandardReferenceProvider {
             ReferenceSignature::new([F32::resolved_type()], [F32::resolved_type()])?,
             revision,
             Arc::new(StrictSerialF32SumReference),
-        )
+        )?;
+        register_standard_quantization(registrar, revision)
     }
 }
 

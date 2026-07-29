@@ -50,14 +50,17 @@ pub(super) fn access_elements(
 /// Returns the ordered read and write accesses of a bounded scheduled region.
 pub(super) fn boundary_accesses(
     schedule: &ScheduledRegion,
-) -> Result<(&Access, &Access), KernelDiagnostic> {
-    let [read, write] = schedule.index.accesses.as_slice() else {
+) -> Result<(&[Access], &Access), KernelDiagnostic> {
+    let Some((write, reads)) = schedule.index.accesses.split_last() else {
         return Err(KernelDiagnostic::ScheduleAccessCount);
     };
-    if read.mode != AccessMode::Read || write.mode != AccessMode::Write {
+    if reads.is_empty()
+        || reads.iter().any(|read| read.mode != AccessMode::Read)
+        || write.mode != AccessMode::Write
+    {
         return Err(KernelDiagnostic::ScheduleAccessCount);
     }
-    Ok((read, write))
+    Ok((reads, write))
 }
 
 /// One memory effect recorded in program order.
@@ -103,8 +106,8 @@ pub(super) fn verify_kernel(
     schedule_identity: &CanonicalScheduledRegionIdentity,
     derived: ResourceRequirements,
 ) -> Result<(), KernelDiagnostic> {
-    let (read, write) = boundary_accesses(schedule)?;
-    verify_signature(data, schedule, read, write, derived)?;
+    let (reads, write) = boundary_accesses(schedule)?;
+    verify_signature(data, schedule, reads, write, derived)?;
 
     let guards = guard_values(data, schedule.schedule.work_items);
     let mut walk = Walk::default();
@@ -112,8 +115,8 @@ pub(super) fn verify_kernel(
     if walk.ungoverned_predicate {
         return Err(KernelDiagnostic::PredicateDominance);
     }
-    verify_effects(&walk, schedule, read, write, derived)?;
-    verify_reduction(&walk, schedule, read)?;
+    verify_effects(&walk, schedule, reads, write, derived)?;
+    verify_reduction(&walk, schedule, reads)?;
 
     let canonical = super::lower::derive_canonical(schedule, schedule_identity, derived)?;
     if data != &canonical {
@@ -125,18 +128,43 @@ pub(super) fn verify_kernel(
 fn verify_signature(
     data: &KernelData,
     schedule: &ScheduledRegion,
-    read: &Access,
+    reads: &[Access],
     write: &Access,
     derived: ResourceRequirements,
 ) -> Result<(), KernelDiagnostic> {
-    let [read_buffer, write_buffer] = data.buffers.as_slice() else {
+    if data.buffers.len() != reads.len().saturating_add(1) {
         return Err(KernelDiagnostic::BufferContract);
+    }
+    let (write_buffer, read_buffers) = data
+        .buffers
+        .split_last()
+        .ok_or(KernelDiagnostic::BufferContract)?;
+    let expected_types: &[KernelType] = match schedule.index.scalar_program {
+        crate::schedule::ScalarProgram::StrictAffineU4Dequantize { .. } => {
+            &[KernelType::U8, KernelType::F32, KernelType::U8]
+        }
+        crate::schedule::ScalarProgram::PointwiseF32(_)
+        | crate::schedule::ScalarProgram::StrictSerialSum { .. }
+        | crate::schedule::ScalarProgram::FusedMultiplyAddSerialSum { .. } => &[KernelType::F32],
     };
-    if read_buffer.tensor != read.tensor
-        || read_buffer.access != BufferAccess::Read
-        || read_buffer.element_type != KernelType::F32
-        || read_buffer.element_count != access_elements(read, schedule)?
+    let expected_elements = reads
+        .iter()
+        .map(|read| access_elements(read, schedule))
+        .collect::<Result<Vec<_>, _>>()?;
+    if read_buffers.len() != expected_types.len()
+        || read_buffers
+            .iter()
+            .zip(reads)
+            .zip(expected_types.iter().zip(expected_elements))
+            .any(|((buffer, read), (expected_type, expected_elements))| {
+                buffer.tensor != read.tensor
+                    || buffer.component_role != read.component_role
+                    || buffer.access != BufferAccess::Read
+                    || buffer.element_type != *expected_type
+                    || buffer.element_count != expected_elements
+            })
         || write_buffer.tensor != write.tensor
+        || write_buffer.component_role != write.component_role
         || write_buffer.access != BufferAccess::Write
         || write_buffer.element_type != KernelType::F32
         || write_buffer.element_count != access_elements(write, schedule)?
@@ -289,7 +317,8 @@ fn visit_block(
             | OperationKind::Constant { .. }
             | OperationKind::Binary { .. }
             | OperationKind::Compare { .. }
-            | OperationKind::Convert { .. } => {}
+            | OperationKind::Convert { .. }
+            | OperationKind::PackedExtract { .. } => {}
         }
     }
 }
@@ -297,7 +326,7 @@ fn visit_block(
 fn verify_effects(
     walk: &Walk,
     schedule: &ScheduledRegion,
-    read: &Access,
+    reads: &[Access],
     write: &Access,
     derived: ResourceRequirements,
 ) -> Result<(), KernelDiagnostic> {
@@ -314,7 +343,7 @@ fn verify_effects(
     for effect in &walk.effects {
         match effect.kind {
             EffectKind::Load { bounds } => {
-                if bounds != read.bounds {
+                if !reads.iter().any(|read| bounds == read.bounds) {
                     return Err(KernelDiagnostic::BoundsEvidence);
                 }
             }
@@ -350,7 +379,7 @@ fn verify_effects(
 fn verify_reduction(
     walk: &Walk,
     schedule: &ScheduledRegion,
-    read: &Access,
+    reads: &[Access],
 ) -> Result<(), KernelDiagnostic> {
     match &schedule.schedule.reduction {
         ReductionTopology::None => {
@@ -361,6 +390,9 @@ fn verify_reduction(
             }
         }
         ReductionTopology::Serial { axes, .. } => {
+            let [read] = reads else {
+                return Err(KernelDiagnostic::ReductionContract);
+            };
             let contributors = contributor_count(axes, &read.map)
                 .map_err(|_| KernelDiagnostic::ContributorDomain)?;
             // Zero contributors commit the reduction identity and exactly one

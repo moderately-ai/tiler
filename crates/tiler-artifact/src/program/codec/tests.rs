@@ -20,8 +20,12 @@
 use std::time::Instant;
 
 use tiler_ir::kernel::{AddressSpace, BufferAccess, KernelType};
+use tiler_ir::program::{StorageEncoding, StorageScalar};
 use tiler_ir::schedule::{ExceptionalValueAssumption, NumericalPermission, ValueDomainProvenance};
-use tiler_ir::semantic::{InputKey, OutputKey, ProviderIdentity};
+use tiler_ir::semantic::{
+    InputKey, OutputKey, ProviderIdentity, STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE,
+    STRICT_AFFINE_ZERO_POINT_ROLE,
+};
 use tiler_ir::shape::Axis;
 
 use super::super::facts::AbiFactBinder;
@@ -39,12 +43,14 @@ use super::super::model::{
     SchemaVersion, StageDependencyData, StageDependencyReason, address_space_from_tag,
     address_space_tag, buffer_access_from_tag, buffer_access_tag, element_type_from_tag,
     element_type_tag, exceptional_assumption_from_tag, exceptional_assumption_tag,
-    permission_from_tag, permission_tag, subnormal_from_tag, subnormal_tag,
+    permission_from_tag, permission_tag, storage_scalar_from_tag, storage_scalar_tag,
+    subnormal_from_tag, subnormal_tag,
 };
 use super::super::tests::{
     ELEMENT_BYTES, Formulas, OTHER_SCALE_BITS, SCALE_BITS, SCRATCH_OFFSET, build_artifact,
     default_artifact, formulas, fused_program, lowering_provider, partial_window_artifact, payload,
-    profile, selection, semantic_program, spare_provider, variant,
+    profile, selection, semantic_program, spare_provider, strict_affine_u4_dequantize_artifact,
+    variant,
 };
 use super::super::{
     ArtifactProgramBuilder, CompilationEnvironment, MAX_VARIANT_ENTRIES, VerifiedArtifactProgram,
@@ -53,7 +59,7 @@ use super::decode::{Cursor, decode, parse_dependencies, parse_expression_arena};
 use super::digest::DigestAlgorithm;
 use super::encode::{
     ENVELOPE_FORMAT, HEADER_BYTES, MAGIC, MANIFEST_DIGEST_DOMAIN, MANIFEST_DOMAIN, MANIFEST_SCHEMA,
-    encode, envelope_digest, section_digest,
+    encode, encode_with_identity, envelope_digest, section_digest,
 };
 use super::error::{
     ArtifactCodecError, CodecLimitKind, OrderedSubject, ReferenceSubject, TagSubject,
@@ -130,10 +136,33 @@ fn manifest_offset(bytes: &[u8], pattern: &[u8]) -> usize {
 /// reject them.
 fn reject_forged(forge: impl FnOnce(&mut ArtifactEnvelope)) -> ArtifactCodecError {
     let artifact = default_artifact();
-    let mut envelope = envelope_of(&artifact);
+    reject_artifact_forgery(&artifact, forge)
+}
+
+fn reject_artifact_forgery(
+    artifact: &VerifiedArtifactProgram,
+    forge: impl FnOnce(&mut ArtifactEnvelope),
+) -> ArtifactCodecError {
+    let mut envelope = envelope_of(artifact);
     forge(&mut envelope);
     let bytes = encode(&envelope).expect("a forged envelope still encodes");
     decode(&bytes).expect_err("a forged envelope is rejected")
+}
+
+fn reject_forgery_with_stale_identity(
+    artifact: &VerifiedArtifactProgram,
+    forge: impl FnOnce(&mut ArtifactEnvelope),
+) -> ArtifactCodecError {
+    let mut envelope = envelope_of(artifact);
+    forge(&mut envelope);
+    let digests: Vec<_> = envelope
+        .sections()
+        .iter()
+        .map(|section| section_digest(DigestAlgorithm::GOVERNED, section))
+        .collect();
+    let bytes = encode_with_identity(&envelope, artifact.canonical_identity(), &digests)
+        .expect("the deliberately stale identity still frames");
+    decode(&bytes).expect_err("a stale identity is rejected")
 }
 
 /// Assembles an artifact carrying a deferred predicate and a launch precondition.
@@ -372,12 +401,31 @@ fn the_derived_feature_set_names_what_a_reader_must_implement() {
 #[test]
 fn every_governed_tag_table_round_trips() {
     use tiler_ir::kernel::{AddressSpace, BufferAccess, KernelType};
-    use tiler_ir::program::ValueRole;
+    use tiler_ir::program::{StorageScalar, ValueRole};
     use tiler_ir::schedule::{FlushedZeroSign, SubnormalMode};
 
-    for value in [KernelType::Bool, KernelType::Index, KernelType::F32] {
+    for value in [
+        KernelType::Bool,
+        KernelType::Index,
+        KernelType::F32,
+        KernelType::U8,
+        KernelType::I32,
+    ] {
         assert_eq!(element_type_from_tag(element_type_tag(value)), Some(value),);
     }
+    assert_eq!(element_type_tag(KernelType::Bool), 0x01);
+    assert_eq!(element_type_tag(KernelType::Index), 0x02);
+    assert_eq!(element_type_tag(KernelType::F32), 0x03);
+    assert_eq!(element_type_tag(KernelType::U8), 0x04);
+    assert_eq!(element_type_tag(KernelType::I32), 0x05);
+    for value in [StorageScalar::U8, StorageScalar::F32] {
+        assert_eq!(
+            storage_scalar_from_tag(storage_scalar_tag(value)),
+            Some(value),
+        );
+    }
+    assert_eq!(storage_scalar_tag(StorageScalar::U8), 0x01);
+    assert_eq!(storage_scalar_tag(StorageScalar::F32), 0x02);
     for value in [
         AddressSpace::Device,
         AddressSpace::Workgroup,
@@ -1842,7 +1890,11 @@ fn a_decoded_artifact_carries_everything_one_dispatch_needs() {
     assert_eq!(bindings[0].kind(), BindingKind::Buffer);
     assert_eq!(bindings[0].access(), BufferAccess::Read);
     assert_eq!(bindings[0].alignment(), 4);
-    assert_eq!(bindings[0].element_type(), KernelType::F32);
+    assert_eq!(bindings[0].access_type(), KernelType::F32);
+    assert_eq!(
+        bindings[0].storage_scalar(),
+        tiler_ir::program::StorageScalar::F32
+    );
     assert_eq!(bindings[0].address_space(), AddressSpace::Device);
     assert_eq!(
         bindings[0].accessible_bytes().evaluate(&facts),
@@ -1868,6 +1920,147 @@ fn a_decoded_artifact_carries_everything_one_dispatch_needs() {
         fused_program(&semantic_program(), SCALE_BITS)
             .canonical_identity()
             .as_bytes(),
+    );
+}
+
+#[test]
+fn strict_affine_components_round_trip_as_target_neutral_structural_abi() {
+    let artifact = strict_affine_u4_dequantize_artifact();
+    let bytes = artifact.encode().expect("strict-affine artifact encodes");
+    let decoded = super::view::decode_artifact(&bytes).expect("strict-affine artifact decodes");
+    assert_eq!(decoded.re_encode().expect("canonical re-encoding"), bytes);
+    assert_eq!(decoded.identity(), artifact.canonical_identity().clone());
+
+    let input = decoded.inputs().next().expect("strict-affine input");
+    assert!(!input.resolved_type_encoding().is_empty());
+    let components: Vec<_> = input.components().collect();
+    assert_eq!(
+        components
+            .iter()
+            .map(|component| component.role())
+            .collect::<Vec<_>>(),
+        [
+            Some(STRICT_AFFINE_CODES_ROLE),
+            Some(STRICT_AFFINE_SCALE_ROLE),
+            Some(STRICT_AFFINE_ZERO_POINT_ROLE),
+        ]
+    );
+    assert_eq!(
+        components
+            .iter()
+            .map(|component| (
+                component.storage_scalar(),
+                component.storage_encoding(),
+                component.access_type(),
+            ))
+            .collect::<Vec<_>>(),
+        [
+            (
+                StorageScalar::U8,
+                StorageEncoding::PACKED_U4_LSB_ZERO_TAIL,
+                KernelType::U8,
+            ),
+            (
+                StorageScalar::F32,
+                StorageEncoding::Unpacked,
+                KernelType::F32,
+            ),
+            (StorageScalar::U8, StorageEncoding::Unpacked, KernelType::U8,),
+        ]
+    );
+    assert!(
+        components
+            .iter()
+            .all(|component| component.resolved_type_encoding().is_some())
+    );
+
+    let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
+    binder
+        .bind_input_shape(input.key(), input.shape())
+        .expect("input shape");
+    let facts = binder.build();
+    let entry = decoded
+        .variants()
+        .next()
+        .expect("one variant")
+        .entries()
+        .next()
+        .expect("one entry");
+    let bindings: Vec<_> = entry.bindings().collect();
+    assert_eq!(
+        bindings
+            .iter()
+            .map(|binding| binding.component_role())
+            .collect::<Vec<_>>(),
+        [
+            Some(STRICT_AFFINE_CODES_ROLE),
+            Some(STRICT_AFFINE_SCALE_ROLE),
+            Some(STRICT_AFFINE_ZERO_POINT_ROLE),
+            None,
+        ]
+    );
+    assert_eq!(
+        bindings
+            .iter()
+            .map(|binding| binding.accessible_bytes().evaluate(&facts))
+            .collect::<Vec<_>>(),
+        [3, 4, 1, 20].map(|bytes| Ok(AbiValue::Unsigned(bytes)))
+    );
+    let result = OutputKey::new("result").expect("output key");
+    for binding in &bindings[..3] {
+        assert_eq!(binding.target(), BindingTarget::ProgramInput(input.key()));
+    }
+    assert_eq!(
+        bindings[3].target(),
+        BindingTarget::ProgramOutput(std::slice::from_ref(&result))
+    );
+    assert_eq!(
+        decoded.payloads()[entry.payload()].backend.as_str(),
+        "tiler.test.target-neutral"
+    );
+}
+
+#[test]
+fn strict_affine_component_corruptions_are_refused_with_typed_causes() {
+    let artifact = strict_affine_u4_dequantize_artifact();
+    assert_eq!(
+        reject_artifact_forgery(&artifact, |envelope| {
+            envelope.variants[0].entries[0].bindings[0].component_role =
+                Some(tiler_ir::semantic::EncodedComponentRole::new(99));
+        }),
+        ArtifactCodecError::UnknownBindingTargetComponent { role: Some(99) }
+    );
+    assert_eq!(
+        reject_artifact_forgery(&artifact, |envelope| {
+            let binding = &mut envelope.variants[0].entries[0].bindings[0];
+            binding.storage_scalar = StorageScalar::F32;
+            binding.encoding = StorageEncoding::Unpacked;
+            binding.access_type = KernelType::F32;
+        }),
+        ArtifactCodecError::BindingComponentMismatch
+    );
+    assert_eq!(
+        reject_artifact_forgery(&artifact, |envelope| {
+            envelope.variants[0].entries[0].bindings[0].encoding = StorageEncoding::Unpacked;
+        }),
+        ArtifactCodecError::BindingComponentMismatch
+    );
+    assert_eq!(
+        reject_artifact_forgery(&artifact, |envelope| {
+            envelope.variants[0].entries[0].bindings[0].access_type = KernelType::F32;
+        }),
+        ArtifactCodecError::BindingAccessTypeMismatch
+    );
+}
+
+#[test]
+fn strict_affine_component_order_is_part_of_artifact_identity() {
+    let artifact = strict_affine_u4_dequantize_artifact();
+    assert_eq!(
+        reject_forgery_with_stale_identity(&artifact, |envelope| {
+            envelope.inputs[0].components.swap(0, 1);
+        }),
+        ArtifactCodecError::ArtifactIdentityMismatch
     );
 }
 
@@ -1977,6 +2170,30 @@ fn a_repeated_binding_target_name_is_rejected() {
         ArtifactCodecError::DuplicateItem {
             subject: OrderedSubject::BindingTargetKey,
         },
+    );
+}
+
+/// A self-consistent binding still cannot contradict the physical component it targets.
+#[test]
+fn a_binding_with_the_wrong_target_component_storage_is_rejected() {
+    assert_eq!(
+        reject_forged(|envelope| {
+            let binding = &mut envelope.variants[0].entries[0].bindings[0];
+            binding.storage_scalar = StorageScalar::U8;
+            binding.access_type = KernelType::U8;
+        }),
+        ArtifactCodecError::BindingComponentMismatch,
+    );
+}
+
+/// A binding cannot ask a kernel to access an unpacked carrier through another type.
+#[test]
+fn an_incompatible_binding_access_type_is_rejected() {
+    assert_eq!(
+        reject_forged(|envelope| {
+            envelope.variants[0].entries[0].bindings[0].access_type = KernelType::Bool;
+        }),
+        ArtifactCodecError::BindingAccessTypeMismatch,
     );
 }
 

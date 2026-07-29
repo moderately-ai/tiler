@@ -21,8 +21,11 @@ use super::model::{
     TailPolicy, TensorRole, VerifiedScheduledRegion, derive_requirements, element_count,
     encode_identity,
 };
-use super::numerics::NumericalRealization;
+use super::numerics::{ExceptionalValueAssumption, NumericalRealization};
 use super::{MAX_SCHEDULE_ACCESSES, MAX_SCHEDULE_BOUNDS_PROOFS};
+use crate::semantic::{
+    STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
+};
 
 /// A transactional scheduled-region builder with private storage.
 ///
@@ -291,10 +294,79 @@ fn verify_intrinsic(region: &ScheduledRegion) -> Result<(), ScheduledRegionDiagn
     {
         return Err(ScheduledRegionDiagnostic::LaunchCoverage);
     }
-    let [read, write] = region.index.accesses.as_slice() else {
-        return Err(ScheduledRegionDiagnostic::AccessCount);
+    match &region.index.scalar_program {
+        ScalarProgram::StrictAffineU4Dequantize { .. } => {
+            let [codes, scale, zero_point, write] = region.index.accesses.as_slice() else {
+                return Err(ScheduledRegionDiagnostic::AccessCount);
+            };
+            verify_strict_affine_u4_dequantize(region, codes, scale, zero_point, write)
+        }
+        ScalarProgram::PointwiseF32(_)
+        | ScalarProgram::StrictSerialSum { .. }
+        | ScalarProgram::FusedMultiplyAddSerialSum { .. } => {
+            let [read, write] = region.index.accesses.as_slice() else {
+                return Err(ScheduledRegionDiagnostic::AccessCount);
+            };
+            verify_access_and_semantics(region, read, write)
+        }
+    }
+}
+
+fn verify_strict_affine_u4_dequantize(
+    region: &ScheduledRegion,
+    codes: &Access,
+    scale: &Access,
+    zero_point: &Access,
+    write: &Access,
+) -> Result<(), ScheduledRegionDiagnostic> {
+    let ScalarProgram::StrictAffineU4Dequantize {
+        codes_role,
+        scale_role,
+        zero_point_role,
+    } = &region.index.scalar_program
+    else {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     };
-    verify_access_and_semantics(region, read, write)
+    let numerical = region.index.numerical;
+    if *codes_role != STRICT_AFFINE_CODES_ROLE
+        || *scale_role != STRICT_AFFINE_SCALE_ROLE
+        || *zero_point_role != STRICT_AFFINE_ZERO_POINT_ROLE
+        || codes.tensor != TensorRole::Input
+        || codes.component_role != Some(*codes_role)
+        || codes.mode != AccessMode::Read
+        || codes.ownership.is_some()
+        || codes.map
+            != (LogicalAccess::PackedU4LsbZeroTail {
+                logical_elements: region.schedule.work_items,
+            })
+        || scale.tensor != TensorRole::Input
+        || scale.component_role != Some(*scale_role)
+        || scale.mode != AccessMode::Read
+        || scale.ownership.is_some()
+        || scale.map != LogicalAccess::ScalarBroadcast
+        || zero_point.tensor != TensorRole::Input
+        || zero_point.component_role != Some(*zero_point_role)
+        || zero_point.mode != AccessMode::Read
+        || zero_point.ownership.is_some()
+        || zero_point.map != LogicalAccess::ScalarBroadcast
+        || !matches!(write.tensor, TensorRole::Intermediate | TensorRole::Output)
+        || write.component_role.is_some()
+        || write.mode != AccessMode::Write
+        || write.map != LogicalAccess::LinearIdentity
+        || write.ownership != Some(region.schedule.output_owner)
+        || !matches!(region.schedule.reduction, ReductionTopology::None)
+        || numerical.input_subnormals != super::SubnormalMode::Preserve
+        || numerical.result_subnormals != super::SubnormalMode::Preserve
+        || numerical.permits_contraction()
+        || numerical.permits_reassociation()
+        || numerical.permits_permutation()
+        || numerical.permits_signed_zero_elimination()
+        || numerical.nan_assumptions != ExceptionalValueAssumption::MakeNoAssumption
+        || numerical.infinity_assumptions != ExceptionalValueAssumption::MakeNoAssumption
+    {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+    verify_proof_records(region, &[codes, scale, zero_point], write)
 }
 
 fn verify_access_and_semantics(
@@ -310,7 +382,7 @@ fn verify_access_and_semantics(
     {
         return Err(ScheduledRegionDiagnostic::AccessContract);
     }
-    verify_proof_records(region, read, write)?;
+    verify_proof_records(region, &[read], write)?;
     let numerical = &region.index.numerical;
     match (
         &region.index.scalar_program,
@@ -393,17 +465,22 @@ fn verify_access_and_semantics(
 
 fn verify_proof_records(
     region: &ScheduledRegion,
-    read: &Access,
+    reads: &[&Access],
     write: &Access,
 ) -> Result<(), ScheduledRegionDiagnostic> {
-    let [read_proof, write_proof] = region.index.bounds_proofs.as_slice() else {
+    let Some((write_proof, read_proofs)) = region.index.bounds_proofs.split_last() else {
         return Err(ScheduledRegionDiagnostic::BoundsProofCount);
     };
-    if read_proof.id != read.bounds
-        || read_proof.tensor != read.tensor
+    if read_proofs.len() != reads.len()
+        || read_proofs.iter().zip(reads).any(|(proof, read)| {
+            proof.id != read.bounds
+                || proof.tensor != read.tensor
+                || proof.component_role != read.component_role
+        })
         || write_proof.id != write.bounds
         || write_proof.tensor != write.tensor
-        || read_proof.id == write_proof.id
+        || write_proof.component_role != write.component_role
+        || read_proofs.iter().any(|proof| proof.id == write_proof.id)
         || region.index.ownership_proof.id != region.schedule.output_owner
         || region.index.ownership_proof.tensor != write.tensor
         || region.index.ownership_proof.kind
@@ -413,7 +490,10 @@ fn verify_proof_records(
     {
         return Err(ScheduledRegionDiagnostic::ProofReference);
     }
-    if !bounds_proof_refines_access(read_proof, &read.map, region)
+    if read_proofs
+        .iter()
+        .zip(reads)
+        .any(|(proof, read)| !bounds_proof_refines_access(proof, &read.map, region))
         || !bounds_proof_refines_access(write_proof, &write.map, region)
     {
         return Err(ScheduledRegionDiagnostic::BoundsProof);
@@ -429,6 +509,16 @@ fn bounds_proof_refines_access(
     match (&proof.kind, access) {
         (BoundsProofKind::LinearRange { element_count }, LogicalAccess::LinearIdentity) => {
             *element_count == region.schedule.work_items
+        }
+        (BoundsProofKind::LinearRange { element_count }, LogicalAccess::ScalarBroadcast) => {
+            *element_count == 1
+        }
+        (
+            BoundsProofKind::LinearRange { element_count },
+            LogicalAccess::PackedU4LsbZeroTail { logical_elements },
+        ) => {
+            *logical_elements == region.schedule.work_items
+                && *element_count == logical_elements.div_ceil(2)
         }
         (
             BoundsProofKind::ReductionDomain {
@@ -476,20 +566,7 @@ mod tests {
     /// This pin was intentionally rebaselined when the old
     /// `ScalarProgram::MultiplyThenAdd` tag (`0x21`) became the exact
     /// `ScalarProgram::PointwiseF32` expression encoding (`0x24`).
-    const STRICT_F32_REGION_IDENTITY_HEX: &str = concat!(
-        "74696c65722e7363686564756c652e7631000000000000000002000000000000",
-        "0002000000000000000300000000000000020101010000000000020201000000",
-        "0101000000000000000000000002000000000111000000000000000600000001",
-        "02110000000000000006000000000200000000000000062400000000000000",
-        "0500000000000000090000000000000001010000000000000015000000000000",
-        "0001020000000000000004400000000000000000000021000000000000000104",
-        "0000000000000004000000000000000000000004000000010000000000000015",
-        "00000000000000010200000000000000043f8000000000000000000021000000",
-        "0000000001030000000000000004000000020000000000000004000000030000",
-        "00000000000400000004000000000000001574696c65722e746573742e737472",
-        "6963742d6633327fc00000010101010101010101000000000000000600000001",
-        "01000000003100000000000000060000000101",
-    );
+    const STRICT_F32_REGION_IDENTITY_HEX: &str = "74696c65722e7363686564756c652e763200000000000000000200000000000000020000000000000003000000000000000201000101000000000002000201000000010100000000000000000000000200000000010011000000000000000600000001020011000000000000000600000000020000000000000006240000000000000005000000000000000900000000000000010100000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc0000001010101010101010100000000000000060000000101000000003100000000000000060000000101";
 
     fn strict_numerical() -> NumericalRealization {
         NumericalRealization::new(
@@ -525,6 +602,7 @@ mod tests {
         builder
             .push_access(Access {
                 tensor: TensorRole::Input,
+                component_role: None,
                 mode: AccessMode::Read,
                 map: LogicalAccess::LinearIdentity,
                 bounds: BoundsWitnessId::new(0),
@@ -534,6 +612,7 @@ mod tests {
         builder
             .push_access(Access {
                 tensor: TensorRole::Intermediate,
+                component_role: None,
                 mode: AccessMode::Write,
                 map: LogicalAccess::LinearIdentity,
                 bounds: BoundsWitnessId::new(1),
@@ -544,6 +623,7 @@ mod tests {
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(0),
                 tensor: TensorRole::Input,
+                component_role: None,
                 kind: BoundsProofKind::LinearRange {
                     element_count: elements,
                 },
@@ -553,6 +633,7 @@ mod tests {
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(1),
                 tensor: TensorRole::Intermediate,
+                component_role: None,
                 kind: BoundsProofKind::LinearRange {
                     element_count: elements,
                 },

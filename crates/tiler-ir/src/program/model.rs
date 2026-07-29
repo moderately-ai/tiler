@@ -18,7 +18,9 @@ use std::fmt;
 use crate::identity::{push_len, push_slice};
 use crate::kernel::{KernelType, VerifiedKernel};
 use crate::schedule::TensorRole;
-use crate::semantic::{InputKey, OutputKey, SemanticGraphIdentity};
+use crate::semantic::{
+    EncodedComponentRole, InputKey, OutputKey, ResolvedValueType, SemanticGraphIdentity,
+};
 use crate::shape::Shape;
 
 use super::MAX_PROGRAM_IDENTITY_BYTES;
@@ -166,6 +168,133 @@ pub enum MaterializedOrigin {
     Internal,
 }
 
+/// Complete physical encoding of one materialized component.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum StorageEncoding {
+    /// Each logical element occupies its natural whole-byte storage width.
+    Unpacked,
+    /// Consecutive fixed-width elements share bytes.
+    BitPacked(BitPackedEncoding),
+}
+
+impl StorageEncoding {
+    /// Fully specified packed-u4 encoding admitted by the initial proof.
+    pub const PACKED_U4_LSB_ZERO_TAIL: Self = Self::BitPacked(BitPackedEncoding {
+        element_bits: std::num::NonZeroU8::new(4).expect("four is nonzero"),
+        bit_order: PackedBitOrder::LeastSignificantElementFirst,
+        tail: PackedTailRule::Zero,
+    });
+
+    const fn tag(self) -> u8 {
+        match self {
+            Self::Unpacked => 0x01,
+            Self::BitPacked(_) => 0x02,
+        }
+    }
+
+    pub(super) fn required_bytes(self, elements: u64, scalar: StorageScalar) -> Option<u64> {
+        match self {
+            Self::Unpacked => elements.checked_mul(scalar.byte_width()),
+            Self::BitPacked(encoding) => elements
+                .checked_mul(u64::from(encoding.element_bits.get()))
+                .and_then(|bits| bits.checked_add(7))
+                .map(|bits| bits / 8),
+        }
+    }
+}
+
+/// Complete rule for packing fixed-width elements into bytes.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct BitPackedEncoding {
+    element_bits: std::num::NonZeroU8,
+    bit_order: PackedBitOrder,
+    tail: PackedTailRule,
+}
+
+impl BitPackedEncoding {
+    /// Constructs a per-byte encoding, rejecting widths that do not divide one byte.
+    #[must_use]
+    pub fn new(element_bits: u8, bit_order: PackedBitOrder, tail: PackedTailRule) -> Option<Self> {
+        let element_bits = std::num::NonZeroU8::new(element_bits)?;
+        (element_bits.get() < 8 && 8 % element_bits.get() == 0).then_some(Self {
+            element_bits,
+            bit_order,
+            tail,
+        })
+    }
+
+    /// Returns the bits occupied by one logical element.
+    #[must_use]
+    pub const fn element_bits(self) -> u8 {
+        self.element_bits.get()
+    }
+
+    /// Returns the ordering of elements within each byte.
+    #[must_use]
+    pub const fn bit_order(self) -> PackedBitOrder {
+        self.bit_order
+    }
+
+    /// Returns the rule for unused bits in the final byte.
+    #[must_use]
+    pub const fn tail(self) -> PackedTailRule {
+        self.tail
+    }
+}
+
+/// Scalar stored at one physical storage position.
+///
+/// This is neither the logical semantic type nor the type a kernel uses for an
+/// access or SSA value. Keeping all three explicit prevents a packed logical
+/// integer carrier from being mislabeled as a kernel predicate merely because
+/// both may occupy one target byte.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum StorageScalar {
+    /// An unsigned byte carrier.
+    U8,
+    /// An IEEE-754 binary32 value.
+    F32,
+}
+
+impl StorageScalar {
+    const fn tag(self) -> u8 {
+        match self {
+            Self::U8 => 0x01,
+            Self::F32 => 0x02,
+        }
+    }
+
+    const fn byte_width(self) -> u64 {
+        match self {
+            Self::U8 => 1,
+            Self::F32 => 4,
+        }
+    }
+
+    pub(super) const fn natural_access_type(self) -> KernelType {
+        match self {
+            Self::U8 => KernelType::U8,
+            Self::F32 => KernelType::F32,
+        }
+    }
+}
+
+/// Ordering of consecutive packed elements inside one byte.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum PackedBitOrder {
+    /// Earlier elements occupy less-significant bits.
+    LeastSignificantElementFirst,
+    /// Earlier elements occupy more-significant bits.
+    MostSignificantElementFirst,
+}
+
+/// Required interpretation of unused bits after the final packed element.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum PackedTailRule {
+    /// Every unused tail bit must be zero.
+    Zero,
+}
+
 /// A byte range of one materialized value.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ByteWindow {
@@ -282,8 +411,9 @@ pub(super) const ROUTING_COMMIT_TRANSITIONS: usize = 3;
 
 /// The declared facts of one materialized program value.
 ///
-/// The required byte count is derived from the shape and element type rather
-/// than declared, so a producer cannot claim a size its own shape contradicts.
+/// The required byte count is derived from the shape, storage scalar, and
+/// encoding rather than declared, so a producer cannot claim a size its own
+/// physical facts contradict.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MaterializedValueSpec {
     /// Where the value comes from.
@@ -292,11 +422,38 @@ pub struct MaterializedValueSpec {
     pub role: ValueRole,
     /// Logical tensor shape of the value.
     pub shape: Shape,
-    /// Element type stored in the value's bytes.
+    /// Scalar physically stored in the value's bytes.
+    pub storage_scalar: StorageScalar,
+    /// Complete physical storage encoding.
+    pub encoding: StorageEncoding,
+    /// Element type used by kernel accesses and SSA values.
     pub element_type: KernelType,
     /// Byte alignment the value requires.
     pub alignment: u32,
     /// Memory domain the value lives in.
+    pub memory_space: MemorySpace,
+}
+
+/// Physical facts for one producer-owned component of a compound logical value.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MaterializedComponentSpec {
+    /// Where the compound logical value comes from.
+    pub origin: MaterializedOrigin,
+    /// Program role of the logical value.
+    pub role: ValueRole,
+    /// Stable semantic role of this component.
+    pub component_role: EncodedComponentRole,
+    /// Physical shape of this component.
+    pub shape: Shape,
+    /// Scalar physically stored in this component's bytes.
+    pub storage_scalar: StorageScalar,
+    /// Element type used by kernel accesses and SSA values.
+    pub element_type: KernelType,
+    /// Complete physical storage encoding.
+    pub encoding: StorageEncoding,
+    /// Byte alignment the component requires.
+    pub alignment: u32,
+    /// Memory domain the component lives in.
     pub memory_space: MemorySpace,
 }
 
@@ -316,9 +473,9 @@ pub struct AllocationSpec {
 /// Returns the byte width of one structured-kernel element type.
 pub(super) const fn element_bytes(element_type: KernelType) -> u64 {
     match element_type {
-        KernelType::Bool => 1,
+        KernelType::Bool | KernelType::U8 => 1,
         KernelType::Index => 8,
-        KernelType::F32 => 4,
+        KernelType::F32 | KernelType::I32 => 4,
     }
 }
 
@@ -353,7 +510,11 @@ pub(super) struct MaterializedValueData {
     pub(super) origin: MaterializedOrigin,
     pub(super) role: ValueRole,
     pub(super) shape: Shape,
+    pub(super) storage_scalar: StorageScalar,
     pub(super) element_type: KernelType,
+    pub(super) component_role: Option<EncodedComponentRole>,
+    pub(super) component_type: Option<ResolvedValueType>,
+    pub(super) encoding: StorageEncoding,
     pub(super) required_bytes: u64,
     pub(super) alignment: u32,
     pub(super) memory_space: MemorySpace,
@@ -769,16 +930,40 @@ impl<'a> MaterializedValueRef<'a> {
         self.data().role
     }
 
-    /// Returns the logical tensor shape.
+    /// Returns the physical tensor shape of this materialization.
     #[must_use]
     pub fn shape(self) -> &'a Shape {
         &self.data().shape
     }
 
-    /// Returns the element type stored in the value's bytes.
+    /// Returns the type used by kernel accesses and SSA values.
     #[must_use]
     pub fn element_type(self) -> KernelType {
         self.data().element_type
+    }
+
+    /// Returns the scalar physically stored in this value's bytes.
+    #[must_use]
+    pub fn storage_scalar(self) -> StorageScalar {
+        self.data().storage_scalar
+    }
+
+    /// Returns the semantic component role, or `None` for a dense value.
+    #[must_use]
+    pub fn component_role(self) -> Option<EncodedComponentRole> {
+        self.data().component_role
+    }
+
+    /// Returns the semantic-contract-derived component type.
+    #[must_use]
+    pub fn component_type(self) -> Option<&'a ResolvedValueType> {
+        self.data().component_type.as_ref()
+    }
+
+    /// Returns the complete physical storage encoding.
+    #[must_use]
+    pub fn storage_encoding(self) -> StorageEncoding {
+        self.data().encoding
     }
 
     /// Returns the derived byte count the value requires.
@@ -994,7 +1179,7 @@ const STAGE_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.stage.v1\0";
 const VALUE_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.value.v1\0";
 const VIEW_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.view.v1\0";
 const ALLOCATION_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.allocation.v1\0";
-/// Program identity domain, bumped to `v3`.
+/// Program identity domain, bumped to `v5`.
 ///
 /// `v2` folded the semantic graph, bound implementations, coverage, program
 /// structure, the entry ABI, the applicability guard and the routing-commit
@@ -1013,11 +1198,16 @@ const ALLOCATION_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.allocation.v1\0";
 /// section determines the whole DAG including its sharing, and an 8-byte
 /// canonical position determines which node a use site means.
 ///
-/// The change is deliberate and its cost is stated: no external consumer holds
-/// a `v2` identity, so invalidating every artifact identity and cache entry
-/// costs a rebuild rather than a migration. See
-/// `encode-abi-expression-identity-in-linear-space`.
-const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v3\0";
+/// `v4` additionally folds each materialization's semantic component role,
+/// producer-derived component type, and complete storage encoding. Those facts
+/// decide both byte interpretation and ABI association, so a `v3` identity is
+/// incomplete for compound encoded values.
+///
+/// `v5` separates the physical storage scalar from the kernel access/SSA type.
+/// It also lets ordinary values carry a storage encoding rather than making
+/// packing imply compound semantics. Both facts change byte interpretation and
+/// must therefore be identity, not construction-only metadata.
+const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v5\0";
 
 fn push_shape(bytes: &mut Vec<u8>, shape: &Shape) {
     push_len(bytes, shape.rank());
@@ -1031,7 +1221,47 @@ fn push_element_type(bytes: &mut Vec<u8>, element_type: KernelType) {
         KernelType::Bool => 0x01,
         KernelType::Index => 0x02,
         KernelType::F32 => 0x03,
+        KernelType::U8 => 0x04,
+        KernelType::I32 => 0x05,
     });
+}
+
+fn push_storage_scalar(bytes: &mut Vec<u8>, scalar: StorageScalar) {
+    bytes.push(scalar.tag());
+}
+
+fn push_storage_encoding(bytes: &mut Vec<u8>, encoding: StorageEncoding) {
+    bytes.push(encoding.tag());
+    if let StorageEncoding::BitPacked(packed) = encoding {
+        bytes.push(packed.element_bits());
+        bytes.push(match packed.bit_order() {
+            PackedBitOrder::LeastSignificantElementFirst => 0x01,
+            PackedBitOrder::MostSignificantElementFirst => 0x02,
+        });
+        bytes.push(match packed.tail() {
+            PackedTailRule::Zero => 0x01,
+        });
+    }
+}
+
+fn push_component_role(bytes: &mut Vec<u8>, role: Option<EncodedComponentRole>) {
+    match role {
+        None => bytes.push(0x00),
+        Some(role) => {
+            bytes.push(0x01);
+            bytes.extend_from_slice(&role.get().to_be_bytes());
+        }
+    }
+}
+
+fn push_component_type(bytes: &mut Vec<u8>, value_type: Option<&ResolvedValueType>) {
+    match value_type {
+        None => bytes.push(0x00),
+        Some(value_type) => {
+            bytes.push(0x01);
+            push_slice(bytes, value_type.canonical_encoding().as_bytes());
+        }
+    }
 }
 
 fn push_origin(bytes: &mut Vec<u8>, origin: &MaterializedOrigin) {
@@ -1122,7 +1352,11 @@ fn value_key(
     bytes.push(value.role.tag());
     push_origin(&mut bytes, &value.origin);
     push_shape(&mut bytes, &value.shape);
+    push_storage_scalar(&mut bytes, value.storage_scalar);
     push_element_type(&mut bytes, value.element_type);
+    push_component_role(&mut bytes, value.component_role);
+    push_component_type(&mut bytes, value.component_type.as_ref());
+    push_storage_encoding(&mut bytes, value.encoding);
     bytes.extend_from_slice(&value.required_bytes.to_be_bytes());
     bytes.extend_from_slice(&value.alignment.to_be_bytes());
     bytes.push(value.memory_space.tag());
@@ -1406,7 +1640,11 @@ fn push_value(
     bytes.push(value.role.tag());
     push_origin(bytes, &value.origin);
     push_shape(bytes, &value.shape);
+    push_storage_scalar(bytes, value.storage_scalar);
     push_element_type(bytes, value.element_type);
+    push_component_role(bytes, value.component_role);
+    push_component_type(bytes, value.component_type.as_ref());
+    push_storage_encoding(bytes, value.encoding);
     bytes.extend_from_slice(&value.required_bytes.to_be_bytes());
     bytes.extend_from_slice(&value.alignment.to_be_bytes());
     bytes.push(value.memory_space.tag());
@@ -1471,4 +1709,39 @@ fn encode_dependency(
         }
     }
     bytes
+}
+
+#[cfg(test)]
+mod component_encoding_tests {
+    use super::{
+        BitPackedEncoding, PackedBitOrder, PackedTailRule, StorageEncoding, StorageScalar,
+    };
+
+    #[test]
+    fn packed_storage_rounds_an_odd_logical_count_to_complete_bytes() {
+        let packed = BitPackedEncoding::new(
+            4,
+            PackedBitOrder::LeastSignificantElementFirst,
+            PackedTailRule::Zero,
+        )
+        .expect("four-bit packing is valid");
+        assert_eq!(
+            StorageEncoding::BitPacked(packed).required_bytes(5, StorageScalar::U8),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn zero_and_whole_byte_packed_widths_reach_their_rejection() {
+        for width in [0, 3, 5, 6, 7, 8] {
+            assert!(
+                BitPackedEncoding::new(
+                    width,
+                    PackedBitOrder::LeastSignificantElementFirst,
+                    PackedTailRule::Zero,
+                )
+                .is_none()
+            );
+        }
+    }
 }

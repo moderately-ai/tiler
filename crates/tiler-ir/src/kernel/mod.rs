@@ -79,6 +79,7 @@
 //! builder.iteration_shape(Shape::from_dims([4]))?;
 //! builder.push_access(Access {
 //!     tensor: TensorRole::Input,
+//!     component_role: None,
 //!     mode: AccessMode::Read,
 //!     map: LogicalAccess::LinearIdentity,
 //!     bounds: BoundsWitnessId::new(0),
@@ -86,6 +87,7 @@
 //! })?;
 //! builder.push_access(Access {
 //!     tensor: TensorRole::Intermediate,
+//!     component_role: None,
 //!     mode: AccessMode::Write,
 //!     map: LogicalAccess::LinearIdentity,
 //!     bounds: BoundsWitnessId::new(1),
@@ -94,11 +96,13 @@
 //! builder.push_bounds_proof(BoundsProof {
 //!     id: BoundsWitnessId::new(0),
 //!     tensor: TensorRole::Input,
+//!     component_role: None,
 //!     kind: BoundsProofKind::LinearRange { element_count: 4 },
 //! })?;
 //! builder.push_bounds_proof(BoundsProof {
 //!     id: BoundsWitnessId::new(1),
 //!     tensor: TensorRole::Intermediate,
+//!     component_role: None,
 //!     kind: BoundsProofKind::LinearRange { element_count: 4 },
 //! })?;
 //! builder.ownership_proof(OwnershipProof {
@@ -166,8 +170,8 @@ pub use lower::lower_scheduled_region;
 pub use model::{
     AddressSpace, BarrierOrdering, BarrierSpec, BinaryOp, BlockRef, BufferAccess, BufferParameter,
     Builtin, CanonicalKernelIdentity, CompareOp, ConvertOp, ExecutionScope, KernelConstant,
-    KernelType, MemoryScope, OperationRef, OperationView, SerialLoopRef, SerialLoopSpec,
-    VerifiedKernel,
+    KernelType, MemoryScope, OperationRef, OperationView, PackedExtractOp, SerialLoopRef,
+    SerialLoopSpec, VerifiedKernel,
 };
 
 /// Maximum buffer parameters admitted by one kernel signature.

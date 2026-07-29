@@ -19,7 +19,10 @@ use std::collections::HashMap;
 
 use crate::kernel::{BufferAccess, VerifiedKernel};
 use crate::schedule::element_count;
-use crate::semantic::{InputKey, OutputKey, SemanticGraphIdentity, SemanticProgram};
+use crate::semantic::{
+    EncodedComponentRole, InputKey, OutputKey, ResolvedValueType, SemanticGraphIdentity,
+    SemanticProgram,
+};
 use crate::shape::{Axis, Shape};
 
 use super::abi::{
@@ -37,11 +40,12 @@ use super::handles::{
 };
 use super::model::{
     AllocationData, AllocationOwnership, AllocationSpec, ByteWindow, DependencyData,
-    DependencyReasonData, KernelProgramData, MaterializedOrigin, MaterializedValueData,
-    MaterializedValueSpec, ProgramOutputData, ROUTING_COMMIT_TRANSITIONS, RoutingCommitState,
-    RoutingCommitTransition, SemanticOccurrence, StageAccess, StageAccessData, StageAccessMode,
-    StageData, StageLaunch, StageLaunchData, ValueRole, VerifiedKernelProgram, ViewData,
-    element_bytes, encode_identity,
+    DependencyReasonData, KernelProgramData, MaterializedComponentSpec, MaterializedOrigin,
+    MaterializedValueData, MaterializedValueSpec, MemorySpace, ProgramOutputData,
+    ROUTING_COMMIT_TRANSITIONS, RoutingCommitState, RoutingCommitTransition, SemanticOccurrence,
+    StageAccess, StageAccessData, StageAccessMode, StageData, StageLaunch, StageLaunchData,
+    StorageEncoding, StorageScalar, ValueRole, VerifiedKernelProgram, ViewData, element_bytes,
+    encode_identity,
 };
 use super::{
     MAX_PROGRAM_ABI_EXPRESSIONS, MAX_PROGRAM_ALLOCATIONS, MAX_PROGRAM_DEPENDENCIES,
@@ -54,8 +58,8 @@ use super::{
 pub(super) struct SemanticSubject {
     pub(super) graph: SemanticGraphIdentity,
     pub(super) operations: u32,
-    inputs: Vec<(InputKey, Shape)>,
-    pub(super) outputs: Vec<(OutputKey, Shape)>,
+    pub(super) inputs: Vec<(InputKey, Shape, ResolvedValueType)>,
+    pub(super) outputs: Vec<(OutputKey, Shape, ResolvedValueType)>,
 }
 
 /// A transactional kernel-program builder with private storage.
@@ -70,7 +74,7 @@ pub struct KernelProgramBuilder {
     dependencies: Vec<DependencyData>,
     outputs: Vec<ProgramOutputData>,
     covered: Vec<SemanticOccurrence>,
-    claimed_inputs: Vec<InputKey>,
+    claimed_inputs: Vec<(InputKey, Option<EncodedComponentRole>)>,
     expressions: Vec<ExprNode>,
     /// Arena position of every node already interned, keyed on the node itself.
     ///
@@ -105,6 +109,17 @@ impl KernelProgramBuilder {
         })?;
         let inputs = interface_input_shapes(semantic);
         let outputs = interface_output_shapes(semantic);
+        if inputs.iter().any(|(_, _, value_type)| {
+            value_type
+                .encoded_numeric_parts()
+                .is_some_and(|(_, contract)| contract.components().is_empty())
+        }) || outputs.iter().any(|(_, _, value_type)| {
+            value_type
+                .encoded_numeric_parts()
+                .is_some_and(|(_, contract)| contract.components().is_empty())
+        }) {
+            return Err(KernelProgramBuildError::EmptyEncodedComponentSet);
+        }
         Ok(Self {
             owner,
             subject: SemanticSubject {
@@ -337,23 +352,83 @@ impl KernelProgramBuilder {
         spec: MaterializedValueSpec,
         allocation: AllocationId,
     ) -> Result<MaterializedValueId, KernelProgramBuildError> {
+        self.push_physical_value(
+            spec.origin,
+            spec.role,
+            None,
+            spec.shape,
+            spec.storage_scalar,
+            spec.element_type,
+            spec.encoding,
+            spec.alignment,
+            spec.memory_space,
+            allocation,
+        )
+    }
+
+    /// Declares one physical component of a compound encoded logical value.
+    ///
+    /// The semantic component role is checked against the bound semantic
+    /// interface; all storage facts are retained in program identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an interface, duplicate-role, storage, capacity, ownership, or
+    /// structural-limit error.
+    pub fn push_component_value(
+        &mut self,
+        spec: MaterializedComponentSpec,
+        allocation: AllocationId,
+    ) -> Result<MaterializedValueId, KernelProgramBuildError> {
+        self.push_physical_value(
+            spec.origin,
+            spec.role,
+            Some(spec.component_role),
+            spec.shape,
+            spec.storage_scalar,
+            spec.element_type,
+            spec.encoding,
+            spec.alignment,
+            spec.memory_space,
+            allocation,
+        )
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "private convergence point for the two checked public value declarations"
+    )]
+    fn push_physical_value(
+        &mut self,
+        origin: MaterializedOrigin,
+        role: ValueRole,
+        component_role: Option<EncodedComponentRole>,
+        shape: Shape,
+        storage_scalar: StorageScalar,
+        element_type: crate::kernel::KernelType,
+        encoding: StorageEncoding,
+        alignment: u32,
+        memory_space: MemorySpace,
+        allocation: AllocationId,
+    ) -> Result<MaterializedValueId, KernelProgramBuildError> {
         let storage = self.resolve_allocation(allocation)?;
-        check_alignment(spec.alignment)?;
-        self.check_origin(&spec)?;
-        let elements = element_count(&spec.shape)
-            .map_err(|_| KernelProgramBuildError::ElementCountOverflow)?;
-        let required_bytes = elements
-            .checked_mul(element_bytes(spec.element_type))
+        check_alignment(alignment)?;
+        let component_type = self.check_origin(&origin, role, &shape, component_role)?;
+        check_physical_storage(storage_scalar, encoding, element_type)?;
+        let elements =
+            element_count(&shape).map_err(|_| KernelProgramBuildError::ElementCountOverflow)?;
+        let required_bytes = encoding
+            .required_bytes(elements, storage_scalar)
             .ok_or(KernelProgramBuildError::ElementCountOverflow)?;
-        if storage.memory_space != spec.memory_space {
+        if storage.memory_space != memory_space {
             return Err(KernelProgramBuildError::AllocationMemorySpace {
-                required: spec.memory_space,
+                required: memory_space,
                 provided: storage.memory_space,
             });
         }
-        if storage.alignment % spec.alignment != 0 {
+        if storage.alignment % alignment != 0 {
             return Err(KernelProgramBuildError::AllocationAlignment {
-                required: spec.alignment,
+                required: alignment,
                 provided: storage.alignment,
             });
         }
@@ -364,10 +439,10 @@ impl KernelProgramBuilder {
             });
         }
         let external = storage.ownership == AllocationOwnership::External;
-        if external != (spec.role == ValueRole::Input) {
+        if external != (role == ValueRole::Input) {
             return Err(KernelProgramBuildError::AllocationOwnershipRole {
                 ownership: storage.ownership,
-                role: spec.role,
+                role,
             });
         }
         limit(
@@ -382,17 +457,21 @@ impl KernelProgramBuilder {
                 limit: MAX_PROGRAM_VALUES,
             },
         )?;
-        if let MaterializedOrigin::ProgramInput { key } = &spec.origin {
-            self.claimed_inputs.push(key.clone());
+        if let MaterializedOrigin::ProgramInput { key } = &origin {
+            self.claimed_inputs.push((key.clone(), component_role));
         }
         self.values.push(MaterializedValueData {
-            origin: spec.origin,
-            role: spec.role,
-            shape: spec.shape,
-            element_type: spec.element_type,
+            origin,
+            role,
+            shape,
+            storage_scalar,
+            element_type,
+            component_role,
+            component_type,
+            encoding,
             required_bytes,
-            alignment: spec.alignment,
-            memory_space: spec.memory_space,
+            alignment,
+            memory_space,
             allocation: allocation.index,
         });
         Ok(id)
@@ -419,6 +498,15 @@ impl KernelProgramBuilder {
             .ok_or(KernelProgramBuildError::ElementCountOverflow)?;
         if end > base.required_bytes {
             return Err(KernelProgramBuildError::ViewOutOfRange {
+                offset: window.offset,
+                length: window.length,
+                value_bytes: base.required_bytes,
+            });
+        }
+        if matches!(base.encoding, StorageEncoding::BitPacked(_))
+            && (window.offset != 0 || window.length != base.required_bytes)
+        {
+            return Err(KernelProgramBuildError::PartialPackedView {
                 offset: window.offset,
                 length: window.length,
                 value_bytes: base.required_bytes,
@@ -574,15 +662,21 @@ impl KernelProgramBuilder {
         value: MaterializedValueId,
     ) -> Result<(), KernelProgramBuildError> {
         let published = self.resolve_value(value)?.clone();
-        let Some((_, shape)) = self
+        let Some((_, shape, value_type)) = self
             .subject
             .outputs
             .iter()
-            .find(|(declared, _)| *declared == key)
+            .find(|(declared, _, _)| *declared == key)
         else {
             return Err(KernelProgramBuildError::UnknownOutputKey { key });
         };
-        if self.outputs.iter().any(|output| output.key == key) {
+        if self.outputs.iter().any(|output| {
+            output.key == key
+                && usize::try_from(output.value)
+                    .ok()
+                    .and_then(|position| self.values.get(position))
+                    .is_some_and(|value| value.component_role == published.component_role)
+        }) {
             return Err(KernelProgramBuildError::DuplicateOutput { key });
         }
         if published.role != ValueRole::Output {
@@ -590,11 +684,19 @@ impl KernelProgramBuilder {
                 role: published.role,
             });
         }
-        if published.shape != *shape {
+        let Some((expected_shape, component_type)) =
+            expected_component(value_type, shape, published.component_role)
+        else {
+            return Err(KernelProgramBuildError::UnexpectedComponentRole {
+                role: published.component_role,
+            });
+        };
+        if published.shape != expected_shape {
             return Err(KernelProgramBuildError::InterfaceShapeMismatch {
                 entity: ProgramEntityKind::Value,
             });
         }
+        self.values[value.as_usize()].component_type = component_type;
         limit(
             self.outputs.len().saturating_add(1),
             MAX_PROGRAM_OUTPUTS,
@@ -809,7 +911,7 @@ impl KernelProgramBuilder {
     /// Binds the bound semantic program's declared input extents as ABI facts.
     fn static_facts(&self) -> AbiFacts {
         let mut extents = Vec::new();
-        for (key, shape) in &self.subject.inputs {
+        for (key, shape, _) in &self.subject.inputs {
             for (axis, extent) in shape.extents().iter().enumerate() {
                 let axis = u32::try_from(axis).expect("a governed shape rank fits u32");
                 extents.push((key.clone(), Axis::new(axis), extent.get()));
@@ -846,30 +948,51 @@ impl KernelProgramBuilder {
         Ok(())
     }
 
-    fn check_origin(&self, spec: &MaterializedValueSpec) -> Result<(), KernelProgramBuildError> {
-        match (&spec.origin, spec.role) {
+    fn check_origin(
+        &self,
+        origin: &MaterializedOrigin,
+        role: ValueRole,
+        shape: &Shape,
+        component_role: Option<EncodedComponentRole>,
+    ) -> Result<Option<ResolvedValueType>, KernelProgramBuildError> {
+        match (origin, role) {
             (MaterializedOrigin::ProgramInput { key }, ValueRole::Input) => {
-                let Some((_, shape)) = self
+                let Some((_, declared_shape, declared_type)) = self
                     .subject
                     .inputs
                     .iter()
-                    .find(|(declared, _)| declared == key)
+                    .find(|(declared, _, _)| declared == key)
                 else {
                     return Err(KernelProgramBuildError::UnknownProgramInput { key: key.clone() });
                 };
-                if self.claimed_inputs.contains(key) {
+                if self
+                    .claimed_inputs
+                    .iter()
+                    .any(|(claimed, role)| claimed == key && *role == component_role)
+                {
                     return Err(KernelProgramBuildError::DuplicateProgramInput {
                         key: key.clone(),
                     });
                 }
-                if spec.shape != *shape {
+                let expected = expected_component(declared_type, declared_shape, component_role);
+                if expected.is_none() {
+                    return Err(KernelProgramBuildError::UnexpectedComponentRole {
+                        role: component_role,
+                    });
+                }
+                let (expected_shape, component_type) = expected.expect("checked above");
+                if shape != &expected_shape {
                     return Err(KernelProgramBuildError::InterfaceShapeMismatch {
                         entity: ProgramEntityKind::Value,
                     });
                 }
-                Ok(())
+                Ok(component_type)
             }
-            (MaterializedOrigin::Internal, ValueRole::Temporary | ValueRole::Output) => Ok(()),
+            (MaterializedOrigin::Internal, ValueRole::Temporary) => match component_role {
+                None => Ok(None),
+                Some(role) => Err(KernelProgramBuildError::UngroupedInternalComponent { role }),
+            },
+            (MaterializedOrigin::Internal, ValueRole::Output) => Ok(None),
             (MaterializedOrigin::ProgramInput { .. } | MaterializedOrigin::Internal, role) => {
                 Err(KernelProgramBuildError::ValueRoleOrigin { role })
             }
@@ -945,6 +1068,13 @@ impl KernelProgramBuilder {
                     position,
                     expected: buffer.tensor,
                     actual: value.role.tensor_role(),
+                });
+            }
+            if buffer.component_role != value.component_role {
+                return Err(KernelProgramBuildError::StageComponentRole {
+                    position,
+                    expected: buffer.component_role,
+                    actual: value.component_role,
                 });
             }
             if buffer.element_type != value.element_type {
@@ -1100,7 +1230,7 @@ impl KernelProgramBuilder {
 ///
 /// A verified program always resolves its own interface values, so the lookup
 /// is a program invariant rather than caller input.
-fn interface_input_shapes(semantic: &SemanticProgram) -> Vec<(InputKey, Shape)> {
+fn interface_input_shapes(semantic: &SemanticProgram) -> Vec<(InputKey, Shape, ResolvedValueType)> {
     semantic
         .inputs()
         .map(|input| {
@@ -1108,13 +1238,20 @@ fn interface_input_shapes(semantic: &SemanticProgram) -> Vec<(InputKey, Shape)> 
                 .shape(input.value())
                 .expect("a verified program resolves its own input value")
                 .clone();
-            (input.key().clone(), shape)
+            let resolved_type = semantic
+                .value(input.value())
+                .expect("a verified program resolves its own input value")
+                .resolved_type()
+                .clone();
+            (input.key().clone(), shape, resolved_type)
         })
         .collect()
 }
 
 /// Reads the ordered output interface of a verified semantic program.
-fn interface_output_shapes(semantic: &SemanticProgram) -> Vec<(OutputKey, Shape)> {
+fn interface_output_shapes(
+    semantic: &SemanticProgram,
+) -> Vec<(OutputKey, Shape, ResolvedValueType)> {
     semantic
         .outputs()
         .map(|output| {
@@ -1122,9 +1259,35 @@ fn interface_output_shapes(semantic: &SemanticProgram) -> Vec<(OutputKey, Shape)
                 .shape(output.value())
                 .expect("a verified program resolves its own output value")
                 .clone();
-            (output.key().clone(), shape)
+            let resolved_type = semantic
+                .value(output.value())
+                .expect("a verified program resolves its own output value")
+                .resolved_type()
+                .clone();
+            (output.key().clone(), shape, resolved_type)
         })
         .collect()
+}
+
+fn expected_component(
+    value_type: &ResolvedValueType,
+    logical_shape: &Shape,
+    role: Option<EncodedComponentRole>,
+) -> Option<(Shape, Option<ResolvedValueType>)> {
+    match (value_type.encoded_numeric_parts(), role) {
+        (None, None) => Some((logical_shape.clone(), None)),
+        (Some((_, contract)), Some(role)) => contract
+            .components()
+            .iter()
+            .find(|component| component.role() == role)
+            .map(|component| {
+                (
+                    component.shape_relation().component_shape(logical_shape),
+                    Some(component.resolved_type().clone()),
+                )
+            }),
+        (None, Some(_)) | (Some(_), None) => None,
+    }
 }
 
 /// Converts a checked arena ordinal into a host index.
@@ -1135,6 +1298,31 @@ fn as_position(index: u32) -> usize {
 fn check_alignment(alignment: u32) -> Result<(), KernelProgramBuildError> {
     if alignment == 0 || !alignment.is_power_of_two() {
         return Err(KernelProgramBuildError::InvalidAlignment { alignment });
+    }
+    Ok(())
+}
+
+fn check_physical_storage(
+    scalar: StorageScalar,
+    encoding: StorageEncoding,
+    access_type: crate::kernel::KernelType,
+) -> Result<(), KernelProgramBuildError> {
+    let expected = match encoding {
+        StorageEncoding::Unpacked => scalar.natural_access_type(),
+        StorageEncoding::BitPacked(_) if scalar == StorageScalar::U8 => {
+            crate::kernel::KernelType::U8
+        }
+        StorageEncoding::BitPacked(_) => {
+            return Err(KernelProgramBuildError::StorageEncodingScalar { scalar, encoding });
+        }
+    };
+    if access_type != expected {
+        return Err(KernelProgramBuildError::StorageAccessType {
+            scalar,
+            encoding,
+            expected,
+            actual: access_type,
+        });
     }
     Ok(())
 }

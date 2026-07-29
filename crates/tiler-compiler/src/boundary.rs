@@ -90,6 +90,8 @@
 use std::fmt;
 
 use tiler_ir::identity::{push_len, push_slice};
+pub(crate) use tiler_ir::program::StorageEncoding;
+use tiler_ir::program::{BitPackedEncoding, PackedBitOrder, PackedTailRule};
 use tiler_ir::shape::Axis;
 
 /// Canonical domain-separation tag for one boundary property set.
@@ -97,7 +99,7 @@ use tiler_ir::shape::Axis;
 /// NUL-terminated and versioned per ADR 0074 convention 3, so property bytes can
 /// never be read as another subject's and a widened vocabulary mints a new tag
 /// rather than silently changing what `v1` meant.
-const PROPERTY_SET_IDENTITY_TAG: &[u8] = b"tiler.compiler.boundary-property-set.v1\0";
+const PROPERTY_SET_IDENTITY_TAG: &[u8] = b"tiler.compiler.boundary-property-set.v3\0";
 
 /// A governed dimension of a physical boundary contract.
 ///
@@ -333,80 +335,300 @@ impl LayoutGuarantee {
     }
 }
 
-/// How one element of a boundary value is represented at its storage position.
-///
-/// Both sides name a concrete encoding and the relation is equality within a
-/// family. That is not a shortcut: `decide-whether-storage-encoding-is-a-missing-boundary-property`
-/// settled that "an unpacked producer does not satisfy a packed requirement
-/// merely by being cheaper to read, and a packed one does not satisfy an
-/// unpacked requirement merely by being denser", so there is no ordering to
-/// state and modelling one would repeat the error that keeps dtype off this list.
+/// Whether an encoded byte window will be read or written.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum StorageEncoding {
-    /// One element occupies its natural whole-byte storage width.
-    Unpacked,
-    /// Several sub-byte elements share a byte at the stated element width.
-    ///
-    /// Reserved: the bounded profile is strict `f32` throughout and produces no
-    /// packed value. ADR 0028's sub-byte integers are the first vocabulary that
-    /// reaches it, and its enforcer is encoding repacking.
-    BitPacked {
-        /// Bits occupied by one element.
-        element_bits: u32,
-    },
+pub(crate) enum StorageAccessKind {
+    /// Reading may inspect a shared boundary byte and discard unrelated bits.
+    Read,
+    /// Writing must not overwrite a byte containing an element outside the range.
+    Write,
 }
 
-impl StorageEncoding {
-    /// The governed canonical key naming this encoding.
-    pub(crate) const fn key(self) -> &'static str {
-        match self {
-            Self::Unpacked => "unpacked",
-            Self::BitPacked { .. } => "bit-packed",
-        }
+/// Exact byte window and edge-bit treatment for one logical element range.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct StorageAccess {
+    byte_offset: u64,
+    byte_length: u64,
+    leading_shared_bits: u32,
+    trailing_shared_bits: u32,
+    trailing_padding_bits: u32,
+}
+
+impl StorageAccess {
+    /// First byte the access reaches.
+    pub(crate) const fn byte_offset(self) -> u64 {
+        self.byte_offset
     }
 
-    const fn tag(self) -> u8 {
-        match self {
-            Self::Unpacked => 0x01,
-            Self::BitPacked { .. } => 0x02,
-        }
+    /// Number of bytes the access reaches.
+    pub(crate) const fn byte_length(self) -> u64 {
+        self.byte_length
     }
 
-    /// Whether this encoding is well formed.
-    ///
-    /// A packed element narrower than one bit, or at least one whole byte, is
-    /// not a packing; both are malformed rather than unsatisfiable.
-    const fn is_well_formed(self) -> bool {
-        match self {
-            Self::Unpacked => true,
-            Self::BitPacked { element_bits } => element_bits > 0 && element_bits < 8,
-        }
+    /// Low bits in the first byte belonging to a preceding logical element.
+    pub(crate) const fn leading_shared_bits(self) -> u32 {
+        self.leading_shared_bits
     }
 
-    /// Whether this encoding discharges a requirement for `required`.
-    const fn satisfies(self, required: Self) -> bool {
-        match (self, required) {
-            (Self::Unpacked, Self::Unpacked) => true,
-            (
-                Self::BitPacked { element_bits },
-                Self::BitPacked {
-                    element_bits: needed,
-                },
-            ) => element_bits == needed,
-            (Self::Unpacked, Self::BitPacked { .. }) | (Self::BitPacked { .. }, Self::Unpacked) => {
-                false
+    /// High bits in the last byte belonging to a following logical element.
+    pub(crate) const fn trailing_shared_bits(self) -> u32 {
+        self.trailing_shared_bits
+    }
+
+    /// Canonical padding bits after the complete value's final logical element.
+    pub(crate) const fn trailing_padding_bits(self) -> u32 {
+        self.trailing_padding_bits
+    }
+}
+
+/// Why an encoded logical range has no safe byte access.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StorageAccessError {
+    /// The requested logical range exceeds the complete logical value.
+    OutOfBounds,
+    /// Computing an endpoint or byte count overflowed.
+    ArithmeticOverflow,
+    /// A packed write would overwrite a byte shared with an element outside the range.
+    UnalignedPartialWrite,
+    /// The encoding has no executable accessor in this bounded proof.
+    UnsupportedEncoding,
+}
+
+/// Why packing or unpacking a bounded code carrier failed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StorageCodecError {
+    /// A code does not fit the encoding's physical element width.
+    CodeOutOfRange {
+        /// Index of the rejected code.
+        index: usize,
+        /// Rejected code value.
+        code: u8,
+    },
+    /// The byte payload length disagrees with the logical element count.
+    ByteLength {
+        /// Required byte count.
+        expected: usize,
+        /// Supplied byte count.
+        actual: usize,
+    },
+    /// Unused bits in the final byte violate the encoding's tail rule.
+    NonCanonicalTail {
+        /// Final byte containing the invalid padding bits.
+        byte: u8,
+    },
+    /// The encoding has no executable codec in this bounded proof.
+    UnsupportedEncoding,
+    /// A logical element count cannot be represented on this host.
+    ElementCountOverflow,
+}
+
+const fn storage_key(encoding: StorageEncoding) -> &'static str {
+    match encoding {
+        StorageEncoding::Unpacked => "unpacked",
+        StorageEncoding::BitPacked(_) => "bit-packed",
+    }
+}
+
+const fn storage_satisfies(guaranteed: StorageEncoding, required: StorageEncoding) -> bool {
+    match (guaranteed, required) {
+        (StorageEncoding::Unpacked, StorageEncoding::Unpacked) => true,
+        (StorageEncoding::BitPacked(left), StorageEncoding::BitPacked(right)) => {
+            left.element_bits() == right.element_bits()
+                && matches!(
+                    (left.bit_order(), right.bit_order()),
+                    (
+                        PackedBitOrder::LeastSignificantElementFirst,
+                        PackedBitOrder::LeastSignificantElementFirst
+                    ) | (
+                        PackedBitOrder::MostSignificantElementFirst,
+                        PackedBitOrder::MostSignificantElementFirst
+                    )
+                )
+                && matches!(
+                    (left.tail(), right.tail()),
+                    (PackedTailRule::Zero, PackedTailRule::Zero)
+                )
+        }
+        (StorageEncoding::Unpacked, StorageEncoding::BitPacked(_))
+        | (StorageEncoding::BitPacked(_), StorageEncoding::Unpacked) => false,
+    }
+}
+
+fn encode_storage(encoding: StorageEncoding, bytes: &mut Vec<u8>) {
+    match encoding {
+        StorageEncoding::Unpacked => bytes.push(0x01),
+        StorageEncoding::BitPacked(packed) => {
+            bytes.push(0x02);
+            bytes.push(packed.element_bits());
+            bytes.push(match packed.bit_order() {
+                PackedBitOrder::LeastSignificantElementFirst => 0x01,
+                PackedBitOrder::MostSignificantElementFirst => 0x02,
+            });
+            bytes.push(match packed.tail() {
+                PackedTailRule::Zero => 0x01,
+            });
+        }
+    }
+}
+
+/// Derives the exact byte window for ordinary one-byte carriers or packed-u4.
+///
+/// `logical_elements` names the complete value so an odd packed tail can be
+/// distinguished from a partial write ending halfway through an interior
+/// byte. Reads may include such a shared byte and report which edge bits to
+/// discard. Writes fail unless both shared edges are outside the write, with
+/// one exception: the zero-filled high nibble after the complete value's odd
+/// final element belongs to the encoding and may be written canonically.
+fn code_access(
+    encoding: StorageEncoding,
+    logical_elements: u64,
+    first: u64,
+    count: u64,
+    kind: StorageAccessKind,
+) -> Result<StorageAccess, StorageAccessError> {
+    let end = first
+        .checked_add(count)
+        .ok_or(StorageAccessError::ArithmeticOverflow)?;
+    if end > logical_elements {
+        return Err(StorageAccessError::OutOfBounds);
+    }
+    if count == 0 {
+        let byte_offset = match encoding {
+            StorageEncoding::Unpacked => first,
+            StorageEncoding::BitPacked(packed) if packed == packed_u4() => first / 2,
+            StorageEncoding::BitPacked(_) => {
+                return Err(StorageAccessError::UnsupportedEncoding);
             }
-        }
+        };
+        return Ok(StorageAccess {
+            byte_offset,
+            byte_length: 0,
+            leading_shared_bits: 0,
+            trailing_shared_bits: 0,
+            trailing_padding_bits: 0,
+        });
     }
-
-    fn encode(self, bytes: &mut Vec<u8>) {
-        bytes.push(self.tag());
-        match self {
-            Self::Unpacked => {}
-            Self::BitPacked { element_bits } => {
-                bytes.extend_from_slice(&element_bits.to_be_bytes());
+    match encoding {
+        StorageEncoding::Unpacked => Ok(StorageAccess {
+            byte_offset: first,
+            byte_length: count,
+            leading_shared_bits: 0,
+            trailing_shared_bits: 0,
+            trailing_padding_bits: 0,
+        }),
+        StorageEncoding::BitPacked(packed) if packed == packed_u4() => {
+            let leading_shared_bits = if first.is_multiple_of(2) { 0 } else { 4 };
+            let trailing_shared_bits = if !end.is_multiple_of(2) && end != logical_elements {
+                4
+            } else {
+                0
+            };
+            let trailing_padding_bits = if !end.is_multiple_of(2) && end == logical_elements {
+                4
+            } else {
+                0
+            };
+            if kind == StorageAccessKind::Write
+                && (leading_shared_bits != 0 || trailing_shared_bits != 0)
+            {
+                return Err(StorageAccessError::UnalignedPartialWrite);
             }
+            let byte_offset = first / 2;
+            let byte_end = end / 2 + end % 2;
+            Ok(StorageAccess {
+                byte_offset,
+                byte_length: byte_end - byte_offset,
+                leading_shared_bits,
+                trailing_shared_bits,
+                trailing_padding_bits,
+            })
         }
+        StorageEncoding::BitPacked(_) => Err(StorageAccessError::UnsupportedEncoding),
+    }
+}
+
+/// Packs ordinary one-byte carriers or four-bit carriers into canonical bytes.
+fn pack_codes(encoding: StorageEncoding, codes: &[u8]) -> Result<Vec<u8>, StorageCodecError> {
+    match encoding {
+        StorageEncoding::Unpacked => Ok(codes.to_vec()),
+        StorageEncoding::BitPacked(packed) if packed == packed_u4() => {
+            let mut bytes = Vec::with_capacity(codes.len().div_ceil(2));
+            for (pair_index, pair) in codes.chunks(2).enumerate() {
+                let first_index = pair_index * 2;
+                let low = pair[0];
+                if low > 0x0f {
+                    return Err(StorageCodecError::CodeOutOfRange {
+                        index: first_index,
+                        code: low,
+                    });
+                }
+                let high = pair.get(1).copied().unwrap_or(0);
+                if high > 0x0f {
+                    return Err(StorageCodecError::CodeOutOfRange {
+                        index: first_index + 1,
+                        code: high,
+                    });
+                }
+                bytes.push(low | (high << 4));
+            }
+            Ok(bytes)
+        }
+        StorageEncoding::BitPacked(_) => Err(StorageCodecError::UnsupportedEncoding),
+    }
+}
+
+/// Unpacks and validates ordinary one-byte or canonical packed-u4 carriers.
+fn unpack_codes(
+    encoding: StorageEncoding,
+    bytes: &[u8],
+    logical_elements: u64,
+) -> Result<Vec<u8>, StorageCodecError> {
+    let logical_elements =
+        usize::try_from(logical_elements).map_err(|_| StorageCodecError::ElementCountOverflow)?;
+    match encoding {
+        StorageEncoding::Unpacked => {
+            if bytes.len() != logical_elements {
+                return Err(StorageCodecError::ByteLength {
+                    expected: logical_elements,
+                    actual: bytes.len(),
+                });
+            }
+            Ok(bytes.to_vec())
+        }
+        StorageEncoding::BitPacked(packed) if packed == packed_u4() => {
+            let expected = logical_elements.div_ceil(2);
+            if bytes.len() != expected {
+                return Err(StorageCodecError::ByteLength {
+                    expected,
+                    actual: bytes.len(),
+                });
+            }
+            if !logical_elements.is_multiple_of(2)
+                && bytes.last().is_some_and(|byte| byte & 0xf0 != 0)
+            {
+                return Err(StorageCodecError::NonCanonicalTail {
+                    byte: *bytes
+                        .last()
+                        .expect("an odd element count requires one byte"),
+                });
+            }
+            let mut codes = Vec::with_capacity(logical_elements);
+            for byte in bytes {
+                codes.push(byte & 0x0f);
+                if codes.len() < logical_elements {
+                    codes.push(byte >> 4);
+                }
+            }
+            Ok(codes)
+        }
+        StorageEncoding::BitPacked(_) => Err(StorageCodecError::UnsupportedEncoding),
+    }
+}
+
+const fn packed_u4() -> BitPackedEncoding {
+    match StorageEncoding::PACKED_U4_LSB_ZERO_TAIL {
+        StorageEncoding::BitPacked(packed) => packed,
+        StorageEncoding::Unpacked => unreachable!(),
     }
 }
 
@@ -923,7 +1145,7 @@ impl RequiredProperty {
     pub(crate) const fn value_key(&self) -> &'static str {
         match self {
             Self::StorageLayout(value) => value.key(),
-            Self::StorageEncoding(value) => value.key(),
+            Self::StorageEncoding(value) => storage_key(*value),
             Self::Alignment(_) => "byte-alignment",
             Self::Materialization(value) => value.key(),
             Self::ExecutionAffinity(value) => value.key(),
@@ -943,8 +1165,8 @@ impl RequiredProperty {
     const fn is_well_formed(&self) -> bool {
         match self {
             Self::StorageLayout(value) => value.is_well_formed(),
-            Self::StorageEncoding(value) => value.is_well_formed(),
-            Self::Alignment(_)
+            Self::StorageEncoding(_)
+            | Self::Alignment(_)
             | Self::Materialization(_)
             | Self::ExecutionAffinity(_)
             | Self::MemoryDomain(_)
@@ -997,7 +1219,7 @@ impl RequiredProperty {
         bytes.push(self.property().tag());
         match self {
             Self::StorageLayout(value) => value.encode(bytes),
-            Self::StorageEncoding(value) => value.encode(bytes),
+            Self::StorageEncoding(value) => encode_storage(*value, bytes),
             Self::Alignment(value) => value.encode(bytes),
             Self::Materialization(value) => value.encode(bytes),
             Self::ExecutionAffinity(value) => value.encode(bytes),
@@ -1118,7 +1340,7 @@ impl GuaranteedProperty {
     pub(crate) const fn value_key(&self) -> &'static str {
         match self {
             Self::StorageLayout(value) => value.key(),
-            Self::StorageEncoding(value) => value.key(),
+            Self::StorageEncoding(value) => storage_key(*value),
             Self::Alignment(_) => "byte-alignment",
             Self::Materialization(value) => value.key(),
             Self::ExecutionAffinity(value) => value.key(),
@@ -1131,8 +1353,8 @@ impl GuaranteedProperty {
     /// Whether this guarantee is well formed.
     const fn is_well_formed(&self) -> bool {
         match self {
-            Self::StorageEncoding(value) => value.is_well_formed(),
-            Self::StorageLayout(_)
+            Self::StorageEncoding(_)
+            | Self::StorageLayout(_)
             | Self::Alignment(_)
             | Self::Materialization(_)
             | Self::ExecutionAffinity(_)
@@ -1156,7 +1378,7 @@ impl GuaranteedProperty {
                 mine.satisfies(*needed)
             }
             (Self::StorageEncoding(mine), RequiredProperty::StorageEncoding(needed)) => {
-                mine.satisfies(*needed)
+                storage_satisfies(*mine, *needed)
             }
             (Self::Alignment(mine), RequiredProperty::Alignment(needed)) => mine.satisfies(*needed),
             (Self::Materialization(mine), RequiredProperty::Materialization(needed)) => {
@@ -1207,7 +1429,7 @@ impl GuaranteedProperty {
         bytes.push(self.property().tag());
         match self {
             Self::StorageLayout(value) => value.encode(bytes),
-            Self::StorageEncoding(value) => value.encode(bytes),
+            Self::StorageEncoding(value) => encode_storage(*value, bytes),
             Self::Alignment(value) => value.encode(bytes),
             Self::Materialization(value) => value.encode(bytes),
             Self::ExecutionAffinity(value) => value.encode(bytes),
@@ -1747,13 +1969,15 @@ fn first_duplicate(
 #[cfg(test)]
 mod tests {
     use super::{
-        AdmittedMemoryDomains, AvailabilityGuarantee, AvailabilityRequirement, BoundaryProperty,
-        BoundaryPropertyError, ByteAlignment, CANONICAL_PROPERTIES, ChildRequirementConflict,
-        ExecutionAffinity, GuaranteedProperties, GuaranteedProperty, LayoutGuarantee,
-        LayoutRequirement, MaterializationForm, MemoryDomainClass, RequiredProperties,
-        RequiredProperty, StorageEncoding, UnsatisfiedProperty, UnsatisfiedReason,
-        VisibilityGuarantee, VisibilityRequirement, derive_child_requirements,
-        encode_property_identity, unsatisfied_properties,
+        AdmittedMemoryDomains, AvailabilityGuarantee, AvailabilityRequirement, BitPackedEncoding,
+        BoundaryProperty, BoundaryPropertyError, ByteAlignment, CANONICAL_PROPERTIES,
+        ChildRequirementConflict, ExecutionAffinity, GuaranteedProperties, GuaranteedProperty,
+        LayoutGuarantee, LayoutRequirement, MaterializationForm, MemoryDomainClass, PackedBitOrder,
+        PackedTailRule, RequiredProperties, RequiredProperty, StorageAccessError,
+        StorageAccessKind, StorageCodecError, StorageEncoding, UnsatisfiedProperty,
+        UnsatisfiedReason, VisibilityGuarantee, VisibilityRequirement, code_access,
+        derive_child_requirements, encode_property_identity, pack_codes, unpack_codes,
+        unsatisfied_properties,
     };
     use tiler_ir::shape::Axis;
 
@@ -1861,14 +2085,14 @@ mod tests {
         )])
         .unwrap();
         let packed = GuaranteedProperties::new([GuaranteedProperty::StorageEncoding(
-            StorageEncoding::BitPacked { element_bits: 4 },
+            StorageEncoding::PACKED_U4_LSB_ZERO_TAIL,
         )])
         .unwrap();
         let needs_unpacked =
             RequiredProperties::new([RequiredProperty::StorageEncoding(StorageEncoding::Unpacked)])
                 .unwrap();
         let needs_packed = RequiredProperties::new([RequiredProperty::StorageEncoding(
-            StorageEncoding::BitPacked { element_bits: 4 },
+            StorageEncoding::PACKED_U4_LSB_ZERO_TAIL,
         )])
         .unwrap();
 
@@ -1880,10 +2104,122 @@ mod tests {
         // A different packed width is a different family member, not a coarser
         // one that subsumes the other.
         let needs_two_bit = RequiredProperties::new([RequiredProperty::StorageEncoding(
-            StorageEncoding::BitPacked { element_bits: 2 },
+            StorageEncoding::BitPacked(
+                BitPackedEncoding::new(
+                    2,
+                    PackedBitOrder::LeastSignificantElementFirst,
+                    PackedTailRule::Zero,
+                )
+                .unwrap(),
+            ),
         )])
         .unwrap();
         assert_eq!(unsatisfied_properties(&needs_two_bit, &packed).len(), 1);
+    }
+
+    #[test]
+    fn ordinary_u8_codes_have_identity_byte_addresses_and_round_trip_exactly() {
+        let encoding = StorageEncoding::Unpacked;
+        let access = code_access(encoding, 5, 1, 3, StorageAccessKind::Write).unwrap();
+        assert_eq!(access.byte_offset(), 1);
+        assert_eq!(access.byte_length(), 3);
+        assert_eq!(access.leading_shared_bits(), 0);
+        assert_eq!(access.trailing_shared_bits(), 0);
+        assert_eq!(access.trailing_padding_bits(), 0);
+
+        let codes = [0x00, 0x7f, 0xff, 0x31, 0x80];
+        let bytes = pack_codes(encoding, &codes).unwrap();
+        assert_eq!(bytes, codes);
+        assert_eq!(unpack_codes(encoding, &bytes, 5).unwrap(), codes);
+        assert_eq!(
+            unpack_codes(encoding, &bytes, 4),
+            Err(StorageCodecError::ByteLength {
+                expected: 4,
+                actual: 5,
+            })
+        );
+    }
+
+    #[test]
+    fn packed_u4_is_lsb_first_and_zero_fills_an_odd_tail() {
+        let encoding = StorageEncoding::PACKED_U4_LSB_ZERO_TAIL;
+        let codes = [0x0, 0x1, 0xf, 0x7, 0x3];
+        let bytes = pack_codes(encoding, &codes).unwrap();
+        assert_eq!(bytes, [0x10, 0x7f, 0x03]);
+        assert_eq!(unpack_codes(encoding, &bytes, 5).unwrap(), codes);
+
+        assert_eq!(
+            pack_codes(encoding, &[0, 0x10]),
+            Err(StorageCodecError::CodeOutOfRange {
+                index: 1,
+                code: 0x10,
+            })
+        );
+        assert_eq!(
+            unpack_codes(encoding, &[0x10, 0x7f, 0xf3], 5),
+            Err(StorageCodecError::NonCanonicalTail { byte: 0xf3 })
+        );
+    }
+
+    #[test]
+    fn packed_u4_reads_name_shared_edge_bits_and_partial_writes_refuse_them() {
+        let encoding = StorageEncoding::PACKED_U4_LSB_ZERO_TAIL;
+
+        let unaligned_read = code_access(encoding, 6, 1, 2, StorageAccessKind::Read).unwrap();
+        assert_eq!(unaligned_read.byte_offset(), 0);
+        assert_eq!(unaligned_read.byte_length(), 2);
+        assert_eq!(unaligned_read.leading_shared_bits(), 4);
+        assert_eq!(unaligned_read.trailing_shared_bits(), 4);
+        assert_eq!(unaligned_read.trailing_padding_bits(), 0);
+        assert_eq!(
+            code_access(encoding, 6, 1, 2, StorageAccessKind::Write),
+            Err(StorageAccessError::UnalignedPartialWrite)
+        );
+
+        let aligned_write = code_access(encoding, 6, 2, 2, StorageAccessKind::Write).unwrap();
+        assert_eq!(aligned_write.byte_offset(), 1);
+        assert_eq!(aligned_write.byte_length(), 1);
+        assert_eq!(aligned_write.leading_shared_bits(), 0);
+        assert_eq!(aligned_write.trailing_shared_bits(), 0);
+        assert_eq!(aligned_write.trailing_padding_bits(), 0);
+
+        assert_eq!(
+            code_access(encoding, 6, 0, 3, StorageAccessKind::Write),
+            Err(StorageAccessError::UnalignedPartialWrite),
+            "an interior high nibble belongs to the next logical element"
+        );
+    }
+
+    #[test]
+    fn packed_u4_whole_value_writes_own_the_zero_filled_odd_tail_only() {
+        let encoding = StorageEncoding::PACKED_U4_LSB_ZERO_TAIL;
+        let whole = code_access(encoding, 5, 0, 5, StorageAccessKind::Write).unwrap();
+        assert_eq!(whole.byte_offset(), 0);
+        assert_eq!(whole.byte_length(), 3);
+        assert_eq!(whole.trailing_shared_bits(), 0);
+        assert_eq!(whole.trailing_padding_bits(), 4);
+
+        let last = code_access(encoding, 5, 4, 1, StorageAccessKind::Write).unwrap();
+        assert_eq!(last.byte_offset(), 2);
+        assert_eq!(last.byte_length(), 1);
+        assert_eq!(last.trailing_shared_bits(), 0);
+        assert_eq!(last.trailing_padding_bits(), 4);
+
+        assert_eq!(
+            code_access(encoding, 5, 1, 4, StorageAccessKind::Write),
+            Err(StorageAccessError::UnalignedPartialWrite),
+            "owning the tail does not authorize overwriting a preceding nibble"
+        );
+        assert_eq!(
+            code_access(encoding, 5, 5, 1, StorageAccessKind::Read),
+            Err(StorageAccessError::OutOfBounds)
+        );
+
+        let empty = code_access(encoding, 5, 3, 0, StorageAccessKind::Write).unwrap();
+        assert_eq!(empty.byte_length(), 0);
+        assert_eq!(empty.leading_shared_bits(), 0);
+        assert_eq!(empty.trailing_shared_bits(), 0);
+        assert_eq!(empty.trailing_padding_bits(), 0);
     }
 
     #[test]
@@ -2113,13 +2449,17 @@ mod tests {
     }
 
     #[test]
-    fn a_packed_encoding_at_a_whole_byte_width_is_malformed() {
-        let error = GuaranteedProperties::new([GuaranteedProperty::StorageEncoding(
-            StorageEncoding::BitPacked { element_bits: 8 },
-        )])
-        .unwrap_err();
-        assert_eq!(error.reason(), "malformed-property-value");
-        assert_eq!(error.property(), BoundaryProperty::StorageEncoding);
+    fn shared_packed_encoding_rejects_whole_byte_and_cross_byte_widths() {
+        for bits in [0, 3, 5, 6, 7, 8] {
+            assert!(
+                BitPackedEncoding::new(
+                    bits,
+                    PackedBitOrder::LeastSignificantElementFirst,
+                    PackedTailRule::Zero,
+                )
+                .is_none()
+            );
+        }
     }
 
     #[test]
@@ -2148,7 +2488,7 @@ mod tests {
             RequiredProperties::new([RequiredProperty::StorageEncoding(StorageEncoding::Unpacked)])
                 .unwrap();
         let packed = RequiredProperties::new([RequiredProperty::StorageEncoding(
-            StorageEncoding::BitPacked { element_bits: 4 },
+            StorageEncoding::PACKED_U4_LSB_ZERO_TAIL,
         )])
         .unwrap();
         assert!(!unpacked.is_no_stronger_than(&packed));
@@ -2305,7 +2645,7 @@ mod tests {
         assert!(
             forward
                 .as_bytes()
-                .starts_with(b"tiler.compiler.boundary-property-set.v1\0")
+                .starts_with(b"tiler.compiler.boundary-property-set.v3\0")
         );
     }
 

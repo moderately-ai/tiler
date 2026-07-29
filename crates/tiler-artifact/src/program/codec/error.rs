@@ -55,8 +55,18 @@ pub(crate) enum TagSubject {
     BindingKind,
     /// The execution policy of one backend payload.
     ExecutionPolicy,
-    /// The storage element type of one interface entry or binding.
+    /// The type through which a kernel accesses one component or binding.
     ElementType,
+    /// The scalar carrier stored in physical memory.
+    StorageScalar,
+    /// Presence of a stable encoded-component role or component type.
+    ComponentPresence,
+    /// Complete physical storage encoding.
+    StorageEncoding,
+    /// Ordering of elements in one packed byte.
+    PackedBitOrder,
+    /// Required contents of unused packed tail bits.
+    PackedTailRule,
     /// The logical address space of one binding.
     AddressSpace,
     /// The access mode of one binding.
@@ -468,6 +478,17 @@ pub(crate) enum ArtifactCodecError {
         /// Whether the target claimed a program input rather than an output.
         input: bool,
     },
+    /// A logical interface entry has no components or repeats a component role.
+    MalformedInterfaceComponents,
+    /// A binding names a role absent from its target interface value.
+    UnknownBindingTargetComponent {
+        /// Stable component role, or `None` for a dense singleton.
+        role: Option<u32>,
+    },
+    /// A binding's carrier, encoding, or access type disagrees with its interface component.
+    BindingComponentMismatch,
+    /// A binding's kernel access type is incompatible with its physical storage.
+    BindingAccessTypeMismatch,
     /// A carried payload maps no backend entry for an executable entry it realizes.
     ///
     /// The mapping is what turns a neutral backend entry key into the symbol a
@@ -629,6 +650,10 @@ impl Error for ArtifactCodecError {
             | Self::UnreferencedSection { .. }
             | Self::EmptyBindingTarget
             | Self::UnknownBindingTargetKey { .. }
+            | Self::MalformedInterfaceComponents
+            | Self::UnknownBindingTargetComponent { .. }
+            | Self::BindingComponentMismatch
+            | Self::BindingAccessTypeMismatch
             | Self::UnmappedBackendEntry { .. }
             | Self::EntryTransportCardinality { .. }
             | Self::DeclaredFeatureMismatch

@@ -114,7 +114,6 @@ use tiler_artifact::proof::{
     DecodedProofSidecar, ProofAssociationError, ProofCodecError, decode_proof_sidecar,
 };
 use tiler_compiler::session::{Compilation, CompileFailure, NumericalContract, compile_governed};
-use tiler_ir::kernel::KernelType;
 use tiler_ir::semantic::{
     F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
     SemanticProgramBuilder, StrictSerialF32Sum,
@@ -419,7 +418,7 @@ fn read_artifact(path: &Path) -> Result<(Vec<u8>, DecodedProofSidecar), ProofErr
 ///
 /// The envelope carries no semantic program — the oracle's input — so the runner
 /// reconstructs one to compare against. What it takes from the artifact is the
-/// interface: the keys, the element types, and the exact input shape. What it
+/// interface: the keys, the logical resolved types, and the exact input shape. What it
 /// supplies is the body, and a disagreement there cannot be checked here; it
 /// would surface as a bit disagreement, which is why the direct path exists.
 ///
@@ -438,6 +437,7 @@ fn read_artifact(path: &Path) -> Result<(Vec<u8>, DecodedProofSidecar), ProofErr
 /// this path ran a `4x1` against the direct path's `4x3`. Nothing here changed
 /// when that closed, which is what reading rather than asserting bought.
 fn bind_interface(decoded: &DecodedProgram) -> Result<(u64, u64, AbiFacts), ProofError> {
+    let f32_type = F32::resolved_type().canonical_encoding();
     let inputs: Vec<_> = decoded.inputs().collect();
     let [input] = inputs.as_slice() else {
         return Err(ProofError::Interface(format!(
@@ -451,11 +451,12 @@ fn bind_interface(decoded: &DecodedProgram) -> Result<(u64, u64, AbiFacts), Proo
             input.shape(),
         )));
     };
-    if input.key().as_str() != INPUT_KEY || input.element_type() != KernelType::F32 {
+    if input.key().as_str() != INPUT_KEY || input.resolved_type_encoding() != f32_type.as_bytes() {
         return Err(ProofError::Interface(format!(
-            "the artifact's input is {:?} of {:?}, this program's is {INPUT_KEY:?} of F32",
+            "the artifact's input is {:?} of logical type {:02x?}, this program's is \
+             {INPUT_KEY:?} of canonical F32",
             input.key().as_str(),
-            input.element_type(),
+            input.resolved_type_encoding(),
         )));
     }
 
@@ -473,15 +474,15 @@ fn bind_interface(decoded: &DecodedProgram) -> Result<(u64, u64, AbiFacts), Proo
         .map(|extent| extent.get())
         .product();
     if output.key().as_str() != OUTPUT_KEY
-        || output.element_type() != KernelType::F32
+        || output.resolved_type_encoding() != f32_type.as_bytes()
         || published != rows.get()
     {
         return Err(ProofError::Interface(format!(
-            "the artifact's output is {:?} of {} {:?}, and reducing its input's inner axis \
-             publishes {} F32 element(s) under {OUTPUT_KEY:?}",
+            "the artifact's output is {:?} of {} and logical type {:02x?}, and reducing its \
+             input's inner axis publishes {} F32 element(s) under {OUTPUT_KEY:?}",
             output.key().as_str(),
             output.shape(),
-            output.element_type(),
+            output.resolved_type_encoding(),
             rows.get(),
         )));
     }
@@ -2495,8 +2496,8 @@ mod tests {
     use tiler_ir::program::abi::ExprNode;
     use tiler_ir::program::{
         AbiExprId as ProgramAbiExprId, AllocationSpec, ByteWindow, DependencyReasonView,
-        KernelProgramBuilder, MaterializedValueSpec, StageAccess, StageLaunch,
-        VerifiedKernelProgram,
+        KernelProgramBuilder, MaterializedValueSpec, StageAccess, StageLaunch, StorageEncoding,
+        StorageScalar, VerifiedKernelProgram,
     };
     use tiler_ir::semantic::SemanticProgram;
     use tiler_ir::shape::Shape;
@@ -2878,6 +2879,8 @@ mod tests {
                             origin: value.origin().clone(),
                             role: value.role(),
                             shape,
+                            storage_scalar: StorageScalar::F32,
+                            encoding: StorageEncoding::Unpacked,
                             element_type: value.element_type(),
                             alignment: value.alignment(),
                             memory_space: value.memory_space(),

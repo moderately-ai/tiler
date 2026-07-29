@@ -23,8 +23,11 @@
 //! needs a `VerifiedKernelProgram` must hold the one it compiled — permanently,
 //! not until some ticket lands.
 
+use tiler_ir::program::{
+    BitPackedEncoding, PackedBitOrder, PackedTailRule, StorageEncoding, StorageScalar,
+};
 use tiler_ir::schedule::{ExceptionalValueAssumption, ResourceRequirements};
-use tiler_ir::semantic::{InputKey, OutputKey, ProviderIdentity};
+use tiler_ir::semantic::{EncodedComponentRole, InputKey, OutputKey, ProviderIdentity};
 use tiler_ir::shape::Shape;
 
 use super::super::expr::{
@@ -39,10 +42,11 @@ use super::super::keys::{
 use super::super::model::{
     ArtifactSchema, BINDING_TARGET_INTERNAL, BINDING_TARGET_PROGRAM_INPUT,
     BINDING_TARGET_PROGRAM_OUTPUT, BackendPayloadDescriptor, BindingData, BindingKind,
-    BindingTargetData, DeferredPredicateData, InterfaceEntryData, LaunchData, RoutingPolicy,
-    SchemaVersion, SelectedProvider, StageDependencyData, StageDependencyReason,
-    address_space_from_tag, buffer_access_from_tag, element_type_from_tag,
-    exceptional_assumption_from_tag, permission_from_tag, subnormal_from_tag,
+    BindingTargetData, DeferredPredicateData, InterfaceComponentData, InterfaceEntryData,
+    LaunchData, RoutingPolicy, SchemaVersion, SelectedProvider, StageDependencyData,
+    StageDependencyReason, address_space_from_tag, buffer_access_from_tag, element_type_from_tag,
+    exceptional_assumption_from_tag, permission_from_tag, storage_scalar_from_tag,
+    subnormal_from_tag,
 };
 use super::super::{
     MAX_ABI_EXPRESSIONS, MAX_ARTIFACT_PAYLOADS, MAX_ARTIFACT_VARIANTS, MAX_DEFERRED_PREDICATES,
@@ -383,7 +387,8 @@ fn read_inputs(
                 key: InputKey::from_owned(cursor.text()?)
                     .map_err(|cause| ArtifactCodecError::InvalidInterfaceKey { cause })?,
                 shape: cursor.shape()?,
-                element_type: cursor.element_type()?,
+                logical_type: cursor.slice()?.to_vec(),
+                components: cursor.interface_components()?,
             })
         },
     )
@@ -401,7 +406,8 @@ fn read_outputs(
                 key: OutputKey::from_owned(cursor.text()?)
                     .map_err(|cause| ArtifactCodecError::InvalidInterfaceKey { cause })?,
                 shape: cursor.shape()?,
-                element_type: cursor.element_type()?,
+                logical_type: cursor.slice()?.to_vec(),
+                components: cursor.interface_components()?,
             })
         },
     )
@@ -887,7 +893,10 @@ fn parse_entry(
         |cursor| {
             Ok(BindingData {
                 kind: cursor.binding_kind()?,
-                element_type: cursor.element_type()?,
+                storage_scalar: cursor.storage_scalar()?,
+                access_type: cursor.element_type()?,
+                component_role: cursor.component_role()?,
+                encoding: cursor.storage_encoding()?,
                 address_space: cursor.address_space()?,
                 access: cursor.buffer_access()?,
                 alignment: cursor.u32()?,
@@ -1051,6 +1060,84 @@ impl<'a> Cursor<'a> {
             extents.push(self.u64()?);
         }
         Shape::try_from_dims(extents).map_err(|cause| ArtifactCodecError::InvalidShape { cause })
+    }
+
+    fn interface_components(&mut self) -> Result<Vec<InterfaceComponentData>, ArtifactCodecError> {
+        self.vec(
+            MAX_ENTRY_BINDINGS,
+            CodecLimitKind::EntryBindings,
+            |cursor| {
+                let role = cursor.component_role()?;
+                let shape = cursor.shape()?;
+                let resolved_type = match cursor.u8()? {
+                    0 => None,
+                    1 => Some(cursor.slice()?.to_vec()),
+                    tag => {
+                        return Err(ArtifactCodecError::UnknownTag {
+                            subject: TagSubject::ComponentPresence,
+                            tag,
+                        });
+                    }
+                };
+                Ok(InterfaceComponentData {
+                    role,
+                    shape,
+                    resolved_type,
+                    storage_scalar: cursor.storage_scalar()?,
+                    encoding: cursor.storage_encoding()?,
+                    access_type: cursor.element_type()?,
+                })
+            },
+        )
+    }
+
+    fn component_role(&mut self) -> Result<Option<EncodedComponentRole>, ArtifactCodecError> {
+        match self.u8()? {
+            0 => Ok(None),
+            1 => Ok(Some(EncodedComponentRole::new(self.u32()?))),
+            tag => Err(ArtifactCodecError::UnknownTag {
+                subject: TagSubject::ComponentPresence,
+                tag,
+            }),
+        }
+    }
+
+    fn storage_encoding(&mut self) -> Result<StorageEncoding, ArtifactCodecError> {
+        match self.u8()? {
+            0x01 => Ok(StorageEncoding::Unpacked),
+            0x02 => {
+                let bits = self.u8()?;
+                let order = match self.u8()? {
+                    0x01 => PackedBitOrder::LeastSignificantElementFirst,
+                    0x02 => PackedBitOrder::MostSignificantElementFirst,
+                    tag => {
+                        return Err(ArtifactCodecError::UnknownTag {
+                            subject: TagSubject::PackedBitOrder,
+                            tag,
+                        });
+                    }
+                };
+                let tail = match self.u8()? {
+                    0x01 => PackedTailRule::Zero,
+                    tag => {
+                        return Err(ArtifactCodecError::UnknownTag {
+                            subject: TagSubject::PackedTailRule,
+                            tag,
+                        });
+                    }
+                };
+                BitPackedEncoding::new(bits, order, tail)
+                    .map(StorageEncoding::BitPacked)
+                    .ok_or(ArtifactCodecError::UnknownTag {
+                        subject: TagSubject::StorageEncoding,
+                        tag: bits,
+                    })
+            }
+            tag => Err(ArtifactCodecError::UnknownTag {
+                subject: TagSubject::StorageEncoding,
+                tag,
+            }),
+        }
     }
 
     fn boolean(&mut self) -> Result<bool, ArtifactCodecError> {
@@ -1252,6 +1339,12 @@ tag_reader!(
     tiler_ir::kernel::KernelType,
     element_type_from_tag,
     TagSubject::ElementType
+);
+tag_reader!(
+    storage_scalar,
+    StorageScalar,
+    storage_scalar_from_tag,
+    TagSubject::StorageScalar
 );
 tag_reader!(
     address_space,

@@ -70,10 +70,14 @@
 //! (`tiler_ir::semantic::ResolvedValueType::encoded_numeric`) whose element codes
 //! and scales are ordinary operands, and whose conversion behaviour is its own
 //! typed contract rather than a resolution of these dimensions. Nothing here
-//! claims to cover one: [`operation_capabilities`] enumerates the operations this
-//! build admits, all of which are scalar `f32`, and an operation outside that
-//! table has no capability entry and therefore no effective permission to
-//! compute. The seam is preserved by that absence, not by a placeholder.
+//! claims to reinterpret one through these generic freedoms:
+//! [`operation_capabilities`] enumerates the strict-affine association and
+//! conversion operations with no consumed generic dimension because their
+//! complete rounding, saturation, exceptional-value, evaluation-order, and
+//! materialization behavior is fixed by their versioned scheme contract.
+//! Physical execution remains unsupported until a lowering separately proves
+//! that complete contract; an empty generic-dimension row is not a lowering
+//! capability.
 
 use tiler_ir::schedule::{
     ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, MaterializationRounding,
@@ -172,20 +176,22 @@ impl OperationNumericalCapability {
 
 /// Every semantic operation family this build admits, with what it can consume.
 ///
-/// **Fact.** The governed semantic registry admits exactly `constant_f32`,
-/// `multiply_f32`, `add_f32`, and `strict_serial_sum_f32`; the governed scalar
-/// registry admits their scalar counterparts plus the canonical-NaN conversion.
-/// None of them divides, computes an elementary function, or converts between
-/// dtypes, which is why three dimensions appear in no row below.
+/// **Fact.** The governed semantic registry admits the four scalar `f32`
+/// operations plus strict-affine association, quantization, and dequantization.
+/// The affine operations' exact behavior is carried by the encoded value and
+/// operation contracts rather than selected from the caller's generic policy.
+/// None of the admitted operations permits a reciprocal substitution or
+/// approximate intrinsic.
 ///
 /// **Inference.** `ReciprocalTransform` needs a division to replace,
 /// `ApproximateIntrinsics` needs an elementary function to approximate, and
-/// `MaterializationRounding` needs a conversion at a materialization boundary to
-/// round. This build's only materialization boundary carries `f32` to `f32` with
-/// no conversion, so no rounding is applied there at all. Their resolutions are
-/// therefore unconsumable and cannot change any result this build produces —
-/// which is what makes it safe for the realization not to carry them, and is
-/// checked rather than assumed by
+/// `MaterializationRounding` is not the strict-affine encode rounding rule:
+/// that conversion is fixed to nearest-even by the scheme, while observable
+/// materialization of the compound value preserves its exact codes and
+/// associated parameters. The three generic dimensions therefore remain
+/// unconsumable and cannot change any result this build produces — which is what
+/// makes it safe for the realization not to carry them, and is checked rather
+/// than assumed by
 /// `every_registered_preset_is_representable_by_this_build`.
 pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapability] {
     /// Dimensions any `f32` arithmetic operation can consume.
@@ -232,6 +238,21 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
         OperationNumericalCapability {
             key: "tiler::strict-serial-sum-f32@1",
             consumes: REDUCTION,
+        },
+        // These operations carry a complete, fixed strict-affine conversion
+        // contract. No caller-selected generic freedom can weaken or substitute
+        // it, and no physical lowering is implied by these rows.
+        OperationNumericalCapability {
+            key: "tiler::assemble-strict-affine@1",
+            consumes: &[],
+        },
+        OperationNumericalCapability {
+            key: "tiler::quantize-strict-affine@1",
+            consumes: &[],
+        },
+        OperationNumericalCapability {
+            key: "tiler::dequantize-strict-affine@1",
+            consumes: &[],
         },
     ]
 }

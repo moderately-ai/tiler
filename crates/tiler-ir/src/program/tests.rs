@@ -14,18 +14,21 @@ use crate::schedule::{
     ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole, VerifiedScheduledRegion,
 };
 use crate::semantic::{
-    F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
-    SemanticProgramBuilder, StrictSerialF32Sum,
+    EncodedComponentRole, F32, F32Add, F32Constant, F32Multiply, InputKey, OperationAttributes,
+    OutputKey, STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
+    SemanticProgram, SemanticProgramBuilder, StrictAffineU4, StrictSerialF32Sum,
+    dequantize_strict_affine_op,
 };
 use crate::shape::{Axis, Shape};
 
 use super::abi::{AbiBinaryOp, AbiRoot, AbiType, AbiUnaryOp, AvailabilityPhase, TargetPropertyKey};
 use super::{
     AbiExprId, AllocationId, AllocationOwnership, AllocationSpec, ByteWindow,
-    KernelProgramBuildError, KernelProgramBuilder, KernelProgramDiagnostic, MaterializedOrigin,
-    MaterializedValueId, MaterializedValueSpec, MemorySpace, ProgramAbiUse, ProgramEntityKind,
-    RoutingCommitState, RoutingCommitTransition, SemanticOccurrence, StageAccess, StageAccessMode,
-    StageId, StageLaunch, ValueRole, VerifiedKernelProgram, ViewId,
+    KernelProgramBuildError, KernelProgramBuilder, KernelProgramDiagnostic,
+    MaterializedComponentSpec, MaterializedOrigin, MaterializedValueId, MaterializedValueSpec,
+    MemorySpace, ProgramAbiUse, ProgramEntityKind, RoutingCommitState, RoutingCommitTransition,
+    SemanticOccurrence, StageAccess, StageAccessMode, StageId, StageLaunch, StorageEncoding,
+    StorageScalar, ValueRole, VerifiedKernelProgram, ViewId,
 };
 
 const SCALE_BITS: u32 = 0x4000_0000; // 2.0f32
@@ -95,6 +98,7 @@ fn pointwise_region(region: u32, scale_bits: u32) -> VerifiedScheduledRegion {
     builder
         .push_access(Access {
             tensor: TensorRole::Input,
+            component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::LinearIdentity,
             bounds: BoundsWitnessId::new(0),
@@ -104,6 +108,7 @@ fn pointwise_region(region: u32, scale_bits: u32) -> VerifiedScheduledRegion {
     builder
         .push_access(Access {
             tensor: TensorRole::Intermediate,
+            component_role: None,
             mode: AccessMode::Write,
             map: LogicalAccess::LinearIdentity,
             bounds: BoundsWitnessId::new(1),
@@ -114,6 +119,7 @@ fn pointwise_region(region: u32, scale_bits: u32) -> VerifiedScheduledRegion {
         .push_bounds_proof(BoundsProof {
             id: BoundsWitnessId::new(0),
             tensor: TensorRole::Input,
+            component_role: None,
             kind: BoundsProofKind::LinearRange {
                 element_count: count,
             },
@@ -123,6 +129,7 @@ fn pointwise_region(region: u32, scale_bits: u32) -> VerifiedScheduledRegion {
         .push_bounds_proof(BoundsProof {
             id: BoundsWitnessId::new(1),
             tensor: TensorRole::Intermediate,
+            component_role: None,
             kind: BoundsProofKind::LinearRange {
                 element_count: count,
             },
@@ -157,6 +164,7 @@ fn reduction_region(region: u32) -> VerifiedScheduledRegion {
     builder
         .push_access(Access {
             tensor: TensorRole::Intermediate,
+            component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::ReductionContributor {
                 input_shape: input_shape(),
@@ -171,6 +179,7 @@ fn reduction_region(region: u32) -> VerifiedScheduledRegion {
     builder
         .push_access(Access {
             tensor: TensorRole::Output,
+            component_role: None,
             mode: AccessMode::Write,
             map: LogicalAccess::LinearIdentity,
             bounds: BoundsWitnessId::new(1),
@@ -181,6 +190,7 @@ fn reduction_region(region: u32) -> VerifiedScheduledRegion {
         .push_bounds_proof(BoundsProof {
             id: BoundsWitnessId::new(0),
             tensor: TensorRole::Intermediate,
+            component_role: None,
             kind: BoundsProofKind::ReductionDomain {
                 input_shape: input_shape(),
                 output_shape: output_shape(),
@@ -193,6 +203,7 @@ fn reduction_region(region: u32) -> VerifiedScheduledRegion {
         .push_bounds_proof(BoundsProof {
             id: BoundsWitnessId::new(1),
             tensor: TensorRole::Output,
+            component_role: None,
             kind: BoundsProofKind::LinearRange {
                 element_count: elements(&output_shape()),
             },
@@ -287,6 +298,126 @@ fn two_chain_program() -> SemanticProgram {
     program
 }
 
+fn strict_affine_u4_passthrough_program() -> SemanticProgram {
+    let mut draft = SemanticProgramBuilder::try_standard().expect("standard registry");
+    let input = draft
+        .input::<StrictAffineU4>(InputKey::new("input").expect("key"), Shape::from_dims([5]))
+        .expect("encoded input");
+    draft
+        .output(OutputKey::new("result").expect("key"), input)
+        .expect("encoded output");
+    draft.build().expect("verified semantic program")
+}
+
+fn strict_affine_u4_dequantize_program() -> SemanticProgram {
+    let mut draft = SemanticProgramBuilder::try_standard().expect("standard registry");
+    let input = draft
+        .input_resolved(
+            InputKey::new("input").expect("key"),
+            Shape::from_dims([5]),
+            StrictAffineU4::resolved_type(),
+        )
+        .expect("encoded input");
+    let output = draft
+        .apply(
+            dequantize_strict_affine_op(),
+            OperationAttributes::empty(),
+            &[input],
+        )
+        .expect("strict affine dequantization")[0];
+    draft
+        .output_resolved(OutputKey::new("result").expect("key"), output)
+        .expect("dense output");
+    draft.build().expect("verified semantic program")
+}
+
+fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
+    let logical_elements = 5;
+    let owner = OwnershipWitnessId::new(0);
+    let mut builder = ScheduledRegionBuilder::new(RegionId::new(17));
+    builder
+        .iteration_shape(Shape::from_dims([logical_elements]))
+        .expect("iteration shape");
+    for access in [
+        Access {
+            tensor: TensorRole::Input,
+            component_role: Some(STRICT_AFFINE_CODES_ROLE),
+            mode: AccessMode::Read,
+            map: LogicalAccess::PackedU4LsbZeroTail { logical_elements },
+            bounds: BoundsWitnessId::new(0),
+            ownership: None,
+        },
+        Access {
+            tensor: TensorRole::Input,
+            component_role: Some(STRICT_AFFINE_SCALE_ROLE),
+            mode: AccessMode::Read,
+            map: LogicalAccess::ScalarBroadcast,
+            bounds: BoundsWitnessId::new(1),
+            ownership: None,
+        },
+        Access {
+            tensor: TensorRole::Input,
+            component_role: Some(STRICT_AFFINE_ZERO_POINT_ROLE),
+            mode: AccessMode::Read,
+            map: LogicalAccess::ScalarBroadcast,
+            bounds: BoundsWitnessId::new(2),
+            ownership: None,
+        },
+        Access {
+            tensor: TensorRole::Output,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(3),
+            ownership: Some(owner),
+        },
+    ] {
+        builder.push_access(access).expect("access");
+    }
+    for (id, tensor, component_role, element_count) in [
+        (
+            0,
+            TensorRole::Input,
+            Some(STRICT_AFFINE_CODES_ROLE),
+            logical_elements.div_ceil(2),
+        ),
+        (1, TensorRole::Input, Some(STRICT_AFFINE_SCALE_ROLE), 1),
+        (2, TensorRole::Input, Some(STRICT_AFFINE_ZERO_POINT_ROLE), 1),
+        (3, TensorRole::Output, None, logical_elements),
+    ] {
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(id),
+                tensor,
+                component_role,
+                kind: BoundsProofKind::LinearRange { element_count },
+            })
+            .expect("bounds proof");
+    }
+    builder
+        .ownership_proof(OwnershipProof {
+            id: owner,
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                output_count: logical_elements,
+            },
+        })
+        .expect("ownership proof");
+    builder
+        .scalar_program(ScalarProgram::StrictAffineU4Dequantize {
+            codes_role: STRICT_AFFINE_CODES_ROLE,
+            scale_role: STRICT_AFFINE_SCALE_ROLE,
+            zero_point_role: STRICT_AFFINE_ZERO_POINT_ROLE,
+        })
+        .expect("scalar program");
+    builder.numerical(strict()).expect("numerical contract");
+    builder
+        .schedule(linear_schedule(logical_elements, owner))
+        .expect("schedule");
+    lower_scheduled_region(&builder.build().expect("verified schedule"))
+        .expect("verified structured kernel")
+}
+
 fn occurrences(range: std::ops::Range<u32>) -> Vec<SemanticOccurrence> {
     range.map(SemanticOccurrence::new).collect()
 }
@@ -305,6 +436,8 @@ fn value(origin: MaterializedOrigin, role: ValueRole, shape: Shape) -> Materiali
         origin,
         role,
         shape,
+        storage_scalar: StorageScalar::F32,
+        encoding: StorageEncoding::Unpacked,
         element_type: KernelType::F32,
         alignment: 4,
         memory_space: MemorySpace::Device,
@@ -1636,6 +1769,236 @@ fn an_output_key_outside_the_bound_interface_is_rejected() {
             .expect_err("role and origin must agree"),
         KernelProgramBuildError::ValueRoleOrigin {
             role: ValueRole::Temporary,
+        }
+    );
+}
+
+#[test]
+fn an_internal_component_without_a_logical_group_is_rejected() {
+    let semantic = serial_sum_program(SCALE_BITS);
+    let mut wired = two_stage(&semantic, TwoStageShape::Canonical);
+    let role = EncodedComponentRole::new(77);
+    let error = wired
+        .builder
+        .push_component_value(
+            MaterializedComponentSpec {
+                origin: MaterializedOrigin::Internal,
+                role: ValueRole::Temporary,
+                component_role: role,
+                shape: input_shape(),
+                storage_scalar: StorageScalar::F32,
+                element_type: KernelType::F32,
+                encoding: StorageEncoding::Unpacked,
+                alignment: 4,
+                memory_space: MemorySpace::Device,
+            },
+            wired.temporary_allocation,
+        )
+        .expect_err("ungrouped internal components must fail closed");
+    assert_eq!(
+        error,
+        KernelProgramBuildError::UngroupedInternalComponent { role }
+    );
+}
+
+#[test]
+fn physical_storage_scalar_and_kernel_access_type_are_checked_separately() {
+    let semantic = strict_affine_u4_passthrough_program();
+    let mut builder = KernelProgramBuilder::new(&semantic).expect("program builder");
+    let allocation = builder
+        .push_allocation(AllocationSpec {
+            capacity_bytes: 20,
+            alignment: 4,
+            memory_space: MemorySpace::Device,
+            ownership: AllocationOwnership::External,
+        })
+        .expect("allocation");
+    let spec = |storage_scalar, element_type| MaterializedComponentSpec {
+        origin: program_input("input"),
+        role: ValueRole::Input,
+        component_role: STRICT_AFFINE_CODES_ROLE,
+        shape: Shape::from_dims([5]),
+        storage_scalar,
+        element_type,
+        encoding: StorageEncoding::PACKED_U4_LSB_ZERO_TAIL,
+        alignment: 1,
+        memory_space: MemorySpace::Device,
+    };
+
+    assert_eq!(
+        builder
+            .push_component_value(spec(StorageScalar::F32, KernelType::U8), allocation)
+            .expect_err("a float scalar cannot carry packed codes"),
+        KernelProgramBuildError::StorageEncodingScalar {
+            scalar: StorageScalar::F32,
+            encoding: StorageEncoding::PACKED_U4_LSB_ZERO_TAIL,
+        }
+    );
+    assert_eq!(
+        builder
+            .push_component_value(spec(StorageScalar::U8, KernelType::Bool), allocation)
+            .expect_err("a boolean access must not stand in for an unsigned byte"),
+        KernelProgramBuildError::StorageAccessType {
+            scalar: StorageScalar::U8,
+            encoding: StorageEncoding::PACKED_U4_LSB_ZERO_TAIL,
+            expected: KernelType::U8,
+            actual: KernelType::Bool,
+        }
+    );
+}
+
+#[test]
+fn packed_program_views_are_bounded_to_the_complete_component() {
+    let semantic = strict_affine_u4_passthrough_program();
+    let mut builder = KernelProgramBuilder::new(&semantic).expect("program builder");
+    let allocation = builder
+        .push_allocation(AllocationSpec {
+            capacity_bytes: 3,
+            alignment: 1,
+            memory_space: MemorySpace::Device,
+            ownership: AllocationOwnership::External,
+        })
+        .expect("allocation");
+    let value = builder
+        .push_component_value(
+            MaterializedComponentSpec {
+                origin: program_input("input"),
+                role: ValueRole::Input,
+                component_role: STRICT_AFFINE_CODES_ROLE,
+                shape: Shape::from_dims([5]),
+                storage_scalar: StorageScalar::U8,
+                element_type: KernelType::U8,
+                encoding: StorageEncoding::PACKED_U4_LSB_ZERO_TAIL,
+                alignment: 1,
+                memory_space: MemorySpace::Device,
+            },
+            allocation,
+        )
+        .expect("packed codes");
+    assert_eq!(
+        builder
+            .push_view(
+                value,
+                ByteWindow {
+                    offset: 0,
+                    length: 2,
+                },
+            )
+            .expect_err("a partial packed byte view has no logical ownership proof"),
+        KernelProgramBuildError::PartialPackedView {
+            offset: 0,
+            length: 2,
+            value_bytes: 3,
+        }
+    );
+    builder
+        .push_whole_view(value)
+        .expect("the whole packed component is stage-visible");
+}
+
+#[test]
+fn strict_affine_stage_bindings_are_addressed_by_component_role() {
+    let semantic = strict_affine_u4_dequantize_program();
+    let kernel = strict_affine_u4_dequantize_kernel();
+    let mut builder = KernelProgramBuilder::new(&semantic).expect("program builder");
+
+    let mut component = |role, shape, storage_scalar, element_type, encoding, bytes, alignment| {
+        let allocation = builder
+            .push_allocation(AllocationSpec {
+                capacity_bytes: bytes,
+                alignment,
+                memory_space: MemorySpace::Device,
+                ownership: AllocationOwnership::External,
+            })
+            .expect("component allocation");
+        let value = builder
+            .push_component_value(
+                MaterializedComponentSpec {
+                    origin: program_input("input"),
+                    role: ValueRole::Input,
+                    component_role: role,
+                    shape,
+                    storage_scalar,
+                    element_type,
+                    encoding,
+                    alignment,
+                    memory_space: MemorySpace::Device,
+                },
+                allocation,
+            )
+            .expect("materialized component");
+        builder.push_whole_view(value).expect("component view")
+    };
+    let codes = component(
+        STRICT_AFFINE_CODES_ROLE,
+        Shape::from_dims([5]),
+        StorageScalar::U8,
+        KernelType::U8,
+        StorageEncoding::PACKED_U4_LSB_ZERO_TAIL,
+        3,
+        1,
+    );
+    let scale = component(
+        STRICT_AFFINE_SCALE_ROLE,
+        Shape::new([]),
+        StorageScalar::F32,
+        KernelType::F32,
+        StorageEncoding::Unpacked,
+        4,
+        4,
+    );
+    let zero_point = component(
+        STRICT_AFFINE_ZERO_POINT_ROLE,
+        Shape::new([]),
+        StorageScalar::U8,
+        KernelType::U8,
+        StorageEncoding::Unpacked,
+        1,
+        1,
+    );
+    let output_allocation = builder
+        .push_allocation(device(20, AllocationOwnership::Program))
+        .expect("output allocation");
+    let output = builder
+        .push_value(
+            value(
+                MaterializedOrigin::Internal,
+                ValueRole::Output,
+                Shape::from_dims([5]),
+            ),
+            output_allocation,
+        )
+        .expect("dense output");
+    let output = builder.push_whole_view(output).expect("output view");
+
+    let codes_bytes = literal(&mut builder, 3);
+    let scale_bytes = literal(&mut builder, 4);
+    let zero_point_bytes = literal(&mut builder, 1);
+    let output_bytes = literal(&mut builder, 20);
+    let grid_threads = literal(&mut builder, 5);
+    let threads_per_workgroup = literal(&mut builder, 1);
+    let error = builder
+        .push_stage(
+            &kernel,
+            &[SemanticOccurrence::new(0)],
+            &[
+                read(zero_point, zero_point_bytes),
+                read(scale, scale_bytes),
+                read(codes, codes_bytes),
+                write(output, output_bytes),
+            ],
+            StageLaunch {
+                grid_threads,
+                threads_per_workgroup,
+            },
+        )
+        .expect_err("same-width input components must not bind by position");
+    assert_eq!(
+        error,
+        KernelProgramBuildError::StageComponentRole {
+            position: 0,
+            expected: Some(STRICT_AFFINE_CODES_ROLE),
+            actual: Some(STRICT_AFFINE_ZERO_POINT_ROLE),
         }
     );
 }

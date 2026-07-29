@@ -115,7 +115,8 @@
 //! # use tiler_ir::program::{
 //! #     AllocationOwnership, AllocationSpec, KernelProgramBuilder, MaterializedOrigin,
 //! #     MaterializedValueSpec, MemorySpace, RoutingCommitState, RoutingCommitTransition,
-//! #     SemanticOccurrence, StageAccess, StageAccessMode, StageLaunch, ValueRole,
+//! #     SemanticOccurrence, StageAccess, StageAccessMode, StageLaunch, StorageEncoding,
+//! #     StorageScalar, ValueRole,
 //! # };
 //! # use tiler_ir::schedule::{
 //! #     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
@@ -147,6 +148,7 @@
 //! # region.iteration_shape(Shape::from_dims([2]))?;
 //! # region.push_access(Access {
 //! #     tensor: TensorRole::Input,
+//! #     component_role: None,
 //! #     mode: AccessMode::Read,
 //! #     map: LogicalAccess::ReductionContributor {
 //! #         input_shape: Shape::from_dims([2, 3]),
@@ -159,6 +161,7 @@
 //! # })?;
 //! # region.push_access(Access {
 //! #     tensor: TensorRole::Output,
+//! #     component_role: None,
 //! #     mode: AccessMode::Write,
 //! #     map: LogicalAccess::LinearIdentity,
 //! #     bounds: BoundsWitnessId::new(1),
@@ -167,6 +170,7 @@
 //! # region.push_bounds_proof(BoundsProof {
 //! #     id: BoundsWitnessId::new(0),
 //! #     tensor: TensorRole::Input,
+//! #     component_role: None,
 //! #     kind: BoundsProofKind::ReductionDomain {
 //! #         input_shape: Shape::from_dims([2, 3]),
 //! #         output_shape: Shape::from_dims([2]),
@@ -177,6 +181,7 @@
 //! # region.push_bounds_proof(BoundsProof {
 //! #     id: BoundsWitnessId::new(1),
 //! #     tensor: TensorRole::Output,
+//! #     component_role: None,
 //! #     kind: BoundsProofKind::LinearRange { element_count: 2 },
 //! # })?;
 //! # region.ownership_proof(OwnershipProof {
@@ -238,7 +243,9 @@
 //! #         origin: MaterializedOrigin::ProgramInput { key: InputKey::new("input")? },
 //! #         role: ValueRole::Input,
 //! #         shape: Shape::from_dims([2, 3]),
+//! #         storage_scalar: StorageScalar::F32,
 //! #         element_type: KernelType::F32,
+//! #         encoding: StorageEncoding::Unpacked,
 //! #         alignment: 4,
 //! #         memory_space: MemorySpace::Device,
 //! #     },
@@ -249,7 +256,9 @@
 //! #         origin: MaterializedOrigin::Internal,
 //! #         role: ValueRole::Output,
 //! #         shape: Shape::from_dims([2]),
+//! #         storage_scalar: StorageScalar::F32,
 //! #         element_type: KernelType::F32,
+//! #         encoding: StorageEncoding::Unpacked,
 //! #         alignment: 4,
 //! #         memory_space: MemorySpace::Device,
 //! #     },

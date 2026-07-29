@@ -39,6 +39,8 @@
 
 use std::collections::BTreeSet;
 
+use tiler_ir::kernel::KernelType;
+use tiler_ir::program::{StorageEncoding, StorageScalar};
 use tiler_ir::semantic::ProviderIdentity;
 
 use super::super::error::{AbiExprUse, ArtifactBuildError, ArtifactDiagnostic};
@@ -168,6 +170,29 @@ fn interface_facts(envelope: &ArtifactEnvelope) -> AbiFacts {
 /// interface positionally and would happily fold a repeat, so this is decided
 /// here rather than left to the identity comparison.
 fn check_interface(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecError> {
+    for entry in envelope
+        .inputs()
+        .iter()
+        .map(|entry| (&entry.logical_type, &entry.components))
+        .chain(
+            envelope
+                .outputs()
+                .iter()
+                .map(|entry| (&entry.logical_type, &entry.components)),
+        )
+    {
+        let (logical_type, components) = entry;
+        let mut roles = std::collections::BTreeSet::new();
+        if logical_type.is_empty()
+            || components.is_empty()
+            || components.iter().any(|component| {
+                !roles.insert(component.role)
+                    || component.role.is_some() != component.resolved_type.is_some()
+            })
+        {
+            return Err(ArtifactCodecError::MalformedInterfaceComponents);
+        }
+    }
     let mut inputs: Vec<&str> = envelope
         .inputs()
         .iter()
@@ -280,29 +305,76 @@ fn check_binding_targets(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCode
         .flat_map(|variant| &variant.entries)
         .flat_map(|entry| &entry.bindings)
     {
+        check_binding_access(binding)?;
         match &binding.target {
             BindingTargetData::ProgramInput(key) => {
-                if !envelope.inputs().iter().any(|input| input.key == *key) {
+                let Some(input) = envelope.inputs().iter().find(|input| input.key == *key) else {
                     return Err(ArtifactCodecError::UnknownBindingTargetKey {
                         key: key.as_str().to_owned(),
                         input: true,
                     });
-                }
+                };
+                check_target_component(&input.components, binding)?;
             }
             BindingTargetData::ProgramOutput(keys) => {
                 for key in keys {
-                    if !envelope.outputs().iter().any(|output| output.key == *key) {
+                    let Some(output) = envelope.outputs().iter().find(|output| output.key == *key)
+                    else {
                         return Err(ArtifactCodecError::UnknownBindingTargetKey {
                             key: key.as_str().to_owned(),
                             input: false,
                         });
-                    }
+                    };
+                    check_target_component(&output.components, binding)?;
                 }
             }
             BindingTargetData::Internal => {}
         }
     }
     Ok(())
+}
+
+fn check_target_component(
+    components: &[super::super::model::InterfaceComponentData],
+    binding: &super::super::model::BindingData,
+) -> Result<(), ArtifactCodecError> {
+    let component = components
+        .iter()
+        .find(|component| component.role == binding.component_role)
+        .ok_or(ArtifactCodecError::UnknownBindingTargetComponent {
+            role: binding
+                .component_role
+                .map(tiler_ir::semantic::EncodedComponentRole::get),
+        })?;
+    if component.storage_scalar != binding.storage_scalar
+        || component.encoding != binding.encoding
+        || component.access_type != binding.access_type
+    {
+        return Err(ArtifactCodecError::BindingComponentMismatch);
+    }
+    Ok(())
+}
+
+fn check_binding_access(
+    binding: &super::super::model::BindingData,
+) -> Result<(), ArtifactCodecError> {
+    let compatible = match binding.encoding {
+        StorageEncoding::Unpacked => {
+            binding.access_type
+                == match binding.storage_scalar {
+                    StorageScalar::U8 => KernelType::U8,
+                    StorageScalar::F32 => KernelType::F32,
+                }
+        }
+        StorageEncoding::BitPacked(_) => {
+            binding.storage_scalar == StorageScalar::U8 && binding.access_type == KernelType::U8
+        }
+    };
+    if compatible {
+        Ok(())
+    } else {
+        Err(ArtifactCodecError::BindingAccessTypeMismatch)
+    }
 }
 
 /// Proves every carried payload maps each backend entry the artifact dispatches.

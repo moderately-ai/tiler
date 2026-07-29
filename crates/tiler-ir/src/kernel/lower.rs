@@ -28,7 +28,7 @@ use super::error::{KernelBuildError, KernelDiagnostic, KernelLoweringError};
 use super::handles::{KernelBufferId, KernelValueId};
 use super::model::{
     AddressSpace, BinaryOp, BufferAccess, BufferParameter, Builtin, CompareOp, ConvertOp,
-    KernelConstant, KernelData, KernelType, SerialLoopSpec, VerifiedKernel,
+    KernelConstant, KernelData, KernelType, PackedExtractOp, SerialLoopSpec, VerifiedKernel,
 };
 use super::verify::{access_elements, boundary_accesses};
 
@@ -63,6 +63,8 @@ enum ReadAddressing {
 #[derive(Clone, Debug)]
 struct CanonicalPlan<'a> {
     scalar: &'a ScalarProgram,
+    reads: &'a [Access],
+    write: &'a Access,
     numerical: NumericalRealization,
     read_tensor: TensorRole,
     write_tensor: TensorRole,
@@ -124,7 +126,8 @@ pub(super) fn derive_canonical(
 }
 
 fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnostic> {
-    let (read, write) = boundary_accesses(schedule)?;
+    let (reads, write) = boundary_accesses(schedule)?;
+    let read = reads.first().ok_or(KernelDiagnostic::ScheduleAccessCount)?;
     let contributors = match &schedule.schedule.reduction {
         ReductionTopology::None => 0,
         ReductionTopology::Serial { axes, .. } => {
@@ -133,6 +136,8 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
     };
     Ok(CanonicalPlan {
         scalar: &schedule.index.scalar_program,
+        reads,
+        write,
         numerical: schedule.index.numerical,
         read_tensor: read.tensor,
         write_tensor: write.tensor,
@@ -143,7 +148,14 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
         write_bounds: write.bounds,
         ownership: schedule.schedule.output_owner,
         contributors,
-        addressing: addressing(read)?,
+        addressing: if matches!(
+            &schedule.index.scalar_program,
+            ScalarProgram::StrictAffineU4Dequantize { .. }
+        ) {
+            ReadAddressing::Identity
+        } else {
+            addressing(read)?
+        },
     })
 }
 
@@ -151,6 +163,9 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
 fn addressing(read: &Access) -> Result<ReadAddressing, KernelDiagnostic> {
     match &read.map {
         LogicalAccess::LinearIdentity => Ok(ReadAddressing::Identity),
+        LogicalAccess::ScalarBroadcast | LogicalAccess::PackedU4LsbZeroTail { .. } => {
+            Err(KernelDiagnostic::BodyRefinement)
+        }
         LogicalAccess::ReductionContributor {
             input_shape, axes, ..
         } => {
@@ -239,8 +254,12 @@ fn emit(
     plan: &CanonicalPlan<'_>,
     requirements: ResourceRequirements,
 ) -> Result<(), KernelLoweringError> {
+    if matches!(plan.scalar, ScalarProgram::StrictAffineU4Dequantize { .. }) {
+        return emit_strict_affine_u4_dequantize(builder, plan, requirements);
+    }
     let read_buffer = builder.declare_buffer(BufferParameter {
         tensor: plan.read_tensor,
+        component_role: None,
         element_type: KernelType::F32,
         address_space: AddressSpace::Device,
         access: BufferAccess::Read,
@@ -248,6 +267,7 @@ fn emit(
     })?;
     let write_buffer = builder.declare_buffer(BufferParameter {
         tensor: plan.write_tensor,
+        component_role: None,
         element_type: KernelType::F32,
         address_space: AddressSpace::Device,
         access: BufferAccess::Write,
@@ -285,6 +305,9 @@ fn emit_guarded(
                 plan.ownership,
             )
         }
+        ScalarProgram::StrictAffineU4Dequantize { .. } => {
+            unreachable!("strict-affine lowering uses its role-addressed signature")
+        }
         ScalarProgram::StrictSerialSum {
             empty_identity_bits,
             ..
@@ -312,6 +335,79 @@ fn emit_guarded(
             Some((*scale_bits, *bias_bits)),
         ),
     }
+}
+
+fn emit_strict_affine_u4_dequantize(
+    builder: &mut KernelBuilder,
+    plan: &CanonicalPlan<'_>,
+    requirements: ResourceRequirements,
+) -> Result<(), KernelLoweringError> {
+    let [codes, scale, zero_point] = plan.reads else {
+        return Err(KernelLoweringError::UnsupportedRegion {
+            rule: "strict-affine-u4-access-count",
+        });
+    };
+    let codes_buffer = builder.declare_buffer(BufferParameter {
+        tensor: codes.tensor,
+        component_role: codes.component_role,
+        element_type: KernelType::U8,
+        address_space: AddressSpace::Device,
+        access: BufferAccess::Read,
+        element_count: plan.read_elements,
+    })?;
+    let scale_buffer = builder.declare_buffer(BufferParameter {
+        tensor: scale.tensor,
+        component_role: scale.component_role,
+        element_type: KernelType::F32,
+        address_space: AddressSpace::Device,
+        access: BufferAccess::Read,
+        element_count: 1,
+    })?;
+    let zero_buffer = builder.declare_buffer(BufferParameter {
+        tensor: zero_point.tensor,
+        component_role: zero_point.component_role,
+        element_type: KernelType::U8,
+        address_space: AddressSpace::Device,
+        access: BufferAccess::Read,
+        element_count: 1,
+    })?;
+    let output_buffer = builder.declare_buffer(BufferParameter {
+        tensor: plan.write.tensor,
+        component_role: plan.write.component_role,
+        element_type: KernelType::F32,
+        address_space: AddressSpace::Device,
+        access: BufferAccess::Write,
+        element_count: plan.write_elements,
+    })?;
+    builder.admit_builtin(Builtin::GlobalInvocationIndex)?;
+    builder.numerical(plan.numerical)?;
+    builder.requirements(requirements)?;
+
+    let invocation = builder.builtin(Builtin::GlobalInvocationIndex)?;
+    let extent = builder.constant(KernelConstant::Index(plan.work_items))?;
+    let active = builder.compare(CompareOp::IndexLessThan, invocation, extent)?;
+    builder.predicated(active, |builder| {
+        let two = builder.constant(KernelConstant::Index(2))?;
+        let carrier_index = builder.binary(BinaryOp::IndexDivide, invocation, two)?;
+        let carrier = builder.load(codes_buffer, carrier_index, codes.bounds)?;
+        let code = builder.packed_extract(PackedExtractOp::U4LsbZeroTail, carrier, invocation)?;
+        let zero_index = builder.constant(KernelConstant::Index(0))?;
+        let scale_value = builder.load(scale_buffer, zero_index, scale.bounds)?;
+        let zero = builder.load(zero_buffer, zero_index, zero_point.bounds)?;
+        let code = builder.convert(ConvertOp::U8ToI32, code)?;
+        let zero = builder.convert(ConvertOp::U8ToI32, zero)?;
+        let difference = builder.binary(BinaryOp::I32Subtract, code, zero)?;
+        let difference = builder.convert(ConvertOp::I32ToF32, difference)?;
+        let result = builder.binary(BinaryOp::F32Multiply, difference, scale_value)?;
+        builder.store(
+            output_buffer,
+            invocation,
+            result,
+            plan.write.bounds,
+            plan.ownership,
+        )
+    })?;
+    Ok(())
 }
 
 fn emit_pointwise(

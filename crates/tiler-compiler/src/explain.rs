@@ -3015,7 +3015,7 @@ mod tests {
                 //   cargo nextest run -p tiler-compiler -E \
                 //     'test(deterministic_trace_is_sealed_and_rendered_separately)'
                 // and read the `left` value the assertion reports.
-                "tiler-explain-v3 request=808d6f8acd62afee\n",
+                "tiler-explain-v3 request=1ef2b4a86acde919\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

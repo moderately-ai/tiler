@@ -472,6 +472,7 @@ mod tests {
             builder
                 .push_access(Access {
                     tensor,
+                    component_role: None,
                     mode,
                     map: LogicalAccess::LinearIdentity,
                     bounds: BoundsWitnessId::new(bounds),
@@ -482,6 +483,7 @@ mod tests {
                 .push_bounds_proof(BoundsProof {
                     id: BoundsWitnessId::new(bounds),
                     tensor,
+                    component_role: None,
                     kind: BoundsProofKind::LinearRange { element_count: 1 },
                 })
                 .expect("the bounds proof binds");

@@ -64,7 +64,8 @@ use std::fmt::Write as _;
 use tiler_ir::kernel::{
     AddressSpace, BarrierOrdering, BarrierSpec, BinaryOp, BlockRef, BufferAccess, Builtin,
     CompareOp, ConvertOp, ExecutionScope, KernelConstant, KernelType, MemoryScope, OperationRef,
-    OperationView, SerialLoopRef, VerifiedBufferId, VerifiedKernel, VerifiedValueId,
+    OperationView, PackedExtractOp, SerialLoopRef, VerifiedBufferId, VerifiedKernel,
+    VerifiedValueId,
 };
 use tiler_ir::schedule::{
     ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, NumericalRealization,
@@ -570,6 +571,8 @@ fn builtin_parameter(builtin: Builtin) -> Result<&'static str, MetalEmitError> {
 pub(crate) const fn msl_type(value_type: KernelType) -> &'static str {
     match value_type {
         KernelType::Bool => "bool",
+        KernelType::U8 => "uchar",
+        KernelType::I32 => "int",
         KernelType::Index => "ulong",
         KernelType::F32 => "float",
     }
@@ -806,6 +809,11 @@ impl KernelEmitter<'_> {
             OperationView::Binary { op, lhs, rhs } => self.emit_binary(op, lhs, rhs, &results),
             OperationView::Compare { op, lhs, rhs } => self.emit_compare(op, lhs, rhs, &results),
             OperationView::Convert { op, source } => self.emit_convert(op, source, &results),
+            OperationView::PackedExtract {
+                op,
+                carrier,
+                logical_index,
+            } => self.emit_packed_extract(op, carrier, logical_index, &results),
             OperationView::Load {
                 buffer,
                 offset,
@@ -945,6 +953,7 @@ impl KernelEmitter<'_> {
             BinaryOp::IndexMultiply => ("*", None),
             BinaryOp::IndexDivide => ("/", None),
             BinaryOp::IndexModulo => ("%", None),
+            BinaryOp::I32Subtract => ("-", None),
             BinaryOp::F32Add => ("+", Some(MetalFloatArithmeticType::F32)),
             BinaryOp::F32Multiply => ("*", Some(MetalFloatArithmeticType::F32)),
             _ => {
@@ -1061,6 +1070,7 @@ impl KernelEmitter<'_> {
                     .insert(MetalNumericalRequirement::SafeMathMode);
                 canonicalize_symbol(bits)
             }
+            ConvertOp::U8ToI32 | ConvertOp::I32ToF32 => msl_type(op.result_type()).to_owned(),
             _ => {
                 return Err(MetalEmitError::UnsupportedOperation {
                     family: MetalOperationFamily::Convert,
@@ -1071,6 +1081,30 @@ impl KernelEmitter<'_> {
         let value_type = self.value_type(*result)?;
         let name = self.bind(*result)?;
         self.line(&format!("{value_type} {name} = {call}({source});"));
+        Ok(())
+    }
+
+    /// Extracts one logical unsigned four-bit code from its byte carrier.
+    fn emit_packed_extract(
+        &mut self,
+        op: PackedExtractOp,
+        carrier: VerifiedValueId,
+        logical_index: VerifiedValueId,
+        results: &[VerifiedValueId],
+    ) -> Result<(), MetalEmitError> {
+        let [result] = results else {
+            return Err(arity("packed-extract-result"));
+        };
+        let expression = match op {
+            PackedExtractOp::U4LsbZeroTail => {
+                let carrier = self.name(carrier)?.to_owned();
+                let logical_index = self.name(logical_index)?.to_owned();
+                format!("uchar(({carrier} >> (({logical_index} & 1ul) * 4ul)) & 0x0fu)")
+            }
+        };
+        let value_type = self.value_type(*result)?;
+        let name = self.bind(*result)?;
+        self.line(&format!("{value_type} {name} = {expression};"));
         Ok(())
     }
 

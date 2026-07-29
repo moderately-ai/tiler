@@ -11,6 +11,7 @@ mod identity;
 mod interface;
 mod operation;
 mod program;
+mod quantization;
 mod registry;
 mod shape_evidence;
 mod standard_operations;
@@ -44,6 +45,15 @@ pub use operation::{
     add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
 };
 pub use program::{SemanticProgram, SemanticProgramBuilder};
+pub use quantization::{
+    ENCODED_NUMERIC_CODE_MAX, ENCODED_NUMERIC_CODE_MIN, ENCODED_NUMERIC_CODE_TYPE,
+    ENCODED_NUMERIC_COMPUTE_TYPE, ENCODED_NUMERIC_DECODE_EVALUATION,
+    ENCODED_NUMERIC_EXPRESSED_TYPE, ENCODED_NUMERIC_MATERIALIZATION, ENCODED_NUMERIC_NAN_BEHAVIOR,
+    ENCODED_NUMERIC_ROUNDING, ENCODED_NUMERIC_SATURATION, STRICT_AFFINE_CODES_ROLE,
+    STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE, StrictAffineU4, StrictAffineU8, U4,
+    U8, assemble_strict_affine_op, dequantize_strict_affine_op, quantize_strict_affine_op,
+    strict_affine_scheme,
+};
 pub(crate) use registry::canonical_f32_bits;
 pub use registry::{
     DefinitionValueSubject, F32, FrozenSemanticRegistry, NormativeDefinitionRef,
@@ -58,7 +68,8 @@ pub use shape_evidence::{SameShape, ShapePredicate, ShapeWitness, ShapedValue};
 pub use standard_operations::{F32Add, F32Constant, F32Multiply, StrictSerialF32Sum};
 pub use types::{
     AttributeFieldId, CanonicalField, CanonicalFloatBitsRef, CanonicalIntegerWidth,
-    CanonicalResolvedValueType, CanonicalValue, CanonicalValueView, EncodedNumericContract,
-    IdentityComponent, QuantSchemeKey, ResolvedValueType, TypeArguments, TypeIdentityError,
+    CanonicalResolvedValueType, CanonicalValue, CanonicalValueView, EncodedComponentDeclaration,
+    EncodedComponentRole, EncodedComponentShape, EncodedNumericContract, IdentityComponent,
+    ParameterIndexMap, QuantSchemeKey, ResolvedValueType, TypeArguments, TypeIdentityError,
     TypeKey,
 };

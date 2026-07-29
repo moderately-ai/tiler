@@ -6,6 +6,7 @@
 //! into an opaque [`VerifiedScheduledRegion`] after intrinsic verification.
 
 use crate::identity::{push_len, push_slice};
+use crate::semantic::EncodedComponentRole;
 use crate::shape::{Axis, Shape};
 
 use super::error::{ContributorError, ElementCountOverflow};
@@ -78,6 +79,16 @@ pub enum ContributorOrder {
 pub enum LogicalAccess {
     /// One iteration coordinate maps to one linear element position.
     LinearIdentity,
+    /// Every invocation reads the single scalar parameter element.
+    ScalarBroadcast,
+    /// One logical U4 position addresses an LSB-first nibble in a U8 carrier.
+    ///
+    /// An odd final logical element owns the low nibble of the last carrier;
+    /// the unused high nibble must be zero before dispatch.
+    PackedU4LsbZeroTail {
+        /// Number of logical U4 elements represented by the carriers.
+        logical_elements: u64,
+    },
     /// Each output coordinate reads a family of contributor coordinates.
     ReductionContributor {
         /// Shape of the reduced input.
@@ -96,6 +107,8 @@ pub enum LogicalAccess {
 pub struct Access {
     /// Boundary tensor role.
     pub tensor: TensorRole,
+    /// Semantic component role, or `None` for a dense value.
+    pub component_role: Option<EncodedComponentRole>,
     /// Whether the access reads or writes.
     pub mode: AccessMode,
     /// Logical coordinate map.
@@ -142,6 +155,8 @@ pub struct BoundsProof {
     pub id: BoundsWitnessId,
     /// Tensor the proof applies to.
     pub tensor: TensorRole,
+    /// Semantic component role, or `None` for a dense value.
+    pub component_role: Option<EncodedComponentRole>,
     /// Proven domain structure.
     pub kind: BoundsProofKind,
 }
@@ -191,6 +206,7 @@ pub struct OwnershipProof {
 /// fn is_reduction(program: &ScalarProgram) -> bool {
 ///     match program {
 ///         ScalarProgram::PointwiseF32(_) => false,
+///         ScalarProgram::StrictAffineU4Dequantize { .. } => false,
 ///         ScalarProgram::StrictSerialSum { .. }
 ///         | ScalarProgram::FusedMultiplyAddSerialSum { .. } => true,
 ///     }
@@ -207,6 +223,19 @@ pub struct OwnershipProof {
 pub enum ScalarProgram {
     /// An exact physical IEEE-754 binary32 pointwise expression.
     PointwiseF32(PointwiseF32Expression),
+    /// Strict per-tensor affine U4-to-F32 dequantization.
+    ///
+    /// Codes use packed U4 in LSB-first, zero-tail U8 carriers; scale is an
+    /// unpacked positive finite F32 scalar; zero point is an unpacked U8
+    /// carrier whose semantic value is in `0..=15`.
+    StrictAffineU4Dequantize {
+        /// Role of the logical-shape code component.
+        codes_role: EncodedComponentRole,
+        /// Role of the per-tensor F32 scale component.
+        scale_role: EncodedComponentRole,
+        /// Role of the per-tensor U4 zero-point component.
+        zero_point_role: EncodedComponentRole,
+    },
     /// A strict serial reduction sum.
     StrictSerialSum {
         /// Reduced axes in canonical ascending order.
@@ -587,11 +616,14 @@ pub(super) fn derive_requirements(region: &ScheduledRegion) -> ResourceRequireme
 
 const TAG_LINEAR_IDENTITY: u8 = 0x01;
 const TAG_REDUCTION_CONTRIBUTOR: u8 = 0x02;
+const TAG_SCALAR_BROADCAST: u8 = 0x03;
+const TAG_PACKED_U4_LSB_ZERO_TAIL: u8 = 0x04;
 const TAG_LINEAR_RANGE: u8 = 0x11;
 const TAG_REDUCTION_DOMAIN: u8 = 0x12;
 const TAG_SCALAR_SERIAL_SUM: u8 = 0x22;
 const TAG_SCALAR_FUSED_SUM: u8 = 0x23;
 const TAG_SCALAR_POINTWISE_F32: u8 = 0x24;
+const TAG_SCALAR_STRICT_AFFINE_U4_DEQUANTIZE: u8 = 0x25;
 const TAG_REDUCTION_NONE: u8 = 0x31;
 const TAG_REDUCTION_SERIAL: u8 = 0x32;
 
@@ -625,6 +657,11 @@ fn push_tensor_role(bytes: &mut Vec<u8>, role: TensorRole) {
 fn push_logical_access(bytes: &mut Vec<u8>, access: &LogicalAccess) {
     match access {
         LogicalAccess::LinearIdentity => bytes.push(TAG_LINEAR_IDENTITY),
+        LogicalAccess::ScalarBroadcast => bytes.push(TAG_SCALAR_BROADCAST),
+        LogicalAccess::PackedU4LsbZeroTail { logical_elements } => {
+            bytes.push(TAG_PACKED_U4_LSB_ZERO_TAIL);
+            bytes.extend_from_slice(&logical_elements.to_be_bytes());
+        }
         LogicalAccess::ReductionContributor {
             input_shape,
             output_shape,
@@ -721,6 +758,16 @@ fn push_scalar_program(bytes: &mut Vec<u8>, program: &ScalarProgram) {
             }
             push_slice(bytes, &expression.root().index().to_be_bytes());
         }
+        ScalarProgram::StrictAffineU4Dequantize {
+            codes_role,
+            scale_role,
+            zero_point_role,
+        } => {
+            bytes.push(TAG_SCALAR_STRICT_AFFINE_U4_DEQUANTIZE);
+            bytes.extend_from_slice(&codes_role.get().to_be_bytes());
+            bytes.extend_from_slice(&scale_role.get().to_be_bytes());
+            bytes.extend_from_slice(&zero_point_role.get().to_be_bytes());
+        }
         ScalarProgram::StrictSerialSum {
             axes,
             order,
@@ -790,6 +837,7 @@ fn push_pointwise_f32_node(bytes: &mut Vec<u8>, node: &PointwiseF32Node) {
 
 fn push_access(bytes: &mut Vec<u8>, access: &Access) {
     push_tensor_role(bytes, access.tensor);
+    push_component_role(bytes, access.component_role);
     bytes.push(match access.mode {
         AccessMode::Read => 0x01,
         AccessMode::Write => 0x02,
@@ -808,6 +856,7 @@ fn push_access(bytes: &mut Vec<u8>, access: &Access) {
 fn push_bounds_proof(bytes: &mut Vec<u8>, proof: &BoundsProof) {
     bytes.extend_from_slice(&proof.id.get().to_be_bytes());
     push_tensor_role(bytes, proof.tensor);
+    push_component_role(bytes, proof.component_role);
     match &proof.kind {
         BoundsProofKind::LinearRange { element_count } => {
             bytes.push(TAG_LINEAR_RANGE);
@@ -824,6 +873,16 @@ fn push_bounds_proof(bytes: &mut Vec<u8>, proof: &BoundsProof) {
             push_shape(bytes, output_shape);
             push_axes(bytes, axes);
             push_order(bytes, *order);
+        }
+    }
+}
+
+fn push_component_role(bytes: &mut Vec<u8>, role: Option<EncodedComponentRole>) {
+    match role {
+        None => bytes.push(0x00),
+        Some(role) => {
+            bytes.push(0x01);
+            bytes.extend_from_slice(&role.get().to_be_bytes());
         }
     }
 }
@@ -866,7 +925,7 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
 /// only site that omitted the terminator.
 pub(super) fn encode_identity(region: &ScheduledRegion) -> CanonicalScheduledRegionIdentity {
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"tiler.schedule.v1\0");
+    bytes.extend_from_slice(b"tiler.schedule.v2\0");
     push_shape(&mut bytes, &region.index.iteration_shape);
     push_len(&mut bytes, region.index.accesses.len());
     for access in &region.index.accesses {

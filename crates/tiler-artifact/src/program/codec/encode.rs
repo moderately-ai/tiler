@@ -14,7 +14,8 @@ use super::super::error::ArtifactDiagnostic;
 use super::super::expr::ExprNode;
 use super::super::model::{address_space_tag, buffer_access_tag};
 use super::super::model::{
-    element_type_tag, push_binding_target, push_numerical, push_resources, push_shape,
+    element_type_tag, push_binding_target, push_component_role, push_numerical, push_resources,
+    push_shape, push_storage_encoding, storage_scalar_tag,
 };
 use super::budget::check_budgets;
 use super::digest::{DIGEST_BYTES, Digest, DigestAlgorithm};
@@ -39,8 +40,11 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 /// with the `u32` capability revision, and to `5.0` when each ABI binding row
 /// gained the accessible offset placing its range inside the value it binds,
 /// and to `6.0` when the two numerical records gained permutation, signed-zero,
-/// NaN-assumption, and infinity-assumption fields.
-/// All five are deliberately **major** steps rather than the minor ones they
+/// NaN-assumption, and infinity-assumption fields, and to `7.0` when interface
+/// entries gained ordered logical components and binding rows gained component
+/// roles, physical storage scalars, complete storage encodings, and kernel
+/// access types.
+/// All six are deliberately **major** steps rather than the minor ones they
 /// might look like: the reader admits `minor <= implemented`, so a minor bump
 /// would have left it accepting an older manifest whose rows it can no longer
 /// parse. A field changed *or added* inside a fixed-width record is not
@@ -48,7 +52,7 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 /// `4.0` reader would consume the offset as the extent and lose framing for
 /// everything after it, while the `6.0` step appends fields inside each entry
 /// before its bindings — and the `4.0` step also moved a field's width.
-pub(super) const MANIFEST_SCHEMA: (u16, u16) = (6, 0);
+pub(super) const MANIFEST_SCHEMA: (u16, u16) = (7, 0);
 
 /// Versioned domain tag opening the canonical manifest bytes.
 pub(super) const MANIFEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.manifest.v1\0";
@@ -227,13 +231,13 @@ fn encode_manifest(
     for input in envelope.inputs() {
         push_slice(&mut bytes, input.key.as_str().as_bytes());
         push_shape(&mut bytes, &input.shape);
-        bytes.push(element_type_tag(input.element_type));
+        encode_interface_components(&mut bytes, input);
     }
     push_len(&mut bytes, envelope.outputs().len());
     for output in envelope.outputs() {
         push_slice(&mut bytes, output.key.as_str().as_bytes());
         push_shape(&mut bytes, &output.shape);
-        bytes.push(element_type_tag(output.element_type));
+        encode_interface_components(&mut bytes, output);
     }
 
     encode_provenance_tables(&mut bytes, envelope);
@@ -243,6 +247,28 @@ fn encode_manifest(
 
     push_slice(&mut bytes, identity.as_bytes());
     Ok(bytes)
+}
+
+fn encode_interface_components<K>(
+    bytes: &mut Vec<u8>,
+    entry: &super::super::model::InterfaceEntryData<K>,
+) {
+    push_slice(bytes, &entry.logical_type);
+    push_len(bytes, entry.components.len());
+    for component in &entry.components {
+        push_component_role(bytes, component.role);
+        push_shape(bytes, &component.shape);
+        match &component.resolved_type {
+            None => bytes.push(0),
+            Some(value_type) => {
+                bytes.push(1);
+                push_slice(bytes, value_type);
+            }
+        }
+        bytes.push(storage_scalar_tag(component.storage_scalar));
+        push_storage_encoding(bytes, component.encoding);
+        bytes.push(element_type_tag(component.access_type));
+    }
 }
 
 /// Derives one section's content digest over its purpose, schema, and bytes.
@@ -355,7 +381,10 @@ fn encode_entry(bytes: &mut Vec<u8>, entry: &EntryRow) {
     push_len(bytes, entry.bindings.len());
     for binding in &entry.bindings {
         bytes.push(binding.kind.tag());
-        bytes.push(element_type_tag(binding.element_type));
+        bytes.push(storage_scalar_tag(binding.storage_scalar));
+        bytes.push(element_type_tag(binding.access_type));
+        push_component_role(bytes, binding.component_role);
+        push_storage_encoding(bytes, binding.encoding);
         bytes.push(address_space_tag(binding.address_space));
         bytes.push(buffer_access_tag(binding.access));
         bytes.extend_from_slice(&binding.alignment.to_be_bytes());

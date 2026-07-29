@@ -247,6 +247,7 @@ pub(crate) fn pointwise_region(
             accesses: vec![
                 Access {
                     tensor: TensorRole::Input,
+                    component_role: None,
                     mode: AccessMode::Read,
                     map: LogicalAccess::LinearIdentity,
                     bounds: BoundsWitnessId::new(0),
@@ -254,6 +255,7 @@ pub(crate) fn pointwise_region(
                 },
                 Access {
                     tensor: write_tensor,
+                    component_role: None,
                     mode: AccessMode::Write,
                     map: LogicalAccess::LinearIdentity,
                     bounds: BoundsWitnessId::new(1),
@@ -264,6 +266,7 @@ pub(crate) fn pointwise_region(
                 BoundsProof {
                     id: BoundsWitnessId::new(0),
                     tensor: TensorRole::Input,
+                    component_role: None,
                     kind: BoundsProofKind::LinearRange {
                         element_count: elements,
                     },
@@ -271,6 +274,7 @@ pub(crate) fn pointwise_region(
                 BoundsProof {
                     id: BoundsWitnessId::new(1),
                     tensor: write_tensor,
+                    component_role: None,
                     kind: BoundsProofKind::LinearRange {
                         element_count: elements,
                     },
@@ -306,6 +310,7 @@ pub(crate) fn reduction_region(
             accesses: vec![
                 Access {
                     tensor: TensorRole::Intermediate,
+                    component_role: None,
                     mode: AccessMode::Read,
                     map: LogicalAccess::ReductionContributor {
                         input_shape: request.serial_sum().input_shape.clone(),
@@ -318,6 +323,7 @@ pub(crate) fn reduction_region(
                 },
                 Access {
                     tensor: TensorRole::Output,
+                    component_role: None,
                     mode: AccessMode::Write,
                     map: LogicalAccess::LinearIdentity,
                     bounds: BoundsWitnessId::new(3),
@@ -328,6 +334,7 @@ pub(crate) fn reduction_region(
                 BoundsProof {
                     id: BoundsWitnessId::new(2),
                     tensor: TensorRole::Intermediate,
+                    component_role: None,
                     kind: BoundsProofKind::ReductionDomain {
                         input_shape: request.serial_sum().input_shape.clone(),
                         output_shape: request.serial_sum().output_shape.clone(),
@@ -338,6 +345,7 @@ pub(crate) fn reduction_region(
                 BoundsProof {
                     id: BoundsWitnessId::new(3),
                     tensor: TensorRole::Output,
+                    component_role: None,
                     kind: BoundsProofKind::LinearRange {
                         element_count: request.serial_sum().output_elements,
                     },
@@ -390,6 +398,7 @@ pub(crate) fn fused_region(
             accesses: vec![
                 Access {
                     tensor: TensorRole::Input,
+                    component_role: None,
                     mode: AccessMode::Read,
                     map: LogicalAccess::ReductionContributor {
                         input_shape: request.serial_sum().input_shape.clone(),
@@ -402,6 +411,7 @@ pub(crate) fn fused_region(
                 },
                 Access {
                     tensor: TensorRole::Output,
+                    component_role: None,
                     mode: AccessMode::Write,
                     map: LogicalAccess::LinearIdentity,
                     bounds: BoundsWitnessId::new(1),
@@ -412,6 +422,7 @@ pub(crate) fn fused_region(
                 BoundsProof {
                     id: BoundsWitnessId::new(0),
                     tensor: TensorRole::Input,
+                    component_role: None,
                     kind: BoundsProofKind::ReductionDomain {
                         input_shape: request.serial_sum().input_shape.clone(),
                         output_shape: request.serial_sum().output_shape.clone(),
@@ -422,6 +433,7 @@ pub(crate) fn fused_region(
                 BoundsProof {
                     id: BoundsWitnessId::new(1),
                     tensor: TensorRole::Output,
+                    component_role: None,
                     kind: BoundsProofKind::LinearRange {
                         element_count: request.serial_sum().output_elements,
                     },
@@ -758,6 +770,7 @@ fn verify_region_subject_binding(
                         && *canonical_nan_bits
                             == subject.numerical_contract().canonical_arithmetic_nan_bits
                 }
+                ScalarProgram::StrictAffineU4Dequantize { .. } => false,
             }
         }
     };

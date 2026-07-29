@@ -11,10 +11,10 @@ use tiler_ir::kernel::{
     KernelType, MAX_KERNEL_IDENTITY_BYTES, VerifiedKernel, lower_scheduled_region,
 };
 use tiler_ir::program::{
-    AllocationOwnership, AllocationSpec, ByteWindow, KernelProgramBuilder, MaterializedOrigin,
-    MaterializedValueSpec, MemorySpace, RoutingCommitState, RoutingCommitTransition,
-    SemanticOccurrence, StageAccess, StageAccessMode, StageLaunch, ValueRole,
-    VerifiedKernelProgram, ViewId,
+    AllocationOwnership, AllocationSpec, ByteWindow, KernelProgramBuilder,
+    MaterializedComponentSpec, MaterializedOrigin, MaterializedValueSpec, MemorySpace,
+    RoutingCommitState, RoutingCommitTransition, SemanticOccurrence, StageAccess, StageAccessMode,
+    StageLaunch, StorageEncoding, StorageScalar, ValueRole, VerifiedKernelProgram, ViewId,
 };
 use tiler_ir::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
@@ -26,14 +26,16 @@ use tiler_ir::schedule::{
 use tiler_ir::semantic::{
     CanonicalIntegerWidth, CanonicalValue, CanonicalValueKind, CanonicalValueView, F32,
     F32_CONSTANT_BITS_ATTRIBUTE, F32Add, F32Constant, F32Multiply, InputKey,
-    NormativeDefinitionRef, OpKey, OperationArity, OperationAttributeSchema, OperationConformance,
-    OperationDefinition, OperationDefinitionFacts, OperationEffect, OperationInferenceError,
-    OperationInferenceOutputs, OperationInferenceRequest, OperationInferencer, OperationSchema,
-    OutputKey, ProviderDiagnosticCode, ProviderIdentity, REDUCTION_AXES_ATTRIBUTE, RegistryError,
-    SemanticProgram, SemanticProgramBuilder, SemanticRegistryBuilder, SemanticRegistryProvider,
-    SemanticRegistryRegistrar, StrictSerialF32Sum, TypeDefinitionFacts, TypeKey, ValueFact,
-    ValueTypeDefinition, ValueTypeDefinitionKey, add_f32_op, constant_f32_op, multiply_f32_op,
-    strict_serial_sum_f32_op,
+    NormativeDefinitionRef, OpKey, OperationArity, OperationAttributeSchema, OperationAttributes,
+    OperationConformance, OperationDefinition, OperationDefinitionFacts, OperationEffect,
+    OperationInferenceError, OperationInferenceOutputs, OperationInferenceRequest,
+    OperationInferencer, OperationSchema, OutputKey, ProviderDiagnosticCode, ProviderIdentity,
+    REDUCTION_AXES_ATTRIBUTE, RegistryError, STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE,
+    STRICT_AFFINE_ZERO_POINT_ROLE, SemanticProgram, SemanticProgramBuilder,
+    SemanticRegistryBuilder, SemanticRegistryProvider, SemanticRegistryRegistrar, StrictAffineU4,
+    StrictSerialF32Sum, TypeDefinitionFacts, TypeKey, ValueFact, ValueTypeDefinition,
+    ValueTypeDefinitionKey, add_f32_op, constant_f32_op, dequantize_strict_affine_op,
+    multiply_f32_op, strict_serial_sum_f32_op,
 };
 use tiler_ir::shape::{Axis, Shape};
 
@@ -42,8 +44,8 @@ use super::{
     AbiUnaryOp, AbiValue, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind,
     ArtifactExecutionPolicy, ArtifactKeyKind, ArtifactProgramBuilder, AvailabilityPhase,
     BackendEntryKey, BackendEntryRef, BackendKey, BackendPayloadDescriptor, BindingKind,
-    BindingSpec, CapabilityKey, CompilationEnvironment, DeferredPredicateSpec, EntrySpec,
-    FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec, PayloadDigest, PayloadId,
+    BindingSpec, BindingTarget, CapabilityKey, CompilationEnvironment, DeferredPredicateSpec,
+    EntrySpec, FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec, PayloadDigest, PayloadId,
     RepresentationKey, SchemaVersion, SelectedProvider, TargetProfileDescriptorDigest,
     TargetProfileKey, TargetProfileRef, TargetPropertyKey, VariantSpec, VerifiedArtifactProgram,
 };
@@ -242,7 +244,9 @@ fn dual_output_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
                 },
                 role: ValueRole::Input,
                 shape: input_shape(),
+                storage_scalar: StorageScalar::F32,
                 element_type: KernelType::F32,
+                encoding: StorageEncoding::Unpacked,
                 alignment: 4,
                 memory_space: MemorySpace::Device,
             },
@@ -255,7 +259,9 @@ fn dual_output_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
                 origin: MaterializedOrigin::Internal,
                 role: ValueRole::Output,
                 shape: output_shape(),
+                storage_scalar: StorageScalar::F32,
                 element_type: KernelType::F32,
+                encoding: StorageEncoding::Unpacked,
                 alignment: 4,
                 memory_space: MemorySpace::Device,
             },
@@ -287,6 +293,7 @@ pub(super) fn fused_kernel(scale_bits: u32) -> VerifiedKernel {
     region
         .push_access(Access {
             tensor: TensorRole::Input,
+            component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::ReductionContributor {
                 input_shape: input_shape(),
@@ -301,6 +308,7 @@ pub(super) fn fused_kernel(scale_bits: u32) -> VerifiedKernel {
     region
         .push_access(Access {
             tensor: TensorRole::Output,
+            component_role: None,
             mode: AccessMode::Write,
             map: LogicalAccess::LinearIdentity,
             bounds: BoundsWitnessId::new(1),
@@ -311,6 +319,7 @@ pub(super) fn fused_kernel(scale_bits: u32) -> VerifiedKernel {
         .push_bounds_proof(BoundsProof {
             id: BoundsWitnessId::new(0),
             tensor: TensorRole::Input,
+            component_role: None,
             kind: BoundsProofKind::ReductionDomain {
                 input_shape: input_shape(),
                 output_shape: output_shape(),
@@ -323,6 +332,7 @@ pub(super) fn fused_kernel(scale_bits: u32) -> VerifiedKernel {
         .push_bounds_proof(BoundsProof {
             id: BoundsWitnessId::new(1),
             tensor: TensorRole::Output,
+            component_role: None,
             kind: BoundsProofKind::LinearRange { element_count: 2 },
         })
         .unwrap();
@@ -396,7 +406,9 @@ pub(crate) fn fused_program(semantic: &SemanticProgram, scale_bits: u32) -> Veri
                 },
                 role: ValueRole::Input,
                 shape: input_shape(),
+                storage_scalar: StorageScalar::F32,
                 element_type: KernelType::F32,
+                encoding: StorageEncoding::Unpacked,
                 alignment: 4,
                 memory_space: MemorySpace::Device,
             },
@@ -409,7 +421,9 @@ pub(crate) fn fused_program(semantic: &SemanticProgram, scale_bits: u32) -> Veri
                 origin: MaterializedOrigin::Internal,
                 role: ValueRole::Output,
                 shape: output_shape(),
+                storage_scalar: StorageScalar::F32,
                 element_type: KernelType::F32,
+                encoding: StorageEncoding::Unpacked,
                 alignment: 4,
                 memory_space: MemorySpace::Device,
             },
@@ -471,6 +485,7 @@ fn pointwise_kernel() -> VerifiedKernel {
     region
         .push_access(Access {
             tensor: TensorRole::Input,
+            component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::LinearIdentity,
             bounds: BoundsWitnessId::new(0),
@@ -480,6 +495,7 @@ fn pointwise_kernel() -> VerifiedKernel {
     region
         .push_access(Access {
             tensor: TensorRole::Intermediate,
+            component_role: None,
             mode: AccessMode::Write,
             map: LogicalAccess::LinearIdentity,
             bounds: BoundsWitnessId::new(1),
@@ -491,6 +507,7 @@ fn pointwise_kernel() -> VerifiedKernel {
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(witness),
                 tensor,
+                component_role: None,
                 kind: BoundsProofKind::LinearRange {
                     element_count: elements,
                 },
@@ -542,6 +559,7 @@ fn reduction_kernel() -> VerifiedKernel {
     region
         .push_access(Access {
             tensor: TensorRole::Intermediate,
+            component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::ReductionContributor {
                 input_shape: input_shape(),
@@ -556,6 +574,7 @@ fn reduction_kernel() -> VerifiedKernel {
     region
         .push_access(Access {
             tensor: TensorRole::Output,
+            component_role: None,
             mode: AccessMode::Write,
             map: LogicalAccess::LinearIdentity,
             bounds: BoundsWitnessId::new(1),
@@ -566,6 +585,7 @@ fn reduction_kernel() -> VerifiedKernel {
         .push_bounds_proof(BoundsProof {
             id: BoundsWitnessId::new(0),
             tensor: TensorRole::Intermediate,
+            component_role: None,
             kind: BoundsProofKind::ReductionDomain {
                 input_shape: input_shape(),
                 output_shape: output_shape(),
@@ -578,6 +598,7 @@ fn reduction_kernel() -> VerifiedKernel {
         .push_bounds_proof(BoundsProof {
             id: BoundsWitnessId::new(1),
             tensor: TensorRole::Output,
+            component_role: None,
             kind: BoundsProofKind::LinearRange { element_count: 2 },
         })
         .unwrap();
@@ -721,7 +742,9 @@ fn wire_two_stage_storage(plan: &mut KernelProgramBuilder) -> TwoStageStorage {
         origin,
         role,
         shape,
+        storage_scalar: StorageScalar::F32,
         element_type: KernelType::F32,
+        encoding: StorageEncoding::Unpacked,
         alignment: 4,
         memory_space: MemorySpace::Device,
     };
@@ -849,6 +872,285 @@ pub(super) fn partial_window_program(semantic: &SemanticProgram) -> VerifiedKern
 }
 
 // -------------------------------------------------------------------------
+fn strict_affine_u4_dequantize_semantic() -> SemanticProgram {
+    let mut draft = SemanticProgramBuilder::try_standard().expect("standard registry");
+    let input = draft
+        .input_resolved(
+            InputKey::new("input").expect("input key"),
+            Shape::from_dims([5]),
+            StrictAffineU4::resolved_type(),
+        )
+        .expect("strict-affine input");
+    let output = draft
+        .apply(
+            dequantize_strict_affine_op(),
+            OperationAttributes::empty(),
+            &[input],
+        )
+        .expect("strict-affine dequantization")[0];
+    draft
+        .output_resolved(OutputKey::new("result").expect("output key"), output)
+        .expect("dense output");
+    draft.build().expect("verified semantic program")
+}
+
+fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
+    let logical_elements = 5;
+    let owner = OwnershipWitnessId::new(0);
+    let mut region = ScheduledRegionBuilder::new(RegionId::new(17));
+    region
+        .iteration_shape(Shape::from_dims([logical_elements]))
+        .expect("iteration shape");
+    for access in [
+        Access {
+            tensor: TensorRole::Input,
+            component_role: Some(STRICT_AFFINE_CODES_ROLE),
+            mode: AccessMode::Read,
+            map: LogicalAccess::PackedU4LsbZeroTail { logical_elements },
+            bounds: BoundsWitnessId::new(0),
+            ownership: None,
+        },
+        Access {
+            tensor: TensorRole::Input,
+            component_role: Some(STRICT_AFFINE_SCALE_ROLE),
+            mode: AccessMode::Read,
+            map: LogicalAccess::ScalarBroadcast,
+            bounds: BoundsWitnessId::new(1),
+            ownership: None,
+        },
+        Access {
+            tensor: TensorRole::Input,
+            component_role: Some(STRICT_AFFINE_ZERO_POINT_ROLE),
+            mode: AccessMode::Read,
+            map: LogicalAccess::ScalarBroadcast,
+            bounds: BoundsWitnessId::new(2),
+            ownership: None,
+        },
+        Access {
+            tensor: TensorRole::Output,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(3),
+            ownership: Some(owner),
+        },
+    ] {
+        region.push_access(access).expect("component access");
+    }
+    for (id, tensor, component_role, element_count) in [
+        (
+            0,
+            TensorRole::Input,
+            Some(STRICT_AFFINE_CODES_ROLE),
+            logical_elements.div_ceil(2),
+        ),
+        (1, TensorRole::Input, Some(STRICT_AFFINE_SCALE_ROLE), 1),
+        (2, TensorRole::Input, Some(STRICT_AFFINE_ZERO_POINT_ROLE), 1),
+        (3, TensorRole::Output, None, logical_elements),
+    ] {
+        region
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(id),
+                tensor,
+                component_role,
+                kind: BoundsProofKind::LinearRange { element_count },
+            })
+            .expect("component bounds");
+    }
+    region
+        .ownership_proof(OwnershipProof {
+            id: owner,
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                output_count: logical_elements,
+            },
+        })
+        .expect("output ownership");
+    region
+        .scalar_program(ScalarProgram::StrictAffineU4Dequantize {
+            codes_role: STRICT_AFFINE_CODES_ROLE,
+            scale_role: STRICT_AFFINE_SCALE_ROLE,
+            zero_point_role: STRICT_AFFINE_ZERO_POINT_ROLE,
+        })
+        .expect("strict-affine scalar program");
+    region.numerical(strict()).expect("numerical contract");
+    region
+        .schedule(KernelSchedule {
+            binding: ExecutionBinding::GlobalLinearInvocation,
+            work_items: logical_elements,
+            threads_per_workgroup: 1,
+            tail: TailPolicy::Exact,
+            output_owner: owner,
+            reduction: ReductionTopology::None,
+            launch: LaunchPlan {
+                grid_threads: logical_elements,
+                threads_per_workgroup: 1,
+                zero_work_skips_dispatch: true,
+            },
+        })
+        .expect("strict-affine schedule");
+    lower_scheduled_region(&region.build().expect("verified schedule"))
+        .expect("verified strict-affine kernel")
+}
+
+fn strict_affine_u4_dequantize_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
+    let kernel = strict_affine_u4_dequantize_kernel();
+    let mut plan = KernelProgramBuilder::new(semantic).expect("program builder");
+    let mut component = |role, shape, storage_scalar, element_type, encoding, bytes, alignment| {
+        let allocation = plan
+            .push_allocation(AllocationSpec {
+                capacity_bytes: bytes,
+                alignment,
+                memory_space: MemorySpace::Device,
+                ownership: AllocationOwnership::External,
+            })
+            .expect("component allocation");
+        let value = plan
+            .push_component_value(
+                MaterializedComponentSpec {
+                    origin: MaterializedOrigin::ProgramInput {
+                        key: InputKey::new("input").expect("input key"),
+                    },
+                    role: ValueRole::Input,
+                    component_role: role,
+                    shape,
+                    storage_scalar,
+                    element_type,
+                    encoding,
+                    alignment,
+                    memory_space: MemorySpace::Device,
+                },
+                allocation,
+            )
+            .expect("materialized component");
+        plan.push_whole_view(value).expect("component view")
+    };
+    let codes = component(
+        STRICT_AFFINE_CODES_ROLE,
+        Shape::from_dims([5]),
+        StorageScalar::U8,
+        KernelType::U8,
+        StorageEncoding::PACKED_U4_LSB_ZERO_TAIL,
+        3,
+        1,
+    );
+    let scale = component(
+        STRICT_AFFINE_SCALE_ROLE,
+        Shape::new([]),
+        StorageScalar::F32,
+        KernelType::F32,
+        StorageEncoding::Unpacked,
+        4,
+        4,
+    );
+    let zero_point = component(
+        STRICT_AFFINE_ZERO_POINT_ROLE,
+        Shape::new([]),
+        StorageScalar::U8,
+        KernelType::U8,
+        StorageEncoding::Unpacked,
+        1,
+        1,
+    );
+    let output_allocation = plan
+        .push_allocation(AllocationSpec {
+            capacity_bytes: 20,
+            alignment: 4,
+            memory_space: MemorySpace::Device,
+            ownership: AllocationOwnership::Program,
+        })
+        .expect("output allocation");
+    let output_value = plan
+        .push_value(
+            MaterializedValueSpec {
+                origin: MaterializedOrigin::Internal,
+                role: ValueRole::Output,
+                shape: Shape::from_dims([5]),
+                storage_scalar: StorageScalar::F32,
+                element_type: KernelType::F32,
+                encoding: StorageEncoding::Unpacked,
+                alignment: 4,
+                memory_space: MemorySpace::Device,
+            },
+            output_allocation,
+        )
+        .expect("dense output");
+    let output = plan.push_whole_view(output_value).expect("output view");
+    let mut literal = |value| {
+        plan.push_abi_root(AbiRoot::UnsignedLiteral(value))
+            .expect("ABI literal")
+    };
+    let codes_bytes = literal(3);
+    let scale_bytes = literal(4);
+    let zero_point_bytes = literal(1);
+    let output_bytes = literal(20);
+    let grid_threads = literal(5);
+    let threads_per_workgroup = literal(1);
+    let guard = plan
+        .push_abi_root(AbiRoot::BooleanLiteral(true))
+        .expect("applicability guard");
+    plan.applicability_guard(guard)
+        .expect("applicability guard");
+    plan.push_stage(
+        &kernel,
+        &[SemanticOccurrence::new(0)],
+        &[
+            StageAccess {
+                view: codes,
+                mode: StageAccessMode::Read,
+                accessible_bytes: codes_bytes,
+            },
+            StageAccess {
+                view: scale,
+                mode: StageAccessMode::Read,
+                accessible_bytes: scale_bytes,
+            },
+            StageAccess {
+                view: zero_point,
+                mode: StageAccessMode::Read,
+                accessible_bytes: zero_point_bytes,
+            },
+            StageAccess {
+                view: output,
+                mode: StageAccessMode::Write,
+                accessible_bytes: output_bytes,
+            },
+        ],
+        StageLaunch {
+            grid_threads,
+            threads_per_workgroup,
+        },
+    )
+    .expect("strict-affine stage");
+    plan.push_output(OutputKey::new("result").expect("output key"), output_value)
+        .expect("published output");
+    for (from, to, fallback_permitted) in [
+        (
+            RoutingCommitState::Preflight,
+            RoutingCommitState::Committed,
+            true,
+        ),
+        (
+            RoutingCommitState::Committed,
+            RoutingCommitState::Executing,
+            false,
+        ),
+        (
+            RoutingCommitState::Executing,
+            RoutingCommitState::Published,
+            false,
+        ),
+    ] {
+        plan.push_routing_commit_transition(RoutingCommitTransition {
+            from,
+            to,
+            fallback_permitted,
+        })
+        .expect("routing transition");
+    }
+    plan.build().expect("verified strict-affine program")
+}
+
 // Artifact fixtures
 // -------------------------------------------------------------------------
 
@@ -891,6 +1193,61 @@ pub(super) fn rules() -> FeasibilityRuleSetRef {
         key: FeasibilityRuleSetKey::new("tiler.test.feasibility").unwrap(),
         revision: 1,
     }
+}
+
+pub(crate) fn strict_affine_u4_dequantize_artifact() -> VerifiedArtifactProgram {
+    let semantic = strict_affine_u4_dequantize_semantic();
+    let program = strict_affine_u4_dequantize_program(&semantic);
+    let provider =
+        ProviderIdentity::new("tiler-test", "strict-affine-u4-dequantize", 1).expect("provider");
+    let environment = CompilationEnvironment::new([provider.clone()]).expect("environment");
+    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).expect("artifact builder");
+    draft
+        .select_provider(SelectedProvider {
+            provider,
+            capability: CapabilityKey::new("tiler.capability.strict-affine-u4-dequantize")
+                .expect("capability"),
+            capability_revision: 1,
+        })
+        .expect("selected provider");
+    let payload = draft
+        .push_payload(BackendPayloadDescriptor {
+            backend: BackendKey::new("tiler.test.target-neutral").expect("backend"),
+            representation: RepresentationKey::new("structural-kir-record")
+                .expect("representation"),
+            payload_schema: SchemaVersion::new(1, 0),
+            digest: PayloadDigest::from_bytes([0xd4, 0x04]).expect("payload digest"),
+            compatibility: profile(),
+            execution_policy: ArtifactExecutionPolicy::RequiresDeviceTranslation,
+        })
+        .expect("payload");
+    draft
+        .push_variant(
+            &program,
+            VariantSpec {
+                target_profile: profile(),
+                feasibility_rules: rules(),
+                deferred_predicates: Vec::new(),
+                entries: vec![EntrySpec {
+                    bindings: (0..4)
+                        .map(|_| BindingSpec {
+                            kind: BindingKind::Buffer,
+                        })
+                        .collect(),
+                    launch: LaunchSpec {
+                        zero_work_skips_dispatch: true,
+                        preconditions: Vec::new(),
+                    },
+                    implementation: BackendEntryRef {
+                        payload,
+                        entry_key: BackendEntryKey::from_bytes(b"strict-affine-u4-dequantize")
+                            .expect("entry key"),
+                    },
+                }],
+            },
+        )
+        .expect("strict-affine variant");
+    draft.build().expect("verified strict-affine artifact")
 }
 
 /// The expression handles every fixture variant is assembled from.
@@ -1033,10 +1390,107 @@ fn builds_a_verified_single_variant_artifact() {
     let input = artifact.inputs().next().expect("one declared input");
     assert_eq!(input.key().as_str(), "input");
     assert_eq!(input.shape(), &input_shape());
-    assert_eq!(input.element_type(), KernelType::F32);
+    assert_eq!(
+        input
+            .components()
+            .next()
+            .expect("one dense component")
+            .access_type(),
+        KernelType::F32
+    );
+    assert_eq!(
+        input
+            .components()
+            .next()
+            .expect("one dense component")
+            .storage_scalar(),
+        StorageScalar::F32
+    );
     let output = artifact.outputs().next().expect("one declared output");
     assert_eq!(output.key().as_str(), "result");
     assert_eq!(output.shape(), &output_shape());
+}
+
+#[test]
+fn strict_affine_components_survive_the_builder_derived_artifact_boundary() {
+    let artifact = strict_affine_u4_dequantize_artifact();
+    assert_ne!(
+        artifact.canonical_identity(),
+        default_artifact().canonical_identity()
+    );
+    let input = artifact.inputs().next().expect("strict-affine input");
+    assert!(!input.resolved_type_encoding().is_empty());
+    let components: Vec<_> = input.components().collect();
+    assert_eq!(
+        components
+            .iter()
+            .map(|component| component.role())
+            .collect::<Vec<_>>(),
+        [
+            Some(STRICT_AFFINE_CODES_ROLE),
+            Some(STRICT_AFFINE_SCALE_ROLE),
+            Some(STRICT_AFFINE_ZERO_POINT_ROLE),
+        ]
+    );
+    assert_eq!(
+        components
+            .iter()
+            .map(|component| (
+                component.storage_scalar(),
+                component.storage_encoding(),
+                component.access_type(),
+            ))
+            .collect::<Vec<_>>(),
+        [
+            (
+                StorageScalar::U8,
+                StorageEncoding::PACKED_U4_LSB_ZERO_TAIL,
+                KernelType::U8,
+            ),
+            (
+                StorageScalar::F32,
+                StorageEncoding::Unpacked,
+                KernelType::F32,
+            ),
+            (StorageScalar::U8, StorageEncoding::Unpacked, KernelType::U8,),
+        ]
+    );
+    let entry = artifact
+        .variants()
+        .next()
+        .expect("one variant")
+        .entries()
+        .next()
+        .expect("one entry");
+    let bindings: Vec<_> = entry.bindings().collect();
+    assert_eq!(
+        bindings
+            .iter()
+            .map(|binding| binding.component_role())
+            .collect::<Vec<_>>(),
+        [
+            Some(STRICT_AFFINE_CODES_ROLE),
+            Some(STRICT_AFFINE_SCALE_ROLE),
+            Some(STRICT_AFFINE_ZERO_POINT_ROLE),
+            None,
+        ]
+    );
+    assert_eq!(
+        bindings
+            .iter()
+            .map(|binding| binding.window().length)
+            .collect::<Vec<_>>(),
+        [3, 4, 1, 20]
+    );
+    let input_key = InputKey::new("input").expect("input key");
+    let output_key = OutputKey::new("result").expect("output key");
+    for binding in &bindings[..3] {
+        assert_eq!(binding.target(), BindingTarget::ProgramInput(&input_key));
+    }
+    assert_eq!(
+        bindings[3].target(),
+        BindingTarget::ProgramOutput(std::slice::from_ref(&output_key))
+    );
 }
 
 #[test]
@@ -1060,7 +1514,8 @@ fn an_entry_reads_its_plan_through_the_shared_ir_alone() {
     assert_eq!(bindings.len(), 2);
     assert_eq!(bindings[0].slot(), 0);
     assert_eq!(bindings[0].kind(), BindingKind::Buffer);
-    assert_eq!(bindings[0].element_type(), KernelType::F32);
+    assert_eq!(bindings[0].access_type(), KernelType::F32);
+    assert_eq!(bindings[0].storage_scalar(), StorageScalar::F32);
     assert_eq!(bindings[0].value_role(), ValueRole::Input);
     assert_eq!(bindings[0].alignment(), 4);
     assert_eq!(bindings[0].window().length, 24);

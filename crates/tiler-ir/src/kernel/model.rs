@@ -19,6 +19,7 @@ use crate::schedule::{
     NumericalPermission, NumericalRealization, RegionId, ResourceRequirements, SubnormalMode,
     TensorRole, ValueDomainProvenance,
 };
+use crate::semantic::EncodedComponentRole;
 
 use super::MAX_KERNEL_IDENTITY_BYTES;
 
@@ -26,7 +27,15 @@ use super::MAX_KERNEL_IDENTITY_BYTES;
 ///
 /// Named so [`encode_identity`] and [`identity_encoded_len`] measure the same
 /// bytes rather than agreeing on a literal by inspection.
-const KERNEL_DOMAIN: &[u8] = b"tiler.kernel.v1\0";
+///
+/// `v2` appended the unsigned-byte access/SSA type. `v3` additionally binds
+/// semantic component roles to buffer parameters and admits the signed-I32
+/// arithmetic, explicit conversions, and packed-U4 extraction required by the
+/// strict-affine dequantization proof. Existing type and operation tags retain
+/// their earlier values and new variants receive appended tags. These facts
+/// change what a verified kernel means, so each widening advances the domain
+/// rather than letting an earlier reader interpret the kernel incompletely.
+const KERNEL_DOMAIN: &[u8] = b"tiler.kernel.v3\0";
 
 /// The width [`push_len`] frames a length in, as ADR 0074 fixes it.
 const LENGTH_BYTES: usize = size_of::<u64>();
@@ -36,8 +45,9 @@ use super::handles::{VerifiedBufferId, VerifiedKernelOwner, VerifiedValueId};
 /// The resolved type of one structured-kernel SSA value.
 ///
 /// The bounded profile resolves exactly the roles the scheduled-region IR can
-/// require: a control predicate, an unsigned 64-bit index role used for element
-/// offsets and induction variables, and the `f32` element type. Widening this
+/// require: a control predicate, an unsigned byte carrier, an unsigned 64-bit
+/// index role used for element offsets and induction variables, and the `f32`
+/// element type. Widening this
 /// vocabulary is a versioned extension, not an open type universe.
 ///
 /// **Deliberately not `#[non_exhaustive]`, and this one is mandatory rather
@@ -54,10 +64,16 @@ use super::handles::{VerifiedBufferId, VerifiedKernelOwner, VerifiedValueId};
 pub enum KernelType {
     /// A one-bit control predicate.
     Bool,
+    /// An unsigned eight-bit storage carrier.
+    ///
+    /// This is a kernel access and SSA type, not a semantic `u8` tensor type.
+    U8,
     /// An unsigned 64-bit index-role integer.
     Index,
     /// An IEEE-754 binary32 value.
     F32,
+    /// A signed 32-bit integer computation value.
+    I32,
 }
 
 impl KernelType {
@@ -66,6 +82,8 @@ impl KernelType {
             Self::Bool => 0x01,
             Self::Index => 0x02,
             Self::F32 => 0x03,
+            Self::U8 => 0x04,
+            Self::I32 => 0x05,
         }
     }
 }
@@ -132,6 +150,8 @@ impl BufferAccess {
 pub struct BufferParameter {
     /// Scheduled boundary tensor this parameter binds.
     pub tensor: TensorRole,
+    /// Semantic component role, or `None` for a dense value.
+    pub component_role: Option<EncodedComponentRole>,
     /// Element type stored in the buffer.
     pub element_type: KernelType,
     /// Governed address space of the buffer.
@@ -222,6 +242,8 @@ pub enum BinaryOp {
     F32Add,
     /// IEEE-754 binary32 multiplication.
     F32Multiply,
+    /// Exact signed 32-bit subtraction.
+    I32Subtract,
 }
 
 impl BinaryOp {
@@ -233,6 +255,7 @@ impl BinaryOp {
             Self::IndexModulo => 0x04,
             Self::F32Add => 0x05,
             Self::F32Multiply => 0x06,
+            Self::I32Subtract => 0x07,
         }
     }
 
@@ -244,6 +267,7 @@ impl BinaryOp {
                 KernelType::Index
             }
             Self::F32Add | Self::F32Multiply => KernelType::F32,
+            Self::I32Subtract => KernelType::I32,
         }
     }
 
@@ -307,12 +331,18 @@ pub enum ConvertOp {
     /// [`NumericalRealization::canonical_arithmetic_nan_bits`]; the operation
     /// deliberately does not carry a second copy of it.
     CanonicalizeF32Nan,
+    /// Exactly widens an unsigned byte into signed I32.
+    U8ToI32,
+    /// Exactly converts an I32 in `-255..=255` into F32.
+    I32ToF32,
 }
 
 impl ConvertOp {
     const fn tag(self) -> u8 {
         match self {
             Self::CanonicalizeF32Nan => 0x01,
+            Self::U8ToI32 => 0x02,
+            Self::I32ToF32 => 0x03,
         }
     }
 
@@ -321,6 +351,8 @@ impl ConvertOp {
     pub const fn source_type(self) -> KernelType {
         match self {
             Self::CanonicalizeF32Nan => KernelType::F32,
+            Self::U8ToI32 => KernelType::U8,
+            Self::I32ToF32 => KernelType::I32,
         }
     }
 
@@ -328,7 +360,48 @@ impl ConvertOp {
     #[must_use]
     pub const fn result_type(self) -> KernelType {
         match self {
-            Self::CanonicalizeF32Nan => KernelType::F32,
+            Self::U8ToI32 => KernelType::I32,
+            Self::CanonicalizeF32Nan | Self::I32ToF32 => KernelType::F32,
+        }
+    }
+}
+
+/// Exact extraction from one governed packed byte encoding.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum PackedExtractOp {
+    /// Selects the low nibble for an even logical index and the high nibble for
+    /// an odd index under LSB-first U4 packing with a canonical zero tail.
+    U4LsbZeroTail,
+}
+
+impl PackedExtractOp {
+    const fn tag(self) -> u8 {
+        match self {
+            Self::U4LsbZeroTail => 0x01,
+        }
+    }
+
+    /// Returns the carrier input type.
+    #[must_use]
+    pub const fn carrier_type(self) -> KernelType {
+        match self {
+            Self::U4LsbZeroTail => KernelType::U8,
+        }
+    }
+
+    /// Returns the logical-index input type.
+    #[must_use]
+    pub const fn index_type(self) -> KernelType {
+        match self {
+            Self::U4LsbZeroTail => KernelType::Index,
+        }
+    }
+
+    /// Returns the unpacked code type.
+    #[must_use]
+    pub const fn result_type(self) -> KernelType {
+        match self {
+            Self::U4LsbZeroTail => KernelType::U8,
         }
     }
 }
@@ -452,6 +525,11 @@ pub(super) enum OperationKind {
     Convert {
         op: ConvertOp,
         source: u32,
+    },
+    PackedExtract {
+        op: PackedExtractOp,
+        carrier: u32,
+        logical_index: u32,
     },
     Load {
         buffer: u32,
@@ -764,6 +842,15 @@ impl<'a> OperationRef<'a> {
                 op: *op,
                 source: kernel.value_id(*source),
             },
+            OperationKind::PackedExtract {
+                op,
+                carrier,
+                logical_index,
+            } => OperationView::PackedExtract {
+                op: *op,
+                carrier: kernel.value_id(*carrier),
+                logical_index: kernel.value_id(*logical_index),
+            },
             OperationKind::Load {
                 buffer,
                 offset,
@@ -854,6 +941,15 @@ pub enum OperationView<'a> {
         op: ConvertOp,
         /// Converted source value.
         source: VerifiedValueId,
+    },
+    /// Extracts one logical packed value from its loaded carrier byte.
+    PackedExtract {
+        /// Exact governed packing rule.
+        op: PackedExtractOp,
+        /// Loaded carrier byte.
+        carrier: VerifiedValueId,
+        /// Logical element index selecting the nibble.
+        logical_index: VerifiedValueId,
     },
     /// Loads one element under schedule-derived bounds evidence.
     Load {
@@ -1044,10 +1140,21 @@ fn push_requirements(bytes: &mut Vec<u8>, requirements: &ResourceRequirements) {
 
 fn push_buffer(bytes: &mut Vec<u8>, buffer: &BufferParameter) {
     push_tensor_role(bytes, buffer.tensor);
+    push_component_role(bytes, buffer.component_role);
     bytes.push(buffer.element_type.tag());
     bytes.push(buffer.address_space.tag());
     bytes.push(buffer.access.tag());
     bytes.extend_from_slice(&buffer.element_count.to_be_bytes());
+}
+
+fn push_component_role(bytes: &mut Vec<u8>, role: Option<EncodedComponentRole>) {
+    match role {
+        None => bytes.push(0x00),
+        Some(role) => {
+            bytes.push(0x01);
+            bytes.extend_from_slice(&role.get().to_be_bytes());
+        }
+    }
 }
 
 fn push_constant(bytes: &mut Vec<u8>, value: KernelConstant) {
@@ -1110,6 +1217,16 @@ fn push_operation(bytes: &mut Vec<u8>, data: &KernelData, operation: &OperationD
             bytes.push(0x15);
             bytes.push(op.tag());
             bytes.extend_from_slice(&source.to_be_bytes());
+        }
+        OperationKind::PackedExtract {
+            op,
+            carrier,
+            logical_index,
+        } => {
+            bytes.push(0x1b);
+            bytes.push(op.tag());
+            bytes.extend_from_slice(&carrier.to_be_bytes());
+            bytes.extend_from_slice(&logical_index.to_be_bytes());
         }
         OperationKind::Load {
             buffer,
@@ -1252,9 +1369,16 @@ fn identity_encoded_len(
         .saturating_add(block_encoded_len(data, 0))
 }
 
-/// Mirrors [`push_buffer`]: four tag bytes and the element count.
+/// Mirrors [`push_buffer`]: tensor, optional role, three tags, and element count.
 fn buffer_encoded_len(buffer: &BufferParameter) -> usize {
-    4_usize.saturating_add(size_of_val(&buffer.element_count))
+    let component = if buffer.component_role.is_some() {
+        5
+    } else {
+        1
+    };
+    4_usize
+        .saturating_add(component)
+        .saturating_add(size_of_val(&buffer.element_count))
 }
 
 /// Mirrors [`push_numerical`].
@@ -1343,6 +1467,13 @@ fn operation_encoded_len(data: &KernelData, operation: &OperationData) -> usize 
             .saturating_add(size_of_val(lhs))
             .saturating_add(size_of_val(rhs)),
         OperationKind::Convert { source, .. } => 1_usize.saturating_add(size_of_val(source)),
+        OperationKind::PackedExtract {
+            carrier,
+            logical_index,
+            ..
+        } => 1_usize
+            .saturating_add(size_of_val(carrier))
+            .saturating_add(size_of_val(logical_index)),
         OperationKind::Load {
             buffer,
             offset,

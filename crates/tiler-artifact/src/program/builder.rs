@@ -25,7 +25,7 @@ use tiler_ir::program::{
 };
 use tiler_ir::schedule::NumericalRealization;
 use tiler_ir::semantic::{
-    InputKey, OutputKey, ProviderIdentity, SemanticIdentity, SemanticProgram,
+    InputKey, OutputKey, ProviderIdentity, ResolvedValueType, SemanticIdentity, SemanticProgram,
 };
 use tiler_ir::shape::Shape;
 
@@ -47,8 +47,9 @@ use super::keys::{BackendKey, FeasibilityRuleSetRef, RepresentationKey, TargetPr
 use super::model::{
     ArtifactExecutionPolicy, ArtifactProgramData, ArtifactSchema, BackendEntryRef,
     BackendPayloadDescriptor, BindingData, BindingKind, BindingTargetData, DeferredPredicateData,
-    EntryData, InterfaceEntryData, LaunchData, RoutingPolicy, SchemaVersion, SelectedProvider,
-    StoredBackendEntry, VariantData, VerifiedArtifactProgram, encode_identity,
+    EntryData, InterfaceComponentData, InterfaceEntryData, LaunchData, RoutingPolicy,
+    SchemaVersion, SelectedProvider, StoredBackendEntry, VariantData, VerifiedArtifactProgram,
+    encode_identity,
 };
 use super::{
     MAX_ABI_EXPRESSIONS, MAX_ARTIFACT_PAYLOADS, MAX_ARTIFACT_VARIANTS, MAX_DEFERRED_PREDICATES,
@@ -110,8 +111,8 @@ impl CompilationEnvironment {
 /// The unforgeable ordered semantic interface every packaged variant realizes.
 #[derive(Clone, Debug)]
 struct SemanticInterface {
-    inputs: Vec<(InputKey, Shape)>,
-    outputs: Vec<(OutputKey, Shape)>,
+    inputs: Vec<(InputKey, Shape, ResolvedValueType)>,
+    outputs: Vec<(OutputKey, Shape, ResolvedValueType)>,
 }
 
 /// The portfolio-wide facts the first packaged variant establishes.
@@ -999,7 +1000,10 @@ impl ArtifactProgramBuilder {
             }
             resolved.push(BindingData {
                 kind: binding.kind,
-                element_type: buffer.element_type,
+                storage_scalar: value.storage_scalar(),
+                access_type: buffer.element_type,
+                component_role: value.component_role(),
+                encoding: value.storage_encoding(),
                 address_space: buffer.address_space,
                 access: buffer.access,
                 alignment: value.alignment(),
@@ -1192,7 +1196,12 @@ fn read_semantic_interface(semantic: &SemanticProgram) -> SemanticInterface {
                 .shape(input.value())
                 .expect("a verified program resolves its own input value")
                 .clone();
-            (input.key().clone(), shape)
+            let value_type = semantic
+                .value(input.value())
+                .expect("a verified program resolves its own input value")
+                .resolved_type()
+                .clone();
+            (input.key().clone(), shape, value_type)
         })
         .collect();
     let outputs = semantic
@@ -1202,7 +1211,12 @@ fn read_semantic_interface(semantic: &SemanticProgram) -> SemanticInterface {
                 .shape(output.value())
                 .expect("a verified program resolves its own output value")
                 .clone();
-            (output.key().clone(), shape)
+            let value_type = semantic
+                .value(output.value())
+                .expect("a verified program resolves its own output value")
+                .resolved_type()
+                .clone();
+            (output.key().clone(), shape, value_type)
         })
         .collect();
     SemanticInterface { inputs, outputs }
@@ -1229,39 +1243,72 @@ fn project_interface(
     ArtifactBuildError,
 > {
     let mut inputs = Vec::with_capacity(interface.inputs.len());
-    for (key, shape) in &interface.inputs {
-        let value = program
+    for (key, shape, value_type) in &interface.inputs {
+        let values: Vec<_> = program
             .values()
-            .find(|value| match value.origin() {
+            .filter(|value| match value.origin() {
                 MaterializedOrigin::ProgramInput { key: bound } => bound == key,
                 MaterializedOrigin::Internal => false,
             })
-            .ok_or(ArtifactBuildError::InterfaceMismatch)?;
-        if value.shape() != shape {
-            return Err(ArtifactBuildError::InterfaceMismatch);
-        }
+            .collect();
+        let components = project_components(value_type, &values)?;
         inputs.push(InterfaceEntryData {
             key: key.clone(),
             shape: shape.clone(),
-            element_type: value.element_type(),
+            logical_type: value_type.canonical_encoding().as_bytes().to_vec(),
+            components,
         });
     }
     let mut outputs = Vec::with_capacity(interface.outputs.len());
-    for (key, shape) in &interface.outputs {
-        let published = program
+    for (key, shape, value_type) in &interface.outputs {
+        let values: Vec<_> = program
             .outputs()
-            .find(|output| output.key() == key)
-            .ok_or(ArtifactBuildError::InterfaceMismatch)?;
-        if published.value().shape() != shape {
-            return Err(ArtifactBuildError::InterfaceMismatch);
-        }
+            .filter(|output| output.key() == key)
+            .map(tiler_ir::program::ProgramOutputRef::value)
+            .collect();
+        let components = project_components(value_type, &values)?;
         outputs.push(InterfaceEntryData {
             key: key.clone(),
             shape: shape.clone(),
-            element_type: published.value().element_type(),
+            logical_type: value_type.canonical_encoding().as_bytes().to_vec(),
+            components,
         });
     }
     Ok((inputs, outputs))
+}
+
+fn project_components(
+    value_type: &ResolvedValueType,
+    values: &[MaterializedValueRef<'_>],
+) -> Result<Vec<InterfaceComponentData>, ArtifactBuildError> {
+    let roles: Vec<_> = match value_type.encoded_numeric_parts() {
+        None => vec![None],
+        Some((_, contract)) => contract
+            .components()
+            .iter()
+            .map(|component| Some(component.role()))
+            .collect(),
+    };
+    roles
+        .into_iter()
+        .map(|role| {
+            let value = values
+                .iter()
+                .copied()
+                .find(|value| value.component_role() == role)
+                .ok_or(ArtifactBuildError::InterfaceMismatch)?;
+            Ok(InterfaceComponentData {
+                role,
+                shape: value.shape().clone(),
+                resolved_type: value
+                    .component_type()
+                    .map(|value_type| value_type.canonical_encoding().as_bytes().to_vec()),
+                storage_scalar: value.storage_scalar(),
+                access_type: value.element_type(),
+                encoding: value.storage_encoding(),
+            })
+        })
+        .collect()
 }
 
 /// Derives what one binding slot addresses, from the plan rather than the producer.

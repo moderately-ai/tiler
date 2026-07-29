@@ -17,6 +17,7 @@ use super::operation::{
     add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
     validate_provider_diagnostic_message,
 };
+use super::quantization::register_standard_quantization;
 use super::types::{
     AttributeFieldId, CanonicalField, CanonicalValue, CanonicalValueView, QuantSchemeKey,
     ResolvedValueType, TypeIdentityError, TypeKey, validate_canonical_value, validate_key,
@@ -1926,7 +1927,7 @@ struct StandardSemantics;
 
 impl SemanticRegistryProvider for StandardSemantics {
     fn identity(&self) -> ProviderIdentity {
-        ProviderIdentity::new("tiler", "standard-semantics", 5)
+        ProviderIdentity::new("tiler", "standard-semantics", 6)
             .expect("the governed standard provider identity is valid")
     }
 
@@ -2036,7 +2037,8 @@ impl SemanticRegistryProvider for StandardSemantics {
             standard_conformance("strict-serial-sum-f32"),
             OperationEffect::Pure,
             Arc::new(StrictSerialSumF32),
-        ))
+        ))?;
+        register_standard_quantization(registrar)
     }
 }
 

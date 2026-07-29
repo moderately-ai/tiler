@@ -80,8 +80,9 @@ use super::super::expr::{
 use super::super::keys::{BackendEntryKey, FeasibilityRuleSetRef, TargetProfileRef};
 use super::super::model::{
     BackendPayloadDescriptor, BindingData, BindingKind, BindingTarget, BindingTargetData,
-    CanonicalArtifactProgramIdentity, DeferredPredicateData, InterfaceEntryData, RoutingPolicy,
-    StageDependencyData, StageDependencyReason, VerifiedArtifactProgram,
+    CanonicalArtifactProgramIdentity, DeferredPredicateData, InterfaceComponentData,
+    InterfaceEntryData, RoutingPolicy, StageDependencyData, StageDependencyReason,
+    VerifiedArtifactProgram,
 };
 use super::error::ArtifactCodecError;
 use super::model::{ArtifactEnvelope, EntryRow, NumericalFacts, SectionKind, VariantRow, position};
@@ -326,10 +327,16 @@ impl<'a> DecodedInput<'a> {
         &self.0.shape
     }
 
-    /// Returns the storage element type of the input.
+    /// Returns the logical resolved-type identity encoding.
     #[must_use]
-    pub const fn element_type(self) -> KernelType {
-        self.0.element_type
+    pub fn resolved_type_encoding(self) -> &'a [u8] {
+        &self.0.logical_type
+    }
+
+    /// Returns physical components in semantic order.
+    #[must_use]
+    pub fn components(self) -> impl ExactSizeIterator<Item = DecodedComponent<'a>> {
+        self.0.components.iter().map(DecodedComponent)
     }
 }
 
@@ -350,10 +357,58 @@ impl<'a> DecodedOutput<'a> {
         &self.0.shape
     }
 
-    /// Returns the storage element type of the output.
+    /// Returns the logical resolved-type identity encoding.
     #[must_use]
-    pub const fn element_type(self) -> KernelType {
-        self.0.element_type
+    pub fn resolved_type_encoding(self) -> &'a [u8] {
+        &self.0.logical_type
+    }
+
+    /// Returns physical components in semantic order.
+    #[must_use]
+    pub fn components(self) -> impl ExactSizeIterator<Item = DecodedComponent<'a>> {
+        self.0.components.iter().map(DecodedComponent)
+    }
+}
+
+/// One decoded physical component of a logical interface value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DecodedComponent<'a>(&'a InterfaceComponentData);
+
+impl<'a> DecodedComponent<'a> {
+    /// Returns the stable semantic role, absent for a dense singleton.
+    #[must_use]
+    pub fn role(self) -> Option<tiler_ir::semantic::EncodedComponentRole> {
+        self.0.role
+    }
+
+    /// Returns the physical component shape.
+    #[must_use]
+    pub fn shape(self) -> &'a Shape {
+        &self.0.shape
+    }
+
+    /// Returns the semantic component type encoding, absent for a dense singleton.
+    #[must_use]
+    pub fn resolved_type_encoding(self) -> Option<&'a [u8]> {
+        self.0.resolved_type.as_deref()
+    }
+
+    /// Returns the scalar carrier stored in physical memory.
+    #[must_use]
+    pub fn storage_scalar(self) -> tiler_ir::program::StorageScalar {
+        self.0.storage_scalar
+    }
+
+    /// Returns the type through which kernels access the stored component.
+    #[must_use]
+    pub fn access_type(self) -> KernelType {
+        self.0.access_type
+    }
+
+    /// Returns the complete physical storage encoding.
+    #[must_use]
+    pub fn storage_encoding(self) -> tiler_ir::program::StorageEncoding {
+        self.0.encoding
     }
 }
 
@@ -811,10 +866,28 @@ impl<'a> DecodedBinding<'a> {
         self.data().kind
     }
 
-    /// Returns the storage element type addressed through the binding.
+    /// Returns the scalar carrier stored in physical memory.
     #[must_use]
-    pub fn element_type(self) -> KernelType {
-        self.data().element_type
+    pub fn storage_scalar(self) -> tiler_ir::program::StorageScalar {
+        self.data().storage_scalar
+    }
+
+    /// Returns the type through which the kernel accesses this binding.
+    #[must_use]
+    pub fn access_type(self) -> KernelType {
+        self.data().access_type
+    }
+
+    /// Returns the stable addressed component role, absent for a dense singleton.
+    #[must_use]
+    pub fn component_role(self) -> Option<tiler_ir::semantic::EncodedComponentRole> {
+        self.data().component_role
+    }
+
+    /// Returns the complete physical storage encoding.
+    #[must_use]
+    pub fn storage_encoding(self) -> tiler_ir::program::StorageEncoding {
+        self.data().encoding
     }
 
     /// Returns the logical address space the binding requires.
@@ -1102,7 +1175,11 @@ impl From<ArtifactCodecError> for ArtifactCodecFailure {
             | ArtifactCodecError::IdentityDerivation { .. }
             | ArtifactCodecError::StageOrderNotAPermutation { .. }
             | ArtifactCodecError::StageDependencyOutOfOrder { .. }
-            | ArtifactCodecError::StageDependencyOnItself { .. } => Self::Invalid { detail },
+            | ArtifactCodecError::StageDependencyOnItself { .. }
+            | ArtifactCodecError::MalformedInterfaceComponents
+            | ArtifactCodecError::UnknownBindingTargetComponent { .. }
+            | ArtifactCodecError::BindingComponentMismatch
+            | ArtifactCodecError::BindingAccessTypeMismatch => Self::Invalid { detail },
         }
     }
 }
