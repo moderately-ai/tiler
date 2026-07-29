@@ -340,7 +340,7 @@ fn record_semantic_discharge_refusal(
     let key = format!("occurrence:{}", source.member().0);
     for (ordinal, discharge) in refusal.assessments().iter().enumerate() {
         let obligation = discharge.obligation();
-        let (_unknown_reason, resource) = match obligation.reason() {
+        let (verifier_reason, verifier_resource) = match obligation.reason() {
             tiler_ir::index::IndexDomainUnknownReason::InsufficientFacts => {
                 ("index-domain-insufficient-facts", None)
             }
@@ -372,7 +372,7 @@ fn record_semantic_discharge_refusal(
         cause = explain_step(
             (|| -> Result<_, CompileError> {
                 let subject = explain.subject(SubjectKind::Kernel, &key)?;
-                let (mut assessment, proof_basis) = match discharge.claim() {
+                let (mut assessment, proof_basis, discharge_resource) = match discharge.claim() {
                     IndexDomainDischargeClaim::Proved(IndexDomainDischargeProof::Sound {
                         ..
                     }) => (
@@ -381,6 +381,7 @@ fn record_semantic_discharge_refusal(
                             EvidenceBasis::CheckedInvariant,
                         )?,
                         Some("sound-proof"),
+                        None,
                     ),
                     IndexDomainDischargeClaim::Proved(
                         IndexDomainDischargeProof::ExhaustiveFinite { .. },
@@ -390,6 +391,7 @@ fn record_semantic_discharge_refusal(
                             EvidenceBasis::ExhaustiveFinite,
                         )?,
                         Some("exhaustive-finite"),
+                        None,
                     ),
                     IndexDomainDischargeClaim::Disproved(disproof) => (
                         PredicateAssessment::disproved(
@@ -398,18 +400,24 @@ fn record_semantic_discharge_refusal(
                             EvidenceBasis::CheckedInvariant,
                         )?,
                         Some("semantic-counterexample"),
+                        None,
                     ),
                     IndexDomainDischargeClaim::Unknown(reason) => {
-                        let reason = match reason {
+                        let (reason, resource) = match reason {
                             tiler_ir::index::IndexDomainUnknownReason::InsufficientFacts => {
-                                "index-domain-insufficient-facts"
+                                ("index-domain-insufficient-facts", None)
                             }
                             tiler_ir::index::IndexDomainUnknownReason::UnsupportedFragment => {
-                                "index-domain-unsupported-fragment"
+                                ("index-domain-unsupported-fragment", None)
                             }
-                            tiler_ir::index::IndexDomainUnknownReason::ResourceLimit { .. } => {
-                                "index-domain-proof-resource-limit"
-                            }
+                            tiler_ir::index::IndexDomainUnknownReason::ResourceLimit {
+                                resource,
+                                required,
+                                limit,
+                            } => (
+                                "index-domain-proof-resource-limit",
+                                Some((*resource, *required, *limit)),
+                            ),
                         };
                         (
                             PredicateAssessment::unknown(
@@ -417,6 +425,7 @@ fn record_semantic_discharge_refusal(
                                 ReasonCode::new(reason)?,
                             )?,
                             None,
+                            resource,
                         )
                     }
                 };
@@ -432,6 +441,18 @@ fn record_semantic_discharge_refusal(
                     .with_fact(ExplainFact::new(
                         "predicate-kind",
                         FactValue::Identity(crate::explain::SubjectKey::new(predicate_kind)?),
+                    )?)?
+                    .with_fact(ExplainFact::new(
+                        "verifier-unknown-reason",
+                        FactValue::Identity(crate::explain::SubjectKey::new(verifier_reason)?),
+                    )?)?
+                    .with_fact(ExplainFact::new(
+                        "discharge-provider",
+                        FactValue::Identity(crate::explain::SubjectKey::new(format!(
+                            "{}.{}",
+                            discharge.authority().provider().namespace(),
+                            discharge.authority().provider().name(),
+                        ))?),
                     )?)?
                     .with_fact(ExplainFact::new(
                         "discharge-rule",
@@ -451,7 +472,44 @@ fn record_semantic_discharge_refusal(
                         FactValue::Identity(crate::explain::SubjectKey::new(proof_basis)?),
                     )?)?;
                 }
-                if let Some((resource, required, limit)) = resource {
+                if let IndexDomainDischargeClaim::Disproved(disproof) = discharge.claim()
+                    && let Some(point_ordinal) = disproof.point_ordinal()
+                {
+                    assessment = assessment.with_fact(ExplainFact::new(
+                        "counterexample-point-ordinal",
+                        FactValue::Count(point_ordinal),
+                    )?)?;
+                }
+                if let Some((resource, required, limit)) = verifier_resource {
+                    let resource = match resource {
+                        tiler_ir::index::ProofResource::Cells => "index-proof-cells",
+                        tiler_ir::index::ProofResource::IntegerBytes => "index-proof-integer-bytes",
+                    };
+                    assessment = assessment
+                        .with_fact(ExplainFact::new(
+                            "verifier-proof-resource",
+                            FactValue::Identity(crate::explain::SubjectKey::new(resource)?),
+                        )?)?
+                        .with_fact(ExplainFact::new(
+                            "verifier-proof-required-upper-64",
+                            FactValue::Count(
+                                u64::try_from(required >> 64)
+                                    .expect("the upper half of u128 fits u64"),
+                            ),
+                        )?)?
+                        .with_fact(ExplainFact::new(
+                            "verifier-proof-required-lower-64",
+                            FactValue::Count(
+                                u64::try_from(required & u128::from(u64::MAX))
+                                    .expect("the lower half of u128 fits u64"),
+                            ),
+                        )?)?
+                        .with_fact(ExplainFact::new(
+                            "verifier-proof-limit",
+                            FactValue::Count(limit),
+                        )?)?;
+                }
+                if let Some((resource, required, limit)) = discharge_resource {
                     let resource = match resource {
                         tiler_ir::index::ProofResource::Cells => "index-proof-cells",
                         tiler_ir::index::ProofResource::IntegerBytes => "index-proof-integer-bytes",

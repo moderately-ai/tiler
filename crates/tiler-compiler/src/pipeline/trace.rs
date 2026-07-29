@@ -264,17 +264,41 @@ fn record_semantic_discharge_proofs(
                         Some(*points),
                     ),
                 };
+                let predicate_kind = match proof.obligation().predicate() {
+                    tiler_ir::index::IndexDomainPredicate::NonNegative { .. } => {
+                        "index-domain.non-negative"
+                    }
+                    tiler_ir::index::IndexDomainPredicate::LessThanExtent { .. } => {
+                        "index-domain.less-than-extent"
+                    }
+                };
                 let mut assessment = PredicateAssessment::proven(
                     format!("kernel.index-domain-obligation.{ordinal}"),
                     basis,
                 )?
                 .with_fact(ExplainFact::new(
+                    "obligation-ordinal",
+                    FactValue::Count(ordinal),
+                )?)?
+                .with_fact(ExplainFact::new(
                     "obligation-key",
                     FactValue::Identity(crate::explain::SubjectKey::new(obligation_key)?),
                 )?)?
                 .with_fact(ExplainFact::new(
+                    "predicate-kind",
+                    FactValue::Identity(crate::explain::SubjectKey::new(predicate_kind)?),
+                )?)?
+                .with_fact(ExplainFact::new(
                     "evidence-basis",
                     FactValue::Identity(crate::explain::SubjectKey::new(proof_kind)?),
+                )?)?
+                .with_fact(ExplainFact::new(
+                    "discharge-provider",
+                    FactValue::Identity(crate::explain::SubjectKey::new(format!(
+                        "{}.{}",
+                        proof.authority().provider().namespace(),
+                        proof.authority().provider().name(),
+                    ))?),
                 )?)?
                 .with_fact(ExplainFact::new(
                     "discharge-rule",

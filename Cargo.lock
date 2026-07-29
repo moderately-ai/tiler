@@ -389,6 +389,9 @@ dependencies = [
 name = "tiler-compiler"
 version = "0.0.0"
 dependencies = [
+ "num-bigint",
+ "num-integer",
+ "num-traits",
  "tiler-ir",
  "tiler-reference",
 ]

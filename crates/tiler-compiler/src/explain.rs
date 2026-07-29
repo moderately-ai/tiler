@@ -471,6 +471,15 @@ impl PredicateAssessment {
     pub(crate) const fn basis(&self) -> &EvidenceBasis {
         &self.basis
     }
+
+    pub(crate) const fn reason(&self) -> Option<&ReasonCode> {
+        match &self.assessment {
+            Assessment::Proven => None,
+            Assessment::Disproved(reason)
+            | Assessment::Unknown(reason)
+            | Assessment::Deferred(reason) => Some(reason),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

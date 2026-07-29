@@ -9,21 +9,21 @@
 //!
 //! The receipts overlay the immutable verified region. They do not rewrite
 //! `tiler-ir` verifier evidence, copy its predicate language, or re-drive the
-//! lowering provider. Concrete host/device semantic enforcement is a separate
-//! physical/runtime vertical; the initial compiler rule therefore preserves
-//! every `Unknown` and fails closed.
-
-#![allow(
-    dead_code,
-    reason = "the three-way discharge protocol is complete while the initial production authority deliberately constructs only Unknown; Proved and Disproved are exercised through private conformance authorities until a real proof or host-enforcement authority lands"
-)]
+//! lowering provider. The production authority evaluates only exact logical
+//! coordinates and extents. Dtype payloads, component layouts, and physical
+//! encodings cannot affect an index-domain predicate and are never inspected.
 
 use core::fmt;
+use std::collections::{HashMap, HashSet};
 
+use num_bigint::{BigInt, Sign};
+use num_integer::Integer;
+use num_traits::Zero;
 use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::index::{
-    IndexDomainSoundProof, IndexDomainUnknownReason, UnknownIndexDomainPredicate,
-    VerifiedIndexRegion,
+    IndexDomainPredicate, IndexDomainSoundProof, IndexDomainUnknownReason, IndexExprView,
+    IndexExtentRef, IndexInteger, IndexIntegerSign, ProofResource, UnknownIndexDomainPredicate,
+    VerifiedDimensionId, VerifiedIndexExprId, VerifiedIndexRegion,
 };
 use tiler_ir::semantic::ProviderIdentity;
 
@@ -31,6 +31,9 @@ use crate::legality::{IndexRefinement, PendingIndexRefinement, complete_pending_
 
 /// Canonical identity tag for one sealed semantic-discharge receipt.
 const RECEIPT_IDENTITY_TAG: &[u8] = b"tiler.compiler.index-domain-discharge-receipt.v1\0";
+const EXHAUSTIVE_DERIVATION: &[u8] = b"tiler.compiler.exact-index-domain-enumeration.v1\0";
+const COUNTEREXAMPLE_TAG: &[u8] = b"tiler.compiler.index-domain-counterexample.v1\0";
+const MAX_DISCHARGE_CELLS: u64 = 16 * 1024 * 1024;
 
 /// Versioned semantic identity of one proof or disproof rule.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -105,6 +108,10 @@ impl IndexDomainDischargeAuthority {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum IndexDomainDischargeProof {
     /// A sound named derivation over the complete predicate domain.
+    #[allow(
+        dead_code,
+        reason = "the production finite authority emits exhaustive evidence, while the complete protocol retains the sound-proof lane for future compiler proofs and exercises it through conformance authorities"
+    )]
     Sound {
         proof: IndexDomainSoundProof,
         derivation: Box<[u8]>,
@@ -117,6 +124,7 @@ pub(crate) enum IndexDomainDischargeProof {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct IndexDomainDisproof {
     reason: &'static str,
+    point_ordinal: Option<u64>,
     counterexample: Box<[u8]>,
 }
 
@@ -124,12 +132,22 @@ impl IndexDomainDisproof {
     pub(crate) fn new(reason: &'static str, counterexample: impl Into<Box<[u8]>>) -> Self {
         Self {
             reason,
+            point_ordinal: None,
             counterexample: counterexample.into(),
         }
     }
 
+    fn with_point_ordinal(mut self, point_ordinal: u64) -> Self {
+        self.point_ordinal = Some(point_ordinal);
+        self
+    }
+
     pub(crate) const fn reason(&self) -> &'static str {
         self.reason
+    }
+
+    pub(crate) const fn point_ordinal(&self) -> Option<u64> {
+        self.point_ordinal
     }
 }
 
@@ -141,10 +159,10 @@ pub(crate) enum IndexDomainDischargeClaim {
     Unknown(IndexDomainUnknownReason),
 }
 
-/// The private authority callback used by the initial discharge stage.
+/// The private authority callback used by the discharge stage.
 ///
 /// It is deliberately not a public extension seam. The production compiler has
-/// only the fail-closed rule below; a public registry belongs with the first
+/// one exact finite authority; a public registry belongs with the first
 /// independently installable authority and its reviewed resolution contract.
 pub(crate) trait IndexDomainDischargeProvider {
     fn authority(&self) -> &IndexDomainDischargeAuthority;
@@ -236,6 +254,10 @@ pub(crate) struct IndexDomainDischargeRefusal {
 }
 
 impl IndexDomainDischargeRefusal {
+    #[allow(
+        dead_code,
+        reason = "the pending state is retained to prove atomic refusal and inspected by conformance tests; production explanation consumes the exact assessments instead"
+    )]
     pub(crate) const fn pending(&self) -> &PendingIndexRefinement {
         &self.pending
     }
@@ -260,34 +282,34 @@ impl fmt::Display for IndexDomainDischargeRefusal {
     }
 }
 
-/// Production rule until a real semantic enforcement or proof authority lands.
-struct UnsupportedIndexDomainDischarge {
+/// Exact bounded compiler-host evaluator for logical index-domain atoms.
+struct ExactFiniteIndexDomainDischarge {
     authority: IndexDomainDischargeAuthority,
 }
 
-impl UnsupportedIndexDomainDischarge {
+impl ExactFiniteIndexDomainDischarge {
     fn governed() -> Self {
         Self {
             authority: IndexDomainDischargeAuthority::builtin(
                 "compiler.index-domain-discharge",
-                "index-domain-discharge-unsupported",
+                "exact-finite-index-domain-enumeration",
                 1,
             ),
         }
     }
 }
 
-impl IndexDomainDischargeProvider for UnsupportedIndexDomainDischarge {
+impl IndexDomainDischargeProvider for ExactFiniteIndexDomainDischarge {
     fn authority(&self) -> &IndexDomainDischargeAuthority {
         &self.authority
     }
 
     fn assess(
         &self,
-        _region: &VerifiedIndexRegion,
+        region: &VerifiedIndexRegion,
         obligation: UnknownIndexDomainPredicate,
     ) -> IndexDomainDischargeClaim {
-        IndexDomainDischargeClaim::Unknown(obligation.reason())
+        assess_finite_domain(region, obligation)
     }
 }
 
@@ -295,7 +317,225 @@ impl IndexDomainDischargeProvider for UnsupportedIndexDomainDischarge {
 pub(crate) fn discharge_pending_index_refinement(
     pending: PendingIndexRefinement,
 ) -> Result<IndexRefinement, IndexDomainDischargeRefusal> {
-    discharge_with(&UnsupportedIndexDomainDischarge::governed(), pending)
+    discharge_with(&ExactFiniteIndexDomainDischarge::governed(), pending)
+}
+
+fn assess_finite_domain(
+    region: &VerifiedIndexRegion,
+    obligation: UnknownIndexDomainPredicate,
+) -> IndexDomainDischargeClaim {
+    let access = region
+        .access(obligation.subject())
+        .expect("a verified residual names an access in its own region");
+    let dimensions = access
+        .domain()
+        .map(|dimension| {
+            region
+                .dimension(dimension)
+                .expect("a verified access domain names its own dimensions")
+                .static_extent()
+                .map(|extent| (dimension, extent.get()))
+        })
+        .collect::<Option<Vec<_>>>();
+    let Some(dimensions) = dimensions else {
+        return IndexDomainDischargeClaim::Unknown(IndexDomainUnknownReason::UnsupportedFragment);
+    };
+    let points = dimensions.iter().try_fold(1_u128, |product, (_, extent)| {
+        product.checked_mul(u128::from(*extent))
+    });
+    let Some(points) = points else {
+        return resource_limit(u128::MAX);
+    };
+    let expression = predicate_expression(obligation.predicate());
+    let mut plan = HashSet::new();
+    if !collect_expression_plan(region, expression, &mut plan) {
+        return IndexDomainDischargeClaim::Unknown(IndexDomainUnknownReason::UnsupportedFragment);
+    }
+    let required = points.saturating_mul(plan.len() as u128);
+    if required > u128::from(MAX_DISCHARGE_CELLS) {
+        return resource_limit(required);
+    }
+    let Ok(points) = u64::try_from(points) else {
+        return resource_limit(required);
+    };
+    let mut coordinates = vec![0_u64; dimensions.len()];
+    let mut environment = HashMap::with_capacity(dimensions.len());
+    let mut values = HashMap::with_capacity(plan.len());
+    for point_ordinal in 0..points {
+        environment.clear();
+        environment.extend(
+            dimensions
+                .iter()
+                .zip(&coordinates)
+                .map(|((dimension, _), coordinate)| (*dimension, *coordinate)),
+        );
+        values.clear();
+        let Some(value) = evaluate_expression(region, expression, &environment, &mut values) else {
+            return IndexDomainDischargeClaim::Unknown(
+                IndexDomainUnknownReason::UnsupportedFragment,
+            );
+        };
+        if !predicate_holds(region, obligation.predicate(), &value) {
+            let reason = match obligation.predicate() {
+                IndexDomainPredicate::NonNegative { .. } => "logical-index-negative",
+                IndexDomainPredicate::LessThanExtent { .. } => "logical-index-not-less-than-extent",
+            };
+            return IndexDomainDischargeClaim::Disproved(
+                IndexDomainDisproof::new(reason, encode_counterexample(&coordinates, &value))
+                    .with_point_ordinal(point_ordinal),
+            );
+        }
+        increment_coordinates(&mut coordinates, &dimensions);
+    }
+    IndexDomainDischargeClaim::Proved(IndexDomainDischargeProof::ExhaustiveFinite {
+        points,
+        derivation: EXHAUSTIVE_DERIVATION.into(),
+    })
+}
+
+fn resource_limit(required: u128) -> IndexDomainDischargeClaim {
+    IndexDomainDischargeClaim::Unknown(IndexDomainUnknownReason::ResourceLimit {
+        resource: ProofResource::Cells,
+        required,
+        limit: MAX_DISCHARGE_CELLS,
+    })
+}
+
+const fn predicate_expression(predicate: IndexDomainPredicate) -> VerifiedIndexExprId {
+    match predicate {
+        IndexDomainPredicate::NonNegative { expression }
+        | IndexDomainPredicate::LessThanExtent { expression, .. } => expression,
+    }
+}
+
+fn collect_expression_plan(
+    region: &VerifiedIndexRegion,
+    expression: VerifiedIndexExprId,
+    reached: &mut HashSet<VerifiedIndexExprId>,
+) -> bool {
+    if !reached.insert(expression) {
+        return true;
+    }
+    let expression = region
+        .index_expression(expression)
+        .expect("a verified predicate names an expression in its own region");
+    match expression.view() {
+        IndexExprView::Constant(_) | IndexExprView::Dimension(_) => true,
+        IndexExprView::LinearCombination { terms, .. } => terms
+            .map(tiler_ir::index::LinearTermRef::value)
+            .all(|child| collect_expression_plan(region, child, reached)),
+        IndexExprView::FloorDiv { dividend, .. } | IndexExprView::Modulo { dividend, .. } => {
+            collect_expression_plan(region, dividend, reached)
+        }
+        _ => false,
+    }
+}
+
+fn evaluate_expression(
+    region: &VerifiedIndexRegion,
+    expression: VerifiedIndexExprId,
+    environment: &HashMap<VerifiedDimensionId, u64>,
+    values: &mut HashMap<VerifiedIndexExprId, BigInt>,
+) -> Option<BigInt> {
+    if let Some(value) = values.get(&expression) {
+        return Some(value.clone());
+    }
+    let view = region
+        .index_expression(expression)
+        .expect("a verified predicate names an expression in its own region")
+        .view();
+    let value = match view {
+        IndexExprView::Constant(value) => decode_integer(value),
+        IndexExprView::Dimension(dimension) => BigInt::from(*environment.get(&dimension)?),
+        IndexExprView::LinearCombination { constant, terms } => {
+            let mut total = decode_integer(constant);
+            for term in terms {
+                total += decode_integer(term.coefficient())
+                    * evaluate_expression(region, term.value(), environment, values)?;
+            }
+            total
+        }
+        IndexExprView::FloorDiv { dividend, divisor } => {
+            evaluate_expression(region, dividend, environment, values)?
+                .div_floor(&BigInt::from(divisor))
+        }
+        IndexExprView::Modulo { dividend, divisor } => {
+            evaluate_expression(region, dividend, environment, values)?
+                .mod_floor(&BigInt::from(divisor))
+        }
+        _ => return None,
+    };
+    values.insert(expression, value.clone());
+    Some(value)
+}
+
+fn decode_integer(value: &IndexInteger) -> BigInt {
+    let (sign, magnitude) = value.to_sign_magnitude();
+    BigInt::from_bytes_be(
+        match sign {
+            IndexIntegerSign::Positive => Sign::Plus,
+            IndexIntegerSign::Negative => Sign::Minus,
+            IndexIntegerSign::Zero => Sign::NoSign,
+        },
+        &magnitude,
+    )
+}
+
+fn predicate_holds(
+    region: &VerifiedIndexRegion,
+    predicate: IndexDomainPredicate,
+    value: &BigInt,
+) -> bool {
+    match predicate {
+        IndexDomainPredicate::NonNegative { .. } => value >= &BigInt::zero(),
+        IndexDomainPredicate::LessThanExtent { extent, .. } => {
+            value < &BigInt::from(resolve_extent(region, extent))
+        }
+    }
+}
+
+fn resolve_extent(region: &VerifiedIndexRegion, extent: IndexExtentRef) -> u64 {
+    match extent {
+        IndexExtentRef::Dimension(dimension) => region
+            .dimension(dimension)
+            .expect("a verified predicate names its own dimension")
+            .static_extent()
+            .expect("the finite discharge rejected symbolic dimensions")
+            .get(),
+        IndexExtentRef::TensorAxis { tensor, axis } => {
+            let shape = region
+                .tensor(tensor)
+                .expect("a verified predicate names its own tensor")
+                .static_shape()
+                .expect("the finite discharge rejected symbolic boundaries");
+            shape.extents()[usize::try_from(axis).expect("a verified tensor axis fits usize")].get()
+        }
+    }
+}
+
+fn increment_coordinates(coordinates: &mut [u64], dimensions: &[(VerifiedDimensionId, u64)]) {
+    for (coordinate, (_, extent)) in coordinates.iter_mut().zip(dimensions).rev() {
+        *coordinate += 1;
+        if *coordinate < *extent {
+            return;
+        }
+        *coordinate = 0;
+    }
+}
+
+fn encode_counterexample(coordinates: &[u64], value: &BigInt) -> Box<[u8]> {
+    let mut output = COUNTEREXAMPLE_TAG.to_vec();
+    push_len(&mut output, coordinates.len());
+    for coordinate in coordinates {
+        output.extend_from_slice(&coordinate.to_be_bytes());
+    }
+    let (sign, magnitude) = value.to_bytes_be();
+    output.push(match sign {
+        Sign::Minus => 1,
+        Sign::NoSign | Sign::Plus => 0,
+    });
+    push_slice(&mut output, &magnitude);
+    output.into_boxed_slice()
 }
 
 pub(crate) fn discharge_with(
@@ -388,6 +628,213 @@ fn encode_provider(output: &mut Vec<u8>, provider: &ProviderIdentity) {
 
 #[cfg(test)]
 mod tests {
-    // Stage tests are added with the compiler fixture once the private
-    // transition is wired into `legality` and `lowering`.
+    use tiler_ir::index::{
+        DomainRole, FrozenScalarRegistry, IndexRegionBuilder, ScalarRegistryBuilder, TensorRole,
+    };
+    use tiler_ir::semantic::{
+        AttributeFieldId, CanonicalField, CanonicalValue, EncodedNumericContract,
+        NormativeDefinitionRef, ProviderIdentity, QuantSchemeKey, RegistryError, ResolvedValueType,
+        SemanticRegistryBuilder, SemanticRegistryProvider, SemanticRegistryRegistrar,
+        TypeArguments, TypeDefinitionFacts, TypeKey, ValueTypeDefinition, ValueTypeDefinitionKey,
+    };
+    use tiler_ir::shape::{Extent, Shape};
+
+    use super::{
+        IndexDomainDischargeClaim, IndexDomainDischargeProof, IndexDomainUnknownReason,
+        MAX_DISCHARGE_CELLS, ProofResource, assess_finite_domain,
+    };
+
+    const LENGTH: u64 = 65_535;
+
+    struct TestTypeFamilies;
+
+    impl SemanticRegistryProvider for TestTypeFamilies {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("test", "index-discharge-types", 1).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), RegistryError> {
+            for name in ["bool", "u4"] {
+                registrar.register_value_type(ValueTypeDefinition::structurally_valid(
+                    ValueTypeDefinitionKey::Nominal(TypeKey::new("tiler", name, 1).unwrap()),
+                    NormativeDefinitionRef::from_owned(format!(
+                        "test {name} type for index discharge"
+                    ))?,
+                    TypeDefinitionFacts::new(CanonicalValue::boolean(true)),
+                ))?;
+            }
+            registrar.register_value_type(ValueTypeDefinition::structurally_valid(
+                ValueTypeDefinitionKey::Parameterized(TypeKey::new("tiler", "complex", 1).unwrap()),
+                NormativeDefinitionRef::new("test complex family for index discharge")?,
+                TypeDefinitionFacts::new(CanonicalValue::boolean(true)),
+            ))?;
+            registrar.register_value_type(ValueTypeDefinition::structurally_valid(
+                ValueTypeDefinitionKey::EncodedNumeric(
+                    QuantSchemeKey::new("test", "encoded", 1).unwrap(),
+                ),
+                NormativeDefinitionRef::new("test encoded family for index discharge")?,
+                TypeDefinitionFacts::new(CanonicalValue::boolean(true)),
+            ))
+        }
+    }
+
+    fn scalar_authority() -> FrozenScalarRegistry {
+        let mut semantics = SemanticRegistryBuilder::standard().unwrap();
+        semantics.register_provider(&TestTypeFamilies).unwrap();
+        ScalarRegistryBuilder::new(semantics.freeze().unwrap()).freeze()
+    }
+
+    fn complex_type() -> ResolvedValueType {
+        ResolvedValueType::parameterized(
+            TypeKey::new("tiler", "complex", 1).unwrap(),
+            TypeArguments::new([CanonicalValue::value_type(ResolvedValueType::nominal(
+                TypeKey::new("tiler", "f32", 1).unwrap(),
+            ))])
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn encoded_type() -> ResolvedValueType {
+        ResolvedValueType::encoded_numeric(
+            QuantSchemeKey::new("test", "encoded", 1).unwrap(),
+            EncodedNumericContract::new([CanonicalField::new(
+                AttributeFieldId::new(1),
+                CanonicalValue::value_type(ResolvedValueType::nominal(
+                    TypeKey::new("tiler", "u4", 1).unwrap(),
+                )),
+            )])
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn residual_region(
+        value_type: ResolvedValueType,
+        second_extent: u64,
+        rounds: usize,
+        offset: i128,
+    ) -> tiler_ir::index::VerifiedIndexRegion {
+        let mut builder = IndexRegionBuilder::new(scalar_authority()).unwrap();
+        let first = builder
+            .dimension(DomainRole::Parallel, Extent::new(LENGTH))
+            .unwrap();
+        let second = builder
+            .dimension(DomainRole::Parallel, Extent::new(second_extent))
+            .unwrap();
+        let shape = Shape::from_dims([LENGTH, second_extent]);
+        let input = builder
+            .tensor(TensorRole::Input, value_type.clone(), shape.clone())
+            .unwrap();
+        let output = builder
+            .tensor(TensorRole::Output, value_type, shape)
+            .unwrap();
+        let first_coordinate = builder.dimension_expr(first).unwrap();
+        let second_coordinate = builder.dimension_expr(second).unwrap();
+        let mut conservative = first_coordinate;
+        for _ in 0..rounds {
+            let modulo = builder.modulo(conservative, 2).unwrap();
+            let quotient = builder.floor_div(conservative, 2).unwrap();
+            conservative = builder
+                .linear_combination(
+                    0_i128.into(),
+                    &[(2_i128.into(), quotient), (1_i128.into(), modulo)],
+                )
+                .unwrap();
+        }
+        if offset != 0 {
+            conservative = builder
+                .linear_combination(offset.into(), &[(1_i128.into(), conservative)])
+                .unwrap();
+        }
+        let value = builder
+            .read(input, &[first, second], &[conservative, second_coordinate])
+            .unwrap();
+        let write = builder
+            .write(
+                output,
+                &[first, second],
+                &[first_coordinate, second_coordinate],
+            )
+            .unwrap();
+        builder.output(write, value).unwrap();
+        let region = builder.build().unwrap();
+        assert_eq!(region.unknown_index_domain_predicates().len(), 1);
+        region
+    }
+
+    fn claim(region: &tiler_ir::index::VerifiedIndexRegion) -> IndexDomainDischargeClaim {
+        let obligation = region
+            .unknown_index_domain_predicates()
+            .next()
+            .expect("the fixture retains one residual");
+        assess_finite_domain(region, obligation)
+    }
+
+    #[test]
+    fn exact_enumeration_proves_the_beyond_verifier_budget_fixture() {
+        let region = residual_region(
+            ResolvedValueType::nominal(TypeKey::new("tiler", "bool", 1).unwrap()),
+            1,
+            5,
+            0,
+        );
+        assert!(matches!(
+            claim(&region),
+            IndexDomainDischargeClaim::Proved(IndexDomainDischargeProof::ExhaustiveFinite {
+                points: LENGTH,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn exact_enumeration_returns_a_deterministic_counterexample() {
+        let region = residual_region(
+            ResolvedValueType::nominal(TypeKey::new("tiler", "u4", 1).unwrap()),
+            1,
+            5,
+            1,
+        );
+        let first = claim(&region);
+        let second = claim(&region);
+        assert_eq!(first, second);
+        assert!(matches!(
+            first,
+            IndexDomainDischargeClaim::Disproved(disproof)
+                if disproof.reason() == "logical-index-not-less-than-extent"
+        ));
+    }
+
+    #[test]
+    fn the_second_governed_budget_preserves_unknown_without_permission() {
+        let region = residual_region(
+            ResolvedValueType::nominal(TypeKey::new("tiler", "bool", 1).unwrap()),
+            64,
+            5,
+            0,
+        );
+        assert!(matches!(
+            claim(&region),
+            IndexDomainDischargeClaim::Unknown(IndexDomainUnknownReason::ResourceLimit {
+                resource: ProofResource::Cells,
+                required,
+                limit: MAX_DISCHARGE_CELLS,
+            }) if required > u128::from(MAX_DISCHARGE_CELLS)
+        ));
+    }
+
+    #[test]
+    fn dtype_family_does_not_change_a_logical_coordinate_proof() {
+        let boolean = ResolvedValueType::nominal(TypeKey::new("tiler", "bool", 1).unwrap());
+        let integer = ResolvedValueType::nominal(TypeKey::new("tiler", "u4", 1).unwrap());
+        let claims = [boolean, integer, complex_type(), encoded_type()]
+            .map(|value_type| claim(&residual_region(value_type, 1, 5, 0)));
+        assert_eq!(claims[0], claims[1]);
+        assert_eq!(claims[1], claims[2]);
+        assert_eq!(claims[2], claims[3]);
+    }
 }

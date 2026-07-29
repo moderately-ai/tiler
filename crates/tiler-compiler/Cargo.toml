@@ -13,6 +13,9 @@ doctest = true
 doc = true
 
 [dependencies]
+num-bigint.workspace = true
+num-integer.workspace = true
+num-traits.workspace = true
 tiler-ir.workspace = true
 
 [dev-dependencies]

@@ -10,7 +10,8 @@ use std::sync::Arc;
 
 use super::tests::{interpret_fused, reduction_loop};
 use super::{
-    CompilationProduct, CompileError, ProgramAlternative, ProgramAlternativeKind, compile,
+    CompilationProduct, CompileError, CompilerOutputError, ProgramAlternative,
+    ProgramAlternativeKind, compile,
 };
 use crate::capability::{
     IndexAccessLoweringContext, IndexAccessLoweringProvider, LoweringCapabilityRegistryBuilder,
@@ -735,6 +736,7 @@ fn contended_lowering_capabilities_fail_closed_with_a_distinct_error() {
 /// `tiler_ir::index::MAX_EXHAUSTIVE_PROOF_CELLS` governs.
 struct ConservativeReadMultiplyLowering {
     rounds: usize,
+    offset: i128,
 }
 
 impl IndexAccessLoweringProvider for ConservativeReadMultiplyLowering {
@@ -759,6 +761,10 @@ impl IndexAccessLoweringProvider for ConservativeReadMultiplyLowering {
                 0_i128.into(),
                 &[(2_i128.into(), quotient), (1_i128.into(), modulo)],
             )?;
+        }
+        if self.offset != 0 {
+            read_coordinates[0] = context
+                .linear_combination(self.offset.into(), &[(1_i128.into(), read_coordinates[0])])?;
         }
         let mut tensors = Vec::new();
         for input in &inputs {
@@ -801,36 +807,31 @@ fn governed_lowerings_never_charge_the_exhaustive_proof_budget() {
     }));
 }
 
-/// A residual read obligation cannot enter an executable compilation.
+/// A finite residual read obligation is proved before executable planning.
 ///
 /// The index region itself remains structurally verified and retains the exact
-/// `Unknown` reason. Refinement is stronger evidence: until a semantic discharge
-/// proves the residual, compilation fails before producing a portfolio or
-/// artifact rather than treating an analysis stop as execution permission.
+/// verifier-budget `Unknown` reason. The separately governed compiler authority
+/// evaluates its whole finite domain, seals the proof, and only then permits
+/// cover enumeration.
 #[test]
-fn a_residual_index_obligation_fails_before_executable_plan_construction() {
+fn a_finite_residual_index_obligation_is_proved_before_plan_construction() {
     let program = external_program(1, Shape::from_dims([65_535, 1]), &[Axis::new(1)], false);
     let mut request = CompilationRequest::governed(&program);
     request.capabilities = registry_with_external_multiply(
         true,
-        Arc::new(ConservativeReadMultiplyLowering { rounds: 5 }),
+        Arc::new(ConservativeReadMultiplyLowering {
+            rounds: 5,
+            offset: 0,
+        }),
     );
-    let CompileError::Explained { source, explain } = compile(request).unwrap_err() else {
-        panic!("target compilation failures retain their explain trace");
-    };
-    assert_eq!(
-        *source,
-        CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
-            phase: "semantic-discharge",
-            rule: "index-domain-discharge-unsupported",
-        })
-    );
+    let product = compile(request).expect("the exact finite authority proves the residual");
+    let explain = &product.targets[0].explain;
     let residuals = explain
         .records()
         .iter()
         .filter(|record| {
             record.event().stage() == ExplainStage::SemanticDischarge
-                && record.event().disposition() == ExplainDisposition::DeferredUnsupported
+                && record.event().disposition() == ExplainDisposition::Admitted
         })
         .collect::<Vec<_>>();
     assert_eq!(residuals.len(), 1);
@@ -843,7 +844,7 @@ fn a_residual_index_obligation_fails_before_executable_plan_construction() {
     let ExplainEvent::Check { assessment, .. } = residual.event() else {
         panic!("the residual is a predicate assessment");
     };
-    assert_eq!(assessment.basis(), &EvidenceBasis::Unknown);
+    assert_eq!(assessment.basis(), &EvidenceBasis::ExhaustiveFinite);
     let fact = |key| {
         assessment
             .facts()
@@ -862,30 +863,155 @@ fn a_residual_index_obligation_fails_before_executable_plan_construction() {
         )
     );
     assert_eq!(
-        fact("proof-resource"),
-        &FactValue::Identity(crate::explain::SubjectKey::new("index-proof-cells").unwrap())
+        fact("evidence-basis"),
+        &FactValue::Identity(crate::explain::SubjectKey::new("exhaustive-finite").unwrap())
     );
-    let FactValue::Count(required_upper) = fact("proof-required-upper-64") else {
-        panic!("the exact required upper half is a count");
-    };
-    let FactValue::Count(required_lower) = fact("proof-required-lower-64") else {
-        panic!("the exact required lower half is a count");
-    };
-    let FactValue::Count(limit) = fact("proof-limit") else {
-        panic!("the proof limit is a count");
-    };
-    let required = (u128::from(*required_upper) << 64) | u128::from(*required_lower);
-    assert!(required > u128::from(*limit));
+    assert_eq!(fact("exhaustive-points"), &FactValue::Count(65_535));
     assert!(matches!(fact("obligation-key"), FactValue::Identity(_)));
-    assert!(!explain.records().iter().any(|record| {
-        record.rule().key().as_str() == "index-domain.semantic-discharge.v1"
-            && record.event().disposition() == ExplainDisposition::Admitted
+    assert_eq!(
+        fact("discharge-provider"),
+        &FactValue::Identity(
+            crate::explain::SubjectKey::new("tiler.compiler.index-domain-discharge").unwrap()
+        )
+    );
+    assert_eq!(
+        fact("discharge-rule"),
+        &FactValue::Identity(
+            crate::explain::SubjectKey::new("tiler.exact-finite-index-domain-enumeration").unwrap()
+        )
+    );
+    let discharge_position = explain
+        .records()
+        .iter()
+        .position(|record| record.event().stage() == ExplainStage::SemanticDischarge)
+        .expect("semantic discharge is explained");
+    let cover_position = explain
+        .records()
+        .iter()
+        .position(|record| record.event().stage() == ExplainStage::CandidateEnumeration)
+        .expect("cover enumeration follows a proof");
+    assert!(discharge_position < cover_position);
+}
+
+/// An exact counterexample is an invalid lowering, never invalid user input.
+#[test]
+fn a_disproved_residual_index_obligation_is_invalid_compiler_output() {
+    let program = external_program(1, Shape::from_dims([65_535, 1]), &[Axis::new(1)], false);
+    let mut request = CompilationRequest::governed(&program);
+    request.capabilities = registry_with_external_multiply(
+        true,
+        Arc::new(ConservativeReadMultiplyLowering {
+            rounds: 5,
+            offset: 1,
+        }),
+    );
+    let CompileError::Explained { source, explain } = compile(request).unwrap_err() else {
+        panic!("target compilation failures retain their explain trace");
+    };
+    assert!(matches!(
+        *source,
+        CompileError::InvalidCompilerOutput(CompilerOutputError::Lowering(_))
+    ));
+    let record = explain
+        .records()
+        .iter()
+        .find(|record| record.event().stage() == ExplainStage::SemanticDischarge)
+        .expect("the counterexample is explained at semantic discharge");
+    assert_eq!(
+        record.event().disposition(),
+        ExplainDisposition::RejectedIntrinsic
+    );
+    let ExplainEvent::Check { assessment, .. } = record.event() else {
+        panic!("the disproof is a predicate assessment");
+    };
+    assert_eq!(
+        assessment.reason().map(crate::explain::ReasonCode::as_str),
+        Some("logical-index-not-less-than-extent")
+    );
+    assert!(assessment.facts().iter().any(|fact| {
+        fact.key().as_str() == "discharge-provider"
+            && fact.value()
+                == &FactValue::Identity(
+                    crate::explain::SubjectKey::new("tiler.compiler.index-domain-discharge")
+                        .unwrap(),
+                )
     }));
+    assert_eq!(
+        assessment
+            .facts()
+            .iter()
+            .find(|fact| fact.key().as_str() == "counterexample-point-ordinal")
+            .map(crate::explain::ExplainFact::value),
+        Some(&FactValue::Count(65_534))
+    );
     assert!(
         !explain
             .records()
             .iter()
             .any(|record| record.event().stage() == ExplainStage::CandidateEnumeration),
-        "semantic discharge refuses before cover enumeration or later program work"
+        "a disproved lowering never reaches cover enumeration"
+    );
+}
+
+/// A second proof-budget stop remains unsupported without execution permission.
+#[test]
+fn an_over_discharge_budget_obligation_remains_unknown_before_planning() {
+    let program = external_program(1, Shape::from_dims([65_535, 64]), &[Axis::new(1)], false);
+    let mut request = CompilationRequest::governed(&program);
+    request.capabilities = registry_with_external_multiply(
+        true,
+        Arc::new(ConservativeReadMultiplyLowering {
+            rounds: 5,
+            offset: 0,
+        }),
+    );
+    let CompileError::Explained { source, explain } = compile(request).unwrap_err() else {
+        panic!("target compilation failures retain their explain trace");
+    };
+    assert_eq!(
+        *source,
+        CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
+            phase: "semantic-discharge",
+            rule: "index-domain-discharge-unsupported",
+        })
+    );
+    let record = explain
+        .records()
+        .iter()
+        .find(|record| record.event().stage() == ExplainStage::SemanticDischarge)
+        .expect("the resource stop is explained at semantic discharge");
+    assert_eq!(
+        record.event().disposition(),
+        ExplainDisposition::DeferredUnsupported
+    );
+    let ExplainEvent::Check { assessment, .. } = record.event() else {
+        panic!("the unknown result is a predicate assessment");
+    };
+    assert_eq!(assessment.basis(), &EvidenceBasis::Unknown);
+    assert_eq!(
+        assessment.reason().map(crate::explain::ReasonCode::as_str),
+        Some("index-domain-proof-resource-limit")
+    );
+    let fact = |key| {
+        assessment
+            .facts()
+            .iter()
+            .find(|fact| fact.key().as_str() == key)
+            .map_or_else(
+                || panic!("resource assessment carries {key}"),
+                crate::explain::ExplainFact::value,
+            )
+    };
+    assert_eq!(fact("proof-limit"), &FactValue::Count(16 * 1024 * 1024));
+    assert_eq!(
+        fact("verifier-proof-limit"),
+        &FactValue::Count(tiler_ir::index::MAX_EXHAUSTIVE_PROOF_CELLS)
+    );
+    assert!(
+        !explain
+            .records()
+            .iter()
+            .any(|record| record.event().stage() == ExplainStage::CandidateEnumeration),
+        "a second resource stop never reaches cover enumeration"
     );
 }

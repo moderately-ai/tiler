@@ -199,7 +199,9 @@ Published | Failed
 device uses complete, but cleanup cannot change the returned failure into a
 fallback route.
 
-**Current implementation boundary.** The compiler now consumes retained logical index-domain obligations in a named semantic-discharge stage before cover enumeration. Its initial authority has no representation-aware host checker and therefore preserves each exact `Unknown` and refuses before any executable plan exists. The runtime host-validation transitions below remain the adopted contract for a supported checker, not evidence that one is implemented. `implement-representation-aware-semantic-host-enforcement` owns the missing vertical across logical value views, plan and artifact identity, runtime capability, routing order, and typed validation results.
+**Current implementation boundary.** The compiler consumes retained logical index-domain obligations in a named semantic-discharge stage before cover enumeration. Its production authority evaluates current index expressions over the complete finite logical coordinate domain with exact integer arithmetic and a separate resource budget; this is compiler validation of lowering-produced coordinates, not runtime inspection of tensor values. `Disproved` is invalid compiler output, while unsupported or over-budget `Unknown` refuses before any executable plan exists.
+
+The runtime host-validation transitions below instead govern residual tensor-value semantic preconditions such as strict quantization's NaN rejection. No governed operation produces such a runtime obligation yet, so the transitions remain an adopted contract rather than evidence of an implementation. `implement-first-runtime-semantic-value-precondition-enforcement` owns the first complete vertical after `prototype-quantized-value-vertical` supplies a real compound-value producer and representation contract. Checker capability and preparation must finish before `RoutingCommit`; the actual value scan begins only after one-way route commitment at `EnforcementCommit`, and no semantic failure can trigger fallback.
 
 ### Transition contract
 
