@@ -70,9 +70,10 @@ use crate::capability::{
     LoweringCapabilityRevision, LoweringEmitError, LoweringFamily, LoweringRegistryError,
     OccurrenceBoundary, ResolvedLoweringCapability,
 };
+use crate::index_discharge::AuthorizedIndexDomainProof;
 
 /// Canonical domain-separation tag for reusable refinement content.
-const CONTENT_IDENTITY_TAG: &[u8] = b"tiler.compiler.index-refinement-content.v1\0";
+const CONTENT_IDENTITY_TAG: &[u8] = b"tiler.compiler.index-refinement-content.v2\0";
 /// Canonical domain-separation tag for one refinement occurrence binding.
 const OCCURRENCE_IDENTITY_TAG: &[u8] = b"tiler.compiler.index-refinement-occurrence.v1\0";
 
@@ -442,6 +443,7 @@ pub struct RefinementContent {
     effect: OperationEffect,
     numerical_contract: NumericalContractIdentity,
     scalar_authority: ScalarAuthorityEvidence,
+    index_domain_proofs: Vec<AuthorizedIndexDomainProof>,
     identity: RefinementContentIdentity,
 }
 
@@ -484,6 +486,17 @@ impl RefinementContent {
     #[must_use]
     pub const fn scalar_authority(&self) -> &ScalarAuthorityEvidence {
         &self.scalar_authority
+    }
+
+    /// Returns the number of residual predicates discharged after IR verification.
+    #[must_use]
+    pub fn index_domain_discharge_count(&self) -> usize {
+        self.index_domain_proofs.len()
+    }
+
+    /// Returns the compiler-sealed proofs over residual index-domain predicates.
+    pub(crate) fn index_domain_proofs(&self) -> &[AuthorizedIndexDomainProof] {
+        &self.index_domain_proofs
     }
 
     /// Returns the reusable content identity.
@@ -981,7 +994,7 @@ pub fn refine_index_region(
         )));
     }
 
-    let content = assemble_content(occurrence, &region, scalar_authority);
+    let content = assemble_content(occurrence, &region, scalar_authority, Vec::new());
     let identity = encode_occurrence_identity(
         &content,
         capability.provider(),
@@ -1204,6 +1217,7 @@ fn assemble_content(
     occurrence: &SemanticOccurrence,
     region: &VerifiedIndexRegion,
     scalar_authority: ScalarAuthorityEvidence,
+    index_domain_proofs: Vec<AuthorizedIndexDomainProof>,
 ) -> RefinementContent {
     let operand_interface = canonical_operand_interface(occurrence);
     let result_interface = occurrence
@@ -1217,6 +1231,7 @@ fn assemble_content(
         occurrence,
         &operand_interface,
         &scalar_authority,
+        &index_domain_proofs,
     );
     RefinementContent {
         region_identity,
@@ -1227,6 +1242,59 @@ fn assemble_content(
         effect: occurrence.effect,
         numerical_contract: occurrence.numerical_contract.clone(),
         scalar_authority,
+        index_domain_proofs,
+        identity,
+    }
+}
+
+/// Completes one pending refinement from sealed proofs over every exact residual.
+///
+/// The proof vector is compiler-owned and unforgeable outside this crate. Its
+/// canonical order must match the retained region's canonical obligation order;
+/// violating that invariant is a compiler defect rather than an input refusal.
+pub(crate) fn complete_pending_index_refinement(
+    pending: PendingIndexRefinement,
+    index_domain_proofs: Vec<AuthorizedIndexDomainProof>,
+) -> IndexRefinement {
+    assert_eq!(
+        pending.obligations().len(),
+        index_domain_proofs.len(),
+        "semantic discharge must prove every retained index-domain obligation"
+    );
+    assert!(
+        pending
+            .obligations()
+            .zip(&index_domain_proofs)
+            .all(|(obligation, proof)| obligation == proof.obligation()),
+        "semantic-discharge proofs must preserve canonical obligation order"
+    );
+    let PendingIndexRefinement {
+        occurrence,
+        provider,
+        revision,
+        capability_authority,
+        scalars: _,
+        operand_bindings,
+        result_bindings,
+        scalar_authority,
+        region,
+    } = pending;
+    let content = assemble_content(&occurrence, &region, scalar_authority, index_domain_proofs);
+    let identity = encode_occurrence_identity(
+        &content,
+        &provider,
+        revision,
+        &capability_authority,
+        &occurrence,
+    );
+    IndexRefinement {
+        content,
+        occurrence: occurrence.identity,
+        provider,
+        revision,
+        operand_bindings,
+        result_bindings,
+        region,
         identity,
     }
 }
@@ -1259,6 +1327,7 @@ fn encode_content_identity(
     occurrence: &SemanticOccurrence,
     operand_interface: &[(u32, ResolvedValueType, Shape)],
     scalar_authority: &ScalarAuthorityEvidence,
+    index_domain_proofs: &[AuthorizedIndexDomainProof],
 ) -> RefinementContentIdentity {
     let mut bytes = CONTENT_IDENTITY_TAG.to_vec();
     push_slice(&mut bytes, region_identity.as_bytes());
@@ -1292,6 +1361,10 @@ fn encode_content_identity(
     push_slice(&mut bytes, scalar_authority.type_definitions().as_bytes());
     push_slice(&mut bytes, scalar_authority.semantic_snapshot().as_bytes());
     push_slice(&mut bytes, scalar_authority.scalar_snapshot().as_bytes());
+    push_len(&mut bytes, index_domain_proofs.len());
+    for proof in index_domain_proofs {
+        push_slice(&mut bytes, proof.identity());
+    }
     RefinementContentIdentity(bytes)
 }
 
@@ -1356,13 +1429,15 @@ fn encode_shape(output: &mut Vec<u8>, shape: &Shape) {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::sync::Arc;
 
     use tiler_ir::index::{
-        DomainRole, FrozenScalarRegistry, ScalarArity, ScalarAttributeSchema, ScalarAttributes,
-        ScalarEffect, ScalarInferenceError, ScalarInferenceOutputs, ScalarInferenceRequest,
-        ScalarOpKey, ScalarOperationContract, ScalarOperationDefinition, ScalarOperationInferencer,
-        ScalarRegistryBuilder,
+        DomainRole, FrozenScalarRegistry, IndexDomainSoundProof, ScalarArity,
+        ScalarAttributeSchema, ScalarAttributes, ScalarEffect, ScalarInferenceError,
+        ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract,
+        ScalarOperationDefinition, ScalarOperationInferencer, ScalarRegistryBuilder,
+        UnknownIndexDomainPredicate, VerifiedIndexRegion,
     };
     use tiler_ir::semantic::{
         CanonicalValue, F32, FrozenSemanticRegistry, InputKey, NormativeDefinitionRef, OutputKey,
@@ -1388,6 +1463,11 @@ mod tests {
         LoweringFamily, LoweringSignature, ScalarLoweringContext, ScalarLoweringProvider,
         ScalarLoweringResults,
     };
+    use crate::index_discharge::{
+        IndexDomainDischargeAuthority, IndexDomainDischargeClaim, IndexDomainDischargeProof,
+        IndexDomainDischargeProvider, IndexDomainDischargeRefusalKind, IndexDomainDisproof,
+        discharge_with,
+    };
     use crate::region::form_region_candidates;
     use crate::request::{DeterministicBudgets, StrictF32NumericalContract};
 
@@ -1411,6 +1491,84 @@ mod tests {
 
     fn binary_signature() -> LoweringSignature {
         LoweringSignature::new([f32_type(), f32_type()], [f32_type()]).unwrap()
+    }
+
+    fn pending_refinement() -> super::PendingIndexRefinement {
+        let scalars = scalar_registry();
+        let length = 65_535;
+        let resolved = index_registry(
+            Arc::new(ConservativeReadSquare { length, rounds: 8 }),
+            &[scalar_key("multiply")],
+        )
+        .resolve_index_access(&multiply_f32_op(), &binary_signature())
+        .unwrap();
+        let occurrence = square_occurrence_with_length(b"pending-site", length);
+        let outcome = refine_index_region(&resolved, &occurrence, &scalars).unwrap();
+        outcome
+            .pending()
+            .expect("the conservative read exceeds the governed proof budget")
+            .clone()
+    }
+
+    #[derive(Clone, Copy)]
+    enum DischargeMode {
+        Sound,
+        Exhaustive,
+        Disproved,
+        Unknown,
+    }
+
+    struct TestDischarge {
+        authority: IndexDomainDischargeAuthority,
+        mode: DischargeMode,
+        calls: Cell<usize>,
+    }
+
+    impl TestDischarge {
+        fn new(mode: DischargeMode, revision: u32) -> Self {
+            Self {
+                authority: IndexDomainDischargeAuthority::builtin(
+                    "test.index-domain-discharge",
+                    "test-index-domain-rule",
+                    revision,
+                ),
+                mode,
+                calls: Cell::new(0),
+            }
+        }
+    }
+
+    impl IndexDomainDischargeProvider for TestDischarge {
+        fn authority(&self) -> &IndexDomainDischargeAuthority {
+            &self.authority
+        }
+
+        fn assess(
+            &self,
+            _region: &VerifiedIndexRegion,
+            obligation: UnknownIndexDomainPredicate,
+        ) -> IndexDomainDischargeClaim {
+            let ordinal = self.calls.get();
+            self.calls.set(ordinal + 1);
+            match self.mode {
+                DischargeMode::Sound => {
+                    IndexDomainDischargeClaim::Proved(IndexDomainDischargeProof::Sound {
+                        proof: IndexDomainSoundProof::Interval,
+                        derivation: b"test-sound-derivation".as_slice().into(),
+                    })
+                }
+                DischargeMode::Exhaustive => {
+                    IndexDomainDischargeClaim::Proved(IndexDomainDischargeProof::ExhaustiveFinite {
+                        points: 65_535,
+                        derivation: b"test-exhaustive-derivation".as_slice().into(),
+                    })
+                }
+                DischargeMode::Disproved => IndexDomainDischargeClaim::Disproved(
+                    IndexDomainDisproof::new("test-counterexample", b"counterexample".as_slice()),
+                ),
+                DischargeMode::Unknown => IndexDomainDischargeClaim::Unknown(obligation.reason()),
+            }
+        }
     }
 
     fn semantic() -> FrozenSemanticRegistry {
@@ -1859,6 +2017,73 @@ mod tests {
                 Some(obligation)
             );
         }
+    }
+
+    #[test]
+    fn semantic_discharge_assesses_every_exact_obligation_once() {
+        let pending = pending_refinement();
+        let obligations = pending.obligations().len();
+        assert_ne!(
+            obligations, 0,
+            "the fixture must retain an exact obligation"
+        );
+        let provider = TestDischarge::new(DischargeMode::Sound, 1);
+
+        let refinement = discharge_with(&provider, pending).unwrap();
+
+        assert_eq!(provider.calls.get(), obligations);
+        assert_eq!(
+            refinement.content().index_domain_discharge_count(),
+            obligations
+        );
+    }
+
+    #[test]
+    fn semantic_discharge_keeps_disproved_and_unknown_distinct_and_atomic() {
+        let disproved = discharge_with(
+            &TestDischarge::new(DischargeMode::Disproved, 1),
+            pending_refinement(),
+        )
+        .unwrap_err();
+        assert_eq!(disproved.kind(), IndexDomainDischargeRefusalKind::Disproved);
+
+        let unknown = discharge_with(
+            &TestDischarge::new(DischargeMode::Unknown, 1),
+            pending_refinement(),
+        )
+        .unwrap_err();
+        assert_eq!(unknown.kind(), IndexDomainDischargeRefusalKind::Unknown);
+
+        assert_eq!(
+            unknown.pending().obligations().len(),
+            unknown.assessments().len(),
+            "a refusal retains the complete pending state and every assessment"
+        );
+    }
+
+    #[test]
+    fn semantic_discharge_authority_and_proof_basis_move_content_identity() {
+        let sound_v1 = discharge_with(
+            &TestDischarge::new(DischargeMode::Sound, 1),
+            pending_refinement(),
+        )
+        .unwrap();
+        let sound_v2 = discharge_with(
+            &TestDischarge::new(DischargeMode::Sound, 2),
+            pending_refinement(),
+        )
+        .unwrap();
+        let exhaustive = discharge_with(
+            &TestDischarge::new(DischargeMode::Exhaustive, 1),
+            pending_refinement(),
+        )
+        .unwrap();
+
+        assert_ne!(sound_v1.content().identity(), sound_v2.content().identity());
+        assert_ne!(
+            sound_v1.content().identity(),
+            exhaustive.content().identity()
+        );
     }
 
     #[test]

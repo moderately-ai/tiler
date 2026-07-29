@@ -199,6 +199,8 @@ Published | Failed
 device uses complete, but cleanup cannot change the returned failure into a
 fallback route.
 
+**Current implementation boundary.** The compiler now consumes retained logical index-domain obligations in a named semantic-discharge stage before cover enumeration. Its initial authority has no representation-aware host checker and therefore preserves each exact `Unknown` and refuses before any executable plan exists. The runtime host-validation transitions below remain the adopted contract for a supported checker, not evidence that one is implemented. `implement-representation-aware-semantic-host-enforcement` owns the missing vertical across logical value views, plan and artifact identity, runtime capability, routing order, and typed validation results.
+
 ### Transition contract
 
 | Transition | Work permitted | On failure | Fallback? |

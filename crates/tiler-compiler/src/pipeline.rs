@@ -57,6 +57,9 @@ use crate::fusion_legality::{
     FusionLegality, FusionLegalityError, FusionLegalityProof, FusionNumericalCapabilities,
     derive_fusion_legality, verify_fusion_legality,
 };
+use crate::index_discharge::{
+    IndexDomainDischargeClaim, IndexDomainDischargeProof, IndexDomainDischargeRefusal,
+};
 use crate::lowering::{LoweringError, OccurrenceEvidence, ResolvedLowering, resolve_lowering};
 use crate::normalize::{
     AlgebraicExplorationParts, AlgebraicRuleConfiguration, NORMALIZATION_SUBJECT,
@@ -316,6 +319,7 @@ pub(crate) enum CompilerOutputError {
     FusionLegality(FusionLegalityError),
     Frontier(FrontierError),
     Selection(SelectionError),
+    Lowering(LoweringError),
 }
 
 impl fmt::Display for CompileError {
@@ -351,6 +355,9 @@ impl fmt::Display for CompileError {
             Self::InvalidCompilerOutput(CompilerOutputError::Frontier(error)) => {
                 error.fmt(formatter)
             }
+            Self::InvalidCompilerOutput(CompilerOutputError::Lowering(error)) => {
+                error.fmt(formatter)
+            }
             Self::Explained { source, .. } => source.fmt(formatter),
         }
     }
@@ -375,6 +382,7 @@ impl Error for CompileError {
             Self::InvalidCompilerOutput(CompilerOutputError::Cover(error)) => Some(error),
             Self::InvalidCompilerOutput(CompilerOutputError::FusionLegality(error)) => Some(error),
             Self::InvalidCompilerOutput(CompilerOutputError::Frontier(error)) => Some(error),
+            Self::InvalidCompilerOutput(CompilerOutputError::Lowering(error)) => Some(error),
             Self::Explained { source, .. } => Some(source),
         }
     }
@@ -1590,6 +1598,11 @@ fn failure_source_details(error: &CompileError) -> (String, SubjectKind, String)
             format!("frontier-{}", error.reason()),
             SubjectKind::Schedule,
             "implementation-frontier".to_owned(),
+        ),
+        CompileError::InvalidCompilerOutput(CompilerOutputError::Lowering(error)) => (
+            format!("lowering-{}", error.reason()),
+            SubjectKind::Kernel,
+            format!("occurrence:{}", error.member().0),
         ),
         CompileError::NoFeasiblePlan(NoFeasiblePlanError::Selection(error))
         | CompileError::InvalidCompilerOutput(CompilerOutputError::Selection(error)) => (

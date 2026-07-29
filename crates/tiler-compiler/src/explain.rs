@@ -13,7 +13,10 @@ use tiler_ir::identity::{push_len, push_slice};
 use crate::fusion::FusionNumericalProof;
 use crate::request::{LoweringProviderIdentity, VerifiedTargetRequest};
 
-pub(crate) const EXPLAIN_SCHEMA_VERSION: u32 = 3;
+// Schema v4 adds the semantic-discharge stage and binds a sound-proof receipt
+// to its typed subject kind. The diagnostic renderer grammar itself is
+// unchanged, so its independent presentation version remains v3.
+pub(crate) const EXPLAIN_SCHEMA_VERSION: u32 = 4;
 pub(crate) const EXPLAIN_RENDERER_VERSION: u32 = 3;
 const COMPILATION_EXPLAIN_SCHEMA_VERSION: u32 = 1;
 const COMPILATION_EXPLAIN_RENDERER_VERSION: u32 = 1;
@@ -94,6 +97,7 @@ pub(crate) enum ExplainStage {
     Costing,
     Selection,
     KernelRefinement,
+    SemanticDischarge,
     ProgramVerification,
     ArtifactPlanning,
 }
@@ -290,7 +294,8 @@ pub(crate) enum EvidenceBasis {
 pub(crate) struct VerifiedEvidenceRef {
     kind: EvidenceReceiptKind,
     compilation: Box<[u8]>,
-    candidate: SubjectKey,
+    subject_kind: SubjectKind,
+    subject: SubjectKey,
     provider: ProviderRef,
     proof: Box<[u8]>,
 }
@@ -298,6 +303,7 @@ pub(crate) struct VerifiedEvidenceRef {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum EvidenceReceiptKind {
     FusionNumerical,
+    IndexDomain,
 }
 
 impl VerifiedEvidenceRef {
@@ -312,10 +318,25 @@ impl VerifiedEvidenceRef {
                 .subject()
                 .canonical_explain_subject_bytes()
                 .into_boxed_slice(),
-            candidate: SubjectKey::new(proof.candidate_label())?,
+            subject_kind: SubjectKind::Candidate,
+            subject: SubjectKey::new(proof.candidate_label())?,
             provider,
             proof: proof.canonical_explain_evidence_bytes().into_boxed_slice(),
         })
+    }
+
+    pub(crate) fn from_index_domain(
+        subject: &SubjectRef,
+        proof: &crate::index_discharge::AuthorizedIndexDomainProof,
+    ) -> Self {
+        Self {
+            kind: EvidenceReceiptKind::IndexDomain,
+            compilation: subject.compilation.canonical.to_vec().into_boxed_slice(),
+            subject_kind: subject.kind,
+            subject: subject.key.clone(),
+            provider: ProviderRef::builtin(),
+            proof: proof.identity().into(),
+        }
     }
 }
 
@@ -766,7 +787,10 @@ impl ExplainEvent {
                         | ExplainStage::Costing
                         | ExplainStage::Selection
                 ) || matches!(&assessment.basis, EvidenceBasis::SoundProof(_))
-                    && *stage != ExplainStage::NumericalLegality
+                    && !matches!(
+                        stage,
+                        ExplainStage::NumericalLegality | ExplainStage::SemanticDischarge
+                    )
                 {
                     return Err(ExplainError::InvalidStageEvent);
                 }
@@ -783,6 +807,7 @@ impl ExplainEvent {
                             | ExplainStage::CapabilityResolution
                             | ExplainStage::IntrinsicScheduling
                             | ExplainStage::KernelRefinement
+                            | ExplainStage::SemanticDischarge
                             | ExplainStage::ProgramVerification
                             | ExplainStage::ArtifactPlanning,
                         RejectionClass::IntrinsicInvalid
@@ -1154,8 +1179,8 @@ impl ExplainWriter {
             && (receipt.compilation.as_ref() != self.subject.canonical.as_ref()
                 || receipt.provider != rule.provider
                 || subjects.len() != 1
-                || subjects[0].kind != SubjectKind::Candidate
-                || subjects[0].key != receipt.candidate)
+                || subjects[0].kind != receipt.subject_kind
+                || subjects[0].key != receipt.subject)
         {
             return Err(ExplainError::EvidenceSubjectMismatch);
         }
@@ -2266,6 +2291,7 @@ const fn stage_name(stage: ExplainStage) -> &'static str {
         ExplainStage::Costing => "costing",
         ExplainStage::Selection => "selection",
         ExplainStage::KernelRefinement => "kernel-refinement",
+        ExplainStage::SemanticDischarge => "semantic-discharge",
         ExplainStage::ProgramVerification => "program-verification",
         ExplainStage::ArtifactPlanning => "artifact-planning",
     }
@@ -2744,9 +2770,11 @@ fn encode_basis(bytes: &mut Vec<u8>, basis: &EvidenceBasis) {
             bytes.push(3);
             bytes.push(match receipt.kind {
                 EvidenceReceiptKind::FusionNumerical => 1,
+                EvidenceReceiptKind::IndexDomain => 2,
             });
             push_slice(bytes, &receipt.compilation);
-            push_slice(bytes, receipt.candidate.as_str().as_bytes());
+            bytes.push(subject_kind_tag(receipt.subject_kind));
+            push_slice(bytes, receipt.subject.as_str().as_bytes());
             push_slice(bytes, receipt.provider.key.as_str().as_bytes());
             bytes.extend_from_slice(&receipt.provider.revision.to_be_bytes());
             push_slice(bytes, &receipt.proof);
@@ -2802,6 +2830,7 @@ const fn stage_tag(stage: ExplainStage) -> u8 {
         ExplainStage::KernelRefinement => 11,
         ExplainStage::ProgramVerification => 12,
         ExplainStage::ArtifactPlanning => 13,
+        ExplainStage::SemanticDischarge => 14,
     }
 }
 

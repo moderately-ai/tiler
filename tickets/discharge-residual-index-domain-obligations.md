@@ -1,11 +1,11 @@
 ---
 id: discharge-residual-index-domain-obligations
 title: Discharge residual index-domain obligations before program work
-status: todo
+status: done
 priority: p1
 dependencies: [carry-unknown-index-domain-obligations]
-related: []
-scopes: [implementation/ir, implementation/compiler]
+related: [implement-representation-aware-semantic-host-enforcement]
+scopes: [implementation/ir, implementation/compiler, contracts/foundation, contracts/optimizer, contracts/numerics, research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, indexing, proof]
@@ -33,3 +33,11 @@ Proved, disproved, and unknown obligations traverse the named stage with distinc
 - On completion, update the IR, optimizer, correctness, and execution-order contracts that describe semantic obligation discharge.
 - Link or file the concrete semantic-host-check implementation owner if this ticket establishes only the protocol.
 - Close the parent chain only when no residual obligation can reach program work undisposed.
+
+## Implementation outcome
+
+- `PendingIndexRefinement` is consumed by one compiler-owned semantic-discharge stage before cover enumeration. The stage borrows each exact region-owned obligation once and preserves `Proved`, `Disproved`, and `Unknown` as distinct typed claims.
+- An all-`Proved` result seals content-identity-bearing receipts over the region, obligation, rule authority and revision, and sound or exhaustive proof payload. Any other aggregate result refuses atomically; the immutable verified region is never rebuilt or mutated.
+- The initial production authority returns the verifier's exact `Unknown` because no representation-aware host checker exists. The compiler emits one typed `semantic-discharge` record per obligation and refuses with `index-domain-discharge-unsupported` before cover enumeration.
+- `implement-representation-aware-semantic-host-enforcement` owns the complete future host-check vertical, including packed, complex, quantized multi-component, sparse/ragged, and extension-type logical views. A dense-`f32` shortcut is explicitly insufficient.
+- The opaque semi-affine fixture remains dependent on the unimplemented symbolic-divisor representation; this ticket does not synthesize a substitute predicate language.

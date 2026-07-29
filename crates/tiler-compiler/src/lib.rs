@@ -23,6 +23,7 @@ mod governed;
 mod honourability;
 #[cfg(test)]
 mod hot_path;
+mod index_discharge;
 pub mod legality;
 mod lowering;
 mod normalize;

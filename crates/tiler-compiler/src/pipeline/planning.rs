@@ -328,23 +328,19 @@ pub(super) fn enumerate_complete_plans(
     })
 }
 
-/// Records why one occurrence's lowering could not be established.
-///
-/// The four classes stay distinct. An absent capability is deferred; a
-/// contended capability is disproved; a residual index predicate is unknown;
-/// and every other refused refinement is disproved.
-fn record_unresolved_index_domain(
+/// Records every exact claim made by the named semantic-discharge stage.
+fn record_semantic_discharge_refusal(
     explain: &mut ExplainWriter,
     source: &LoweringError,
-    provider: &crate::request::LoweringProviderIdentity,
-    pending: &crate::legality::PendingIndexRefinement,
+    refusal: &IndexDomainDischargeRefusal,
     mut cause: ExplainRecordId,
 ) -> Result<ExplainRecordId, TargetFailure> {
     use std::fmt::Write as _;
 
     let key = format!("occurrence:{}", source.member().0);
-    for (ordinal, obligation) in pending.obligations().enumerate() {
-        let (reason, resource) = match obligation.reason() {
+    for (ordinal, discharge) in refusal.assessments().iter().enumerate() {
+        let obligation = discharge.obligation();
+        let (_unknown_reason, resource) = match obligation.reason() {
             tiler_ir::index::IndexDomainUnknownReason::InsufficientFacts => {
                 ("index-domain-insufficient-facts", None)
             }
@@ -375,29 +371,86 @@ fn record_unresolved_index_domain(
         let ordinal = u64::try_from(ordinal).expect("index-region obligations are host bounded");
         cause = explain_step(
             (|| -> Result<_, CompileError> {
-                let provider_ref = ProviderRef::lowering(provider)?;
-                let rule = RuleRef::provided(
-                    "kernel.index-region-refinement.v1",
-                    provider.capability_revision().get(),
-                    provider_ref,
-                )?;
                 let subject = explain.subject(SubjectKind::Kernel, &key)?;
-                let mut assessment = PredicateAssessment::unknown(
-                    format!("kernel.index-domain-obligation.{ordinal}"),
-                    ReasonCode::new(reason)?,
-                )?
-                .with_fact(ExplainFact::new(
-                    "obligation-ordinal",
-                    FactValue::Count(ordinal),
-                )?)?
-                .with_fact(ExplainFact::new(
-                    "obligation-key",
-                    FactValue::Identity(crate::explain::SubjectKey::new(&obligation_key)?),
-                )?)?
-                .with_fact(ExplainFact::new(
-                    "predicate-kind",
-                    FactValue::Identity(crate::explain::SubjectKey::new(predicate_kind)?),
-                )?)?;
+                let (mut assessment, proof_basis) = match discharge.claim() {
+                    IndexDomainDischargeClaim::Proved(IndexDomainDischargeProof::Sound {
+                        ..
+                    }) => (
+                        PredicateAssessment::proven(
+                            format!("kernel.index-domain-obligation.{ordinal}"),
+                            EvidenceBasis::CheckedInvariant,
+                        )?,
+                        Some("sound-proof"),
+                    ),
+                    IndexDomainDischargeClaim::Proved(
+                        IndexDomainDischargeProof::ExhaustiveFinite { .. },
+                    ) => (
+                        PredicateAssessment::proven(
+                            format!("kernel.index-domain-obligation.{ordinal}"),
+                            EvidenceBasis::ExhaustiveFinite,
+                        )?,
+                        Some("exhaustive-finite"),
+                    ),
+                    IndexDomainDischargeClaim::Disproved(disproof) => (
+                        PredicateAssessment::disproved(
+                            format!("kernel.index-domain-obligation.{ordinal}"),
+                            ReasonCode::new(disproof.reason())?,
+                            EvidenceBasis::CheckedInvariant,
+                        )?,
+                        Some("semantic-counterexample"),
+                    ),
+                    IndexDomainDischargeClaim::Unknown(reason) => {
+                        let reason = match reason {
+                            tiler_ir::index::IndexDomainUnknownReason::InsufficientFacts => {
+                                "index-domain-insufficient-facts"
+                            }
+                            tiler_ir::index::IndexDomainUnknownReason::UnsupportedFragment => {
+                                "index-domain-unsupported-fragment"
+                            }
+                            tiler_ir::index::IndexDomainUnknownReason::ResourceLimit { .. } => {
+                                "index-domain-proof-resource-limit"
+                            }
+                        };
+                        (
+                            PredicateAssessment::unknown(
+                                format!("kernel.index-domain-obligation.{ordinal}"),
+                                ReasonCode::new(reason)?,
+                            )?,
+                            None,
+                        )
+                    }
+                };
+                assessment = assessment
+                    .with_fact(ExplainFact::new(
+                        "obligation-ordinal",
+                        FactValue::Count(ordinal),
+                    )?)?
+                    .with_fact(ExplainFact::new(
+                        "obligation-key",
+                        FactValue::Identity(crate::explain::SubjectKey::new(&obligation_key)?),
+                    )?)?
+                    .with_fact(ExplainFact::new(
+                        "predicate-kind",
+                        FactValue::Identity(crate::explain::SubjectKey::new(predicate_kind)?),
+                    )?)?
+                    .with_fact(ExplainFact::new(
+                        "discharge-rule",
+                        FactValue::Identity(crate::explain::SubjectKey::new(format!(
+                            "{}.{}",
+                            discharge.authority().rule().identity().namespace(),
+                            discharge.authority().rule().identity().name(),
+                        ))?),
+                    )?)?
+                    .with_fact(ExplainFact::new(
+                        "discharge-revision",
+                        FactValue::Count(u64::from(discharge.authority().revision().get())),
+                    )?)?;
+                if let Some(proof_basis) = proof_basis {
+                    assessment = assessment.with_fact(ExplainFact::new(
+                        "evidence-basis",
+                        FactValue::Identity(crate::explain::SubjectKey::new(proof_basis)?),
+                    )?)?;
+                }
                 if let Some((resource, required, limit)) = resource {
                     let resource = match resource {
                         tiler_ir::index::ProofResource::Cells => "index-proof-cells",
@@ -425,17 +478,17 @@ fn record_unresolved_index_domain(
                         .with_fact(ExplainFact::new("proof-limit", FactValue::Count(limit))?)?;
                 }
                 Ok(explain.push_detail(
-                    rule,
+                    RuleRef::builtin("index-domain.semantic-discharge.v1")?,
                     vec![subject],
                     ExplainEvent::Check {
-                        stage: ExplainStage::KernelRefinement,
+                        stage: ExplainStage::SemanticDischarge,
                         assessment,
                         rejection: RejectionClass::IntrinsicInvalid,
                     },
                     vec![cause],
                 )?)
             })(),
-            ExplainStage::KernelRefinement,
+            ExplainStage::SemanticDischarge,
             SubjectKind::Kernel,
             &key,
             record_cause(cause),
@@ -449,13 +502,14 @@ pub(super) fn record_lowering_failure(
     source: &LoweringError,
     cause: ExplainRecordId,
 ) -> Result<ExplainRecordId, TargetFailure> {
-    if let Some((provider, pending)) = source.unresolved_index_domain() {
-        return record_unresolved_index_domain(explain, source, provider, pending, cause);
+    if let Some((_, refusal)) = source.semantic_discharge() {
+        return record_semantic_discharge_refusal(explain, source, refusal, cause);
     }
     let key = format!("occurrence:{}", source.member().0);
     let (stage, subject_kind) = match source {
-        LoweringError::Refine { .. } | LoweringError::Unresolved { .. } => {
-            (ExplainStage::KernelRefinement, SubjectKind::Kernel)
+        LoweringError::Refine { .. } => (ExplainStage::KernelRefinement, SubjectKind::Kernel),
+        LoweringError::SemanticDischarge { .. } => {
+            (ExplainStage::SemanticDischarge, SubjectKind::Kernel)
         }
         LoweringError::Occurrence { .. } | LoweringError::Resolve { .. } => {
             (ExplainStage::CapabilityResolution, SubjectKind::Capability)
@@ -478,6 +532,9 @@ pub(super) fn record_lowering_failure(
                         match stage {
                             ExplainStage::KernelRefinement => {
                                 "kernel.index-region-refines-occurrence"
+                            }
+                            ExplainStage::SemanticDischarge => {
+                                "kernel.index-domain-obligations-discharged"
                             }
                             _ => "capability.index-access-resolved",
                         },
@@ -504,29 +561,50 @@ pub(super) fn record_lowering_failure(
 /// Attributes a lowering-stage failure to its exact phase and subject.
 ///
 /// Resolution failures belong to [`ExplainStage::CapabilityResolution`] and
-/// refinement refusals to [`ExplainStage::KernelRefinement`]; both are reported
-/// as unsupported capabilities rather than as target infeasibility, because the
-/// installed authority is what could not lower the program.
+/// refinement refusals belong to [`ExplainStage::KernelRefinement`], while
+/// residual semantic claims belong to [`ExplainStage::SemanticDischarge`].
 pub(super) fn lowering_failure(source: &LoweringError, cause: ExplainRecordId) -> TargetFailure {
     let stage = match source {
-        LoweringError::Refine { .. } | LoweringError::Unresolved { .. } => {
-            ExplainStage::KernelRefinement
-        }
+        LoweringError::Refine { .. } => ExplainStage::KernelRefinement,
+        LoweringError::SemanticDischarge { .. } => ExplainStage::SemanticDischarge,
         LoweringError::Occurrence { .. } | LoweringError::Resolve { .. } => {
             ExplainStage::CapabilityResolution
         }
     };
-    target_failure(
+    let phase = match source {
+        LoweringError::SemanticDischarge { .. } => "semantic-discharge",
+        _ => "lowering",
+    };
+    let error = if matches!(
+        source,
+        LoweringError::SemanticDischarge { refusal, .. }
+            if semantic_discharge_is_invalid(refusal.kind())
+    ) {
+        CompileError::InvalidCompilerOutput(CompilerOutputError::Lowering(source.clone()))
+    } else {
         CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
-            phase: "lowering",
+            phase,
             rule: source.reason(),
-        }),
+        })
+    };
+    target_failure(
+        error,
         stage,
         format!("lowering-{}", source.reason()),
         SubjectKind::Capability,
         format!("occurrence:{}", source.member().0),
         record_cause(cause),
     )
+}
+
+/// Returns whether a discharge outcome proves the emitted lowering invalid.
+const fn semantic_discharge_is_invalid(
+    kind: crate::index_discharge::IndexDomainDischargeRefusalKind,
+) -> bool {
+    match kind {
+        crate::index_discharge::IndexDomainDischargeRefusalKind::Disproved => true,
+        crate::index_discharge::IndexDomainDischargeRefusalKind::Unknown => false,
+    }
 }
 
 /// Returns the planning ordinal a cover region's implementation will carry.
@@ -754,4 +832,20 @@ pub(super) fn select_non_dominated<'alternatives>(
                 rule: "portfolio-empty",
             }),
         ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::semantic_discharge_is_invalid;
+    use crate::index_discharge::IndexDomainDischargeRefusalKind;
+
+    #[test]
+    fn only_disproved_semantic_discharge_is_invalid_compiler_output() {
+        assert!(semantic_discharge_is_invalid(
+            IndexDomainDischargeRefusalKind::Disproved
+        ));
+        assert!(!semantic_discharge_is_invalid(
+            IndexDomainDischargeRefusalKind::Unknown
+        ));
+    }
 }

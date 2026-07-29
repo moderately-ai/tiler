@@ -190,7 +190,7 @@ pub(super) fn record_refinement(
     match occurrence.evidence() {
         OccurrenceEvidence::Refined(refinement) => {
             let identity = refinement_label(refinement);
-            explain_step(
+            let refinement_cause = explain_step(
                 (|| -> Result<_, CompileError> {
                     let provider = ProviderRef::lowering(occurrence.provider())?;
                     let rule = RuleRef::provided(
@@ -221,9 +221,97 @@ pub(super) fn record_refinement(
                 SubjectKind::Kernel,
                 &key,
                 record_cause(cause),
-            )
+            )?;
+            record_semantic_discharge_proofs(explain, &key, refinement, refinement_cause)
         }
     }
+}
+
+/// Records every sealed residual-domain proof before cover enumeration.
+fn record_semantic_discharge_proofs(
+    explain: &mut ExplainWriter,
+    key: &str,
+    refinement: &crate::legality::IndexRefinement,
+    mut cause: ExplainRecordId,
+) -> Result<ExplainRecordId, TargetFailure> {
+    use std::fmt::Write as _;
+
+    for (ordinal, proof) in refinement
+        .content()
+        .index_domain_proofs()
+        .iter()
+        .enumerate()
+    {
+        let ordinal = u64::try_from(ordinal).expect("index-region obligations are host bounded");
+        cause = explain_step(
+            (|| -> Result<_, CompileError> {
+                let subject = explain.subject(SubjectKind::Kernel, key)?;
+                let mut obligation_key = String::from("obligation:");
+                for byte in proof.obligation().canonical_local_key().as_bytes() {
+                    write!(obligation_key, "{byte:02x}").expect("writing to a String cannot fail");
+                }
+                let (basis, proof_kind, points) = match proof.proof() {
+                    IndexDomainDischargeProof::Sound { .. } => (
+                        EvidenceBasis::SoundProof(VerifiedEvidenceRef::from_index_domain(
+                            &subject, proof,
+                        )),
+                        "sound-proof",
+                        None,
+                    ),
+                    IndexDomainDischargeProof::ExhaustiveFinite { points, .. } => (
+                        EvidenceBasis::ExhaustiveFinite,
+                        "exhaustive-finite",
+                        Some(*points),
+                    ),
+                };
+                let mut assessment = PredicateAssessment::proven(
+                    format!("kernel.index-domain-obligation.{ordinal}"),
+                    basis,
+                )?
+                .with_fact(ExplainFact::new(
+                    "obligation-key",
+                    FactValue::Identity(crate::explain::SubjectKey::new(obligation_key)?),
+                )?)?
+                .with_fact(ExplainFact::new(
+                    "evidence-basis",
+                    FactValue::Identity(crate::explain::SubjectKey::new(proof_kind)?),
+                )?)?
+                .with_fact(ExplainFact::new(
+                    "discharge-rule",
+                    FactValue::Identity(crate::explain::SubjectKey::new(format!(
+                        "{}.{}",
+                        proof.authority().rule().identity().namespace(),
+                        proof.authority().rule().identity().name(),
+                    ))?),
+                )?)?
+                .with_fact(ExplainFact::new(
+                    "discharge-revision",
+                    FactValue::Count(u64::from(proof.authority().revision().get())),
+                )?)?;
+                if let Some(points) = points {
+                    assessment = assessment.with_fact(ExplainFact::new(
+                        "exhaustive-points",
+                        FactValue::Count(points),
+                    )?)?;
+                }
+                Ok(explain.push_detail(
+                    RuleRef::builtin("index-domain.semantic-discharge.v1")?,
+                    vec![subject],
+                    ExplainEvent::Check {
+                        stage: ExplainStage::SemanticDischarge,
+                        assessment,
+                        rejection: RejectionClass::IntrinsicInvalid,
+                    },
+                    vec![cause],
+                )?)
+            })(),
+            ExplainStage::SemanticDischarge,
+            SubjectKind::Kernel,
+            key,
+            record_cause(cause),
+        )?;
+    }
+    Ok(cause)
 }
 
 /// Returns the stable presentation label of one refinement occurrence identity.

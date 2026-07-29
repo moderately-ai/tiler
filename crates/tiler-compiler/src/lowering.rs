@@ -28,10 +28,14 @@ use std::sync::Arc;
 use tiler_ir::semantic::{OpKey, SemanticProgram};
 
 use crate::capability::{LoweringResolveError, LoweringSignature, ResolvedLoweringCapability};
+use crate::index_discharge::{
+    IndexDomainDischargeRefusal, IndexDomainDischargeRefusalKind,
+    discharge_pending_index_refinement,
+};
 use crate::legality::{
     IndexRefinement, IndexRefinementOutcome, NumericalContractIdentity, OccurrenceOperand,
-    OccurrenceResult, OccurrenceValueId, PendingIndexRefinement, RefinementError,
-    SemanticOccurrence, SemanticOccurrenceIdentity, refine_index_region,
+    OccurrenceResult, OccurrenceValueId, RefinementError, SemanticOccurrence,
+    SemanticOccurrenceIdentity, refine_index_region,
 };
 use crate::region::{RegionFormationOutcome, SemanticMemberId};
 use crate::request::{LoweringProviderIdentity, VerifiedTargetRequest};
@@ -130,14 +134,14 @@ pub(crate) enum LoweringError {
         /// Typed refinement cause.
         source: Arc<RefinementError>,
     },
-    /// The provider emitted conforming checked state with residual predicates.
-    Unresolved {
-        /// Recognized member whose realization awaits semantic discharge.
+    /// Named semantic discharge refused one or more residual predicates.
+    SemanticDischarge {
+        /// Recognized member whose realization failed semantic discharge.
         member: SemanticMemberId,
         /// Resolved provider and capability revision that emitted the region.
         provider: LoweringProviderIdentity,
-        /// Exact checked state retaining the region-local predicate authority.
-        pending: Box<PendingIndexRefinement>,
+        /// Exact typed assessments and retained pending state.
+        refusal: Box<IndexDomainDischargeRefusal>,
     },
 }
 
@@ -148,7 +152,7 @@ impl LoweringError {
             Self::Occurrence { member, .. }
             | Self::Resolve { member, .. }
             | Self::Refine { member, .. }
-            | Self::Unresolved { member, .. } => *member,
+            | Self::SemanticDischarge { member, .. } => *member,
         }
     }
 
@@ -160,7 +164,10 @@ impl LoweringError {
                 LoweringResolveError::MissingCapability { .. } => "missing-capability",
                 LoweringResolveError::AmbiguousCapability { .. } => "ambiguous-capability",
             },
-            Self::Unresolved { .. } => "unresolved-index-domain",
+            Self::SemanticDischarge { refusal, .. } => match refusal.kind() {
+                IndexDomainDischargeRefusalKind::Disproved => "index-domain-disproved",
+                IndexDomainDischargeRefusalKind::Unknown => "index-domain-discharge-unsupported",
+            },
             Self::Refine { .. } => "refinement-refused",
         }
     }
@@ -179,17 +186,17 @@ impl LoweringError {
         )
     }
 
-    /// Returns the exact checked pending state, when residuals stopped refinement.
-    pub(crate) fn unresolved_index_domain(
+    /// Returns the exact semantic-discharge refusal, when residuals stopped lowering.
+    pub(crate) fn semantic_discharge(
         &self,
-    ) -> Option<(&LoweringProviderIdentity, &PendingIndexRefinement)> {
-        let Self::Unresolved {
-            provider, pending, ..
+    ) -> Option<(&LoweringProviderIdentity, &IndexDomainDischargeRefusal)> {
+        let Self::SemanticDischarge {
+            provider, refusal, ..
         } = self
         else {
             return None;
         };
-        Some((provider, pending))
+        Some((provider, refusal))
     }
 }
 
@@ -211,13 +218,12 @@ impl fmt::Display for LoweringError {
                 "compile.lowering.refinement: member {} was not realized: {source}",
                 member.0
             ),
-            Self::Unresolved {
-                member, pending, ..
+            Self::SemanticDischarge {
+                member, refusal, ..
             } => write!(
                 formatter,
-                "compile.lowering.refinement: member {} retains {} unresolved index-domain obligation(s)",
-                member.0,
-                pending.obligations().len()
+                "compile.lowering.semantic-discharge: member {} was refused: {}",
+                member.0, refusal
             ),
         }
     }
@@ -226,7 +232,7 @@ impl fmt::Display for LoweringError {
 impl Error for LoweringError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Occurrence { .. } | Self::Unresolved { .. } => None,
+            Self::Occurrence { .. } | Self::SemanticDischarge { .. } => None,
             Self::Resolve { source, .. } => Some(source.as_ref()),
             Self::Refine { source, .. } => Some(source.as_ref()),
         }
@@ -263,17 +269,17 @@ impl PartialEq for LoweringError {
                 },
             ) => member == other_member && provider == other_provider && source == other_source,
             (
-                Self::Unresolved {
+                Self::SemanticDischarge {
                     member,
                     provider,
-                    pending,
+                    refusal,
                 },
-                Self::Unresolved {
+                Self::SemanticDischarge {
                     member: other_member,
                     provider: other_provider,
-                    pending: other_pending,
+                    refusal: other_refusal,
                 },
-            ) => member == other_member && provider == other_provider && pending == other_pending,
+            ) => member == other_member && provider == other_provider && refusal == other_refusal,
             _ => false,
         }
     }
@@ -420,11 +426,13 @@ fn refine(
         }
     })? {
         IndexRefinementOutcome::Refined(refinement) => Ok(OccurrenceEvidence::Refined(refinement)),
-        IndexRefinementOutcome::Pending(pending) => Err(LoweringError::Unresolved {
-            member,
-            provider,
-            pending,
-        }),
+        IndexRefinementOutcome::Pending(pending) => discharge_pending_index_refinement(*pending)
+            .map(|refinement| OccurrenceEvidence::Refined(Box::new(refinement)))
+            .map_err(|refusal| LoweringError::SemanticDischarge {
+                member,
+                provider,
+                refusal: Box::new(refusal),
+            }),
     }
 }
 

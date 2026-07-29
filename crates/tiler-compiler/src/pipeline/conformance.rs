@@ -821,15 +821,15 @@ fn a_residual_index_obligation_fails_before_executable_plan_construction() {
     assert_eq!(
         *source,
         CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
-            phase: "lowering",
-            rule: "unresolved-index-domain",
+            phase: "semantic-discharge",
+            rule: "index-domain-discharge-unsupported",
         })
     );
     let residuals = explain
         .records()
         .iter()
         .filter(|record| {
-            record.event().stage() == ExplainStage::KernelRefinement
+            record.event().stage() == ExplainStage::SemanticDischarge
                 && record.event().disposition() == ExplainDisposition::DeferredUnsupported
         })
         .collect::<Vec<_>>();
@@ -837,12 +837,9 @@ fn a_residual_index_obligation_fails_before_executable_plan_construction() {
     let residual = residuals[0];
     assert_eq!(
         residual.rule().key().as_str(),
-        "kernel.index-region-refinement.v1"
+        "index-domain.semantic-discharge.v1"
     );
-    assert_eq!(
-        residual.rule().provider(),
-        &ProviderRef::registered(&external_lowering_provider()).unwrap()
-    );
+    assert_eq!(residual.rule().provider(), &ProviderRef::builtin());
     let ExplainEvent::Check { assessment, .. } = residual.event() else {
         panic!("the residual is a predicate assessment");
     };
@@ -881,7 +878,14 @@ fn a_residual_index_obligation_fails_before_executable_plan_construction() {
     assert!(required > u128::from(*limit));
     assert!(matches!(fact("obligation-key"), FactValue::Identity(_)));
     assert!(!explain.records().iter().any(|record| {
-        record.rule().key().as_str() == "kernel.index-region-refinement.v1"
+        record.rule().key().as_str() == "index-domain.semantic-discharge.v1"
             && record.event().disposition() == ExplainDisposition::Admitted
     }));
+    assert!(
+        !explain
+            .records()
+            .iter()
+            .any(|record| record.event().stage() == ExplainStage::CandidateEnumeration),
+        "semantic discharge refuses before cover enumeration or later program work"
+    );
 }
