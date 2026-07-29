@@ -97,6 +97,7 @@ satisfies_dependents = false
   "spikes/README.md",
   "docs/open-questions.md",
   "docs/roadmap.md",
+  "docs/dtype-support.md",
   "docs/decisions/README.md",
 ]
 "contracts/decisions" = ["docs/decisions/[0-9]*.md"]
