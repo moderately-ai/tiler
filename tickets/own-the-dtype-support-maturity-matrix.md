@@ -1,7 +1,7 @@
 ---
 id: own-the-dtype-support-maturity-matrix
 title: Own the dtype support maturity matrix
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [enumerate-the-mature-tensor-dtype-taxonomy, own-operation-family-support-matrix, register-the-accepted-built-in-dtype-catalog, prototype-quantized-value-vertical, implement-first-runtime-semantic-value-precondition-enforcement, scope-first-quantized-lm-profile, preserve-primary-dtype-standards-evidence, produce-typed-strict-affine-quantize-semantic-preconditions, admit-a-dtype-dispatchability-capability-axis, implement-workload-selected-quantized-parameter-maps, group-internal-compound-materializations-by-logical-value, implement-first-quantized-backend-profile, calibrate-device-cost-models, correct-the-stale-post-vertical-implementation-status]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: [docs/dtype-support.md]
 tags: [documentation, roadmap, dtype, breadth]
-claimed_from: todo
-assignee: codex
-lease_expires_at: 1785335057
 ---
 ## User-visible outcome
 
