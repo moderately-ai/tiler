@@ -3,7 +3,7 @@ id: implement-first-quantized-backend-profile
 title: Implement the first selected quantized backend profile
 status: deferred
 priority: p2
-dependencies: [prototype-quantized-value-vertical, group-internal-compound-materializations-by-logical-value]
+dependencies: [prototype-quantized-value-vertical, group-internal-compound-materializations-by-logical-value, admit-strict-affine-quantize-physical-candidate, implement-first-runtime-semantic-value-precondition-enforcement]
 related: [implement-workload-selected-quantized-parameter-maps, own-the-dtype-support-maturity-matrix, admit-a-dtype-dispatchability-capability-axis]
 scopes: [implementation/compiler, implementation/artifact, implementation/reference, implementation/runtime]
 shared_scopes: [project/tickets]
@@ -41,6 +41,7 @@ Any consequential public or cross-crate crate, module, trait, type, or call-site
 - Consume the selection and elimination record from `scope-first-quantized-lm-profile`; do not repeat format selection here.
 - Add a dependency on `implement-workload-selected-quantized-parameter-maps` only if the chosen profile uses a non-per-tensor map.
 - Add a dependency on `implement-first-runtime-semantic-value-precondition-enforcement` for any selected scheme whose valid execution domain requires runtime tensor-value validation.
+- Consume `admit-strict-affine-quantize-physical-candidate` for the bounded correctness route and make this ticket depend on the completed runtime enforcement vertical before promoting dynamic strict-affine inputs to executable backend support. The candidate breaks the dependency cycle by supplying real result work without prematurely exposing dispatch authority.
 - Add a dependency on `admit-a-dtype-dispatchability-capability-axis` before claiming target-family executability and on the exact profile-driven physical-vocabulary ticket before adding a carrier or kernel type.
 - Add profile-specific analytical and calibrated cost dependencies before claiming the selected implementation is device-optimal; a correctness-only spike may proceed while unmeasured costs remain `Unknown`, but it cannot select itself as optimal.
 - Update `own-the-dtype-support-maturity-matrix` with construction-site evidence and bounded conformance results when this profile closes.
