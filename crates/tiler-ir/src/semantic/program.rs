@@ -12,9 +12,10 @@ use super::handles::{
     GraphId, OperationId, OperationIndex, Value, ValueId, ValueIndex, next_graph_id,
 };
 use super::identity::{
-    MAX_SEMANTIC_PROGRAM_CANONICAL_WORK_BYTES, SemanticIdentity, compute_graph_identity,
-    empty_graph_canonical_work_bytes, graph_identity_encoded_len_for_verified,
-    input_canonical_work_bytes, operation_canonical_work_bytes, output_canonical_work_bytes,
+    MAX_SEMANTIC_PROGRAM_CANONICAL_WORK_BYTES, SemanticIdentity, canonical_value_ids_for_verified,
+    compute_graph_identity, empty_graph_canonical_work_bytes,
+    graph_identity_encoded_len_for_verified, input_canonical_work_bytes,
+    operation_canonical_work_bytes, output_canonical_work_bytes,
 };
 use super::interface::{
     InputIndex, InputKey, Output, OutputKey, OutputSelector, ProgramInput, ProgramInputRef,
@@ -24,11 +25,18 @@ use super::operation::{
     MAX_OPERATION_OPERANDS, OperationAttributes, OperationData, OperationRef, ResultIndex,
     ValueData, ValueDefinition, ValueFact, ValueRef,
 };
+use super::precondition::{
+    MAX_SEMANTIC_PRECONDITION_OBLIGATION_IDENTITY_BYTES, SemanticPreconditionData,
+    SemanticPreconditionDisproof, SemanticPreconditionOrdinal, SemanticPreconditionStatus,
+    StaticAssessment, StaticValueEvidence, assess_static_precondition,
+    initialize_obligation_identities, obligation_identity_total_encoded_len,
+};
 use super::registry::{
     FrozenSemanticRegistry, SemanticAdmissionProvenanceIdentity,
     SemanticDefinitionProjectionIdentity, SemanticRegistrySnapshotIdentity,
 };
 use super::shape_evidence::{SameShape, ShapeWitness, ShapedValue};
+use super::types::CanonicalValueView;
 use super::types::ResolvedValueType;
 
 /// A verified, immutable semantic tensor program.
@@ -48,6 +56,7 @@ pub(super) struct ProgramData {
     pub(super) semantic_identity: OnceLock<SemanticIdentity>,
     pub(super) graph_identity_encoded_len: usize,
     pub(super) canonical_work_bytes: usize,
+    pub(super) canonical_value_ids: Vec<u64>,
     pub(super) reached_definitions: SemanticDefinitionProjectionIdentity,
     pub(super) admission_provenance: SemanticAdmissionProvenanceIdentity,
     pub(super) registry_snapshot: SemanticRegistrySnapshotIdentity,
@@ -78,6 +87,7 @@ impl SemanticProgram {
             .map(|(index, operation)| OperationRef {
                 owner: self.data.owner,
                 index: OperationIndex::from_verified_len(index),
+                program: &self.data,
                 operation,
             })
     }
@@ -148,6 +158,7 @@ impl SemanticProgram {
             .map(|operation| OperationRef {
                 owner: self.data.owner,
                 index: id.index,
+                program: &self.data,
                 operation,
             })
             .ok_or(HandleError::InvalidLocal {
@@ -412,6 +423,25 @@ pub struct SemanticProgramBuilder {
 }
 
 impl SemanticProgramBuilder {
+    #[cfg(test)]
+    pub(super) const fn retained_canonical_work_bytes(&self) -> usize {
+        self.canonical_work_bytes
+    }
+
+    fn clone_for_identity_preflight(&self) -> Self {
+        Self {
+            owner: self.owner,
+            inputs: self.inputs.clone(),
+            operations: self.operations.clone(),
+            values: self.values.clone(),
+            outputs: self.outputs.clone(),
+            input_keys: self.input_keys.clone(),
+            output_keys: self.output_keys.clone(),
+            semantic_registry: self.semantic_registry.clone(),
+            canonical_work_bytes: self.canonical_work_bytes,
+        }
+    }
+
     /// Tries to create an empty builder with a distinct graph owner.
     ///
     /// # Errors
@@ -699,13 +729,51 @@ impl SemanticProgramBuilder {
                     });
                 }
             };
+        let registry_snapshot = self.semantic_registry.snapshot_identity().clone();
+        let has_residual_preconditions = self.operations.iter().any(|operation| {
+            operation
+                .semantic_preconditions
+                .iter()
+                .any(|precondition| precondition.status == SemanticPreconditionStatus::Residual)
+        });
+        let obligation_identity_bytes = if has_residual_preconditions {
+            let mut preview = self.clone_for_identity_preflight();
+            preview.compact_to_outputs();
+            let mut preview_data = ProgramData {
+                owner: preview.owner,
+                origin: preview.owner,
+                inputs: preview.inputs,
+                operations: preview.operations,
+                values: preview.values,
+                outputs: preview.outputs,
+                semantic_identity: OnceLock::new(),
+                graph_identity_encoded_len: 0,
+                canonical_work_bytes: preview.canonical_work_bytes,
+                canonical_value_ids: Vec::new(),
+                reached_definitions: reached_definitions.clone(),
+                admission_provenance: admission_provenance.clone(),
+                registry_snapshot: registry_snapshot.clone(),
+                semantic_registry: preview.semantic_registry,
+            };
+            preview_data.canonical_value_ids = canonical_value_ids_for_verified(&preview_data);
+            preview_data.graph_identity_encoded_len =
+                graph_identity_encoded_len_for_verified(&preview_data);
+            obligation_identity_total_encoded_len(&preview_data)
+        } else {
+            0
+        };
+        if let Err(failure) = validate_obligation_identity_bytes(obligation_identity_bytes) {
+            return Err(ProgramBuildError {
+                builder: Box::new(self),
+                failure,
+            });
+        }
         let Some(completed_owner) = allocate_owner() else {
             return Err(ProgramBuildError {
                 builder: Box::new(self),
                 failure: ProgramBuildFailure::GraphIdentityExhausted,
             });
         };
-        let registry_snapshot = self.semantic_registry.snapshot_identity().clone();
         let origin = self.owner;
         self.compact_to_outputs();
         let mut data = ProgramData {
@@ -718,17 +786,35 @@ impl SemanticProgramBuilder {
             semantic_identity: OnceLock::new(),
             graph_identity_encoded_len: 0,
             canonical_work_bytes: self.canonical_work_bytes,
+            canonical_value_ids: Vec::new(),
             reached_definitions,
             admission_provenance,
             registry_snapshot,
             semantic_registry: self.semantic_registry,
         };
+        data.canonical_value_ids = canonical_value_ids_for_verified(&data);
         data.graph_identity_encoded_len = graph_identity_encoded_len_for_verified(&data);
         assert!(
             data.graph_identity_encoded_len <= data.canonical_work_bytes
                 && data.graph_identity_encoded_len <= MAX_SEMANTIC_PROGRAM_CANONICAL_WORK_BYTES,
             "verified graph identity exceeds its admitted canonical-work budget"
         );
+        if obligation_identity_bytes != 0 {
+            debug_assert_eq!(
+                obligation_identity_total_encoded_len(&data),
+                obligation_identity_bytes
+            );
+            let graph = compute_graph_identity(&data);
+            initialize_obligation_identities(&mut data, &graph);
+            data.semantic_identity
+                .set(SemanticIdentity::new(
+                    graph,
+                    data.reached_definitions.clone(),
+                    data.admission_provenance.clone(),
+                    data.registry_snapshot.clone(),
+                ))
+                .expect("completed program semantic identity initializes exactly once");
+        }
         Ok(SemanticProgram {
             data: Arc::new(data),
         })
@@ -786,6 +872,8 @@ impl SemanticProgramBuilder {
             validate_shape(fact.shape())?;
         }
         validate_results(&self.semantic_registry, &inferred)?;
+        let semantic_preconditions =
+            self.assess_semantic_preconditions(&key, &operand_indices, &operand_facts)?;
         let operation_index =
             OperationIndex::from_len(self.operations.len()).ok_or(BuildError::TooManyEntities {
                 entity: EntityKind::Operation,
@@ -803,8 +891,13 @@ impl SemanticProgramBuilder {
                 entity: EntityKind::Value,
             })?;
         }
-        let added_canonical_work =
-            operation_canonical_work_bytes(&key, &attributes, operand_indices.len(), &inferred);
+        let added_canonical_work = operation_canonical_work_bytes(
+            &key,
+            &attributes,
+            operand_indices.len(),
+            &inferred,
+            semantic_preconditions.len(),
+        );
         let canonical_work_bytes = self.reserve_canonical_work(added_canonical_work)?;
         let mut result_indices = Vec::with_capacity(inferred.len());
         let mut result_ids = Vec::with_capacity(inferred.len());
@@ -830,9 +923,123 @@ impl SemanticProgramBuilder {
             attributes,
             operands: operand_indices,
             results: result_indices,
+            semantic_preconditions,
         });
         self.canonical_work_bytes = canonical_work_bytes;
         Ok(result_ids)
+    }
+
+    fn assess_semantic_preconditions(
+        &self,
+        key: &super::operation::OpKey,
+        operands: &[ValueIndex],
+        operand_facts: &[ValueFact],
+    ) -> Result<Vec<SemanticPreconditionData>, BuildError> {
+        let definition = self
+            .semantic_registry
+            .operation_definition(key)
+            .expect("successful inference resolved the operation definition");
+        let mut assessed = Vec::with_capacity(definition.semantic_preconditions().as_slice().len());
+        let mut disproof: Option<SemanticPreconditionDisproof> = None;
+        for (position, declaration) in definition
+            .semantic_preconditions()
+            .as_slice()
+            .iter()
+            .enumerate()
+        {
+            let ordinal = SemanticPreconditionOrdinal::from_verified_position(position);
+            let operand_position = usize::try_from(declaration.operand().get())
+                .expect("u32 fits every supported host usize");
+            let subject = operands[operand_position];
+            let fact = &operand_facts[operand_position];
+            let evidence = self.static_value_evidence(subject);
+            let (status, proof_basis) = match assess_static_precondition(
+                declaration,
+                fact.resolved_type(),
+                fact.shape(),
+                evidence,
+            ) {
+                StaticAssessment::Proven(proof_basis) => {
+                    (SemanticPreconditionStatus::Proven, Some(proof_basis))
+                }
+                StaticAssessment::Residual => (SemanticPreconditionStatus::Residual, None),
+                StaticAssessment::Disproved => {
+                    let candidate = SemanticPreconditionDisproof::new(
+                        key.clone(),
+                        declaration,
+                        ordinal,
+                        ValueId {
+                            owner: self.owner,
+                            index: subject,
+                        },
+                        Arc::clone(&self.values[subject.as_usize()].resolved_type),
+                        self.values[subject.as_usize()].shape.clone(),
+                    );
+                    let replace = disproof.as_ref().is_none_or(|prior| {
+                        super::precondition::semantic_disproof_precedes(&candidate, prior)
+                    });
+                    if replace {
+                        disproof = Some(candidate);
+                    }
+                    continue;
+                }
+            };
+            assessed.push(SemanticPreconditionData {
+                ordinal,
+                subject,
+                status,
+                proof_basis,
+                obligation_identity: None,
+            });
+        }
+        if let Some(disproof) = disproof {
+            return Err(BuildError::SemanticPreconditionDisproved(Arc::new(
+                disproof,
+            )));
+        }
+        Ok(assessed)
+    }
+
+    fn static_value_evidence(&self, subject: ValueIndex) -> Option<StaticValueEvidence> {
+        let value = self.values.get(subject.as_usize())?;
+        let f32_type = super::registry::F32::resolved_type();
+        if value.resolved_type.as_ref() != &f32_type || value.shape.rank() != 0 {
+            return None;
+        }
+        let ValueDefinition::OperationResult {
+            operation,
+            result_index,
+        } = value.definition
+        else {
+            return None;
+        };
+        if result_index.get() != 0 {
+            return None;
+        }
+        let producer = self.operations.get(operation.as_usize())?;
+        if producer.key != super::operation::constant_f32_op() {
+            return None;
+        }
+        if !self
+            .semantic_registry
+            .is_standard_static_evidence_authority(&producer.key)
+        {
+            return None;
+        }
+        let CanonicalValueView::FloatBits(bits) = producer
+            .attributes
+            .get(super::operation::F32_CONSTANT_BITS_ATTRIBUTE)?
+            .view()
+        else {
+            return None;
+        };
+        if bits.format() != f32_type.nominal_key()? || bits.bits().len() != 4 {
+            return None;
+        }
+        let bytes: [u8; 4] = bits.bits().try_into().ok()?;
+        Some(StaticValueEvidence::F32ScalarBits(u32::from_be_bytes(
+            bytes,
+        )))
     }
 
     fn reserve_canonical_work(&self, added: usize) -> Result<usize, BuildError> {
@@ -987,7 +1194,6 @@ impl SemanticProgramBuilder {
             pending.extend(operation.operands.iter().copied());
             pending.extend(operation.results.iter().copied());
         }
-
         let mut value_map = vec![None; self.values.len()];
         let mut next_value = 0_usize;
         for (old_index, reachable) in reachable_values.iter().copied().enumerate() {
@@ -1055,6 +1261,10 @@ impl SemanticProgramBuilder {
             for result in &mut operation.results {
                 *result = value_map[result.as_usize()]
                     .expect("a reachable operation retains every result");
+            }
+            for precondition in &mut operation.semantic_preconditions {
+                precondition.subject = value_map[precondition.subject.as_usize()]
+                    .expect("a reachable precondition retains its exact subject");
             }
             self.operations.push(operation);
         }
@@ -1229,7 +1439,13 @@ impl SemanticProgramBuilder {
         ) else {
             return false;
         };
-        expected.len() == operation.results.len()
+        let Ok(expected_preconditions) =
+            self.assess_semantic_preconditions(&operation.key, &operation.operands, &operand_facts)
+        else {
+            return false;
+        };
+        expected_preconditions == operation.semantic_preconditions
+            && expected.len() == operation.results.len()
             && operation
                 .results
                 .iter()
@@ -1253,6 +1469,18 @@ fn checked_index(index: usize, entity: EntityKind) -> Result<ValueIndex, BuildEr
     ValueIndex::from_len(index).ok_or(BuildError::TooManyEntities { entity })
 }
 
+fn validate_obligation_identity_bytes(actual: usize) -> Result<(), ProgramBuildFailure> {
+    if actual > MAX_SEMANTIC_PRECONDITION_OBLIGATION_IDENTITY_BYTES {
+        return Err(
+            ProgramBuildFailure::SemanticPreconditionObligationIdentityBytesExceeded {
+                actual,
+                limit: MAX_SEMANTIC_PRECONDITION_OBLIGATION_IDENTITY_BYTES,
+            },
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::EncodedNumericContract;
@@ -1262,13 +1490,31 @@ mod tests {
         OperationAttributeSchema, OperationConformance, OperationDefinition,
         OperationDefinitionFacts, OperationEffect, OperationInferenceError,
         OperationInferenceOutputs, OperationInferenceRequest, OperationInferencer, OperationSchema,
-        ProviderDiagnosticCode, ProviderIdentity, QuantSchemeKey, SemanticGraphIdentity,
-        SemanticRegistryBuilder, SemanticRegistryProvider, SemanticRegistryRegistrar,
-        StrictSerialF32Sum, TypeArguments, TypeDefinitionFacts, TypeKey, ValueTypeDefinition,
-        ValueTypeDefinitionKey, add_f32_op,
+        ProviderDiagnosticCode, ProviderIdentity, QuantSchemeKey, RegistryError,
+        SemanticGraphIdentity, SemanticRegistryBuilder, SemanticRegistryProvider,
+        SemanticRegistryRegistrar, StrictSerialF32Sum, TypeArguments, TypeDefinitionFacts, TypeKey,
+        U4, ValueTypeDefinition, ValueTypeDefinitionKey, add_f32_op,
     };
     use super::*;
     use crate::shape::{Axis, Shape, StaticShape};
+
+    #[test]
+    fn residual_obligation_identity_cache_bound_accepts_boundary_and_rejects_one_over() {
+        assert!(
+            validate_obligation_identity_bytes(MAX_SEMANTIC_PRECONDITION_OBLIGATION_IDENTITY_BYTES)
+                .is_ok()
+        );
+        assert!(matches!(
+            validate_obligation_identity_bytes(
+                MAX_SEMANTIC_PRECONDITION_OBLIGATION_IDENTITY_BYTES + 1
+            ),
+            Err(ProgramBuildFailure::SemanticPreconditionObligationIdentityBytesExceeded {
+                actual,
+                limit,
+            }) if actual == MAX_SEMANTIC_PRECONDITION_OBLIGATION_IDENTITY_BYTES + 1
+                && limit == MAX_SEMANTIC_PRECONDITION_OBLIGATION_IDENTITY_BYTES
+        ));
+    }
 
     fn input_key(value: &str) -> InputKey {
         InputKey::new(value).unwrap()
@@ -1334,6 +1580,61 @@ mod tests {
                 .unwrap())
             }
         }
+    }
+
+    struct PreconditionPrecedenceProvider;
+
+    impl SemanticRegistryProvider for PreconditionPrecedenceProvider {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("test", "precondition-precedence", 1).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), RegistryError> {
+            let declarations = super::super::SemanticPreconditionDeclarations::new([
+                super::super::SemanticPreconditionDeclaration::new(
+                    super::super::no_nan_predicate(),
+                    super::super::OperationOperandIndex::new(0),
+                    super::super::SemanticLogicalView::WholeValue,
+                    super::super::SemanticInvalidInputCode::new("test", "invalid-nan", 1).unwrap(),
+                ),
+            ])
+            .unwrap();
+            registrar.register_operation(
+                OperationDefinition::new(
+                    OpKey::new("test", "precondition-precedence", 1).unwrap(),
+                    OperationSchema::new(OperationArity::exact(1), OperationArity::exact(1), [])
+                        .unwrap(),
+                    NormativeDefinitionRef::new("test precondition precedence")?,
+                    OperationDefinitionFacts::new(CanonicalValue::boolean(true)),
+                    OperationConformance::new(CanonicalValue::boolean(true)),
+                    OperationEffect::Pure,
+                    Arc::new(Identity),
+                )
+                .with_semantic_preconditions(declarations)
+                .unwrap(),
+            )
+        }
+    }
+
+    #[test]
+    fn typed_result_contract_failure_precedes_static_input_disproof() {
+        let mut registry = SemanticRegistryBuilder::standard().unwrap();
+        registry
+            .register_provider(&PreconditionPrecedenceProvider)
+            .unwrap();
+        let mut builder = SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap();
+        let nan = F32Constant::apply(&mut builder, f32::NAN.to_bits()).unwrap();
+        let error = builder
+            .apply_typed_single::<U4>(
+                OpKey::new("test", "precondition-precedence", 1).unwrap(),
+                OperationAttributes::empty(),
+                &[nan.erase()],
+            )
+            .unwrap_err();
+        assert!(matches!(error, BuildError::Reify(_)));
     }
 
     struct Pair;

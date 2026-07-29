@@ -10,6 +10,7 @@ mod handles;
 mod identity;
 mod interface;
 mod operation;
+mod precondition;
 mod program;
 mod quantization;
 mod registry;
@@ -43,6 +44,15 @@ pub use operation::{
     REDUCTION_AXES_ATTRIBUTE, ResultIndex, SERIAL_SUM_F32_FACT_ACCUMULATION,
     SERIAL_SUM_F32_FACT_CANONICAL_NAN_BITS, SERIAL_SUM_F32_FACT_FOLD_ORDER, ValueFact, ValueRef,
     add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
+};
+pub use precondition::{
+    MAX_OPERATION_SEMANTIC_PRECONDITIONS, MAX_SEMANTIC_PRECONDITION_OBLIGATION_IDENTITY_BYTES,
+    OperationOperandIndex, SemanticInvalidInputCode, SemanticLogicalView,
+    SemanticPreconditionDeclaration, SemanticPreconditionDeclarationError,
+    SemanticPreconditionDeclarations, SemanticPreconditionDisproof,
+    SemanticPreconditionObligationIdentity, SemanticPreconditionOrdinal,
+    SemanticPreconditionProofBasis, SemanticPreconditionRef, SemanticPreconditionStatus,
+    SemanticPredicateIdentity, no_nan_predicate, positive_finite_scalar_predicate,
 };
 pub use program::{SemanticProgram, SemanticProgramBuilder};
 pub use quantization::{

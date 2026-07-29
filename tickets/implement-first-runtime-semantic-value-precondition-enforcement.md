@@ -3,8 +3,8 @@ id: implement-first-runtime-semantic-value-precondition-enforcement
 title: Implement first runtime semantic value-precondition enforcement
 status: todo
 priority: p2
-dependencies: [prototype-quantized-value-vertical, carry-semantic-enforcement-plans-through-program-and-artifact]
-related: [own-the-dtype-support-maturity-matrix]
+dependencies: [prototype-quantized-value-vertical, carry-semantic-enforcement-plans-through-program-and-artifact, enforce-resolved-encoded-value-binding-conformance]
+related: [own-the-dtype-support-maturity-matrix, produce-typed-strict-affine-assemble-semantic-precondition]
 scopes: [implementation/reference, implementation/artifact, implementation/runtime, implementation/metal, implementation/build, contracts/foundation, contracts/numerics, contracts/optimizer, contracts/artifacts, contracts/decisions, research/runtime]
 shared_scopes: [project/tickets]
 paths: []
@@ -17,7 +17,7 @@ The first real strict-affine `Quantize` tensor-value semantic preconditions are 
 
 ## Dependency correction
 
-- **Fact:** no typed `SemanticPrecondition` producer exists in `crates/`, and strict-affine `Quantize` has no physical/runtime route.
+- **Fact:** the prerequisite producer ticket introduces typed strict-affine `Quantize` preconditions, while strict-affine `Quantize` still has no physical/runtime route or enforcement-plan carrier.
 - **Fact:** the preserved spike proves the ownership state machine and deterministic reduction only; it does not prove compound reconstruction, artifact codecs, checker provenance, or a governed executable consumer.
 - **Inference:** a synthetic loader fixture cannot close this outcome. The work is dependency-ordered through `produce-typed-strict-affine-quantize-semantic-preconditions`, `admit-strict-affine-quantize-physical-candidate`, and `carry-semantic-enforcement-plans-through-program-and-artifact`.
 

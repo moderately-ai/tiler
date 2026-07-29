@@ -6,7 +6,7 @@ title: "Reject NaN in strict affine quantization"
 topics: ["numerics","quantization","nan"]
 catalog_group: "dtypes-quantization"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 applies_to: ["tiler.contract.numerical-semantics"]
 evidence: ["tiler.research.numerics.affine-quantization-semantics"]
 ticket: "define-initial-affine-quantization-semantics"
@@ -76,3 +76,9 @@ changes an exceptional value into valid numerical zero. Endpoint mapping is
 equally arbitrary for a full affine code range. A reserved code is appropriate
 only for a scheme that defines one and therefore belongs to that scheme's
 explicit contract rather than generic strict affine quantization.
+
+## Implementation status
+
+**Fact:** the governed `QuantizeStrictAffine` definition now declares a typed `tiler::no-nan@1` precondition over its expressed-value operand. Exact governed f32 constants are assessed during semantic construction: qNaN and sNaN reject transactionally, while non-NaN constants are retained as proved and runtime-unknown values retain an exact residual obligation.
+
+**Fact:** the reference evaluator independently rejects qNaN and sNaN. Physical enforcement, artifact carriage, and runtime publication remain unimplemented and are tracked separately; this partial producer/reference support is not a runnable-backend guarantee.

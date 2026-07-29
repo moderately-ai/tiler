@@ -3149,7 +3149,14 @@ mod tests {
                 //   cargo nextest run -p tiler-compiler -E \
                 //     'test(deterministic_trace_is_sealed_and_rendered_separately)'
                 // and read the `left` value the assertion reports.
-                "tiler-explain-v4 request=1ef2b4a86acde919\n",
+                //
+                // Rebaselined when governed operation definitions gained typed
+                // semantic-precondition declarations. The request subject
+                // reaches the definition projection, so preserving the prior
+                // qualifier would erase a runtime-relevant semantic contract.
+                // Rebaselined again when registry v7 bound the host-sealed
+                // static-evidence authority into registry provenance.
+                "tiler-explain-v4 request=e9bbe3c9404464af\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

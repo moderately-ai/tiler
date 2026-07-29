@@ -8,6 +8,10 @@ use crate::shape::Shape;
 
 use super::handles::{GraphId, OperationId, OperationIndex, ValueId, ValueIndex};
 use super::interface::InputIndex;
+use super::precondition::{
+    SemanticPreconditionData, SemanticPreconditionDeclarations, SemanticPreconditionRef,
+};
+use super::program::ProgramData;
 use super::registry::NormativeDefinitionRef;
 use super::types::{
     AttributeFieldId, CanonicalField, CanonicalValue, ResolvedValueType, TypeIdentityError, TypeKey,
@@ -515,6 +519,13 @@ pub enum OperationSchemaError {
         /// Invalid default field.
         field_id: AttributeFieldId,
     },
+    /// A precondition selected an operand not present in every admitted signature.
+    SemanticPreconditionOperandOutOfRange {
+        /// Zero-based selected operand.
+        operand: super::precondition::OperationOperandIndex,
+        /// Minimum operand arity admitted by the schema.
+        minimum_arity: u32,
+    },
 }
 
 impl fmt::Display for OperationSchemaError {
@@ -553,6 +564,14 @@ impl fmt::Display for OperationSchemaError {
                     "operation attribute field {field_id} has a mismatched default"
                 )
             }
+            Self::SemanticPreconditionOperandOutOfRange {
+                operand,
+                minimum_arity,
+            } => write!(
+                formatter,
+                "semantic precondition operand {} is absent from signatures with the schema minimum arity {minimum_arity}",
+                operand.get()
+            ),
         }
     }
 }
@@ -1282,6 +1301,7 @@ pub struct OperationDefinition {
     algebraic_capabilities: OperationAlgebraicCapabilities,
     conformance: OperationConformance,
     effect: OperationEffect,
+    semantic_preconditions: SemanticPreconditionDeclarations,
     inferencer: Arc<dyn OperationInferencer>,
 }
 
@@ -1296,6 +1316,7 @@ impl fmt::Debug for OperationDefinition {
             .field("algebraic_capabilities", &self.algebraic_capabilities)
             .field("conformance", &self.conformance)
             .field("effect", &self.effect)
+            .field("semantic_preconditions", &self.semantic_preconditions)
             .field("inferencer", &"OperationInferencer(..)")
             .finish()
     }
@@ -1321,6 +1342,7 @@ impl OperationDefinition {
             algebraic_capabilities: OperationAlgebraicCapabilities::none(),
             conformance,
             effect,
+            semantic_preconditions: SemanticPreconditionDeclarations::empty(),
             inferencer,
         }
     }
@@ -1333,6 +1355,33 @@ impl OperationDefinition {
     ) -> Self {
         self.algebraic_capabilities = algebraic_capabilities;
         self
+    }
+
+    /// Adds the bounded semantic predicates required by every admitted application.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperationSchemaError`] when a declaration selects an operand
+    /// absent from a signature admitted by this definition's arity range.
+    pub fn with_semantic_preconditions(
+        mut self,
+        semantic_preconditions: SemanticPreconditionDeclarations,
+    ) -> Result<Self, OperationSchemaError> {
+        if let Some(operand) = semantic_preconditions
+            .as_slice()
+            .iter()
+            .map(super::precondition::SemanticPreconditionDeclaration::operand)
+            .find(|operand| operand.get() >= self.schema.operands.minimum())
+        {
+            return Err(
+                OperationSchemaError::SemanticPreconditionOperandOutOfRange {
+                    operand,
+                    minimum_arity: self.schema.operands.minimum(),
+                },
+            );
+        }
+        self.semantic_preconditions = semantic_preconditions;
+        Ok(self)
     }
 
     /// Returns the stable operation-family key.
@@ -1375,6 +1424,12 @@ impl OperationDefinition {
     #[must_use]
     pub const fn effect(&self) -> OperationEffect {
         self.effect
+    }
+
+    /// Returns typed semantic predicates in declaration-ordinal order.
+    #[must_use]
+    pub const fn semantic_preconditions(&self) -> &SemanticPreconditionDeclarations {
+        &self.semantic_preconditions
     }
 
     pub(super) fn preflight(
@@ -1509,6 +1564,7 @@ pub(super) struct OperationData {
     pub(super) attributes: OperationAttributes,
     pub(super) operands: Vec<ValueIndex>,
     pub(super) results: Vec<ValueIndex>,
+    pub(super) semantic_preconditions: Vec<SemanticPreconditionData>,
 }
 
 /// A borrowed atomic operation in a semantic program.
@@ -1516,10 +1572,11 @@ pub(super) struct OperationData {
 pub struct OperationRef<'a> {
     pub(super) owner: GraphId,
     pub(super) index: OperationIndex,
+    pub(super) program: &'a ProgramData,
     pub(super) operation: &'a OperationData,
 }
 
-impl OperationRef<'_> {
+impl<'a> OperationRef<'a> {
     /// Returns the graph-owned operation handle.
     #[must_use]
     pub const fn id(&self) -> OperationId {
@@ -1561,6 +1618,21 @@ impl OperationRef<'_> {
             owner: self.owner,
             index,
         })
+    }
+
+    /// Returns every proved or residual semantic precondition in declaration order.
+    #[must_use]
+    pub fn semantic_preconditions(
+        self,
+    ) -> impl ExactSizeIterator<Item = SemanticPreconditionRef<'a>> + DoubleEndedIterator + 'a {
+        self.operation
+            .semantic_preconditions
+            .iter()
+            .map(move |data| SemanticPreconditionRef {
+                program: self.program,
+                operation_index: self.index,
+                data,
+            })
     }
 }
 

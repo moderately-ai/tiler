@@ -12,6 +12,8 @@ const LENGTH_BYTES: usize = std::mem::size_of::<u64>();
 const VALUE_ID_BYTES: usize = std::mem::size_of::<u64>();
 const RESULT_INDEX_BYTES: usize = std::mem::size_of::<u32>();
 const EXTENT_BYTES: usize = std::mem::size_of::<u64>();
+const PRECONDITION_ORDINAL_BYTES: usize = std::mem::size_of::<u32>();
+const PRECONDITION_STATUS_BYTES: usize = std::mem::size_of::<u8>();
 const GRAPH_DOMAIN: &[u8] = b"tiler.semantic-graph.v2\0";
 
 /// Collision-free canonical semantic-graph identity bytes.
@@ -167,6 +169,14 @@ fn canonical_traversal(program: &ProgramData) -> CanonicalTraversal {
     }
 }
 
+pub(super) fn canonical_value_ids_for_verified(program: &ProgramData) -> Vec<u64> {
+    canonical_traversal(program)
+        .canonical_ids
+        .into_iter()
+        .map(|identity| identity.expect("verified program reaches every retained value"))
+        .collect()
+}
+
 fn visit_value(
     program: &ProgramData,
     value: super::handles::ValueIndex,
@@ -243,24 +253,33 @@ pub(super) fn operation_canonical_work_bytes(
     attributes: &super::operation::OperationAttributes,
     operand_count: usize,
     results: &[super::operation::ValueFact],
+    semantic_precondition_count: usize,
 ) -> usize {
-    LENGTH_BYTES.saturating_add(
-        key.encoded_len()
-            .saturating_add(attributes.encoded_len())
-            .saturating_add(LENGTH_BYTES)
-            .saturating_add(operand_count.saturating_mul(VALUE_ID_BYTES))
-            .saturating_add(LENGTH_BYTES)
-            .saturating_add(
-                results
-                    .iter()
-                    .map(|fact| {
-                        RESULT_INDEX_BYTES
-                            .saturating_add(fact.resolved_type().encoded_len())
-                            .saturating_add(shape_encoded_len(fact.shape()))
-                    })
-                    .fold(0_usize, usize::saturating_add),
+    LENGTH_BYTES
+        .saturating_add(
+            key.encoded_len()
+                .saturating_add(attributes.encoded_len())
+                .saturating_add(LENGTH_BYTES)
+                .saturating_add(operand_count.saturating_mul(VALUE_ID_BYTES))
+                .saturating_add(LENGTH_BYTES)
+                .saturating_add(
+                    results
+                        .iter()
+                        .map(|fact| {
+                            RESULT_INDEX_BYTES
+                                .saturating_add(fact.resolved_type().encoded_len())
+                                .saturating_add(shape_encoded_len(fact.shape()))
+                        })
+                        .fold(0_usize, usize::saturating_add),
+                ),
+        )
+        .saturating_add(
+            semantic_precondition_count.saturating_mul(
+                PRECONDITION_ORDINAL_BYTES
+                    .saturating_add(VALUE_ID_BYTES)
+                    .saturating_add(PRECONDITION_STATUS_BYTES),
             ),
-    )
+        )
 }
 
 pub(super) fn output_canonical_work_bytes(key: &super::interface::OutputKey) -> usize {

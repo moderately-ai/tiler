@@ -133,6 +133,7 @@ Generate combinations of:
 - strict affine quantization rejecting qNaN and sNaN before committing an
   observable result, plus separate conformance vectors for every explicitly
   admitted alternative NaN mapping;
+- strict affine U4 and U8 Quantize producing both ordered residual predicates for runtime-unknown expressed value and scale; exact governed constants independently proving each predicate with a sealed typed proof basis; a provider merely self-identifying as the standard provider remaining unable to mint proof; zero, negative, ±infinite, qNaN, and sNaN scales rejecting; ±infinite expressed values and the smallest positive subnormal scale succeeding; simultaneous disproof using deterministic stable-code/ordinal priority; malformed typed result contracts taking diagnostic precedence over input disproof; and no operation, result, or canonical-work mutation after rejection;
 - float-to-integer values on both sides of every rounded destination boundary,
   signed zeros, subnormals, infinities, and qNaN/sNaN; strict/exact rejection,
   ordered saturation, and explicit NaN-to-zero totalization remain distinct;
@@ -222,6 +223,7 @@ Benchmarks are not substitutes for these correctness cases.
   definition projections but unequal admission provenance and registry
   snapshots. No `TypeId`, pointer, vtable, or registration order leaks into
   durable content.
+- Semantic-precondition tests distinguish declaration identity from occurrence obligation identity. They cover predicate and invalid-code changes, declaration bounds and duplicates, the explicit logical-view tag, exact operand selectors, shape, complete resolved type, canonical occurrence and subject coordinates after compaction, dead-operation removal, insertion-order independence, provider-revision provenance without obligation-identity churn, the aggregate cached-identity byte boundary and one-over refusal, and retained proved/residual records with typed proof basis.
 - Reached semantic-authority closure tests cover nested parameterized and
   encoded components, occurrence `Type` and `FloatBits` references, operation
   defaults/facts/conformance, missing definition references, finite cycles,

@@ -288,6 +288,10 @@ initial pure effect signature, deterministic inference and semantic
 validation, normative semantic specification identity, conformance vectors,
 and stable host-readable names.
 
+When an operation's admitted domain is narrower than its operand types, the mandatory definition also carries bounded typed semantic-precondition declarations. The host derives declaration ordinals, validates every operand selector, instantiates the declarations against exact occurrences, and owns canonical identity. A provider may name a new stable predicate and invalid-input code, but an unknown predicate has no implicit proof or runtime checker: it remains an exactly identified residual and compilation fails closed until separately admitted authorities can assess and enforce it.
+
+Semantic preconditions are not descriptive facts, applicability predicates, representation validators, or inferencer-returned result facts. An extension cannot remove one by returning a convenient result type, cannot ask the caller to restate it as graph data, and cannot turn static disproof into “not applicable.” Providers that declare no narrower input domain need no declarations.
+
 Normative meaning is mandatory, but a particular executable evaluator is not
 universally mandatory. Reference evaluation is an optional capability. A phase
 that needs executable reference behavior admits the operation only when a
@@ -473,6 +477,7 @@ visibility.
 - rewrites are transactional, reverified, cycle-bounded, and budgeted;
 - callback panics cannot commit partial graph state; a future recovery boundary
   must attribute any caught panic to its provider;
+- semantic-precondition declarations reject duplicate meaning/subject pairs and out-of-range selectors; known disproof commits no graph mutation; unknown predicates stay residual; declaration order, predicate revision, invalid-input code, and canonical occurrence/subject coordinates perturb only their governed identity subjects;
 - unknown operations never enter `VerifiedSemanticGraph`;
 - malformed serialized input cannot trigger extension code before structural
   and resource validation.

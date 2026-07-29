@@ -6,7 +6,7 @@ title: "Separate semantic validation from physical enforcement"
 topics: ["numerics","validation","runtime"]
 catalog_group: "dtypes-quantization"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 applies_to: ["tiler.contract.numerical-semantics","tiler.contract.correctness-and-testing"]
 evidence: ["tiler.research.numerics.affine-quantization-semantics"]
 ticket: "define-initial-affine-quantization-semantics"
@@ -114,3 +114,9 @@ Always fusing a flag cannot report failure before computation and is unsafe when
 output escapes. Treating validation as a plan guard confuses invalid input with
 optimization applicability. Trusting the caller avoids cost but permits silent
 semantic violation and therefore requires a distinct policy.
+
+## Implementation status
+
+**Fact:** the semantic producer half is implemented for governed strict-affine `Quantize`. Operation definitions own bounded typed declarations; semantic construction retains ordered proved and residual assessments, rejects statically disproved predicates transactionally, and gives each residual a canonical identity formed after graph compaction from semantic meaning and exact canonical occurrence/subject coordinates.
+
+**Fact:** the implementation deliberately stops before physical enforcement. No `EnforcementPlan`, program/artifact carriage, runtime witness state machine, or publication mechanism exists yet. Those stages remain required before a residual-bearing quantize program can execute, and an unsupported runtime must fail closed rather than treating the obligation as a plan guard.

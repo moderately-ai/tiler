@@ -6,7 +6,7 @@ title: "Fix strict affine quantization evaluation"
 topics: ["numerics","quantization","semantics"]
 catalog_group: "dtypes-quantization"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 applies_to: ["tiler.contract.numerical-semantics"]
 evidence: ["tiler.research.numerics.affine-quantization-semantics"]
 ticket: "define-initial-affine-quantization-semantics"
@@ -93,3 +93,9 @@ round them differently for wider domains. Leaving computation precision or
 subnormal behavior to lowering defeats portability. Treating integer rescale as
 synonymous with decode-then-encode loses observable approximation and rounding
 differences.
+
+## Implementation status
+
+**Fact:** the bounded u4/f32 and u8/f32 semantic and reference profiles implement the fixed strict-affine evaluation order above. The governed `QuantizeStrictAffine` definition now additionally declares positive-finite scale and non-NaN expressed-value predicates as typed semantic preconditions; exact governed f32 constants prove or disprove them during construction, and unknown values remain residual.
+
+**Fact:** wider code types, other computation or expressed dtypes, non-per-tensor parameter maps, logical requantization, integer rescale, executable backend realization, and runtime enforcement are not implemented by this slice. Their absence is explicit rather than inferred from the existence of the generic encoded-value seam.

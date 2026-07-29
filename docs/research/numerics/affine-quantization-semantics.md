@@ -7,7 +7,7 @@ topics: ["numerics","quantization","semantics"]
 catalog_group: "dtypes-quantization"
 research_status: "complete"
 disposition: "adopted"
-implementation_status: "not-started"
+implementation_status: "partial"
 evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.numerical-semantics","tiler.contract.correctness-and-testing"]
 adopted_by: ["ADR-0031","ADR-0032","ADR-0033"]
@@ -212,6 +212,6 @@ remain explicit. The first physical proof must include at least one 8-bit path
 and one packed 4-bit block path; otherwise it would not validate the separation
 between logical codes, parameter maps, and storage encoding.
 
-Unproven dynamic full-data validation may remain unsupported in a narrow
-runtime profile until it implements an ADR 0033 enforcement plan. Constants and
-compiler-proven values still exercise the same semantic operations.
+The implemented subset is narrower than that original target. It admits strict-affine u4/f32 and u8/f32 per-tensor semantic/reference profiles, generic ordered component declarations, and explicit Assemble/Quantize/Dequantize operations. `QuantizeStrictAffine` now owns typed `NoNaN` and `PositiveFiniteScalar` declarations; exact governed f32 constants prove or disprove them, while runtime-unknown values retain canonical residual obligations. A target-neutral structural u4 dequantization path exists, but it is not a runnable backend.
+
+Per-axis and per-block maps, i4/i8 schemes, requantization, integer rescale, zero-point constant production, Assemble's scale declaration, direct encoded-input payload validation, physical enforcement, artifact carriage, and runtime publication remain separately tracked work. The generic type and predicate seams reserve those extensions without claiming support. Unproven dynamic validation remains non-executable until an ADR 0033 enforcement plan and compatible runtime route exist.

@@ -155,6 +155,8 @@ pub enum BuildError {
     },
     /// Frozen semantic authority rejected an operation application.
     SemanticRegistry(RegistryError),
+    /// Authoritative static evidence disproved an operation's semantic precondition.
+    SemanticPreconditionDisproved(Arc<super::precondition::SemanticPreconditionDisproof>),
     /// Canonical operation attributes exceeded host-owned structural rules.
     InvalidOperationAttributes(TypeIdentityError),
     /// A local Rust marker was not bound in the frozen registry.
@@ -222,6 +224,7 @@ impl fmt::Display for BuildError {
                 write!(formatter, "{role} is invalid in this semantic graph")
             }
             Self::SemanticRegistry(error) => error.fmt(formatter),
+            Self::SemanticPreconditionDisproved(error) => error.fmt(formatter),
             Self::InvalidOperationAttributes(error) => {
                 write!(formatter, "invalid operation attributes: {error}")
             }
@@ -255,6 +258,7 @@ impl Error for BuildError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::SemanticRegistry(error) => Some(error),
+            Self::SemanticPreconditionDisproved(error) => Some(error),
             Self::InvalidOperationAttributes(error) => Some(error),
             Self::RegistryLookup(error) => Some(error),
             Self::Reify(error) => Some(error),
@@ -498,6 +502,13 @@ pub enum ProgramBuildFailure {
     Validation(ValidationDiagnostics),
     /// A distinct completed-program owner could not be allocated.
     GraphIdentityExhausted,
+    /// Cached residual-obligation identities exceeded their governed aggregate bound.
+    SemanticPreconditionObligationIdentityBytesExceeded {
+        /// Required canonical bytes.
+        actual: usize,
+        /// Governed aggregate maximum.
+        limit: usize,
+    },
 }
 
 impl fmt::Display for ProgramBuildFailure {
@@ -507,6 +518,10 @@ impl fmt::Display for ProgramBuildFailure {
             Self::GraphIdentityExhausted => {
                 formatter.write_str("semantic graph identity space is exhausted")
             }
+            Self::SemanticPreconditionObligationIdentityBytesExceeded { actual, limit } => write!(
+                formatter,
+                "semantic precondition obligation identities require {actual} bytes, exceeding governed limit {limit}"
+            ),
         }
     }
 }
@@ -515,12 +530,13 @@ impl Error for ProgramBuildFailure {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Validation(diagnostics) => Some(diagnostics),
-            Self::GraphIdentityExhausted => None,
+            Self::GraphIdentityExhausted
+            | Self::SemanticPreconditionObligationIdentityBytesExceeded { .. } => None,
         }
     }
 }
 
-/// A terminal validation failure that preserves the original builder.
+/// A consuming commitment failure that preserves the original builder.
 #[derive(Debug)]
 pub struct ProgramBuildError {
     pub(super) builder: Box<super::program::SemanticProgramBuilder>,
@@ -539,7 +555,10 @@ impl ProgramBuildError {
     pub const fn diagnostics(&self) -> Option<&ValidationDiagnostics> {
         match &self.failure {
             ProgramBuildFailure::Validation(diagnostics) => Some(diagnostics),
-            ProgramBuildFailure::GraphIdentityExhausted => None,
+            ProgramBuildFailure::GraphIdentityExhausted
+            | ProgramBuildFailure::SemanticPreconditionObligationIdentityBytesExceeded { .. } => {
+                None
+            }
         }
     }
 

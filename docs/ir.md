@@ -839,6 +839,10 @@ semantic validation failure is never a plan miss. An explicitly trusted
 assumption is a separate future policy, not another enforcement of strict
 semantics.
 
+**Fact — the semantic producer boundary is implemented.** `OperationDefinition` owns a bounded ordered set of typed declarations: stable predicate identity, host-derived declaration ordinal, operand selector, exact logical view, and stable invalid-input code. `SemanticProgramBuilder` instantiates them against the exact occurrence after schema, inference, and typed-result checks. A known proof retains its closed host-owned proof basis, a residual retains one cached canonical obligation identity, and a static disproof returns a typed owned build error before committing the operation or any result. Public provider identity cannot mint proof authority; only the sealed standard constant-f32 recognizer supplies the first proof basis. The host preflights aggregate residual-identity bytes against a governed 16 MiB bound before allocating or encoding those identities.
+
+**Fact — residual identity is canonical occurrence identity, not an arena handle.** The identity is minted after reachable compaction from the semantic graph identity, reached definition projection, canonical operation coordinate, declaration encoding, canonical subject coordinate, complete resolved type, and shape. It excludes provider revision, registry snapshot, storage, pointer, checker identity, and mutable runtime state. The first assessment authority recognizes only exact governed f32 constants; every other producer remains residual rather than being inferred from type, shape, or descriptive facts.
+
 A residual witness dependency names the stable predicate and obligation,
 logical subject and component roles, exact logical view, value version or
 immutability proof, and producer/coherence prerequisites. Consumers depend on

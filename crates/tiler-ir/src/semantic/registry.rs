@@ -501,6 +501,22 @@ struct RegisteredValueType {
 struct RegisteredOperation {
     definition: OperationDefinition,
     provider: ProviderIdentity,
+    static_evidence_authority: StaticEvidenceAuthority,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StaticEvidenceAuthority {
+    None,
+    StandardSemanticsV7,
+}
+
+impl StaticEvidenceAuthority {
+    fn encode(self, output: &mut Vec<u8>) {
+        output.push(match self {
+            Self::None => 0,
+            Self::StandardSemanticsV7 => 1,
+        });
+    }
 }
 
 /// A statically linked source of semantic definitions and optional marker bindings.
@@ -570,7 +586,10 @@ impl SemanticRegistryBuilder {
     /// provider contract.
     pub fn standard() -> Result<Self, RegistryError> {
         let mut builder = Self::new();
-        builder.register_provider(&StandardSemantics)?;
+        builder.register_provider_with_authority(
+            &StandardSemantics,
+            StaticEvidenceAuthority::StandardSemanticsV7,
+        )?;
         Ok(builder)
     }
 
@@ -583,6 +602,14 @@ impl SemanticRegistryBuilder {
     pub fn register_provider(
         &mut self,
         provider: &(dyn SemanticRegistryProvider + 'static),
+    ) -> Result<(), RegistryError> {
+        self.register_provider_with_authority(provider, StaticEvidenceAuthority::None)
+    }
+
+    fn register_provider_with_authority(
+        &mut self,
+        provider: &(dyn SemanticRegistryProvider + 'static),
+        static_evidence_authority: StaticEvidenceAuthority,
     ) -> Result<(), RegistryError> {
         let identity = provider.identity();
         let mut batch = RegistrationBatch::default();
@@ -603,13 +630,14 @@ impl SemanticRegistryBuilder {
         {
             return Err(RegistryError::ProviderRegisteredNothing { provider: identity });
         }
-        self.commit_batch(batch, &identity)
+        self.commit_batch(batch, &identity, static_evidence_authority)
     }
 
     fn commit_batch(
         &mut self,
         batch: RegistrationBatch,
         identity: &ProviderIdentity,
+        static_evidence_authority: StaticEvidenceAuthority,
     ) -> Result<(), RegistryError> {
         self.validate_batch_collisions(&batch)?;
         check_registry_count(
@@ -662,6 +690,7 @@ impl SemanticRegistryBuilder {
                     RegisteredOperation {
                         definition,
                         provider: identity.clone(),
+                        static_evidence_authority,
                     },
                 )
             }));
@@ -1379,6 +1408,12 @@ impl FrozenSemanticRegistry {
         self.0.operations.get(key).map(|entry| &entry.provider)
     }
 
+    pub(super) fn is_standard_static_evidence_authority(&self, key: &OpKey) -> bool {
+        self.0.operations.get(key).is_some_and(|entry| {
+            entry.static_evidence_authority == StaticEvidenceAuthority::StandardSemanticsV7
+        })
+    }
+
     /// Validates one application and derives all ordered result facts.
     ///
     /// # Errors
@@ -1509,7 +1544,7 @@ impl FrozenSemanticRegistry {
         &self,
         closure: &SemanticAuthorityClosure,
     ) -> SemanticDefinitionProjectionIdentity {
-        let mut bytes = b"tiler.semantic-definition-projection.v4\0".to_vec();
+        let mut bytes = b"tiler.semantic-definition-projection.v5\0".to_vec();
         push_len(&mut bytes, closure.type_keys.len());
         for key in &closure.type_keys {
             let registered = self
@@ -1927,7 +1962,7 @@ struct StandardSemantics;
 
 impl SemanticRegistryProvider for StandardSemantics {
     fn identity(&self) -> ProviderIdentity {
-        ProviderIdentity::new("tiler", "standard-semantics", 6)
+        ProviderIdentity::new("tiler", "standard-semantics", 7)
             .expect("the governed standard provider identity is valid")
     }
 
@@ -2273,7 +2308,7 @@ fn compute_identity(
     definitions: &BTreeMap<ValueTypeDefinitionKey, RegisteredValueType>,
     operations: &BTreeMap<OpKey, RegisteredOperation>,
 ) -> SemanticRegistrySnapshotIdentity {
-    let mut bytes = b"tiler.semantic-registry.v6\0".to_vec();
+    let mut bytes = b"tiler.semantic-registry.v7\0".to_vec();
     push_len(&mut bytes, definitions.len());
     for (key, registered) in definitions {
         encode_registered_type(&mut bytes, key, registered);
@@ -2425,6 +2460,7 @@ fn encode_registered_operation(
 ) {
     encode_operation_definition(output, key, &registered.definition);
     registered.provider.encode(output);
+    registered.static_evidence_authority.encode(output);
 }
 
 fn encode_operation_definition(
@@ -2444,6 +2480,7 @@ fn encode_operation_definition(
     output.push(match definition.effect() {
         OperationEffect::Pure => 1,
     });
+    definition.semantic_preconditions().encode(output);
 }
 
 fn encode_type_key(output: &mut Vec<u8>, key: &TypeKey) {
@@ -2455,7 +2492,12 @@ fn encode_type_key(output: &mut Vec<u8>, key: &TypeKey) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::semantic::{EncodedNumericContract, TypeArguments};
+    use crate::semantic::{
+        EncodedNumericContract, F32Constant, InputKey, OperationOperandIndex, OutputKey,
+        SemanticInvalidInputCode, SemanticLogicalView, SemanticPreconditionDeclaration,
+        SemanticPreconditionDeclarations, SemanticPreconditionStatus, SemanticPredicateIdentity,
+        SemanticProgram, SemanticProgramBuilder, TypeArguments, U4, quantize_strict_affine_op,
+    };
     use std::sync::atomic::{AtomicBool, Ordering};
 
     #[test]
@@ -2569,6 +2611,214 @@ mod tests {
             declared.admission_provenance()
         );
         assert_ne!(absent.registry_snapshot(), declared.registry_snapshot());
+    }
+
+    struct PreconditionProvider {
+        revision: u32,
+        predicate_revision: u32,
+        invalid_code_name: &'static str,
+    }
+
+    impl SemanticRegistryProvider for PreconditionProvider {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("test", "precondition-operation", self.revision).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), RegistryError> {
+            let declarations =
+                SemanticPreconditionDeclarations::new([SemanticPreconditionDeclaration::new(
+                    SemanticPredicateIdentity::new("test", "predicate", self.predicate_revision)
+                        .unwrap(),
+                    OperationOperandIndex::new(0),
+                    SemanticLogicalView::WholeValue,
+                    SemanticInvalidInputCode::new("test", self.invalid_code_name, 1).unwrap(),
+                )])
+                .unwrap();
+            registrar.register_operation(
+                OperationDefinition::new(
+                    OpKey::new("test", "precondition-identity", 1).unwrap(),
+                    exact_schema(1, 1, []),
+                    NormativeDefinitionRef::new("test precondition identity v1")?,
+                    OperationDefinitionFacts::new(CanonicalValue::boolean(true)),
+                    OperationConformance::new(CanonicalValue::boolean(true)),
+                    OperationEffect::Pure,
+                    Arc::new(IdentityInferencer),
+                )
+                .with_semantic_preconditions(declarations)
+                .expect("the test selector is within the exact schema"),
+            )
+        }
+    }
+
+    fn precondition_program(provider: &PreconditionProvider) -> SemanticProgram {
+        let mut registry = SemanticRegistryBuilder::standard().unwrap();
+        registry.register_provider(provider).unwrap();
+        let mut builder = SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap();
+        let input = builder
+            .input::<F32>(
+                InputKey::new("input").unwrap(),
+                crate::shape::Shape::new([]),
+            )
+            .unwrap();
+        let result = builder
+            .apply(
+                OpKey::new("test", "precondition-identity", 1).unwrap(),
+                OperationAttributes::empty(),
+                &[input.erase()],
+            )
+            .unwrap()[0];
+        builder
+            .output_resolved(OutputKey::new("result").unwrap(), result)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    fn sole_obligation(program: &SemanticProgram) -> Vec<u8> {
+        let precondition = program
+            .operations()
+            .find(|operation| {
+                operation.key() == &OpKey::new("test", "precondition-identity", 1).unwrap()
+            })
+            .unwrap()
+            .semantic_preconditions()
+            .next()
+            .unwrap();
+        assert_eq!(precondition.status(), SemanticPreconditionStatus::Residual);
+        precondition
+            .obligation_identity()
+            .unwrap()
+            .as_bytes()
+            .to_vec()
+    }
+
+    #[test]
+    fn predicate_declarations_change_definitions_and_obligations_but_not_graph_structure() {
+        let first = precondition_program(&PreconditionProvider {
+            revision: 1,
+            predicate_revision: 1,
+            invalid_code_name: "invalid-a",
+        });
+        let predicate_changed = precondition_program(&PreconditionProvider {
+            revision: 1,
+            predicate_revision: 2,
+            invalid_code_name: "invalid-a",
+        });
+        let code_changed = precondition_program(&PreconditionProvider {
+            revision: 1,
+            predicate_revision: 1,
+            invalid_code_name: "invalid-b",
+        });
+
+        for changed in [&predicate_changed, &code_changed] {
+            assert_eq!(
+                first.semantic_identity().graph(),
+                changed.semantic_identity().graph()
+            );
+            assert_ne!(
+                first.semantic_identity().reached_definitions(),
+                changed.semantic_identity().reached_definitions()
+            );
+            assert_eq!(
+                first.semantic_identity().admission_provenance(),
+                changed.semantic_identity().admission_provenance()
+            );
+            assert_ne!(sole_obligation(&first), sole_obligation(changed));
+        }
+    }
+
+    #[test]
+    fn provider_revision_changes_provenance_but_not_semantic_obligation_identity() {
+        let first = precondition_program(&PreconditionProvider {
+            revision: 1,
+            predicate_revision: 1,
+            invalid_code_name: "invalid",
+        });
+        let second = precondition_program(&PreconditionProvider {
+            revision: 2,
+            predicate_revision: 1,
+            invalid_code_name: "invalid",
+        });
+
+        assert_eq!(
+            first.semantic_identity().graph(),
+            second.semantic_identity().graph()
+        );
+        assert_eq!(
+            first.semantic_identity().reached_definitions(),
+            second.semantic_identity().reached_definitions()
+        );
+        assert_ne!(
+            first.semantic_identity().admission_provenance(),
+            second.semantic_identity().admission_provenance()
+        );
+        assert_ne!(
+            first.semantic_identity().registry_snapshot(),
+            second.semantic_identity().registry_snapshot()
+        );
+        assert_eq!(sole_obligation(&first), sole_obligation(&second));
+    }
+
+    struct LookalikeStandardSemantics;
+
+    impl SemanticRegistryProvider for LookalikeStandardSemantics {
+        fn identity(&self) -> ProviderIdentity {
+            StandardSemantics.identity()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), RegistryError> {
+            StandardSemantics.register(registrar)
+        }
+    }
+
+    #[test]
+    fn self_declared_standard_provider_identity_cannot_forge_static_proof_authority() {
+        let mut registry = SemanticRegistryBuilder::new();
+        registry
+            .register_provider(&LookalikeStandardSemantics)
+            .unwrap();
+        let registry = registry.freeze().unwrap();
+        assert_ne!(
+            registry.snapshot_identity(),
+            FrozenSemanticRegistry::standard()
+                .unwrap()
+                .snapshot_identity()
+        );
+        let mut builder = SemanticProgramBuilder::try_new(registry).unwrap();
+        let expressed = F32Constant::apply(&mut builder, 1.0_f32.to_bits())
+            .unwrap()
+            .erase();
+        let scale = F32Constant::apply(&mut builder, 0.5_f32.to_bits())
+            .unwrap()
+            .erase();
+        let zero = builder
+            .input::<U4>(InputKey::new("zero").unwrap(), crate::shape::Shape::new([]))
+            .unwrap()
+            .erase();
+        let result = builder
+            .apply(
+                quantize_strict_affine_op(),
+                OperationAttributes::empty(),
+                &[expressed, scale, zero],
+            )
+            .unwrap()[0];
+        builder
+            .output_resolved(OutputKey::new("result").unwrap(), result)
+            .unwrap();
+        let program = builder.build().unwrap();
+        let quantize = program
+            .operations()
+            .find(|operation| operation.key() == &quantize_strict_affine_op())
+            .unwrap();
+        assert!(quantize.semantic_preconditions().all(|precondition| {
+            precondition.status() == SemanticPreconditionStatus::Residual
+                && precondition.proof_basis().is_none()
+        }));
     }
 
     impl SemanticRegistryProvider for TestProvider {
@@ -3965,7 +4215,7 @@ mod tests {
     /// order, so these bytes pin both that order and the record encoding.
     /// Change them only together with a deliberate identity-version bump.
     const FAMILY_ORDER_IDENTITY_FIXTURE: &str = concat!(
-        "74696c65722e73656d616e7469632d72656769737472792e76360000000000000000030100000000",
+        "74696c65722e73656d616e7469632d72656769737472792e76370000000000000000030100000000",
         "000000047465737400000000000000037a7a7a00000001000000000000000b74657374207a7a7a20",
         "7631042000000001000000000000000474657374000000000000000b6f72642d6669787475726500",
         "0000010200000000000000047465737400000000000000036d6d6d00000001000000000000000b74",

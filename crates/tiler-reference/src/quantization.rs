@@ -529,7 +529,16 @@ mod tests {
     #[test]
     fn compound_validator_rejects_every_invalid_scale_class() {
         let (profile, codes, _, zero) = compound_fixture();
-        for invalid_scale in [0.0, -1.0, f32::INFINITY, f32::NAN] {
+        for invalid_scale in [
+            0.0,
+            -0.0,
+            -1.0,
+            f32::from_bits(0x8000_0001),
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NAN,
+            f32::from_bits(0x7f80_0001),
+        ] {
             let value =
                 compound_value(&profile, &codes, &f32_scalar(invalid_scale), &zero).unwrap();
             assert_eq!(
@@ -537,6 +546,9 @@ mod tests {
                 Err(ReferenceValueError::InvalidRepresentation)
             );
         }
+        let smallest_positive_subnormal =
+            compound_value(&profile, &codes, &f32_scalar(f32::from_bits(1)), &zero).unwrap();
+        assert!(validate_strict_affine(&smallest_positive_subnormal, &profile).is_ok());
     }
 
     #[test]
@@ -549,10 +561,12 @@ mod tests {
 
     #[test]
     fn strict_quantize_rejects_nan() {
-        assert_eq!(
-            quantize_one(f32::NAN, 0.5, 8, 15),
-            Err(ReferenceOperationError::InvalidApplication)
-        );
+        for nan in [f32::NAN, f32::from_bits(0x7f80_0001)] {
+            assert_eq!(
+                quantize_one(nan, 0.5, 8, 15),
+                Err(ReferenceOperationError::InvalidApplication)
+            );
+        }
     }
 
     #[test]
@@ -748,6 +762,83 @@ mod tests {
             dense_f32(&quarter[0]).unwrap()[0].to_bits(),
             0.75_f32.to_bits()
         );
+    }
+
+    #[test]
+    fn residual_bearing_u4_and_u8_quantize_graphs_reject_runtime_nan_and_invalid_scale() {
+        for (zero_type, expected_result_type) in [
+            (U4::resolved_type(), StrictAffineU4::resolved_type()),
+            (U8::resolved_type(), StrictAffineU8::resolved_type()),
+        ] {
+            let x_key = InputKey::new("x").unwrap();
+            let scale_key = InputKey::new("scale").unwrap();
+            let zero_key = InputKey::new("zero").unwrap();
+            let mut graph = SemanticProgramBuilder::try_standard().unwrap();
+            let x = graph
+                .input_resolved(x_key.clone(), Shape::new([]), F32::resolved_type())
+                .unwrap();
+            let scale = graph
+                .input_resolved(scale_key.clone(), Shape::new([]), F32::resolved_type())
+                .unwrap();
+            let zero_value = graph
+                .input_resolved(zero_key.clone(), Shape::new([]), zero_type.clone())
+                .unwrap();
+            let quantized = graph
+                .apply(
+                    quantize_strict_affine_op(),
+                    OperationAttributes::empty(),
+                    &[x, scale, zero_value],
+                )
+                .unwrap()[0];
+            graph
+                .output_resolved(OutputKey::new("result").unwrap(), quantized)
+                .unwrap();
+            let program = graph.build().unwrap();
+            let quantize = program
+                .operations()
+                .find(|operation| operation.key() == &quantize_strict_affine_op())
+                .unwrap();
+            let result = program.value(quantize.results().next().unwrap()).unwrap();
+            assert_eq!(result.resolved_type(), &expected_result_type);
+            assert_eq!(
+                quantize
+                    .semantic_preconditions()
+                    .filter(|precondition| {
+                        precondition.status()
+                            == tiler_ir::semantic::SemanticPreconditionStatus::Residual
+                    })
+                    .count(),
+                2
+            );
+            let zero = Tensor::scalar(zero_type, element([8])).unwrap();
+            let evaluator = ReferenceEvaluator::standard().unwrap();
+            for (x, scale) in [
+                (f32_scalar(f32::NAN), f32_scalar(0.5)),
+                (f32_scalar(1.0), f32_scalar(0.0)),
+            ] {
+                let error = evaluator
+                    .evaluate(
+                        &program,
+                        &[
+                            InputBinding::new(&x_key, &x),
+                            InputBinding::new(&scale_key, &scale),
+                            InputBinding::new(&zero_key, &zero),
+                        ],
+                    )
+                    .unwrap_err();
+                assert!(
+                    matches!(
+                        &error,
+                        EvaluationError::Operation {
+                            operation,
+                            source: ReferenceOperationError::InvalidApplication,
+                            ..
+                        } if operation == &quantize_strict_affine_op()
+                    ),
+                    "unexpected runtime rejection: {error:?}"
+                );
+            }
+        }
     }
 
     #[test]
