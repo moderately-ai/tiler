@@ -1,7 +1,7 @@
 ---
 id: measure-macos-apple9-f32-under-unified-msl4-profile
 title: Measure macOS Apple9 F32 under the unified MSL 4 profile
-status: todo
+status: in-progress
 priority: p0
 dependencies: []
 related: [restore-replayable-apple-compatibility-evidence, record-metal-runtime-compiler-provenance-gap, carry-the-dtype-on-the-metal-subnormal-flush-fact, spike-bf16-through-the-second-dtype-seams]
@@ -9,6 +9,9 @@ scopes: [research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: [metal, numerics, target-profiles, evidence]
+claimed_from: todo
+assignee: codex-root
+lease_expires_at: 1785456586
 ---
 ## User-visible outcome
 
