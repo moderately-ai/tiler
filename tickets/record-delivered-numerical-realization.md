@@ -10,7 +10,7 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, numerics, needs-tom]
 ---
-ADR 0076 item 4. A produced artifact carries a first-class, **readable** record of the numerical realization actually delivered: the resolved contract complete over every dimension, each dimension's means of honouring it, the target facts relied on, and the identity of the profile that declared them.
+ADR 0076 item 4 requires a produced artifact to carry a first-class, **readable** record of the numerical realization actually delivered: the resolved contract complete over every dimension, each dimension's assessment and required means of honouring it, the target facts relied on, and the identity of the profile that declared them. This completed ticket produced a staged historical draft only; the current qualification in `## Outcome` names its replacement.
 
 A consumer comparing generated output against a CPU reference reads this record. It does not reconstruct it from the request, from the selected compiler flags, or from the target's name.
 
@@ -30,7 +30,7 @@ Do not design an "actual versus requested" shape. There is no divergence to repo
 
 ## Boundary — this needs Tom
 
-`tiler-artifact` gained its first public content in `prototype-artifact-program-model`. This ticket adds a public numerical surface to it, which under ADR 0075 is Tom's to approve before it is accepted or merged. Build a tested implementation as a concrete draft, present the boundary as an atomic decision with alternatives, and pause — a tested implementation is not implicit approval of its public interface.
+`tiler-artifact` gained its first public content in `prototype-artifact-program-model`. This ticket was scoped to draft a public numerical surface for later approval under ADR 0075; it did not itself publish one. Build a tested implementation as a concrete draft, present the boundary as an atomic decision with alternatives, and pause — a tested implementation is not implicit approval of its public interface.
 
 Apply the ADR 0074 conventions: typed non-erasing errors, opaque identities with `as_bytes()` and presentation-only `label()` accessors, domain-tagged and length-prefixed encodings with no ordinal dependence, a transactional builder with a consuming `build()`, no `pub` fields on the verified product. On `#[non_exhaustive]`, apply the amended convention 5 rather than the blanket rule: an enum an out-of-crate consumer maps *totally* must stay exhaustive, because a wildcard there makes a missed variant silently wrong instead of a build error. `tiler-artifact` already encodes `KernelType`, `AddressSpace`, and `BufferAccess` into identity cross-crate, which is the worked precedent for that judgement.
 
@@ -81,6 +81,8 @@ Recorded rather than escalated: exactly one of the two options above survives th
 ## Outcome
 
 **The draft is built and staged crate-private; the surface is Tom's.** The record is implemented and tested in `crates/tiler-artifact/src/program/realization.rs`, as a private `mod realization;` whose items are all `pub(crate)` and none re-exported, under ADR 0074 convention 7 with the required `#![allow(dead_code, reason = …)]`. **No public API was merged.** `accept-the-delivered-realization-artifact-surface` is the review gate, and `wire-the-delivered-realization-record-into-the-artifact` depends on it.
+
+**Current qualification (2026-07-29): this outcome is historical evidence, not the candidate public shape.** A later full-tree audit found that the draft's four fixed dimensions, dtype-free lookup, opaque means key, incomplete provenance, and raw declaration API conflict with the current eleven-dimension, dtype-keyed honourability contract and its measured `f16`/`f32` divergence. `redesign-the-delivered-realization-record-from-typed-evidence` owns the replacement. Preserve the tests and rationale as evidence for fail-closed construction and one-record placement; do not promote this draft.
 
 ### Fact — the record's shape, and what each field is evidence of
 

@@ -2,25 +2,25 @@
 id: carry-the-honourability-fact-provenance-into-the-artifact-record
 title: Carry the honourability fact provenance into the artifact record
 status: todo
-priority: p2
-dependencies: [wire-the-delivered-realization-record-into-the-artifact]
+priority: p1
+dependencies: [express-metal-honourability-in-the-shared-form]
 related: [record-delivered-numerical-realization, name-the-compiler-and-environment-in-adr-0076-target-facts, record-metal-runtime-compiler-provenance-gap]
-scopes: [implementation/artifact, implementation/compiler]
+scopes: [implementation/metal, implementation/compiler, contracts/numerics]
 shared_scopes: []
 paths: []
 tags: [implementation, artifact, compiler, numerics, provenance]
 ---
 ## User-visible outcome
 
-An artifact reader can see *which compiler build and execution environment* each numerical honourability claim was measured on — not just "Metal on Apple silicon", which the recorded measurement shows names three independently-versioned compilers on one host. Until then, a delivered-realization record is not readable in the sense ADR 0076 item 4 requires.
+The target/profile authority can produce structured provenance identifying the authority, validity scope, compiler build, and execution environment for each numerical honourability fact, and the compiler can validate and carry that provenance with selected evidence. A later artifact translation can therefore remain readable without treating the compiler as the measured fact's authority or requiring a consumer to decode opaque scope bytes.
 
 ADR 0076 item 3 fixes a numerical honourability declaration as "a stated, versioned profile fact with the same provenance discipline `CapabilityFact` already carries — an availability phase, a validity scope, an authority, and the declaring profile's identity", and adds that the validity scope "must identify which compiler build and which execution environment the declared behaviour was measured on". Item 4 states that the artifact record "inherits that requirement rather than adding one": a record naming a delivered realization without naming the compiler that produced it is not readable in the sense item 4 requires.
 
-`record-delivered-numerical-realization`'s draft carries two of the four. `HonouredDimensionFact` holds the means and the availability phase; `DeliveredNumericalRealization` holds the declaring profile identity. The authority and the validity scope are absent, and so is the compiler-and-environment identification the scope must supply.
+`record-delivered-numerical-realization`'s historical draft carries two of the four. `HonouredDimensionFact` holds the means and the availability phase; `DeliveredNumericalRealization` holds the declaring profile identity. The authority and the validity scope are absent, and so is the compiler-and-environment identification the scope must supply.
 
 ## Facts, so the gap is not mistaken for an oversight
 
-**Fact — the authority and validity scope are unreachable, not merely unused.** `crates/tiler-compiler/src/feasibility.rs:291` and `:321` declare `FactAuthority` and `FactValidityScope` `pub(crate)`, and each offers only a `tag()` for the profile descriptor's own encoding. `tiler-artifact` and `tiler-compiler` are siblings that each depend only on `tiler-ir`, so no visibility change alone reaches them; a key-minting API on the compiler side is what a sibling can consume, the way `HonouringMeans::key` already serves the means.
+**Fact — the authority and validity scope are unreachable, not merely unused.** `crates/tiler-compiler/src/feasibility.rs` declares `FactAuthority` and `FactValidityScope` `pub(crate)`, and each offers only a `tag()` for the profile descriptor's own encoding. The compiler can carry these facts but is not automatically their authority: the Metal/profile declarer is the source of the measured statement. A compiler-minted opaque key would both mis-site authority and leave a future artifact reader unable to identify the compiler build and environment without a second recognizer.
 
 **Fact — no type in the workspace expresses a compiler build or an execution environment as a target fact.** Exact check: `grep -rn "compiler build\|CompilerBuild\|ExecutionEnvironment\|execution environment" crates/tiler-compiler/src/ crates/tiler-metal/src/` returns nothing. `name-the-compiler-and-environment-in-adr-0076-target-facts` is `done` and holds `contracts/decisions` only — it added the requirement to the ADR and implemented nothing, which is correct for its scope and leaves this open.
 
@@ -28,10 +28,13 @@ ADR 0076 item 3 fixes a numerical honourability declaration as "a stated, versio
 
 ## What closes this
 
-The declaring authority mints an opaque key for the fact's authority and validity scope, and the validity scope identifies the compiler build and execution environment measured. The artifact record carries them per dimension beside the means it already carries, and encodes them into the record's canonical bytes. No field is reserved before its producer exists: a field a producer cannot fill is the producer-less placeholder this repository has repeatedly had to retract, which is exactly why the draft omits them rather than defaulting them.
+The target/profile declarer produces one structured, versioned provenance value that identifies the measured-fact authority, validity scope, compiler build, and execution environment. The shared honourability declaration validates it; the compiler carries it unchanged with selected evidence and exposes an exact proposed borrowed view for the later public-boundary review. Opaque display keys may supplement identity but cannot replace the structured fields a reader must interpret.
+
+This ticket does not modify the artifact record or encode provenance into artifact identity. `redesign-the-delivered-realization-record-from-typed-evidence` owns the total checked representation and review packet; `wire-the-delivered-realization-record-into-the-artifact` owns production translation, encoding, and identity after Tom accepts the boundary.
 
 ## Graph maintenance
 
-- The key-minting API lands on the compiler side (`FactAuthority`/`FactValidityScope` are unreachable from the sibling crate — see the Facts above); when it lands, update `record-delivered-numerical-realization`'s draft note that two of four provenance parts were absent.
+- The structured fact is produced at the target/profile declaration boundary and carried by the compiler; do not make the compiler the measured fact's authority merely because it owns feasibility.
 - If you find yourself adding a field the producer cannot fill yet, stop — this ticket's own closing text forbids producer-less placeholders. Record what the producer would need instead, on this ticket.
 - When the compiler-build/environment fact type first exists, tell `record-metal-runtime-compiler-provenance-gap` (related) — its gap is the same fact from the runtime side.
+- This producer work precedes `redesign-the-delivered-realization-record-from-typed-evidence`. The former edge to `wire-the-delivered-realization-record-into-the-artifact` was backwards: wiring cannot precede the provenance the required record must carry.

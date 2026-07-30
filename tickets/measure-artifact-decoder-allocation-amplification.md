@@ -3,7 +3,7 @@ id: measure-artifact-decoder-allocation-amplification
 title: Measure and reduce artifact-decoder allocation amplification
 status: todo
 priority: p2
-dependencies: [bind-stage-coverage-to-index-refinement-identity, bind-the-artifact-variant-abi-to-the-program-abi, carry-the-byte-offset-of-a-partial-binding-view, carry-the-honourability-fact-provenance-into-the-artifact-record]
+dependencies: [bind-stage-coverage-to-index-refinement-identity, bind-the-artifact-variant-abi-to-the-program-abi, carry-the-byte-offset-of-a-partial-binding-view, wire-the-delivered-realization-record-into-the-artifact]
 related: [prototype-neutral-artifact-codec]
 scopes: [research/artifacts, implementation/artifact]
 shared_scopes: []

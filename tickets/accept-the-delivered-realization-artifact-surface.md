@@ -1,53 +1,66 @@
 ---
 id: accept-the-delivered-realization-artifact-surface
 title: Accept the delivered-realization artifact surface
-status: awaiting-decision
+status: todo
 priority: p1
-dependencies: []
-related: [record-delivered-numerical-realization, accept-adr-0076-numerical-realizations]
-scopes: [implementation/artifact]
-shared_scopes: []
+dependencies: [redesign-the-delivered-realization-record-from-typed-evidence]
+related: [record-delivered-numerical-realization, accept-adr-0076-numerical-realizations, carry-the-honourability-fact-provenance-into-the-artifact-record, wire-the-delivered-realization-record-into-the-artifact]
+scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/build, contracts/numerics, contracts/artifacts, contracts/decisions]
+shared_scopes: [project/tickets]
 paths: []
 tags: [api, decision, numerics, artifact, needs-tom]
 ---
-## Decision needed (2026-07-28)
+## User-visible outcome
 
-**The question, atomic:** accept the `DeliveredRealizationBuilder` + readers shape as staged — a constructor on `ArtifactProgramBuilder` plus readers on `VerifiedArtifactProgram` and `DecodedArtifact` — or name the items to change before it is made public?
+Tom receives one exact, compile-checked public-boundary proposal whose scalar-arithmetic record is complete over the governing eleven-dimension numerical contract, identifies the dtype-wide contract by canonical resolved-type identity, distinguishes operation and policy loci with stable obligation keys, preserves structured honouring means and provenance, and reserves future operation- or scheme-owned contract families without applying floating semantics universally.
 
-| | Accept as staged | Hold |
-| --- | --- | --- |
-| **Enables** | `wire-the-delivered-realization-record-into-the-artifact` (currently `todo`, and blocked on nothing else) can start; the file-scope convention-7 allow at `crates/tiler-artifact/src/program/realization.rs:1-4` comes off and its 24 `pub(crate)` items become reachable; ADR 0076 item 4 stops being a requirement the code satisfies only internally. | The shape stays free to revise at no compatibility cost, which is exactly what convention 7 staged it for. |
-| **Prevents** | The shape becomes a compatibility commitment; a later change to it is a breaking change rather than an edit. | ADR 0076 item 4 stays unmet in anything a consumer can observe — a produced artifact carries no readable record of the realization it delivered — and every dependent slice stays blocked. Nothing further can be done in the meantime: the draft cannot be reached from outside the crate by design (`mod realization;` is private at `crates/tiler-artifact/src/program/mod.rs:339`). |
+## Withdrawal of the former decision
 
-Two shapes in the list below look like open sub-questions and are not; both were eliminated by derivation, and the derivations are here so a reader can refute them rather than re-ask them.
+The 2026-07-28 request to accept the staged `DeliveredRealizationBuilder` and readers is withdrawn. Source review disproved its premises:
 
-**No presentation `label()` on `HonouringMeansKey`, and adding one would be wrong.** ADR 0074 convention 2 offers a label so a wide digest can be read; a means key is already text a reader can render, so a label digesting it would make the record *less* readable. The convention is about the role of the value, and this value has the readable role already. (Reproduced from `record-delivered-numerical-realization`; that ticket's copy is the original.)
+- the staged record has four fixed dimension fields while the governing compiler vocabulary has eleven and the widened scheduled/artifact realization has eight;
+- the accessor omits arithmetic dtype despite a measured profile giving different `f16` and `f32` answers for the same dimension;
+- the artifact dimension enum is a drifting duplicate;
+- opaque means bytes erase the payload of a declared relaxation and cannot support the reference-comparison consumer the ADR names;
+- required authority, validity, compiler-build, and execution-environment provenance is absent;
+- a raw byte declaration accepts caller assertions rather than compiler-selected typed evidence; and
+- `UnrecordedRealization` is temporary migration state immediately contradicted by the required terminal record.
 
-**`NumericalDimension` is deliberately not `#[non_exhaustive]`** under ADR 0074's amended convention 5b: this crate's encoder maps it totally and a wildcard there would have to invent an identity byte. A consumer rendering one line per dimension is the same case.
+Publishing that draft would be incorrect and less maintainable, so Tom is not being asked to choose between it and delay. Delay is correctness-derived until a complete concrete replacement exists.
 
-## Items to ratify
+## Boundary that will be reviewed
 
-- **`DeliveredNumericalRealization`** — the record. Private fields, read through `profile()` and `honoured(dimension)`. One record per artifact, because `ArtifactProgramBuilder` already enforces one numerical contract and one target profile across every variant (`NumericalContractMismatch`, `TargetProfileMismatch`).
-- **`NumericalDimension`** — the four behaviour dimensions of `tiler_ir::schedule::NumericalRealization`, not `#[non_exhaustive]` for the reason derived above.
-- **`HonouringMeansKey`** — the opaque means key, `from_bytes` and `as_bytes()`, with no `label()`, for the reason derived above.
-- **`HonouredDimensionFact`** — the per-dimension target fact: `means()` and `available_at()`.
-- **`DeliveredRealizationBuilder`** — `new(profile)`, `declare(dimension, means, available_at)`, consuming `build()`.
-- **`DeliveredRealizationError`** with `rule()`, **`HonouringMeansKeyError`**, and **`UnrecordedRealization`** with its `RULE` constant.
-- **`MAX_HONOURING_MEANS_KEY_BYTES`**.
-- On the artifact itself, whatever `wire-the-delivered-realization-record-into-the-artifact` adds: a builder entry point, `VerifiedArtifactProgram`'s reader, and `DecodedArtifact`'s reader.
+`redesign-the-delivered-realization-record-from-typed-evidence` owns the exact compile-checked review packet, including proposed signatures, call sites, contract text, and a bounded spike or equivalent private draft. This ticket becomes `awaiting-decision` only after that packet has:
 
-Builder-error recovery and rejection-rule spelling follow existing artifact conventions or move to separately scoped reviews; they are not additional owner questions in this ticket.
+- one shared exhaustive eleven-dimension scalar-arithmetic authority;
+- checked compiler-produced policy subjects carrying canonical resolved-type identity;
+- complete scalar-arithmetic contract rows, canonical policy-locus obligations, and complete required/not-required assessment coverage;
+- structured means and complete provenance;
+- compact dense scalar-arithmetic storage, sorted sparse evidence, and borrowed allocation-free lookup;
+- exact proposed top-level readers with no optional-record state;
+- an exhaustive proposed `tiler-build` translation from compiler-produced typed evidence;
+- typed proposed construction/decode refusals and explicit identity/schema migration work owned downstream; and
+- adversarial fixtures whose failure paths were each observed.
 
-## Counterpoint to accepting — the question this record does *not* reopen, and its trigger
+Tom then reviews the exact public crate/module/type/constructor/reader/error boundary, not an abstract promise that implementation will later fill.
 
-Whether `tiler-artifact` should also expose a **typed view** of the means — a recognizer over a key it still does not mint — rather than opaque bytes alone. It is not asked now because no consumer branches on the means: comparison, identity, and rendering the key as text are all the opaque form supports and all anything needs today. It becomes forced the moment a consumer must *reason over* the means rather than compare it, and ADR 0076 item 4 names the likely one — the means "changes what a reference comparison should expect from a dimension honoured by emulation rather than natively." A comparator that can only compare bytes would hard-code `b"supported-with-exact-emulation"`, which is the second authority ADR 0076 line 58 forbids, arriving by copy instead of by declaration. **Trigger:** the first consumer that must branch on the means. The right response then is a recognizer whose unknown case is a real `None`, not a relocation of the vocabulary.
+## Design constraints already derived
 
-Accepting the opaque shape now is therefore not a bet that the typed view is unnecessary; it is the position that the recognizer should arrive with its first consumer, when the unknown case has a caller to be answered to.
+- One artifact-wide record is correct while the artifact builder enforces one numerical contract and target profile across the portfolio. A future multi-subject portfolio must move the record to its subject.
+- Exhaustive dimension handling is required; `#[non_exhaustive]` is wrong for a vocabulary total encoders and renderers must cover.
+- Eleven named fields are eliminated in favour of one dense scalar-arithmetic schema because named fields duplicate the dimension set and force public churn.
+- Raw means strings are eliminated because they erase structured relaxation meaning and invite a second authority in consumers.
+- Every scalar-arithmetic dimension records whether any packaged route requires it. A required disposition names a non-empty canonical range of locus-specific obligations and evidence; `NotRequired` is an explicit compiler-produced assertion rather than a fact the artifact decoder can independently derive.
+- Unknown numerical record families or tags reject fail-closed; an older reader never skips them and still calls an executable artifact validated.
+- Recognition of a dtype identity never creates a policy subject or implies operation, reference, storage, dispatch, lowering, runtime, or backend support.
 
-## Why this is owner-reserved at all
+## Closes when
 
-ADR 0076 item 4 requires a produced artifact to carry a readable record of the numerical realization it delivered. `record-delivered-numerical-realization` built that record as a tested concrete draft in `crates/tiler-artifact/src/program/realization.rs` and staged it **crate-private** under ADR 0074 convention 7, because reaching it needs a constructor on the artifact builder and a reader on the verified and decoded artifact, and ADR 0075 reserves that surface to Tom. `AGENTS.md` states the same rule: "A tested implementation may serve as a concrete draft, but it is not implicit approval of its public interface."
+The redesign dependency is done; its exact tested public diff and call site are presented here; every candidate alternative that fails correctness, performance, or long-term maintainability is explicitly eliminated; Tom ratifies the surviving boundary; and `wire-the-delivered-realization-record-into-the-artifact` is unblocked against that accepted shape.
 
-## Parked 2026-07-27 — awaiting Tom
+## Graph maintenance
 
-The implementation exists, is tested, and is staged `pub(crate)`. Nothing is public today: `mod realization;` is private and not re-exported, every item is `pub(crate)`, and the module carries the convention-7 file allow. The decision above is the only thing that moves this ticket.
+- The target/profile provenance producer now precedes the redesign instead of depending on later artifact wiring.
+- Keep `wire-the-delivered-realization-record-into-the-artifact` blocked on this acceptance ticket.
+- Qualify the completed four-dimension draft as historical evidence and remove its stale current recommendation from downstream briefs.
+- Do not return this ticket to `awaiting-decision` until the compile-checked review packet exists and has passed its targeted checks. Production wiring, codec, readers, identity/schema movement, and rebaselines remain downstream.

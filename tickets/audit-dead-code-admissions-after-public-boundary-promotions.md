@@ -19,7 +19,7 @@ promotion wave makes the intended producers and consumers reachable.
 
 | File | Allow at | Reopening owner named by the reason |
 | --- | --- | --- |
-| `crates/tiler-artifact/src/program/realization.rs` | 1 | `accept-the-delivered-realization-artifact-surface`, then `wire-the-delivered-realization-record-into-the-artifact` |
+| `crates/tiler-artifact/src/program/realization.rs` | 1 | `redesign-the-delivered-realization-record-from-typed-evidence`, `accept-the-delivered-realization-artifact-surface`, then `wire-the-delivered-realization-record-into-the-artifact`; the redesign may replace the file and its allow |
 | `crates/tiler-artifact/src/program/codec/mod.rs` | 1 | Tom's ADR 0075 call on promoting the codec surface (also covers `unused_imports`) |
 | `crates/tiler-cache/src/expansion/collect.rs` | 101 | `accept-the-tiler-cache-public-boundary`, plus a proc-macro frontend or maintenance command as the calling slice |
 | `crates/tiler-cache/src/expansion/preflight.rs` | 1 | `accept-the-tiler-cache-public-boundary` |
@@ -47,7 +47,7 @@ reopen it. Do not add artificial call sites merely to satisfy the lint.
 
 ## Trigger
 
-**Dependency status, checked 2026-07-28:** `expose-the-governed-fact-field-vocabulary` **done**; `expose-the-numerical-contract-preference-list` **done**; `promote-the-metal-aot-compilation-identity` **in-progress**; `promote-the-symbolic-index-profile-to-a-public-boundary` **awaiting-decision** (blocked on four owner questions recorded on that ticket); `wire-the-delivered-realization-record-into-the-artifact` **todo** (blocked on `accept-the-delivered-realization-artifact-surface`). So the wave is two-fifths landed and the two furthest out are both waiting on Tom rather than on engineering.
+**Dependency status, checked 2026-07-29:** `expose-the-governed-fact-field-vocabulary` **done**; `expose-the-numerical-contract-preference-list` **done**; `promote-the-metal-aot-compilation-identity` has landed its prepared-compilation boundary; `promote-the-symbolic-index-profile-to-a-public-boundary` remains split across owner-reviewed public shapes; `wire-the-delivered-realization-record-into-the-artifact` is `todo` behind engineering through the shared Metal honourability form, structured provenance, and a compile-checked redesign before Tom reviews the exact replacement boundary. The artifact path is not currently waiting on Tom alone.
 
 **Do not run this audit per promotion.** It is a sweep, and its value comes from every promotion in the wave having landed, so that an item still unreached is genuinely unreached rather than merely waiting for its own ticket. **Run it when the last of the five lands**, or earlier if a *subsystem* completes — all of `tiler-ir`'s promotions, or all of `tiler-artifact`'s — in which case audit only that crate's admissions and say in the record that the sweep was partial.
 
