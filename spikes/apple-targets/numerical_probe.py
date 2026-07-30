@@ -501,6 +501,23 @@ class Verdict(enum.Enum):
         }
 
 
+class WitnessStatus(enum.Enum):
+    """The exhaustive relation between an observed witness and its two controls."""
+
+    EXECUTED = "executed"
+    NOT_EXECUTED = "not-executed"
+    DISAGREES = "disagrees"
+
+
+def witness_status(witness: Witness, observed: int) -> WitnessStatus:
+    """Classify one witness without collapsing an unexpected value into deletion."""
+    if observed == witness.executed:
+        return WitnessStatus.EXECUTED
+    if observed == witness.deleted:
+        return WitnessStatus.NOT_EXECUTED
+    return WitnessStatus.DISAGREES
+
+
 class Execution(enum.Enum):
     """Where a family's compiled module may legitimately be dispatched.
 
@@ -824,6 +841,111 @@ asked and not in which artifact was produced.
 """
 
 FAMILY_BY_NAME = {family.name: family for family in FAMILIES}
+
+
+class GpuFamily(enum.Enum):
+    """A closed device-family requirement understood by the dispatch host."""
+
+    APPLE9 = "apple9"
+
+
+@dataclass(frozen=True)
+class Profile:
+    """One indivisible numerical-measurement target.
+
+    The offline target and runtime language are intentionally one value rather
+    than independent command-line switches. A record called "unified" is valid
+    only when both compiler paths consume this same selection.
+    """
+
+    name: str
+    schema: str
+    msl_version: str
+    runtime_language: str
+    families: tuple[Family, ...]
+    dtypes: tuple[Dtype, ...]
+    required_gpu_family: GpuFamily | None = None
+
+    def __post_init__(self) -> None:
+        if self.required_gpu_family is not None and not isinstance(
+            self.required_gpu_family, GpuFamily
+        ):
+            raise TypeError("required_gpu_family must be a GpuFamily")
+
+    def family(self, name: str) -> Family:
+        """Resolve one family inside this profile, refusing cross-profile use."""
+        for family in self.families:
+            if family.name == name:
+                return family
+        raise ProbeFailure(f"{name!r} is not in profile {self.name}")
+
+    def offline_flags(self, family: str, configuration: Configuration) -> list[str]:
+        """Render the complete offline selection from this profile alone."""
+        selected = self.family(family)
+        return [
+            "-target",
+            selected.target,
+            f"-std={self.msl_version}",
+            f"-O{configuration.optimization}",
+            f"-fmetal-math-mode={configuration.math_mode}",
+            f"-fmetal-math-fp32-functions={configuration.fp32_functions}",
+            f"-ffp-contract={configuration.fp_contract}",
+        ]
+
+    def runtime_options(
+        self, configuration: RuntimeConfiguration, archive: Path | None = None
+    ) -> str:
+        """Render the complete runtime selection from this profile alone."""
+        selections = [
+            f"math={configuration.math_mode}",
+            f"fpfun={configuration.fp32_functions}",
+            f"lang={self.runtime_language}",
+            f"opt={configuration.optimization}",
+        ]
+        if archive is not None:
+            selections.append(f"archive={archive}")
+        return ",".join(selections)
+
+    def accepts_gpu(self, apple9_support: str) -> bool:
+        """Apply the closed GPU-family requirement exhaustively."""
+        match self.required_gpu_family:
+            case None:
+                return True
+            case GpuFamily.APPLE9:
+                return apple9_support == "supported"
+
+
+LEGACY_PROFILE = Profile(
+    "legacy-msl31-all-families",
+    SCHEMA,
+    MSL_VERSION,
+    RUNTIME_LANGUAGE,
+    FAMILIES,
+    DTYPES,
+)
+
+APPLE9_F32_UNIFIED_MSL4_MACOS26 = Profile(
+    "apple9-f32-unified-msl4-macos26",
+    "tiler.apple-numerical-behaviour/v7",
+    "metal4.0",
+    "4.0",
+    (
+        Family(
+            "macos",
+            "MetalPlatform::MacOs",
+            "macosx",
+            "air64-apple-macos26.0",
+            Execution.MACOS_HOST,
+        ),
+    ),
+    (F32,),
+    GpuFamily.APPLE9,
+)
+
+PROFILES = {
+    profile.name: profile
+    for profile in (LEGACY_PROFILE, APPLE9_F32_UNIFIED_MSL4_MACOS26)
+}
 
 HOST_FAMILY = "macos"
 """The family whose execution environment is the machine running the harness.
@@ -1667,16 +1789,10 @@ class Configuration:
             f"{_fp32_suffix(self.fp32_functions)}"
         )
 
-    def flags(self, family: Family) -> list[str]:
-        return [
-            "-target",
-            family.target,
-            f"-std={MSL_VERSION}",
-            f"-O{self.optimization}",
-            f"-fmetal-math-mode={self.math_mode}",
-            f"-fmetal-math-fp32-functions={self.fp32_functions}",
-            f"-ffp-contract={self.fp_contract}",
-        ]
+    def flags(self, family: Family, profile: Profile = LEGACY_PROFILE) -> list[str]:
+        if profile.family(family.name) != family:
+            raise ProbeFailure(f"{family.name!r} does not carry profile {profile.name}'s target")
+        return profile.offline_flags(family.name, self)
 
 
 @dataclass(frozen=True)
@@ -1703,16 +1819,10 @@ class RuntimeConfiguration:
             f"runtime.{self.math_mode}.opt-{self.optimization}{_fp32_suffix(self.fp32_functions)}"
         )
 
-    def options(self, archive: Path | None = None) -> str:
-        selections = [
-            f"math={self.math_mode}",
-            f"fpfun={self.fp32_functions}",
-            f"lang={RUNTIME_LANGUAGE}",
-            f"opt={self.optimization}",
-        ]
-        if archive is not None:
-            selections.append(f"archive={archive}")
-        return ",".join(selections)
+    def options(
+        self, archive: Path | None = None, profile: Profile = LEGACY_PROFILE
+    ) -> str:
+        return profile.runtime_options(self, archive)
 
 
 @dataclass(frozen=True)
@@ -1739,7 +1849,11 @@ def matrix() -> str:
     return EXHAUSTIVE_MATRIX if os.environ.get(EXHAUSTIVE) is not None else COVERING
 
 
-def cases(family: str, selection: str | None = None) -> tuple[Case, ...]:
+def cases(
+    family: str,
+    selection: str | None = None,
+    profile: Profile = LEGACY_PROFILE,
+) -> tuple[Case, ...]:
     """Every kernel and configuration pair the recorded findings need, for one family.
 
     The set is assembled per finding and then deduplicated, so a case shared by
@@ -1756,6 +1870,7 @@ def cases(family: str, selection: str | None = None) -> tuple[Case, ...]:
     test holds the covering set to that coverage claim, so narrowing an axis
     without noticing is a test failure rather than a quieter record.
     """
+    profile.family(family)
     selection = matrix() if selection is None else selection
     exhaustive = selection == EXHAUSTIVE_MATRIX
     selected: list[Case] = []
@@ -1905,10 +2020,16 @@ def cases(family: str, selection: str | None = None) -> tuple[Case, ...]:
     unique: dict[str, Case] = {}
     for case in selected:
         unique.setdefault(case.key, case)
-    return tuple(unique.values())
+    return tuple(
+        case for case in unique.values() if BY_NAME[case.kernel].dtype in profile.dtypes
+    )
 
 
-def runtime_cases(family: str, selection: str | None = None) -> tuple[Case, ...]:
+def runtime_cases(
+    family: str,
+    selection: str | None = None,
+    profile: Profile = LEGACY_PROFILE,
+) -> tuple[Case, ...]:
     """Every runtime-compilation case for one family, derived from its offline set.
 
     Deriving it is what keeps the two paths comparable. A runtime case exists for
@@ -1923,8 +2044,9 @@ def runtime_cases(family: str, selection: str | None = None) -> tuple[Case, ...]
     against offline rows at that level, so deriving a runtime case from an `-O1`
     row would produce one with no candidate to be compared against.
     """
+    profile.family(family)
     pairs: dict[tuple[str, str, str], None] = {}
-    for case in cases(family, selection):
+    for case in cases(family, selection, profile):
         assert isinstance(case.configuration, Configuration)
         if case.configuration.optimization != RUNTIME_PAIRED_OPTIMIZATION:
             continue
@@ -2163,21 +2285,32 @@ class Toolchain:
     sdks: dict[str, Sdk]
     clang_path: str
 
-    def compile_ir(self, source: Path, destination: Path, case: Case) -> None:
-        self._metal(["-S", "-emit-llvm"], source, destination, case)
+    def compile_ir(
+        self, source: Path, destination: Path, case: Case, profile: Profile = LEGACY_PROFILE
+    ) -> None:
+        self._metal(["-S", "-emit-llvm"], source, destination, case, profile)
 
-    def compile_air(self, source: Path, destination: Path, case: Case) -> None:
-        self._metal(["-c"], source, destination, case)
+    def compile_air(
+        self, source: Path, destination: Path, case: Case, profile: Profile = LEGACY_PROFILE
+    ) -> None:
+        self._metal(["-c"], source, destination, case, profile)
 
-    def _metal(self, mode: list[str], source: Path, destination: Path, case: Case) -> None:
-        family = FAMILY_BY_NAME[case.family]
+    def _metal(
+        self,
+        mode: list[str],
+        source: Path,
+        destination: Path,
+        case: Case,
+        profile: Profile,
+    ) -> None:
+        family = profile.family(case.family)
         assert isinstance(case.configuration, Configuration)
         command = [
             "xcrun",
             "--sdk",
             family.sdk,
             "metal",
-            *case.configuration.flags(family),
+            *case.configuration.flags(family, profile),
             *mode,
             str(source),
             "-o",
@@ -2252,7 +2385,7 @@ def _resolve_sdk(name: str) -> Sdk:
     )
 
 
-def resolve() -> Toolchain:
+def resolve(profile: Profile = LEGACY_PROFILE) -> Toolchain:
     """Resolve every family's SDK, the offline toolchain, and the host compiler, or refuse.
 
     Every refusal here is a `ProbeUnavailable`, which callers turn into a skip.
@@ -2265,7 +2398,7 @@ def resolve() -> Toolchain:
         raise ProbeUnavailable(Reason.TOOLCHAIN, f"host is {platform.system()}, not Darwin")
     if shutil.which("xcrun") is None:
         raise ProbeUnavailable(Reason.TOOLCHAIN, "xcrun is not on PATH")
-    sdks = {family.sdk: _resolve_sdk(family.sdk) for family in FAMILIES}
+    sdks = {family.sdk: _resolve_sdk(family.sdk) for family in profile.families}
     clang = _run(["xcrun", "--sdk", "macosx", "--find", "clang"])
     clang_path = _first_line(clang.stdout)
     if clang.returncode != 0 or not clang_path:
@@ -2342,6 +2475,7 @@ class Dispatch:
     registry_id: str
     entries: dict[str, Reported]
     compiler_images: tuple[str, ...]
+    apple9_support: str
 
 
 @dataclass(frozen=True)
@@ -2377,7 +2511,7 @@ def _manifest_line(key: str, dtype: Dtype, source: Path, function: str, options:
     return "\t".join((*prefix, "source", str(source), function, options))
 
 
-def operand_arguments() -> list[str]:
+def operand_arguments(profile: Profile = LEGACY_PROFILE) -> list[str]:
     """The `<dtype>=<hex>,...` groups the dispatch host is given, one per dtype.
 
     Every dtype's vector is passed on every invocation rather than only the ones
@@ -2386,7 +2520,7 @@ def operand_arguments() -> list[str]:
     """
     return [
         f"{dtype.name}=" + ",".join(dtype.render(value) for value in dtype.operands)
-        for dtype in DTYPES
+        for dtype in profile.dtypes
     ]
 
 
@@ -2396,6 +2530,7 @@ def dispatch_batch(
     manifest: Path,
     subject: str,
     dtypes: dict[str, Dtype],
+    profile: Profile = LEGACY_PROFILE,
 ) -> Dispatch:
     """Run the dispatch host once over a whole manifest and parse its `key=value` lines.
 
@@ -2415,7 +2550,7 @@ def dispatch_batch(
         str(host),
         "batch",
         str(manifest),
-        *operand_arguments(),
+        *operand_arguments(profile),
     ]
     result = _run(command)
     if result.returncode == 3:
@@ -2429,7 +2564,7 @@ def dispatch_batch(
         raise ProbeFailure(
             f"dispatch of {subject} failed with {result.returncode}: {_normalized(result.stderr)}"
         )
-    device, registry = "", ""
+    device, registry, apple9_support = "", "", ""
     images: list[str] = []
     entries: dict[str, Reported] = {}
     key, applied, archive, values = "", None, None, []
@@ -2459,6 +2594,8 @@ def dispatch_batch(
             device = value
         elif name == "registry-id":
             registry = value
+        elif name == "gpu-family-apple9":
+            apple9_support = value
         elif name == "runtime-compiler-image":
             images.append(value)
         elif name == "case":
@@ -2475,7 +2612,15 @@ def dispatch_batch(
     close()
     if not entries:
         raise ProbeFailure(f"dispatch of {subject} reported no case at all")
-    return Dispatch(device, registry, entries, tuple(sorted(set(images))))
+    if profile.required_gpu_family is not None and not apple9_support:
+        raise ProbeFailure(f"{subject}: the dispatch host reported no Apple9 support state")
+    return Dispatch(
+        device,
+        registry,
+        entries,
+        tuple(sorted(set(images))),
+        apple9_support or "unreported",
+    )
 
 
 @dataclass(frozen=True)
@@ -2785,7 +2930,7 @@ def _simulator_launch() -> tuple[bool, str, tuple[str, ...], tuple[tuple[str, st
     return True, "", (simctl, "spawn", device["udid"]), identity
 
 
-def attachments() -> dict[str, Attachment]:
+def attachments(profile: Profile = LEGACY_PROFILE) -> dict[str, Attachment]:
     """Resolve every family's own execution environment, or the reason it has none.
 
     No family borrows another's. `IOsDevice` resolves to `Execution.NONE` here
@@ -2795,7 +2940,7 @@ def attachments() -> dict[str, Attachment]:
     is exactly why the refusal is structural rather than a run-time check.
     """
     resolved: dict[str, Attachment] = {}
-    for family in FAMILIES:
+    for family in profile.families:
         if family.execution is Execution.MACOS_HOST:
             resolved[family.name] = Attachment(family, True, "", (), "macosx", (), ())
         elif family.execution is Execution.IOS_SIMULATOR:
@@ -2821,7 +2966,12 @@ ARCHIVE_PROBE_CASE = "archive-support"
 BFLOAT_PROBE_CASE = "bfloat-support"
 
 
-def archive_support(host: Path, attachment: Attachment, work: Path) -> str:
+def archive_support(
+    host: Path,
+    attachment: Attachment,
+    work: Path,
+    profile: Profile = LEGACY_PROFILE,
+) -> str:
     """Decide whether a binary archive can be serialized in this execution environment.
 
     Returns the empty string when it can, or the exact reason it cannot. This is
@@ -2834,7 +2984,9 @@ def archive_support(host: Path, attachment: Attachment, work: Path) -> str:
     source = work / "archive_probe.metal"
     source.write_text(kernel.source(), encoding="utf-8")
     manifest = work / "archive_probe.manifest.tsv"
-    options = RuntimeConfiguration("safe", "default").options(work / "archive_probe.metallib")
+    options = RuntimeConfiguration("safe", "default").options(
+        work / "archive_probe.metallib", profile
+    )
     manifest.write_text(
         _manifest_line(ARCHIVE_PROBE_CASE, kernel.dtype, source, ENTRY_POINT, options) + "\n",
         encoding="utf-8",
@@ -2846,9 +2998,15 @@ def archive_support(host: Path, attachment: Attachment, work: Path) -> str:
             manifest,
             "the archive-support probe",
             {ARCHIVE_PROBE_CASE: kernel.dtype},
+            profile,
         )
     except ProbeFailure as failed:
         return _normalized(str(failed))
+    if not profile.accepts_gpu(reported.apple9_support):
+        raise ProbeFailure(
+            f"profile {profile.name} requires Apple9, but the device reported "
+            f"{reported.apple9_support}"
+        )
     archive = reported.entries[ARCHIVE_PROBE_CASE].archive
     if archive is None:
         return "the dispatch host reported no archive"
@@ -2857,7 +3015,13 @@ def archive_support(host: Path, attachment: Attachment, work: Path) -> str:
     return ""
 
 
-def bfloat_support(toolchain: Toolchain, host: Path, attachment: Attachment, work: Path) -> str:
+def bfloat_support(
+    toolchain: Toolchain,
+    host: Path,
+    attachment: Attachment,
+    work: Path,
+    profile: Profile = LEGACY_PROFILE,
+) -> str:
     """Decide whether this execution environment will run a `bfloat` kernel at all.
 
     Returns the empty string when it will, or the exact reason it will not. Like
@@ -2896,7 +3060,7 @@ def bfloat_support(toolchain: Toolchain, host: Path, attachment: Attachment, wor
     air_path = work / "bfloat_probe.air"
     library = work / "bfloat_probe.metallib"
     try:
-        toolchain.compile_air(source, air_path, case)
+        toolchain.compile_air(source, air_path, case, profile)
         toolchain.link(air_path, library, attachment.family)
     except ProbeFailure as failed:
         return _normalized(str(failed))
@@ -2912,6 +3076,7 @@ def bfloat_support(toolchain: Toolchain, host: Path, attachment: Attachment, wor
             manifest,
             "the bfloat-support probe",
             {BFLOAT_PROBE_CASE: kernel.dtype},
+            profile,
         )
     except ProbeFailure as failed:
         return _normalized(str(failed))
@@ -2919,7 +3084,11 @@ def bfloat_support(toolchain: Toolchain, host: Path, attachment: Attachment, wor
 
 
 def _observe_offline(
-    toolchain: Toolchain, work: Path, case: Case, dispatched: bool
+    toolchain: Toolchain,
+    work: Path,
+    case: Case,
+    dispatched: bool,
+    profile: Profile = LEGACY_PROFILE,
 ) -> tuple[Observation, Path | None, str]:
     """Compile one offline case, and link it when its family can be dispatched.
 
@@ -2928,19 +3097,19 @@ def _observe_offline(
     answers none of them. The compatibility probe is the record that establishes
     each family links.
     """
-    family = FAMILY_BY_NAME[case.family]
+    family = profile.family(case.family)
     kernel = BY_NAME[case.kernel]
     stem = case.key.replace(".", "_")
     source = work / f"{stem}.metal"
     source.write_text(kernel.source(), encoding="utf-8")
     ir_path = work / f"{stem}.ll"
-    toolchain.compile_ir(source, ir_path, case)
+    toolchain.compile_ir(source, ir_path, case, profile)
     ir = ir_path.read_text(encoding="utf-8")
     library: Path | None = None
     if dispatched:
         air_path = work / f"{stem}.air"
         library = work / f"{stem}.metallib"
-        toolchain.compile_air(source, air_path, case)
+        toolchain.compile_air(source, air_path, case, profile)
         toolchain.link(air_path, library, family)
     observation = Observation(
         case=case,
@@ -2954,7 +3123,11 @@ def _observe_offline(
 
 
 def _cross_family_hazard(
-    toolchain: Toolchain, host: Path, attachment: Attachment, work: Path
+    toolchain: Toolchain,
+    host: Path,
+    attachment: Attachment,
+    work: Path,
+    profile: Profile = LEGACY_PROFILE,
 ) -> dict[str, str]:
     """Measure what happens when a foreign family's module is loaded on the host GPU.
 
@@ -2965,7 +3138,7 @@ def _cross_family_hazard(
     module, not a fact about the family the module was compiled for.
     """
     measured: dict[str, str] = {}
-    for family in FAMILIES:
+    for family in profile.families:
         if family.execution is not Execution.NONE:
             continue
         case = Case(family.name, "multiply_two", Configuration("safe", "2", "off"))
@@ -2975,7 +3148,7 @@ def _cross_family_hazard(
         source.write_text(kernel.source(), encoding="utf-8")
         air_path = work / f"{stem}.air"
         library = work / f"{stem}.metallib"
-        toolchain.compile_air(source, air_path, case)
+        toolchain.compile_air(source, air_path, case, profile)
         toolchain.link(air_path, library, family)
         manifest = work / f"{stem}.manifest.tsv"
         manifest.write_text(
@@ -2984,7 +3157,9 @@ def _cross_family_hazard(
         )
         name = f"cross_family_load.{family.name}_module_on_{attachment.family.name}_gpu"
         try:
-            reported = dispatch_batch(host, attachment, manifest, name, {"hazard": kernel.dtype})
+            reported = dispatch_batch(
+                host, attachment, manifest, name, {"hazard": kernel.dtype}, profile
+            )
         except ProbeFailure as refused:
             measured[name] = _normalized(f"refused: {refused}")
             continue
@@ -2995,7 +3170,7 @@ def _cross_family_hazard(
     return measured
 
 
-def probe(work_directory: Path) -> Run:
+def probe(work_directory: Path, profile: Profile = LEGACY_PROFILE) -> Run:
     """Compile every family, dispatch the ones with a device, and classify every case.
 
     Raises `ProbeUnavailable` when no toolchain, SDK, or host GPU resolves, and
@@ -3003,9 +3178,9 @@ def probe(work_directory: Path) -> Run:
     execution environment is absent is neither: its compile side runs and its
     device side is recorded as unmeasured.
     """
-    toolchain = resolve()
+    toolchain = resolve(profile)
     work_directory.mkdir(parents=True, exist_ok=True)
-    attached = attachments()
+    attached = attachments(profile)
 
     observations: dict[str, Observation] = {}
     triples: dict[str, str] = {}
@@ -3015,9 +3190,10 @@ def probe(work_directory: Path) -> Run:
     runtime_images: dict[str, str] = {}
     runtime_builds: dict[str, str] = {}
     bfloat_reasons: dict[str, str] = {}
+    apple9_support: dict[str, str] = {}
     hosts: dict[str, Path] = {}
 
-    for family in FAMILIES:
+    for family in profile.families:
         attachment = attached[family.name]
         work = work_directory / family.name
         work.mkdir(parents=True, exist_ok=True)
@@ -3027,9 +3203,9 @@ def probe(work_directory: Path) -> Run:
             hosts[family.name] = host
 
         libraries: dict[str, Path] = {}
-        for case in cases(family.name):
+        for case in cases(family.name, profile=profile):
             observation, library, triple = _observe_offline(
-                toolchain, work, case, attachment.available
+                toolchain, work, case, attachment.available, profile
             )
             observations[case.key] = observation
             if library is not None:
@@ -3048,16 +3224,21 @@ def probe(work_directory: Path) -> Run:
             # Not "unsupported": this family has no device to ask, which is a
             # different fact from a device that answered no.
             bfloat_reasons[family.name] = unavailable
+            apple9_support[family.name] = unavailable
             continue
 
         host = hosts[family.name]
-        archive_reason = archive_support(host, attachment, work)
+        archive_reason = archive_support(host, attachment, work, profile)
         # Asked once per family, before any measured case is dispatched. A
         # family that refuses gets its `bf16` cases left out of the manifest and
         # recorded as refused; every other dtype in the same family is measured
         # exactly as before, which is the whole point of asking separately.
-        bfloat_reason = bfloat_support(toolchain, host, attachment, work)
-        bfloat_reasons[family.name] = bfloat_reason or "supported"
+        if BF16 in profile.dtypes:
+            bfloat_reason = bfloat_support(toolchain, host, attachment, work, profile)
+            bfloat_reasons[family.name] = bfloat_reason or "supported"
+        else:
+            bfloat_reason = ""
+            bfloat_reasons[family.name] = "unmeasured-by-profile"
 
         def refused(case: Case, reason: str = bfloat_reason) -> bool:
             return bool(reason) and BY_NAME[case.kernel].dtype is BF16
@@ -3066,13 +3247,13 @@ def probe(work_directory: Path) -> Run:
         archives: dict[str, Path] = {}
         manifest_dtypes: dict[str, Dtype] = {}
         lines: list[str] = []
-        for case in cases(family.name):
+        for case in cases(family.name, profile=profile):
             if refused(case):
                 continue
             dtype = BY_NAME[case.kernel].dtype
             manifest_dtypes[case.key] = dtype
             lines.append(_manifest_line(case.key, dtype, libraries[case.key], ENTRY_POINT, None))
-        for case in runtime_cases(family.name):
+        for case in runtime_cases(family.name, profile=profile):
             assert isinstance(case.configuration, RuntimeConfiguration)
             if refused(case):
                 continue
@@ -3095,21 +3276,32 @@ def probe(work_directory: Path) -> Run:
                     kernel.dtype,
                     source,
                     ENTRY_POINT,
-                    case.configuration.options(archive),
+                    case.configuration.options(archive, profile),
                 )
             )
         manifest = work_directory / f"{family.name}.manifest.tsv"
         manifest.write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
         reported = dispatch_batch(
-            host, attachment, manifest, f"the {family.name} manifest", manifest_dtypes
+            host,
+            attachment,
+            manifest,
+            f"the {family.name} manifest",
+            manifest_dtypes,
+            profile,
         )
+        apple9_support[family.name] = reported.apple9_support
+        if not profile.accepts_gpu(reported.apple9_support):
+            raise ProbeFailure(
+                f"profile {profile.name} requires Apple9, but the device reported "
+                f"{reported.apple9_support}"
+            )
         devices[family.name] = reported.device
         registries[family.name] = reported.registry_id or "unreported"
         runtime_images[family.name] = " ".join(reported.compiler_images) or "unreported"
         runtime_builds[family.name] = compiler_build(reported.compiler_images)
 
         compiler = ""
-        for case in cases(family.name):
+        for case in cases(family.name, profile=profile):
             if refused(case):
                 # The compile side already ran and is kept: `bfloat` compiles and
                 # links for this family, and that a module the device will not
@@ -3134,7 +3326,7 @@ def probe(work_directory: Path) -> Run:
                 applied_options=None,
                 archived_options=None,
             )
-        for case in runtime_cases(family.name):
+        for case in runtime_cases(family.name, profile=profile):
             if refused(case):
                 observations[case.key] = Observation(
                     case=case,
@@ -3171,7 +3363,7 @@ def probe(work_directory: Path) -> Run:
         runtime_compilers[family.name] = compiler or f"unavailable:{archive_reason}"
 
     hazards = _cross_family_hazard(
-        toolchain, hosts[HOST_FAMILY], attached[HOST_FAMILY], work_directory
+        toolchain, hosts[HOST_FAMILY], attached[HOST_FAMILY], work_directory, profile
     )
     measured = {
         "emitted_triple": triples,
@@ -3182,13 +3374,16 @@ def probe(work_directory: Path) -> Run:
         "runtime_compiler_build": runtime_builds,
         "device_bfloat_support": bfloat_reasons,
     }
-    return Run(environment(toolchain, attached, measured), observations, hazards)
+    if profile is not LEGACY_PROFILE:
+        measured["device_apple9_support"] = apple9_support
+    return Run(environment(toolchain, attached, measured, profile), observations, hazards)
 
 
 def environment(
     toolchain: Toolchain,
     attached: dict[str, Attachment],
     measured: dict[str, dict[str, str]],
+    profile: Profile = LEGACY_PROFILE,
 ) -> dict[str, str]:
     """Capture the exact host row and per-family rows every measurement is qualified by.
 
@@ -3208,7 +3403,7 @@ def environment(
         "machine": _first_line(_run(["uname", "-m"]).stdout),
         "xcode": " ".join(xcode.stdout.split()) if xcode.returncode == 0 else "unreported",
     }
-    for family in FAMILIES:
+    for family in profile.families:
         sdk = toolchain.sdks[family.sdk]
         attachment = attached[family.name]
         prefix = f"family.{family.name}"
@@ -3233,21 +3428,25 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def record_rows(run: Run) -> list[tuple[str, str]]:
+def record_rows(
+    run: Run,
+    profile: Profile = LEGACY_PROFILE,
+    evidence: dict[str, str] | None = None,
+) -> list[tuple[str, str]]:
     """Render one run as the ordered key/value rows of the checked-in record."""
     revision = _run(["git", "-C", str(REPOSITORY), "rev-parse", "HEAD"])
     rows: list[tuple[str, str]] = [
-        ("schema", SCHEMA),
+        ("schema", profile.schema),
         ("probe.repository_base_revision", _first_line(revision.stdout) or "unreported"),
         ("probe.harness_sha256", digest(Path(__file__).resolve())),
         ("probe.host_source_sha256", digest(HOST_SOURCE)),
         ("probe.matrix", matrix()),
-        ("probe.fixed_flags", f"-std={MSL_VERSION}"),
+        ("probe.fixed_flags", f"-std={profile.msl_version}"),
         ("probe.default_fp32_functions", DEFAULT_FP32_FUNCTIONS),
         ("probe.entry_point", ENTRY_POINT),
-        ("probe.dtypes", " ".join(dtype.name for dtype in DTYPES)),
+        ("probe.dtypes", " ".join(dtype.name for dtype in profile.dtypes)),
         ("probe.default_dtype", DEFAULT_DTYPE.name),
-        ("probe.runtime_fixed_options", f"lang={RUNTIME_LANGUAGE}"),
+        ("probe.runtime_fixed_options", f"lang={profile.runtime_language}"),
         ("probe.runtime_paired_optimization", f"-O{RUNTIME_PAIRED_OPTIMIZATION}"),
         ("probe.guard_layers.offline_with_device", f"{EMITTED_ARITHMETIC} {EXECUTION_WITNESS}"),
         ("probe.guard_layers.offline_without_device", EMITTED_ARITHMETIC),
@@ -3259,8 +3458,20 @@ def record_rows(run: Run) -> list[tuple[str, str]]:
     ]
     rows += [
         (f"probe.operands.{dtype.name}", " ".join(dtype.render(v) for v in dtype.operands))
-        for dtype in DTYPES
+        for dtype in profile.dtypes
     ]
+    if profile is not LEGACY_PROFILE:
+        rows[1:1] = [
+            ("probe.profile", profile.name),
+            ("probe.families", " ".join(family.name for family in profile.families)),
+            (
+                "probe.required_gpu_family",
+                profile.required_gpu_family.value if profile.required_gpu_family else "none",
+            ),
+            ("probe.runtime_target_contract", "execution-environment-no-target-property"),
+        ]
+        for key, value in sorted((evidence or {}).items()):
+            rows.append((f"probe.{key}", value))
     rows += [(f"environment.{key}", value) for key, value in run.environment.items()]
     rows += [(f"hazard.{key}", value) for key, value in sorted(run.hazards.items())]
     for key in sorted(run.observations):
@@ -3273,8 +3484,11 @@ def record_rows(run: Run) -> list[tuple[str, str]]:
         if observation.compile_options is not None:
             rows.append((f"case.{key}.compile_options", " ".join(observation.compile_options)))
         if observation.operations is not None:
+            rendered_operations = " ".join(str(op) for op in observation.operations)
+            if profile is not LEGACY_PROFILE and not rendered_operations:
+                rendered_operations = "none"
             rows.append(
-                (f"case.{key}.float_operations", " ".join(str(op) for op in observation.operations))
+                (f"case.{key}.float_operations", rendered_operations)
             )
         if observation.refusal:
             # A missing `results` row means "not dispatched" and nothing more, so
@@ -3297,9 +3511,24 @@ def record_rows(run: Run) -> list[tuple[str, str]]:
                     " ".join(dtype.render(value) for value in observation.results),
                 )
             )
+            if profile is not LEGACY_PROFILE:
+                witness = observation.kernel.witness
+                if witness is None:
+                    rendered_witness = "none"
+                else:
+                    observed = observation.result_for(witness.operand)
+                    status = witness_status(witness, observed).value
+                    rendered_witness = (
+                        f"operand={dtype.render(witness.operand)},"
+                        f"expected={dtype.render(witness.executed)},"
+                        f"observed={dtype.render(observed)},status={status}"
+                    )
+                rows.append((f"case.{key}.execution_witness", rendered_witness))
     for comparison in path_comparisons(run):
         rows.append((f"comparison.{comparison.runtime_case}", comparison.render()))
-    rows.append(("probe.status", "complete"))
+    rows.append(
+        ("probe.status", "complete" if profile is LEGACY_PROFILE else "validated")
+    )
     # A record row is one tab-separated line. A captured diagnostic that carried
     # a newline would split into two rows that `read_record` then rejects, and a
     # value that carried a tab would silently truncate. Both are corrupted
@@ -3311,10 +3540,74 @@ def record_rows(run: Run) -> list[tuple[str, str]]:
     return rows
 
 
-def write_record(run: Run, destination: Path) -> None:
+def write_record(
+    run: Run,
+    destination: Path,
+    profile: Profile = LEGACY_PROFILE,
+    evidence: dict[str, str] | None = None,
+) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    body = "".join(f"{key}\t{value}\n" for key, value in record_rows(run))
+    body = "".join(
+        f"{key}\t{value}\n" for key, value in record_rows(run, profile, evidence)
+    )
     destination.write_text(body, encoding="utf-8")
+
+
+VALIDATOR = HERE / "validate_numerical_record.py"
+
+
+def write_result(run: Run, destination: Path, profile: Profile) -> None:
+    """Atomically retain one validated record, its exact inputs, and unique sources."""
+    if profile is LEGACY_PROFILE:
+        raise ProbeFailure("--result-dir requires a named non-legacy profile")
+    if destination.exists():
+        raise ProbeFailure(f"result directory already exists: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(
+        tempfile.mkdtemp(prefix=f".{destination.name}.", dir=destination.parent)
+    )
+    try:
+        sources = staging / "sources"
+        sources.mkdir()
+        kernels = {
+            case.kernel
+            for family in profile.families
+            for case in cases(family.name, profile=profile)
+        }
+        manifest_rows = [
+            ("schema", "tiler.apple-numerical-input-manifest/v1"),
+            ("profile", profile.name),
+            ("msl_version", profile.msl_version),
+            ("runtime_language", profile.runtime_language),
+        ]
+        for path in (Path(__file__).resolve(), HOST_SOURCE, VALIDATOR):
+            relative = path.relative_to(REPOSITORY)
+            manifest_rows.append((f"input.{relative}", digest(path)))
+        for name in sorted(kernels):
+            source = sources / f"{name}.metal"
+            source.write_text(BY_NAME[name].source(), encoding="utf-8")
+            manifest_rows.append((f"source.sources/{source.name}", digest(source)))
+        manifest = staging / "input-manifest.tsv"
+        manifest.write_text(
+            "".join(f"{key}\t{value}\n" for key, value in manifest_rows),
+            encoding="utf-8",
+        )
+        evidence = {
+            "input_manifest_file": manifest.name,
+            "input_manifest_sha256": digest(manifest),
+            "validator_sha256": digest(VALIDATOR),
+        }
+        record = staging / "record.tsv"
+        write_record(run, record, profile, evidence)
+        checked = _run([sys.executable, str(VALIDATOR), str(record)])
+        if checked.returncode != 0:
+            raise ProbeFailure(
+                f"retained result validation failed: {_normalized(checked.stderr)}"
+            )
+        staging.rename(destination)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
 
 
 COMPARED_PREFIXES = ("case.", "comparison.", "hazard.")
@@ -3383,20 +3676,40 @@ def read_record(path: Path) -> dict[str, str]:
 
 def main(arguments: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--record", type=Path, help="write the measured record to this path")
+    output = parser.add_mutually_exclusive_group()
+    output.add_argument("--record", type=Path, help="write the legacy measured record to this path")
+    output.add_argument(
+        "--result-dir",
+        type=Path,
+        help="atomically retain a validated named-profile result directory",
+    )
+    parser.add_argument(
+        "--profile",
+        choices=tuple(PROFILES),
+        default=LEGACY_PROFILE.name,
+        help="select one indivisible target/language/device profile",
+    )
     parser.add_argument(
         "--work-dir",
         type=Path,
         help="keep the generated sources, IR, AIR, and libraries here instead of a temporary tree",
     )
     parsed = parser.parse_args(arguments)
+    profile = PROFILES[parsed.profile]
+    if parsed.record is not None and profile is not LEGACY_PROFILE:
+        parser.error("a named profile must be retained with --result-dir")
+    if parsed.result_dir is not None and profile is LEGACY_PROFILE:
+        parser.error("the legacy profile must be retained with --record")
     try:
         if parsed.work_dir is not None:
-            run = probe(parsed.work_dir.resolve())
+            run = probe(parsed.work_dir.resolve(), profile)
         else:
             with tempfile.TemporaryDirectory(prefix="tiler-apple-numerics.") as directory:
-                run = probe(Path(directory))
+                run = probe(Path(directory), profile)
     except ProbeUnavailable as unavailable:
+        if profile is not LEGACY_PROFILE or os.environ.get(REQUIRE_TOOLCHAIN) is not None:
+            print(f"numerical_probe: required measurement unavailable, {unavailable}", file=sys.stderr)
+            return 1
         print(f"numerical_probe: skipped, {unavailable}", file=sys.stderr)
         return 0
     print(f"matrix={matrix()}")
@@ -3416,8 +3729,11 @@ def main(arguments: list[str] | None = None) -> int:
     for comparison in path_comparisons(run):
         print(f"comparison.{comparison.runtime_case}\t{comparison.render()}")
     if parsed.record is not None:
-        write_record(run, parsed.record)
+        write_record(run, parsed.record, profile)
         print(f"record={parsed.record}")
+    if parsed.result_dir is not None:
+        write_result(run, parsed.result_dir.resolve(), profile)
+        print(f"result-dir={parsed.result_dir}")
     return 0
 
 

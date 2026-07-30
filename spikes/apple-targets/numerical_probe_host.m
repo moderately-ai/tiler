@@ -193,7 +193,7 @@ static int probe_usage(NSString *detail) {
     fprintf(stderr, "\n");
     fprintf(stderr, "       <options> is a comma-separated key=value list; every key and value "
                     "must be recognized:\n");
-    fprintf(stderr, "         math=safe|relaxed|fast  fpfun=fast|precise  lang=3.1|3.2  "
+    fprintf(stderr, "         math=safe|relaxed|fast  fpfun=fast|precise  lang=3.1|3.2|4.0  "
                     "opt=default|size  [archive=<path>]\n");
     return kProbeExitUsage;
 }
@@ -256,6 +256,8 @@ static BOOL apply_compile_option(MTLCompileOptions *options, NSString *key, NSSt
             options.languageVersion = MTLLanguageVersion3_1;
         } else if ([value isEqualToString:@"3.2"]) {
             options.languageVersion = MTLLanguageVersion3_2;
+        } else if ([value isEqualToString:@"4.0"]) {
+            options.languageVersion = MTLLanguageVersion4_0;
         } else {
             return NO;
         }
@@ -295,6 +297,8 @@ static NSString *applied_options(MTLCompileOptions *options) {
         language = @"3.1";
     } else if (options.languageVersion == MTLLanguageVersion3_2) {
         language = @"3.2";
+    } else if (options.languageVersion == MTLLanguageVersion4_0) {
+        language = @"4.0";
     }
     NSString *optimization = @"unknown";
     switch (options.optimizationLevel) {
@@ -675,6 +679,8 @@ int main(int argc, const char *argv[]) {
         }
         printf("device=%s\n", device.name.UTF8String);
         printf("registry-id=%llu\n", (unsigned long long)device.registryID);
+        printf("gpu-family-apple9=%s\n",
+               [device supportsFamily:MTLGPUFamilyApple9] ? "supported" : "unsupported");
 
         id<MTLCommandQueue> queue = [device newCommandQueue];
         if (queue == nil) {

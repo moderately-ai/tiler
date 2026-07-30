@@ -31,6 +31,7 @@ measure.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import os
 import shutil
@@ -51,6 +52,13 @@ PROBE = importlib.util.module_from_spec(_SPEC)
 # fails to build.
 sys.modules[_SPEC.name] = PROBE
 _SPEC.loader.exec_module(PROBE)
+_VALIDATOR_SPEC = importlib.util.spec_from_file_location(
+    "validate_numerical_record", HERE / "validate_numerical_record.py"
+)
+if _VALIDATOR_SPEC is None or _VALIDATOR_SPEC.loader is None:
+    raise RuntimeError("could not load the Apple numerical record validator")
+VALIDATOR = importlib.util.module_from_spec(_VALIDATOR_SPEC)
+_VALIDATOR_SPEC.loader.exec_module(VALIDATOR)
 
 RESULTS = HERE / "results"
 RECORD = RESULTS / "2026-07-27-numerics-covering-xcode26.6-metal32023.883" / "record.tsv"
@@ -171,6 +179,321 @@ def synthetic_runtime(
 # --------------------------------------------------------------------------
 # Guard tests. No Apple toolchain required; these must never be skipped.
 # --------------------------------------------------------------------------
+
+
+def test_the_apple9_profile_is_one_exact_indivisible_selection() -> None:
+    """No caller can pair the governed offline target with another runtime language."""
+    profile = PROBE.APPLE9_F32_UNIFIED_MSL4_MACOS26
+    assert profile.name == "apple9-f32-unified-msl4-macos26"
+    assert profile.schema == "tiler.apple-numerical-behaviour/v7"
+    assert profile.msl_version == "metal4.0"
+    assert profile.runtime_language == "4.0"
+    assert profile.required_gpu_family is PROBE.GpuFamily.APPLE9
+    assert profile.dtypes == (PROBE.F32,)
+    assert [(family.name, family.sdk, family.target) for family in profile.families] == [
+        ("macos", "macosx", "air64-apple-macos26.0")
+    ]
+    family = profile.family("macos")
+    configuration = PROBE.Configuration("safe", "2", "off")
+    offline = profile.offline_flags("macos", configuration)
+    assert offline[:3] == [
+        "-target",
+        "air64-apple-macos26.0",
+        "-std=metal4.0",
+    ]
+    runtime = profile.runtime_options(PROBE.RuntimeConfiguration("safe", "default"))
+    assert runtime == "math=safe,fpfun=precise,lang=4.0,opt=default"
+    assert {
+        PROBE.BY_NAME[case.kernel].dtype
+        for case in PROBE.cases("macos", profile=profile)
+    } == {PROBE.F32}
+    assert all(
+        case.family == "macos"
+        for case in PROBE.runtime_cases("macos", profile=profile)
+    )
+    materialize = synthetic("materialize", 0, {})
+    run = PROBE.Run({"date_utc": "unreported"}, {materialize.case.key: materialize}, {})
+    key = f"case.{materialize.case.key}.float_operations"
+    assert dict(PROBE.record_rows(run, profile))[key] == "none"
+    assert dict(PROBE.record_rows(run))[key] == ""
+
+
+def apple9_record_rows() -> dict[str, str]:
+    """Build a complete producer-defined covering population without a GPU."""
+    profile = PROBE.APPLE9_F32_UNIFIED_MSL4_MACOS26
+    observations = {}
+    for case in (
+        *PROBE.cases("macos", PROBE.COVERING, profile),
+        *PROBE.runtime_cases("macos", PROBE.COVERING, profile),
+    ):
+        kernel = PROBE.BY_NAME[case.kernel]
+        values = list(kernel.dtype.operands)
+        if kernel.witness is not None:
+            values[kernel.dtype.operands.index(kernel.witness.operand)] = kernel.witness.executed
+        runtime = case.is_runtime
+        observations[case.key] = PROBE.Observation(
+            case,
+            None if runtime else ("air.compile.denorms_disable",),
+            None if runtime else (PROBE.FloatOperation("fadd", ()),),
+            tuple(values),
+            profile.runtime_options(case.configuration) if runtime else None,
+            "" if runtime else None,
+        )
+    run = PROBE.Run({"date_utc": "unreported"}, observations, {})
+    return dict(PROBE.record_rows(run, profile))
+
+
+def test_the_apple9_validator_requires_the_exact_population_and_linkage() -> None:
+    rows = apple9_record_rows()
+    VALIDATOR.validate_population(rows, PROBE)
+    inadmissible_rows = dict(rows)
+    kernel = PROBE.BY_NAME["scale_one_bias_zero"]
+    assert kernel.witness is not None
+    witness_index = kernel.dtype.operands.index(kernel.witness.operand)
+    for key in tuple(inadmissible_rows):
+        if ".scale_one_bias_zero." not in key or not key.endswith(".results"):
+            continue
+        patterns = inadmissible_rows[key].split()
+        patterns[witness_index] = kernel.dtype.render(kernel.witness.deleted)
+        inadmissible_rows[key] = " ".join(patterns)
+        witness_key = key.removesuffix(".results") + ".execution_witness"
+        inadmissible_rows[witness_key] = (
+            f"operand={kernel.dtype.render(kernel.witness.operand)},"
+            f"expected={kernel.dtype.render(kernel.witness.executed)},"
+            f"observed={kernel.dtype.render(kernel.witness.deleted)},status=not-executed"
+        )
+    VALIDATOR.validate_population(inadmissible_rows, PROBE)
+    disagreeing_rows = dict(rows)
+    results_key = next(
+        key
+        for key in disagreeing_rows
+        if ".multiply_two." in key and key.endswith(".results")
+    )
+    kernel = PROBE.BY_NAME["multiply_two"]
+    assert kernel.witness is not None
+    patterns = disagreeing_rows[results_key].split()
+    witness_index = kernel.dtype.operands.index(kernel.witness.operand)
+    unrelated = kernel.dtype.operands[0]
+    assert unrelated not in {kernel.witness.executed, kernel.witness.deleted}
+    diagnostic = synthetic(
+        "multiply_two",
+        1,
+        {kernel.witness.operand: unrelated},
+    )
+    diagnostic_rows = dict(
+        PROBE.record_rows(
+            PROBE.Run(
+                {"date_utc": "unreported"},
+                {diagnostic.case.key: diagnostic},
+                {},
+            ),
+            PROBE.APPLE9_F32_UNIFIED_MSL4_MACOS26,
+        )
+    )
+    assert diagnostic_rows[
+        f"case.{diagnostic.case.key}.execution_witness"
+    ].endswith("status=disagrees")
+    patterns[witness_index] = kernel.dtype.render(unrelated)
+    disagreeing_rows[results_key] = " ".join(patterns)
+    witness_key = results_key.removesuffix(".results") + ".execution_witness"
+    disagreeing_rows[witness_key] = (
+        f"operand={kernel.dtype.render(kernel.witness.operand)},"
+        f"expected={kernel.dtype.render(kernel.witness.executed)},"
+        f"observed={kernel.dtype.render(unrelated)},status=not-executed"
+    )
+    with pytest.raises(VALIDATOR.RecordError, match="status=disagrees"):
+        VALIDATOR.validate_population(disagreeing_rows, PROBE)
+    disagreeing_rows[witness_key] = disagreeing_rows[witness_key].replace(
+        "status=not-executed", "status=disagrees"
+    )
+    with pytest.raises(VALIDATOR.RecordError, match="witness disagrees"):
+        VALIDATOR.validate_population(disagreeing_rows, PROBE)
+    mutations = []
+    for suffix in (
+        ".results",
+        ".execution_witness",
+        ".applied_options",
+    ):
+        changed = dict(rows)
+        del changed[next(key for key in changed if key.startswith("case.") and key.endswith(suffix))]
+        mutations.append(changed)
+    changed = dict(rows)
+    case_key = next(iter(PROBE.cases("macos", PROBE.COVERING, PROBE.APPLE9_F32_UNIFIED_MSL4_MACOS26))).key
+    for key in tuple(changed):
+        if key.startswith(f"case.{case_key}."):
+            del changed[key]
+    mutations.append(changed)
+    changed = dict(rows)
+    key = next(key for key in changed if key.endswith(".results"))
+    changed[key] = " ".join(changed[key].split()[:-1])
+    mutations.append(changed)
+    changed = dict(rows)
+    key = next(key for key in changed if key.endswith(".execution_witness") and changed[key] != "none")
+    changed[key] = changed[key].replace("status=executed", "status=not-executed")
+    mutations.append(changed)
+    changed = dict(rows)
+    key = next(key for key in changed if key.endswith(".applied_options"))
+    changed[key] = changed[key].replace("lang=4.0", "lang=4.0evil")
+    mutations.append(changed)
+    changed = dict(rows)
+    key = next(key for key in changed if key.startswith("comparison."))
+    changed[key] = "agree arbitrary"
+    mutations.append(changed)
+    changed = dict(rows)
+    del changed[next(key for key in changed if key.startswith("comparison."))]
+    mutations.append(changed)
+    changed = dict(rows)
+    key = next(key for key in changed if key.startswith("case.macos."))
+    changed[key.replace("case.macos.", "case.ios-device.", 1)] = changed.pop(key)
+    mutations.append(changed)
+    for mutated in mutations:
+        with pytest.raises(VALIDATOR.RecordError):
+            VALIDATOR.validate_population(mutated, PROBE)
+
+
+def test_the_apple9_manifest_requires_every_unique_source() -> None:
+    profile = PROBE.APPLE9_F32_UNIFIED_MSL4_MACOS26
+    with tempfile.TemporaryDirectory(prefix="tiler-source-inventory.") as directory:
+        root = Path(directory)
+        sources = root / "sources"
+        sources.mkdir()
+        kernels = {
+            case.kernel
+            for case in PROBE.cases("macos", PROBE.COVERING, profile)
+        }
+        manifest_rows = [
+            ("schema", VALIDATOR.MANIFEST_SCHEMA),
+            ("profile", profile.name),
+            ("msl_version", profile.msl_version),
+            ("runtime_language", profile.runtime_language),
+        ]
+        for path in (HERE / "numerical_probe.py", HERE / "numerical_probe_host.m", PROBE.VALIDATOR):
+            relative = path.relative_to(PROBE.REPOSITORY)
+            manifest_rows.append((f"input.{relative}", PROBE.digest(path)))
+        for name in sorted(kernels):
+            source = sources / f"{name}.metal"
+            source.write_text(PROBE.BY_NAME[name].source(), encoding="utf-8")
+            manifest_rows.append((f"source.sources/{source.name}", PROBE.digest(source)))
+        manifest = root / "input-manifest.tsv"
+        manifest.write_text(
+            "".join(f"{key}\t{value}\n" for key, value in manifest_rows),
+            encoding="utf-8",
+        )
+        rows = {
+            "probe.matrix": PROBE.COVERING,
+            "probe.input_manifest_file": manifest.name,
+            "probe.input_manifest_sha256": PROBE.digest(manifest),
+        }
+        VALIDATOR.validate_manifest(root / "record.tsv", rows, PROBE)
+        source_index = next(
+            index for index, (key, _) in enumerate(manifest_rows) if key.startswith("source.")
+        )
+        source_key, _ = manifest_rows[source_index]
+        source = root / source_key.removeprefix("source.")
+        canonical_source = source.read_text(encoding="utf-8")
+        source.write_text(f"{canonical_source}// mutation\n", encoding="utf-8")
+        manifest_rows[source_index] = (source_key, PROBE.digest(source))
+        manifest.write_text(
+            "".join(f"{key}\t{value}\n" for key, value in manifest_rows),
+            encoding="utf-8",
+        )
+        rows["probe.input_manifest_sha256"] = PROBE.digest(manifest)
+        with pytest.raises(VALIDATOR.RecordError, match="canonical producer output"):
+            VALIDATOR.validate_manifest(root / "record.tsv", rows, PROBE)
+        source.write_text(canonical_source, encoding="utf-8")
+        manifest_rows[source_index] = (source_key, PROBE.digest(source))
+        manifest_rows.pop()
+        manifest.write_text(
+            "".join(f"{key}\t{value}\n" for key, value in manifest_rows),
+            encoding="utf-8",
+        )
+        rows["probe.input_manifest_sha256"] = PROBE.digest(manifest)
+        with pytest.raises(VALIDATOR.RecordError, match="source inventory"):
+            VALIDATOR.validate_manifest(root / "record.tsv", rows, PROBE)
+
+
+def test_profile_boundaries_reject_cross_family_and_unknown_gpu_requirements() -> None:
+    profile = PROBE.APPLE9_F32_UNIFIED_MSL4_MACOS26
+    with pytest.raises(PROBE.ProbeFailure):
+        PROBE.cases("ios-device", profile=profile)
+    with pytest.raises(PROBE.ProbeFailure):
+        PROBE.runtime_cases("ios-device", profile=profile)
+    with pytest.raises(TypeError):
+        PROBE.Profile(
+            "bad",
+            profile.schema,
+            profile.msl_version,
+            profile.runtime_language,
+            profile.families,
+            profile.dtypes,
+            "apple10",
+        )
+
+
+def test_invalid_profile_output_pairings_never_probe_hardware(monkeypatch) -> None:
+    called = 0
+
+    def unexpected_probe(*_arguments, **_keywords):
+        nonlocal called
+        called += 1
+        raise AssertionError("probe must not run")
+
+    monkeypatch.setattr(PROBE, "probe", unexpected_probe)
+    with pytest.raises(SystemExit):
+        PROBE.main(
+            [
+                "--profile",
+                PROBE.APPLE9_F32_UNIFIED_MSL4_MACOS26.name,
+                "--record",
+                "wrong.tsv",
+            ]
+        )
+    with pytest.raises(SystemExit):
+        PROBE.main(["--result-dir", "wrong"])
+    assert called == 0
+
+
+def test_the_producer_revision_must_resolve_the_recorded_blobs(monkeypatch) -> None:
+    rows = {
+        "probe.repository_base_revision": "0" * 40,
+        "probe.harness_sha256": "1" * 64,
+        "probe.host_source_sha256": "2" * 64,
+        "probe.validator_sha256": "3" * 64,
+    }
+    with pytest.raises(VALIDATOR.RecordError, match="all-zero"):
+        VALIDATOR.validate_revision_identity(rows)
+    tree = subprocess.run(
+        ["git", "-C", str(PROBE.REPOSITORY), "rev-parse", "HEAD^{tree}"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    rows["probe.repository_base_revision"] = tree
+    with pytest.raises(VALIDATOR.RecordError, match="not a commit"):
+        VALIDATOR.validate_revision_identity(rows)
+    blobs = {
+        "spikes/apple-targets/numerical_probe.py": b"probe",
+        "spikes/apple-targets/numerical_probe_host.m": b"host",
+        "spikes/apple-targets/validate_numerical_record.py": b"validator",
+    }
+    rows["probe.repository_base_revision"] = "a" * 40
+    rows["probe.harness_sha256"] = hashlib.sha256(blobs["spikes/apple-targets/numerical_probe.py"]).hexdigest()
+    rows["probe.host_source_sha256"] = hashlib.sha256(
+        blobs["spikes/apple-targets/numerical_probe_host.m"]
+    ).hexdigest()
+    rows["probe.validator_sha256"] = hashlib.sha256(
+        blobs["spikes/apple-targets/validate_numerical_record.py"]
+    ).hexdigest()
+    monkeypatch.setattr(
+        VALIDATOR,
+        "revision_blob",
+        lambda _revision, relative: blobs[relative],
+    )
+    monkeypatch.setattr(VALIDATOR, "revision_object_type", lambda _revision: "commit")
+    VALIDATOR.validate_revision_identity(rows)
+    rows["probe.harness_sha256"] = "f" * 64
+    with pytest.raises(VALIDATOR.RecordError, match="revision blob mismatch"):
+        VALIDATOR.validate_revision_identity(rows)
 
 
 def test_every_kernel_states_a_witness_that_could_prove_its_arithmetic_ran() -> None:

@@ -8,7 +8,7 @@ experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement"]
 supports: ["tiler.research.apple-targets.compatibility", "tiler.research.apple-targets.numerical-behaviour"]
-entrypoints: ["spikes/apple-targets/compatibility_probe.sh", "spikes/apple-targets/runtime_failure_probe.swift", "spikes/apple-targets/validate_compatibility_record.py", "spikes/apple-targets/test_probes.py", "spikes/apple-targets/numerical_probe.py", "spikes/apple-targets/numerical_probe_host.m", "spikes/apple-targets/test_numerical_probe.py", "spikes/apple-targets/bfloat_dispatch_probe.py"]
+entrypoints: ["spikes/apple-targets/compatibility_probe.sh", "spikes/apple-targets/runtime_failure_probe.swift", "spikes/apple-targets/validate_compatibility_record.py", "spikes/apple-targets/validate_numerical_record.py", "spikes/apple-targets/test_probes.py", "spikes/apple-targets/numerical_probe.py", "spikes/apple-targets/numerical_probe_host.m", "spikes/apple-targets/test_numerical_probe.py", "spikes/apple-targets/bfloat_dispatch_probe.py"]
 last_verified: "2026-07-25"
 ticket: "apple-artifact-compatibility"
 ---
@@ -250,6 +250,25 @@ TILER_APPLE_NUMERICS_EXHAUSTIVE=1 \
   uv run python spikes/apple-targets/numerical_probe.py \
   --record spikes/apple-targets/results/<yyyy-mm-dd>-numerics-exhaustive-<toolchain>/record.tsv
 ```
+
+The production-profile experiment is a separate named selection rather than a set of freely composable flags. From this directory, record the covering and exhaustive Apple9/F32 rows with:
+
+```sh
+TILER_REQUIRE_METAL_TOOLCHAIN=1 uv run python numerical_probe.py \
+  --profile apple9-f32-unified-msl4-macos26 \
+  --result-dir results/<yyyy-mm-dd>-numerics-covering-apple9-f32-unified-msl4-macos26-<toolchain>
+
+TILER_REQUIRE_METAL_TOOLCHAIN=1 TILER_APPLE_NUMERICS_EXHAUSTIVE=1 \
+  uv run python numerical_probe.py \
+  --profile apple9-f32-unified-msl4-macos26 \
+  --result-dir results/<yyyy-mm-dd>-numerics-exhaustive-apple9-f32-unified-msl4-macos26-<toolchain>
+```
+
+That profile always selects `-target air64-apple-macos26.0` and `-std=metal4.0` offline, explicit `MTLLanguageVersion4_0` at runtime, the macOS artifact family, F32 only, and an Apple9 device. `MTLCompileOptions` has no deployment-target property, so the runtime half is qualified by the exact host OS and device rather than falsely claiming it received the offline target flag. A missing macOS toolchain, rejected MSL version, non-Apple9 device, failed compile/link/pipeline/command buffer, missing execution witness, path divergence, or invalid retained input is a nonzero refusal and publishes no result directory.
+
+Each successful result directory contains `record.tsv`, `input-manifest.tsv`, and one canonical `sources/*.metal` file per unique F32 kernel. The producer hashes itself, the dispatch host, the validator, the manifest, and every retained source, validates the staged directory, and publishes it atomically. AIR, LLVM IR, metallibs, binary archives, and the host executable remain regenerable scratch products and are not retained. Validate a published row with `uv run python validate_numerical_record.py results/<result>/record.tsv`.
+
+The validator derives the complete case, source, execution-witness, runtime-option, and comparison populations from the committed producer definitions. It rejects missing or extra rows, noncanonical source bytes, malformed or falsely reported witness values, path divergence, and a producer revision that cannot resolve to the recorded harness, host, and validator digests. A derived `not-executed` or `none` witness is retained as the reason that case is inadmissible rather than rejected or turned into evidence.
 
 Pass `--work-dir spikes/apple-targets/local-work` to keep the generated
 sources, IR, AIR, and libraries for inspection; that directory is ignored.

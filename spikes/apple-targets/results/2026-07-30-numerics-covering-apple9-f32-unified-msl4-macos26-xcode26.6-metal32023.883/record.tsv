@@ -1,0 +1,828 @@
+schema	tiler.apple-numerical-behaviour/v7
+probe.profile	apple9-f32-unified-msl4-macos26
+probe.families	macos
+probe.required_gpu_family	apple9
+probe.runtime_target_contract	execution-environment-no-target-property
+probe.repository_base_revision	0cd85ce5f01470fe8410c61d3ff4128a0633b207
+probe.harness_sha256	ef224faf467be9321e4f2086d47543916ddae78c5bcca67eb42ebedcf2fc91e1
+probe.host_source_sha256	31a3e02f6cba8628006e5d0f84e51890d2e00d98259f842432278b78f4bc4ee6
+probe.matrix	covering
+probe.fixed_flags	-std=metal4.0
+probe.default_fp32_functions	precise
+probe.entry_point	tiler_probe
+probe.dtypes	f32
+probe.default_dtype	f32
+probe.runtime_fixed_options	lang=4.0
+probe.runtime_paired_optimization	-O2
+probe.guard_layers.offline_with_device	emitted-arithmetic execution-witness
+probe.guard_layers.offline_without_device	emitted-arithmetic
+probe.guard_layers.runtime	execution-witness
+probe.offline_flag_without_runtime_counterpart.0	-target: MTLCompileOptions has no target property; the runtime compiler targets the device and OS it is running on, which is why a runtime case is attributed to the family whose execution environment compiled it
+probe.offline_flag_without_runtime_counterpart.1	-ffp-contract: MTLCompileOptions has no contraction property; the source-level `#pragma METAL fp contract(...)` is accepted by this front end but changing the source would break the byte-identical pairing the comparison depends on
+probe.offline_flag_without_runtime_counterpart.2	-O0/-O1/-O3/-Os: MTLLibraryOptimizationLevel offers Default and Size only, so four of the five offline optimization levels have no runtime counterpart
+probe.operands.f32	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+probe.input_manifest_file	input-manifest.tsv
+probe.input_manifest_sha256	0fe9750db13737db6cff4dfab0c67295d5d833278be468620e65b205cf91cd09
+probe.validator_sha256	b612346edebb8749d62da869330bdb88e9477ecbabd4a7db23205bf20dcc36eb
+environment.date_utc	2026-07-30T21:15:27Z
+environment.os_version	27.0
+environment.os_build	26A5388g
+environment.machine	arm64
+environment.xcode	Xcode 26.6 Build version 17F113
+environment.family.macos.metal_platform	MetalPlatform::MacOs
+environment.family.macos.sdk	macosx
+environment.family.macos.sdk_version	26.5
+environment.family.macos.sdk_build	25F70
+environment.family.macos.requested_target	air64-apple-macos26.0
+environment.family.macos.metal_version	Apple metal version 32023.883 (metalfe-32023.883)
+environment.family.macos.metallib_version	AIR-LLD 32023.883 (metalfe-32023.883) (compatible with legacy metallib linker)
+environment.family.macos.execution	macos-host-gpu
+environment.family.macos.emitted_triple	air64_v28-apple-macosx26.0.0
+environment.family.macos.device	Apple M4 Max
+environment.family.macos.device_registry_id	4294968452
+environment.family.macos.runtime_compiler	Apple metal version 32023.921 (metalfe-32023.921)
+environment.family.macos.runtime_compiler_images	/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/32023/Libraries/libGPUCompilerUtils.dylib /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/32023/Libraries/libllvm-flatbuffers.dylib
+environment.family.macos.runtime_compiler_build	metalfe-32023.921
+environment.family.macos.device_bfloat_support	unmeasured-by-profile
+environment.family.macos.device_apple9_support	supported
+case.macos.add_smallest_normal.fast.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.add_smallest_normal.fast.O0.contract-off.float_operations	fadd+reassoc+nnan+ninf+nsz+arcp+afn
+case.macos.add_smallest_normal.fast.O0.contract-off.results	00800000 00800000 00800000 01000000 00800000 00800000 3eb97ef9 3f800000
+case.macos.add_smallest_normal.fast.O0.contract-off.execution_witness	operand=00800000,expected=01000000,observed=01000000,status=executed
+case.macos.add_smallest_normal.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.add_smallest_normal.fast.O2.contract-off.float_operations	fadd+reassoc+nnan+ninf+nsz+arcp+afn
+case.macos.add_smallest_normal.fast.O2.contract-off.results	00800000 00800000 00800000 01000000 00800000 00800000 3eb97ef9 3f800000
+case.macos.add_smallest_normal.fast.O2.contract-off.execution_witness	operand=00800000,expected=01000000,observed=01000000,status=executed
+case.macos.add_smallest_normal.relaxed.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.add_smallest_normal.relaxed.O0.contract-off.float_operations	fadd+reassoc+nsz+arcp+afn
+case.macos.add_smallest_normal.relaxed.O0.contract-off.results	00800000 00800000 00800000 01000000 00800000 00800000 3eb97ef9 3f800000
+case.macos.add_smallest_normal.relaxed.O0.contract-off.execution_witness	operand=00800000,expected=01000000,observed=01000000,status=executed
+case.macos.add_smallest_normal.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.add_smallest_normal.relaxed.O2.contract-off.float_operations	fadd+reassoc+nsz+arcp+afn
+case.macos.add_smallest_normal.relaxed.O2.contract-off.results	00800000 00800000 00800000 01000000 00800000 00800000 3eb97ef9 3f800000
+case.macos.add_smallest_normal.relaxed.O2.contract-off.execution_witness	operand=00800000,expected=01000000,observed=01000000,status=executed
+case.macos.add_smallest_normal.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=4.0,opt=default
+case.macos.add_smallest_normal.runtime.fast.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.add_smallest_normal.runtime.fast.opt-default.results	00800000 00800000 00800000 01000000 00800000 00800000 3eb97ef9 3f800000
+case.macos.add_smallest_normal.runtime.fast.opt-default.execution_witness	operand=00800000,expected=01000000,observed=01000000,status=executed
+case.macos.add_smallest_normal.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=4.0,opt=size
+case.macos.add_smallest_normal.runtime.fast.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.add_smallest_normal.runtime.fast.opt-size.results	00800000 00800000 00800000 01000000 00800000 00800000 3eb97ef9 3f800000
+case.macos.add_smallest_normal.runtime.fast.opt-size.execution_witness	operand=00800000,expected=01000000,observed=01000000,status=executed
+case.macos.add_smallest_normal.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=4.0,opt=default
+case.macos.add_smallest_normal.runtime.relaxed.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.add_smallest_normal.runtime.relaxed.opt-default.results	00800000 00800000 00800000 01000000 00800000 00800000 3eb97ef9 3f800000
+case.macos.add_smallest_normal.runtime.relaxed.opt-default.execution_witness	operand=00800000,expected=01000000,observed=01000000,status=executed
+case.macos.add_smallest_normal.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=4.0,opt=size
+case.macos.add_smallest_normal.runtime.relaxed.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.add_smallest_normal.runtime.relaxed.opt-size.results	00800000 00800000 00800000 01000000 00800000 00800000 3eb97ef9 3f800000
+case.macos.add_smallest_normal.runtime.relaxed.opt-size.execution_witness	operand=00800000,expected=01000000,observed=01000000,status=executed
+case.macos.add_smallest_normal.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=4.0,opt=default
+case.macos.add_smallest_normal.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.add_smallest_normal.runtime.safe.opt-default.results	00800000 00800000 00800000 01000000 00800000 00800000 3eb97ef9 3f800000
+case.macos.add_smallest_normal.runtime.safe.opt-default.execution_witness	operand=00800000,expected=01000000,observed=01000000,status=executed
+case.macos.add_smallest_normal.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=4.0,opt=size
+case.macos.add_smallest_normal.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.add_smallest_normal.runtime.safe.opt-size.results	00800000 00800000 00800000 01000000 00800000 00800000 3eb97ef9 3f800000
+case.macos.add_smallest_normal.runtime.safe.opt-size.execution_witness	operand=00800000,expected=01000000,observed=01000000,status=executed
+case.macos.add_smallest_normal.safe.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.add_smallest_normal.safe.O0.contract-off.float_operations	fadd
+case.macos.add_smallest_normal.safe.O0.contract-off.results	00800000 00800000 00800000 01000000 00800000 00800000 3eb97ef9 3f800000
+case.macos.add_smallest_normal.safe.O0.contract-off.execution_witness	operand=00800000,expected=01000000,observed=01000000,status=executed
+case.macos.add_smallest_normal.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.add_smallest_normal.safe.O2.contract-off.float_operations	fadd
+case.macos.add_smallest_normal.safe.O2.contract-off.results	00800000 00800000 00800000 01000000 00800000 00800000 3eb97ef9 3f800000
+case.macos.add_smallest_normal.safe.O2.contract-off.execution_witness	operand=00800000,expected=01000000,observed=01000000,status=executed
+case.macos.contraction_pair.fast.O2.contract-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.contraction_pair.fast.O2.contract-fast.float_operations	fmul+fast fadd+fast
+case.macos.contraction_pair.fast.O2.contract-fast.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9d 40200000
+case.macos.contraction_pair.fast.O2.contract-fast.execution_witness	operand=3f800000,expected=40200000,observed=40200000,status=executed
+case.macos.contraction_pair.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.contraction_pair.fast.O2.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn fadd+reassoc+nnan+ninf+nsz+arcp+afn
+case.macos.contraction_pair.fast.O2.contract-off.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
+case.macos.contraction_pair.fast.O2.contract-off.execution_witness	operand=3f800000,expected=40200000,observed=40200000,status=executed
+case.macos.contraction_pair.fast.O2.contract-on.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.contraction_pair.fast.O2.contract-on.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn fadd+reassoc+nnan+ninf+nsz+arcp+afn
+case.macos.contraction_pair.fast.O2.contract-on.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
+case.macos.contraction_pair.fast.O2.contract-on.execution_witness	operand=3f800000,expected=40200000,observed=40200000,status=executed
+case.macos.contraction_pair.relaxed.O2.contract-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.contraction_pair.relaxed.O2.contract-fast.float_operations	fmul+reassoc+nsz+arcp+contract+afn fadd+reassoc+nsz+arcp+contract+afn
+case.macos.contraction_pair.relaxed.O2.contract-fast.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9d 40200000
+case.macos.contraction_pair.relaxed.O2.contract-fast.execution_witness	operand=3f800000,expected=40200000,observed=40200000,status=executed
+case.macos.contraction_pair.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.contraction_pair.relaxed.O2.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn fadd+reassoc+nsz+arcp+afn
+case.macos.contraction_pair.relaxed.O2.contract-off.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
+case.macos.contraction_pair.relaxed.O2.contract-off.execution_witness	operand=3f800000,expected=40200000,observed=40200000,status=executed
+case.macos.contraction_pair.relaxed.O2.contract-on.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.contraction_pair.relaxed.O2.contract-on.float_operations	fmul+reassoc+nsz+arcp+afn fadd+reassoc+nsz+arcp+afn
+case.macos.contraction_pair.relaxed.O2.contract-on.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
+case.macos.contraction_pair.relaxed.O2.contract-on.execution_witness	operand=3f800000,expected=40200000,observed=40200000,status=executed
+case.macos.contraction_pair.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=4.0,opt=default
+case.macos.contraction_pair.runtime.fast.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.contraction_pair.runtime.fast.opt-default.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9d 40200000
+case.macos.contraction_pair.runtime.fast.opt-default.execution_witness	operand=3f800000,expected=40200000,observed=40200000,status=executed
+case.macos.contraction_pair.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=4.0,opt=size
+case.macos.contraction_pair.runtime.fast.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.contraction_pair.runtime.fast.opt-size.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9d 40200000
+case.macos.contraction_pair.runtime.fast.opt-size.execution_witness	operand=3f800000,expected=40200000,observed=40200000,status=executed
+case.macos.contraction_pair.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=4.0,opt=default
+case.macos.contraction_pair.runtime.relaxed.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.contraction_pair.runtime.relaxed.opt-default.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9d 40200000
+case.macos.contraction_pair.runtime.relaxed.opt-default.execution_witness	operand=3f800000,expected=40200000,observed=40200000,status=executed
+case.macos.contraction_pair.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=4.0,opt=size
+case.macos.contraction_pair.runtime.relaxed.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.contraction_pair.runtime.relaxed.opt-size.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9d 40200000
+case.macos.contraction_pair.runtime.relaxed.opt-size.execution_witness	operand=3f800000,expected=40200000,observed=40200000,status=executed
+case.macos.contraction_pair.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=4.0,opt=default
+case.macos.contraction_pair.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.contraction_pair.runtime.safe.opt-default.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
+case.macos.contraction_pair.runtime.safe.opt-default.execution_witness	operand=3f800000,expected=40200000,observed=40200000,status=executed
+case.macos.contraction_pair.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=4.0,opt=size
+case.macos.contraction_pair.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.contraction_pair.runtime.safe.opt-size.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
+case.macos.contraction_pair.runtime.safe.opt-size.execution_witness	operand=3f800000,expected=40200000,observed=40200000,status=executed
+case.macos.contraction_pair.safe.O2.contract-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.contraction_pair.safe.O2.contract-fast.float_operations	fmul+contract fadd+contract
+case.macos.contraction_pair.safe.O2.contract-fast.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9d 40200000
+case.macos.contraction_pair.safe.O2.contract-fast.execution_witness	operand=3f800000,expected=40200000,observed=40200000,status=executed
+case.macos.contraction_pair.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.contraction_pair.safe.O2.contract-off.float_operations	fmul fadd
+case.macos.contraction_pair.safe.O2.contract-off.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
+case.macos.contraction_pair.safe.O2.contract-off.execution_witness	operand=3f800000,expected=40200000,observed=40200000,status=executed
+case.macos.contraction_pair.safe.O2.contract-on.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.contraction_pair.safe.O2.contract-on.float_operations	fmul fadd
+case.macos.contraction_pair.safe.O2.contract-on.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
+case.macos.contraction_pair.safe.O2.contract-on.execution_witness	operand=3f800000,expected=40200000,observed=40200000,status=executed
+case.macos.contraction_pair_canonicalized.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=4.0,opt=default
+case.macos.contraction_pair_canonicalized.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.contraction_pair_canonicalized.runtime.safe.opt-default.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
+case.macos.contraction_pair_canonicalized.runtime.safe.opt-default.execution_witness	operand=3f800000,expected=40200000,observed=40200000,status=executed
+case.macos.contraction_pair_canonicalized.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=4.0,opt=size
+case.macos.contraction_pair_canonicalized.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.contraction_pair_canonicalized.runtime.safe.opt-size.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
+case.macos.contraction_pair_canonicalized.runtime.safe.opt-size.execution_witness	operand=3f800000,expected=40200000,observed=40200000,status=executed
+case.macos.contraction_pair_canonicalized.safe.O2.contract-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.contraction_pair_canonicalized.safe.O2.contract-fast.float_operations	fmul+contract fadd+contract
+case.macos.contraction_pair_canonicalized.safe.O2.contract-fast.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
+case.macos.contraction_pair_canonicalized.safe.O2.contract-fast.execution_witness	operand=3f800000,expected=40200000,observed=40200000,status=executed
+case.macos.contraction_pair_canonicalized.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.contraction_pair_canonicalized.safe.O2.contract-off.float_operations	fmul fadd
+case.macos.contraction_pair_canonicalized.safe.O2.contract-off.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
+case.macos.contraction_pair_canonicalized.safe.O2.contract-off.execution_witness	operand=3f800000,expected=40200000,observed=40200000,status=executed
+case.macos.contraction_pair_canonicalized.safe.O2.contract-on.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.contraction_pair_canonicalized.safe.O2.contract-on.float_operations	fmul fadd
+case.macos.contraction_pair_canonicalized.safe.O2.contract-on.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
+case.macos.contraction_pair_canonicalized.safe.O2.contract-on.execution_witness	operand=3f800000,expected=40200000,observed=40200000,status=executed
+case.macos.divide_by_half.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=4.0,opt=default
+case.macos.divide_by_half.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_half.runtime.safe.opt-default.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.macos.divide_by_half.runtime.safe.opt-default.execution_witness	operand=3f800000,expected=40000000,observed=40000000,status=executed
+case.macos.divide_by_half.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=4.0,opt=size
+case.macos.divide_by_half.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_half.runtime.safe.opt-size.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.macos.divide_by_half.runtime.safe.opt-size.execution_witness	operand=3f800000,expected=40000000,observed=40000000,status=executed
+case.macos.divide_by_half.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_half.safe.O2.contract-off.float_operations	fmul
+case.macos.divide_by_half.safe.O2.contract-off.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.macos.divide_by_half.safe.O2.contract-off.execution_witness	operand=3f800000,expected=40000000,observed=40000000,status=executed
+case.macos.divide_by_three.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three.fast.O2.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.macos.divide_by_three.fast.O2.contract-off.results	00000000 00000000 00000000 00000000 80000000 80000000 3df753f7 3eaaaaab
+case.macos.divide_by_three.fast.O2.contract-off.execution_witness	operand=3f800000,expected=3eaaaaab,observed=3eaaaaab,status=executed
+case.macos.divide_by_three.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three.relaxed.O2.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.macos.divide_by_three.relaxed.O2.contract-off.results	00000000 00000000 00000000 00000000 80000000 80000000 3df753f7 3eaaaaab
+case.macos.divide_by_three.relaxed.O2.contract-off.execution_witness	operand=3f800000,expected=3eaaaaab,observed=3eaaaaab,status=executed
+case.macos.divide_by_three.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=4.0,opt=default
+case.macos.divide_by_three.runtime.fast.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three.runtime.fast.opt-default.results	00000000 00000000 00000000 00000000 80000000 80000000 3df753f7 3eaaaaab
+case.macos.divide_by_three.runtime.fast.opt-default.execution_witness	operand=3f800000,expected=3eaaaaab,observed=3eaaaaab,status=executed
+case.macos.divide_by_three.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=4.0,opt=size
+case.macos.divide_by_three.runtime.fast.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three.runtime.fast.opt-size.results	00000000 00000000 00000000 00000000 80000000 80000000 3df753f7 3eaaaaab
+case.macos.divide_by_three.runtime.fast.opt-size.execution_witness	operand=3f800000,expected=3eaaaaab,observed=3eaaaaab,status=executed
+case.macos.divide_by_three.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=4.0,opt=default
+case.macos.divide_by_three.runtime.relaxed.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three.runtime.relaxed.opt-default.results	00000000 00000000 00000000 00000000 80000000 80000000 3df753f7 3eaaaaab
+case.macos.divide_by_three.runtime.relaxed.opt-default.execution_witness	operand=3f800000,expected=3eaaaaab,observed=3eaaaaab,status=executed
+case.macos.divide_by_three.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=4.0,opt=size
+case.macos.divide_by_three.runtime.relaxed.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three.runtime.relaxed.opt-size.results	00000000 00000000 00000000 00000000 80000000 80000000 3df753f7 3eaaaaab
+case.macos.divide_by_three.runtime.relaxed.opt-size.execution_witness	operand=3f800000,expected=3eaaaaab,observed=3eaaaaab,status=executed
+case.macos.divide_by_three.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=4.0,opt=default
+case.macos.divide_by_three.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three.runtime.safe.opt-default.results	00000000 00000000 00000000 00000000 80000000 80000000 3df753f7 3eaaaaab
+case.macos.divide_by_three.runtime.safe.opt-default.execution_witness	operand=3f800000,expected=3eaaaaab,observed=3eaaaaab,status=executed
+case.macos.divide_by_three.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=4.0,opt=size
+case.macos.divide_by_three.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three.runtime.safe.opt-size.results	00000000 00000000 00000000 00000000 80000000 80000000 3df753f7 3eaaaaab
+case.macos.divide_by_three.runtime.safe.opt-size.execution_witness	operand=3f800000,expected=3eaaaaab,observed=3eaaaaab,status=executed
+case.macos.divide_by_three.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three.safe.O2.contract-off.float_operations	fdiv
+case.macos.divide_by_three.safe.O2.contract-off.results	00000000 00000000 00000000 00000000 80000000 80000000 3df753f7 3eaaaaab
+case.macos.divide_by_three.safe.O2.contract-off.execution_witness	operand=3f800000,expected=3eaaaaab,observed=3eaaaaab,status=executed
+case.macos.divide_by_three_eighths.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_eighths.fast.O2.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.macos.divide_by_three_eighths.fast.O2.contract-off.results	00000000 00000000 00000000 012aaaab 80000000 80000000 3f7753f7 402aaaab
+case.macos.divide_by_three_eighths.fast.O2.contract-off.execution_witness	operand=3f800000,expected=402aaaab,observed=402aaaab,status=executed
+case.macos.divide_by_three_eighths.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_eighths.relaxed.O2.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.macos.divide_by_three_eighths.relaxed.O2.contract-off.results	00000000 00000000 00000000 012aaaab 80000000 80000000 3f7753f7 402aaaab
+case.macos.divide_by_three_eighths.relaxed.O2.contract-off.execution_witness	operand=3f800000,expected=402aaaab,observed=402aaaab,status=executed
+case.macos.divide_by_three_eighths.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=4.0,opt=default
+case.macos.divide_by_three_eighths.runtime.fast.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_eighths.runtime.fast.opt-default.results	00000000 00000000 00000000 012aaaab 80000000 80000000 3f7753f7 402aaaab
+case.macos.divide_by_three_eighths.runtime.fast.opt-default.execution_witness	operand=3f800000,expected=402aaaab,observed=402aaaab,status=executed
+case.macos.divide_by_three_eighths.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=4.0,opt=size
+case.macos.divide_by_three_eighths.runtime.fast.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_eighths.runtime.fast.opt-size.results	00000000 00000000 00000000 012aaaab 80000000 80000000 3f7753f7 402aaaab
+case.macos.divide_by_three_eighths.runtime.fast.opt-size.execution_witness	operand=3f800000,expected=402aaaab,observed=402aaaab,status=executed
+case.macos.divide_by_three_eighths.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=4.0,opt=default
+case.macos.divide_by_three_eighths.runtime.relaxed.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_eighths.runtime.relaxed.opt-default.results	00000000 00000000 00000000 012aaaab 80000000 80000000 3f7753f7 402aaaab
+case.macos.divide_by_three_eighths.runtime.relaxed.opt-default.execution_witness	operand=3f800000,expected=402aaaab,observed=402aaaab,status=executed
+case.macos.divide_by_three_eighths.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=4.0,opt=size
+case.macos.divide_by_three_eighths.runtime.relaxed.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_eighths.runtime.relaxed.opt-size.results	00000000 00000000 00000000 012aaaab 80000000 80000000 3f7753f7 402aaaab
+case.macos.divide_by_three_eighths.runtime.relaxed.opt-size.execution_witness	operand=3f800000,expected=402aaaab,observed=402aaaab,status=executed
+case.macos.divide_by_three_eighths.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=4.0,opt=default
+case.macos.divide_by_three_eighths.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_eighths.runtime.safe.opt-default.results	00000000 00000000 00000000 012aaaab 80000000 80000000 3f7753f7 402aaaab
+case.macos.divide_by_three_eighths.runtime.safe.opt-default.execution_witness	operand=3f800000,expected=402aaaab,observed=402aaaab,status=executed
+case.macos.divide_by_three_eighths.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=4.0,opt=size
+case.macos.divide_by_three_eighths.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_eighths.runtime.safe.opt-size.results	00000000 00000000 00000000 012aaaab 80000000 80000000 3f7753f7 402aaaab
+case.macos.divide_by_three_eighths.runtime.safe.opt-size.execution_witness	operand=3f800000,expected=402aaaab,observed=402aaaab,status=executed
+case.macos.divide_by_three_eighths.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_three_eighths.safe.O2.contract-off.float_operations	fdiv
+case.macos.divide_by_three_eighths.safe.O2.contract-off.results	00000000 00000000 00000000 012aaaab 80000000 80000000 3f7753f7 402aaaab
+case.macos.divide_by_three_eighths.safe.O2.contract-off.execution_witness	operand=3f800000,expected=402aaaab,observed=402aaaab,status=executed
+case.macos.divide_by_two.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=4.0,opt=default
+case.macos.divide_by_two.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_two.runtime.safe.opt-default.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.macos.divide_by_two.runtime.safe.opt-default.execution_witness	operand=3f800000,expected=3f000000,observed=3f000000,status=executed
+case.macos.divide_by_two.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=4.0,opt=size
+case.macos.divide_by_two.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_two.runtime.safe.opt-size.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.macos.divide_by_two.runtime.safe.opt-size.execution_witness	operand=3f800000,expected=3f000000,observed=3f000000,status=executed
+case.macos.divide_by_two.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.divide_by_two.safe.O2.contract-off.float_operations	fmul
+case.macos.divide_by_two.safe.O2.contract-off.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.macos.divide_by_two.safe.O2.contract-off.execution_witness	operand=3f800000,expected=3f000000,observed=3f000000,status=executed
+case.macos.fused_pair.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=4.0,opt=default
+case.macos.fused_pair.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.fused_pair.runtime.safe.opt-default.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9d 40200000
+case.macos.fused_pair.runtime.safe.opt-default.execution_witness	operand=3f800000,expected=40200000,observed=40200000,status=executed
+case.macos.fused_pair.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=4.0,opt=size
+case.macos.fused_pair.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.fused_pair.runtime.safe.opt-size.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9d 40200000
+case.macos.fused_pair.runtime.safe.opt-size.execution_witness	operand=3f800000,expected=40200000,observed=40200000,status=executed
+case.macos.fused_pair.safe.O2.contract-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.fused_pair.safe.O2.contract-fast.float_operations	air.fma.f32+contract
+case.macos.fused_pair.safe.O2.contract-fast.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9d 40200000
+case.macos.fused_pair.safe.O2.contract-fast.execution_witness	operand=3f800000,expected=40200000,observed=40200000,status=executed
+case.macos.fused_pair.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.fused_pair.safe.O2.contract-off.float_operations	air.fma.f32
+case.macos.fused_pair.safe.O2.contract-off.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9d 40200000
+case.macos.fused_pair.safe.O2.contract-off.execution_witness	operand=3f800000,expected=40200000,observed=40200000,status=executed
+case.macos.fused_pair.safe.O2.contract-on.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.fused_pair.safe.O2.contract-on.float_operations	air.fma.f32
+case.macos.fused_pair.safe.O2.contract-on.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9d 40200000
+case.macos.fused_pair.safe.O2.contract-on.execution_witness	operand=3f800000,expected=40200000,observed=40200000,status=executed
+case.macos.materialize.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.materialize.fast.O2.contract-off.float_operations	none
+case.macos.materialize.fast.O2.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.materialize.fast.O2.contract-off.execution_witness	none
+case.macos.materialize.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.materialize.relaxed.O2.contract-off.float_operations	none
+case.macos.materialize.relaxed.O2.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.materialize.relaxed.O2.contract-off.execution_witness	none
+case.macos.materialize.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=4.0,opt=default
+case.macos.materialize.runtime.fast.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.materialize.runtime.fast.opt-default.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.materialize.runtime.fast.opt-default.execution_witness	none
+case.macos.materialize.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=4.0,opt=size
+case.macos.materialize.runtime.fast.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.materialize.runtime.fast.opt-size.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.materialize.runtime.fast.opt-size.execution_witness	none
+case.macos.materialize.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=4.0,opt=default
+case.macos.materialize.runtime.relaxed.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.materialize.runtime.relaxed.opt-default.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.materialize.runtime.relaxed.opt-default.execution_witness	none
+case.macos.materialize.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=4.0,opt=size
+case.macos.materialize.runtime.relaxed.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.materialize.runtime.relaxed.opt-size.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.materialize.runtime.relaxed.opt-size.execution_witness	none
+case.macos.materialize.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=4.0,opt=default
+case.macos.materialize.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.materialize.runtime.safe.opt-default.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.materialize.runtime.safe.opt-default.execution_witness	none
+case.macos.materialize.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=4.0,opt=size
+case.macos.materialize.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.materialize.runtime.safe.opt-size.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.materialize.runtime.safe.opt-size.execution_witness	none
+case.macos.materialize.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.materialize.safe.O2.contract-off.float_operations	none
+case.macos.materialize.safe.O2.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.materialize.safe.O2.contract-off.execution_witness	none
+case.macos.multiply_half.fast.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half.fast.O0.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.macos.multiply_half.fast.O0.contract-off.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.macos.multiply_half.fast.O0.contract-off.execution_witness	operand=3f800000,expected=3f000000,observed=3f000000,status=executed
+case.macos.multiply_half.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half.fast.O2.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.macos.multiply_half.fast.O2.contract-off.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.macos.multiply_half.fast.O2.contract-off.execution_witness	operand=3f800000,expected=3f000000,observed=3f000000,status=executed
+case.macos.multiply_half.fast.O2.contract-off.fpfun-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half.fast.O2.contract-off.fpfun-fast.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.macos.multiply_half.fast.O2.contract-off.fpfun-fast.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.macos.multiply_half.fast.O2.contract-off.fpfun-fast.execution_witness	operand=3f800000,expected=3f000000,observed=3f000000,status=executed
+case.macos.multiply_half.relaxed.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half.relaxed.O0.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.macos.multiply_half.relaxed.O0.contract-off.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.macos.multiply_half.relaxed.O0.contract-off.execution_witness	operand=3f800000,expected=3f000000,observed=3f000000,status=executed
+case.macos.multiply_half.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half.relaxed.O2.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.macos.multiply_half.relaxed.O2.contract-off.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.macos.multiply_half.relaxed.O2.contract-off.execution_witness	operand=3f800000,expected=3f000000,observed=3f000000,status=executed
+case.macos.multiply_half.relaxed.O2.contract-off.fpfun-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half.relaxed.O2.contract-off.fpfun-fast.float_operations	fmul+reassoc+nsz+arcp+afn
+case.macos.multiply_half.relaxed.O2.contract-off.fpfun-fast.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.macos.multiply_half.relaxed.O2.contract-off.fpfun-fast.execution_witness	operand=3f800000,expected=3f000000,observed=3f000000,status=executed
+case.macos.multiply_half.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=4.0,opt=default
+case.macos.multiply_half.runtime.fast.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half.runtime.fast.opt-default.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.macos.multiply_half.runtime.fast.opt-default.execution_witness	operand=3f800000,expected=3f000000,observed=3f000000,status=executed
+case.macos.multiply_half.runtime.fast.opt-default.fpfun-fast.applied_options	math=fast,fpfun=fast,lang=4.0,opt=default
+case.macos.multiply_half.runtime.fast.opt-default.fpfun-fast.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half.runtime.fast.opt-default.fpfun-fast.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.macos.multiply_half.runtime.fast.opt-default.fpfun-fast.execution_witness	operand=3f800000,expected=3f000000,observed=3f000000,status=executed
+case.macos.multiply_half.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=4.0,opt=size
+case.macos.multiply_half.runtime.fast.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half.runtime.fast.opt-size.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.macos.multiply_half.runtime.fast.opt-size.execution_witness	operand=3f800000,expected=3f000000,observed=3f000000,status=executed
+case.macos.multiply_half.runtime.fast.opt-size.fpfun-fast.applied_options	math=fast,fpfun=fast,lang=4.0,opt=size
+case.macos.multiply_half.runtime.fast.opt-size.fpfun-fast.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half.runtime.fast.opt-size.fpfun-fast.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.macos.multiply_half.runtime.fast.opt-size.fpfun-fast.execution_witness	operand=3f800000,expected=3f000000,observed=3f000000,status=executed
+case.macos.multiply_half.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=4.0,opt=default
+case.macos.multiply_half.runtime.relaxed.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half.runtime.relaxed.opt-default.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.macos.multiply_half.runtime.relaxed.opt-default.execution_witness	operand=3f800000,expected=3f000000,observed=3f000000,status=executed
+case.macos.multiply_half.runtime.relaxed.opt-default.fpfun-fast.applied_options	math=relaxed,fpfun=fast,lang=4.0,opt=default
+case.macos.multiply_half.runtime.relaxed.opt-default.fpfun-fast.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half.runtime.relaxed.opt-default.fpfun-fast.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.macos.multiply_half.runtime.relaxed.opt-default.fpfun-fast.execution_witness	operand=3f800000,expected=3f000000,observed=3f000000,status=executed
+case.macos.multiply_half.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=4.0,opt=size
+case.macos.multiply_half.runtime.relaxed.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half.runtime.relaxed.opt-size.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.macos.multiply_half.runtime.relaxed.opt-size.execution_witness	operand=3f800000,expected=3f000000,observed=3f000000,status=executed
+case.macos.multiply_half.runtime.relaxed.opt-size.fpfun-fast.applied_options	math=relaxed,fpfun=fast,lang=4.0,opt=size
+case.macos.multiply_half.runtime.relaxed.opt-size.fpfun-fast.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half.runtime.relaxed.opt-size.fpfun-fast.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.macos.multiply_half.runtime.relaxed.opt-size.fpfun-fast.execution_witness	operand=3f800000,expected=3f000000,observed=3f000000,status=executed
+case.macos.multiply_half.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=4.0,opt=default
+case.macos.multiply_half.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half.runtime.safe.opt-default.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.macos.multiply_half.runtime.safe.opt-default.execution_witness	operand=3f800000,expected=3f000000,observed=3f000000,status=executed
+case.macos.multiply_half.runtime.safe.opt-default.fpfun-fast.applied_options	math=safe,fpfun=fast,lang=4.0,opt=default
+case.macos.multiply_half.runtime.safe.opt-default.fpfun-fast.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half.runtime.safe.opt-default.fpfun-fast.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.macos.multiply_half.runtime.safe.opt-default.fpfun-fast.execution_witness	operand=3f800000,expected=3f000000,observed=3f000000,status=executed
+case.macos.multiply_half.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=4.0,opt=size
+case.macos.multiply_half.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half.runtime.safe.opt-size.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.macos.multiply_half.runtime.safe.opt-size.execution_witness	operand=3f800000,expected=3f000000,observed=3f000000,status=executed
+case.macos.multiply_half.runtime.safe.opt-size.fpfun-fast.applied_options	math=safe,fpfun=fast,lang=4.0,opt=size
+case.macos.multiply_half.runtime.safe.opt-size.fpfun-fast.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half.runtime.safe.opt-size.fpfun-fast.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.macos.multiply_half.runtime.safe.opt-size.fpfun-fast.execution_witness	operand=3f800000,expected=3f000000,observed=3f000000,status=executed
+case.macos.multiply_half.safe.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half.safe.O0.contract-off.float_operations	fmul
+case.macos.multiply_half.safe.O0.contract-off.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.macos.multiply_half.safe.O0.contract-off.execution_witness	operand=3f800000,expected=3f000000,observed=3f000000,status=executed
+case.macos.multiply_half.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half.safe.O2.contract-off.float_operations	fmul
+case.macos.multiply_half.safe.O2.contract-off.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.macos.multiply_half.safe.O2.contract-off.execution_witness	operand=3f800000,expected=3f000000,observed=3f000000,status=executed
+case.macos.multiply_half.safe.O2.contract-off.fpfun-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_half.safe.O2.contract-off.fpfun-fast.float_operations	fmul
+case.macos.multiply_half.safe.O2.contract-off.fpfun-fast.results	00000000 00000000 00000000 00000000 80000000 80000000 3e397ef9 3f000000
+case.macos.multiply_half.safe.O2.contract-off.fpfun-fast.execution_witness	operand=3f800000,expected=3f000000,observed=3f000000,status=executed
+case.macos.multiply_one.fast.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_one.fast.O0.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.macos.multiply_one.fast.O0.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.multiply_one.fast.O0.contract-off.execution_witness	none
+case.macos.multiply_one.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_one.fast.O2.contract-off.float_operations	none
+case.macos.multiply_one.fast.O2.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.multiply_one.fast.O2.contract-off.execution_witness	none
+case.macos.multiply_one.relaxed.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_one.relaxed.O0.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.macos.multiply_one.relaxed.O0.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.multiply_one.relaxed.O0.contract-off.execution_witness	none
+case.macos.multiply_one.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_one.relaxed.O2.contract-off.float_operations	none
+case.macos.multiply_one.relaxed.O2.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.multiply_one.relaxed.O2.contract-off.execution_witness	none
+case.macos.multiply_one.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=4.0,opt=default
+case.macos.multiply_one.runtime.fast.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_one.runtime.fast.opt-default.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.multiply_one.runtime.fast.opt-default.execution_witness	none
+case.macos.multiply_one.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=4.0,opt=size
+case.macos.multiply_one.runtime.fast.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_one.runtime.fast.opt-size.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.multiply_one.runtime.fast.opt-size.execution_witness	none
+case.macos.multiply_one.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=4.0,opt=default
+case.macos.multiply_one.runtime.relaxed.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_one.runtime.relaxed.opt-default.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.multiply_one.runtime.relaxed.opt-default.execution_witness	none
+case.macos.multiply_one.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=4.0,opt=size
+case.macos.multiply_one.runtime.relaxed.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_one.runtime.relaxed.opt-size.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.multiply_one.runtime.relaxed.opt-size.execution_witness	none
+case.macos.multiply_one.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=4.0,opt=default
+case.macos.multiply_one.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_one.runtime.safe.opt-default.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.multiply_one.runtime.safe.opt-default.execution_witness	none
+case.macos.multiply_one.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=4.0,opt=size
+case.macos.multiply_one.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_one.runtime.safe.opt-size.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.multiply_one.runtime.safe.opt-size.execution_witness	none
+case.macos.multiply_one.safe.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_one.safe.O0.contract-off.float_operations	fmul
+case.macos.multiply_one.safe.O0.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.multiply_one.safe.O0.contract-off.execution_witness	none
+case.macos.multiply_one.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_one.safe.O2.contract-off.float_operations	none
+case.macos.multiply_one.safe.O2.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.multiply_one.safe.O2.contract-off.execution_witness	none
+case.macos.multiply_two.fast.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two.fast.O0.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.macos.multiply_two.fast.O0.contract-off.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.macos.multiply_two.fast.O0.contract-off.execution_witness	operand=3f800000,expected=40000000,observed=40000000,status=executed
+case.macos.multiply_two.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two.fast.O2.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.macos.multiply_two.fast.O2.contract-off.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.macos.multiply_two.fast.O2.contract-off.execution_witness	operand=3f800000,expected=40000000,observed=40000000,status=executed
+case.macos.multiply_two.fast.O2.contract-off.fpfun-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two.fast.O2.contract-off.fpfun-fast.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn
+case.macos.multiply_two.fast.O2.contract-off.fpfun-fast.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.macos.multiply_two.fast.O2.contract-off.fpfun-fast.execution_witness	operand=3f800000,expected=40000000,observed=40000000,status=executed
+case.macos.multiply_two.relaxed.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two.relaxed.O0.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.macos.multiply_two.relaxed.O0.contract-off.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.macos.multiply_two.relaxed.O0.contract-off.execution_witness	operand=3f800000,expected=40000000,observed=40000000,status=executed
+case.macos.multiply_two.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two.relaxed.O2.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn
+case.macos.multiply_two.relaxed.O2.contract-off.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.macos.multiply_two.relaxed.O2.contract-off.execution_witness	operand=3f800000,expected=40000000,observed=40000000,status=executed
+case.macos.multiply_two.relaxed.O2.contract-off.fpfun-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two.relaxed.O2.contract-off.fpfun-fast.float_operations	fmul+reassoc+nsz+arcp+afn
+case.macos.multiply_two.relaxed.O2.contract-off.fpfun-fast.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.macos.multiply_two.relaxed.O2.contract-off.fpfun-fast.execution_witness	operand=3f800000,expected=40000000,observed=40000000,status=executed
+case.macos.multiply_two.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=4.0,opt=default
+case.macos.multiply_two.runtime.fast.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two.runtime.fast.opt-default.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.macos.multiply_two.runtime.fast.opt-default.execution_witness	operand=3f800000,expected=40000000,observed=40000000,status=executed
+case.macos.multiply_two.runtime.fast.opt-default.fpfun-fast.applied_options	math=fast,fpfun=fast,lang=4.0,opt=default
+case.macos.multiply_two.runtime.fast.opt-default.fpfun-fast.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two.runtime.fast.opt-default.fpfun-fast.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.macos.multiply_two.runtime.fast.opt-default.fpfun-fast.execution_witness	operand=3f800000,expected=40000000,observed=40000000,status=executed
+case.macos.multiply_two.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=4.0,opt=size
+case.macos.multiply_two.runtime.fast.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two.runtime.fast.opt-size.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.macos.multiply_two.runtime.fast.opt-size.execution_witness	operand=3f800000,expected=40000000,observed=40000000,status=executed
+case.macos.multiply_two.runtime.fast.opt-size.fpfun-fast.applied_options	math=fast,fpfun=fast,lang=4.0,opt=size
+case.macos.multiply_two.runtime.fast.opt-size.fpfun-fast.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two.runtime.fast.opt-size.fpfun-fast.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.macos.multiply_two.runtime.fast.opt-size.fpfun-fast.execution_witness	operand=3f800000,expected=40000000,observed=40000000,status=executed
+case.macos.multiply_two.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=4.0,opt=default
+case.macos.multiply_two.runtime.relaxed.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two.runtime.relaxed.opt-default.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.macos.multiply_two.runtime.relaxed.opt-default.execution_witness	operand=3f800000,expected=40000000,observed=40000000,status=executed
+case.macos.multiply_two.runtime.relaxed.opt-default.fpfun-fast.applied_options	math=relaxed,fpfun=fast,lang=4.0,opt=default
+case.macos.multiply_two.runtime.relaxed.opt-default.fpfun-fast.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two.runtime.relaxed.opt-default.fpfun-fast.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.macos.multiply_two.runtime.relaxed.opt-default.fpfun-fast.execution_witness	operand=3f800000,expected=40000000,observed=40000000,status=executed
+case.macos.multiply_two.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=4.0,opt=size
+case.macos.multiply_two.runtime.relaxed.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two.runtime.relaxed.opt-size.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.macos.multiply_two.runtime.relaxed.opt-size.execution_witness	operand=3f800000,expected=40000000,observed=40000000,status=executed
+case.macos.multiply_two.runtime.relaxed.opt-size.fpfun-fast.applied_options	math=relaxed,fpfun=fast,lang=4.0,opt=size
+case.macos.multiply_two.runtime.relaxed.opt-size.fpfun-fast.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two.runtime.relaxed.opt-size.fpfun-fast.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.macos.multiply_two.runtime.relaxed.opt-size.fpfun-fast.execution_witness	operand=3f800000,expected=40000000,observed=40000000,status=executed
+case.macos.multiply_two.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=4.0,opt=default
+case.macos.multiply_two.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two.runtime.safe.opt-default.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.macos.multiply_two.runtime.safe.opt-default.execution_witness	operand=3f800000,expected=40000000,observed=40000000,status=executed
+case.macos.multiply_two.runtime.safe.opt-default.fpfun-fast.applied_options	math=safe,fpfun=fast,lang=4.0,opt=default
+case.macos.multiply_two.runtime.safe.opt-default.fpfun-fast.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two.runtime.safe.opt-default.fpfun-fast.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.macos.multiply_two.runtime.safe.opt-default.fpfun-fast.execution_witness	operand=3f800000,expected=40000000,observed=40000000,status=executed
+case.macos.multiply_two.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=4.0,opt=size
+case.macos.multiply_two.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two.runtime.safe.opt-size.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.macos.multiply_two.runtime.safe.opt-size.execution_witness	operand=3f800000,expected=40000000,observed=40000000,status=executed
+case.macos.multiply_two.runtime.safe.opt-size.fpfun-fast.applied_options	math=safe,fpfun=fast,lang=4.0,opt=size
+case.macos.multiply_two.runtime.safe.opt-size.fpfun-fast.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two.runtime.safe.opt-size.fpfun-fast.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.macos.multiply_two.runtime.safe.opt-size.fpfun-fast.execution_witness	operand=3f800000,expected=40000000,observed=40000000,status=executed
+case.macos.multiply_two.safe.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two.safe.O0.contract-off.float_operations	fmul
+case.macos.multiply_two.safe.O0.contract-off.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.macos.multiply_two.safe.O0.contract-off.execution_witness	operand=3f800000,expected=40000000,observed=40000000,status=executed
+case.macos.multiply_two.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two.safe.O2.contract-off.float_operations	fmul
+case.macos.multiply_two.safe.O2.contract-off.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.macos.multiply_two.safe.O2.contract-off.execution_witness	operand=3f800000,expected=40000000,observed=40000000,status=executed
+case.macos.multiply_two.safe.O2.contract-off.fpfun-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.multiply_two.safe.O2.contract-off.fpfun-fast.float_operations	fmul
+case.macos.multiply_two.safe.O2.contract-off.fpfun-fast.results	00000000 00000000 00000000 01000000 80000000 80000000 3f397ef9 40000000
+case.macos.multiply_two.safe.O2.contract-off.fpfun-fast.execution_witness	operand=3f800000,expected=40000000,observed=40000000,status=executed
+case.macos.reassociation_chain.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.reassociation_chain.fast.O2.contract-off.float_operations	fadd+reassoc+nnan+ninf+nsz+arcp+afn
+case.macos.reassociation_chain.fast.O2.contract-off.results	34000000 34000000 34000000 34000000 34000000 34000000 3eb97efd 3f800001
+case.macos.reassociation_chain.fast.O2.contract-off.execution_witness	operand=00800000,expected=34000000,observed=34000000,status=executed
+case.macos.reassociation_chain.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.reassociation_chain.relaxed.O2.contract-off.float_operations	fadd+reassoc+nsz+arcp+afn
+case.macos.reassociation_chain.relaxed.O2.contract-off.results	34000000 34000000 34000000 34000000 34000000 34000000 3eb97efd 3f800001
+case.macos.reassociation_chain.relaxed.O2.contract-off.execution_witness	operand=00800000,expected=34000000,observed=34000000,status=executed
+case.macos.reassociation_chain.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=4.0,opt=default
+case.macos.reassociation_chain.runtime.fast.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.reassociation_chain.runtime.fast.opt-default.results	34000000 34000000 34000000 34000000 34000000 34000000 3eb97efd 3f800001
+case.macos.reassociation_chain.runtime.fast.opt-default.execution_witness	operand=00800000,expected=34000000,observed=34000000,status=executed
+case.macos.reassociation_chain.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=4.0,opt=size
+case.macos.reassociation_chain.runtime.fast.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.reassociation_chain.runtime.fast.opt-size.results	34000000 34000000 34000000 34000000 34000000 34000000 3eb97efd 3f800001
+case.macos.reassociation_chain.runtime.fast.opt-size.execution_witness	operand=00800000,expected=34000000,observed=34000000,status=executed
+case.macos.reassociation_chain.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=4.0,opt=default
+case.macos.reassociation_chain.runtime.relaxed.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.reassociation_chain.runtime.relaxed.opt-default.results	34000000 34000000 34000000 34000000 34000000 34000000 3eb97efd 3f800001
+case.macos.reassociation_chain.runtime.relaxed.opt-default.execution_witness	operand=00800000,expected=34000000,observed=34000000,status=executed
+case.macos.reassociation_chain.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=4.0,opt=size
+case.macos.reassociation_chain.runtime.relaxed.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.reassociation_chain.runtime.relaxed.opt-size.results	34000000 34000000 34000000 34000000 34000000 34000000 3eb97efd 3f800001
+case.macos.reassociation_chain.runtime.relaxed.opt-size.execution_witness	operand=00800000,expected=34000000,observed=34000000,status=executed
+case.macos.reassociation_chain.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=4.0,opt=default
+case.macos.reassociation_chain.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.reassociation_chain.runtime.safe.opt-default.results	34000000 34000000 34000000 34000000 34000000 34000000 3eb97efd 3f800000
+case.macos.reassociation_chain.runtime.safe.opt-default.execution_witness	operand=00800000,expected=34000000,observed=34000000,status=executed
+case.macos.reassociation_chain.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=4.0,opt=size
+case.macos.reassociation_chain.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.reassociation_chain.runtime.safe.opt-size.results	34000000 34000000 34000000 34000000 34000000 34000000 3eb97efd 3f800000
+case.macos.reassociation_chain.runtime.safe.opt-size.execution_witness	operand=00800000,expected=34000000,observed=34000000,status=executed
+case.macos.reassociation_chain.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.reassociation_chain.safe.O2.contract-off.float_operations	fadd fadd
+case.macos.reassociation_chain.safe.O2.contract-off.results	34000000 34000000 34000000 34000000 34000000 34000000 3eb97efd 3f800000
+case.macos.reassociation_chain.safe.O2.contract-off.execution_witness	operand=00800000,expected=34000000,observed=34000000,status=executed
+case.macos.scale_one_bias_zero.fast.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero.fast.O0.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn fadd+reassoc+nnan+ninf+nsz+arcp+afn
+case.macos.scale_one_bias_zero.fast.O0.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.scale_one_bias_zero.fast.O0.contract-off.execution_witness	operand=80000000,expected=00000000,observed=80000000,status=not-executed
+case.macos.scale_one_bias_zero.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero.fast.O2.contract-off.float_operations	none
+case.macos.scale_one_bias_zero.fast.O2.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.scale_one_bias_zero.fast.O2.contract-off.execution_witness	operand=80000000,expected=00000000,observed=80000000,status=not-executed
+case.macos.scale_one_bias_zero.fast.O2.contract-off.fpfun-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero.fast.O2.contract-off.fpfun-fast.float_operations	none
+case.macos.scale_one_bias_zero.fast.O2.contract-off.fpfun-fast.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.scale_one_bias_zero.fast.O2.contract-off.fpfun-fast.execution_witness	operand=80000000,expected=00000000,observed=80000000,status=not-executed
+case.macos.scale_one_bias_zero.relaxed.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero.relaxed.O0.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn fadd+reassoc+nsz+arcp+afn
+case.macos.scale_one_bias_zero.relaxed.O0.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.scale_one_bias_zero.relaxed.O0.contract-off.execution_witness	operand=80000000,expected=00000000,observed=80000000,status=not-executed
+case.macos.scale_one_bias_zero.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero.relaxed.O2.contract-off.float_operations	none
+case.macos.scale_one_bias_zero.relaxed.O2.contract-off.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.scale_one_bias_zero.relaxed.O2.contract-off.execution_witness	operand=80000000,expected=00000000,observed=80000000,status=not-executed
+case.macos.scale_one_bias_zero.relaxed.O2.contract-off.fpfun-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero.relaxed.O2.contract-off.fpfun-fast.float_operations	none
+case.macos.scale_one_bias_zero.relaxed.O2.contract-off.fpfun-fast.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.scale_one_bias_zero.relaxed.O2.contract-off.fpfun-fast.execution_witness	operand=80000000,expected=00000000,observed=80000000,status=not-executed
+case.macos.scale_one_bias_zero.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=4.0,opt=default
+case.macos.scale_one_bias_zero.runtime.fast.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero.runtime.fast.opt-default.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.scale_one_bias_zero.runtime.fast.opt-default.execution_witness	operand=80000000,expected=00000000,observed=80000000,status=not-executed
+case.macos.scale_one_bias_zero.runtime.fast.opt-default.fpfun-fast.applied_options	math=fast,fpfun=fast,lang=4.0,opt=default
+case.macos.scale_one_bias_zero.runtime.fast.opt-default.fpfun-fast.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero.runtime.fast.opt-default.fpfun-fast.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.scale_one_bias_zero.runtime.fast.opt-default.fpfun-fast.execution_witness	operand=80000000,expected=00000000,observed=80000000,status=not-executed
+case.macos.scale_one_bias_zero.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=4.0,opt=size
+case.macos.scale_one_bias_zero.runtime.fast.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero.runtime.fast.opt-size.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.scale_one_bias_zero.runtime.fast.opt-size.execution_witness	operand=80000000,expected=00000000,observed=80000000,status=not-executed
+case.macos.scale_one_bias_zero.runtime.fast.opt-size.fpfun-fast.applied_options	math=fast,fpfun=fast,lang=4.0,opt=size
+case.macos.scale_one_bias_zero.runtime.fast.opt-size.fpfun-fast.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero.runtime.fast.opt-size.fpfun-fast.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.scale_one_bias_zero.runtime.fast.opt-size.fpfun-fast.execution_witness	operand=80000000,expected=00000000,observed=80000000,status=not-executed
+case.macos.scale_one_bias_zero.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=4.0,opt=default
+case.macos.scale_one_bias_zero.runtime.relaxed.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero.runtime.relaxed.opt-default.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.scale_one_bias_zero.runtime.relaxed.opt-default.execution_witness	operand=80000000,expected=00000000,observed=80000000,status=not-executed
+case.macos.scale_one_bias_zero.runtime.relaxed.opt-default.fpfun-fast.applied_options	math=relaxed,fpfun=fast,lang=4.0,opt=default
+case.macos.scale_one_bias_zero.runtime.relaxed.opt-default.fpfun-fast.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero.runtime.relaxed.opt-default.fpfun-fast.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.scale_one_bias_zero.runtime.relaxed.opt-default.fpfun-fast.execution_witness	operand=80000000,expected=00000000,observed=80000000,status=not-executed
+case.macos.scale_one_bias_zero.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=4.0,opt=size
+case.macos.scale_one_bias_zero.runtime.relaxed.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero.runtime.relaxed.opt-size.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.scale_one_bias_zero.runtime.relaxed.opt-size.execution_witness	operand=80000000,expected=00000000,observed=80000000,status=not-executed
+case.macos.scale_one_bias_zero.runtime.relaxed.opt-size.fpfun-fast.applied_options	math=relaxed,fpfun=fast,lang=4.0,opt=size
+case.macos.scale_one_bias_zero.runtime.relaxed.opt-size.fpfun-fast.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero.runtime.relaxed.opt-size.fpfun-fast.results	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+case.macos.scale_one_bias_zero.runtime.relaxed.opt-size.fpfun-fast.execution_witness	operand=80000000,expected=00000000,observed=80000000,status=not-executed
+case.macos.scale_one_bias_zero.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=4.0,opt=default
+case.macos.scale_one_bias_zero.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero.runtime.safe.opt-default.results	00000000 00000000 00000000 00800000 00000000 00000000 3eb97ef9 3f800000
+case.macos.scale_one_bias_zero.runtime.safe.opt-default.execution_witness	operand=80000000,expected=00000000,observed=00000000,status=executed
+case.macos.scale_one_bias_zero.runtime.safe.opt-default.fpfun-fast.applied_options	math=safe,fpfun=fast,lang=4.0,opt=default
+case.macos.scale_one_bias_zero.runtime.safe.opt-default.fpfun-fast.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero.runtime.safe.opt-default.fpfun-fast.results	00000000 00000000 00000000 00800000 00000000 00000000 3eb97ef9 3f800000
+case.macos.scale_one_bias_zero.runtime.safe.opt-default.fpfun-fast.execution_witness	operand=80000000,expected=00000000,observed=00000000,status=executed
+case.macos.scale_one_bias_zero.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=4.0,opt=size
+case.macos.scale_one_bias_zero.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero.runtime.safe.opt-size.results	00000000 00000000 00000000 00800000 00000000 00000000 3eb97ef9 3f800000
+case.macos.scale_one_bias_zero.runtime.safe.opt-size.execution_witness	operand=80000000,expected=00000000,observed=00000000,status=executed
+case.macos.scale_one_bias_zero.runtime.safe.opt-size.fpfun-fast.applied_options	math=safe,fpfun=fast,lang=4.0,opt=size
+case.macos.scale_one_bias_zero.runtime.safe.opt-size.fpfun-fast.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero.runtime.safe.opt-size.fpfun-fast.results	00000000 00000000 00000000 00800000 00000000 00000000 3eb97ef9 3f800000
+case.macos.scale_one_bias_zero.runtime.safe.opt-size.fpfun-fast.execution_witness	operand=80000000,expected=00000000,observed=00000000,status=executed
+case.macos.scale_one_bias_zero.safe.O0.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero.safe.O0.contract-off.float_operations	fmul fadd
+case.macos.scale_one_bias_zero.safe.O0.contract-off.results	00000000 00000000 00000000 00800000 00000000 00000000 3eb97ef9 3f800000
+case.macos.scale_one_bias_zero.safe.O0.contract-off.execution_witness	operand=80000000,expected=00000000,observed=00000000,status=executed
+case.macos.scale_one_bias_zero.safe.O1.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero.safe.O1.contract-off.float_operations	fadd
+case.macos.scale_one_bias_zero.safe.O1.contract-off.results	00000000 00000000 00000000 00800000 00000000 00000000 3eb97ef9 3f800000
+case.macos.scale_one_bias_zero.safe.O1.contract-off.execution_witness	operand=80000000,expected=00000000,observed=00000000,status=executed
+case.macos.scale_one_bias_zero.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero.safe.O2.contract-off.float_operations	fadd
+case.macos.scale_one_bias_zero.safe.O2.contract-off.results	00000000 00000000 00000000 00800000 00000000 00000000 3eb97ef9 3f800000
+case.macos.scale_one_bias_zero.safe.O2.contract-off.execution_witness	operand=80000000,expected=00000000,observed=00000000,status=executed
+case.macos.scale_one_bias_zero.safe.O2.contract-off.fpfun-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero.safe.O2.contract-off.fpfun-fast.float_operations	fadd
+case.macos.scale_one_bias_zero.safe.O2.contract-off.fpfun-fast.results	00000000 00000000 00000000 00800000 00000000 00000000 3eb97ef9 3f800000
+case.macos.scale_one_bias_zero.safe.O2.contract-off.fpfun-fast.execution_witness	operand=80000000,expected=00000000,observed=00000000,status=executed
+case.macos.scale_one_bias_zero.safe.O3.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero.safe.O3.contract-off.float_operations	fadd
+case.macos.scale_one_bias_zero.safe.O3.contract-off.results	00000000 00000000 00000000 00800000 00000000 00000000 3eb97ef9 3f800000
+case.macos.scale_one_bias_zero.safe.O3.contract-off.execution_witness	operand=80000000,expected=00000000,observed=00000000,status=executed
+case.macos.scale_one_bias_zero.safe.Os.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_one_bias_zero.safe.Os.contract-off.float_operations	fadd
+case.macos.scale_one_bias_zero.safe.Os.contract-off.results	00000000 00000000 00000000 00800000 00000000 00000000 3eb97ef9 3f800000
+case.macos.scale_one_bias_zero.safe.Os.contract-off.execution_witness	operand=80000000,expected=00000000,observed=00000000,status=executed
+case.macos.scale_two_bias_one.fast.O2.contract-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.scale_two_bias_one.fast.O2.contract-fast.float_operations	fmul+fast fadd+fast
+case.macos.scale_two_bias_one.fast.O2.contract-fast.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.macos.scale_two_bias_one.fast.O2.contract-fast.execution_witness	operand=3f800000,expected=40400000,observed=40400000,status=executed
+case.macos.scale_two_bias_one.fast.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.scale_two_bias_one.fast.O2.contract-off.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn fadd+reassoc+nnan+ninf+nsz+arcp+afn
+case.macos.scale_two_bias_one.fast.O2.contract-off.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.macos.scale_two_bias_one.fast.O2.contract-off.execution_witness	operand=3f800000,expected=40400000,observed=40400000,status=executed
+case.macos.scale_two_bias_one.fast.O2.contract-on.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.scale_two_bias_one.fast.O2.contract-on.float_operations	fmul+reassoc+nnan+ninf+nsz+arcp+afn fadd+reassoc+nnan+ninf+nsz+arcp+afn
+case.macos.scale_two_bias_one.fast.O2.contract-on.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.macos.scale_two_bias_one.fast.O2.contract-on.execution_witness	operand=3f800000,expected=40400000,observed=40400000,status=executed
+case.macos.scale_two_bias_one.relaxed.O2.contract-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_two_bias_one.relaxed.O2.contract-fast.float_operations	fmul+reassoc+nsz+arcp+contract+afn fadd+reassoc+nsz+arcp+contract+afn
+case.macos.scale_two_bias_one.relaxed.O2.contract-fast.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.macos.scale_two_bias_one.relaxed.O2.contract-fast.execution_witness	operand=3f800000,expected=40400000,observed=40400000,status=executed
+case.macos.scale_two_bias_one.relaxed.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_two_bias_one.relaxed.O2.contract-off.float_operations	fmul+reassoc+nsz+arcp+afn fadd+reassoc+nsz+arcp+afn
+case.macos.scale_two_bias_one.relaxed.O2.contract-off.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.macos.scale_two_bias_one.relaxed.O2.contract-off.execution_witness	operand=3f800000,expected=40400000,observed=40400000,status=executed
+case.macos.scale_two_bias_one.relaxed.O2.contract-on.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_two_bias_one.relaxed.O2.contract-on.float_operations	fmul+reassoc+nsz+arcp+afn fadd+reassoc+nsz+arcp+afn
+case.macos.scale_two_bias_one.relaxed.O2.contract-on.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.macos.scale_two_bias_one.relaxed.O2.contract-on.execution_witness	operand=3f800000,expected=40400000,observed=40400000,status=executed
+case.macos.scale_two_bias_one.runtime.fast.opt-default.applied_options	math=fast,fpfun=precise,lang=4.0,opt=default
+case.macos.scale_two_bias_one.runtime.fast.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.scale_two_bias_one.runtime.fast.opt-default.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.macos.scale_two_bias_one.runtime.fast.opt-default.execution_witness	operand=3f800000,expected=40400000,observed=40400000,status=executed
+case.macos.scale_two_bias_one.runtime.fast.opt-size.applied_options	math=fast,fpfun=precise,lang=4.0,opt=size
+case.macos.scale_two_bias_one.runtime.fast.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+case.macos.scale_two_bias_one.runtime.fast.opt-size.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.macos.scale_two_bias_one.runtime.fast.opt-size.execution_witness	operand=3f800000,expected=40400000,observed=40400000,status=executed
+case.macos.scale_two_bias_one.runtime.relaxed.opt-default.applied_options	math=relaxed,fpfun=precise,lang=4.0,opt=default
+case.macos.scale_two_bias_one.runtime.relaxed.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_two_bias_one.runtime.relaxed.opt-default.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.macos.scale_two_bias_one.runtime.relaxed.opt-default.execution_witness	operand=3f800000,expected=40400000,observed=40400000,status=executed
+case.macos.scale_two_bias_one.runtime.relaxed.opt-size.applied_options	math=relaxed,fpfun=precise,lang=4.0,opt=size
+case.macos.scale_two_bias_one.runtime.relaxed.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_two_bias_one.runtime.relaxed.opt-size.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.macos.scale_two_bias_one.runtime.relaxed.opt-size.execution_witness	operand=3f800000,expected=40400000,observed=40400000,status=executed
+case.macos.scale_two_bias_one.runtime.safe.opt-default.applied_options	math=safe,fpfun=precise,lang=4.0,opt=default
+case.macos.scale_two_bias_one.runtime.safe.opt-default.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_two_bias_one.runtime.safe.opt-default.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.macos.scale_two_bias_one.runtime.safe.opt-default.execution_witness	operand=3f800000,expected=40400000,observed=40400000,status=executed
+case.macos.scale_two_bias_one.runtime.safe.opt-size.applied_options	math=safe,fpfun=precise,lang=4.0,opt=size
+case.macos.scale_two_bias_one.runtime.safe.opt-size.archived_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_two_bias_one.runtime.safe.opt-size.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.macos.scale_two_bias_one.runtime.safe.opt-size.execution_witness	operand=3f800000,expected=40400000,observed=40400000,status=executed
+case.macos.scale_two_bias_one.safe.O2.contract-fast.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_two_bias_one.safe.O2.contract-fast.float_operations	fmul+contract fadd+contract
+case.macos.scale_two_bias_one.safe.O2.contract-fast.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.macos.scale_two_bias_one.safe.O2.contract-fast.execution_witness	operand=3f800000,expected=40400000,observed=40400000,status=executed
+case.macos.scale_two_bias_one.safe.O2.contract-off.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_two_bias_one.safe.O2.contract-off.float_operations	fmul fadd
+case.macos.scale_two_bias_one.safe.O2.contract-off.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.macos.scale_two_bias_one.safe.O2.contract-off.execution_witness	operand=3f800000,expected=40400000,observed=40400000,status=executed
+case.macos.scale_two_bias_one.safe.O2.contract-on.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+case.macos.scale_two_bias_one.safe.O2.contract-on.float_operations	fmul fadd
+case.macos.scale_two_bias_one.safe.O2.contract-on.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fdcbf7c 40400000
+case.macos.scale_two_bias_one.safe.O2.contract-on.execution_witness	operand=3f800000,expected=40400000,observed=40400000,status=executed
+comparison.macos.add_smallest_normal.runtime.fast.opt-default	agree candidates=macos.add_smallest_normal.fast.O2.contract-off matched=macos.add_smallest_normal.fast.O2.contract-off
+comparison.macos.add_smallest_normal.runtime.fast.opt-size	agree candidates=macos.add_smallest_normal.fast.O2.contract-off matched=macos.add_smallest_normal.fast.O2.contract-off
+comparison.macos.add_smallest_normal.runtime.relaxed.opt-default	agree candidates=macos.add_smallest_normal.relaxed.O2.contract-off matched=macos.add_smallest_normal.relaxed.O2.contract-off
+comparison.macos.add_smallest_normal.runtime.relaxed.opt-size	agree candidates=macos.add_smallest_normal.relaxed.O2.contract-off matched=macos.add_smallest_normal.relaxed.O2.contract-off
+comparison.macos.add_smallest_normal.runtime.safe.opt-default	agree candidates=macos.add_smallest_normal.safe.O2.contract-off matched=macos.add_smallest_normal.safe.O2.contract-off
+comparison.macos.add_smallest_normal.runtime.safe.opt-size	agree candidates=macos.add_smallest_normal.safe.O2.contract-off matched=macos.add_smallest_normal.safe.O2.contract-off
+comparison.macos.contraction_pair.runtime.fast.opt-default	agree-on-some candidates=macos.contraction_pair.fast.O2.contract-fast,macos.contraction_pair.fast.O2.contract-off,macos.contraction_pair.fast.O2.contract-on matched=macos.contraction_pair.fast.O2.contract-fast
+comparison.macos.contraction_pair.runtime.fast.opt-size	agree-on-some candidates=macos.contraction_pair.fast.O2.contract-fast,macos.contraction_pair.fast.O2.contract-off,macos.contraction_pair.fast.O2.contract-on matched=macos.contraction_pair.fast.O2.contract-fast
+comparison.macos.contraction_pair.runtime.relaxed.opt-default	agree-on-some candidates=macos.contraction_pair.relaxed.O2.contract-fast,macos.contraction_pair.relaxed.O2.contract-off,macos.contraction_pair.relaxed.O2.contract-on matched=macos.contraction_pair.relaxed.O2.contract-fast
+comparison.macos.contraction_pair.runtime.relaxed.opt-size	agree-on-some candidates=macos.contraction_pair.relaxed.O2.contract-fast,macos.contraction_pair.relaxed.O2.contract-off,macos.contraction_pair.relaxed.O2.contract-on matched=macos.contraction_pair.relaxed.O2.contract-fast
+comparison.macos.contraction_pair.runtime.safe.opt-default	agree-on-some candidates=macos.contraction_pair.safe.O2.contract-fast,macos.contraction_pair.safe.O2.contract-off,macos.contraction_pair.safe.O2.contract-on matched=macos.contraction_pair.safe.O2.contract-off,macos.contraction_pair.safe.O2.contract-on
+comparison.macos.contraction_pair.runtime.safe.opt-size	agree-on-some candidates=macos.contraction_pair.safe.O2.contract-fast,macos.contraction_pair.safe.O2.contract-off,macos.contraction_pair.safe.O2.contract-on matched=macos.contraction_pair.safe.O2.contract-off,macos.contraction_pair.safe.O2.contract-on
+comparison.macos.contraction_pair_canonicalized.runtime.safe.opt-default	agree candidates=macos.contraction_pair_canonicalized.safe.O2.contract-fast,macos.contraction_pair_canonicalized.safe.O2.contract-off,macos.contraction_pair_canonicalized.safe.O2.contract-on matched=macos.contraction_pair_canonicalized.safe.O2.contract-fast,macos.contraction_pair_canonicalized.safe.O2.contract-off,macos.contraction_pair_canonicalized.safe.O2.contract-on
+comparison.macos.contraction_pair_canonicalized.runtime.safe.opt-size	agree candidates=macos.contraction_pair_canonicalized.safe.O2.contract-fast,macos.contraction_pair_canonicalized.safe.O2.contract-off,macos.contraction_pair_canonicalized.safe.O2.contract-on matched=macos.contraction_pair_canonicalized.safe.O2.contract-fast,macos.contraction_pair_canonicalized.safe.O2.contract-off,macos.contraction_pair_canonicalized.safe.O2.contract-on
+comparison.macos.divide_by_half.runtime.safe.opt-default	agree candidates=macos.divide_by_half.safe.O2.contract-off matched=macos.divide_by_half.safe.O2.contract-off
+comparison.macos.divide_by_half.runtime.safe.opt-size	agree candidates=macos.divide_by_half.safe.O2.contract-off matched=macos.divide_by_half.safe.O2.contract-off
+comparison.macos.divide_by_three.runtime.fast.opt-default	agree candidates=macos.divide_by_three.fast.O2.contract-off matched=macos.divide_by_three.fast.O2.contract-off
+comparison.macos.divide_by_three.runtime.fast.opt-size	agree candidates=macos.divide_by_three.fast.O2.contract-off matched=macos.divide_by_three.fast.O2.contract-off
+comparison.macos.divide_by_three.runtime.relaxed.opt-default	agree candidates=macos.divide_by_three.relaxed.O2.contract-off matched=macos.divide_by_three.relaxed.O2.contract-off
+comparison.macos.divide_by_three.runtime.relaxed.opt-size	agree candidates=macos.divide_by_three.relaxed.O2.contract-off matched=macos.divide_by_three.relaxed.O2.contract-off
+comparison.macos.divide_by_three.runtime.safe.opt-default	agree candidates=macos.divide_by_three.safe.O2.contract-off matched=macos.divide_by_three.safe.O2.contract-off
+comparison.macos.divide_by_three.runtime.safe.opt-size	agree candidates=macos.divide_by_three.safe.O2.contract-off matched=macos.divide_by_three.safe.O2.contract-off
+comparison.macos.divide_by_three_eighths.runtime.fast.opt-default	agree candidates=macos.divide_by_three_eighths.fast.O2.contract-off matched=macos.divide_by_three_eighths.fast.O2.contract-off
+comparison.macos.divide_by_three_eighths.runtime.fast.opt-size	agree candidates=macos.divide_by_three_eighths.fast.O2.contract-off matched=macos.divide_by_three_eighths.fast.O2.contract-off
+comparison.macos.divide_by_three_eighths.runtime.relaxed.opt-default	agree candidates=macos.divide_by_three_eighths.relaxed.O2.contract-off matched=macos.divide_by_three_eighths.relaxed.O2.contract-off
+comparison.macos.divide_by_three_eighths.runtime.relaxed.opt-size	agree candidates=macos.divide_by_three_eighths.relaxed.O2.contract-off matched=macos.divide_by_three_eighths.relaxed.O2.contract-off
+comparison.macos.divide_by_three_eighths.runtime.safe.opt-default	agree candidates=macos.divide_by_three_eighths.safe.O2.contract-off matched=macos.divide_by_three_eighths.safe.O2.contract-off
+comparison.macos.divide_by_three_eighths.runtime.safe.opt-size	agree candidates=macos.divide_by_three_eighths.safe.O2.contract-off matched=macos.divide_by_three_eighths.safe.O2.contract-off
+comparison.macos.divide_by_two.runtime.safe.opt-default	agree candidates=macos.divide_by_two.safe.O2.contract-off matched=macos.divide_by_two.safe.O2.contract-off
+comparison.macos.divide_by_two.runtime.safe.opt-size	agree candidates=macos.divide_by_two.safe.O2.contract-off matched=macos.divide_by_two.safe.O2.contract-off
+comparison.macos.fused_pair.runtime.safe.opt-default	agree candidates=macos.fused_pair.safe.O2.contract-fast,macos.fused_pair.safe.O2.contract-off,macos.fused_pair.safe.O2.contract-on matched=macos.fused_pair.safe.O2.contract-fast,macos.fused_pair.safe.O2.contract-off,macos.fused_pair.safe.O2.contract-on
+comparison.macos.fused_pair.runtime.safe.opt-size	agree candidates=macos.fused_pair.safe.O2.contract-fast,macos.fused_pair.safe.O2.contract-off,macos.fused_pair.safe.O2.contract-on matched=macos.fused_pair.safe.O2.contract-fast,macos.fused_pair.safe.O2.contract-off,macos.fused_pair.safe.O2.contract-on
+comparison.macos.materialize.runtime.fast.opt-default	agree candidates=macos.materialize.fast.O2.contract-off matched=macos.materialize.fast.O2.contract-off
+comparison.macos.materialize.runtime.fast.opt-size	agree candidates=macos.materialize.fast.O2.contract-off matched=macos.materialize.fast.O2.contract-off
+comparison.macos.materialize.runtime.relaxed.opt-default	agree candidates=macos.materialize.relaxed.O2.contract-off matched=macos.materialize.relaxed.O2.contract-off
+comparison.macos.materialize.runtime.relaxed.opt-size	agree candidates=macos.materialize.relaxed.O2.contract-off matched=macos.materialize.relaxed.O2.contract-off
+comparison.macos.materialize.runtime.safe.opt-default	agree candidates=macos.materialize.safe.O2.contract-off matched=macos.materialize.safe.O2.contract-off
+comparison.macos.materialize.runtime.safe.opt-size	agree candidates=macos.materialize.safe.O2.contract-off matched=macos.materialize.safe.O2.contract-off
+comparison.macos.multiply_half.runtime.fast.opt-default	agree candidates=macos.multiply_half.fast.O2.contract-off matched=macos.multiply_half.fast.O2.contract-off
+comparison.macos.multiply_half.runtime.fast.opt-default.fpfun-fast	agree candidates=macos.multiply_half.fast.O2.contract-off.fpfun-fast matched=macos.multiply_half.fast.O2.contract-off.fpfun-fast
+comparison.macos.multiply_half.runtime.fast.opt-size	agree candidates=macos.multiply_half.fast.O2.contract-off matched=macos.multiply_half.fast.O2.contract-off
+comparison.macos.multiply_half.runtime.fast.opt-size.fpfun-fast	agree candidates=macos.multiply_half.fast.O2.contract-off.fpfun-fast matched=macos.multiply_half.fast.O2.contract-off.fpfun-fast
+comparison.macos.multiply_half.runtime.relaxed.opt-default	agree candidates=macos.multiply_half.relaxed.O2.contract-off matched=macos.multiply_half.relaxed.O2.contract-off
+comparison.macos.multiply_half.runtime.relaxed.opt-default.fpfun-fast	agree candidates=macos.multiply_half.relaxed.O2.contract-off.fpfun-fast matched=macos.multiply_half.relaxed.O2.contract-off.fpfun-fast
+comparison.macos.multiply_half.runtime.relaxed.opt-size	agree candidates=macos.multiply_half.relaxed.O2.contract-off matched=macos.multiply_half.relaxed.O2.contract-off
+comparison.macos.multiply_half.runtime.relaxed.opt-size.fpfun-fast	agree candidates=macos.multiply_half.relaxed.O2.contract-off.fpfun-fast matched=macos.multiply_half.relaxed.O2.contract-off.fpfun-fast
+comparison.macos.multiply_half.runtime.safe.opt-default	agree candidates=macos.multiply_half.safe.O2.contract-off matched=macos.multiply_half.safe.O2.contract-off
+comparison.macos.multiply_half.runtime.safe.opt-default.fpfun-fast	agree candidates=macos.multiply_half.safe.O2.contract-off.fpfun-fast matched=macos.multiply_half.safe.O2.contract-off.fpfun-fast
+comparison.macos.multiply_half.runtime.safe.opt-size	agree candidates=macos.multiply_half.safe.O2.contract-off matched=macos.multiply_half.safe.O2.contract-off
+comparison.macos.multiply_half.runtime.safe.opt-size.fpfun-fast	agree candidates=macos.multiply_half.safe.O2.contract-off.fpfun-fast matched=macos.multiply_half.safe.O2.contract-off.fpfun-fast
+comparison.macos.multiply_one.runtime.fast.opt-default	agree candidates=macos.multiply_one.fast.O2.contract-off matched=macos.multiply_one.fast.O2.contract-off
+comparison.macos.multiply_one.runtime.fast.opt-size	agree candidates=macos.multiply_one.fast.O2.contract-off matched=macos.multiply_one.fast.O2.contract-off
+comparison.macos.multiply_one.runtime.relaxed.opt-default	agree candidates=macos.multiply_one.relaxed.O2.contract-off matched=macos.multiply_one.relaxed.O2.contract-off
+comparison.macos.multiply_one.runtime.relaxed.opt-size	agree candidates=macos.multiply_one.relaxed.O2.contract-off matched=macos.multiply_one.relaxed.O2.contract-off
+comparison.macos.multiply_one.runtime.safe.opt-default	agree candidates=macos.multiply_one.safe.O2.contract-off matched=macos.multiply_one.safe.O2.contract-off
+comparison.macos.multiply_one.runtime.safe.opt-size	agree candidates=macos.multiply_one.safe.O2.contract-off matched=macos.multiply_one.safe.O2.contract-off
+comparison.macos.multiply_two.runtime.fast.opt-default	agree candidates=macos.multiply_two.fast.O2.contract-off matched=macos.multiply_two.fast.O2.contract-off
+comparison.macos.multiply_two.runtime.fast.opt-default.fpfun-fast	agree candidates=macos.multiply_two.fast.O2.contract-off.fpfun-fast matched=macos.multiply_two.fast.O2.contract-off.fpfun-fast
+comparison.macos.multiply_two.runtime.fast.opt-size	agree candidates=macos.multiply_two.fast.O2.contract-off matched=macos.multiply_two.fast.O2.contract-off
+comparison.macos.multiply_two.runtime.fast.opt-size.fpfun-fast	agree candidates=macos.multiply_two.fast.O2.contract-off.fpfun-fast matched=macos.multiply_two.fast.O2.contract-off.fpfun-fast
+comparison.macos.multiply_two.runtime.relaxed.opt-default	agree candidates=macos.multiply_two.relaxed.O2.contract-off matched=macos.multiply_two.relaxed.O2.contract-off
+comparison.macos.multiply_two.runtime.relaxed.opt-default.fpfun-fast	agree candidates=macos.multiply_two.relaxed.O2.contract-off.fpfun-fast matched=macos.multiply_two.relaxed.O2.contract-off.fpfun-fast
+comparison.macos.multiply_two.runtime.relaxed.opt-size	agree candidates=macos.multiply_two.relaxed.O2.contract-off matched=macos.multiply_two.relaxed.O2.contract-off
+comparison.macos.multiply_two.runtime.relaxed.opt-size.fpfun-fast	agree candidates=macos.multiply_two.relaxed.O2.contract-off.fpfun-fast matched=macos.multiply_two.relaxed.O2.contract-off.fpfun-fast
+comparison.macos.multiply_two.runtime.safe.opt-default	agree candidates=macos.multiply_two.safe.O2.contract-off matched=macos.multiply_two.safe.O2.contract-off
+comparison.macos.multiply_two.runtime.safe.opt-default.fpfun-fast	agree candidates=macos.multiply_two.safe.O2.contract-off.fpfun-fast matched=macos.multiply_two.safe.O2.contract-off.fpfun-fast
+comparison.macos.multiply_two.runtime.safe.opt-size	agree candidates=macos.multiply_two.safe.O2.contract-off matched=macos.multiply_two.safe.O2.contract-off
+comparison.macos.multiply_two.runtime.safe.opt-size.fpfun-fast	agree candidates=macos.multiply_two.safe.O2.contract-off.fpfun-fast matched=macos.multiply_two.safe.O2.contract-off.fpfun-fast
+comparison.macos.reassociation_chain.runtime.fast.opt-default	agree candidates=macos.reassociation_chain.fast.O2.contract-off matched=macos.reassociation_chain.fast.O2.contract-off
+comparison.macos.reassociation_chain.runtime.fast.opt-size	agree candidates=macos.reassociation_chain.fast.O2.contract-off matched=macos.reassociation_chain.fast.O2.contract-off
+comparison.macos.reassociation_chain.runtime.relaxed.opt-default	agree candidates=macos.reassociation_chain.relaxed.O2.contract-off matched=macos.reassociation_chain.relaxed.O2.contract-off
+comparison.macos.reassociation_chain.runtime.relaxed.opt-size	agree candidates=macos.reassociation_chain.relaxed.O2.contract-off matched=macos.reassociation_chain.relaxed.O2.contract-off
+comparison.macos.reassociation_chain.runtime.safe.opt-default	agree candidates=macos.reassociation_chain.safe.O2.contract-off matched=macos.reassociation_chain.safe.O2.contract-off
+comparison.macos.reassociation_chain.runtime.safe.opt-size	agree candidates=macos.reassociation_chain.safe.O2.contract-off matched=macos.reassociation_chain.safe.O2.contract-off
+comparison.macos.scale_one_bias_zero.runtime.fast.opt-default	agree candidates=macos.scale_one_bias_zero.fast.O2.contract-off matched=macos.scale_one_bias_zero.fast.O2.contract-off
+comparison.macos.scale_one_bias_zero.runtime.fast.opt-default.fpfun-fast	agree candidates=macos.scale_one_bias_zero.fast.O2.contract-off.fpfun-fast matched=macos.scale_one_bias_zero.fast.O2.contract-off.fpfun-fast
+comparison.macos.scale_one_bias_zero.runtime.fast.opt-size	agree candidates=macos.scale_one_bias_zero.fast.O2.contract-off matched=macos.scale_one_bias_zero.fast.O2.contract-off
+comparison.macos.scale_one_bias_zero.runtime.fast.opt-size.fpfun-fast	agree candidates=macos.scale_one_bias_zero.fast.O2.contract-off.fpfun-fast matched=macos.scale_one_bias_zero.fast.O2.contract-off.fpfun-fast
+comparison.macos.scale_one_bias_zero.runtime.relaxed.opt-default	agree candidates=macos.scale_one_bias_zero.relaxed.O2.contract-off matched=macos.scale_one_bias_zero.relaxed.O2.contract-off
+comparison.macos.scale_one_bias_zero.runtime.relaxed.opt-default.fpfun-fast	agree candidates=macos.scale_one_bias_zero.relaxed.O2.contract-off.fpfun-fast matched=macos.scale_one_bias_zero.relaxed.O2.contract-off.fpfun-fast
+comparison.macos.scale_one_bias_zero.runtime.relaxed.opt-size	agree candidates=macos.scale_one_bias_zero.relaxed.O2.contract-off matched=macos.scale_one_bias_zero.relaxed.O2.contract-off
+comparison.macos.scale_one_bias_zero.runtime.relaxed.opt-size.fpfun-fast	agree candidates=macos.scale_one_bias_zero.relaxed.O2.contract-off.fpfun-fast matched=macos.scale_one_bias_zero.relaxed.O2.contract-off.fpfun-fast
+comparison.macos.scale_one_bias_zero.runtime.safe.opt-default	agree candidates=macos.scale_one_bias_zero.safe.O2.contract-off matched=macos.scale_one_bias_zero.safe.O2.contract-off
+comparison.macos.scale_one_bias_zero.runtime.safe.opt-default.fpfun-fast	agree candidates=macos.scale_one_bias_zero.safe.O2.contract-off.fpfun-fast matched=macos.scale_one_bias_zero.safe.O2.contract-off.fpfun-fast
+comparison.macos.scale_one_bias_zero.runtime.safe.opt-size	agree candidates=macos.scale_one_bias_zero.safe.O2.contract-off matched=macos.scale_one_bias_zero.safe.O2.contract-off
+comparison.macos.scale_one_bias_zero.runtime.safe.opt-size.fpfun-fast	agree candidates=macos.scale_one_bias_zero.safe.O2.contract-off.fpfun-fast matched=macos.scale_one_bias_zero.safe.O2.contract-off.fpfun-fast
+comparison.macos.scale_two_bias_one.runtime.fast.opt-default	agree candidates=macos.scale_two_bias_one.fast.O2.contract-fast,macos.scale_two_bias_one.fast.O2.contract-off,macos.scale_two_bias_one.fast.O2.contract-on matched=macos.scale_two_bias_one.fast.O2.contract-fast,macos.scale_two_bias_one.fast.O2.contract-off,macos.scale_two_bias_one.fast.O2.contract-on
+comparison.macos.scale_two_bias_one.runtime.fast.opt-size	agree candidates=macos.scale_two_bias_one.fast.O2.contract-fast,macos.scale_two_bias_one.fast.O2.contract-off,macos.scale_two_bias_one.fast.O2.contract-on matched=macos.scale_two_bias_one.fast.O2.contract-fast,macos.scale_two_bias_one.fast.O2.contract-off,macos.scale_two_bias_one.fast.O2.contract-on
+comparison.macos.scale_two_bias_one.runtime.relaxed.opt-default	agree candidates=macos.scale_two_bias_one.relaxed.O2.contract-fast,macos.scale_two_bias_one.relaxed.O2.contract-off,macos.scale_two_bias_one.relaxed.O2.contract-on matched=macos.scale_two_bias_one.relaxed.O2.contract-fast,macos.scale_two_bias_one.relaxed.O2.contract-off,macos.scale_two_bias_one.relaxed.O2.contract-on
+comparison.macos.scale_two_bias_one.runtime.relaxed.opt-size	agree candidates=macos.scale_two_bias_one.relaxed.O2.contract-fast,macos.scale_two_bias_one.relaxed.O2.contract-off,macos.scale_two_bias_one.relaxed.O2.contract-on matched=macos.scale_two_bias_one.relaxed.O2.contract-fast,macos.scale_two_bias_one.relaxed.O2.contract-off,macos.scale_two_bias_one.relaxed.O2.contract-on
+comparison.macos.scale_two_bias_one.runtime.safe.opt-default	agree candidates=macos.scale_two_bias_one.safe.O2.contract-fast,macos.scale_two_bias_one.safe.O2.contract-off,macos.scale_two_bias_one.safe.O2.contract-on matched=macos.scale_two_bias_one.safe.O2.contract-fast,macos.scale_two_bias_one.safe.O2.contract-off,macos.scale_two_bias_one.safe.O2.contract-on
+comparison.macos.scale_two_bias_one.runtime.safe.opt-size	agree candidates=macos.scale_two_bias_one.safe.O2.contract-fast,macos.scale_two_bias_one.safe.O2.contract-off,macos.scale_two_bias_one.safe.O2.contract-on matched=macos.scale_two_bias_one.safe.O2.contract-fast,macos.scale_two_bias_one.safe.O2.contract-off,macos.scale_two_bias_one.safe.O2.contract-on
+probe.status	validated
