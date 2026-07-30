@@ -79,6 +79,10 @@ pub(crate) use crate::target::TargetProfileIdentity;
 /// Trailing NUL so no descriptor can be a prefix of a differently-domained
 /// encoding, matching the framing the rest of the workspace's identities use.
 ///
+/// `v7` retires the invented numeric barrier-capacity axis. Tag `0x08` remains
+/// reserved, but a schedule with no synchronization now has no predicate to
+/// prove.
+///
 /// `v6` because every numerical row now carries its complete resolved semantic
 /// type. `v5` carried only the arithmetic class in each row, allowing two
 /// distinct same-class subjects to share feasibility identity.
@@ -88,7 +92,7 @@ pub(crate) use crate::target::TargetProfileIdentity;
 /// `v3` distinguished per-dimension behaviours after the strict-arithmetic
 /// boolean was retired, but two profiles resting on different measured builds
 /// still collided under it.
-const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v6\0";
+const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v7\0";
 
 /// Governed key of the feasibility rule set this authority applies.
 ///
@@ -102,12 +106,17 @@ const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v6\0"
 /// layer's `FeasibilityRuleSetRef` carries both a key and a revision rather than
 /// one number.
 ///
-/// This key replaces `tiler.feasibility.phased-capability-bounds.v1`, whose
-/// vocabulary was capability bounds alone: it could neither express a
-/// per-dimension numerical predicate nor decide one, and it named an axis
-/// (`strict-f32`) this rule set no longer has.
+/// `v2` retires the numeric barrier-capacity predicate from the vocabulary.
+/// `v1` could decide a predicate the corrected authority cannot express, so a
+/// revision bump would violate the key's vocabulary boundary.
+///
+/// The family originally replaced
+/// `tiler.feasibility.phased-capability-bounds.v1`, whose vocabulary was
+/// capability bounds alone: it could neither express a per-dimension numerical
+/// predicate nor decide one, and it named an axis (`strict-f32`) this rule set
+/// no longer has.
 const GOVERNED_FEASIBILITY_RULE_SET_KEY: &str =
-    "tiler.feasibility.phased-capability-and-numerical-honourability.v1";
+    "tiler.feasibility.phased-capability-and-numerical-honourability.v2";
 
 /// Nonzero output-affecting revision of the governed feasibility rule set.
 ///
@@ -177,8 +186,6 @@ pub(crate) enum CapabilityAxis {
     DeviceAddressSpace,
     /// Explicitly staged local memory, in bytes.
     LocalMemoryBytes,
-    /// Barrier/collective synchronization operations.
-    Barriers,
 }
 
 impl CapabilityAxis {
@@ -191,10 +198,10 @@ impl CapabilityAxis {
     /// whose descriptor changed without its facts changing would claim to be a
     /// different profile.
     ///
-    /// `0x06` is a retired tag, not a free one. It named the withdrawn
-    /// `StrictF32Arithmetic` axis, and reassigning it would let a `v3`
-    /// descriptor produced after some future widening mean something a reader of
-    /// the retirement would not expect. New axes take the next unused value.
+    /// `0x06` and `0x08` are retired tags, not free ones. They named the
+    /// withdrawn `StrictF32Arithmetic` and numeric barrier-count axes. Reusing
+    /// either would let a descriptor mean something a reader of the retirement
+    /// would not expect. New axes take the next unused value.
     const fn tag(self) -> u8 {
         match self {
             Self::GridAxisThreads => 0x01,
@@ -203,7 +210,6 @@ impl CapabilityAxis {
             Self::IndexWidthBits => 0x04,
             Self::DeviceAddressSpace => 0x05,
             Self::LocalMemoryBytes => 0x07,
-            Self::Barriers => 0x08,
         }
     }
 }
@@ -222,14 +228,13 @@ enum Relation {
 
 /// The canonical axis order. This is the single source of truth for evaluation
 /// and reporting order, matching the derived [`CapabilityAxis`] ordering.
-const CANONICAL_AXES: [CapabilityAxis; 7] = [
+const CANONICAL_AXES: [CapabilityAxis; 6] = [
     CapabilityAxis::GridAxisThreads,
     CapabilityAxis::WorkgroupThreads,
     CapabilityAxis::BufferBindings,
     CapabilityAxis::IndexWidthBits,
     CapabilityAxis::DeviceAddressSpace,
     CapabilityAxis::LocalMemoryBytes,
-    CapabilityAxis::Barriers,
 ];
 
 impl CapabilityAxis {
@@ -242,7 +247,6 @@ impl CapabilityAxis {
             Self::IndexWidthBits => "index-bits",
             Self::DeviceAddressSpace => "device-memory",
             Self::LocalMemoryBytes => "local-memory-bytes",
-            Self::Barriers => "barriers",
         }
     }
 
@@ -251,8 +255,7 @@ impl CapabilityAxis {
             Self::GridAxisThreads
             | Self::WorkgroupThreads
             | Self::BufferBindings
-            | Self::LocalMemoryBytes
-            | Self::Barriers => Relation::AtMost,
+            | Self::LocalMemoryBytes => Relation::AtMost,
             Self::IndexWidthBits => Relation::Exact,
             Self::DeviceAddressSpace => Relation::Implies,
         }
@@ -264,9 +267,7 @@ impl CapabilityAxis {
             Self::GridAxisThreads | Self::WorkgroupThreads => Quantity::Threads(value),
             Self::BufferBindings => Quantity::Bindings(value),
             Self::LocalMemoryBytes => Quantity::Bytes(value),
-            Self::IndexWidthBits | Self::DeviceAddressSpace | Self::Barriers => {
-                Quantity::Count(value)
-            }
+            Self::IndexWidthBits | Self::DeviceAddressSpace => Quantity::Count(value),
         }
     }
 
@@ -1547,7 +1548,6 @@ mod tests {
                 compile_fact(id, CapabilityAxis::IndexWidthBits, 64),
                 compile_fact(id, CapabilityAxis::DeviceAddressSpace, 1),
                 compile_fact(id, CapabilityAxis::LocalMemoryBytes, 0),
-                compile_fact(id, CapabilityAxis::Barriers, 0),
             ],
             baseline_honourability(id),
         )
@@ -1722,7 +1722,6 @@ mod tests {
                 AxisRequirement::new(CapabilityAxis::IndexWidthBits, 64),
                 AxisRequirement::new(CapabilityAxis::DeviceAddressSpace, 1),
                 AxisRequirement::new(CapabilityAxis::LocalMemoryBytes, 0),
-                AxisRequirement::new(CapabilityAxis::Barriers, 0),
             ],
             strict_requirements(),
         )
@@ -1938,7 +1937,6 @@ mod tests {
                 AxisRequirement::new(CapabilityAxis::IndexWidthBits, 64),
                 AxisRequirement::new(CapabilityAxis::DeviceAddressSpace, 1),
                 AxisRequirement::new(CapabilityAxis::LocalMemoryBytes, 0),
-                AxisRequirement::new(CapabilityAxis::Barriers, 0),
             ],
             numerical,
         )
@@ -2327,7 +2325,7 @@ mod tests {
         .unwrap();
         let proposal = FeasibilityProposal::new(
             "candidate:unprovable",
-            vec![AxisRequirement::new(CapabilityAxis::Barriers, 1)],
+            vec![AxisRequirement::new(CapabilityAxis::LocalMemoryBytes, 1)],
             Vec::new(),
         )
         .unwrap();
@@ -2414,7 +2412,7 @@ mod tests {
         assert_eq!(
             CheckedTargetProfile::new(
                 id,
-                vec![compile_fact(&other, CapabilityAxis::Barriers, 0)],
+                vec![compile_fact(&other, CapabilityAxis::LocalMemoryBytes, 0,)],
                 Vec::new()
             ),
             Err(FeasibilityError::MalformedProfile {
@@ -2795,8 +2793,11 @@ mod tests {
         let rules = GOVERNED_FEASIBILITY_RULE_SET;
 
         assert_ne!(rules.key(), profile.identity().key());
-        assert!(rules.revision() > 0);
-        assert!(!rules.key().is_empty());
+        assert_eq!(
+            rules.key(),
+            "tiler.feasibility.phased-capability-and-numerical-honourability.v2"
+        );
+        assert_eq!(rules.revision(), 1);
 
         // The descriptor is the profile's identity beside its key, and it does
         // not carry the rule set: a consumer that recorded only the descriptor

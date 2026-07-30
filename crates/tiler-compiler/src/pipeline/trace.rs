@@ -1062,7 +1062,7 @@ pub(super) fn target_quantity(rule: &str, value: u64) -> Result<Quantity, Explai
         "grid-axis" | "threads-per-workgroup" => Ok(Quantity::Threads(value)),
         "buffer-bindings" => Ok(Quantity::Bindings(value)),
         "local-memory-bytes" => Ok(Quantity::Bytes(value)),
-        "index-bits" | "device-memory" | "barriers" => Ok(Quantity::Count(value)),
+        "index-bits" | "device-memory" => Ok(Quantity::Count(value)),
         _ => Err(ExplainError::UnknownQuantityUnit),
     }
 }
@@ -1252,9 +1252,9 @@ pub(super) fn record_cost_and_selection(
 mod tests {
     use super::{
         CostUnit, ExplainEvent, ExplainStage, FactValue, Quantity, analytical_quantity,
-        opaque_call_rejection_event,
+        opaque_call_rejection_event, target_quantity,
     };
-    use crate::explain::ExplainDisposition;
+    use crate::explain::{ExplainDisposition, ExplainError};
     use crate::frontier::{OpaqueCallRejectionCause, WorkResolutionError};
     use tiler_ir::semantic::{ResolvedValueType, TypeKey};
 
@@ -1277,6 +1277,15 @@ mod tests {
         assert_eq!(
             analytical_quantity(CostUnit::Nanoseconds, 5),
             Quantity::Nanoseconds(5)
+        );
+    }
+
+    /// A retired capability axis cannot survive as an explain-only quantity.
+    #[test]
+    fn barrier_count_is_not_a_target_quantity() {
+        assert_eq!(
+            target_quantity("barriers", 0),
+            Err(ExplainError::UnknownQuantityUnit)
         );
     }
 
@@ -1438,7 +1447,6 @@ mod tests {
                 buffer_bindings: u32::MAX,
                 threads_per_workgroup: 1,
                 local_memory_bytes: 0,
-                barriers: 0,
                 requires_device_memory: true,
                 input_subnormals: realization.input_subnormals,
                 result_subnormals: realization.result_subnormals,

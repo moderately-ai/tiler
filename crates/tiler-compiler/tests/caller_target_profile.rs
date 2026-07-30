@@ -116,7 +116,6 @@ fn external_profile(
     builder
         .declare_local_memory_bytes(32_768, source.clone())
         .unwrap();
-    builder.declare_barriers(16, source.clone()).unwrap();
     if numerics != NumericalDeclarations::Absent {
         let subject = ScalarArithmetic::f32();
         builder

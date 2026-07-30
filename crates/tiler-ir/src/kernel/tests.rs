@@ -1302,7 +1302,6 @@ fn effect_ordering_requires_the_owning_commit_to_be_last() {
 #[test]
 fn a_barrier_the_schedule_does_not_require_is_rejected_explicitly() {
     let scheduled = pointwise_region(RegionId::new(0), &Shape::from_dims([2, 3]));
-    assert_eq!(scheduled.requirements().barriers, 0);
     let mut builder = KernelBuilder::new(&scheduled).unwrap();
     let (read, write) = pointwise_signature(&mut builder, &scheduled, 6);
     let (invocation, active) = guard(&mut builder, 6);
@@ -1327,10 +1326,7 @@ fn a_barrier_the_schedule_does_not_require_is_rejected_explicitly() {
         .unwrap();
     assert_eq!(
         diagnostics(builder),
-        [KernelDiagnostic::BarrierCount {
-            emitted: 1,
-            required: 0,
-        }]
+        [KernelDiagnostic::UnexpectedSynchronization]
     );
 }
 
@@ -1649,12 +1645,8 @@ fn structured_loop_shape_and_yields_are_checked_at_insertion() {
 fn diagnostics_and_errors_expose_stable_rule_identifiers() {
     assert_eq!(KernelDiagnostic::BodyRefinement.rule(), "body-refinement");
     assert_eq!(
-        KernelDiagnostic::BarrierCount {
-            emitted: 1,
-            required: 0,
-        }
-        .rule(),
-        "barrier-count"
+        KernelDiagnostic::UnexpectedSynchronization.rule(),
+        "unexpected-synchronization"
     );
     assert_eq!(
         KernelLoweringError::Verification(KernelDiagnostic::OutputCoverage).rule(),

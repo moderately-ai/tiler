@@ -1192,8 +1192,7 @@ Several adjacent concepts remain deliberately separate:
   predicate over typed capability facts, candidate resources, evaluated launch
   values, ABI/layout, and binding/access facts, including any named deferred
   phase.
-- `ResourceRequirements` records exact quantities or proven upper bounds used
-  for feasibility, such as bindings, threads, and local-memory bytes.
+- `ResourceRequirements` records exact quantities or proven upper bounds used for feasibility, such as bindings, threads, and local-memory bytes. It does not encode synchronization as a barrier-operation count.
 - `ResourceEstimate` records quantities that cannot yet prove feasibility, such
   as register pressure, occupancy, and source/code-size estimates.
 - `ApplicabilityPredicate` is a runtime-checkable condition over shapes,
@@ -1219,6 +1218,8 @@ Several adjacent concepts remain deliberately separate:
 - Index ranges and coordinate maps cannot overflow under the declared guards.
 - The chosen schedule preserves the declared numerical contract.
 
+**Fact — the implemented schedule profile admits only the absence of synchronization.** Its normalized `KernelSchedule` has no identity-bearing synchronization point, phase, placement, participant set, or convergence proof. A schedule with no synchronization requirement is therefore admitted vacuously and consumes no target synchronization fact. This is an implemented subset, not a claim that synchronization can be reconstructed from a kernel operation or a numeric resource count.
+
 ### Target feasibility assessment
 
 `assess_feasibility(ScheduledRegion, TargetProfile)` computes exact/proven
@@ -1236,6 +1237,8 @@ follows route-sensitive `LaunchPreflight` and final selection but precedes
 output/scratch acquisition or encoding. Later allocation and launch invariants
 fail closed. Estimates may guide search and dominance but cannot prove
 feasibility.
+
+Synchronization is not a scalar capacity axis. A future synchronized schedule must carry one typed obligation joining the schedule synchronization point and phase, operation kind, participants and execution scope, visibility, fenced memory spaces, ordering, and convergence. Target support must be one atomic realization fact with provenance over that same subject; independently true component facts cannot be composed into permission for a combination no authority established.
 
 An `Unknown` *feasibility* verdict keeps its candidate in explain and search state only; such a candidate cannot enter an executable `ImplementationFrontier` or manifest. This rule is about target feasibility and does not erase `Unknown` elsewhere: a structurally verified index region may retain an exact unresolved logical predicate. That region remains valid analysis state, but it is not executable refinement evidence. The current compiler runs [semantic discharge before cover or frontier construction](compiler/optimizer.md#refinement-requires-discharged-index-domain-evidence), completes refinement only when every residual is proved, and otherwise fails closed with a typed `Disproved` or `Unknown` assessment.
 
@@ -1270,14 +1273,7 @@ range, and alias class. The initial alias contract permits input/input aliasing
 but requires a newly allocated output that aliases no input. Richer alias
 classes are deferred until an optimization consumes them.
 
-Loads and stores carry dominating schedule-derived bounds evidence. Ordinary
-stores also carry output-ownership evidence; atomics and reductions name their
-selected protocols. Barriers separately state execution scope, memory scope,
-fenced spaces, ordering, convergence, and the schedule synchronization point
-they realize. Serial reductions use explicit loops; collectives retain the
-selected participant set, combine order, identity/tail, owner/visibility, and
-numerical realization. Conversions distinguish semantic value conversion,
-representation conversion, checked index/address narrowing, and bitcast.
+Loads and stores carry dominating schedule-derived bounds evidence. Ordinary stores also carry output-ownership evidence; atomics and reductions name their selected protocols. The proposed complete barrier contract separately states execution scope, memory scope, fenced spaces, ordering, convergence, and the schedule synchronization point it realizes. The current `BarrierSpec` is only a type-system reservation for execution scope, memory scope, fenced spaces, and ordering: it has no schedule synchronization-point identity, phase, placement, participant set, visibility contract, or convergence proof. The implemented verifier therefore rejects every current barrier intrinsically as `UnexpectedSynchronization`, regardless of target facts. Serial reductions use explicit loops; collectives retain the selected participant set, combine order, identity/tail, owner/visibility, and numerical realization. Conversions distinguish semantic value conversion, representation conversion, checked index/address narrowing, and bitcast.
 
 Invocation coordinates are governed builtins admitted by the kernel signature
 and mapped to schedule execution axes, never backend source names. The schedule
@@ -1296,8 +1292,7 @@ initial form.
 - Address spaces are explicit and valid.
 - Every memory effect has dominating bounds evidence; every ordinary store
   matches its scheduled ownership witness.
-- Barriers and collectives match scheduled participant, scope, fence, phase,
-  convergence, visibility, and order requirements.
+- Once admitted, barriers and collectives match scheduled participant, scope, fence, phase, convergence, visibility, and order requirements. No barrier is admitted by the implemented zero-synchronization schedule profile.
 - Builtins, loops, tails, accesses, conversions, and reductions refine the
   referenced schedule and numerical contracts.
 - Derived local-memory and launch requirements match the schedule. Target

@@ -28,14 +28,18 @@ use super::MAX_KERNEL_IDENTITY_BYTES;
 /// Named so [`encode_identity`] and [`identity_encoded_len`] measure the same
 /// bytes rather than agreeing on a literal by inspection.
 ///
+/// `v4` removes the invalid numeric barrier-capacity field from the fixed
+/// resource-requirement record. A v3 reader would otherwise consume the
+/// following fields at the old offset.
+///
 /// `v2` appended the unsigned-byte access/SSA type. `v3` additionally binds
 /// semantic component roles to buffer parameters and admits the signed-I32
 /// arithmetic, explicit conversions, and packed-U4 extraction required by the
 /// strict-affine dequantization proof. Existing type and operation tags retain
-/// their earlier values and new variants receive appended tags. These facts
-/// change what a verified kernel means, so each widening advances the domain
-/// rather than letting an earlier reader interpret the kernel incompletely.
-const KERNEL_DOMAIN: &[u8] = b"tiler.kernel.v3\0";
+/// their earlier values and new variants receive appended tags. These changes
+/// advance the domain rather than letting an earlier reader interpret the
+/// kernel incompletely.
+const KERNEL_DOMAIN: &[u8] = b"tiler.kernel.v4\0";
 
 /// The width [`push_len`] frames a length in, as ADR 0074 fixes it.
 const LENGTH_BYTES: usize = size_of::<u64>();
@@ -1126,7 +1130,6 @@ fn push_requirements(bytes: &mut Vec<u8>, requirements: &ResourceRequirements) {
     bytes.extend_from_slice(&requirements.buffer_bindings.to_be_bytes());
     bytes.extend_from_slice(&requirements.threads_per_workgroup.to_be_bytes());
     bytes.extend_from_slice(&requirements.local_memory_bytes.to_be_bytes());
-    bytes.extend_from_slice(&requirements.barriers.to_be_bytes());
     bytes.push(u8::from(requirements.requires_device_memory));
     push_subnormal(bytes, requirements.input_subnormals);
     push_subnormal(bytes, requirements.result_subnormals);
@@ -1409,7 +1412,6 @@ fn requirements_encoded_len(requirements: &ResourceRequirements) -> usize {
     size_of_val(&requirements.buffer_bindings)
         .saturating_add(size_of_val(&requirements.threads_per_workgroup))
         .saturating_add(size_of_val(&requirements.local_memory_bytes))
-        .saturating_add(size_of_val(&requirements.barriers))
         // The device-memory flag, two subnormal modes, and four permissions.
         .saturating_add(7)
         .saturating_add(exceptional_assumption_encoded_len(

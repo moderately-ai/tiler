@@ -396,7 +396,6 @@ mod tests {
             buffer_bindings: bindings,
             threads_per_workgroup: 1,
             local_memory_bytes: 0,
-            barriers: 0,
             requires_device_memory: true,
             input_subnormals: SubnormalMode::Preserve,
             result_subnormals: SubnormalMode::Preserve,

@@ -256,6 +256,12 @@ fn an_encoded_envelope_round_trips_to_an_equal_model() {
         decoded.canonical_identity().expect("identity re-derives"),
         *artifact.canonical_identity(),
     );
+    assert!(
+        artifact
+            .canonical_identity()
+            .as_bytes()
+            .starts_with(b"tiler.artifact-program.v10\0")
+    );
 }
 
 #[test]
@@ -288,6 +294,7 @@ fn the_framing_header_is_the_fixed_width_it_declares() {
         &bytes[HEADER_BYTES..HEADER_BYTES + MANIFEST_DOMAIN.len()],
         MANIFEST_DOMAIN,
     );
+    assert_eq!(MANIFEST_SCHEMA, (8, 0));
 }
 
 #[test]
@@ -713,6 +720,14 @@ fn an_unknown_digest_algorithm_is_rejected_rather_than_inferred() {
 #[test]
 fn an_unknown_manifest_or_component_schema_is_rejected() {
     let schema_at = HEADER_BYTES + MANIFEST_DOMAIN.len();
+    let mut previous_manifest = encoded(&default_artifact());
+    previous_manifest[schema_at..schema_at + 2].copy_from_slice(&7_u16.to_be_bytes());
+    reseal(&mut previous_manifest);
+    assert_eq!(
+        decode(&previous_manifest),
+        Err(ArtifactCodecError::UnsupportedManifestSchema { major: 7, minor: 0 }),
+    );
+
     let mut manifest = encoded(&default_artifact());
     manifest[schema_at + 2..schema_at + 4].copy_from_slice(&5_u16.to_be_bytes());
     reseal(&mut manifest);

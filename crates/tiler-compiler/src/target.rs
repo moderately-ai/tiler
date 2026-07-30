@@ -28,7 +28,6 @@
 //! builder.declare_index_bits(64, source.clone())?;
 //! builder.declare_device_memory(true, source.clone())?;
 //! builder.declare_local_memory_bytes(32_768, source.clone())?;
-//! builder.declare_barriers(16, source.clone())?;
 //! builder.declare_dtype_dispatchability(
 //!     F32::resolved_type(),
 //!     DTypeDispatchability::Dispatchable,
@@ -136,12 +135,12 @@ pub(crate) const GOVERNED_TARGET_PROFILE_KEY: &str = "tiler.prototype-target-neu
 /// Domain of the complete producer declaration carried into artifact identity.
 ///
 /// This is a new grammar, not a continuation of feasibility's
-/// `tiler.target-profile.descriptor.v6`: the checked descriptor remains an
-/// internal feasibility component, while this v7 declaration encodes the same
+/// `tiler.target-profile.descriptor.v7`: the checked descriptor remains an
+/// internal feasibility component, while this v8 declaration encodes the same
 /// capability and numerical semantics plus exact dtype dispatch through one
 /// shared provenance table. A reader of an older domain therefore cannot
 /// mistake these bytes for the new grammar.
-const COMPLETE_PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.declaration.v7\0";
+const COMPLETE_PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.declaration.v8\0";
 const PROFILE_SOURCE_DOMAIN: &[u8] = b"tiler.target-profile.fact-sources.v4\0";
 const DISPATCHABILITY_DOMAIN: &[u8] = b"tiler.target-profile.dtype-dispatchability.v2\0";
 
@@ -1087,11 +1086,8 @@ impl TargetProfileBuilder {
             .declare_device_memory(true, source.clone())
             .expect("the governed device-memory declaration is valid");
         builder
-            .declare_local_memory_bytes(0, source.clone())
+            .declare_local_memory_bytes(0, source)
             .expect("the governed local-memory declaration is valid");
-        builder
-            .declare_barriers(0, source)
-            .expect("the governed barrier declaration is valid");
         builder.scalar = governed_target_honourability();
         // This is a compiler-governed prototype, target-neutral dispatch fact.
         // It does not claim Metal support or any device-family measurement.
@@ -1292,32 +1288,6 @@ impl TargetProfileBuilder {
         source: TargetCompileProfileMeasurementSource,
     ) -> Result<(), TargetProfileBuildError> {
         self.declare_quantitative(CapabilityAxis::LocalMemoryBytes, bound, source.0)
-    }
-
-    /// Declares the maximum barrier/collective synchronization operations.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed error without inserting an invalid or duplicate fact.
-    pub fn declare_barriers(
-        &mut self,
-        bound: u32,
-        source: TargetFactSource,
-    ) -> Result<(), TargetProfileBuildError> {
-        self.declare_quantitative(CapabilityAxis::Barriers, u64::from(bound), source.0)
-    }
-
-    /// Declares a measured maximum barrier/collective synchronization count.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed error without inserting an invalid or duplicate fact.
-    pub fn declare_measured_barriers(
-        &mut self,
-        bound: u32,
-        source: TargetCompileProfileMeasurementSource,
-    ) -> Result<(), TargetProfileBuildError> {
-        self.declare_quantitative(CapabilityAxis::Barriers, u64::from(bound), source.0)
     }
 
     fn declare_scalar(
@@ -2670,7 +2640,6 @@ mod tests {
         builder
             .declare_local_memory_bytes(32_768, source.clone())
             .unwrap();
-        builder.declare_barriers(16, source).unwrap();
         builder
     }
 
@@ -2900,7 +2869,6 @@ mod tests {
         second
             .declare_local_memory_bytes(32_768, revised_source.clone())
             .unwrap();
-        second.declare_barriers(16, revised_source).unwrap();
         let second = second.build().unwrap();
         assert_ne!(
             first.canonical_descriptor(),
@@ -3008,9 +2976,6 @@ mod tests {
             .declare_measured_local_memory_bytes(32_768, source.clone())
             .unwrap();
         builder
-            .declare_measured_barriers(16, source.clone())
-            .unwrap();
-        builder
             .declare_measured_input_subnormal_behaviour(
                 subject.clone(),
                 SubnormalMode::Preserve,
@@ -3104,7 +3069,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(builder.quantitative.len(), 7);
+        assert_eq!(builder.quantitative.len(), 6);
         assert_eq!(builder.scalar.len(), 15);
         assert_eq!(builder.dispatchability.len(), 1);
         for provenance in builder
@@ -3875,22 +3840,20 @@ mod tests {
     }
 
     #[test]
-    fn request_subject_binds_local_memory_and_barriers() {
+    fn request_subject_binds_local_memory() {
         let baseline = public_builder("test.request-subject.v1").build().unwrap();
-        for axis in [CapabilityAxis::LocalMemoryBytes, CapabilityAxis::Barriers] {
-            let mut changed = public_builder("test.request-subject.v1");
-            changed
-                .quantitative
-                .iter_mut()
-                .find(|declaration| declaration.axis == axis)
-                .unwrap()
-                .bound += 1;
-            let changed = changed.build().unwrap();
-            assert_ne!(
-                baseline.request_subject_bytes(),
-                changed.request_subject_bytes()
-            );
-        }
+        let mut changed = public_builder("test.request-subject.v1");
+        changed
+            .quantitative
+            .iter_mut()
+            .find(|declaration| declaration.axis == CapabilityAxis::LocalMemoryBytes)
+            .unwrap()
+            .bound += 1;
+        let changed = changed.build().unwrap();
+        assert_ne!(
+            baseline.request_subject_bytes(),
+            changed.request_subject_bytes()
+        );
         assert_eq!(
             baseline.request_subject_bytes(),
             baseline.canonical_descriptor()

@@ -219,13 +219,8 @@ pub enum KernelDiagnostic {
     OutputCoverage,
     /// The ordered effect sequence does not end with the owning store.
     EffectOrdering,
-    /// The emitted barrier count differs from the scheduled requirement.
-    BarrierCount {
-        /// Barriers the kernel emits.
-        emitted: u32,
-        /// Barriers the derived requirements admit.
-        required: u32,
-    },
+    /// The kernel contains synchronization that no schedule has authorized.
+    UnexpectedSynchronization,
     /// The structured loops do not realize the scheduled reduction topology.
     ReductionContract,
     /// The reduction contributor domain is malformed.
@@ -260,7 +255,7 @@ impl KernelDiagnostic {
             Self::OwnershipEvidence => "ownership-evidence",
             Self::OutputCoverage => "output-coverage",
             Self::EffectOrdering => "effect-ordering",
-            Self::BarrierCount { .. } => "barrier-count",
+            Self::UnexpectedSynchronization => "unexpected-synchronization",
             Self::ReductionContract => "reduction-contract",
             Self::ContributorDomain => "contributor-domain",
             Self::ElementCountOverflow => "element-count-overflow",

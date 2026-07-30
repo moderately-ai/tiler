@@ -94,7 +94,7 @@ struct LoopSummary {
 #[derive(Debug, Default)]
 struct Walk {
     effects: Vec<Effect>,
-    barriers: u32,
+    has_synchronization: bool,
     loops: Vec<LoopSummary>,
     ungoverned_predicate: bool,
 }
@@ -115,7 +115,7 @@ pub(super) fn verify_kernel(
     if walk.ungoverned_predicate {
         return Err(KernelDiagnostic::PredicateDominance);
     }
-    verify_effects(&walk, schedule, reads, write, derived)?;
+    verify_effects(&walk, schedule, reads, write)?;
     verify_reduction(&walk, schedule, reads)?;
 
     let canonical = super::lower::derive_canonical(schedule, schedule_identity, derived)?;
@@ -266,7 +266,7 @@ fn visit_block(
                 loop_depth,
                 guarded,
             }),
-            OperationKind::Barrier { .. } => walk.barriers = walk.barriers.saturating_add(1),
+            OperationKind::Barrier { .. } => walk.has_synchronization = true,
             OperationKind::Predicated { predicate, body } => {
                 if !guards.contains(predicate) {
                     walk.ungoverned_predicate = true;
@@ -328,13 +328,9 @@ fn verify_effects(
     schedule: &ScheduledRegion,
     reads: &[Access],
     write: &Access,
-    derived: ResourceRequirements,
 ) -> Result<(), KernelDiagnostic> {
-    if walk.barriers != derived.barriers {
-        return Err(KernelDiagnostic::BarrierCount {
-            emitted: walk.barriers,
-            required: derived.barriers,
-        });
+    if walk.has_synchronization {
+        return Err(KernelDiagnostic::UnexpectedSynchronization);
     }
     if walk.effects.iter().any(|effect| !effect.guarded) {
         return Err(KernelDiagnostic::PredicateDominance);

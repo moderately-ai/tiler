@@ -132,7 +132,16 @@ use super::keys::{
 /// role, physical storage scalar, complete storage encoding, and kernel access
 /// type. A `v8` identity cannot distinguish schemes or physical encodings that
 /// require different runtime bindings.
-const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v9\0";
+///
+/// # Why this is a `v10` step
+///
+/// Raised to `v10` when the resource-requirement record stopped encoding a
+/// numeric barrier count. The count was not a valid synchronization capability:
+/// it carried no operation kind, participants, visibility, ordering, placement,
+/// or convergence proof. Removing its four bytes changes the framing of every
+/// following entry field, so the old and corrected subjects need incomparable
+/// domains rather than two interpretations of one byte string.
+const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v10\0";
 const STAGE_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.stage.v1\0";
 const PAYLOAD_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.payload.v1\0";
 /// Versioned domain separator of one selected provider's canonical key.
@@ -1739,7 +1748,6 @@ pub(super) fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirement
         buffer_bindings,
         threads_per_workgroup,
         local_memory_bytes,
-        barriers,
         requires_device_memory,
         input_subnormals,
         result_subnormals,
@@ -1753,7 +1761,6 @@ pub(super) fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirement
     bytes.extend_from_slice(&buffer_bindings.to_be_bytes());
     bytes.extend_from_slice(&threads_per_workgroup.to_be_bytes());
     bytes.extend_from_slice(&local_memory_bytes.to_be_bytes());
-    bytes.extend_from_slice(&barriers.to_be_bytes());
     bytes.push(u8::from(requires_device_memory));
     bytes.push(subnormal_tag(input_subnormals));
     bytes.push(subnormal_tag(result_subnormals));

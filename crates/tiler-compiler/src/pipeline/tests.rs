@@ -614,7 +614,6 @@ fn every_wired_authority_emits_its_typed_explain_records() {
             ("kernel.plan-refinement", 2),
             ("program.plan-verified", 2),
             ("artifact.plan-construction", 2),
-            ("target.barriers", 3),
             ("target.buffer-bindings", 3),
             ("target.device-memory", 3),
             ("target.grid-axis", 3),
@@ -638,6 +637,17 @@ fn every_wired_authority_emits_its_typed_explain_records() {
             ("tiler.cost.structural.v1", 2),
             ("tiler.selection.structural-pareto.v1", 2),
         ])
+    );
+    assert!(
+        trace.records().iter().all(|record| {
+            record.rule().key().as_str() != "target.barriers"
+                && !matches!(
+                    record.event(),
+                    ExplainEvent::Feasibility { predicate, .. }
+                        if predicate.as_str() == "barriers"
+                )
+        }),
+        "a zero-synchronization program emitted an invented barrier capability fact"
     );
     let analytical = trace
         .records()
@@ -853,7 +863,7 @@ fn end_to_end_explain_emitter_has_exhaustive_typed_conformance() {
                     (Quantity::Bytes(_), Quantity::Bytes(_))
                 )
             }
-            "index-bits" | "device-memory" | "barriers" => {
+            "index-bits" | "device-memory" => {
                 matches!(
                     (required, available),
                     (Quantity::Count(_), Quantity::Count(_))
@@ -869,7 +879,6 @@ fn end_to_end_explain_emitter_has_exhaustive_typed_conformance() {
     assert_eq!(
         target_predicates,
         BTreeMap::from([
-            ("barriers", 3),
             ("buffer-bindings", 3),
             ("device-memory", 3),
             ("grid-axis", 3),

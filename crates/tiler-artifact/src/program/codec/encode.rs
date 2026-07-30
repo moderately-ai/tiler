@@ -43,16 +43,18 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 /// NaN-assumption, and infinity-assumption fields, and to `7.0` when interface
 /// entries gained ordered logical components and binding rows gained component
 /// roles, physical storage scalars, complete storage encodings, and kernel
-/// access types.
-/// All six are deliberately **major** steps rather than the minor ones they
+/// access types, and to `8.0` when the entry resource record stopped carrying
+/// the invalid numeric barrier count.
+/// All seven are deliberately **major** steps rather than the minor ones they
 /// might look like: the reader admits `minor <= implemented`, so a minor bump
 /// would have left it accepting an older manifest whose rows it can no longer
 /// parse. A field changed *or added* inside a fixed-width record is not
 /// additive — the `5.0` step inserts four bytes ahead of an existing field, so a
 /// `4.0` reader would consume the offset as the extent and lose framing for
-/// everything after it, while the `6.0` step appends fields inside each entry
-/// before its bindings — and the `4.0` step also moved a field's width.
-pub(super) const MANIFEST_SCHEMA: (u16, u16) = (7, 0);
+/// everything after it, the `6.0` step appends fields inside each entry before
+/// its bindings, and the `8.0` step removes four bytes ahead of existing fields
+/// — and the `4.0` step also moved a field's width.
+pub(super) const MANIFEST_SCHEMA: (u16, u16) = (8, 0);
 
 /// Versioned domain tag opening the canonical manifest bytes.
 pub(super) const MANIFEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.manifest.v1\0";

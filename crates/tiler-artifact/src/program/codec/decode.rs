@@ -864,7 +864,6 @@ fn parse_entry(
         buffer_bindings: cursor.u32()?,
         threads_per_workgroup: cursor.u32()?,
         local_memory_bytes: cursor.u64()?,
-        barriers: cursor.u32()?,
         requires_device_memory: cursor.boolean()?,
         input_subnormals: cursor.subnormal()?,
         result_subnormals: cursor.subnormal()?,

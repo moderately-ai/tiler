@@ -441,8 +441,6 @@ pub struct ResourceRequirements {
     pub threads_per_workgroup: u32,
     /// Local (threadgroup) memory bytes required.
     pub local_memory_bytes: u64,
-    /// Execution barriers required.
-    pub barriers: u32,
     /// Whether the region requires a device address space.
     pub requires_device_memory: bool,
     /// Subnormal input handling the region's declared realization requires.
@@ -590,7 +588,8 @@ pub fn contributor_count(axes: &[Axis], access: &LogicalAccess) -> Result<u64, C
 /// Derives the resource requirements of a verified region.
 ///
 /// Bindings follow the region's access count; the launch fixes the thread
-/// count; the bounded profile stages no local memory or barriers. The numerical
+/// count; the bounded profile stages no local memory and introduces no
+/// synchronization requirement. The numerical
 /// realization is carried forward whole rather than reduced to a predicate:
 /// deriving one bit here would decide, inside intrinsic verification, which
 /// dimensions a target is allowed to be asked about, and that decision belongs
@@ -601,7 +600,6 @@ pub(super) fn derive_requirements(region: &ScheduledRegion) -> ResourceRequireme
         buffer_bindings,
         threads_per_workgroup: region.schedule.threads_per_workgroup,
         local_memory_bytes: 0,
-        barriers: 0,
         requires_device_memory: true,
         input_subnormals: region.index.numerical.input_subnormals,
         result_subnormals: region.index.numerical.result_subnormals,

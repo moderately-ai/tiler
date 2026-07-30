@@ -3222,7 +3222,12 @@ mod tests {
                 // the nested checked descriptor and second provenance table
                 // with one canonical source table shared by quantitative,
                 // numerical, and exact-dispatch rows.
-                "tiler-explain-v4 request=109224285c9ffff2\n",
+                // Rebaselined when the invented barrier-count target axis was
+                // removed and complete profile declaration v8 reserved its
+                // retired tag. The request subject commits to that target
+                // declaration, so preserving the old qualifier would erase an
+                // identity-affecting target contract change.
+                "tiler-explain-v4 request=3c62d73c2515bde0\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )
