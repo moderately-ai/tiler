@@ -106,9 +106,9 @@ use tiler_metal_aot::input::{
 use crate::emit::emit_translation_unit;
 use crate::record::MetalNumericalRequirement;
 use crate::target::{
-    LaunchIndexRealization, MetalDeploymentMinimum, MetalFloatArithmeticType, MetalFlushedZeroSign,
-    MetalPlatform, MetalSubnormalArithmetic, MetalSubnormalArithmeticFacts, MetalTargetFacts,
-    MslLanguageVersion,
+    LaunchIndexRealization, MetalDeploymentMinimum, MetalEmissionRealization,
+    MetalFloatArithmeticType, MetalFlushedZeroSign, MetalPlatform, MetalSubnormalArithmetic,
+    MetalSubnormalArithmeticFacts, MetalTargetFacts, MslLanguageVersion,
 };
 
 /// The ambient input that turns an absent toolchain into a failure.
@@ -165,7 +165,6 @@ fn emitter_facts() -> MetalTargetFacts {
         MslLanguageVersion::Metal3_1,
         MetalPlatform::MacOs,
         MetalDeploymentMinimum::new(14, 0),
-        LaunchIndexRealization::ThreadPositionInGridUInt,
         MetalSubnormalArithmeticFacts::unmeasured()
             .stating(
                 MetalFloatArithmeticType::F32,
@@ -185,6 +184,10 @@ fn emitter_facts() -> MetalTargetFacts {
             ),
         31,
     )
+}
+
+const fn emission_realization() -> MetalEmissionRealization {
+    MetalEmissionRealization::new(LaunchIndexRealization::ThreadPositionInGridUInt)
 }
 
 /// Builds the compilation request the goldens are governed to compile under.
@@ -370,8 +373,12 @@ fn every_golden_declares_the_target_the_driver_compiles_it_for() {
 /// compile the source under numerics it does not tolerate.
 #[test]
 fn the_strict_realization_honours_every_requirement_emission_records() {
-    let unit = emit_translation_unit(&[&crate::tests::pointwise_kernel()], &emitter_facts())
-        .expect("the bounded pointwise fixture emits");
+    let unit = emit_translation_unit(
+        &[&crate::tests::pointwise_kernel()],
+        &emitter_facts(),
+        emission_realization(),
+    )
+    .expect("the bounded pointwise fixture emits");
     let realization = NumericalRealization::strict_baseline();
     let flags = golden_request(unit.source()).compile_flags();
     assert!(
@@ -445,8 +452,12 @@ fn the_portfolio_unit_links_every_entry_point_when_a_toolchain_resolves() {
     let single = crate::tests::single_axis_reduction_kernel();
     let multi = crate::tests::multi_axis_reduction_kernel();
     let fused = crate::tests::fused_reduction_kernel();
-    let unit = emit_translation_unit(&[&pointwise, &single, &multi, &fused], &emitter_facts())
-        .expect("the bounded portfolio emits");
+    let unit = emit_translation_unit(
+        &[&pointwise, &single, &multi, &fused],
+        &emitter_facts(),
+        emission_realization(),
+    )
+    .expect("the bounded portfolio emits");
     assert_eq!(unit.entry_points().len(), 4);
 
     let artifact = toolchain

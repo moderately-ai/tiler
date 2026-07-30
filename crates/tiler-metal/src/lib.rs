@@ -7,19 +7,17 @@
 //!
 //! # What it consumes
 //!
-//! One or more [`tiler_ir::kernel::VerifiedKernel`]s and an explicit
-//! [`target::MetalTargetFacts`]. A verified kernel is already proven to be a
-//! refinement of its scheduled region, so this crate never consults the
-//! semantic graph, re-derives an access relation, infers a reduction order, or
-//! recognizes a fusion shape. It translates the structured operation vocabulary
-//! mechanically, one operation at a time.
+//! One or more [`tiler_ir::kernel::VerifiedKernel`]s, explicit
+//! [`target::MetalTargetFacts`], and a selected
+//! [`target::MetalEmissionRealization`]. A verified kernel is already proven
+//! to be a refinement of its scheduled region, so this crate never consults
+//! the semantic graph, re-derives an access relation, infers a reduction order,
+//! or recognizes a fusion shape. It translates the structured operation
+//! vocabulary mechanically, one operation at a time.
 //!
 //! # What it guarantees
 //!
-//! - **Deterministic bytes.** The same set of verified kernels and the same
-//!   target facts always produce byte-identical source. Entry points are
-//!   ordered by canonical identity, symbols are content-derived, local names
-//!   come from a fixed structural walk, and only ordered containers are used.
+//! - **Deterministic bytes.** The same set of verified kernels, target facts, and selected emission realization always produce byte-identical source. Entry points are ordered by canonical identity, symbols are content-derived, local names come from a fixed structural walk, and only ordered containers are used.
 //! - **Fail-closed translation.** A governed construct with no Metal
 //!   realization is a typed [`diagnostic::MetalEmitError`] naming the rejected
 //!   entity and a stable rule identifier, never best-effort source.
@@ -106,9 +104,10 @@
 //! use tiler_metal::emit::emit_translation_unit;
 //! use tiler_metal::record::{MetalNumericalGap, MetalNumericalRequirement};
 //! use tiler_metal::target::{
-//!     LaunchIndexRealization, MetalDeploymentMinimum, MetalFloatArithmeticType,
-//!     MetalFlushedZeroSign, MetalPlatform, MetalSubnormalArithmetic,
-//!     MetalSubnormalArithmeticFacts, MetalTargetFacts, MslLanguageVersion,
+//!     LaunchIndexRealization, MetalDeploymentMinimum, MetalEmissionRealization,
+//!     MetalFloatArithmeticType, MetalFlushedZeroSign, MetalPlatform,
+//!     MetalSubnormalArithmetic, MetalSubnormalArithmeticFacts, MetalTargetFacts,
+//!     MslLanguageVersion,
 //! };
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -185,7 +184,6 @@
 //!     MslLanguageVersion::Metal3_1,
 //!     MetalPlatform::MacOs,
 //!     MetalDeploymentMinimum::new(14, 0),
-//!     LaunchIndexRealization::ThreadPositionInGridUInt,
 //!     // One measured behaviour per arithmetic type: the Apple row flushes in
 //!     // f32 and preserves in f16. A type left out is Unknown, and emitting
 //!     // arithmetic in it fails the conformance claim rather than borrowing
@@ -203,10 +201,17 @@
 //!         ),
 //!     31,
 //! );
-//! let unit = emit_translation_unit(&[&kernel], &target)?;
+//! let emission = MetalEmissionRealization::new(
+//!     LaunchIndexRealization::ThreadPositionInGridUInt,
+//! );
+//! let unit = emit_translation_unit(&[&kernel], &target, emission)?;
 //!
-//! // Emission is a pure function of the kernels and the target facts.
-//! assert_eq!(unit.source(), emit_translation_unit(&[&kernel], &target)?.source());
+//! // Emission is a pure function of the kernels, target facts, and selected
+//! // source realization.
+//! assert_eq!(
+//!     unit.source(),
+//!     emit_translation_unit(&[&kernel], &target, emission)?.source(),
+//! );
 //! let entry = &unit.entry_points()[0];
 //! assert!(unit.source().contains(&format!("kernel void {}(", entry.symbol())));
 //! assert_eq!(entry.buffers().len(), 2);

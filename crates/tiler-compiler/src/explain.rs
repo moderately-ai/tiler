@@ -15,13 +15,14 @@ use tiler_ir::semantic::ResolvedValueType;
 use crate::fusion::FusionNumericalProof;
 use crate::request::{LoweringProviderIdentity, VerifiedTargetRequest};
 
-// Schema v6 adds the complete resolved dtype to numerical honourability; v5
+// Schema v7 appends the bits quantity used for exact widths; v6 adds the
+// complete resolved dtype to numerical honourability; v5
 // appended opaque-call and provider subject kinds, the NotApplicable
 // check class and disposition, and the arithmetic dtype to numerical
-// honourability. Every earlier tag retains its v4 value. Renderer v4 already
-// published the complete nominal dtype spelling and remains unchanged.
-pub(crate) const EXPLAIN_SCHEMA_VERSION: u32 = 6;
-pub(crate) const EXPLAIN_RENDERER_VERSION: u32 = 4;
+// honourability. Every earlier tag retains its v4 value. Renderer v5 appends
+// the `bits` unit without changing any existing spelling.
+pub(crate) const EXPLAIN_SCHEMA_VERSION: u32 = 7;
+pub(crate) const EXPLAIN_RENDERER_VERSION: u32 = 5;
 const COMPILATION_EXPLAIN_SCHEMA_VERSION: u32 = 1;
 const COMPILATION_EXPLAIN_RENDERER_VERSION: u32 = 1;
 const MAX_COMPILATION_EXPLAIN_CANDIDATES: usize = 256;
@@ -509,6 +510,7 @@ impl PredicateAssessment {
 pub(crate) enum Quantity {
     Count(u64),
     Bytes(u64),
+    Bits(u64),
     Threads(u64),
     Bindings(u64),
     Operations(u64),
@@ -526,6 +528,7 @@ impl Quantity {
             Self::Operations(_) => 5,
             Self::Registers(_) => 6,
             Self::Nanoseconds(_) => 7,
+            Self::Bits(_) => 8,
         }
     }
 
@@ -533,6 +536,7 @@ impl Quantity {
         match self {
             Self::Count(value)
             | Self::Bytes(value)
+            | Self::Bits(value)
             | Self::Threads(value)
             | Self::Bindings(value)
             | Self::Operations(value)
@@ -2433,6 +2437,7 @@ const fn quantity_name(quantity: Quantity) -> &'static str {
     match quantity {
         Quantity::Count(_) => "count",
         Quantity::Bytes(_) => "bytes",
+        Quantity::Bits(_) => "bits",
         Quantity::Threads(_) => "threads",
         Quantity::Bindings(_) => "bindings",
         Quantity::Operations(_) => "operations",
@@ -3003,9 +3008,9 @@ mod tests {
     }
 
     #[test]
-    fn opaque_call_vocabulary_is_append_only_and_versioned() {
-        assert_eq!(EXPLAIN_SCHEMA_VERSION, 6);
-        assert_eq!(EXPLAIN_RENDERER_VERSION, 4);
+    fn explain_vocabulary_is_append_only_and_versioned() {
+        assert_eq!(EXPLAIN_SCHEMA_VERSION, 7);
+        assert_eq!(EXPLAIN_RENDERER_VERSION, 5);
         assert_eq!(subject_kind_tag(SubjectKind::Alternative), 12);
         assert_eq!(subject_kind_tag(SubjectKind::OpaqueCall), 13);
         assert_eq!(subject_kind_tag(SubjectKind::Provider), 14);
@@ -3016,6 +3021,36 @@ mod tests {
         assert_eq!(
             disposition_name(ExplainDisposition::NotApplicable),
             "not-applicable"
+        );
+    }
+
+    #[test]
+    fn bit_width_is_not_a_dimensionless_count_in_identity_or_rendering() {
+        let event = |quantity| ExplainEvent::Feasibility {
+            predicate: PredicateKey::new("device-address-bits").unwrap(),
+            outcome: FeasibilityOutcome::Admitted,
+            required: quantity,
+            available: quantity,
+        };
+        let count = event(Quantity::Count(64));
+        let bits = event(Quantity::Bits(64));
+        assert_eq!(count.validate(), Ok(()));
+        assert_eq!(bits.validate(), Ok(()));
+
+        let mut count_identity = Vec::new();
+        let mut bits_identity = Vec::new();
+        encode_event(&mut count_identity, &count);
+        encode_event(&mut bits_identity, &bits);
+        assert_ne!(
+            count_identity, bits_identity,
+            "a width in bits shared identity with a dimensionless count"
+        );
+
+        let mut rendered = String::new();
+        render_event(&mut rendered, &bits);
+        assert_eq!(
+            rendered,
+            "feasibility:device-address-bits:admitted:bits=64:64"
         );
     }
 
@@ -3227,7 +3262,10 @@ mod tests {
                 // retired tag. The request subject commits to that target
                 // declaration, so preserving the old qualifier would erase an
                 // identity-affecting target contract change.
-                "tiler-explain-v4 request=3c62d73c2515bde0\n",
+                // Rebaselined when complete profile declaration v9 replaced
+                // conflated index width with operation-complete u64 arithmetic
+                // support and an explicitly absent address-width authority.
+                "tiler-explain-v5 request=a3c962f558f61a1a\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )
@@ -4136,7 +4174,7 @@ mod tests {
         assert_eq!(
             forward
                 .render()
-                .matches("tiler-explain-v4 request=")
+                .matches("tiler-explain-v5 request=")
                 .count(),
             3,
             "the top-level selection and both complete candidate traces render",

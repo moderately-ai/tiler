@@ -79,6 +79,10 @@ pub(crate) use crate::target::TargetProfileIdentity;
 /// Trailing NUL so no descriptor can be a prefix of a differently-domained
 /// encoding, matching the framing the rest of the workspace's identities use.
 ///
+/// `v8` retires the conflated index/address-width axis and adds independent
+/// operation-complete unsigned-64 index arithmetic and device-address-width
+/// facts. Tag `0x04` remains reserved.
+///
 /// `v7` retires the invented numeric barrier-capacity axis. Tag `0x08` remains
 /// reserved, but a schedule with no synchronization now has no predicate to
 /// prove.
@@ -92,7 +96,7 @@ pub(crate) use crate::target::TargetProfileIdentity;
 /// `v3` distinguished per-dimension behaviours after the strict-arithmetic
 /// boolean was retired, but two profiles resting on different measured builds
 /// still collided under it.
-const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v7\0";
+const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v8\0";
 
 /// Governed key of the feasibility rule set this authority applies.
 ///
@@ -106,6 +110,10 @@ const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v7\0"
 /// layer's `FeasibilityRuleSetRef` carries both a key and a revision rather than
 /// one number.
 ///
+/// `v3` retires the conflated index/address-width predicate and adds independent
+/// operation-complete unsigned-64 index arithmetic and device-address-width
+/// predicates.
+///
 /// `v2` retires the numeric barrier-capacity predicate from the vocabulary.
 /// `v1` could decide a predicate the corrected authority cannot express, so a
 /// revision bump would violate the key's vocabulary boundary.
@@ -116,7 +124,7 @@ const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v7\0"
 /// predicate nor decide one, and it named an axis (`strict-f32`) this rule set
 /// no longer has.
 const GOVERNED_FEASIBILITY_RULE_SET_KEY: &str =
-    "tiler.feasibility.phased-capability-and-numerical-honourability.v2";
+    "tiler.feasibility.phased-capability-and-numerical-honourability.v3";
 
 /// Nonzero output-affecting revision of the governed feasibility rule set.
 ///
@@ -180,12 +188,14 @@ pub(crate) enum CapabilityAxis {
     WorkgroupThreads,
     /// Distinct buffer bindings per kernel entry.
     BufferBindings,
-    /// Index/address width in bits.
-    IndexWidthBits,
     /// Availability of an explicitly addressable device memory space.
     DeviceAddressSpace,
     /// Explicitly staged local memory, in bytes.
     LocalMemoryBytes,
+    /// Complete support for the governed unsigned-64 KIR index operation family.
+    IndexArithmeticU64,
+    /// Device address-model width in bits.
+    DeviceAddressWidthBits,
 }
 
 impl CapabilityAxis {
@@ -198,18 +208,20 @@ impl CapabilityAxis {
     /// whose descriptor changed without its facts changing would claim to be a
     /// different profile.
     ///
-    /// `0x06` and `0x08` are retired tags, not free ones. They named the
-    /// withdrawn `StrictF32Arithmetic` and numeric barrier-count axes. Reusing
-    /// either would let a descriptor mean something a reader of the retirement
-    /// would not expect. New axes take the next unused value.
+    /// `0x04`, `0x06`, and `0x08` are retired tags, not free ones. They named
+    /// the conflated index/address width, withdrawn `StrictF32Arithmetic`, and
+    /// numeric barrier-count axes. Reusing one would let a descriptor mean
+    /// something a reader of the retirement would not expect. New axes take the
+    /// next unused value.
     const fn tag(self) -> u8 {
         match self {
             Self::GridAxisThreads => 0x01,
             Self::WorkgroupThreads => 0x02,
             Self::BufferBindings => 0x03,
-            Self::IndexWidthBits => 0x04,
             Self::DeviceAddressSpace => 0x05,
             Self::LocalMemoryBytes => 0x07,
+            Self::IndexArithmeticU64 => 0x09,
+            Self::DeviceAddressWidthBits => 0x0a,
         }
     }
 }
@@ -219,7 +231,7 @@ impl CapabilityAxis {
 enum Relation {
     /// Feasible iff `required <= available` (ceilings such as threads or bytes).
     AtMost,
-    /// Feasible iff `required == available` (two-sided, such as index width).
+    /// Feasible iff `required == available` (two-sided, such as address width).
     Exact,
     /// Boolean implication: a required capability must be supported. Feasible iff
     /// `required == 0 || available != 0`.
@@ -228,13 +240,14 @@ enum Relation {
 
 /// The canonical axis order. This is the single source of truth for evaluation
 /// and reporting order, matching the derived [`CapabilityAxis`] ordering.
-const CANONICAL_AXES: [CapabilityAxis; 6] = [
+const CANONICAL_AXES: [CapabilityAxis; 7] = [
     CapabilityAxis::GridAxisThreads,
     CapabilityAxis::WorkgroupThreads,
     CapabilityAxis::BufferBindings,
-    CapabilityAxis::IndexWidthBits,
     CapabilityAxis::DeviceAddressSpace,
     CapabilityAxis::LocalMemoryBytes,
+    CapabilityAxis::IndexArithmeticU64,
+    CapabilityAxis::DeviceAddressWidthBits,
 ];
 
 impl CapabilityAxis {
@@ -244,9 +257,10 @@ impl CapabilityAxis {
             Self::GridAxisThreads => "grid-axis",
             Self::WorkgroupThreads => "threads-per-workgroup",
             Self::BufferBindings => "buffer-bindings",
-            Self::IndexWidthBits => "index-bits",
             Self::DeviceAddressSpace => "device-memory",
             Self::LocalMemoryBytes => "local-memory-bytes",
+            Self::IndexArithmeticU64 => "index-arithmetic-u64",
+            Self::DeviceAddressWidthBits => "device-address-bits",
         }
     }
 
@@ -256,8 +270,8 @@ impl CapabilityAxis {
             | Self::WorkgroupThreads
             | Self::BufferBindings
             | Self::LocalMemoryBytes => Relation::AtMost,
-            Self::IndexWidthBits => Relation::Exact,
-            Self::DeviceAddressSpace => Relation::Implies,
+            Self::DeviceAddressSpace | Self::IndexArithmeticU64 => Relation::Implies,
+            Self::DeviceAddressWidthBits => Relation::Exact,
         }
     }
 
@@ -267,13 +281,14 @@ impl CapabilityAxis {
             Self::GridAxisThreads | Self::WorkgroupThreads => Quantity::Threads(value),
             Self::BufferBindings => Quantity::Bindings(value),
             Self::LocalMemoryBytes => Quantity::Bytes(value),
-            Self::IndexWidthBits | Self::DeviceAddressSpace => Quantity::Count(value),
+            Self::DeviceAddressSpace | Self::IndexArithmeticU64 => Quantity::Count(value),
+            Self::DeviceAddressWidthBits => Quantity::Bits(value),
         }
     }
 
     /// Whether `value` is an admissible declaration for this axis.
     ///
-    /// Boolean-capability axes admit only `0` or `1`; index width must be
+    /// Boolean-capability axes admit only `0` or `1`; exact quantities must be
     /// positive. Ceilings admit any non-negative amount.
     const fn admits(self, value: u64) -> bool {
         match self.relation() {
@@ -1545,9 +1560,9 @@ mod tests {
                 compile_fact(id, CapabilityAxis::GridAxisThreads, 65_535),
                 compile_fact(id, CapabilityAxis::WorkgroupThreads, 1),
                 compile_fact(id, CapabilityAxis::BufferBindings, 2),
-                compile_fact(id, CapabilityAxis::IndexWidthBits, 64),
                 compile_fact(id, CapabilityAxis::DeviceAddressSpace, 1),
                 compile_fact(id, CapabilityAxis::LocalMemoryBytes, 0),
+                compile_fact(id, CapabilityAxis::IndexArithmeticU64, 1),
             ],
             baseline_honourability(id),
         )
@@ -1719,9 +1734,9 @@ mod tests {
                 AxisRequirement::new(CapabilityAxis::GridAxisThreads, grid_threads),
                 AxisRequirement::new(CapabilityAxis::WorkgroupThreads, 1),
                 AxisRequirement::new(CapabilityAxis::BufferBindings, 2),
-                AxisRequirement::new(CapabilityAxis::IndexWidthBits, 64),
                 AxisRequirement::new(CapabilityAxis::DeviceAddressSpace, 1),
                 AxisRequirement::new(CapabilityAxis::LocalMemoryBytes, 0),
+                AxisRequirement::new(CapabilityAxis::IndexArithmeticU64, 1),
             ],
             strict_requirements(),
         )
@@ -1753,7 +1768,10 @@ mod tests {
                 .iter()
                 .map(|p| p.axis())
                 .collect::<Vec<_>>(),
-            CANONICAL_AXES.to_vec()
+            CANONICAL_AXES
+                .into_iter()
+                .filter(|axis| *axis != CapabilityAxis::DeviceAddressWidthBits)
+                .collect::<Vec<_>>()
         );
         let grid = evidence.predicates()[0];
         assert_eq!(grid.required(), Quantity::Threads(6));
@@ -1934,9 +1952,9 @@ mod tests {
                 AxisRequirement::new(CapabilityAxis::GridAxisThreads, 6),
                 AxisRequirement::new(CapabilityAxis::WorkgroupThreads, 1),
                 AxisRequirement::new(CapabilityAxis::BufferBindings, 2),
-                AxisRequirement::new(CapabilityAxis::IndexWidthBits, 64),
                 AxisRequirement::new(CapabilityAxis::DeviceAddressSpace, 1),
                 AxisRequirement::new(CapabilityAxis::LocalMemoryBytes, 0),
+                AxisRequirement::new(CapabilityAxis::IndexArithmeticU64, 1),
             ],
             numerical,
         )
@@ -2332,6 +2350,112 @@ mod tests {
         assert!(matches!(
             profile.assess(&proposal, AvailabilityPhase::LaunchPreflight),
             FeasibilityOutcome::Unknown(_)
+        ));
+    }
+
+    #[test]
+    fn arithmetic_support_and_address_width_are_independent_predicates() {
+        let id = identity();
+        let current = baseline_profile();
+        let proposal = baseline_proposal("candidate:current-index-operations", 6);
+        let FeasibilityOutcome::Proven(evidence) =
+            current.assess(&proposal, AvailabilityPhase::CompileProfile)
+        else {
+            panic!("the current KIR requires arithmetic support but no address width");
+        };
+        assert!(
+            evidence
+                .predicates()
+                .iter()
+                .any(
+                    |predicate| predicate.axis() == CapabilityAxis::IndexArithmeticU64
+                        && predicate.required() == Quantity::Count(1)
+                        && predicate.available() == Quantity::Count(1)
+                )
+        );
+        assert!(
+            evidence
+                .predicates()
+                .iter()
+                .all(|predicate| predicate.axis() != CapabilityAxis::DeviceAddressWidthBits)
+        );
+
+        let address_requirement = FeasibilityProposal::new(
+            "candidate:requires-64-bit-addresses",
+            vec![AxisRequirement::new(
+                CapabilityAxis::DeviceAddressWidthBits,
+                64,
+            )],
+            Vec::new(),
+        )
+        .unwrap();
+        let FeasibilityOutcome::Unknown(unknown) =
+            current.assess(&address_requirement, AvailabilityPhase::CompileProfile)
+        else {
+            panic!("an absent address-width authority is unknown");
+        };
+        assert!(matches!(
+            unknown.predicates(),
+            [predicate]
+                if predicate.axis() == CapabilityAxis::DeviceAddressWidthBits
+                    && predicate.required() == Quantity::Bits(64)
+        ));
+
+        let address_32 = CheckedTargetProfile::new(
+            id,
+            vec![compile_fact(id, CapabilityAxis::DeviceAddressWidthBits, 32)],
+            Vec::new(),
+        )
+        .unwrap();
+        let FeasibilityOutcome::Rejected(rejection) =
+            address_32.assess(&address_requirement, AvailabilityPhase::CompileProfile)
+        else {
+            panic!("an explicit 32-bit address model rejects a 64-bit requirement");
+        };
+        assert!(matches!(
+            rejection.disproved(),
+            [predicate]
+                if predicate.axis() == CapabilityAxis::DeviceAddressWidthBits
+                    && predicate.required() == Quantity::Bits(64)
+                    && predicate.available() == Quantity::Bits(32)
+        ));
+
+        let arithmetic_requirement = FeasibilityProposal::new(
+            "candidate:requires-u64-index-arithmetic",
+            vec![AxisRequirement::new(CapabilityAxis::IndexArithmeticU64, 1)],
+            Vec::new(),
+        )
+        .unwrap();
+        let missing_arithmetic = CheckedTargetProfile::new(id, Vec::new(), Vec::new()).unwrap();
+        let FeasibilityOutcome::Unknown(unknown) =
+            missing_arithmetic.assess(&arithmetic_requirement, AvailabilityPhase::CompileProfile)
+        else {
+            panic!("missing u64 index-arithmetic authority is unknown");
+        };
+        assert!(matches!(
+            unknown.predicates(),
+            [predicate]
+                if predicate.axis() == CapabilityAxis::IndexArithmeticU64
+                    && predicate.required() == Quantity::Count(1)
+        ));
+
+        let no_arithmetic = CheckedTargetProfile::new(
+            id,
+            vec![compile_fact(id, CapabilityAxis::IndexArithmeticU64, 0)],
+            Vec::new(),
+        )
+        .unwrap();
+        let FeasibilityOutcome::Rejected(rejection) =
+            no_arithmetic.assess(&arithmetic_requirement, AvailabilityPhase::CompileProfile)
+        else {
+            panic!("explicitly unavailable u64 index arithmetic rejects the KIR family");
+        };
+        assert!(matches!(
+            rejection.disproved(),
+            [predicate]
+                if predicate.axis() == CapabilityAxis::IndexArithmeticU64
+                    && predicate.required() == Quantity::Count(1)
+                    && predicate.available() == Quantity::Count(0)
         ));
     }
 
@@ -2770,7 +2894,13 @@ mod tests {
         assert_eq!(profile.identity().key(), BASELINE_KEY);
         // Facts are sorted into canonical axis order regardless of input order.
         let axes: Vec<_> = profile.facts().iter().map(CapabilityFact::axis).collect();
-        assert_eq!(axes, CANONICAL_AXES.to_vec());
+        assert_eq!(
+            axes,
+            CANONICAL_AXES
+                .into_iter()
+                .filter(|axis| *axis != CapabilityAxis::DeviceAddressWidthBits)
+                .collect::<Vec<_>>()
+        );
         let dimensions: Vec<_> = profile
             .honourability()
             .iter()
@@ -2795,7 +2925,7 @@ mod tests {
         assert_ne!(rules.key(), profile.identity().key());
         assert_eq!(
             rules.key(),
-            "tiler.feasibility.phased-capability-and-numerical-honourability.v2"
+            "tiler.feasibility.phased-capability-and-numerical-honourability.v3"
         );
         assert_eq!(rules.revision(), 1);
 

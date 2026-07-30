@@ -28,7 +28,7 @@ use tiler_compiler::session::{Compilation, PlanAlternative};
 use tiler_ir::semantic::SemanticProgram;
 use tiler_metal::diagnostic::MetalEmitError;
 use tiler_metal::emit::emit_translation_unit;
-use tiler_metal::target::MetalTargetFacts;
+use tiler_metal::target::{MetalEmissionRealization, MetalTargetFacts};
 use tiler_metal_aot::driver::Toolchain;
 use tiler_metal_aot::input::{NumericalRealization, OptimizationLevel};
 
@@ -143,6 +143,95 @@ impl Error for MetalPlanBuildError {
     }
 }
 
+/// Explicit source-emission and AOT policy for one checked Metal plan.
+///
+/// These choices are grouped because they govern production of the carried
+/// payload, not because they establish target capability. In particular,
+/// [`Self::emission`] remains independent of the [`MetalTargetFacts`] supplied
+/// to [`accept_or_publish_metal_plan`].
+///
+/// A selected launch declaration is not a launch-capacity fact:
+///
+/// ```compile_fail
+/// use tiler_compiler::target::{
+///     TargetFactSource, TargetProfileBuilder, TargetProfileKey,
+/// };
+/// use tiler_metal::target::{LaunchIndexRealization, MetalEmissionRealization};
+///
+/// let emission = MetalEmissionRealization::new(
+///     LaunchIndexRealization::ThreadPositionInGridUInt,
+/// );
+/// let source: TargetFactSource = unimplemented!();
+/// let mut profile =
+///     TargetProfileBuilder::new(TargetProfileKey::new("example.target.v1".to_owned()).unwrap());
+/// profile
+///     .declare_max_threads_per_grid_axis(emission, source)
+///     .unwrap();
+/// ```
+///
+/// A selected launch declaration is not index-arithmetic support:
+///
+/// ```compile_fail
+/// use tiler_compiler::target::{
+///     TargetFactSource, TargetProfileBuilder, TargetProfileKey,
+/// };
+/// use tiler_metal::target::{LaunchIndexRealization, MetalEmissionRealization};
+///
+/// let emission = MetalEmissionRealization::new(
+///     LaunchIndexRealization::ThreadPositionInGridUInt,
+/// );
+/// let source: TargetFactSource = unimplemented!();
+/// let mut profile =
+///     TargetProfileBuilder::new(TargetProfileKey::new("example.target.v1".to_owned()).unwrap());
+/// profile
+///     .declare_index_arithmetic(emission, source)
+///     .unwrap();
+/// ```
+///
+/// A selected launch declaration is not a device-address width:
+///
+/// ```compile_fail
+/// use tiler_compiler::target::{
+///     TargetFactSource, TargetProfileBuilder, TargetProfileKey,
+/// };
+/// use tiler_metal::target::{LaunchIndexRealization, MetalEmissionRealization};
+///
+/// let emission = MetalEmissionRealization::new(
+///     LaunchIndexRealization::ThreadPositionInGridUInt,
+/// );
+/// let source: TargetFactSource = unimplemented!();
+/// let mut profile =
+///     TargetProfileBuilder::new(TargetProfileKey::new("example.target.v1".to_owned()).unwrap());
+/// profile
+///     .declare_device_address_width(emission, source)
+///     .unwrap();
+/// ```
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MetalPlanBuildPolicy {
+    /// The exact source-level realization selected for Metal emission.
+    pub emission: MetalEmissionRealization,
+    /// The explicit optimization level selected for offline compilation.
+    pub optimization: OptimizationLevel,
+    /// The explicit numerical realization selected for offline compilation.
+    pub numerical: NumericalRealization,
+}
+
+impl MetalPlanBuildPolicy {
+    /// Assembles the complete payload-production policy.
+    #[must_use]
+    pub const fn new(
+        emission: MetalEmissionRealization,
+        optimization: OptimizationLevel,
+        numerical: NumericalRealization,
+    ) -> Self {
+        Self {
+            emission,
+            optimization,
+            numerical,
+        }
+    }
+}
+
 /// Emits, prepares, assembles, and cache-resolves one checked Metal plan.
 ///
 /// The plan is owner-linked: all compilation-wide facts are read through
@@ -152,10 +241,14 @@ impl Error for MetalPlanBuildError {
 /// not retain the graph; the artifact builder verifies it against the plan's
 /// target-neutral program before returning.
 ///
-/// `target`, `optimization`, and `numerical` are explicit build policy. The
-/// emitted target facts and prepared compiler target are carried as payload
-/// obligations in addition to the compiler plan's target-profile reference;
-/// neither is inferred from the other.
+/// `target` and `policy` are explicit inputs. Target facts and the selected
+/// source-level realization remain separate: choosing a launch-index
+/// declaration does not establish an arithmetic width, address width, or
+/// launch capacity. The emitted target facts and prepared compiler target
+/// remain separate from the compiler plan's target-profile reference; neither
+/// is inferred from the other. The translation unit retains
+/// [`MetalPlanBuildPolicy::emission`], and its exact emitted source becomes part
+/// of payload and compilation identity.
 ///
 /// # Errors
 ///
@@ -168,12 +261,12 @@ pub fn accept_or_publish_metal_plan(
     semantic: &SemanticProgram,
     plan: PlanAlternative<'_>,
     target: &MetalTargetFacts,
-    optimization: OptimizationLevel,
-    numerical: NumericalRealization,
+    policy: MetalPlanBuildPolicy,
 ) -> Result<AcceptedMetalPlanArtifact, MetalPlanBuildError> {
     let kernels: Vec<_> = plan.kernels().iter().collect();
-    let unit = emit_translation_unit(&kernels, target).map_err(MetalPlanBuildError::Emission)?;
-    let request = metal_compile_request(&unit, optimization, numerical)
+    let unit = emit_translation_unit(&kernels, target, policy.emission)
+        .map_err(MetalPlanBuildError::Emission)?;
+    let request = metal_compile_request(&unit, policy.optimization, policy.numerical)
         .map_err(MetalPlanBuildError::Preparation)?;
     let prepared = toolchain
         .prepare(&request)
@@ -352,14 +445,17 @@ mod tests {
     };
     use tiler_ir::shape::{Axis, Shape};
     use tiler_metal::target::{
-        LaunchIndexRealization, MetalDeploymentMinimum, MetalFloatArithmeticType,
-        MetalFlushedZeroSign, MetalPlatform, MetalSubnormalArithmetic,
+        LaunchIndexRealization, MetalDeploymentMinimum, MetalEmissionRealization,
+        MetalFloatArithmeticType, MetalFlushedZeroSign, MetalPlatform, MetalSubnormalArithmetic,
         MetalSubnormalArithmeticFacts, MetalTargetFacts, MslLanguageVersion,
     };
     use tiler_metal_aot::driver::Toolchain;
     use tiler_metal_aot::input::{NumericalRealization, OptimizationLevel};
 
-    use super::{MetalPlanBuildError, accept_or_publish_metal_plan, resolution_artifact};
+    use super::{
+        MetalPlanBuildError, MetalPlanBuildPolicy, accept_or_publish_metal_plan,
+        resolution_artifact,
+    };
 
     fn semantic_program() -> SemanticProgram {
         let mut builder =
@@ -390,7 +486,6 @@ mod tests {
             MslLanguageVersion::Metal3_1,
             MetalPlatform::MacOs,
             MetalDeploymentMinimum::new(14, 0),
-            LaunchIndexRealization::ThreadPositionInGridUInt,
             MetalSubnormalArithmeticFacts::unmeasured()
                 .stating(
                     MetalFloatArithmeticType::F32,
@@ -403,6 +498,18 @@ mod tests {
                     MetalSubnormalArithmetic::PreservesSubnormals,
                 ),
             31,
+        )
+    }
+
+    fn emission_realization() -> MetalEmissionRealization {
+        MetalEmissionRealization::new(LaunchIndexRealization::ThreadPositionInGridUInt)
+    }
+
+    fn build_policy() -> MetalPlanBuildPolicy {
+        MetalPlanBuildPolicy::new(
+            emission_realization(),
+            OptimizationLevel::Default,
+            NumericalRealization::strict_baseline(),
         )
     }
 
@@ -503,8 +610,7 @@ mod tests {
                 &program,
                 plan,
                 &target_facts(),
-                OptimizationLevel::Default,
-                NumericalRealization::strict_baseline(),
+                build_policy(),
             )
             .expect("the checked plan resolves");
             outcomes.push(match accepted.resolution() {
@@ -546,8 +652,7 @@ mod tests {
             &program,
             selected,
             &target_facts(),
-            OptimizationLevel::Default,
-            NumericalRealization::strict_baseline(),
+            build_policy(),
         )
         .expect("the selected plan resolves");
         let materialized = accept_or_publish_metal_plan(
@@ -556,8 +661,7 @@ mod tests {
             &program,
             materialized,
             &target_facts(),
-            OptimizationLevel::Default,
-            NumericalRealization::strict_baseline(),
+            build_policy(),
         )
         .expect("the materialized plan resolves");
 
@@ -614,8 +718,7 @@ mod tests {
             &program,
             plan,
             &insufficient,
-            OptimizationLevel::Default,
-            NumericalRealization::strict_baseline(),
+            build_policy(),
         )
         .expect_err("a target with one binding cannot emit this plan");
         assert!(

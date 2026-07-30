@@ -14,8 +14,7 @@
 //!
 //! # Determinism
 //!
-//! The emitted bytes are a pure function of the verified kernels and the target
-//! facts:
+//! The emitted bytes are a pure function of the verified kernels, the target facts, and the selected emission realization:
 //!
 //! - Entry points are ordered by canonical kernel identity bytes and
 //!   deduplicated by identity, so caller order cannot change the output.
@@ -77,7 +76,7 @@ use crate::record::{
     MetalBufferBinding, MetalEntryPoint, MetalNumericalGap, MetalNumericalRequirement,
     MetalTranslationUnit,
 };
-use crate::target::{MetalFloatArithmeticType, MetalTargetFacts};
+use crate::target::{MetalEmissionRealization, MetalFloatArithmeticType, MetalTargetFacts};
 
 /// One level of emitted indentation.
 const INDENT: &str = "    ";
@@ -114,8 +113,7 @@ macro_rules! emit {
 ///
 /// The kernels are deduplicated by canonical identity and emitted in ascending
 /// canonical-identity order, so the result is a pure function of the *set* of
-/// kernels and the target facts. Helpers required by more than one entry point
-/// are emitted once.
+/// kernels, the target facts, and the selected emission realization. Helpers required by more than one entry point are emitted once.
 ///
 /// # Errors
 ///
@@ -128,6 +126,7 @@ macro_rules! emit {
 pub fn emit_translation_unit(
     kernels: &[&VerifiedKernel],
     target: &MetalTargetFacts,
+    emission: MetalEmissionRealization,
 ) -> Result<MetalTranslationUnit, MetalEmitError> {
     let ordered = order_kernels(kernels);
     let mut helpers = BTreeSet::new();
@@ -142,6 +141,7 @@ pub fn emit_translation_unit(
         let emitted = emit_entry_point(
             kernel,
             target,
+            emission,
             &mut helpers,
             &mut numerical,
             &mut gaps,
@@ -156,9 +156,10 @@ pub fn emit_translation_unit(
         bodies.push(emitted.text);
     }
 
-    let source = assemble(target, &helpers, &gaps, &unstated, &bodies);
+    let source = assemble(target, emission, &helpers, &gaps, &unstated, &bodies);
     Ok(MetalTranslationUnit::new(
         *target,
+        emission,
         source,
         entry_points,
         numerical.into_iter().collect(),
@@ -204,6 +205,7 @@ pub(crate) fn reserve_symbol<'a>(
 /// Assembles the provenance header, the required helpers, and the entry points.
 fn assemble(
     target: &MetalTargetFacts,
+    emission: MetalEmissionRealization,
     helpers: &BTreeSet<u32>,
     gaps: &BTreeSet<MetalNumericalGap>,
     unstated: &BTreeSet<MetalFloatArithmeticType>,
@@ -226,14 +228,15 @@ fn assemble(
     );
     emit!(
         source,
-        "// Launch index: [[{}]] declared as {}\n",
-        target.launch_index.attribute(),
-        target.launch_index.declared_type()
+        "// Launch delivery realization: [[{}]] declared as {}\n",
+        emission.launch_index.attribute(),
+        emission.launch_index.declared_type()
     );
     emit!(
         source,
-        "// Launch precondition: no invocation index may exceed {}.\n",
-        target.launch_index.maximum_index()
+        "// Structured index arithmetic: {}, widened explicitly from {} delivery.\n",
+        msl_type(KernelType::Index),
+        emission.launch_index.declared_type(),
     );
     // One line per arithmetic type rather than one for the target: the measured
     // Apple row flushes in `f32` and preserves in `f16`, so a single line would
@@ -370,6 +373,7 @@ struct EmittedEntryPoint {
 fn emit_entry_point(
     kernel: &VerifiedKernel,
     target: &MetalTargetFacts,
+    emission: MetalEmissionRealization,
     helpers: &mut BTreeSet<u32>,
     numerical: &mut BTreeSet<MetalNumericalRequirement>,
     gaps: &mut BTreeSet<MetalNumericalGap>,
@@ -417,6 +421,7 @@ fn emit_entry_point(
     let mut emitter = KernelEmitter {
         kernel,
         target,
+        emission,
         helpers,
         numerical,
         gaps,
@@ -471,7 +476,7 @@ fn emit_entry_point(
         parameters.push(parameter_declaration(binding)?);
     }
     for builtin in kernel.admitted_builtins() {
-        parameters.push(builtin_declaration(*builtin, target)?);
+        parameters.push(builtin_declaration(*builtin, emission)?);
     }
     emit!(text, "kernel void {symbol}(");
     if parameters.is_empty() {
@@ -540,13 +545,13 @@ pub(crate) fn address_space_declaration(
 /// Returns the MSL declaration of one admitted launch builtin parameter.
 fn builtin_declaration(
     builtin: Builtin,
-    target: &MetalTargetFacts,
+    emission: MetalEmissionRealization,
 ) -> Result<String, MetalEmitError> {
     let name = builtin_parameter(builtin)?;
     Ok(format!(
         "{} {name} [[{}]]",
-        target.launch_index.declared_type(),
-        target.launch_index.attribute()
+        emission.launch_index.declared_type(),
+        emission.launch_index.attribute()
     ))
 }
 
@@ -571,7 +576,7 @@ pub(crate) const fn msl_type(value_type: KernelType) -> &'static str {
         KernelType::Bool => "bool",
         KernelType::U8 => "uchar",
         KernelType::I32 => "int",
-        KernelType::Index => "ulong",
+        KernelType::Index => "uint64_t",
         KernelType::F32 => "float",
     }
 }
@@ -725,6 +730,7 @@ const fn subnormal_gap(
 struct KernelEmitter<'a> {
     kernel: &'a VerifiedKernel,
     target: &'a MetalTargetFacts,
+    emission: MetalEmissionRealization,
     helpers: &'a mut BTreeSet<u32>,
     numerical: &'a mut BTreeSet<MetalNumericalRequirement>,
     gaps: &'a mut BTreeSet<MetalNumericalGap>,
@@ -889,11 +895,12 @@ impl KernelEmitter<'_> {
             return Err(arity("builtin-result"));
         };
         let parameter = builtin_parameter(builtin)?;
-        let declared = self.target.launch_index.declared_type();
+        let declared = self.emission.launch_index.declared_type();
         let value_type = self.value_type(*result)?;
         let name = self.bind(*result)?;
-        // The launch attribute's declared type is fixed by the language, so a
-        // narrower delivery is widened exactly rather than reinterpreted.
+        // This translation unit selected the launch attribute's declared type
+        // from the forms MSL 4.0 Table 5.8 admits. A narrower delivery is
+        // widened exactly rather than reinterpreted.
         if declared == value_type {
             self.line(&format!("{value_type} {name} = {parameter};"));
         } else {

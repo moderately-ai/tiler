@@ -69,11 +69,9 @@ resolved numerical permissions explicitly admit the native behavior.
 
 ## Target profiles
 
-Offline scheduling uses a named conservative target profile, not assumptions
-about an unspecified Apple GPU. A profile records platform/deployment range,
-supported dtypes/features, SIMD-group assumptions, maximum threads and
-threadgroup memory, binding limits, supported address/index widths, and
-bootstrap cost parameters.
+Offline scheduling uses a named conservative target profile, not assumptions about an unspecified Apple GPU. A profile records platform/deployment range, supported dtypes/features, SIMD-group assumptions, maximum threads and threadgroup memory, binding limits, operation-complete index-arithmetic support, optional device-address width where a real consumer and authority exist, and bootstrap cost parameters.
+
+The current bounded KIR requires the complete governed unsigned-64 index-operation family: constants, comparison, addition, multiplication, division, remainder, induction, and buffer-relative element offsets. MSL 4.0's normative `uint64_t` spelling realizes that arithmetic type, but source-language type availability alone does not establish operation-complete support on every Apple GPU family. The first production profile must cite an exact applicable family-scoped authority. The current KIR performs no pointer-integer conversion and consumes no device-address-width predicate, so the governed Metal profile declares no such row and a future address-width query remains `Unknown`; the existing device-memory-space fact answers only whether the space exists.
 
 This is the Metal instance of ADR 0043's generic schema. Family/platform facts
 are compile guarantees; `MTLDevice` facts are live-device facts; and
@@ -124,6 +122,8 @@ returned output/temporary bindings are validated against those guarantees as
 post-commit invariants; a mismatch fails closed.
 
 ## MSL emission
+
+MSL 4.0 permits `ushort` or `uint` declarations for `thread_position_in_grid`. The bounded emitter selects scalar `uint` as an emission realization and explicitly widens it to KIR's `uint64_t` arithmetic value. That selected declaration is not a target capability and its maximum coordinate value is not a grid-capacity extent. Grid limits remain independently sourced, and a future `ushort` realization requires a separately verified launch-domain fit before selection.
 
 A macro-local translation unit should:
 

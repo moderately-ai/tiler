@@ -73,7 +73,7 @@ use std::process::ExitCode;
 use tiler_artifact::program::ArtifactCodecFailure;
 #[cfg(test)]
 use tiler_artifact::program::decode_artifact;
-use tiler_build::{MetalPlanBuildError, accept_or_publish_metal_plan};
+use tiler_build::{MetalPlanBuildError, MetalPlanBuildPolicy, accept_or_publish_metal_plan};
 #[cfg(test)]
 use tiler_build::{metal_compile_request, prepare_metal_payload};
 use tiler_cache::expansion::{ExpansionCache, Resolution};
@@ -86,9 +86,9 @@ use tiler_ir::shape::{Axis, Shape};
 #[cfg(test)]
 use tiler_metal::emit::emit_translation_unit;
 use tiler_metal::target::{
-    LaunchIndexRealization, MetalDeploymentMinimum, MetalFloatArithmeticType, MetalFlushedZeroSign,
-    MetalPlatform, MetalSubnormalArithmetic, MetalSubnormalArithmeticFacts, MetalTargetFacts,
-    MslLanguageVersion,
+    LaunchIndexRealization, MetalDeploymentMinimum, MetalEmissionRealization,
+    MetalFloatArithmeticType, MetalFlushedZeroSign, MetalPlatform, MetalSubnormalArithmetic,
+    MetalSubnormalArithmeticFacts, MetalTargetFacts, MslLanguageVersion,
 };
 use tiler_metal_aot::driver::Toolchain;
 use tiler_metal_aot::input::{NumericalRealization, OptimizationLevel};
@@ -165,7 +165,6 @@ fn target_facts() -> MetalTargetFacts {
         MslLanguageVersion::Metal3_1,
         MetalPlatform::MacOs,
         MetalDeploymentMinimum::new(14, 0),
-        LaunchIndexRealization::ThreadPositionInGridUInt,
         MetalSubnormalArithmeticFacts::unmeasured()
             .stating(
                 MetalFloatArithmeticType::F32,
@@ -178,6 +177,20 @@ fn target_facts() -> MetalTargetFacts {
                 MetalSubnormalArithmetic::PreservesSubnormals,
             ),
         BUFFER_BINDING_LIMIT,
+    )
+}
+
+/// The source-level choices this producer selects independently of target facts.
+fn emission_realization() -> MetalEmissionRealization {
+    MetalEmissionRealization::new(LaunchIndexRealization::ThreadPositionInGridUInt)
+}
+
+/// The complete payload-production policy this producer selects.
+fn build_policy() -> MetalPlanBuildPolicy {
+    MetalPlanBuildPolicy::new(
+        emission_realization(),
+        OptimizationLevel::Default,
+        NumericalRealization::strict_baseline(),
     )
 }
 
@@ -226,7 +239,8 @@ fn emit_and_compile(
     tiler_metal::record::MetalTranslationUnit,
     tiler_build::CompiledMetalPayload,
 ) {
-    let unit = emit_translation_unit(kernels, &target_facts()).expect("the kernels emit");
+    let unit = emit_translation_unit(kernels, &target_facts(), emission_realization())
+        .expect("the kernels emit");
     let request = metal_compile_request(
         &unit,
         OptimizationLevel::Default,
@@ -357,8 +371,7 @@ fn publish_member(
         program,
         plan,
         &facts,
-        OptimizationLevel::Default,
-        NumericalRealization::strict_baseline(),
+        build_policy(),
     )
     .map_err(ProducerError::Plan)?;
     let artifact = accepted.artifact();
@@ -479,7 +492,8 @@ impl fmt::Display for ProducerError {
 #[cfg(test)]
 mod tests {
     use super::{
-        COLUMNS, PLAN_ROLES, REDUCTION_CLASSES, ROWS, serial_sum_program, sidecar, target_facts,
+        COLUMNS, PLAN_ROLES, REDUCTION_CLASSES, ROWS, build_policy, emission_realization,
+        serial_sum_program, sidecar, target_facts,
     };
     use crate::{ArtifactCodecFailure, decode_artifact};
     use tiler_artifact::proof::decode_proof_sidecar;
@@ -496,7 +510,6 @@ mod tests {
     use tiler_ir::semantic::multiply_f32_op;
     use tiler_metal::emit::emit_translation_unit;
     use tiler_metal_aot::driver::Toolchain;
-    use tiler_metal_aot::input::{NumericalRealization, OptimizationLevel};
 
     fn governed_targets() -> TargetRequest {
         TargetRequest::new([TargetProfile::governed()])
@@ -517,12 +530,14 @@ mod tests {
         let selected = compilation.selected().expect("a selected alternative");
         let kernels: Vec<_> = selected.kernels().iter().collect();
 
-        let first = emit_translation_unit(&kernels, &target_facts()).expect("the kernels emit");
-        let second = emit_translation_unit(&kernels, &target_facts()).expect("the kernels emit");
+        let first = emit_translation_unit(&kernels, &target_facts(), emission_realization())
+            .expect("the kernels emit");
+        let second = emit_translation_unit(&kernels, &target_facts(), emission_realization())
+            .expect("the kernels emit");
         assert_eq!(
             first.source(),
             second.source(),
-            "emission is a pure function of the kernels and the target facts",
+            "emission is a pure function of the kernels, target facts, and selected realization",
         );
         assert!(!first.entry_points().is_empty());
         assert!(
@@ -849,8 +864,7 @@ mod tests {
             &program,
             selected,
             &target_facts(),
-            OptimizationLevel::Default,
-            NumericalRealization::strict_baseline(),
+            build_policy(),
         )
         .expect("the checked plan resolves");
         let artifact = accepted.artifact().clone();
@@ -1092,7 +1106,8 @@ mod tests {
         let strict_plan = strict.selected().expect("a selected alternative");
         let strict_kernels: Vec<_> = strict_plan.kernels().iter().collect();
         let strict_unit =
-            emit_translation_unit(&strict_kernels, &target_facts()).expect("the kernels emit");
+            emit_translation_unit(&strict_kernels, &target_facts(), emission_realization())
+                .expect("the kernels emit");
         assert!(
             strict_unit.require_declared_realization().is_err(),
             "a subnormal-preserving contract is still unrealizable on a flushing target",
@@ -1111,7 +1126,8 @@ mod tests {
         let flush_plan = flushing.selected().expect("a selected alternative");
         let flush_kernels: Vec<_> = flush_plan.kernels().iter().collect();
         let flush_unit =
-            emit_translation_unit(&flush_kernels, &target_facts()).expect("the kernels emit");
+            emit_translation_unit(&flush_kernels, &target_facts(), emission_realization())
+                .expect("the kernels emit");
         flush_unit
             .require_declared_realization()
             .expect("the target honours the contract the caller stated");

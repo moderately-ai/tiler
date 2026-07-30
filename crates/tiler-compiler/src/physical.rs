@@ -11,6 +11,7 @@ use tiler_ir::shape::Shape;
 // semantic-occurrence binding, request-subject binding, and target feasibility.
 // The shared vocabulary is re-exported so existing `crate::physical::*`
 // importers continue to resolve.
+use tiler_ir::kernel::KernelType;
 pub(crate) use tiler_ir::kernel::VerifiedKernel;
 pub(crate) use tiler_ir::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
@@ -927,10 +928,11 @@ pub(crate) fn target_profile_descriptor(target: &TargetProfile) -> &[u8] {
 
 /// Builds the typed candidate proposal for one scheduled region.
 ///
-/// The candidate requires 64-bit indexing and the device address space whenever
-/// its resource requirements demand it; the prototype baseline needs no local
-/// memory and introduces no synchronization obligation. Its numerical
-/// requirements are the region's declared
+/// The candidate requires complete support for the governed unsigned-64 KIR
+/// index operation family and the device address space whenever its resource
+/// requirements demand it. It does not infer a device address width from that
+/// arithmetic type. The prototype baseline needs no local memory and introduces
+/// no synchronization obligation. Its numerical requirements are the region's declared
 /// realization carried forward **per dimension** rather than collapsed into one
 /// summary bit — the collapse the retired `StrictF32Arithmetic` axis forced, and
 /// which could neither name a failing dimension nor express emulation.
@@ -951,7 +953,8 @@ fn region_proposal(
                 CapabilityAxis::BufferBindings,
                 u64::from(requirements.buffer_bindings),
             ),
-            AxisRequirement::new(CapabilityAxis::IndexWidthBits, 64),
+            index_arithmetic_requirement(KernelType::Index)
+                .expect("the governed KIR index type has an arithmetic requirement"),
             AxisRequirement::new(
                 CapabilityAxis::DeviceAddressSpace,
                 u64::from(requirements.requires_device_memory),
@@ -988,6 +991,17 @@ fn region_proposal(
             ),
         ],
     )
+}
+
+/// Derives the hard arithmetic requirement of one governed KIR value type.
+///
+/// Exhaustive so a new KIR type is a build error until its target requirement
+/// is classified. Storage availability alone never satisfies this predicate.
+const fn index_arithmetic_requirement(value_type: KernelType) -> Option<AxisRequirement> {
+    match value_type {
+        KernelType::Index => Some(AxisRequirement::new(CapabilityAxis::IndexArithmeticU64, 1)),
+        KernelType::Bool | KernelType::U8 | KernelType::F32 | KernelType::I32 => None,
+    }
 }
 
 /// Maps a feasibility intrinsic error onto the physical-error contract.
@@ -1059,9 +1073,12 @@ mod tests {
     /// and step whatever domain tag the change requires in the same commit.
     #[test]
     fn the_governed_descriptor_bytes_do_not_move() {
-        // Rebaselined to the 760-byte complete v8 declaration after retiring the invented numeric barrier-capacity row. Quantitative, numerical, and exact-dispatch rows continue to share one canonical provenance table.
+        // Rebaselined to the complete v9 declaration after replacing the
+        // conflated index-width row with operation-complete u64 arithmetic.
+        // Device-address width remains absent because no current KIR operation
+        // consumes it and the governed authority does not establish it.
         // Every artifact identity and cache entry derived from it moves with it. Regenerate with `cargo nextest run -p tiler-compiler -E 'test(the_governed_descriptor_bytes_do_not_move)'` and take `left`.
-        const GOVERNED: &str = "000000000000002474696c65722e7461726765742d70726f66696c652e6465636c61726174696f6e2e763800000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e7631000000000000002574696c65722e7461726765742d70726f66696c652e666163742d736f75726365732e7634000000000000000001000000000000007400000003010101000000000000002a74696c65722e676f7665726e65642d7461726765742d70726f66696c652d617574686f726974792e76310000000101000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e76310000000100000000000000060000000000000009677269642d61786973ffff000000000000000000000000000015746872656164732d7065722d776f726b67726f7570010000000000000000000000000000000f6275666665722d62696e64696e6773020000000000000000000000000000000a696e6465782d62697473400000000000000000000000000000000d6465766963652d6d656d6f727901000000000000000000000000000000126c6f63616c2d6d656d6f72792d62797465730000000000000000000000000000000001000000000000004303000000000000003a74696c65722e7265736f6c7665642d76616c75652d747970652e76330001000000000000000574696c6572000000000000000366333200000001000000000000000c000101010100000101020100000201010100000201020100000302010100000302020100000402010100000402020100000502010100000602010100000904010100000a04010100000000000000002e74696c65722e7461726765742d70726f66696c652e64747970652d64697370617463686162696c6974792e7632000000000000000001000000000000003a74696c65722e7265736f6c7665642d76616c75652d747970652e76330001000000000000000574696c65720000000000000003663332000000010100";
+        const GOVERNED: &str = "000000000000002474696c65722e7461726765742d70726f66696c652e6465636c61726174696f6e2e763900000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e7631000000000000002574696c65722e7461726765742d70726f66696c652e666163742d736f75726365732e7634000000000000000001000000000000007400000003010101000000000000002a74696c65722e676f7665726e65642d7461726765742d70726f66696c652d617574686f726974792e76310000000101000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e76310000000100000000000000060000000000000009677269642d61786973ffff000000000000000000000000000015746872656164732d7065722d776f726b67726f7570010000000000000000000000000000000f6275666665722d62696e64696e6773020000000000000000000000000000000d6465766963652d6d656d6f727901000000000000000000000000000000126c6f63616c2d6d656d6f72792d62797465730000000000000000000000000000000014696e6465782d61726974686d657469632d7536340100000000000000000000000000000001000000000000004303000000000000003a74696c65722e7265736f6c7665642d76616c75652d747970652e76330001000000000000000574696c6572000000000000000366333200000001000000000000000c000101010100000101020100000201010100000201020100000302010100000302020100000402010100000402020100000502010100000602010100000904010100000a04010100000000000000002e74696c65722e7461726765742d70726f66696c652e64747970652d64697370617463686162696c6974792e7632000000000000000001000000000000003a74696c65722e7265736f6c7665642d76616c75652d747970652e76330001000000000000000574696c65720000000000000003663332000000010100";
 
         let profile = crate::request::TargetProfile::governed();
         let descriptor = target_profile_descriptor(&profile);

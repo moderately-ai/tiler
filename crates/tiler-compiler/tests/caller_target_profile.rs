@@ -7,12 +7,12 @@ use tiler_compiler::session::{
     TargetNumericalRefusalDisposition, TargetNumericalRequirement, compile,
 };
 use tiler_compiler::target::{
-    DTypeDispatchability, DTypeDispatchabilityResolution, MAX_TARGET_PROFILES_PER_REQUEST,
-    MeasuredFactAuthority, ScalarArithmetic, ScalarSupport, TargetCompileProfileMeasurementSource,
-    TargetCompilerBuild, TargetCompilerRole, TargetExecutionEnvironment,
-    TargetFactProducerIdentity, TargetFactSource, TargetMeasurementContext,
-    TargetNormativeReferenceIdentity, TargetProfile, TargetProfileBuilder, TargetProfileKey,
-    TargetRequest, TargetRequestError,
+    DTypeDispatchability, DTypeDispatchabilityResolution, DeviceAddressWidth,
+    IndexArithmeticSupport, MAX_TARGET_PROFILES_PER_REQUEST, MeasuredFactAuthority,
+    ScalarArithmetic, ScalarSupport, TargetCompileProfileMeasurementSource, TargetCompilerBuild,
+    TargetCompilerRole, TargetExecutionEnvironment, TargetFactProducerIdentity, TargetFactSource,
+    TargetMeasurementContext, TargetNormativeReferenceIdentity, TargetProfile,
+    TargetProfileBuilder, TargetProfileKey, TargetRequest, TargetRequestError,
 };
 use tiler_ir::program::abi::AvailabilityPhase;
 use tiler_ir::schedule::{
@@ -111,7 +111,12 @@ fn external_profile(
     builder
         .declare_max_buffer_bindings_per_entry(31, source.clone())
         .unwrap();
-    builder.declare_index_bits(64, source.clone()).unwrap();
+    builder
+        .declare_index_arithmetic(IndexArithmeticSupport::CompleteU64, source.clone())
+        .unwrap();
+    builder
+        .declare_device_address_width(DeviceAddressWidth::Bits64, source.clone())
+        .unwrap();
     builder.declare_device_memory(true, source.clone()).unwrap();
     builder
         .declare_local_memory_bytes(32_768, source.clone())

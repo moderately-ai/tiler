@@ -27,7 +27,10 @@ use core::fmt;
 use tiler_ir::kernel::{BufferParameter, CanonicalKernelIdentity};
 
 use crate::diagnostic::MetalEmitError;
-use crate::target::{MetalFloatArithmeticType, MetalTargetFacts, MetalUnstatedSubnormalArithmetic};
+use crate::target::{
+    MetalEmissionRealization, MetalFloatArithmeticType, MetalTargetFacts,
+    MetalUnstatedSubnormalArithmetic,
+};
 
 /// One numerical compiler flag this emitted source requires to be correct.
 ///
@@ -303,6 +306,7 @@ impl MetalEntryPoint {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MetalTranslationUnit {
     target: MetalTargetFacts,
+    emission: MetalEmissionRealization,
     source: String,
     entry_points: Vec<MetalEntryPoint>,
     numerical: Vec<MetalNumericalRequirement>,
@@ -313,6 +317,7 @@ pub struct MetalTranslationUnit {
 impl MetalTranslationUnit {
     pub(crate) const fn new(
         target: MetalTargetFacts,
+        emission: MetalEmissionRealization,
         source: String,
         entry_points: Vec<MetalEntryPoint>,
         numerical: Vec<MetalNumericalRequirement>,
@@ -321,6 +326,7 @@ impl MetalTranslationUnit {
     ) -> Self {
         Self {
             target,
+            emission,
             source,
             entry_points,
             numerical,
@@ -333,6 +339,16 @@ impl MetalTranslationUnit {
     #[must_use]
     pub const fn target(&self) -> &MetalTargetFacts {
         &self.target
+    }
+
+    /// Returns the source-level realization selected for this translation unit.
+    ///
+    /// This is deliberately separate from [`Self::target`]: selecting a
+    /// `uint` launch parameter does not establish 32-bit index arithmetic,
+    /// device-address width, or a concrete launch limit.
+    #[must_use]
+    pub const fn emission_realization(&self) -> MetalEmissionRealization {
+        self.emission
     }
 
     /// Returns the complete emitted Metal Shading Language source.

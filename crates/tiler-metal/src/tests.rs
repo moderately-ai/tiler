@@ -39,14 +39,14 @@ use tiler_ir::shape::{Axis, Shape};
 
 use crate::diagnostic::{BarrierRejection, MetalEmitError};
 use crate::emit::{
-    address_space_declaration, barrier_call, emit_translation_unit, is_f32_nan, msl_type,
-    realization_requirements, reserve_symbol,
+    address_space_declaration, barrier_call, emit_translation_unit as emit_with_realization,
+    is_f32_nan, msl_type, realization_requirements, reserve_symbol,
 };
 use crate::record::{MetalNumericalGap, MetalNumericalRequirement, MetalTranslationUnit};
 use crate::target::{
-    LaunchIndexRealization, MetalDeploymentMinimum, MetalFloatArithmeticType, MetalFlushedZeroSign,
-    MetalPlatform, MetalSubnormalArithmetic, MetalSubnormalArithmeticFacts, MetalTargetFacts,
-    MslLanguageVersion,
+    LaunchIndexRealization, MetalDeploymentMinimum, MetalEmissionRealization,
+    MetalFloatArithmeticType, MetalFlushedZeroSign, MetalPlatform, MetalSubnormalArithmetic,
+    MetalSubnormalArithmeticFacts, MetalTargetFacts, MslLanguageVersion,
 };
 
 const NAN_BITS: u32 = 0x7fc0_0000;
@@ -74,10 +74,20 @@ fn target() -> MetalTargetFacts {
         MslLanguageVersion::Metal3_1,
         MetalPlatform::MacOs,
         MetalDeploymentMinimum::new(14, 0),
-        LaunchIndexRealization::ThreadPositionInGridUInt,
         subnormal_facts(APPLE_FLUSH),
         31,
     )
+}
+
+const fn emission() -> MetalEmissionRealization {
+    MetalEmissionRealization::new(LaunchIndexRealization::ThreadPositionInGridUInt)
+}
+
+fn emit_translation_unit(
+    kernels: &[&VerifiedKernel],
+    target: &MetalTargetFacts,
+) -> Result<MetalTranslationUnit, MetalEmitError> {
+    emit_with_realization(kernels, target, emission())
 }
 
 /// The Apple row's per-type subnormal facts, with the `f32` entry varied.
@@ -683,9 +693,19 @@ fn every_f32_immediate_is_emitted_as_an_exact_bit_pattern() {
 
 #[test]
 fn the_launch_index_is_widened_explicitly() {
-    let source = emit_one(&pointwise_kernel());
+    let unit = emit_translation_unit(&[&pointwise_kernel()], &target()).unwrap();
+    let source = unit.source();
+    assert_eq!(unit.emission_realization(), emission());
     assert!(source.contains("uint tiler_global_invocation_index [[thread_position_in_grid]]"));
-    assert!(source.contains("ulong v0 = ulong(tiler_global_invocation_index);"));
+    assert!(
+        source.contains(
+            "uint64_t v0 = uint64_t(tiler_global_invocation_index);  // widened from uint"
+        )
+    );
+    assert!(source.contains(
+        "// Structured index arithmetic: uint64_t, widened explicitly from uint delivery."
+    ));
+    assert!(!source.contains("Launch precondition"));
 }
 
 #[test]
@@ -1060,6 +1080,7 @@ fn a_unit_with_no_arithmetic_reports_no_unstated_type() {
 fn an_unstated_type_is_reported_before_a_gap() {
     let unit = MetalTranslationUnit::new(
         target(),
+        emission(),
         String::new(),
         Vec::new(),
         Vec::new(),
@@ -1310,7 +1331,7 @@ fn governed_types_map_to_their_metal_spellings() {
     assert_eq!(msl_type(KernelType::Bool), "bool");
     assert_eq!(msl_type(KernelType::U8), "uchar");
     assert_eq!(msl_type(KernelType::I32), "int");
-    assert_eq!(msl_type(KernelType::Index), "ulong");
+    assert_eq!(msl_type(KernelType::Index), "uint64_t");
     assert_eq!(msl_type(KernelType::F32), "float");
 }
 

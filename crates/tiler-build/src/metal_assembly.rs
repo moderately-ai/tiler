@@ -421,8 +421,8 @@ mod tests {
     use tiler_ir::shape::Shape;
     use tiler_metal::emit::emit_translation_unit;
     use tiler_metal::target::{
-        LaunchIndexRealization, MetalDeploymentMinimum, MetalFloatArithmeticType,
-        MetalFlushedZeroSign, MetalPlatform, MetalSubnormalArithmetic,
+        LaunchIndexRealization, MetalDeploymentMinimum, MetalEmissionRealization,
+        MetalFloatArithmeticType, MetalFlushedZeroSign, MetalPlatform, MetalSubnormalArithmetic,
         MetalSubnormalArithmeticFacts, MetalTargetFacts, MslLanguageVersion,
     };
     use tiler_metal_aot::driver::Toolchain;
@@ -439,14 +439,18 @@ mod tests {
             MslLanguageVersion::Metal3_1,
             MetalPlatform::MacOs,
             MetalDeploymentMinimum::new(minimum, 0),
-            LaunchIndexRealization::ThreadPositionInGridUInt,
             MetalSubnormalArithmeticFacts::unmeasured(),
             31,
         )
     }
 
+    fn emission_realization() -> MetalEmissionRealization {
+        MetalEmissionRealization::new(LaunchIndexRealization::ThreadPositionInGridUInt)
+    }
+
     fn unit(minimum: u16) -> tiler_metal::record::MetalTranslationUnit {
-        emit_translation_unit(&[], &facts(minimum)).expect("an empty translation unit emits")
+        emit_translation_unit(&[], &facts(minimum), emission_realization())
+            .expect("an empty translation unit emits")
     }
 
     fn arithmetic_unit() -> tiler_metal::record::MetalTranslationUnit {
@@ -535,7 +539,8 @@ mod tests {
         let mut facts = facts(14);
         facts.subnormal_arithmetic = MetalSubnormalArithmeticFacts::unmeasured()
             .stating(MetalFloatArithmeticType::F32, subnormal_arithmetic);
-        emit_translation_unit(&[&kernel], &facts).expect("the arithmetic unit emits")
+        emit_translation_unit(&[&kernel], &facts, emission_realization())
+            .expect("the arithmetic unit emits")
     }
 
     fn scale_then_bias_expression(scale_bits: u32, bias_bits: u32) -> PointwiseF32Expression {
@@ -660,6 +665,14 @@ mod tests {
         let expected_provenance = prepared.provenance().clone();
         let payload =
             prepare_metal_payload(&unit, prepared).expect("the emitted and prepared facts agree");
+        assert_eq!(unit.emission_realization(), emission_realization());
+        assert_eq!(payload.metadata().source, unit.source().as_bytes());
+        assert!(
+            unit.source().contains(
+                "// Launch delivery realization: [[thread_position_in_grid]] declared as uint"
+            ),
+            "the artifact-carried source must retain the selected launch realization",
+        );
 
         let mut pending_builder = artifact_builder();
         payload
@@ -784,7 +797,6 @@ mod tests {
                 MslLanguageVersion::Metal4_0,
                 platform,
                 MetalDeploymentMinimum::new(26, 0),
-                LaunchIndexRealization::ThreadPositionInGridUInt,
                 MetalSubnormalArithmeticFacts::unmeasured(),
                 31,
             );
@@ -815,7 +827,6 @@ mod tests {
                 language,
                 platform,
                 MetalDeploymentMinimum::new(26, 0),
-                LaunchIndexRealization::ThreadPositionInGridUInt,
                 MetalSubnormalArithmeticFacts::unmeasured(),
                 31,
             );

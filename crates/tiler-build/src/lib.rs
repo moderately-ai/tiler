@@ -28,6 +28,7 @@ pub use metal_cache::{
 };
 pub use metal_payload::{MetalPayloadFact, MetalPayloadMismatch, validate_prepared_metal_payload};
 pub use metal_plan::{
-    AcceptedMetalPlanArtifact, MetalPlanBuildError, accept_or_publish_metal_plan,
+    AcceptedMetalPlanArtifact, MetalPlanBuildError, MetalPlanBuildPolicy,
+    accept_or_publish_metal_plan,
 };
 pub use metal_profile::{MetalF32TargetProfileError, declare_metal_f32_subnormal_behaviour};

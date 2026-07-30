@@ -115,8 +115,8 @@ mod tests {
     };
     use tiler_ir::shape::{Axis, Shape};
     use tiler_metal::target::{
-        LaunchIndexRealization, MetalDeploymentMinimum, MetalFlushedZeroSign, MetalPlatform,
-        MetalSubnormalArithmetic, MetalSubnormalArithmeticFacts, MslLanguageVersion,
+        MetalDeploymentMinimum, MetalFlushedZeroSign, MetalPlatform, MetalSubnormalArithmetic,
+        MetalSubnormalArithmeticFacts, MslLanguageVersion,
     };
 
     fn source(
@@ -155,7 +155,6 @@ mod tests {
             MslLanguageVersion::Metal3_1,
             MetalPlatform::MacOs,
             MetalDeploymentMinimum::new(14, 0),
-            LaunchIndexRealization::ThreadPositionInGridUInt,
             subnormals,
             31,
         )
@@ -205,7 +204,6 @@ mod tests {
             MslLanguageVersion::Metal3_1,
             MetalPlatform::MacOs,
             MetalDeploymentMinimum::new(14, 0),
-            LaunchIndexRealization::ThreadPositionInGridUInt,
             neighbouring_only,
             31,
         );

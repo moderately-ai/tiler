@@ -2,9 +2,10 @@
 //!
 //! Every fact that can change emitted source is a required field. This module
 //! deliberately provides no `Default`: a caller states the language standard,
-//! artifact family, deployment minimum, launch-index realization, and binding
-//! capacity it is emitting for, exactly as `tiler-metal-aot` requires every
-//! output-affecting compiler input to be stated.
+//! artifact family, deployment minimum, and binding capacity it is emitting
+//! for, exactly as `tiler-metal-aot` requires every output-affecting compiler
+//! input to be stated. Source-level choices are carried separately by
+//! [`crate::target::MetalEmissionRealization`].
 //!
 //! These are *compile-time* target facts. Prepared-pipeline facts such as
 //! `maxTotalThreadsPerThreadgroup`, `threadExecutionWidth`, and
@@ -43,9 +44,9 @@
 //!
 //! **Why the two records are not one type in disguise.**
 //! [`MetalTargetFacts`](crate::target::MetalTargetFacts)
-//! also carries a launch-index realization, a per-dtype subnormal-arithmetic
-//! record, and a binding capacity, none of which a compiler invocation has any
-//! use for. The
+//! also carries a per-dtype subnormal-arithmetic record and a binding capacity,
+//! while [`crate::target::MetalEmissionRealization`] carries source-level lowering choices;
+//! none of those facts has any use in a compiler invocation. The
 //! driver's `MetalTarget` derives an `AppleSdk`, which selects `xcrun --sdk`,
 //! and builds the `air64-apple-*` triple — tool-discovery knowledge this crate
 //! must never acquire. Neither record subsumes the other; they overlap in
@@ -304,13 +305,14 @@ impl fmt::Display for MetalDeploymentMinimum {
     }
 }
 
-/// How the target delivers the governed global launch index to a kernel.
+/// One selected MSL realization of the governed global launch index.
 ///
 /// The structured kernel IR types a launch builtin as its governed index role,
-/// an unsigned 64-bit integer. Metal delivers the launch position through an
-/// attributed parameter whose declared type is fixed by the language, so the
-/// realization is a target fact rather than a lowering choice, and any width
-/// difference becomes an explicit widening in emitted source.
+/// an unsigned 64-bit integer. MSL 4.0 Table 5.8 permits
+/// `[[thread_position_in_grid]]` to be declared as either `ushort` or `uint`
+/// scalar/vector forms. The backend selects one admitted declaration here,
+/// separately from target facts, and any width difference becomes an explicit
+/// widening in emitted source.
 ///
 /// **Measurement.** On Metal 32023.883 (`air64-apple-macos13.0`,
 /// `-std=metal3.1`), declaring `[[thread_position_in_grid]]` as `ulong` is
@@ -339,18 +341,30 @@ impl LaunchIndexRealization {
             Self::ThreadPositionInGridUInt => "uint",
         }
     }
+}
 
-    /// Returns the largest launch index this realization can deliver.
-    ///
-    /// A dispatch whose grid exceeds this bound cannot address every invocation
-    /// through this builtin. Launch geometry is not part of a verified kernel,
-    /// so this bound is stated in the emitted provenance header as a launch
-    /// precondition rather than checked here.
+/// Source-level choices used to emit one Metal translation unit.
+///
+/// These are realizations selected by the backend, not capabilities inferred
+/// from an Apple artifact family or a device. Keeping them separate from
+/// [`MetalTargetFacts`] prevents a selected launch-parameter spelling from
+/// being mistaken for proof of integer arithmetic width, device-address width,
+/// or concrete launch capacity.
+///
+/// This is a caller-constructed input record, so it deliberately exposes its
+/// field and is not `#[non_exhaustive]`: adding another required realization is
+/// a construction-site change either way.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct MetalEmissionRealization {
+    /// The selected declaration of the governed global launch index.
+    pub launch_index: LaunchIndexRealization,
+}
+
+impl MetalEmissionRealization {
+    /// Assembles the complete source-emission realization.
     #[must_use]
-    pub const fn maximum_index(self) -> u64 {
-        match self {
-            Self::ThreadPositionInGridUInt => u32::MAX as u64,
-        }
+    pub const fn new(launch_index: LaunchIndexRealization) -> Self {
+        Self { launch_index }
     }
 }
 
@@ -745,8 +759,6 @@ pub struct MetalTargetFacts {
     pub platform: MetalPlatform,
     /// The requested deployment minimum.
     pub deployment_minimum: MetalDeploymentMinimum,
-    /// How the target delivers the governed global launch index.
-    pub launch_index: LaunchIndexRealization,
     /// How the target's arithmetic treats subnormals, stated per floating-point
     /// type.
     ///
@@ -772,7 +784,6 @@ impl MetalTargetFacts {
         language: MslLanguageVersion,
         platform: MetalPlatform,
         deployment_minimum: MetalDeploymentMinimum,
-        launch_index: LaunchIndexRealization,
         subnormal_arithmetic: MetalSubnormalArithmeticFacts,
         buffer_binding_limit: u32,
     ) -> Self {
@@ -780,7 +791,6 @@ impl MetalTargetFacts {
             language,
             platform,
             deployment_minimum,
-            launch_index,
             subnormal_arithmetic,
             buffer_binding_limit,
         }

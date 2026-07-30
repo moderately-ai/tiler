@@ -3,8 +3,8 @@
 //
 // Metal Shading Language: metal3.1
 // Artifact family: macos (deployment minimum 14.0)
-// Launch index: [[thread_position_in_grid]] declared as uint
-// Launch precondition: no invocation index may exceed 4294967295.
+// Launch delivery realization: [[thread_position_in_grid]] declared as uint
+// Structured index arithmetic: uint64_t, widened explicitly from uint delivery.
 // Arithmetic subnormals, per floating-point type:
 //   f32: flushes-to-zero-preserving-sign
 //   f16: preserves-subnormals
@@ -42,20 +42,20 @@ kernel void tiler_kernel_11b6a49ef72f5cda(
         device const float *b0 [[buffer(0)]],
         device float *b1 [[buffer(1)]],
         uint tiler_global_invocation_index [[thread_position_in_grid]]) {
-    ulong v0 = ulong(tiler_global_invocation_index);  // widened from uint
-    ulong v1 = 2ul;
+    uint64_t v0 = uint64_t(tiler_global_invocation_index);  // widened from uint
+    uint64_t v1 = 2ul;
     bool v2 = v0 < v1;
     if (v2) {
-        ulong v3 = 3ul;
-        ulong v4 = v0 * v3;
+        uint64_t v3 = 3ul;
+        uint64_t v4 = v0 * v3;
         float v5 = b0[v4];  // bounds witness 0
         // serial loop over [1, 3)
-        ulong v6 = 1ul;
+        uint64_t v6 = 1ul;
         float v7 = v5;
         for (; v6 < 3ul; v6 = v6 + 1ul) {
-            ulong v8 = 3ul;
-            ulong v9 = v0 * v8;
-            ulong v10 = v9 + v6;
+            uint64_t v8 = 3ul;
+            uint64_t v9 = v0 * v8;
+            uint64_t v10 = v9 + v6;
             float v11 = b0[v10];  // bounds witness 0
             float v12 = v7 + v11;
             float v13 = tiler_canonicalize_nan_f32_7fc00000(v12);

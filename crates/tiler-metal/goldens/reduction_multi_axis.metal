@@ -3,8 +3,8 @@
 //
 // Metal Shading Language: metal3.1
 // Artifact family: macos (deployment minimum 14.0)
-// Launch index: [[thread_position_in_grid]] declared as uint
-// Launch precondition: no invocation index may exceed 4294967295.
+// Launch delivery realization: [[thread_position_in_grid]] declared as uint
+// Structured index arithmetic: uint64_t, widened explicitly from uint delivery.
 // Arithmetic subnormals, per floating-point type:
 //   f32: flushes-to-zero-preserving-sign
 //   f16: preserves-subnormals
@@ -42,27 +42,27 @@ kernel void tiler_kernel_140ad7e1855516d4(
         device const float *b0 [[buffer(0)]],
         device float *b1 [[buffer(1)]],
         uint tiler_global_invocation_index [[thread_position_in_grid]]) {
-    ulong v0 = ulong(tiler_global_invocation_index);  // widened from uint
-    ulong v1 = 2ul;
+    uint64_t v0 = uint64_t(tiler_global_invocation_index);  // widened from uint
+    uint64_t v1 = 2ul;
     bool v2 = v0 < v1;
     if (v2) {
-        ulong v3 = 12ul;
-        ulong v4 = v0 * v3;
+        uint64_t v3 = 12ul;
+        uint64_t v4 = v0 * v3;
         float v5 = b0[v4];  // bounds witness 0
         // serial loop over [1, 12)
-        ulong v6 = 1ul;
+        uint64_t v6 = 1ul;
         float v7 = v5;
         for (; v6 < 12ul; v6 = v6 + 1ul) {
-            ulong v8 = 12ul;
-            ulong v9 = v0 * v8;
-            ulong v10 = 4ul;
-            ulong v11 = v6 / v10;
-            ulong v12 = 4ul;
-            ulong v13 = v11 * v12;
-            ulong v14 = v9 + v13;
-            ulong v15 = 4ul;
-            ulong v16 = v6 % v15;
-            ulong v17 = v14 + v16;
+            uint64_t v8 = 12ul;
+            uint64_t v9 = v0 * v8;
+            uint64_t v10 = 4ul;
+            uint64_t v11 = v6 / v10;
+            uint64_t v12 = 4ul;
+            uint64_t v13 = v11 * v12;
+            uint64_t v14 = v9 + v13;
+            uint64_t v15 = 4ul;
+            uint64_t v16 = v6 % v15;
+            uint64_t v17 = v14 + v16;
             float v18 = b0[v17];  // bounds witness 0
             float v19 = v7 + v18;
             float v20 = tiler_canonicalize_nan_f32_7fc00000(v19);

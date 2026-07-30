@@ -1062,7 +1062,8 @@ pub(super) fn target_quantity(rule: &str, value: u64) -> Result<Quantity, Explai
         "grid-axis" | "threads-per-workgroup" => Ok(Quantity::Threads(value)),
         "buffer-bindings" => Ok(Quantity::Bindings(value)),
         "local-memory-bytes" => Ok(Quantity::Bytes(value)),
-        "index-bits" | "device-memory" => Ok(Quantity::Count(value)),
+        "index-arithmetic-u64" | "device-memory" => Ok(Quantity::Count(value)),
+        "device-address-bits" => Ok(Quantity::Bits(value)),
         _ => Err(ExplainError::UnknownQuantityUnit),
     }
 }
@@ -1280,12 +1281,26 @@ mod tests {
         );
     }
 
-    /// A retired capability axis cannot survive as an explain-only quantity.
+    /// Retired capability axes cannot survive as explain-only quantities.
     #[test]
-    fn barrier_count_is_not_a_target_quantity() {
+    fn retired_target_axes_are_not_target_quantities() {
+        for retired in ["barriers", "index-bits"] {
+            assert_eq!(
+                target_quantity(retired, 0),
+                Err(ExplainError::UnknownQuantityUnit)
+            );
+        }
+    }
+
+    #[test]
+    fn index_arithmetic_and_device_address_width_have_distinct_quantities() {
         assert_eq!(
-            target_quantity("barriers", 0),
-            Err(ExplainError::UnknownQuantityUnit)
+            target_quantity("index-arithmetic-u64", 1),
+            Ok(Quantity::Count(1))
+        );
+        assert_eq!(
+            target_quantity("device-address-bits", 64),
+            Ok(Quantity::Bits(64))
         );
     }
 

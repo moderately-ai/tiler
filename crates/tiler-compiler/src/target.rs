@@ -11,8 +11,9 @@
 //!
 //! ```
 //! use tiler_compiler::target::{
-//!     DTypeDispatchability, TargetFactProducerIdentity, TargetFactSource,
-//!     TargetNormativeReferenceIdentity, TargetProfileBuilder, TargetProfileKey, TargetRequest,
+//!     DTypeDispatchability, DeviceAddressWidth, IndexArithmeticSupport,
+//!     TargetFactProducerIdentity, TargetFactSource, TargetNormativeReferenceIdentity,
+//!     TargetProfileBuilder, TargetProfileKey, TargetRequest,
 //! };
 //! use tiler_ir::semantic::F32;
 //!
@@ -25,7 +26,8 @@
 //! builder.declare_max_threads_per_grid_axis(65_535, source.clone())?;
 //! builder.declare_max_threads_per_workgroup(256, source.clone())?;
 //! builder.declare_max_buffer_bindings_per_entry(31, source.clone())?;
-//! builder.declare_index_bits(64, source.clone())?;
+//! builder.declare_index_arithmetic(IndexArithmeticSupport::CompleteU64, source.clone())?;
+//! builder.declare_device_address_width(DeviceAddressWidth::Bits64, source.clone())?;
 //! builder.declare_device_memory(true, source.clone())?;
 //! builder.declare_local_memory_bytes(32_768, source.clone())?;
 //! builder.declare_dtype_dispatchability(
@@ -135,12 +137,12 @@ pub(crate) const GOVERNED_TARGET_PROFILE_KEY: &str = "tiler.prototype-target-neu
 /// Domain of the complete producer declaration carried into artifact identity.
 ///
 /// This is a new grammar, not a continuation of feasibility's
-/// `tiler.target-profile.descriptor.v7`: the checked descriptor remains an
-/// internal feasibility component, while this v8 declaration encodes the same
+/// `tiler.target-profile.descriptor.v8`: the checked descriptor remains an
+/// internal feasibility component, while this v9 declaration encodes the same
 /// capability and numerical semantics plus exact dtype dispatch through one
 /// shared provenance table. A reader of an older domain therefore cannot
 /// mistake these bytes for the new grammar.
-const COMPLETE_PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.declaration.v8\0";
+const COMPLETE_PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.declaration.v9\0";
 const PROFILE_SOURCE_DOMAIN: &[u8] = b"tiler.target-profile.fact-sources.v4\0";
 const DISPATCHABILITY_DOMAIN: &[u8] = b"tiler.target-profile.dtype-dispatchability.v2\0";
 
@@ -937,6 +939,52 @@ impl ScalarHonourabilityDeclaration {
     }
 }
 
+/// Support for the governed KIR index-arithmetic family.
+///
+/// This is deliberately not a raw integer width. `CompleteU64` means the target
+/// supports every unsigned-64 operation that [`tiler_ir::kernel::KernelType::Index`]
+/// may emit, rather than merely storing a 64-bit scalar.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum IndexArithmeticSupport {
+    /// The governed unsigned-64 index operation family is unsupported.
+    Unsupported,
+    /// The governed unsigned-64 index operation family is supported completely.
+    CompleteU64,
+}
+
+impl IndexArithmeticSupport {
+    const fn bound(self) -> u64 {
+        match self {
+            Self::Unsupported => 0,
+            Self::CompleteU64 => 1,
+        }
+    }
+}
+
+/// Width of a target's device address model.
+///
+/// This fact does not describe integer arithmetic, buffer length, or launch
+/// coordinate delivery. A profile omits it when no applicable authority has
+/// established the address model.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum DeviceAddressWidth {
+    /// A 32-bit device address model.
+    Bits32,
+    /// A 64-bit device address model.
+    Bits64,
+}
+
+impl DeviceAddressWidth {
+    /// Returns the width in bits.
+    #[must_use]
+    pub const fn bits(self) -> u8 {
+        match self {
+            Self::Bits32 => 32,
+            Self::Bits64 => 64,
+        }
+    }
+}
+
 /// Qualitative ability of a target family to dispatch one exact dtype.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum DTypeDispatchability {
@@ -973,9 +1021,6 @@ impl QuantitativeCapabilityDeclaration {
     fn validate(&self) -> Result<(), TargetProfileBuildError> {
         if !self.source.is_valid() {
             return Err(TargetProfileBuildError::InvalidProducerClaim);
-        }
-        if self.axis == CapabilityAxis::IndexWidthBits && self.bound == 0 {
-            return Err(TargetProfileBuildError::MalformedProfile { rule: "fact-bound" });
         }
         Ok(())
     }
@@ -1080,8 +1125,8 @@ impl TargetProfileBuilder {
             .declare_max_buffer_bindings_per_entry(2, source.clone())
             .expect("the governed binding declaration is valid");
         builder
-            .declare_index_bits(64, source.clone())
-            .expect("the governed index-width declaration is valid");
+            .declare_index_arithmetic(IndexArithmeticSupport::CompleteU64, source.clone())
+            .expect("the governed index-arithmetic declaration is valid");
         builder
             .declare_device_memory(true, source.clone())
             .expect("the governed device-memory declaration is valid");
@@ -1204,30 +1249,72 @@ impl TargetProfileBuilder {
         self.declare_quantitative(CapabilityAxis::BufferBindings, u64::from(bound), source.0)
     }
 
-    /// Declares the exact index/address width.
+    /// Declares support for the governed KIR index-arithmetic family.
     ///
     /// # Errors
     ///
     /// Returns a typed error without inserting an invalid or duplicate fact.
-    pub fn declare_index_bits(
+    pub fn declare_index_arithmetic(
         &mut self,
-        bits: u8,
+        support: IndexArithmeticSupport,
         source: TargetFactSource,
     ) -> Result<(), TargetProfileBuildError> {
-        self.declare_quantitative(CapabilityAxis::IndexWidthBits, u64::from(bits), source.0)
+        self.declare_quantitative(
+            CapabilityAxis::IndexArithmeticU64,
+            support.bound(),
+            source.0,
+        )
     }
 
-    /// Declares a measured exact index/address width.
+    /// Declares measured support for the governed KIR index-arithmetic family.
     ///
     /// # Errors
     ///
     /// Returns a typed error without inserting an invalid or duplicate fact.
-    pub fn declare_measured_index_bits(
+    pub fn declare_measured_index_arithmetic(
         &mut self,
-        bits: u8,
+        support: IndexArithmeticSupport,
         source: TargetCompileProfileMeasurementSource,
     ) -> Result<(), TargetProfileBuildError> {
-        self.declare_quantitative(CapabilityAxis::IndexWidthBits, u64::from(bits), source.0)
+        self.declare_quantitative(
+            CapabilityAxis::IndexArithmeticU64,
+            support.bound(),
+            source.0,
+        )
+    }
+
+    /// Declares the exact device address-model width.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting an invalid or duplicate fact.
+    pub fn declare_device_address_width(
+        &mut self,
+        width: DeviceAddressWidth,
+        source: TargetFactSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_quantitative(
+            CapabilityAxis::DeviceAddressWidthBits,
+            u64::from(width.bits()),
+            source.0,
+        )
+    }
+
+    /// Declares a measured exact device address-model width.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting an invalid or duplicate fact.
+    pub fn declare_measured_device_address_width(
+        &mut self,
+        width: DeviceAddressWidth,
+        source: TargetCompileProfileMeasurementSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_quantitative(
+            CapabilityAxis::DeviceAddressWidthBits,
+            u64::from(width.bits()),
+            source.0,
+        )
     }
 
     /// Declares whether an explicitly addressable device memory space exists.
@@ -2635,7 +2722,12 @@ mod tests {
         builder
             .declare_max_buffer_bindings_per_entry(31, source.clone())
             .unwrap();
-        builder.declare_index_bits(64, source.clone()).unwrap();
+        builder
+            .declare_index_arithmetic(IndexArithmeticSupport::CompleteU64, source.clone())
+            .unwrap();
+        builder
+            .declare_device_address_width(DeviceAddressWidth::Bits64, source.clone())
+            .unwrap();
         builder.declare_device_memory(true, source.clone()).unwrap();
         builder
             .declare_local_memory_bytes(32_768, source.clone())
@@ -2861,7 +2953,10 @@ mod tests {
             .declare_max_buffer_bindings_per_entry(31, revised_source.clone())
             .unwrap();
         second
-            .declare_index_bits(64, revised_source.clone())
+            .declare_index_arithmetic(IndexArithmeticSupport::CompleteU64, revised_source.clone())
+            .unwrap();
+        second
+            .declare_device_address_width(DeviceAddressWidth::Bits64, revised_source.clone())
             .unwrap();
         second
             .declare_device_memory(true, revised_source.clone())
@@ -2967,7 +3062,10 @@ mod tests {
             .declare_measured_max_buffer_bindings_per_entry(31, source.clone())
             .unwrap();
         builder
-            .declare_measured_index_bits(64, source.clone())
+            .declare_measured_index_arithmetic(IndexArithmeticSupport::CompleteU64, source.clone())
+            .unwrap();
+        builder
+            .declare_measured_device_address_width(DeviceAddressWidth::Bits64, source.clone())
             .unwrap();
         builder
             .declare_measured_device_memory(true, source.clone())
@@ -3069,7 +3167,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(builder.quantitative.len(), 6);
+        assert_eq!(builder.quantitative.len(), 7);
         assert_eq!(builder.scalar.len(), 15);
         assert_eq!(builder.dispatchability.len(), 1);
         for provenance in builder
@@ -3584,9 +3682,9 @@ mod tests {
         let source = public_external_source(1);
         let quantitative_len = builder.quantitative.len();
         assert_eq!(
-            builder.declare_index_bits(32, source.clone()),
+            builder.declare_index_arithmetic(IndexArithmeticSupport::Unsupported, source.clone(),),
             Err(TargetProfileBuildError::DuplicateQuantitativeCapability {
-                axis: "index-bits",
+                axis: "index-arithmetic-u64",
                 phase: AvailabilityPhase::CompileProfile,
             })
         );
@@ -3641,7 +3739,9 @@ mod tests {
         forward
             .declare_max_threads_per_grid_axis(64, source.clone())
             .unwrap();
-        forward.declare_index_bits(64, source.clone()).unwrap();
+        forward
+            .declare_index_arithmetic(IndexArithmeticSupport::CompleteU64, source.clone())
+            .unwrap();
         forward
             .declare_dtype_dispatchability(
                 first_type.clone(),
@@ -3657,7 +3757,9 @@ mod tests {
             )
             .unwrap();
         let mut reverse = TargetProfileBuilder::new(key);
-        reverse.declare_index_bits(64, source.clone()).unwrap();
+        reverse
+            .declare_index_arithmetic(IndexArithmeticSupport::CompleteU64, source.clone())
+            .unwrap();
         reverse
             .declare_max_threads_per_grid_axis(64, source.clone())
             .unwrap();
@@ -3690,9 +3792,9 @@ mod tests {
         builder
             .quantitative
             .iter_mut()
-            .find(|declaration| declaration.axis == CapabilityAxis::IndexWidthBits)
+            .find(|declaration| declaration.axis == CapabilityAxis::IndexArithmeticU64)
             .unwrap()
-            .bound = 0;
+            .bound = 2;
         assert_eq!(
             builder.try_build(),
             Err(TargetProfileBuildError::MalformedProfile { rule: "fact-bound" })
@@ -3857,6 +3959,53 @@ mod tests {
         assert_eq!(
             baseline.request_subject_bytes(),
             baseline.canonical_descriptor()
+        );
+    }
+
+    #[test]
+    fn arithmetic_support_and_device_address_width_move_identity_independently() {
+        let baseline = public_builder("test.width-independence.v1")
+            .build()
+            .unwrap();
+        let mut arithmetic = public_builder("test.width-independence.v1");
+        arithmetic
+            .quantitative
+            .iter_mut()
+            .find(|declaration| declaration.axis == CapabilityAxis::IndexArithmeticU64)
+            .unwrap()
+            .bound = IndexArithmeticSupport::Unsupported.bound();
+        let arithmetic = arithmetic.build().unwrap();
+        let mut address = public_builder("test.width-independence.v1");
+        address
+            .quantitative
+            .iter_mut()
+            .find(|declaration| declaration.axis == CapabilityAxis::DeviceAddressWidthBits)
+            .unwrap()
+            .bound = u64::from(DeviceAddressWidth::Bits32.bits());
+        let address = address.build().unwrap();
+
+        assert_ne!(
+            baseline.canonical_descriptor(),
+            arithmetic.canonical_descriptor()
+        );
+        assert_ne!(
+            baseline.canonical_descriptor(),
+            address.canonical_descriptor()
+        );
+        assert_ne!(
+            arithmetic.canonical_descriptor(),
+            address.canonical_descriptor()
+        );
+    }
+
+    #[test]
+    fn governed_profile_does_not_invent_a_device_address_width() {
+        assert!(
+            TargetProfile::governed()
+                .checked()
+                .facts()
+                .iter()
+                .all(|fact| fact.axis() != CapabilityAxis::DeviceAddressWidthBits)
         );
     }
 

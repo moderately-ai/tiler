@@ -121,9 +121,9 @@ use tiler_ir::semantic::{
 use tiler_ir::shape::{Axis, Shape};
 use tiler_metal::emit::emit_translation_unit;
 use tiler_metal::target::{
-    LaunchIndexRealization, MetalDeploymentMinimum, MetalFloatArithmeticType, MetalFlushedZeroSign,
-    MetalPlatform, MetalSubnormalArithmetic, MetalSubnormalArithmeticFacts, MetalTargetFacts,
-    MslLanguageVersion,
+    LaunchIndexRealization, MetalDeploymentMinimum, MetalEmissionRealization,
+    MetalFloatArithmeticType, MetalFlushedZeroSign, MetalPlatform, MetalSubnormalArithmetic,
+    MetalSubnormalArithmeticFacts, MetalTargetFacts, MslLanguageVersion,
 };
 use tiler_metal_aot::driver::Toolchain;
 use tiler_metal_aot::input::{
@@ -246,7 +246,6 @@ fn target_facts() -> MetalTargetFacts {
         MslLanguageVersion::Metal3_1,
         MetalPlatform::MacOs,
         MetalDeploymentMinimum::new(14, 0),
-        LaunchIndexRealization::ThreadPositionInGridUInt,
         MetalSubnormalArithmeticFacts::unmeasured()
             .stating(
                 MetalFloatArithmeticType::F32,
@@ -260,6 +259,11 @@ fn target_facts() -> MetalTargetFacts {
             ),
         BUFFER_BINDING_LIMIT,
     )
+}
+
+/// The source-level choices this proof selects independently of target facts.
+fn emission_realization() -> MetalEmissionRealization {
+    MetalEmissionRealization::new(LaunchIndexRealization::ThreadPositionInGridUInt)
 }
 
 /// Builds `sum((input * 1.0) + 0.0)` over the reduced axis of a given shape.
@@ -1927,7 +1931,8 @@ fn run() -> Result<(), ProofError> {
 
     let facts = target_facts();
     let kernels: Vec<_> = selected.kernels().iter().collect();
-    let unit = emit_translation_unit(&kernels, &facts).map_err(|_| ProofError::Emit)?;
+    let unit = emit_translation_unit(&kernels, &facts, emission_realization())
+        .map_err(|_| ProofError::Emit)?;
     // Emission succeeds even when the target cannot honour the declared
     // contract, so conformance is asked explicitly rather than inferred.
     unit.require_declared_realization()

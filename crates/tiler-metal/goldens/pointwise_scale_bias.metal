@@ -3,8 +3,8 @@
 //
 // Metal Shading Language: metal3.1
 // Artifact family: macos (deployment minimum 14.0)
-// Launch index: [[thread_position_in_grid]] declared as uint
-// Launch precondition: no invocation index may exceed 4294967295.
+// Launch delivery realization: [[thread_position_in_grid]] declared as uint
+// Structured index arithmetic: uint64_t, widened explicitly from uint delivery.
 // Arithmetic subnormals, per floating-point type:
 //   f32: flushes-to-zero-preserving-sign
 //   f16: preserves-subnormals
@@ -42,8 +42,8 @@ kernel void tiler_kernel_82f3fb8d82924ceb(
         device const float *b0 [[buffer(0)]],
         device float *b1 [[buffer(1)]],
         uint tiler_global_invocation_index [[thread_position_in_grid]]) {
-    ulong v0 = ulong(tiler_global_invocation_index);  // widened from uint
-    ulong v1 = 4ul;
+    uint64_t v0 = uint64_t(tiler_global_invocation_index);  // widened from uint
+    uint64_t v1 = 4ul;
     bool v2 = v0 < v1;
     if (v2) {
         float v3 = b0[v0];  // bounds witness 0

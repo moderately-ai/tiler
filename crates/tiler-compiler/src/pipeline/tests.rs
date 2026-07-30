@@ -478,7 +478,7 @@ fn product_is_deterministic_and_preserves_the_materialized_boundary() {
     assert_eq!(first, second);
     let target = &first.targets[0];
     let rendered = target.explain.render();
-    assert!(rendered.starts_with("tiler-explain-v4 request="));
+    assert!(rendered.starts_with("tiler-explain-v5 request="));
     assert!(rendered.contains("feasibility:threads-per-workgroup:admitted"));
     assert!(rendered.contains("feasibility:buffer-bindings:admitted"));
     assert!(rendered.contains("event=selection:tiler.selection.structural-pareto.v1:selected"));
@@ -617,7 +617,7 @@ fn every_wired_authority_emits_its_typed_explain_records() {
             ("target.buffer-bindings", 3),
             ("target.device-memory", 3),
             ("target.grid-axis", 3),
-            ("target.index-bits", 3),
+            ("target.index-arithmetic-u64", 3),
             ("target.local-memory-bytes", 3),
             // The four per-dimension honourability records replace the one
             // `target.strict-f32` predicate, which is the whole point of
@@ -648,6 +648,17 @@ fn every_wired_authority_emits_its_typed_explain_records() {
                 )
         }),
         "a zero-synchronization program emitted an invented barrier capability fact"
+    );
+    assert!(
+        trace.records().iter().all(|record| {
+            record.rule().key().as_str() != "target.device-address-bits"
+                && !matches!(
+                    record.event(),
+                    ExplainEvent::Feasibility { predicate, .. }
+                        if predicate.as_str() == "device-address-bits"
+                )
+        }),
+        "a program with no address-width requirement emitted an address-width fact"
     );
     let analytical = trace
         .records()
@@ -774,7 +785,7 @@ fn every_wired_authority_emits_its_typed_explain_records() {
         .find(|record| record.rule().key().as_str() == "fusion.legality.v1")
         .expect("a fusion-legality record");
     assert_eq!(legality.event().disposition(), ExplainDisposition::Admitted);
-    assert!(trace.render().starts_with("tiler-explain-v4 request="));
+    assert!(trace.render().starts_with("tiler-explain-v5 request="));
 }
 
 /// Asserts the honourability half of the end-to-end explain conformance.
@@ -863,10 +874,16 @@ fn end_to_end_explain_emitter_has_exhaustive_typed_conformance() {
                     (Quantity::Bytes(_), Quantity::Bytes(_))
                 )
             }
-            "index-bits" | "device-memory" => {
+            "index-arithmetic-u64" | "device-memory" => {
                 matches!(
                     (required, available),
                     (Quantity::Count(_), Quantity::Count(_))
+                )
+            }
+            "device-address-bits" => {
+                matches!(
+                    (required, available),
+                    (Quantity::Bits(_), Quantity::Bits(_))
                 )
             }
             other => panic!("unexpected target predicate {other}"),
@@ -882,7 +899,7 @@ fn end_to_end_explain_emitter_has_exhaustive_typed_conformance() {
             ("buffer-bindings", 3),
             ("device-memory", 3),
             ("grid-axis", 3),
-            ("index-bits", 3),
+            ("index-arithmetic-u64", 3),
             ("local-memory-bytes", 3),
             ("threads-per-workgroup", 3),
         ])
@@ -930,7 +947,7 @@ fn normalization_converges_duplicated_and_shared_constants_on_one_portfolio() {
     let rendered = from_duplicated.targets[0].compilation_explain.render();
     let request_headers = rendered
         .lines()
-        .filter(|line| line.starts_with("tiler-explain-v4 request="))
+        .filter(|line| line.starts_with("tiler-explain-v5 request="))
         .collect::<Vec<_>>();
     assert_eq!(request_headers.len(), 2);
     assert_ne!(
@@ -2536,7 +2553,7 @@ fn mixed_frontier_records_exact_opaque_call_rejection_detail() {
         "a local rejection is never cost evidence"
     );
     let rendered = trace.render();
-    assert!(rendered.starts_with("tiler-explain-v4 "));
+    assert!(rendered.starts_with("tiler-explain-v5 "));
     assert!(rendered.contains("opaque-call:call-owner/mystery@3[input=input,output=output]"));
     assert!(rendered.contains("provider:tiler.test.physical::opaque@7"));
     assert!(rendered.contains("admitted-count:count=1"));
