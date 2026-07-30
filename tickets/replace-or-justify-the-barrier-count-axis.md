@@ -1,7 +1,7 @@
 ---
 id: replace-or-justify-the-barrier-count-axis
 title: Replace or justify the barrier-count capability axis
-status: todo
+status: in-progress
 priority: p0
 dependencies: []
 related: [construct-and-bind-the-first-authoritative-metal-compile-profile]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler, contracts/foundation, contr
 shared_scopes: [project/tickets]
 paths: []
 tags: [synchronization, feasibility, target-profiles, correctness]
+claimed_from: todo
+assignee: codex-root
+lease_expires_at: 1785534750
 ---
 ## User-visible outcome
 
