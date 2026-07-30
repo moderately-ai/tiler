@@ -1,7 +1,7 @@
 ---
 id: carry-the-honourability-fact-provenance-into-the-artifact-record
 title: Carry structured target-fact provenance through declaration and selection
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [record-delivered-numerical-realization, name-the-compiler-and-environment-in-adr-0076-target-facts, record-metal-runtime-compiler-provenance-gap, carry-structured-provenance-through-numerical-rejections]
@@ -9,9 +9,6 @@ scopes: [implementation/metal, implementation/compiler, implementation/build, co
 shared_scopes: []
 paths: []
 tags: [implementation, artifact, compiler, numerics, provenance]
-claimed_from: todo
-assignee: codex-root
-lease_expires_at: 1785429221
 ---
 ## User-visible outcome
 
@@ -52,6 +49,12 @@ impl PlanAlternative<'_> {
 `HonouredNumericalFact<'a>` is a copyable borrowed view with private storage and typed accessors for `NumericalDimension`, `ArithmeticType`, `DimensionBehaviour`, `HonouringMeans`, `AvailabilityPhase`, `FactAuthority`, `FactValidityScope`, the declaring profile key, and `FactSourceView<'a>`. `FactSourceView` exposes the provenance schema version, a borrowed `VersionedIdentityView` for the fact authority, and exactly one `FactEvidenceView`: either `GovernedGuarantee(VersionedIdentityView)` or `Measurement(ExactSizeIterator<MeasurementContextView>)`. Each measurement context exposes an exact-size iterator of `CompilerBuildView` plus one `ExecutionEnvironmentView`; each compiler build exposes a borrowed `CompilerBuildRoleView`, implementation key, version, and optional build; the environment exposes platform key, platform version/build, architecture key, and hardware description. The role view keeps the provider-defined role identity borrowed too, so the facade's no-owned-record statement is literal.
 
 The facade does not expose `Arc`, vectors, constructors, canonical encoders, checked-profile internals, or an owned record. It is an allocation-free inspection subview: a consumer can read typed selected evidence without decoding opaque bytes or forging a compiler-verified fact. Borrowing ties the view to the owning `Compilation` allocation, not uniquely to one `PlanAlternative`, so this iterator alone is deliberately not the artifact translation authority. The later total boundary must consume `PlanAlternative` directly or a whole plan-scoped view that cross-checks policy subjects, all-dimension `Required`/`NotRequired` coverage, obligation and execution-locus associations, and this evidence pool together. The governed common roles plus a versioned provider-defined role prevent a future toolchain from collapsing an unknown role into the nearest current one.
+
+## Implementation outcome
+
+Commits `a12f709`, `2515db7`, and `cad3e43` add the private structured source vocabulary, validate it at checked-profile admission, canonicalize and deduplicate source/declaration tables, carry the exact checked fact through `ProvenEvidence` and `SelectedPlan`, and bind the complete source plus declaring profile into selected-plan identity. Governed guarantees remain distinct from measurements; measured sources require nonempty compiler-build sets paired with exact environments; descriptor v4 and request/selection identity pins were rebaselined from the resulting canonical bytes.
+
+The malformed-source and build/environment identity checks were each perturbed and observed failing before restoration. Targeted compiler tests pass 418/418 with one skipped; the final workspace gate passes 1,300 debug tests, all doc tests, 491 release tests, rustdoc, ticket lint, and shellcheck. Two clean detached reviews accepted the implementation and the cached canonical-key optimization without findings.
 
 ## Graph maintenance
 
