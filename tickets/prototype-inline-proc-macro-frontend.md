@@ -1,7 +1,7 @@
 ---
 id: prototype-inline-proc-macro-frontend
 title: Implement the inline proc-macro frontend proof
-status: in-progress
+status: todo
 priority: p1
 dependencies: [prototype-public-compiler-api, prototype-neutral-artifact-codec]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/frontend, implementation/compiler, implementation/worksp
 shared_scopes: [project/tickets, implementation/cargo-lock]
 paths: []
 tags: [implementation, frontend, proc-macro, inline-dx]
-claimed_from: todo
-assignee: codex-root
-lease_expires_at: 1785435144
 ---
 ## Outcome (2026-07-30)
 
