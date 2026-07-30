@@ -125,7 +125,7 @@ illustrative and do not commit a Rust API or serialization.
 ## Runtime identities and immutable inputs
 
 ```text
-RuntimeArtifactKey = EnvelopeDigest + selected BackendPayloadDigest
+RuntimeArtifactKey = EnvelopeDigest + selected payload descriptor position
 
 LiveDeviceKey {
   backend_provider_key,
@@ -153,6 +153,8 @@ InputBindingFingerprint {
   access_and_alignment,
 }
 ```
+
+`EnvelopeDigest` binds every exact byte of the validated envelope, including each carried backend object, while the canonical descriptor position identifies which payload within that envelope the runtime selected. The compilation-subject digest is not an exact-object identity: two non-reproducible links of one source, flags, target, and toolchain subject deliberately share artifact identity while carrying different code bytes.
 
 `LiveDeviceKey` is runtime-scoped. A bare ordinal, object address, or portable
 artifact target is not sufficient identity. The provider decides the stable
@@ -425,15 +427,18 @@ early-return paths.
 The minimum successful-cache keys are:
 
 ```text
-LibraryCacheKey = LiveDeviceKey + BackendPayloadDigest
+LibraryCacheKey = LiveDeviceKey
+                + SectionDigest(selected BackendPayloadCode)
 
 PipelineCacheKey = LiveDeviceKey
-                 + BackendPayloadDigest
-                 + BackendEntryKey
+                 + SectionDigest(selected BackendPayloadCode)
+                 + resolved backend entry symbol
                  + specialization values
                  + canonical pipeline descriptor
                  + translation/archive/runtime mode
 ```
+
+The library key uses the governed code-section digest because library construction consumes the exact emitted object and can safely reuse identical object bytes across envelopes. Pipeline construction consumes one symbol resolved from that object, not the neutral `BackendEntryKey` by itself and not the payload's whole metadata section. Keying the resolved symbol prevents two metadata sections that map the same neutral key to different functions from aliasing, while leaving unrelated transport-slot mappings out of pipeline identity so they do not destroy safe reuse. Neither key may substitute the payload descriptor's compilation-subject digest for the code-section digest.
 
 Cache initialization is fallible and concurrency-safe. Successful objects are
 published only after complete construction and validation. Device/context loss

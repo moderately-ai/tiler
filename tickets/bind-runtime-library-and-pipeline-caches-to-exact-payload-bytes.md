@@ -1,10 +1,10 @@
 ---
 id: bind-runtime-library-and-pipeline-caches-to-exact-payload-bytes
 title: Bind runtime library and pipeline caches to exact payload bytes
-status: ready
+status: done
 priority: p1
 dependencies: []
-related: [correct-stale-artifact-identity-and-delivery-authorities]
+related: [correct-stale-artifact-identity-and-delivery-authorities, prototype-candle-metal-adapter]
 scopes: [research/runtime]
 shared_scopes: [project/tickets]
 paths: []
@@ -28,6 +28,16 @@ The adopted runtime execution contract keys loaded libraries and prepared pipeli
 - State why the compilation-subject digest is insufficient and retain the existing live-device/context, entry, specialization, pipeline-descriptor, and runtime-mode dimensions.
 - Search runtime, cache, artifact, and integration authorities for the same obsolete name or semantic conflation. Correct only `research/runtime` here; split findings in other scopes.
 - Prove the stale-key check can fail against the current base, run `tkt lint`, `git diff --check`, the documentation link/authority checks available in this repository, and one final `make full`.
+
+## Outcome
+
+The three key layers now name the subject each actually consumes. `RuntimeArtifactKey` is the complete `EnvelopeDigest` plus the selected payload's canonical descriptor position, so it identifies both the exact validated bytes and the payload selected within them. `LibraryCacheKey` uses the selected `BackendPayloadCode` section's governed `SectionDigest`, permitting safe reuse of identical object bytes across envelopes. `PipelineCacheKey` uses that exact code digest plus the resolved backend entry symbol. The neutral `BackendEntryKey` alone cannot distinguish metadata that maps one neutral key to different functions, while the whole metadata digest would unnecessarily prevent reuse when only transport slots or unrelated entries differ.
+
+Using `EnvelopeDigest` for every cache would be correct but unnecessarily prevent library and pipeline reuse across envelopes carrying identical payload sections. Using only the compilation-subject digest would preserve reuse by silently allowing two non-reproducible objects of one subject to alias. The split keys retain correctness and the useful reuse granularity without inventing a new identity authority.
+
+The existing live-device/context, entry, specialization, canonical pipeline descriptor, and runtime-mode dimensions remain present. The graph now relates `prototype-candle-metal-adapter`, the ticket that owns the first reusable live-device cache. A corpus search found no other current authority using the retired `BackendPayloadDigest` name.
+
+The stale-name check was proven able to fail: `rg -n 'BackendPayloadDigest' docs/research/runtime/runtime-execution-contract.md` finds all three obsolete formulas at base `0e74053` and finds none in the corrected record.
 
 ## Closes when
 
