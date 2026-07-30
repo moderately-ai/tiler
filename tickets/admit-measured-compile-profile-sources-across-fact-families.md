@@ -1,7 +1,7 @@
 ---
 id: admit-measured-compile-profile-sources-across-fact-families
 title: Admit measured CompileProfile sources across target fact families
-status: todo
+status: in-progress
 priority: p0
 dependencies: []
 related: [construct-and-bind-the-first-authoritative-metal-compile-profile, carry-the-honourability-fact-provenance-into-the-artifact-record, decide-per-dtype-dispatchability-as-a-target-capability]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, implementation/build, contracts/foundation, co
 shared_scopes: [project/tickets]
 paths: []
 tags: [target-profiles, provenance, correctness]
+claimed_from: todo
+assignee: codex-root
+lease_expires_at: 1785450295
 ---
 ## User-visible outcome
 
