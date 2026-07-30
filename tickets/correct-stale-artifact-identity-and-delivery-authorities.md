@@ -1,7 +1,7 @@
 ---
 id: correct-stale-artifact-identity-and-delivery-authorities
 title: Correct stale artifact identity and delivery authorities
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [prototype-kernel-program-ir, prototype-neutral-artifact-codec, prototype-metal-runtime-proof, correct-the-stale-post-vertical-implementation-status]
@@ -9,9 +9,6 @@ scopes: [contracts/artifacts, contracts/decisions, research/artifacts, research/
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, artifact, identity, correctness]
-claimed_from: todo
-assignee: codex
-lease_expires_at: 1785338389
 ---
 ## User-visible outcome
 
