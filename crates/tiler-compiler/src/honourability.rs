@@ -1190,11 +1190,21 @@ impl NumericalRequirement {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct HonouredDimension {
     fact: NumericalHonourabilityFact,
+    canonical_key: Arc<[u8]>,
 }
 
 impl HonouredDimension {
-    pub(crate) const fn new(fact: NumericalHonourabilityFact) -> Self {
-        Self { fact }
+    pub(crate) fn new(fact: NumericalHonourabilityFact) -> Self {
+        let mut canonical_key = Vec::new();
+        encode_honourability_facts(&mut canonical_key, std::slice::from_ref(&fact));
+        push_slice(
+            &mut canonical_key,
+            fact.provenance().profile().key().as_bytes(),
+        );
+        Self {
+            fact,
+            canonical_key: Arc::from(canonical_key),
+        }
     }
 
     /// The dimension honoured.
@@ -1225,6 +1235,11 @@ impl HonouredDimension {
     /// The exact checked fact that justified selection.
     pub(crate) const fn fact(&self) -> &NumericalHonourabilityFact {
         &self.fact
+    }
+
+    /// Complete canonical evidence key, including the declaring profile.
+    pub(crate) fn canonical_key(&self) -> &[u8] {
+        &self.canonical_key
     }
 }
 

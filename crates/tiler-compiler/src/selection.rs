@@ -75,7 +75,7 @@ use crate::feasibility::ResolvedPredicate;
 use crate::frontier::{
     AdmittedImplementation, BoundaryOwnership, FrontierRegionSubject, ImplementationFrontier,
 };
-use crate::honourability::{HonouredDimension, encode_honourability_facts};
+use crate::honourability::HonouredDimension;
 use crate::region::{RegionFormationOutcome, RegionOccurrenceIdentity};
 use crate::request::DeterministicBudgets;
 
@@ -1565,12 +1565,10 @@ fn aggregate_guards(selections: &[RegionSelection]) -> Vec<ResolvedPredicate> {
 
 /// Aggregates the deduplicated honoured numerical dimensions of one plan.
 ///
-/// Sorted and deduplicated by the canonical encoding of the exact checked fact
-/// plus its declaring profile. The fact encoding includes its complete
-/// structured source provenance, validity, phase, behaviour, and means, so two
-/// entries disagreeing on any selected evidence remain distinct claims.
+/// Sorted and deduplicated by each entry's cached complete canonical evidence
+/// key, so entries disagreeing on any selected evidence remain distinct claims.
 fn aggregate_honoured(selections: &[RegionSelection]) -> Vec<HonouredDimension> {
-    let mut honoured: Vec<(Vec<u8>, HonouredDimension)> = selections
+    let mut honoured: Vec<HonouredDimension> = selections
         .iter()
         .flat_map(|selection| {
             selection
@@ -1580,15 +1578,10 @@ fn aggregate_honoured(selections: &[RegionSelection]) -> Vec<HonouredDimension> 
                 .iter()
                 .cloned()
         })
-        .map(|entry| {
-            let mut key = Vec::new();
-            encode_honoured(&mut key, &entry);
-            (key, entry)
-        })
         .collect();
-    honoured.sort_by(|left, right| left.0.cmp(&right.0));
-    honoured.dedup_by(|left, right| left.0 == right.0);
-    honoured.into_iter().map(|(_, entry)| entry).collect()
+    honoured.sort_by(|left, right| left.canonical_key().cmp(right.canonical_key()));
+    honoured.dedup_by(|left, right| left.canonical_key() == right.canonical_key());
+    honoured
 }
 
 fn encode_plan_identity(
@@ -1643,14 +1636,9 @@ fn encode_guard(output: &mut Vec<u8>, guard: ResolvedPredicate) {
 
 /// Encodes one honoured numerical dimension into a plan identity.
 ///
-/// The checked fact is encoded by the honourability authority itself rather
-/// than reconstructed here. That encoding carries the complete structured
-/// source provenance, phase, validity, behaviour, and means; selection adds
-/// only the declaring profile, which checked-fact encoding deliberately omits
-/// because a profile descriptor already supplies it as the enclosing subject.
+/// The cached key carries the exact checked fact and its declaring profile.
 fn encode_honoured(output: &mut Vec<u8>, honoured: &HonouredDimension) {
-    encode_honourability_facts(output, std::slice::from_ref(honoured.fact()));
-    push_slice(output, honoured.profile().key().as_bytes());
+    output.extend_from_slice(honoured.canonical_key());
 }
 
 fn member_key(members: &[crate::region::SemanticMemberId]) -> Vec<u32> {
