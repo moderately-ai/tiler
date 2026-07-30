@@ -1,7 +1,7 @@
 ---
 id: prototype-inline-proc-macro-frontend
 title: Implement the inline proc-macro frontend proof
-status: awaiting-decision
+status: in-progress
 priority: p1
 dependencies: [prototype-public-compiler-api, prototype-neutral-artifact-codec]
 related: []
@@ -9,8 +9,19 @@ scopes: [implementation/frontend, implementation/compiler, implementation/worksp
 shared_scopes: [project/tickets, implementation/cargo-lock]
 paths: []
 tags: [implementation, frontend, proc-macro, inline-dx]
+claimed_from: todo
+assignee: codex-root
+lease_expires_at: 1785435144
 ---
-## Decision needed (2026-07-28)
+## Outcome (2026-07-30)
+
+Tom approved candidate B: an expression-position `tiler::tensor!` macro with a leading declaration block, explicit symbolic extents and typed operands, ordinary Rust operators where they carry the intended logical operation, named calls for operations without an operator spelling, and `out` bindings returned to the surrounding Rust expression.
+
+The declaration block is the surviving long-term surface because it states a shared symbol once, scales without repeating attribute runs across many operands, retains token-level spans for typed diagnostics, and can grow from operators into named operation calls without changing the region model. Candidate C is eliminated because a string literal cannot reliably preserve operand-level spans through indirection. Candidate A remains implementable but is rejected because its repeated attributes and method-only body become progressively noisier as regions, dtype declarations, and output cardinality grow.
+
+This decision releases implementation. It does not authorize a runtime JIT, source scan, consumer build step, implicit inspection outside the macro invocation, or a second operation vocabulary disconnected from the public logical program.
+
+## Decision record (2026-07-28; accepted 2026-07-30)
 
 **The question, atomic:** what does the inline tensor region *look like* at a call site?
 
@@ -66,7 +77,7 @@ Delimiter and position: parenthesized call, expression position, body inside a s
 
 The accepted inline developer experience removes a whole class of answers before taste is consulted: no consumer `build.rs`, no duplicated registry, no source scan, no Cargo subcommand, no prepare step, no runtime source JIT, and each invocation a self-contained AOT and embedding unit. Any syntax that needs the macro to see *outside* its own invocation — a region referring to tensors declared in an earlier macro call, or a program assembled across statements — is eliminated by that rule rather than by preference; broader fusion requires a larger explicit inline region.
 
-**No recommendation offered on the choice between A, B, and C.** Unlike the other parked boundaries, this one is a product-taste decision rather than one the constraints narrow — all three are implementable, and the span consequence noted against C is a cost to weigh rather than an elimination, because a caller who wants index notation may accept region-level error attribution to get it.
+The original analysis left the choice between A, B, and C to product taste. The accepted outcome above resolves that choice in favor of B and strengthens the span consequence against C into an elimination under the retained operand-level diagnostic requirement.
 
 ## What is settled and implementable without the answer
 
@@ -76,6 +87,6 @@ Implement a bounded inline Rust proc-macro frontend that parses one visible tens
 
 If the owning production crate is absent, this ticket owns its atomic workspace admission and lockfile update. After that crate exists, replace any temporary prototype entry in `[scope_crates]` with the real package owner; do not leave reverse-dependency expansion attached to the prototype.
 
-## Parked 2026-07-27 — awaiting Tom
+## Activated 2026-07-30
 
-The syntax question above is the whole of what is parked; everything else in this ticket is implementable the day it is answered.
+Tom's approval of candidate B released the only parked question. The ticket is now ready for implementation.
