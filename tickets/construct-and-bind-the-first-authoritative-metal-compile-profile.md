@@ -1,17 +1,14 @@
 ---
 id: construct-and-bind-the-first-authoritative-metal-compile-profile
 title: Construct and bind the first authoritative Metal compile-time target profile
-status: in-progress
+status: todo
 priority: p0
-dependencies: [express-metal-honourability-in-the-shared-form]
+dependencies: [express-metal-honourability-in-the-shared-form, admit-measured-compile-profile-sources-across-fact-families, measure-macos-apple9-f32-under-unified-msl4-profile, source-or-rephase-first-metal-launch-limits, separate-metal-launch-index-from-index-and-address-width, replace-or-justify-the-barrier-count-axis, validate-macos-metal-profile-host-applicability]
 related: [admit-a-caller-declared-target-profile, carry-the-honourability-fact-provenance-into-the-artifact-record, decide-per-dtype-dispatchability-as-a-target-capability, record-metal-runtime-compiler-provenance-gap, prototype-metal-runtime-proof, measure-apple-numerics-on-physical-ios-device, spike-bf16-through-the-second-dtype-seams, redesign-the-delivered-realization-record-from-typed-evidence]
 scopes: [implementation/build, implementation/compiler, implementation/metal, implementation/metal-aot, implementation/runtime, contracts/foundation, contracts/numerics, contracts/artifacts, contracts/navigation, research/target-profiles]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, metal, target-profile, numerics, runtime, provenance]
-claimed_from: todo
-assignee: codex-root
-lease_expires_at: 1785455030
 ---
 ## User-visible outcome
 
@@ -114,3 +111,21 @@ This migration is the production proof. The F32 projection ticket and its synthe
 - Make production delivered-realization wiring depend on this ticket before it packages real Metal evidence. The redesign and public-boundary acceptance tickets may continue using checked synthetic evidence.
 - Keep `consolidate-private-compiler-target-concerns` directly after the projection ticket; it is a private refactor and does not need production facts.
 - Relate workload-definition research without blocking its definition. Any execution ticket derived from it must depend on this profile.
+
+## Authority-ledger research outcome
+
+**Fact:** the compiler consumes seven quantitative axes for every scheduled-region proposal. The governed values `65_535`, `1`, `2`, `64`, `true`, `0`, and `0` are compiler-owned prototype declarations, not one authoritative Metal profile. Apple primary material supports 31 buffer argument-table entries, MSL `float`, the `device` address space, `uint` launch delivery, and `ulong` storage/arithmetic syntax, but it does not support treating the `uint` maximum as a compute-grid extent or Apple’s theoretical 1,024-thread family limit as a compiled pipeline capacity. The 64-bit integer-math row is Apple-family-specific and is not a generic Mac2 guarantee.
+
+**Fact:** measured compile-profile provenance is currently constructible only for the two complete F32 subnormal dimensions. Quantitative, exact dtype-dispatchability, and other numerical builder operations cannot accept `TargetCompileProfileMeasurementSource`; using `external_guarantee` would change empirical `MeasuredEnvironment` evidence into `PortableProfile` authority. The measured-source ticket owns the required reviewed type refinement.
+
+**Measurement:** the retained Apple numerical record qualifies F32 behavior on an Apple M4 Max under macOS 27.0 build 26A5388g, arm64, Xcode 26.6 build 17F113, macOS SDK 26.5 build 25F70, offline `metalfe-32023.883`, AIR-LLD 32023.883, and runtime/pipeline compiler `metalfe-32023.921`. That row is MSL 3.1 with an emitted macOS 14 triple, so it cannot be silently reused as the requested unified MSL 4.0/macOS 26 production profile. The later MSL 4 measurement ticket owns the exact replacement evidence.
+
+**Measurement:** retained runs on the same named M4 Max report different registry IDs, while macOS and the simulator agree within each run. Registry ID is same-run correlation evidence, not stable hardware identity. `correct-apple-numerical-registry-id-authority` owns the prose correction and is deliberately related rather than a parent dependency.
+
+**Fact — source correction:** current source identity is artifact program v9 and neutral manifest schema 7.0, with resolved value type v3, scheduled region v2, structured kernel v3, and verified kernel program v5. Any implementation or mutation evidence produced here must use those current identities rather than an older artifact/manifest schema.
+
+**Inference:** a truthful first profile must separate launch delivery, arithmetic-index width, and device-address width; make a zero synchronization requirement vacuous or replace the unsupported barrier count; source or defer grid extent 4 and workgroup size 1 at their real phases; and independently earn the runtime profile offer from measured host predicates. The cheaper substitutions — 65,535 from `uint`, 1,024 from the feature table, a generic macOS 64-bit claim, or a `Compilation`-derived host offer — were eliminated because each can silently certify a fact its source does not establish.
+
+**Proposal:** after the six blockers below close, `tiler-build` can own one bound declaration containing the checked compiler profile, exact F32-only Metal facts, total AOT target projection, structured sources, and host-applicability policy. Compiler buffer capacity must be no greater than the Metal emission limit; F32 subnormal facts must be projected once; backend-only language/platform/deployment facts remain payload identity; and LiveDevice/PreparedKernel facts remain later preflight obligations.
+
+This parent remains open. Production migration must not begin by filling any missing row with a convenient constant; it may proceed only after `admit-measured-compile-profile-sources-across-fact-families`, `measure-macos-apple9-f32-under-unified-msl4-profile`, `source-or-rephase-first-metal-launch-limits`, `separate-metal-launch-index-from-index-and-address-width`, `replace-or-justify-the-barrier-count-axis`, and `validate-macos-metal-profile-host-applicability` are complete.
