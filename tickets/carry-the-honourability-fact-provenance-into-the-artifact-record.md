@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: []
 related: [record-delivered-numerical-realization, name-the-compiler-and-environment-in-adr-0076-target-facts, record-metal-runtime-compiler-provenance-gap, carry-structured-provenance-through-numerical-rejections]
-scopes: [implementation/metal, implementation/compiler, implementation/build, contracts/numerics]
+scopes: [implementation/metal, implementation/compiler, implementation/build, contracts/numerics, project/tickets]
 shared_scopes: []
 paths: []
 tags: [implementation, artifact, compiler, numerics, provenance]
