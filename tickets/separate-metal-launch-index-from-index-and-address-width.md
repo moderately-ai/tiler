@@ -1,7 +1,7 @@
 ---
 id: separate-metal-launch-index-from-index-and-address-width
 title: Separate Metal launch index delivery from index and address width
-status: todo
+status: in-progress
 priority: p0
 dependencies: []
 related: [source-or-rephase-first-metal-launch-limits, restore-replayable-apple-compatibility-evidence]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler, implementation/metal, imple
 shared_scopes: [project/tickets]
 paths: []
 tags: [metal, indexing, target-profiles, correctness]
+claimed_from: todo
+assignee: codex-root
+lease_expires_at: 1785453661
 ---
 ## User-visible outcome
 
