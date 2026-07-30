@@ -3218,7 +3218,11 @@ mod tests {
                 // Rebaselined for provenance schema v3 and the complete/source
                 // descriptor domains v6/v4. Old `a3aff309fd6cc3ba`; regenerate
                 // with the focused nextest command above and take `left`.
-                "tiler-explain-v4 request=6a10192b88f5f968\n",
+                // Rebaselined when complete profile declaration v7 replaced
+                // the nested checked descriptor and second provenance table
+                // with one canonical source table shared by quantitative,
+                // numerical, and exact-dispatch rows.
+                "tiler-explain-v4 request=109224285c9ffff2\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

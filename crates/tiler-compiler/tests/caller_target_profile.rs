@@ -7,8 +7,9 @@ use tiler_compiler::session::{
     TargetNumericalRefusalDisposition, TargetNumericalRequirement, compile,
 };
 use tiler_compiler::target::{
-    DTypeDispatchability, MAX_TARGET_PROFILES_PER_REQUEST, MeasuredFactAuthority, ScalarArithmetic,
-    ScalarSupport, TargetCompilerBuild, TargetCompilerRole, TargetExecutionEnvironment,
+    DTypeDispatchability, DTypeDispatchabilityResolution, MAX_TARGET_PROFILES_PER_REQUEST,
+    MeasuredFactAuthority, ScalarArithmetic, ScalarSupport, TargetCompileProfileMeasurementSource,
+    TargetCompilerBuild, TargetCompilerRole, TargetExecutionEnvironment,
     TargetFactProducerIdentity, TargetFactSource, TargetMeasurementContext,
     TargetNormativeReferenceIdentity, TargetProfile, TargetProfileBuilder, TargetProfileKey,
     TargetRequest, TargetRequestError,
@@ -65,6 +66,30 @@ fn deferred_measurement() -> TargetFactSource {
     TargetFactSource::measured(
         TargetFactProducerIdentity::new("test.runtime-probe.v1".to_owned(), 1).unwrap(),
         MeasuredFactAuthority::DeviceRuntime,
+        [context],
+    )
+    .unwrap()
+}
+
+fn compile_profile_measurement() -> TargetCompileProfileMeasurementSource {
+    let compiler = TargetCompilerBuild::new(
+        TargetCompilerRole::CodeGenerator,
+        "test-offline-compiler".to_owned(),
+        "1.0".to_owned(),
+        Some("build-1".to_owned()),
+    )
+    .unwrap();
+    let environment = TargetExecutionEnvironment::builder()
+        .platform("test-platform".to_owned())
+        .platform_version("1.0".to_owned())
+        .platform_build("build-1".to_owned())
+        .architecture("test-architecture".to_owned())
+        .hardware("test-hardware".to_owned())
+        .build()
+        .unwrap();
+    let context = TargetMeasurementContext::new([compiler], environment).unwrap();
+    TargetCompileProfileMeasurementSource::new(
+        TargetFactProducerIdentity::new("test.compile-profile-probe.v1".to_owned(), 1).unwrap(),
         [context],
     )
     .unwrap()
@@ -209,6 +234,38 @@ fn semantic_program() -> SemanticProgram {
         .output(OutputKey::new("result").unwrap(), sum)
         .unwrap();
     builder.build().unwrap()
+}
+
+#[test]
+fn measured_compile_profile_source_is_admitted_by_each_fact_family() {
+    let source = compile_profile_measurement();
+    let mut builder = TargetProfileBuilder::new(
+        TargetProfileKey::new("test.measured-public-boundary.v1".to_owned()).unwrap(),
+    );
+    builder
+        .declare_measured_max_threads_per_workgroup(256, source.clone())
+        .unwrap();
+    builder
+        .declare_measured_contraction(
+            ScalarArithmetic::f32(),
+            NumericalPermission::Forbidden,
+            ScalarSupport::Exact,
+            source.clone(),
+        )
+        .unwrap();
+    builder
+        .declare_measured_dtype_dispatchability(
+            F32::resolved_type(),
+            DTypeDispatchability::Dispatchable,
+            source,
+        )
+        .unwrap();
+    let profile = builder.build().unwrap();
+    assert!(!profile.canonical_descriptor().is_empty());
+    assert_eq!(
+        profile.dtype_dispatchability(&F32::resolved_type(), AvailabilityPhase::CompileProfile),
+        DTypeDispatchabilityResolution::Dispatchable
+    );
 }
 
 #[test]

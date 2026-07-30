@@ -93,6 +93,23 @@
 //!     [],
 //! );
 //! ```
+//!
+//! Compile-profile measurement provenance cannot be constructed as a tuple or
+//! erased into the general source type:
+//!
+//! ```compile_fail
+//! use tiler_compiler::target::TargetCompileProfileMeasurementSource;
+//! let _ = TargetCompileProfileMeasurementSource;
+//! ```
+//!
+//! ```compile_fail
+//! use tiler_compiler::target::{
+//!     TargetCompileProfileMeasurementSource, TargetFactSource,
+//! };
+//! fn erase(source: TargetCompileProfileMeasurementSource) -> TargetFactSource {
+//!     source.into()
+//! }
+//! ```
 
 use std::sync::{Arc, OnceLock};
 
@@ -119,12 +136,12 @@ pub(crate) const GOVERNED_TARGET_PROFILE_KEY: &str = "tiler.prototype-target-neu
 /// Domain of the complete producer declaration carried into artifact identity.
 ///
 /// This is a new grammar, not a continuation of feasibility's
-/// `tiler.target-profile.descriptor.v6`: the v6 descriptor remains an embedded
-/// checked capability-and-numerics component, while this v6 envelope additionally
-/// binds each quantitative row to structured source attribution and exact,
-/// phase-qualified dtype-dispatch facts. A reader of
-/// the old domain therefore cannot mistake these bytes for the old grammar.
-const COMPLETE_PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.declaration.v6\0";
+/// `tiler.target-profile.descriptor.v6`: the checked descriptor remains an
+/// internal feasibility component, while this v7 declaration encodes the same
+/// capability and numerical semantics plus exact dtype dispatch through one
+/// shared provenance table. A reader of an older domain therefore cannot
+/// mistake these bytes for the new grammar.
+const COMPLETE_PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.declaration.v7\0";
 const PROFILE_SOURCE_DOMAIN: &[u8] = b"tiler.target-profile.fact-sources.v4\0";
 const DISPATCHABILITY_DOMAIN: &[u8] = b"tiler.target-profile.dtype-dispatchability.v2\0";
 
@@ -1092,12 +1109,12 @@ impl TargetProfileBuilder {
         &mut self,
         axis: CapabilityAxis,
         bound: u64,
-        source: TargetFactSource,
+        source: Arc<FactSourceProvenance>,
     ) -> Result<(), TargetProfileBuildError> {
         let declaration = QuantitativeCapabilityDeclaration {
             axis,
             bound,
-            source: source.0,
+            source,
         };
         declaration.validate()?;
         if self.quantitative.iter().any(|existing| {
@@ -1123,7 +1140,20 @@ impl TargetProfileBuilder {
         bound: u64,
         source: TargetFactSource,
     ) -> Result<(), TargetProfileBuildError> {
-        self.declare_quantitative(CapabilityAxis::GridAxisThreads, bound, source)
+        self.declare_quantitative(CapabilityAxis::GridAxisThreads, bound, source.0)
+    }
+
+    /// Declares a measured maximum launch-grid extent along one axis.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting an invalid or duplicate fact.
+    pub fn declare_measured_max_threads_per_grid_axis(
+        &mut self,
+        bound: u64,
+        source: TargetCompileProfileMeasurementSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_quantitative(CapabilityAxis::GridAxisThreads, bound, source.0)
     }
 
     /// Declares the maximum number of threads in one workgroup.
@@ -1136,7 +1166,20 @@ impl TargetProfileBuilder {
         bound: u32,
         source: TargetFactSource,
     ) -> Result<(), TargetProfileBuildError> {
-        self.declare_quantitative(CapabilityAxis::WorkgroupThreads, u64::from(bound), source)
+        self.declare_quantitative(CapabilityAxis::WorkgroupThreads, u64::from(bound), source.0)
+    }
+
+    /// Declares a measured maximum number of threads in one workgroup.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting an invalid or duplicate fact.
+    pub fn declare_measured_max_threads_per_workgroup(
+        &mut self,
+        bound: u32,
+        source: TargetCompileProfileMeasurementSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_quantitative(CapabilityAxis::WorkgroupThreads, u64::from(bound), source.0)
     }
 
     /// Declares the maximum distinct buffer bindings per kernel entry.
@@ -1149,7 +1192,20 @@ impl TargetProfileBuilder {
         bound: u32,
         source: TargetFactSource,
     ) -> Result<(), TargetProfileBuildError> {
-        self.declare_quantitative(CapabilityAxis::BufferBindings, u64::from(bound), source)
+        self.declare_quantitative(CapabilityAxis::BufferBindings, u64::from(bound), source.0)
+    }
+
+    /// Declares a measured maximum number of buffer bindings per kernel entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting an invalid or duplicate fact.
+    pub fn declare_measured_max_buffer_bindings_per_entry(
+        &mut self,
+        bound: u32,
+        source: TargetCompileProfileMeasurementSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_quantitative(CapabilityAxis::BufferBindings, u64::from(bound), source.0)
     }
 
     /// Declares the exact index/address width.
@@ -1162,7 +1218,20 @@ impl TargetProfileBuilder {
         bits: u8,
         source: TargetFactSource,
     ) -> Result<(), TargetProfileBuildError> {
-        self.declare_quantitative(CapabilityAxis::IndexWidthBits, u64::from(bits), source)
+        self.declare_quantitative(CapabilityAxis::IndexWidthBits, u64::from(bits), source.0)
+    }
+
+    /// Declares a measured exact index/address width.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting an invalid or duplicate fact.
+    pub fn declare_measured_index_bits(
+        &mut self,
+        bits: u8,
+        source: TargetCompileProfileMeasurementSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_quantitative(CapabilityAxis::IndexWidthBits, u64::from(bits), source.0)
     }
 
     /// Declares whether an explicitly addressable device memory space exists.
@@ -1178,7 +1247,24 @@ impl TargetProfileBuilder {
         self.declare_quantitative(
             CapabilityAxis::DeviceAddressSpace,
             u64::from(supported),
-            source,
+            source.0,
+        )
+    }
+
+    /// Declares measured support for an explicitly addressable device memory space.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting an invalid or duplicate fact.
+    pub fn declare_measured_device_memory(
+        &mut self,
+        supported: bool,
+        source: TargetCompileProfileMeasurementSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_quantitative(
+            CapabilityAxis::DeviceAddressSpace,
+            u64::from(supported),
+            source.0,
         )
     }
 
@@ -1192,7 +1278,20 @@ impl TargetProfileBuilder {
         bound: u64,
         source: TargetFactSource,
     ) -> Result<(), TargetProfileBuildError> {
-        self.declare_quantitative(CapabilityAxis::LocalMemoryBytes, bound, source)
+        self.declare_quantitative(CapabilityAxis::LocalMemoryBytes, bound, source.0)
+    }
+
+    /// Declares a measured maximum explicitly staged local memory size.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting an invalid or duplicate fact.
+    pub fn declare_measured_local_memory_bytes(
+        &mut self,
+        bound: u64,
+        source: TargetCompileProfileMeasurementSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_quantitative(CapabilityAxis::LocalMemoryBytes, bound, source.0)
     }
 
     /// Declares the maximum barrier/collective synchronization operations.
@@ -1205,7 +1304,20 @@ impl TargetProfileBuilder {
         bound: u32,
         source: TargetFactSource,
     ) -> Result<(), TargetProfileBuildError> {
-        self.declare_quantitative(CapabilityAxis::Barriers, u64::from(bound), source)
+        self.declare_quantitative(CapabilityAxis::Barriers, u64::from(bound), source.0)
+    }
+
+    /// Declares a measured maximum barrier/collective synchronization count.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting an invalid or duplicate fact.
+    pub fn declare_measured_barriers(
+        &mut self,
+        bound: u32,
+        source: TargetCompileProfileMeasurementSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_quantitative(CapabilityAxis::Barriers, u64::from(bound), source.0)
     }
 
     fn declare_scalar(
@@ -1214,14 +1326,14 @@ impl TargetProfileBuilder {
         dimension: NumericalDimension,
         behaviour: DimensionBehaviour,
         support: ScalarSupport,
-        source: TargetFactSource,
+        source: Arc<FactSourceProvenance>,
     ) -> Result<(), TargetProfileBuildError> {
         let declaration = ScalarHonourabilityDeclaration {
             subject,
             dimension,
             behaviour,
             means: support.means(),
-            source: source.0,
+            source,
         };
         declaration.validate()?;
         if self.scalar.iter().any(|existing| {
@@ -1253,7 +1365,7 @@ impl TargetProfileBuilder {
             NumericalDimension::InputSubnormals,
             DimensionBehaviour::Subnormals(behaviour),
             support,
-            source,
+            source.0,
         )
     }
 
@@ -1274,7 +1386,7 @@ impl TargetProfileBuilder {
             NumericalDimension::ResultSubnormals,
             DimensionBehaviour::Subnormals(behaviour),
             support,
-            source,
+            source.0,
         )
     }
 
@@ -1421,7 +1533,28 @@ impl TargetProfileBuilder {
             NumericalDimension::Contraction,
             DimensionBehaviour::Transform(behaviour),
             support,
-            source,
+            source.0,
+        )
+    }
+
+    /// Declares measured support for one contraction permission.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting an invalid or duplicate declaration.
+    pub fn declare_measured_contraction(
+        &mut self,
+        subject: ScalarArithmetic,
+        behaviour: NumericalPermission,
+        support: ScalarSupport,
+        source: TargetCompileProfileMeasurementSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_scalar(
+            subject,
+            NumericalDimension::Contraction,
+            DimensionBehaviour::Transform(behaviour),
+            support,
+            source.0,
         )
     }
 
@@ -1442,7 +1575,28 @@ impl TargetProfileBuilder {
             NumericalDimension::Reassociation,
             DimensionBehaviour::Transform(behaviour),
             support,
-            source,
+            source.0,
+        )
+    }
+
+    /// Declares measured support for one reassociation permission.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting an invalid or duplicate declaration.
+    pub fn declare_measured_reassociation(
+        &mut self,
+        subject: ScalarArithmetic,
+        behaviour: NumericalPermission,
+        support: ScalarSupport,
+        source: TargetCompileProfileMeasurementSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_scalar(
+            subject,
+            NumericalDimension::Reassociation,
+            DimensionBehaviour::Transform(behaviour),
+            support,
+            source.0,
         )
     }
 
@@ -1463,7 +1617,28 @@ impl TargetProfileBuilder {
             NumericalDimension::Permutation,
             DimensionBehaviour::Transform(behaviour),
             support,
-            source,
+            source.0,
+        )
+    }
+
+    /// Declares measured support for one operand-permutation permission.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting an invalid or duplicate declaration.
+    pub fn declare_measured_permutation(
+        &mut self,
+        subject: ScalarArithmetic,
+        behaviour: NumericalPermission,
+        support: ScalarSupport,
+        source: TargetCompileProfileMeasurementSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_scalar(
+            subject,
+            NumericalDimension::Permutation,
+            DimensionBehaviour::Transform(behaviour),
+            support,
+            source.0,
         )
     }
 
@@ -1484,7 +1659,28 @@ impl TargetProfileBuilder {
             NumericalDimension::SignedZero,
             DimensionBehaviour::Transform(behaviour),
             support,
-            source,
+            source.0,
+        )
+    }
+
+    /// Declares measured support for one signed-zero permission.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting an invalid or duplicate declaration.
+    pub fn declare_measured_signed_zero(
+        &mut self,
+        subject: ScalarArithmetic,
+        behaviour: NumericalPermission,
+        support: ScalarSupport,
+        source: TargetCompileProfileMeasurementSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_scalar(
+            subject,
+            NumericalDimension::SignedZero,
+            DimensionBehaviour::Transform(behaviour),
+            support,
+            source.0,
         )
     }
 
@@ -1505,7 +1701,28 @@ impl TargetProfileBuilder {
             NumericalDimension::ReciprocalTransform,
             DimensionBehaviour::Transform(behaviour),
             support,
-            source,
+            source.0,
+        )
+    }
+
+    /// Declares measured support for one reciprocal-transform permission.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting an invalid or duplicate declaration.
+    pub fn declare_measured_reciprocal_transform(
+        &mut self,
+        subject: ScalarArithmetic,
+        behaviour: NumericalPermission,
+        support: ScalarSupport,
+        source: TargetCompileProfileMeasurementSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_scalar(
+            subject,
+            NumericalDimension::ReciprocalTransform,
+            DimensionBehaviour::Transform(behaviour),
+            support,
+            source.0,
         )
     }
 
@@ -1526,7 +1743,28 @@ impl TargetProfileBuilder {
             NumericalDimension::ApproximateIntrinsics,
             DimensionBehaviour::Approximation(behaviour),
             support,
-            source,
+            source.0,
+        )
+    }
+
+    /// Declares measured support for one approximation envelope.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting an invalid or duplicate declaration.
+    pub fn declare_measured_approximate_intrinsics(
+        &mut self,
+        subject: ScalarArithmetic,
+        behaviour: tiler_ir::schedule::ApproximationEnvelope,
+        support: ScalarSupport,
+        source: TargetCompileProfileMeasurementSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_scalar(
+            subject,
+            NumericalDimension::ApproximateIntrinsics,
+            DimensionBehaviour::Approximation(behaviour),
+            support,
+            source.0,
         )
     }
 
@@ -1547,7 +1785,28 @@ impl TargetProfileBuilder {
             NumericalDimension::NanAssumptions,
             DimensionBehaviour::ExceptionalValue(behaviour),
             support,
-            source,
+            source.0,
+        )
+    }
+
+    /// Declares measured support for one NaN-assumption behaviour.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting an invalid or duplicate declaration.
+    pub fn declare_measured_nan_assumptions(
+        &mut self,
+        subject: ScalarArithmetic,
+        behaviour: ExceptionalValueAssumption,
+        support: ScalarSupport,
+        source: TargetCompileProfileMeasurementSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_scalar(
+            subject,
+            NumericalDimension::NanAssumptions,
+            DimensionBehaviour::ExceptionalValue(behaviour),
+            support,
+            source.0,
         )
     }
 
@@ -1568,7 +1827,28 @@ impl TargetProfileBuilder {
             NumericalDimension::InfinityAssumptions,
             DimensionBehaviour::ExceptionalValue(behaviour),
             support,
-            source,
+            source.0,
+        )
+    }
+
+    /// Declares measured support for one infinity-assumption behaviour.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting an invalid or duplicate declaration.
+    pub fn declare_measured_infinity_assumptions(
+        &mut self,
+        subject: ScalarArithmetic,
+        behaviour: ExceptionalValueAssumption,
+        support: ScalarSupport,
+        source: TargetCompileProfileMeasurementSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_scalar(
+            subject,
+            NumericalDimension::InfinityAssumptions,
+            DimensionBehaviour::ExceptionalValue(behaviour),
+            support,
+            source.0,
         )
     }
 
@@ -1589,7 +1869,28 @@ impl TargetProfileBuilder {
             NumericalDimension::MaterializationRounding,
             DimensionBehaviour::Rounding(behaviour),
             support,
-            source,
+            source.0,
+        )
+    }
+
+    /// Declares measured support for one observable materialization-rounding behaviour.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting an invalid or duplicate declaration.
+    pub fn declare_measured_materialization_rounding(
+        &mut self,
+        subject: ScalarArithmetic,
+        behaviour: tiler_ir::schedule::MaterializationRounding,
+        support: ScalarSupport,
+        source: TargetCompileProfileMeasurementSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_scalar(
+            subject,
+            NumericalDimension::MaterializationRounding,
+            DimensionBehaviour::Rounding(behaviour),
+            support,
+            source.0,
         )
     }
 
@@ -1607,10 +1908,36 @@ impl TargetProfileBuilder {
         verdict: DTypeDispatchability,
         source: TargetFactSource,
     ) -> Result<(), TargetProfileBuildError> {
+        self.declare_dtype_dispatchability_with_source(resolved_type, verdict, source.0)
+    }
+
+    /// Declares measured dispatchability for one exact full resolved value type.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting an invalid or duplicate fact.
+    ///
+    /// No neighbouring nominal type, parameterized type, or encoded value
+    /// inherits this declaration.
+    pub fn declare_measured_dtype_dispatchability(
+        &mut self,
+        resolved_type: ResolvedValueType,
+        verdict: DTypeDispatchability,
+        source: TargetCompileProfileMeasurementSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_dtype_dispatchability_with_source(resolved_type, verdict, source.0)
+    }
+
+    fn declare_dtype_dispatchability_with_source(
+        &mut self,
+        resolved_type: ResolvedValueType,
+        verdict: DTypeDispatchability,
+        source: Arc<FactSourceProvenance>,
+    ) -> Result<(), TargetProfileBuildError> {
         let fact = DTypeDispatchabilityFact {
             resolved_type,
             verdict,
-            source: source.0,
+            source,
         };
         fact.validate()?;
         if self.dispatchability.iter().any(|existing| {
@@ -1733,7 +2060,12 @@ impl TargetProfileBuilder {
         )
         .map_err(TargetProfileBuildError::from)?;
 
-        let descriptor = complete_descriptor(&checked, &self.quantitative, &self.dispatchability);
+        let descriptor = complete_descriptor(
+            &self.key,
+            &self.quantitative,
+            &self.scalar,
+            &self.dispatchability,
+        );
         if descriptor.len() > MAX_TARGET_PROFILE_DESCRIPTOR_BYTES {
             return Err(TargetProfileBuildError::DescriptorTooLong {
                 actual: descriptor.len(),
@@ -1880,17 +2212,19 @@ impl ScalarSupport {
 }
 
 fn complete_descriptor(
-    checked: &CheckedTargetProfile,
+    key: &TargetProfileKey,
     quantitative: &[QuantitativeCapabilityDeclaration],
+    scalar: &[ScalarHonourabilityDeclaration],
     dispatchability: &[DTypeDispatchabilityFact],
 ) -> Vec<u8> {
     let mut bytes = Vec::new();
     push_slice(&mut bytes, COMPLETE_PROFILE_DESCRIPTOR_DOMAIN);
-    push_slice(&mut bytes, checked.canonical_descriptor());
+    push_slice(&mut bytes, key.as_str().as_bytes());
     push_slice(&mut bytes, PROFILE_SOURCE_DOMAIN);
     let mut sources: Vec<_> = quantitative
         .iter()
         .map(|fact| fact.source.as_ref())
+        .chain(scalar.iter().map(|declaration| declaration.source.as_ref()))
         .chain(dispatchability.iter().map(|fact| fact.source.as_ref()))
         .map(|source| (source.canonical_bytes(), source))
         .collect();
@@ -1902,11 +2236,51 @@ fn complete_descriptor(
     }
     push_len(&mut bytes, quantitative.len());
     for fact in quantitative {
+        push_slice(&mut bytes, fact.axis.key().as_bytes());
+        bytes.extend_from_slice(&fact.bound.to_le_bytes());
         let source_bytes = fact.source.canonical_bytes();
         let source_index = sources
             .binary_search_by(|candidate| candidate.0.cmp(&source_bytes))
             .expect("every quantitative source was inserted into the source table");
         QuantitativeCapabilityDeclaration::encode_source_index(&mut bytes, source_index);
+    }
+    let mut subjects = scalar
+        .iter()
+        .map(|declaration| {
+            let mut subject = Vec::new();
+            declaration.subject.encode(&mut subject);
+            subject
+        })
+        .collect::<Vec<_>>();
+    subjects.sort();
+    subjects.dedup();
+    push_len(&mut bytes, subjects.len());
+    for subject in &subjects {
+        push_slice(&mut bytes, subject);
+    }
+    let mut scalar_rows = Vec::with_capacity(scalar.len());
+    for declaration in scalar {
+        let mut subject = Vec::new();
+        declaration.subject.encode(&mut subject);
+        let subject_index = subjects
+            .binary_search(&subject)
+            .expect("every numerical subject was inserted into the subject table");
+        let source_bytes = declaration.source.canonical_bytes();
+        let source_index = sources
+            .binary_search_by(|candidate| candidate.0.cmp(&source_bytes))
+            .expect("every numerical source was inserted into the source table");
+        let mut row = Vec::new();
+        encode_compact_index(&mut row, subject_index);
+        row.push(declaration.dimension.tag());
+        declaration.behaviour.encode(&mut row);
+        declaration.means.encode(&mut row);
+        encode_compact_index(&mut row, source_index);
+        scalar_rows.push(row);
+    }
+    scalar_rows.sort_unstable();
+    push_len(&mut bytes, scalar_rows.len());
+    for row in scalar_rows {
+        bytes.extend_from_slice(&row);
     }
     push_slice(&mut bytes, DISPATCHABILITY_DOMAIN);
     push_len(&mut bytes, dispatchability.len());
@@ -2304,6 +2678,14 @@ mod tests {
         compiler_version: &str,
         platform_build: &str,
     ) -> TargetCompileProfileMeasurementSource {
+        compile_profile_measurement_source_with(1, compiler_version, platform_build)
+    }
+
+    fn compile_profile_measurement_source_with(
+        producer_revision: u32,
+        compiler_version: &str,
+        platform_build: &str,
+    ) -> TargetCompileProfileMeasurementSource {
         let compiler = TargetCompilerBuild::new(
             TargetCompilerRole::CodeGenerator,
             "test-code-generator".to_owned(),
@@ -2321,8 +2703,11 @@ mod tests {
             .unwrap();
         let context = TargetMeasurementContext::new([compiler], environment).unwrap();
         TargetCompileProfileMeasurementSource::new(
-            TargetFactProducerIdentity::new("test.compile-profile-measurement.v1".to_owned(), 1)
-                .unwrap(),
+            TargetFactProducerIdentity::new(
+                "test.compile-profile-measurement.v1".to_owned(),
+                producer_revision,
+            )
+            .unwrap(),
             [context],
         )
         .unwrap()
@@ -2598,6 +2983,306 @@ mod tests {
     }
 
     #[test]
+    fn compiler_profile_measurement_source_reaches_every_profile_fact_family() {
+        let source = compile_profile_measurement_source("1.0", "build-1");
+        let subject = ScalarArithmetic::f32();
+        let mut builder = TargetProfileBuilder::new(
+            TargetProfileKey::new("test.measured-all-families.v1".to_owned()).unwrap(),
+        );
+        builder
+            .declare_measured_max_threads_per_grid_axis(65_535, source.clone())
+            .unwrap();
+        builder
+            .declare_measured_max_threads_per_workgroup(256, source.clone())
+            .unwrap();
+        builder
+            .declare_measured_max_buffer_bindings_per_entry(31, source.clone())
+            .unwrap();
+        builder
+            .declare_measured_index_bits(64, source.clone())
+            .unwrap();
+        builder
+            .declare_measured_device_memory(true, source.clone())
+            .unwrap();
+        builder
+            .declare_measured_local_memory_bytes(32_768, source.clone())
+            .unwrap();
+        builder
+            .declare_measured_barriers(16, source.clone())
+            .unwrap();
+        builder
+            .declare_measured_input_subnormal_behaviour(
+                subject.clone(),
+                SubnormalMode::Preserve,
+                source.clone(),
+            )
+            .unwrap();
+        builder
+            .declare_measured_result_subnormal_behaviour(
+                subject.clone(),
+                SubnormalMode::Preserve,
+                source.clone(),
+            )
+            .unwrap();
+        builder
+            .declare_measured_contraction(
+                subject.clone(),
+                NumericalPermission::Forbidden,
+                ScalarSupport::Exact,
+                source.clone(),
+            )
+            .unwrap();
+        builder
+            .declare_measured_reassociation(
+                subject.clone(),
+                NumericalPermission::Forbidden,
+                ScalarSupport::Exact,
+                source.clone(),
+            )
+            .unwrap();
+        builder
+            .declare_measured_permutation(
+                subject.clone(),
+                NumericalPermission::Forbidden,
+                ScalarSupport::Exact,
+                source.clone(),
+            )
+            .unwrap();
+        builder
+            .declare_measured_signed_zero(
+                subject.clone(),
+                NumericalPermission::Forbidden,
+                ScalarSupport::Exact,
+                source.clone(),
+            )
+            .unwrap();
+        builder
+            .declare_measured_reciprocal_transform(
+                subject.clone(),
+                NumericalPermission::Forbidden,
+                ScalarSupport::Exact,
+                source.clone(),
+            )
+            .unwrap();
+        builder
+            .declare_measured_approximate_intrinsics(
+                subject.clone(),
+                tiler_ir::schedule::ApproximationEnvelope::Forbidden,
+                ScalarSupport::Exact,
+                source.clone(),
+            )
+            .unwrap();
+        builder
+            .declare_measured_nan_assumptions(
+                subject.clone(),
+                ExceptionalValueAssumption::MakeNoAssumption,
+                ScalarSupport::Exact,
+                source.clone(),
+            )
+            .unwrap();
+        builder
+            .declare_measured_infinity_assumptions(
+                subject.clone(),
+                ExceptionalValueAssumption::MakeNoAssumption,
+                ScalarSupport::Exact,
+                source.clone(),
+            )
+            .unwrap();
+        builder
+            .declare_measured_materialization_rounding(
+                subject,
+                tiler_ir::schedule::MaterializationRounding::NearestTiesToEven,
+                ScalarSupport::Exact,
+                source.clone(),
+            )
+            .unwrap();
+        builder
+            .declare_measured_dtype_dispatchability(
+                F32::resolved_type(),
+                DTypeDispatchability::Dispatchable,
+                source,
+            )
+            .unwrap();
+
+        assert_eq!(builder.quantitative.len(), 7);
+        assert_eq!(builder.scalar.len(), 15);
+        assert_eq!(builder.dispatchability.len(), 1);
+        for provenance in builder
+            .quantitative
+            .iter()
+            .map(|declaration| declaration.source.as_ref())
+            .chain(
+                builder
+                    .scalar
+                    .iter()
+                    .map(|declaration| declaration.source.as_ref()),
+            )
+            .chain(
+                builder
+                    .dispatchability
+                    .iter()
+                    .map(|declaration| declaration.source.as_ref()),
+            )
+        {
+            assert_eq!(provenance.phase(), AvailabilityPhase::CompileProfile);
+            assert_eq!(provenance.authority(), FactAuthority::MeasuredProfile);
+            assert_eq!(
+                provenance.validity(),
+                FactValidityScope::MeasuredEnvironment
+            );
+        }
+        builder.build().unwrap();
+    }
+
+    #[test]
+    fn measured_profile_declarations_reject_conflicts_without_partial_insertion() {
+        let source = || compile_profile_measurement_source("1.0", "build-1");
+        let mut builder = TargetProfileBuilder::new(
+            TargetProfileKey::new("test.measured-conflicts.v1".to_owned()).unwrap(),
+        );
+        builder
+            .declare_measured_max_threads_per_workgroup(256, source())
+            .unwrap();
+        let quantitative = builder.quantitative.clone();
+        assert_eq!(
+            builder.declare_measured_max_threads_per_workgroup(128, source()),
+            Err(TargetProfileBuildError::DuplicateQuantitativeCapability {
+                axis: "threads-per-workgroup",
+                phase: AvailabilityPhase::CompileProfile,
+            })
+        );
+        assert_eq!(builder.quantitative, quantitative);
+
+        builder
+            .declare_measured_contraction(
+                ScalarArithmetic::f32(),
+                NumericalPermission::Forbidden,
+                ScalarSupport::Exact,
+                source(),
+            )
+            .unwrap();
+        let scalar = builder.scalar.clone();
+        assert_eq!(
+            builder.declare_measured_contraction(
+                ScalarArithmetic::f32(),
+                NumericalPermission::Forbidden,
+                ScalarSupport::Unsupported,
+                source(),
+            ),
+            Err(TargetProfileBuildError::DuplicateScalarDeclaration)
+        );
+        assert_eq!(builder.scalar, scalar);
+
+        builder
+            .declare_measured_dtype_dispatchability(
+                F32::resolved_type(),
+                DTypeDispatchability::Dispatchable,
+                source(),
+            )
+            .unwrap();
+        let dispatchability = builder.dispatchability.clone();
+        assert_eq!(
+            builder.declare_measured_dtype_dispatchability(
+                F32::resolved_type(),
+                DTypeDispatchability::Unsupported,
+                source(),
+            ),
+            Err(TargetProfileBuildError::DuplicateDispatchability)
+        );
+        assert_eq!(builder.dispatchability, dispatchability);
+    }
+
+    #[test]
+    fn measured_profile_identity_binds_source_and_fact_values() {
+        let descriptor =
+            |producer_revision, compiler_version, platform_build, threads, verdict, support| {
+                let source = compile_profile_measurement_source_with(
+                    producer_revision,
+                    compiler_version,
+                    platform_build,
+                );
+                let mut builder = TargetProfileBuilder::new(
+                    TargetProfileKey::new("test.measured-identity.v1".to_owned()).unwrap(),
+                );
+                builder
+                    .declare_measured_max_threads_per_workgroup(threads, source.clone())
+                    .unwrap();
+                builder
+                    .declare_measured_contraction(
+                        ScalarArithmetic::f32(),
+                        NumericalPermission::Forbidden,
+                        support,
+                        source.clone(),
+                    )
+                    .unwrap();
+                builder
+                    .declare_measured_dtype_dispatchability(F32::resolved_type(), verdict, source)
+                    .unwrap();
+                builder.build().unwrap().canonical_descriptor().to_vec()
+            };
+        let baseline = descriptor(
+            1,
+            "1.0",
+            "build-1",
+            256,
+            DTypeDispatchability::Dispatchable,
+            ScalarSupport::Exact,
+        );
+        for changed in [
+            descriptor(
+                2,
+                "1.0",
+                "build-1",
+                256,
+                DTypeDispatchability::Dispatchable,
+                ScalarSupport::Exact,
+            ),
+            descriptor(
+                1,
+                "2.0",
+                "build-1",
+                256,
+                DTypeDispatchability::Dispatchable,
+                ScalarSupport::Exact,
+            ),
+            descriptor(
+                1,
+                "1.0",
+                "build-2",
+                256,
+                DTypeDispatchability::Dispatchable,
+                ScalarSupport::Exact,
+            ),
+            descriptor(
+                1,
+                "1.0",
+                "build-1",
+                128,
+                DTypeDispatchability::Dispatchable,
+                ScalarSupport::Exact,
+            ),
+            descriptor(
+                1,
+                "1.0",
+                "build-1",
+                256,
+                DTypeDispatchability::Unsupported,
+                ScalarSupport::Exact,
+            ),
+            descriptor(
+                1,
+                "1.0",
+                "build-1",
+                256,
+                DTypeDispatchability::Dispatchable,
+                ScalarSupport::Unsupported,
+            ),
+        ] {
+            assert_ne!(baseline, changed);
+        }
+    }
+
+    #[test]
     fn measured_scalar_subnormal_declarations_build_independent_exclusive_tables() {
         let behaviours = [
             SubnormalMode::Preserve,
@@ -2843,6 +3528,25 @@ mod tests {
             ),
             Err(TargetFactSourceError::DuplicateMeasurementContext)
         );
+        assert_eq!(
+            TargetCompileProfileMeasurementSource::new(producer(), std::iter::empty()),
+            Err(TargetFactSourceError::EmptyMeasurementContextSet)
+        );
+        let context = TargetMeasurementContext::new(
+            [TargetCompilerBuild::new(
+                TargetCompilerRole::RuntimeCompiler,
+                "test-compiler".to_owned(),
+                "1.0".to_owned(),
+                None,
+            )
+            .unwrap()],
+            environment(),
+        )
+        .unwrap();
+        assert_eq!(
+            TargetCompileProfileMeasurementSource::new(producer(), [context.clone(), context],),
+            Err(TargetFactSourceError::DuplicateMeasurementContext)
+        );
     }
 
     #[test]
@@ -3075,6 +3779,41 @@ mod tests {
                 .assess(&proposal, AvailabilityPhase::CompileProfile),
             FeasibilityOutcome::Unknown(_)
         ));
+    }
+
+    #[test]
+    fn measured_profile_omissions_remain_unknown_across_fact_families() {
+        let mut builder = TargetProfileBuilder::new(
+            TargetProfileKey::new("test.sparse-measured.v1".to_owned()).unwrap(),
+        );
+        builder
+            .declare_measured_max_threads_per_grid_axis(
+                64,
+                compile_profile_measurement_source("1.0", "build-1"),
+            )
+            .unwrap();
+        let profile = builder.build().unwrap();
+        let proposal = FeasibilityProposal::new(
+            "requires-omitted-facts",
+            vec![AxisRequirement::new(CapabilityAxis::WorkgroupThreads, 1)],
+            vec![NumericalRequirement::new(
+                NumericalDimension::Contraction,
+                ArithmeticType::F32,
+                F32::resolved_type(),
+                DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+            )],
+        )
+        .unwrap();
+        assert!(matches!(
+            profile
+                .checked()
+                .assess(&proposal, AvailabilityPhase::CompileProfile),
+            FeasibilityOutcome::Unknown(_)
+        ));
+        assert_eq!(
+            profile.dtype_dispatchability(&F32::resolved_type(), AvailabilityPhase::CompileProfile),
+            DTypeDispatchabilityResolution::Unknown
+        );
     }
 
     #[test]
