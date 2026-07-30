@@ -1469,46 +1469,6 @@ pub(crate) fn run_rewrite_engine(
     Ok(EngineRun::Adopted(alternatives))
 }
 
-/// Readmits every alternative through the request boundary, pairing each with
-/// its own verification.
-///
-/// # Why every alternative is readmitted rather than the chosen one
-///
-/// A committed rewrite is a new program and cannot inherit the input's
-/// verification — see the call site in `pipeline.rs`. Readmission *re-resolves*
-/// the numerical contract from the caller's stated preference rather than
-/// inheriting the answer this run reached, so two alternatives can resolve to
-/// **different** contracts. An alternative is therefore a program *and* its
-/// verification, and readmitting only a winner would mean choosing before
-/// knowing what each alternative actually requires.
-///
-/// # Why any failure is a fault
-///
-/// Every alternative is a semantics-preserving rewrite of a program the
-/// boundary already admitted, so one it now rejects means the rewrite changed
-/// something it should not have. That is invalid compiler output whether it
-/// happens to one alternative or all of them, and the surviving alternatives do
-/// not make it less so.
-///
-/// Dropping the offender and continuing would discard the evidence of a
-/// compiler defect, and would do so most often exactly when the defect is
-/// rarest — a rule that misbehaves on one program in a hundred. If a rewrite is
-/// ever shown to *legitimately* change what a program requires, this is the
-/// place that should be relaxed, on that evidence and not before.
-pub(crate) fn readmit_alternatives<Verified>(
-    alternatives: Vec<RewriteProposal<SemanticProgram>>,
-    readmit: impl Fn(&SemanticProgram) -> Option<Verified>,
-) -> Result<Vec<(RewriteProposal<SemanticProgram>, Verified)>, NormalizeError> {
-    let mut readmitted = Vec::with_capacity(alternatives.len());
-    for alternative in alternatives {
-        let verified = readmit(alternative.candidate()).ok_or(NormalizeError::InvalidRewrite {
-            rule: "request-readmission",
-        })?;
-        readmitted.push((alternative, verified));
-    }
-    Ok(readmitted)
-}
-
 /// Groups readmitted alternatives by the numerical contract each resolved to.
 ///
 /// # Why alternatives must not be compared across groups
@@ -2760,66 +2720,6 @@ mod tests {
                 EngineFailure::Provider(ProviderDefect::Misattributed { .. })
             ),
             "a misattributed proposal reached the engine: {failure:?}"
-        );
-    }
-
-    /// Every alternative is readmitted, and each keeps its own verification.
-    ///
-    /// The stub returns a distinct value per program, so a readmission that
-    /// verified once and reused the answer would fail here rather than pass —
-    /// which is the whole point of readmitting each, since two alternatives can
-    /// resolve to different numerical contracts.
-    #[test]
-    fn every_alternative_carries_its_own_readmission() {
-        let alternatives = run_rewrite_engine(
-            &cse_registry(),
-            &program(2.0, 2.0, false),
-            DeterministicBudgets::governed(),
-        )
-        .expect("no failure")
-        .expect("not abandoned");
-        assert_eq!(alternatives.len(), 1);
-
-        let calls = std::cell::Cell::new(0_u32);
-        let readmitted = readmit_alternatives(alternatives, |_| {
-            calls.set(calls.get() + 1);
-            Some(calls.get())
-        })
-        .expect("a valid rewrite readmits");
-
-        assert_eq!(readmitted.len(), 1);
-        assert_eq!(
-            calls.get(),
-            1,
-            "readmission did not run once per alternative"
-        );
-        assert_eq!(readmitted[0].0.rule(), CommonSubexpressionRule.identity());
-        assert_eq!(readmitted[0].1, 1);
-    }
-
-    /// A refused readmission is a fault, not a dropped alternative.
-    ///
-    /// This is the semantics the routing ticket settles on, asserted here so it
-    /// cannot be quietly relaxed into a filter: an alternative the boundary
-    /// rejects is a rewrite that changed what it should not have, and surviving
-    /// siblings do not make that less true.
-    #[test]
-    fn a_refused_readmission_is_a_fault_rather_than_a_dropped_alternative() {
-        let alternatives = run_rewrite_engine(
-            &cse_registry(),
-            &program(2.0, 2.0, false),
-            DeterministicBudgets::governed(),
-        )
-        .expect("no failure")
-        .expect("not abandoned");
-
-        let outcome = readmit_alternatives(alternatives, |_| -> Option<u32> { None });
-        assert_eq!(
-            outcome.err(),
-            Some(NormalizeError::InvalidRewrite {
-                rule: "request-readmission",
-            }),
-            "a refused readmission was filtered instead of reported"
         );
     }
 

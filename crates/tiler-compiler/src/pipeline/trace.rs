@@ -581,6 +581,7 @@ fn opaque_call_rejection_event(
                 Ok(ExplainEvent::NumericalHonourability {
                     dimension: PredicateKey::new(cause.dimension().key())?,
                     arithmetic: cause.arithmetic(),
+                    resolved_type: cause.resolved_type().clone(),
                     required: ReasonCode::new(cause.required().key())?,
                     outcome: crate::explain::HonourabilityOutcome::Unhonourable {
                         means: ReasonCode::new(cause.means().key())?,
@@ -919,6 +920,7 @@ pub(super) fn record_target_rejection(
                 Ok(ExplainEvent::NumericalHonourability {
                     dimension: PredicateKey::new(cause.dimension().key())?,
                     arithmetic: cause.arithmetic(),
+                    resolved_type: cause.resolved_type().clone(),
                     required: ReasonCode::new(cause.required().key())?,
                     outcome: crate::explain::HonourabilityOutcome::Unhonourable {
                         means: ReasonCode::new(cause.means().key())?,
@@ -992,7 +994,7 @@ pub(super) fn record_target_admissions(
             scheduled.requirements(),
             request.numerical_contract().arithmetic,
             region.schedule.work_items,
-            &profile,
+            profile,
         )
         .map_err(|error| {
             let stage = physical_error_stage(&error);
@@ -1035,6 +1037,7 @@ pub(super) fn record_target_admissions(
                         ExplainEvent::NumericalHonourability {
                             dimension: PredicateKey::new(honoured.dimension().key())?,
                             arithmetic: honoured.arithmetic(),
+                            resolved_type: honoured.resolved_type().clone(),
                             required: ReasonCode::new(honoured.behaviour().key())?,
                             outcome: crate::explain::HonourabilityOutcome::Honoured {
                                 means: ReasonCode::new(honoured.means().key())?,
@@ -1253,6 +1256,7 @@ mod tests {
     };
     use crate::explain::ExplainDisposition;
     use crate::frontier::{OpaqueCallRejectionCause, WorkResolutionError};
+    use tiler_ir::semantic::{ResolvedValueType, TypeKey};
 
     /// Every analytical unit maps to its namesake typed quantity.
     ///
@@ -1281,7 +1285,9 @@ mod tests {
         let cases = [
             (
                 OpaqueCallRejectionCause::NotApplicable {
-                    target_profile_key: "tiler.target.test",
+                    target_profile_key: crate::request::TargetProfileKey::governed(
+                        "tiler.target.test",
+                    ),
                 },
                 "opaque-call.applicability.v1",
                 ExplainStage::CandidateEnumeration,
@@ -1423,7 +1429,7 @@ mod tests {
             DimensionBehaviour, HonouringMeans, NumericalDimension, UnhonouredDimension,
         };
         use crate::physical::ResourceVerdict;
-        use crate::request::{PrototypeTargetProfile, StrictF32NumericalContract};
+        use crate::request::{StrictF32NumericalContract, TargetProfile};
         use tiler_ir::schedule::{ArithmeticType, NumericalPermission, ResourceRequirements};
 
         let realization = StrictF32NumericalContract::governed().realization();
@@ -1445,7 +1451,7 @@ mod tests {
             },
             ArithmeticType::F32,
             1,
-            &PrototypeTargetProfile::governed(),
+            &TargetProfile::governed(),
         )
         .expect_err("the binding requirement exceeds the governed profile")
         {
@@ -1467,6 +1473,7 @@ mod tests {
         let unhonourable = UnhonouredDimension::new(
             NumericalDimension::Contraction,
             ArithmeticType::F16,
+            ResolvedValueType::nominal(TypeKey::new("test", "f16", 1).unwrap()),
             DimensionBehaviour::Transform(NumericalPermission::Permitted),
             HonouringMeans::Unsupported,
             Some(DimensionBehaviour::Transform(
@@ -1488,6 +1495,7 @@ mod tests {
                     honoured: Some(honoured),
                 },
                 profile,
+                ..
             } if dimension.as_str() == "numerics.contraction"
                 && required.as_str() == "permitted"
                 && means.as_str() == "unsupported"

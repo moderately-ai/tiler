@@ -149,12 +149,12 @@ fn hot_path_profile_loop() {
 #[test]
 fn hot_path_planning_share() {
     let program = program(4, 3);
-    let compilations =
+    let compilation =
         compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32).expect("compiles");
-    let rendered = compilations[0].explain().render();
+    let rendered = compilation.explain().render();
     println!(
         "MEASURE alternatives: {}, explain records: {}, explain bytes: {}",
-        compilations[0].alternatives().len(),
+        compilation.alternatives().len(),
         rendered.lines().count(),
         rendered.len(),
     );

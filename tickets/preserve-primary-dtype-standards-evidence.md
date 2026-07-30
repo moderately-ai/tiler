@@ -2,7 +2,7 @@
 id: preserve-primary-dtype-standards-evidence
 title: Preserve primary dtype standards evidence
 status: todo
-priority: p2
+priority: p1
 dependencies: []
 related: [own-the-dtype-support-maturity-matrix, enumerate-the-mature-tensor-dtype-taxonomy, define-dtype-namespace-admission-policy, register-the-accepted-built-in-dtype-catalog]
 scopes: [research/numerics, contracts/decisions]

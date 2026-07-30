@@ -86,7 +86,7 @@ use tiler_ir::schedule::{
 
 use crate::honourability::{DimensionBehaviour, NumericalDimension, NumericalRequirement};
 use crate::request::StrictF32NumericalContract;
-use tiler_ir::semantic::OpKey;
+use tiler_ir::semantic::{F32, OpKey};
 
 /// The accuracy envelope the relaxed preset authorizes.
 ///
@@ -424,6 +424,7 @@ pub(crate) fn dimension_requirements(
             NumericalRequirement::new(
                 dimension,
                 contract.arithmetic,
+                F32::resolved_type(),
                 contract.behaviour(dimension),
             )
         })

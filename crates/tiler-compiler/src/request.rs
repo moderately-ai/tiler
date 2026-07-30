@@ -4,10 +4,12 @@ use std::sync::OnceLock;
 
 use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::index::FrozenScalarRegistry;
+use tiler_ir::program::abi::AvailabilityPhase;
 use tiler_ir::semantic::{
     CanonicalIntegerWidth, CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey,
-    OutputKey, ProviderIdentity, REDUCTION_AXES_ATTRIBUTE, SemanticIdentity, SemanticProgram,
-    TypeKey, ValueId, add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
+    OutputKey, ProviderIdentity, REDUCTION_AXES_ATTRIBUTE, ResolvedValueType, SemanticIdentity,
+    SemanticProgram, TypeKey, ValueId, add_f32_op, constant_f32_op, multiply_f32_op,
+    strict_serial_sum_f32_op,
 };
 use tiler_ir::shape::{Axis, Shape};
 
@@ -23,11 +25,13 @@ use crate::capability::{
 };
 use crate::governed::{governed_lowering_capabilities, governed_scalars};
 use crate::honourability::{
-    DeclaredBehaviour, DeferredDimension, DimensionBehaviour, HonouringMeans, NumericalDimension,
-    NumericalRequirement, UndeclaredDimension, UnhonouredDimension, encode_declared_behaviours,
+    DeferredDimension, DimensionBehaviour, NumericalDimension, NumericalRequirement,
+    UndeclaredDimension, UnhonouredDimension,
 };
 use crate::policy::{NumericalPolicyPreset, UnrepresentableDimension};
 use crate::region::SemanticMemberId;
+use crate::target::DTypeDispatchabilityResolution;
+pub(crate) use crate::target::{TargetProfile, TargetProfileKey};
 
 const REQUEST_SCHEMA_VERSION: u32 = 1;
 pub(crate) const NUMERICAL_CONTRACT_KEY: &str = "tiler.strict-f32.v1";
@@ -49,77 +53,8 @@ pub(crate) const FLUSH_CONTRACT_KEY: &str = "tiler.flush-f32.v1";
 /// stop sizing every relaxed-contract plan. Keep the arm's key list in sync
 /// when adding a fourth.
 pub(crate) const RELAXED_CONTRACT_KEY: &str = "tiler.relaxed-f32.v1";
-const TARGET_PROFILE_KEY: &str = "tiler.prototype-target-neutral-baseline.v1";
-
-/// Maximum byte length of one target-profile key.
-///
-/// The key enters the request subject and therefore artifact identity, so it is
-/// bounded where it is minted rather than wherever it is later encoded.
-const MAX_TARGET_PROFILE_KEY_BYTES: usize = 128;
-
-/// The governed key of one declared target profile.
-///
-/// **Opaque with a fallible constructor**, per ADR 0074 convention 2: a key
-/// names a profile that was declared, and a caller assembling one from a bare
-/// string could name a profile that never was. The bytes it encodes to are
-/// exactly the bytes the `&'static str` it replaces encoded to — `push_slice`
-/// of the same run — which is why `the_governed_descriptor_bytes_do_not_move`
-/// keeps passing across this change.
-///
-/// It holds a `Cow` rather than a `&'static str` because
-/// `admit-a-caller-declared-target-profile` needs an owned key, and moving the
-/// applicability vocabulary onto a type that already admits one is what makes
-/// that refactor tractable instead of a single 57-error commit. Nothing
-/// constructs an owned key yet; the seam exists so the next step is additive.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct TargetProfileKey(std::borrow::Cow<'static, str>);
-
-impl TargetProfileKey {
-    /// Names a key this build governs, with no validation and no allocation.
-    ///
-    /// Reserved for keys compiled into this crate. A key arriving from outside
-    /// goes through [`Self::declared`], which is where the checks are.
-    pub(crate) const fn governed(key: &'static str) -> Self {
-        Self(std::borrow::Cow::Borrowed(key))
-    }
-
-    /// Validates one caller-supplied key.
-    ///
-    /// # Errors
-    ///
-    /// [`RequestError::UnsupportedCapability`] when the key is empty, exceeds
-    /// [`MAX_TARGET_PROFILE_KEY_BYTES`], or carries a byte outside the governed
-    /// spelling. The spelling is restricted so a key cannot carry framing or
-    /// display characters into an identity encoding that frames by length.
-    #[allow(
-        dead_code,
-        reason = "the declaration path that consumes it is admit-a-caller-declared-target-profile; the seam lands with the vocabulary that has to accept it"
-    )]
-    pub(crate) fn declared(key: String) -> Result<Self, RequestError> {
-        let admitted = |byte: u8| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'-' | b'_')
-        };
-        if key.is_empty() || key.len() > MAX_TARGET_PROFILE_KEY_BYTES || !key.bytes().all(admitted)
-        {
-            return Err(RequestError::UnsupportedCapability {
-                phase: "target",
-                rule: "target-profile-key-spelling",
-            });
-        }
-        Ok(Self(std::borrow::Cow::Owned(key)))
-    }
-
-    /// Returns the key's exact bytes as encoded into identity.
-    pub(crate) fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::fmt::Display for TargetProfileKey {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
+/// Maximum distinct numerical contracts admitted in one preference.
+pub(crate) const MAX_NUMERICAL_CONTRACT_PREFERENCES: usize = 3;
 /// Recognized operation count when both pointwise constants are one shared value.
 const RECOGNIZED_OPERATIONS_MIN: usize = 4;
 /// Recognized operation count when each pointwise constant is a distinct value.
@@ -364,13 +299,26 @@ impl NumericalContractPreference {
     ///
     /// # Errors
     ///
-    /// Returns [`RequestError::UnstatedNumericalContract`] for an empty list.
+    /// Returns a typed request error for an empty, duplicate, or oversized list.
     /// There is no default and no implicit strictest reading: a request that
     /// states no contract does not compile, and the diagnostic says the contract
     /// is unstated rather than naming a dimension.
     pub(crate) fn ordered(stated: Vec<StrictF32NumericalContract>) -> Result<Self, RequestError> {
         if stated.is_empty() {
             return Err(RequestError::UnstatedNumericalContract);
+        }
+        if stated.len() > MAX_NUMERICAL_CONTRACT_PREFERENCES {
+            return Err(RequestError::TooManyNumericalContracts {
+                actual: stated.len(),
+                max: MAX_NUMERICAL_CONTRACT_PREFERENCES,
+            });
+        }
+        if stated
+            .iter()
+            .enumerate()
+            .any(|(index, contract)| stated[..index].contains(contract))
+        {
+            return Err(RequestError::DuplicateNumericalContract);
         }
         Ok(Self { stated })
     }
@@ -590,153 +538,6 @@ impl PartialEq for CompilerCapabilitySnapshot {
 
 impl Eq for CompilerCapabilitySnapshot {}
 
-/// The target-neutral baseline's per-dimension numerical honourability.
-///
-/// It replaces the retired `supports_strict_f32` boolean (ADR 0076 item 3),
-/// which could say only *whether* one summary obligation was met and never which
-/// dimension failed or by what means a target would honour it.
-///
-/// **What is declared and why.** This is a target-*neutral* prototype profile,
-/// so it declares exactly the behaviours the contracts this build registers ask
-/// for, and no more. Preservation and sign-preserving flushing are both honoured
-/// exactly on both subnormal dimensions, which is what makes both registered
-/// contracts compile here. Both transform dimensions honour `Forbidden` and
-/// `Permitted` exactly: forbidding a transform is an obligation a neutral
-/// profile meets by not performing it, and permitting one places no obligation
-/// at all, so a target honours it whatever it does.
-///
-/// **What is deliberately absent.** `FlushToZero { AlwaysPositive }` is not
-/// declared on either subnormal dimension. Nothing has measured a target that
-/// produces a positive zero for a negative subnormal, and a neutral baseline
-/// must not claim a behaviour on no evidence. A contract requiring it therefore
-/// resolves to [`crate::feasibility::FeasibilityOutcome::Unknown`] rather than
-/// being admitted — the fail-closed direction, and the case that shows an
-/// unenumerated behaviour does not default to honoured. `Permitted` on the
-/// permutation and signed-zero dimensions, and `AssumeAbsent` on either
-/// exceptional-value dimension, are absent for the same reason at one remove: no
-/// registered contract asks for them, and a build that cannot realize them has
-/// nothing to declare.
-///
-/// **Every line names `f32` and only `f32`.** This build admits `f32` arithmetic
-/// and nothing else, and a declaration is per `(dimension, arithmetic type)`
-/// because the two are measurably independent — the same Apple profile flushes
-/// subnormals in `f32` and preserves them in `f16`. A contract stating any other
-/// arithmetic type therefore finds nothing declared and resolves to `Unknown`,
-/// which is the fail-closed direction and not an omission.
-fn governed_target_honourability() -> &'static [DeclaredBehaviour] {
-    static GOVERNED: OnceLock<Vec<DeclaredBehaviour>> = OnceLock::new();
-    GOVERNED.get_or_init(|| {
-        vec![
-            DeclaredBehaviour::compile_profile(
-                NumericalDimension::InputSubnormals,
-                ArithmeticType::F32,
-                DimensionBehaviour::Subnormals(SubnormalMode::Preserve),
-                HonouringMeans::SupportedExactly,
-            ),
-            DeclaredBehaviour::compile_profile(
-                NumericalDimension::InputSubnormals,
-                ArithmeticType::F32,
-                DimensionBehaviour::Subnormals(SubnormalMode::FlushToZero {
-                    zero_sign: FlushedZeroSign::PreservesSign,
-                }),
-                HonouringMeans::SupportedExactly,
-            ),
-            DeclaredBehaviour::compile_profile(
-                NumericalDimension::ResultSubnormals,
-                ArithmeticType::F32,
-                DimensionBehaviour::Subnormals(SubnormalMode::Preserve),
-                HonouringMeans::SupportedExactly,
-            ),
-            DeclaredBehaviour::compile_profile(
-                NumericalDimension::ResultSubnormals,
-                ArithmeticType::F32,
-                DimensionBehaviour::Subnormals(SubnormalMode::FlushToZero {
-                    zero_sign: FlushedZeroSign::PreservesSign,
-                }),
-                HonouringMeans::SupportedExactly,
-            ),
-            DeclaredBehaviour::compile_profile(
-                NumericalDimension::Contraction,
-                ArithmeticType::F32,
-                DimensionBehaviour::Transform(NumericalPermission::Forbidden),
-                HonouringMeans::SupportedExactly,
-            ),
-            DeclaredBehaviour::compile_profile(
-                NumericalDimension::Contraction,
-                ArithmeticType::F32,
-                DimensionBehaviour::Transform(NumericalPermission::Permitted),
-                HonouringMeans::SupportedExactly,
-            ),
-            DeclaredBehaviour::compile_profile(
-                NumericalDimension::Reassociation,
-                ArithmeticType::F32,
-                DimensionBehaviour::Transform(NumericalPermission::Forbidden),
-                HonouringMeans::SupportedExactly,
-            ),
-            DeclaredBehaviour::compile_profile(
-                NumericalDimension::Reassociation,
-                ArithmeticType::F32,
-                DimensionBehaviour::Transform(NumericalPermission::Permitted),
-                HonouringMeans::SupportedExactly,
-            ),
-            DeclaredBehaviour::compile_profile(
-                NumericalDimension::Permutation,
-                ArithmeticType::F32,
-                DimensionBehaviour::Transform(NumericalPermission::Forbidden),
-                HonouringMeans::SupportedExactly,
-            ),
-            DeclaredBehaviour::compile_profile(
-                NumericalDimension::SignedZero,
-                ArithmeticType::F32,
-                DimensionBehaviour::Transform(NumericalPermission::Forbidden),
-                HonouringMeans::SupportedExactly,
-            ),
-            DeclaredBehaviour::compile_profile(
-                NumericalDimension::NanAssumptions,
-                ArithmeticType::F32,
-                DimensionBehaviour::ExceptionalValue(ExceptionalValueAssumption::MakeNoAssumption),
-                HonouringMeans::SupportedExactly,
-            ),
-            DeclaredBehaviour::compile_profile(
-                NumericalDimension::InfinityAssumptions,
-                ArithmeticType::F32,
-                DimensionBehaviour::ExceptionalValue(ExceptionalValueAssumption::MakeNoAssumption),
-                HonouringMeans::SupportedExactly,
-            ),
-        ]
-    })
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct PrototypeTargetProfile {
-    pub(crate) key: &'static str,
-    pub(crate) max_threads_per_grid_axis: u64,
-    pub(crate) max_threads_per_workgroup: u32,
-    pub(crate) max_buffer_bindings_per_entry: u32,
-    pub(crate) index_bits: u8,
-    pub(crate) supports_device_memory: bool,
-    /// What this target declares it honours on each numerical dimension.
-    ///
-    /// A `&'static` slice rather than an owned collection, so the profile stays
-    /// a `Copy` value that participates in the request subject and in equality
-    /// exactly as its quantitative bounds do.
-    pub(crate) numerical: &'static [DeclaredBehaviour],
-}
-
-impl PrototypeTargetProfile {
-    pub(crate) fn governed() -> Self {
-        Self {
-            key: TARGET_PROFILE_KEY,
-            max_threads_per_grid_axis: 65_535,
-            max_threads_per_workgroup: 1,
-            max_buffer_bindings_per_entry: 2,
-            index_bits: 64,
-            supports_device_memory: true,
-            numerical: governed_target_honourability(),
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct CompilationRequest<'a> {
     pub(crate) program: &'a SemanticProgram,
@@ -745,7 +546,7 @@ pub(crate) struct CompilationRequest<'a> {
     /// `Default` and no ambient fallback (ADR 0076 item 2).
     pub(crate) numerical_contracts: NumericalContractPreference,
     pub(crate) budgets: DeterministicBudgets,
-    pub(crate) target_profiles: Vec<PrototypeTargetProfile>,
+    pub(crate) target_profiles: Vec<TargetProfile>,
     pub(crate) capabilities: CompilerCapabilitySnapshot,
 }
 
@@ -794,7 +595,7 @@ impl CompilationRequest<'_> {
             shape_environment: StaticShapeEnvironment::governed(),
             numerical_contracts,
             budgets: DeterministicBudgets::governed(),
-            target_profiles: vec![PrototypeTargetProfile::governed()],
+            target_profiles: vec![TargetProfile::governed()],
             capabilities: CompilerCapabilitySnapshot::governed(),
         }
     }
@@ -973,13 +774,35 @@ pub(crate) struct VerifiedCompilationRequest {
     normalized: NormalizedProgram,
     semantic_identity: SemanticIdentity,
     numerical_contracts: NumericalContractPreference,
-    /// The contract resolved for each target profile, positionally aligned with
-    /// `target_profiles`. Resolution happens once, here, before any planning.
-    resolved_contracts: Vec<StrictF32NumericalContract>,
     budgets: DeterministicBudgets,
-    target_profiles: Vec<PrototypeTargetProfile>,
+    /// Ordered target receipts minted at verification.
+    ///
+    /// Profile, resolved contract, and authority travel as one slot so no later
+    /// stage can recover their association by comparing whole profile values or
+    /// by indexing several parallel vectors.
+    target_slots: Vec<VerifiedTargetSlot>,
     capabilities: CompilerCapabilitySnapshot,
-    authorities: Vec<VerifiedRequestSubject>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct VerifiedTargetSlot {
+    target_profile: TargetProfile,
+    resolution: VerifiedTargetResolution,
+}
+
+/// Contract resolution retained for one structurally admitted target.
+///
+/// A target that cannot honour any stated contract is still a verified member
+/// of the request. Keeping that outcome in its ordered slot lets later
+/// orchestration report it beside successful companions instead of aborting the
+/// batch before those companions are considered.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum VerifiedTargetResolution {
+    Resolved {
+        numerical_contract: StrictF32NumericalContract,
+        authority: Box<VerifiedRequestSubject>,
+    },
+    Rejected(RequestError),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -989,7 +812,7 @@ pub(crate) struct VerifiedTargetRequest {
     numerical_contracts: NumericalContractPreference,
     numerical_contract: StrictF32NumericalContract,
     budgets: DeterministicBudgets,
-    target_profile: PrototypeTargetProfile,
+    target_profile: TargetProfile,
     capabilities: CompilerCapabilitySnapshot,
     authority: VerifiedRequestSubject,
 }
@@ -1013,7 +836,7 @@ pub(crate) struct VerifiedRequestSubject {
     numerical_contracts: NumericalContractPreference,
     numerical_contract: StrictF32NumericalContract,
     budgets: DeterministicBudgets,
-    target_profile: PrototypeTargetProfile,
+    target_profile: TargetProfile,
     capability_schema_version: u32,
     lowering_registry: CanonicalLoweringRegistryIdentity,
 }
@@ -1084,7 +907,7 @@ impl VerifiedTargetRequest {
             &self.numerical_contracts,
             self.numerical_contract,
             self.budgets,
-            self.target_profile,
+            &self.target_profile,
             &self.capabilities,
         ) == self.authority
     }
@@ -1108,8 +931,8 @@ impl VerifiedTargetRequest {
         self.budgets
     }
 
-    pub(crate) const fn target_profile(&self) -> PrototypeTargetProfile {
-        self.target_profile
+    pub(crate) const fn target_profile(&self) -> &TargetProfile {
+        &self.target_profile
     }
 
     pub(crate) const fn capabilities(&self) -> &CompilerCapabilitySnapshot {
@@ -1118,6 +941,13 @@ impl VerifiedTargetRequest {
 
     pub(crate) const fn semantic_identity(&self) -> &SemanticIdentity {
         &self.semantic_identity
+    }
+
+    /// Rebinds only the profile for downstream tamper-check fixtures.
+    #[cfg(test)]
+    pub(crate) fn with_target_profile_for_test(mut self, target_profile: TargetProfile) -> Self {
+        self.target_profile = target_profile;
+        self
     }
 }
 
@@ -1132,7 +962,7 @@ impl VerifiedRequestSubject {
 
     pub(crate) fn canonical_explain_subject_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
-        bytes.extend_from_slice(b"tiler.compiler.request-subject.v1\0");
+        bytes.extend_from_slice(b"tiler.compiler.request-subject.v2\0");
         push_slice(&mut bytes, self.semantic_identity.graph().as_bytes());
         push_slice(
             &mut bytes,
@@ -1228,22 +1058,7 @@ impl VerifiedRequestSubject {
         ] {
             bytes.extend_from_slice(&budget.to_be_bytes());
         }
-        push_slice(&mut bytes, self.target_profile.key.as_bytes());
-        bytes.extend_from_slice(&self.target_profile.max_threads_per_grid_axis.to_be_bytes());
-        bytes.extend_from_slice(&self.target_profile.max_threads_per_workgroup.to_be_bytes());
-        bytes.extend_from_slice(
-            &self
-                .target_profile
-                .max_buffer_bindings_per_entry
-                .to_be_bytes(),
-        );
-        bytes.push(self.target_profile.index_bits);
-        bytes.push(u8::from(self.target_profile.supports_device_memory));
-        // The honourability declaration replaces the retired `supports_strict_f32`
-        // byte. Its complete rows and deduplicated source table are encoded rather
-        // than summarized, because that is exactly what the boolean could not say:
-        // which dimension, which behaviour, by what means, and on whose evidence.
-        encode_declared_behaviours(&mut bytes, self.target_profile.numerical);
+        bytes.extend_from_slice(self.target_profile.request_subject_bytes());
         bytes.extend_from_slice(&self.capability_schema_version.to_be_bytes());
         push_slice(&mut bytes, self.lowering_registry.as_bytes());
         bytes
@@ -1338,8 +1153,14 @@ impl NormalizedSerialSumSubject {
 }
 
 impl VerifiedCompilationRequest {
-    pub(crate) fn target_profiles(&self) -> &[PrototypeTargetProfile] {
-        &self.target_profiles
+    pub(crate) fn target_slots(&self) -> &[VerifiedTargetSlot] {
+        &self.target_slots
+    }
+
+    /// Returns the verified target indexes used by receipt-mutation fixtures.
+    #[cfg(test)]
+    pub(crate) fn target_profiles(&self) -> Vec<usize> {
+        (0..self.target_slots.len()).collect()
     }
 
     /// Returns the verified deterministic budgets bound to this request.
@@ -1347,69 +1168,105 @@ impl VerifiedCompilationRequest {
         self.budgets
     }
 
-    /// Returns the caller's stated numerical-contract preference.
-    pub(crate) fn numerical_contracts(&self) -> &NumericalContractPreference {
-        &self.numerical_contracts
-    }
-
-    /// Returns the one contract every target resolved to, when they agree.
+    /// Re-admits one semantic candidate for an already verified target group.
     ///
-    /// A program-scoped stage that runs before per-target compilation — semantic
-    /// normalization is the only one — needs exactly one contract, and there is
-    /// no defensible way to pick among several: a rewrite legal under one
-    /// contract may be illegal under another, so normalizing under either would
-    /// apply to one target a licence the other never granted. Returning [`None`]
-    /// when the targets disagree makes the caller fail closed instead.
-    pub(crate) fn uniform_resolved_contract(&self) -> Option<StrictF32NumericalContract> {
-        let (first, rest) = self.resolved_contracts.split_first()?;
-        rest.iter()
-            .all(|resolved| resolved == first)
-            .then_some(*first)
+    /// The outer request has already admitted the nonempty unique target set,
+    /// contract vocabulary, capability pairing, and request schema. Candidate
+    /// readmission therefore rechecks only the candidate program and remints
+    /// target-local authorities for the named resolved slots. Repeating the
+    /// outer admission here would let an unrelated target rejection erase this
+    /// contract group.
+    pub(crate) fn readmit_candidate(
+        &self,
+        program: &SemanticProgram,
+        target_indexes: &[usize],
+    ) -> Result<Self, RequestError> {
+        let (normalized, semantic_identity) = verify_program(program, self.budgets)?;
+        let mut target_slots = Vec::with_capacity(target_indexes.len());
+        for target_index in target_indexes {
+            let slot = self
+                .target_slots
+                .get(*target_index)
+                .ok_or(RequestError::UnverifiedTargetSelection)?;
+            let VerifiedTargetResolution::Resolved {
+                numerical_contract, ..
+            } = &slot.resolution
+            else {
+                return Err(RequestError::UnverifiedTargetSelection);
+            };
+            let authority = request_subject(
+                &normalized,
+                &semantic_identity,
+                &self.numerical_contracts,
+                *numerical_contract,
+                self.budgets,
+                &slot.target_profile,
+                &self.capabilities,
+            );
+            target_slots.push(VerifiedTargetSlot {
+                target_profile: slot.target_profile.clone(),
+                resolution: VerifiedTargetResolution::Resolved {
+                    numerical_contract: *numerical_contract,
+                    authority: Box::new(authority),
+                },
+            });
+        }
+        Ok(Self {
+            normalized,
+            semantic_identity,
+            numerical_contracts: self.numerical_contracts.clone(),
+            budgets: self.budgets,
+            target_slots,
+            capabilities: self.capabilities.clone(),
+        })
     }
 
     pub(crate) fn for_target(
         &self,
-        target_profile: PrototypeTargetProfile,
+        target_index: usize,
     ) -> Result<VerifiedTargetRequest, RequestError> {
-        let Some(index) = self
-            .target_profiles
-            .iter()
-            .position(|profile| *profile == target_profile)
-        else {
+        let Some(slot) = self.target_slots.get(target_index) else {
             return Err(RequestError::UnverifiedTargetSelection);
         };
-        let Some(numerical_contract) = self.resolved_contracts.get(index).copied() else {
-            return Err(RequestError::UnverifiedTargetSelection);
+        let (numerical_contract, authority) = match &slot.resolution {
+            VerifiedTargetResolution::Resolved {
+                numerical_contract,
+                authority,
+            } => (numerical_contract, authority),
+            VerifiedTargetResolution::Rejected(error) => return Err(error.clone()),
         };
         let current_authority = request_subject(
             &self.normalized,
             &self.semantic_identity,
             &self.numerical_contracts,
-            numerical_contract,
+            *numerical_contract,
             self.budgets,
-            target_profile,
+            &slot.target_profile,
             &self.capabilities,
         );
-        if target_profile != PrototypeTargetProfile::governed()
-            || self
-                .target_profiles
-                .iter()
-                .any(|profile| *profile != PrototypeTargetProfile::governed())
-            || !numerical_contract.is_governed()
-            || self.authorities.get(index) != Some(&current_authority)
-        {
+        if !numerical_contract.is_governed() || authority.as_ref() != &current_authority {
             return Err(RequestError::UnverifiedTargetSelection);
         }
         Ok(VerifiedTargetRequest {
             normalized: self.normalized.clone(),
             semantic_identity: self.semantic_identity.clone(),
             numerical_contracts: self.numerical_contracts.clone(),
-            numerical_contract,
+            numerical_contract: *numerical_contract,
             budgets: self.budgets,
-            target_profile,
+            target_profile: slot.target_profile.clone(),
             capabilities: self.capabilities.clone(),
             authority: current_authority,
         })
+    }
+}
+
+impl VerifiedTargetSlot {
+    pub(crate) const fn target_profile(&self) -> &TargetProfile {
+        &self.target_profile
+    }
+
+    pub(crate) const fn resolution(&self) -> &VerifiedTargetResolution {
+        &self.resolution
     }
 }
 
@@ -1419,7 +1276,7 @@ fn request_subject(
     numerical_contracts: &NumericalContractPreference,
     numerical_contract: StrictF32NumericalContract,
     budgets: DeterministicBudgets,
-    target_profile: PrototypeTargetProfile,
+    target_profile: &TargetProfile,
     capabilities: &CompilerCapabilitySnapshot,
 ) -> VerifiedRequestSubject {
     #[cfg(test)]
@@ -1449,7 +1306,7 @@ fn request_subject(
         numerical_contracts: numerical_contracts.clone(),
         numerical_contract,
         budgets,
-        target_profile,
+        target_profile: target_profile.clone(),
         capability_schema_version: capabilities.schema_version,
         lowering_registry: capabilities.registry_identity().clone(),
     }
@@ -1461,7 +1318,7 @@ fn request_subject(
 /// a declared refusal, an absent declaration, and a declaration that has not yet
 /// become available are not the same thing, and reporting the second or third as
 /// a rejection would assert knowledge the profile never supplied.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ContractRejection {
     /// The target declares it cannot honour a required behaviour.
     Unhonourable {
@@ -1484,7 +1341,7 @@ pub(crate) enum ContractRejection {
 
 impl ContractRejection {
     /// The contract whose resolution this rejection explains.
-    pub(crate) const fn contract_key(self) -> &'static str {
+    pub(crate) const fn contract_key(&self) -> &'static str {
         match self {
             Self::Unhonourable { contract_key, .. }
             | Self::Undeclared { contract_key, .. }
@@ -1493,7 +1350,7 @@ impl ContractRejection {
     }
 
     /// The dimension the resolution failed on.
-    pub(crate) const fn dimension(self) -> NumericalDimension {
+    pub(crate) const fn dimension(&self) -> NumericalDimension {
         match self {
             Self::Unhonourable { cause, .. } => cause.dimension(),
             Self::Undeclared { cause, .. } => cause.dimension(),
@@ -1507,7 +1364,7 @@ impl ContractRejection {
     /// in one arithmetic type and refuse it in another — the measured Apple row
     /// preserves subnormals in `f16` and flushes them in `f32` — so a rejection
     /// naming only the dimension would be false about the other type.
-    pub(crate) const fn arithmetic(self) -> ArithmeticType {
+    pub(crate) const fn arithmetic(&self) -> ArithmeticType {
         match self {
             Self::Unhonourable { cause, .. } => cause.arithmetic(),
             Self::Undeclared { cause, .. } => cause.arithmetic(),
@@ -1515,8 +1372,17 @@ impl ContractRejection {
         }
     }
 
+    /// The complete resolved semantic type the resolution failed for.
+    pub(crate) fn resolved_type(&self) -> &ResolvedValueType {
+        match self {
+            Self::Unhonourable { cause, .. } => cause.resolved_type(),
+            Self::Undeclared { cause, .. } => cause.resolved_type(),
+            Self::Deferred { cause, .. } => cause.resolved_type(),
+        }
+    }
+
     /// The behaviour the contract required on that dimension.
-    pub(crate) const fn required(self) -> DimensionBehaviour {
+    pub(crate) const fn required(&self) -> DimensionBehaviour {
         match self {
             Self::Unhonourable { cause, .. } => cause.required(),
             Self::Undeclared { cause, .. } => cause.required(),
@@ -1553,6 +1419,17 @@ impl fmt::Display for ContractRejection {
     }
 }
 
+/// Why one exact program dtype cannot be dispatched at compile profile.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DTypeDispatchRefusalDisposition {
+    /// The profile explicitly refuses the exact type.
+    Unsupported,
+    /// The first exact fact becomes available only at a later phase.
+    Deferred { available_at: AvailabilityPhase },
+    /// No fact names the exact type at any phase.
+    Unknown,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RequestError {
     UnsupportedRequestVersion,
@@ -1565,6 +1442,13 @@ pub(crate) enum RequestError {
     /// and no implicit strictest reading, so the diagnostic says the contract is
     /// unstated rather than reporting a dimension the caller never chose.
     UnstatedNumericalContract,
+    /// The same exact numerical contract appeared more than once.
+    DuplicateNumericalContract,
+    /// The preference exceeded the number of distinct public contracts.
+    TooManyNumericalContracts {
+        actual: usize,
+        max: usize,
+    },
     /// No contract in the caller's stated order resolves on this target.
     ///
     /// Every stated entry's first canonical failure is retained, in the caller's
@@ -1572,8 +1456,15 @@ pub(crate) enum RequestError {
     /// its last entry. Nothing here proposes a substitute contract: only the
     /// caller may change what its program means.
     NoResolvableNumericalContract {
-        target_profile: &'static str,
+        target_profile: TargetProfileKey,
         rejections: Vec<ContractRejection>,
+    },
+    /// One exact program value type cannot be dispatched on this target at the
+    /// compile-profile phase.
+    DTypeNotDispatchable {
+        target_profile: TargetProfileKey,
+        resolved_type: Box<ResolvedValueType>,
+        disposition: DTypeDispatchRefusalDisposition,
     },
     /// A stated contract resolves a dimension this build cannot realize.
     ///
@@ -1616,6 +1507,13 @@ impl fmt::Display for RequestError {
             Self::UnstatedNumericalContract => formatter.write_str(
                 "compile.request.numerics.unstated: a resolved numerical contract is required",
             ),
+            Self::DuplicateNumericalContract => formatter.write_str(
+                "compile.request.numerics.duplicate: numerical contracts must be distinct",
+            ),
+            Self::TooManyNumericalContracts { actual, max } => write!(
+                formatter,
+                "compile.request.numerics.too-many: {actual} contracts exceeds maximum {max}"
+            ),
             Self::NoResolvableNumericalContract {
                 target_profile,
                 rejections,
@@ -1629,6 +1527,15 @@ impl fmt::Display for RequestError {
                 }
                 Ok(())
             }
+            Self::DTypeNotDispatchable {
+                target_profile,
+                resolved_type,
+                disposition,
+            } => write!(
+                formatter,
+                "compile.request.dtype.dispatch: target {target_profile} cannot dispatch exact type {:?} at compile profile: {disposition:?}",
+                resolved_type.canonical_encoding().as_bytes(),
+            ),
             Self::UnrepresentableNumericalDimension { cause } => write!(
                 formatter,
                 "compile.request.numerics.unrepresentable: {} in {} requires {}, this build realizes only {} and {} can consume it",
@@ -1713,77 +1620,134 @@ pub(crate) fn verify_request(
         // contract this build does not register.
         return unsupported("numerics", "governed-contract-profile");
     }
-    if request
-        .target_profiles
-        .iter()
-        .any(|target| *target != PrototypeTargetProfile::governed())
-    {
-        return unsupported("target", "prototype-target-neutral-baseline-v1");
-    }
     let mut target_keys: Vec<_> = request
         .target_profiles
         .iter()
-        .map(|target| target.key)
+        .map(TargetProfile::profile_key)
         .collect();
     target_keys.sort_unstable();
     if target_keys.windows(2).any(|keys| keys[0] == keys[1]) {
         return Err(RequestError::DuplicateTargetProfile);
     }
-    check_budget(
-        "semantic-values",
-        request.budgets.semantic_values,
-        request.program.value_count(),
-    )?;
-    check_budget(
-        "semantic-operations",
-        request.budgets.semantic_operations,
-        request.program.operation_count(),
-    )?;
-    check_budget("regions", request.budgets.regions, 2)?;
-    check_budget(
-        "host-expression-nodes",
-        request.budgets.host_expression_nodes,
-        9,
-    )?;
-    check_budget("buffers", request.budgets.buffers, 3)?;
+    let (normalized, semantic_identity) = verify_program(request.program, request.budgets)?;
+    let dispatch_types = canonical_program_value_types(request.program);
 
-    let normalized = select_supported_strategy(request.program)?;
-    let semantic_identity = request.program.semantic_identity().clone();
-    // Resolve the caller's preference once, per target, before any planning
-    // begins. Resolution is the honourability authority applied to the contract
-    // alone — no region, no schedule, and no cost participates, because the
-    // contract is not a search dimension (ADR 0076 item 5).
-    let resolved_contracts = request
+    // Resolve every structurally admitted target independently. A profile that
+    // honours no stated contract is a target-local outcome, not a reason to
+    // discard the other ordered slots. Intrinsic profile/authority failures
+    // remain outer request errors because no target outcome can make malformed
+    // input valid.
+    let target_slots = request
         .target_profiles
         .iter()
-        .map(|target| resolve_numerical_contract(&request.numerical_contracts, target))
-        .collect::<Result<Vec<_>, _>>()?;
-    let authorities = request
-        .target_profiles
-        .iter()
-        .zip(&resolved_contracts)
-        .map(|(target, resolved)| {
-            request_subject(
-                &normalized,
-                &semantic_identity,
-                &request.numerical_contracts,
-                *resolved,
-                request.budgets,
-                *target,
-                &request.capabilities,
-            )
+        .map(|target| {
+            let resolution = match require_compile_profile_dispatch(target, &dispatch_types) {
+                Ok(()) => match resolve_numerical_contract(&request.numerical_contracts, target) {
+                    Ok(numerical_contract) => {
+                        let authority = request_subject(
+                            &normalized,
+                            &semantic_identity,
+                            &request.numerical_contracts,
+                            numerical_contract,
+                            request.budgets,
+                            target,
+                            &request.capabilities,
+                        );
+                        VerifiedTargetResolution::Resolved {
+                            numerical_contract,
+                            authority: Box::new(authority),
+                        }
+                    }
+                    Err(error @ RequestError::NoResolvableNumericalContract { .. }) => {
+                        VerifiedTargetResolution::Rejected(error)
+                    }
+                    Err(error) => return Err(error),
+                },
+                Err(error @ RequestError::DTypeNotDispatchable { .. }) => {
+                    VerifiedTargetResolution::Rejected(error)
+                }
+                Err(error) => return Err(error),
+            };
+            Ok(VerifiedTargetSlot {
+                target_profile: target.clone(),
+                resolution,
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(VerifiedCompilationRequest {
         normalized,
         semantic_identity,
         numerical_contracts: request.numerical_contracts,
-        resolved_contracts,
         budgets: request.budgets,
-        target_profiles: request.target_profiles,
+        target_slots,
         capabilities: request.capabilities,
-        authorities,
     })
+}
+
+/// Returns every exact value type in canonical byte order, without duplicates.
+fn canonical_program_value_types(program: &SemanticProgram) -> Vec<ResolvedValueType> {
+    let mut resolved_types = program
+        .values()
+        .map(|value| value.resolved_type().clone())
+        .collect::<Vec<_>>();
+    resolved_types.sort_by(|left, right| {
+        left.canonical_encoding()
+            .as_bytes()
+            .cmp(right.canonical_encoding().as_bytes())
+    });
+    resolved_types.dedup();
+    resolved_types
+}
+
+/// Requires an exact compile-profile dispatch fact for every program value type.
+fn require_compile_profile_dispatch(
+    target: &TargetProfile,
+    resolved_types: &[ResolvedValueType],
+) -> Result<(), RequestError> {
+    for resolved_type in resolved_types {
+        let disposition =
+            match target.dtype_dispatchability(resolved_type, AvailabilityPhase::CompileProfile) {
+                DTypeDispatchabilityResolution::Dispatchable => continue,
+                DTypeDispatchabilityResolution::Unsupported => {
+                    DTypeDispatchRefusalDisposition::Unsupported
+                }
+                DTypeDispatchabilityResolution::Deferred { available_at } => {
+                    DTypeDispatchRefusalDisposition::Deferred { available_at }
+                }
+                DTypeDispatchabilityResolution::Unknown => DTypeDispatchRefusalDisposition::Unknown,
+            };
+        return Err(RequestError::DTypeNotDispatchable {
+            target_profile: target.profile_key().clone(),
+            resolved_type: Box::new(resolved_type.clone()),
+            disposition,
+        });
+    }
+    Ok(())
+}
+
+/// Verifies the program-scoped portion shared by outer admission and semantic
+/// candidate readmission.
+fn verify_program(
+    program: &SemanticProgram,
+    budgets: DeterministicBudgets,
+) -> Result<(NormalizedProgram, SemanticIdentity), RequestError> {
+    check_budget(
+        "semantic-values",
+        budgets.semantic_values,
+        program.value_count(),
+    )?;
+    check_budget(
+        "semantic-operations",
+        budgets.semantic_operations,
+        program.operation_count(),
+    )?;
+    check_budget("regions", budgets.regions, 2)?;
+    check_budget("host-expression-nodes", budgets.host_expression_nodes, 9)?;
+    check_budget("buffers", budgets.buffers, 3)?;
+    Ok((
+        select_supported_strategy(program)?,
+        program.semantic_identity().clone(),
+    ))
 }
 
 /// Resolves a caller's ordered preference against one target's declaration.
@@ -1801,7 +1765,7 @@ pub(crate) fn verify_request(
 /// [`RequestError::UnsupportedCapability`].
 fn resolve_numerical_contract(
     preference: &NumericalContractPreference,
-    target: &PrototypeTargetProfile,
+    target: &TargetProfile,
 ) -> Result<StrictF32NumericalContract, RequestError> {
     let mut rejections = Vec::new();
     for contract in preference.stated() {
@@ -1830,7 +1794,7 @@ fn resolve_numerical_contract(
                 rejections.extend(unknown.dimensions().first().map(|cause| {
                     ContractRejection::Undeclared {
                         contract_key: contract.key,
-                        cause: *cause,
+                        cause: cause.clone(),
                     }
                 }));
             }
@@ -1838,14 +1802,14 @@ fn resolve_numerical_contract(
                 rejections.extend(deferred.dimensions().first().map(|cause| {
                     ContractRejection::Deferred {
                         contract_key: contract.key,
-                        cause: *cause,
+                        cause: cause.clone(),
                     }
                 }));
             }
         }
     }
     Err(RequestError::NoResolvableNumericalContract {
-        target_profile: target.key,
+        target_profile: target.profile_key().clone(),
         rejections,
     })
 }
@@ -2266,39 +2230,6 @@ fn unsupported<T>(phase: &'static str, rule: &'static str) -> Result<T, RequestE
 
 #[cfg(test)]
 mod tests {
-    /// A declared key is validated, and the governed one encodes unchanged.
-    ///
-    /// The spelling rule exists because the key is framed by length into an
-    /// identity encoding: a key carrying whitespace or framing bytes would be
-    /// encodable but unreadable in a trace, and one carrying arbitrary bytes
-    /// would make two profiles distinguishable only by something no reader can
-    /// print. The bound is checked at the same place for the same reason.
-    #[test]
-    fn a_declared_target_profile_key_is_validated() {
-        assert!(TargetProfileKey::declared("tiler.some-target.v1".to_owned()).is_ok());
-        assert!(TargetProfileKey::declared("with_underscore-1.0".to_owned()).is_ok());
-
-        for refused in [
-            String::new(),
-            "Tiler.Capital.v1".to_owned(),
-            "has space".to_owned(),
-            "has\u{0}nul".to_owned(),
-            "x".repeat(super::MAX_TARGET_PROFILE_KEY_BYTES + 1),
-        ] {
-            assert!(
-                TargetProfileKey::declared(refused.clone()).is_err(),
-                "an unadmitted key was accepted: {refused:?}",
-            );
-        }
-
-        // The governed key round-trips to exactly the bytes it always encoded,
-        // which is what `the_governed_descriptor_bytes_do_not_move` rests on.
-        assert_eq!(
-            TargetProfileKey::governed(TARGET_PROFILE_KEY).as_str(),
-            TARGET_PROFILE_KEY,
-        );
-    }
-
     use std::sync::Arc;
 
     use super::*;
@@ -2613,8 +2544,12 @@ mod tests {
         assert_eq!(normalized.input_elements, 6);
         assert_eq!(normalized.output_elements, 2);
         assert_eq!(
-            verified.target_profiles,
-            [PrototypeTargetProfile::governed()]
+            verified
+                .target_slots
+                .iter()
+                .map(|slot| &slot.target_profile)
+                .collect::<Vec<_>>(),
+            [&TargetProfile::governed()]
         );
     }
 
@@ -2837,6 +2772,46 @@ mod tests {
     }
 
     #[test]
+    fn program_dispatch_types_are_exact_canonical_and_unique() {
+        let mut registry = SemanticRegistryBuilder::standard().unwrap();
+        registry
+            .register_provider(&UnusedSemantics { revision: 1 })
+            .unwrap();
+        let mut builder = SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap();
+        let f32 = builder
+            .input::<F32>(InputKey::new("f32").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let scalar = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
+        let foreign_type =
+            ResolvedValueType::nominal(TypeKey::new("tiler-test", "unused", 1).unwrap());
+        let foreign = builder
+            .input_resolved(
+                InputKey::new("foreign").unwrap(),
+                Shape::from_dims([2, 3]),
+                foreign_type.clone(),
+            )
+            .unwrap();
+        builder
+            .output(OutputKey::new("f32-output").unwrap(), f32)
+            .unwrap();
+        builder
+            .output(OutputKey::new("scalar-output").unwrap(), scalar)
+            .unwrap();
+        builder
+            .output_resolved(OutputKey::new("foreign-output").unwrap(), foreign)
+            .unwrap();
+        let program = builder.build().unwrap();
+
+        let actual = canonical_program_value_types(&program);
+        assert_eq!(actual.len(), 2, "repeated F32 values are deduplicated");
+        assert!(actual.contains(&F32::resolved_type()));
+        assert!(actual.contains(&foreign_type));
+        assert!(actual.windows(2).all(|pair| {
+            pair[0].canonical_encoding().as_bytes() < pair[1].canonical_encoding().as_bytes()
+        }));
+    }
+
+    #[test]
     fn request_rejects_profile_and_budget_mismatches_stably() {
         let program = program();
         let mut request = CompilationRequest::governed(&program);
@@ -2888,10 +2863,9 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(bare, listed);
-        let target = PrototypeTargetProfile::governed();
         assert_eq!(
-            bare.for_target(target).unwrap().subject(),
-            listed.for_target(target).unwrap().subject(),
+            bare.for_target(0).unwrap().subject(),
+            listed.for_target(0).unwrap().subject(),
         );
     }
 
@@ -2920,10 +2894,14 @@ mod tests {
                 NumericalContractPreference::ordered(vec![first, second]).unwrap(),
             ))
             .unwrap();
-            assert_eq!(verified.uniform_resolved_contract(), Some(first));
-            let target = verified
-                .for_target(PrototypeTargetProfile::governed())
-                .unwrap();
+            assert!(matches!(
+                verified.target_slots[0].resolution,
+                VerifiedTargetResolution::Resolved {
+                    numerical_contract,
+                    ..
+                } if numerical_contract == first
+            ));
+            let target = verified.for_target(0).unwrap();
             assert_eq!(target.numerical_contract(), first);
             // The whole stated list is retained, not only the winner: the
             // caller's fallback intent is what the list exists to record.
@@ -2942,7 +2920,6 @@ mod tests {
     #[test]
     fn the_stated_preference_separates_requests_that_resolve_alike() {
         let program = program();
-        let target = PrototypeTargetProfile::governed();
         let alone = verify_request(CompilationRequest::governed_preferring(
             &program,
             NumericalContractPreference::ordered(vec![StrictF32NumericalContract::governed()])
@@ -2958,8 +2935,8 @@ mod tests {
             .unwrap(),
         ))
         .unwrap();
-        let alone = alone.for_target(target).unwrap();
-        let with_fallback = with_fallback.for_target(target).unwrap();
+        let alone = alone.for_target(0).unwrap();
+        let with_fallback = with_fallback.for_target(0).unwrap();
         assert_eq!(
             alone.numerical_contract(),
             with_fallback.numerical_contract()
@@ -3019,19 +2996,16 @@ mod tests {
             })
         );
 
-        let target = PrototypeTargetProfile::governed();
+        let target = TargetProfile::governed();
         let error = resolve_numerical_contract(
             &NumericalContractPreference::ordered(vec![
                 positive_flush,
                 StrictF32NumericalContract::governed(),
             ])
             .unwrap(),
-            &PrototypeTargetProfile {
-                // A profile that declares nothing at all: every dimension of
-                // every entry is undeclared, so nothing may be admitted.
-                numerical: &[],
-                ..target
-            },
+            // A profile that declares nothing at all: every dimension of every
+            // entry is undeclared, so nothing may be admitted.
+            &TargetProfile::governed_without_numerical_declarations(),
         )
         .unwrap_err();
         let RequestError::NoResolvableNumericalContract {
@@ -3041,7 +3015,7 @@ mod tests {
         else {
             panic!("an unhonourable preference rejects by name");
         };
-        assert_eq!(target_profile, target.key);
+        assert_eq!(target_profile, *target.profile_key());
         assert_eq!(rejections.len(), 2, "one cause per stated entry");
         assert_eq!(rejections[0].contract_key(), positive_flush.key);
         assert_eq!(
@@ -3061,7 +3035,7 @@ mod tests {
     /// declaration is what admits them.
     #[test]
     fn the_governed_baseline_honours_every_registered_contract() {
-        let target = PrototypeTargetProfile::governed();
+        let target = TargetProfile::governed();
         let expected = crate::honourability::CANONICAL_DIMENSIONS
             .into_iter()
             .filter(|dimension| crate::policy::is_consumable(*dimension))
@@ -3082,7 +3056,7 @@ mod tests {
                     crate::honourability::HonouringMeans::SupportedExactly
                 );
                 assert_eq!(honoured.arithmetic(), contract.arithmetic);
-                assert_eq!(honoured.profile().key(), target.key);
+                assert_eq!(honoured.profile().key(), target.profile_key().as_str());
             }
         }
     }
@@ -3097,7 +3071,7 @@ mod tests {
     /// contradicts.
     #[test]
     fn a_contract_for_an_undeclared_arithmetic_type_is_unknown() {
-        let target = PrototypeTargetProfile::governed();
+        let target = TargetProfile::governed();
         let mut contract = StrictF32NumericalContract::governed();
         contract.arithmetic = ArithmeticType::F16;
         let outcome = crate::physical::assess_contract(&target, contract).unwrap();
@@ -3139,9 +3113,7 @@ mod tests {
         assert_eq!(verify_request(empty), Err(RequestError::EmptyTargetSet));
 
         let mut duplicate = CompilationRequest::governed(&program);
-        duplicate
-            .target_profiles
-            .push(PrototypeTargetProfile::governed());
+        duplicate.target_profiles.push(TargetProfile::governed());
         assert_eq!(
             verify_request(duplicate),
             Err(RequestError::DuplicateTargetProfile)
@@ -3152,47 +3124,46 @@ mod tests {
     fn verified_request_receipts_reject_post_verification_mutation() {
         let program = program();
         let verified = verify_request(CompilationRequest::governed(&program)).unwrap();
-        let governed_target = PrototypeTargetProfile::governed();
-
         let mut forged = verified.clone();
         forged.budgets.buffers += 1;
         assert_eq!(
-            forged.for_target(governed_target),
+            forged.for_target(0),
             Err(RequestError::UnverifiedTargetSelection)
         );
 
         let mut forged = verified.clone();
         forged.capabilities = CompilerCapabilitySnapshot::without_capabilities();
         assert_eq!(
-            forged.for_target(governed_target),
+            forged.for_target(0),
             Err(RequestError::UnverifiedTargetSelection)
         );
 
         let mut forged = verified.clone();
-        forged.target_profiles[0].max_threads_per_grid_axis -= 1;
+        forged.target_slots[0].target_profile =
+            TargetProfile::governed_without_numerical_declarations();
         assert_eq!(
-            forged.for_target(governed_target),
+            forged.for_target(0),
             Err(RequestError::UnverifiedTargetSelection)
         );
 
         let mut forged = verified.clone();
         forged.semantic_identity = program_with_unused_provider(7).semantic_identity().clone();
         assert_eq!(
-            forged.for_target(governed_target),
+            forged.for_target(0),
             Err(RequestError::UnverifiedTargetSelection)
         );
 
         let mut forged = verified.clone();
         forged.normalized.serial_sum_mut().scale_bits = 3.0_f32.to_bits();
         assert_eq!(
-            forged.for_target(governed_target),
+            forged.for_target(0),
             Err(RequestError::UnverifiedTargetSelection)
         );
 
         let mut forged = verified;
         forged.normalized.serial_sum_mut().output_key = OutputKey::new("forged").unwrap();
         assert_eq!(
-            forged.for_target(governed_target),
+            forged.for_target(0),
             Err(RequestError::UnverifiedTargetSelection)
         );
     }
@@ -3201,10 +3172,10 @@ mod tests {
     fn verified_target_receipt_detects_every_governed_subject_mutation_class() {
         let program = program();
         let verified = verify_request(CompilationRequest::governed(&program)).unwrap();
-        let target = verified.for_target(verified.target_profiles[0]).unwrap();
+        let target = verified.for_target(0).unwrap();
 
         let mut forged = target.clone();
-        forged.target_profile.max_buffer_bindings_per_entry -= 1;
+        forged.target_profile = TargetProfile::governed_without_numerical_declarations();
         assert!(!forged.reconstructs_its_authority());
 
         let mut forged = target.clone();
@@ -3282,6 +3253,7 @@ mod tests {
 #[cfg(test)]
 mod subject_budget {
     use super::*;
+    use crate::honourability::encode_declared_behaviours;
 
     /// Reports what the canonical explain subject is made of, byte by byte.
     ///
@@ -3297,9 +3269,7 @@ mod subject_budget {
     fn the_explain_subject_byte_budget() {
         let program = super::tests::program();
         let verified = verify_request(CompilationRequest::governed(&program)).unwrap();
-        let target = verified
-            .for_target(PrototypeTargetProfile::governed())
-            .unwrap();
+        let target = verified.for_target(0).unwrap();
         let subject = target.subject();
         let identity = &subject.semantic_identity;
 
@@ -3319,10 +3289,11 @@ mod subject_budget {
             ),
         ];
         let lowering = subject.lowering_registry.as_bytes().len();
+        let declared = TargetProfile::governed_declared_behaviours();
         let mut numerical_bytes = Vec::new();
-        encode_declared_behaviours(&mut numerical_bytes, subject.target_profile.numerical);
+        encode_declared_behaviours(&mut numerical_bytes, &declared);
         let numerical = numerical_bytes.len();
-        let declaration_lines = subject.target_profile.numerical.len();
+        let declaration_lines = declared.len();
         let total = subject.canonical_explain_subject_bytes().len();
         let embedded: usize = components.iter().map(|(_, size)| size).sum();
 

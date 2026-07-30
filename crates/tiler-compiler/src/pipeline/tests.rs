@@ -30,7 +30,10 @@ fn test_root(explain: &mut ExplainWriter) -> ExplainRecordId {
 }
 use crate::explain::ExplainDisposition;
 use crate::physical::{RegionId, TensorRole};
-use crate::request::{CompilerCapabilitySnapshot, StrictF32NumericalContract};
+use crate::request::{
+    CompilerCapabilitySnapshot, NumericalContractPreference, StrictF32NumericalContract,
+    TargetProfile,
+};
 use std::collections::BTreeMap;
 use tiler_ir::kernel::{BinaryOp, CompareOp, ConvertOp, KernelConstant, OperationView};
 use tiler_ir::program::{DependencyReasonView, ValueRole};
@@ -50,6 +53,27 @@ fn semantic(reverse_constants: bool) -> SemanticProgram {
         1.0_f32.to_bits(),
         reverse_constants,
     )
+}
+
+fn request_with_targets(
+    program: &SemanticProgram,
+    target_profiles: Vec<TargetProfile>,
+    contracts: Vec<StrictF32NumericalContract>,
+) -> CompilationRequest<'_> {
+    let mut request = CompilationRequest::governed_preferring(
+        program,
+        NumericalContractPreference::ordered(contracts).expect("the fixture states a contract"),
+    );
+    request.target_profiles = target_profiles;
+    request
+}
+
+fn outcome_for_key<'a>(product: &'a CompilationProduct, key: &str) -> &'a TargetCompilationOutcome {
+    product
+        .targets
+        .iter()
+        .find(|outcome| outcome.target_profile().profile_key().as_str() == key)
+        .unwrap_or_else(|| panic!("missing target outcome for {key}"))
 }
 
 fn semantic_case(
@@ -760,6 +784,7 @@ fn assert_honoured_dimensions_are_exhaustive(trace: &crate::explain::VerifiedExp
             required,
             outcome,
             profile,
+            resolved_type,
         } = record.event()
         else {
             continue;
@@ -775,6 +800,7 @@ fn assert_honoured_dimensions_are_exhaustive(trace: &crate::explain::VerifiedExp
             "tiler.prototype-target-neutral-baseline.v1"
         );
         assert_eq!(*arithmetic, tiler_ir::schedule::ArithmeticType::F32);
+        assert_eq!(resolved_type, &tiler_ir::semantic::F32::resolved_type());
         *honoured
             .entry((dimension.as_str(), required.as_str()))
             .or_insert(0_usize) += 1;
@@ -1030,18 +1056,219 @@ fn malformed_request_is_not_reported_as_missing_capability() {
 }
 
 #[test]
-fn forged_same_key_target_facts_are_rejected_at_the_request_boundary() {
+fn target_outcomes_preserve_caller_order_in_both_directions() {
+    let semantic = semantic(false);
+    let success = TargetProfile::governed_with_key_for_test("test.success.v1");
+    let no_contract = TargetProfile::without_numerical_declarations_for_test("test.no-contract.v1");
+    for profiles in [
+        vec![success.clone(), no_contract.clone()],
+        vec![no_contract.clone(), success.clone()],
+    ] {
+        let expected_keys = profiles
+            .iter()
+            .map(|profile| profile.profile_key().as_str().to_owned())
+            .collect::<Vec<_>>();
+        let product = compile(request_with_targets(
+            &semantic,
+            profiles,
+            vec![StrictF32NumericalContract::governed()],
+        ))
+        .expect("a target-local numerical refusal does not fail the batch");
+        assert_eq!(
+            product
+                .targets
+                .iter()
+                .map(|outcome| outcome.target_profile().profile_key().as_str())
+                .collect::<Vec<_>>(),
+            expected_keys.iter().map(String::as_str).collect::<Vec<_>>()
+        );
+        assert!(
+            outcome_for_key(&product, "test.success.v1")
+                .compiled()
+                .is_some()
+        );
+        assert!(matches!(
+            outcome_for_key(&product, "test.no-contract.v1").failure(),
+            Some(CompileError::NoFeasiblePlan(NoFeasiblePlanError::Request(
+                RequestError::NoResolvableNumericalContract { .. }
+            )))
+        ));
+    }
+}
+
+#[test]
+fn target_identity_is_independent_of_batch_order() {
+    let semantic = semantic(false);
+    let success = TargetProfile::governed_with_key_for_test("test.identity.v1");
+    let no_contract = TargetProfile::without_numerical_declarations_for_test("test.companion.v1");
+    let compile_order = |profiles| {
+        compile(request_with_targets(
+            &semantic,
+            profiles,
+            vec![StrictF32NumericalContract::governed()],
+        ))
+        .unwrap()
+    };
+    let forward = compile_order(vec![success.clone(), no_contract.clone()]);
+    let reverse = compile_order(vec![no_contract, success]);
+    assert_eq!(
+        outcome_for_key(&forward, "test.identity.v1").compiled(),
+        outcome_for_key(&reverse, "test.identity.v1").compiled()
+    );
+}
+
+#[test]
+fn distinct_resolved_contracts_are_compiled_as_two_groups() {
+    let semantic = semantic(false);
+    let strict = TargetProfile::governed_with_key_for_test("test.strict.v1");
+    let flush = TargetProfile::flush_only_for_test("test.flush.v1");
+    let (result, group_count) = observe_contract_group_compilations(|| {
+        compile(request_with_targets(
+            &semantic,
+            vec![strict, flush],
+            vec![
+                StrictF32NumericalContract::governed(),
+                StrictF32NumericalContract::governed_flush_to_zero(),
+            ],
+        ))
+    });
+    let product = result.unwrap();
+    assert_eq!(group_count, 2);
+    assert_eq!(
+        outcome_for_key(&product, "test.strict.v1")
+            .compiled()
+            .unwrap()
+            .resolved_contract,
+        StrictF32NumericalContract::governed()
+    );
+    assert_eq!(
+        outcome_for_key(&product, "test.flush.v1")
+            .compiled()
+            .unwrap()
+            .resolved_contract,
+        StrictF32NumericalContract::governed_flush_to_zero()
+    );
+}
+
+#[test]
+fn one_target_failure_does_not_erase_a_companion_in_the_same_group() {
+    let semantic = semantic(false);
+    let success = TargetProfile::governed_with_key_for_test("test.isolation.success.v1");
+    let bounded = TargetProfile::with_grid_axis_limit_for_test("test.isolation.bounded.v1", 1);
+    let (result, group_count) = observe_contract_group_compilations(|| {
+        compile(request_with_targets(
+            &semantic,
+            vec![success, bounded],
+            vec![StrictF32NumericalContract::governed()],
+        ))
+    });
+    let product = result.expect("target-local feasibility cannot erase its companion");
+    assert_eq!(group_count, 1);
+    assert!(
+        outcome_for_key(&product, "test.isolation.success.v1")
+            .compiled()
+            .is_some()
+    );
+    assert!(matches!(
+        outcome_for_key(&product, "test.isolation.bounded.v1").failure(),
+        Some(CompileError::Explained { source, .. })
+            if matches!(
+                source.as_ref(),
+                CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(
+                    PhysicalError::Target { .. }
+                ))
+            )
+    ));
+}
+
+#[test]
+fn empty_and_duplicate_target_sets_are_outer_request_failures() {
+    let semantic = semantic(false);
+    let mut empty = CompilationRequest::governed(&semantic);
+    empty.target_profiles.clear();
+    assert_eq!(
+        compile(empty),
+        Err(CompileError::InvalidRequest(RequestError::EmptyTargetSet))
+    );
+
+    let duplicate = TargetProfile::governed_with_key_for_test("test.duplicate.v1");
+    assert_eq!(
+        compile(request_with_targets(
+            &semantic,
+            vec![duplicate.clone(), duplicate],
+            vec![StrictF32NumericalContract::governed()],
+        )),
+        Err(CompileError::InvalidRequest(
+            RequestError::DuplicateTargetProfile
+        ))
+    );
+}
+
+#[test]
+fn target_group_cardinality_mismatch_is_an_outer_compiler_invariant() {
+    let semantic = semantic(false);
+    let verified = verify_request(request_with_targets(
+        &semantic,
+        vec![
+            TargetProfile::governed_with_key_for_test("test.group.first.v1"),
+            TargetProfile::governed_with_key_for_test("test.group.second.v1"),
+        ],
+        vec![StrictF32NumericalContract::governed()],
+    ))
+    .unwrap();
+    let group = resolved_target_groups(&verified).remove(0);
+    let candidate = verified
+        .readmit_candidate(&semantic, &group.target_indexes[..1])
+        .unwrap();
+    assert_eq!(
+        verify_target_group_coordination(&verified, &group, &candidate),
+        Err(CompileError::InvalidCompilerOutput(
+            CompilerOutputError::Program(ProgramError::Structure {
+                rule: "target-group-cardinality"
+            })
+        ))
+    );
+}
+
+#[test]
+fn invalid_compiler_output_from_target_compilation_remains_outer() {
+    let target = TargetProfile::governed_with_key_for_test("test.outer-invariant.v1");
+    let result = target_compilation_outcome(
+        &target,
+        Err(TargetCompileFailure::Outer(
+            CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
+                ProgramError::Structure {
+                    rule: "test-target-compiler-invariant",
+                },
+            )),
+        )),
+    );
+    assert!(matches!(
+        result,
+        Err(CompileError::InvalidCompilerOutput(
+            CompilerOutputError::Program(ProgramError::Structure {
+                rule: "test-target-compiler-invariant"
+            })
+        ))
+    ));
+}
+
+#[test]
+fn a_caller_declared_target_profile_reaches_target_feasibility() {
     let semantic = semantic(false);
     let mut request = CompilationRequest::governed(&semantic);
-    request.target_profiles[0].max_threads_per_grid_axis = 1;
-    let error = compile(request).unwrap_err();
-    assert_eq!(
-        error,
-        CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
-            phase: "target",
-            rule: "prototype-target-neutral-baseline-v1",
-        })
-    );
+    request.target_profiles[0] = crate::request::TargetProfile::governed_with_grid_axis_limit(1);
+    let product = compile(request).expect("the well-formed caller profile is admitted");
+    assert!(matches!(
+        product.targets[0].failure(),
+        Some(CompileError::Explained { source, .. })
+            if matches!(
+                source.as_ref(),
+                CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(
+                    PhysicalError::Target { .. }
+                ))
+            )
+    ));
 }
 
 /// An installed authority that lowers nothing is a deferred capability, and
@@ -1091,12 +1318,15 @@ fn region_budget_retains_the_verified_baseline() {
     // region formation never proposed.
     let mut bounded = CompilationRequest::governed(&semantic);
     bounded.budgets.region_candidates_per_seed = 0;
-    let error = compile(bounded).unwrap_err();
-    let CompileError::Explained { source, explain } = error else {
+    let product = compile(bounded).expect("a target-local refusal is an ordered outcome");
+    let CompileError::Explained { source, explain } = product.targets[0]
+        .failure()
+        .expect("the bounded target has no complete plan")
+    else {
         panic!("target compilation failures retain their explain trace");
     };
     assert!(matches!(
-        *source,
+        source.as_ref(),
         CompileError::NoFeasiblePlan(NoFeasiblePlanError::Selection(SelectionError::Structure {
             rule: "no-complete-plan"
         }))
@@ -1189,12 +1419,16 @@ fn no_feasible_plan_retains_a_typed_terminal_failure_trace() {
         false,
         Axis::new(1),
     );
-    let error = compile(CompilationRequest::governed(&semantic)).unwrap_err();
-    let CompileError::Explained { source, explain } = error else {
+    let product = compile(CompilationRequest::governed(&semantic))
+        .expect("a target-local refusal is an ordered outcome");
+    let CompileError::Explained { source, explain } = product.targets[0]
+        .failure()
+        .expect("the target has no feasible plan")
+    else {
         panic!("target compilation failures retain their explain trace");
     };
     assert!(matches!(
-        *source,
+        source.as_ref(),
         CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(PhysicalError::Target { .. }))
     ));
     assert_eq!(
@@ -2180,9 +2414,11 @@ impl PhysicalImplementationProvider for UnregisteredOpaqueProvider {
                 crate::call_registry::OpaqueCallProposal::new(self.call, self.bindings.clone())
                     .expect("fixture proposal is exactly reportable"),
             )),
-            crate::frontier::TargetApplicability::for_targets([
-                crate::request::TargetProfileKey::governed(context.target_profile_key()),
-            ]),
+            crate::frontier::TargetApplicability::for_targets([context
+                .request()
+                .target_profile()
+                .profile_key()
+                .clone()]),
             crate::frontier::PhysicalCostEstimate::structural(1, 2, 0),
         )]
     }

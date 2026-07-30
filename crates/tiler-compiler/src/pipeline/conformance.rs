@@ -281,7 +281,7 @@ fn externally_registered_operations_compile_through_the_ordinary_path() {
     let product = compile(CompilationRequest::governed(&program)).unwrap();
     let target = &product.targets[0];
     assert_eq!(
-        target.target_profile_key,
+        target.target_profile.profile_key().as_str(),
         "tiler.prototype-target-neutral-baseline.v1"
     );
     assert_eq!(target.portfolio.alternatives.len(), 2);

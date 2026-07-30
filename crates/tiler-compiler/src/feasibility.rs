@@ -72,18 +72,23 @@ use crate::honourability::{
     NumericalHonourabilityFact, NumericalRequirement, UndeclaredDimension, UnhonouredDimension,
     encode_honourability_facts,
 };
+pub(crate) use crate::target::TargetProfileIdentity;
 
 /// Domain separator of a canonical target profile descriptor.
 ///
 /// Trailing NUL so no descriptor can be a prefix of a differently-domained
 /// encoding, matching the framing the rest of the workspace's identities use.
 ///
-/// `v4` because the encoding now carries each numerical fact's versioned
+/// `v6` because every numerical row now carries its complete resolved semantic
+/// type. `v5` carried only the arithmetic class in each row, allowing two
+/// distinct same-class subjects to share feasibility identity.
+///
+/// `v4` introduced each numerical fact's versioned
 /// authority and its governed-guarantee or measured compiler/environment source.
 /// `v3` distinguished per-dimension behaviours after the strict-arithmetic
 /// boolean was retired, but two profiles resting on different measured builds
 /// still collided under it.
-const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v4\0";
+const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v6\0";
 
 /// Governed key of the feasibility rule set this authority applies.
 ///
@@ -291,6 +296,12 @@ const fn satisfies(relation: Relation, required: u64, available: u64) -> bool {
 pub(crate) enum FactAuthority {
     /// A governed, conservative compile-time profile guarantee.
     GovernedProfile,
+    /// A named external producer's normative target-family declaration.
+    ///
+    /// This is available at the compile-profile phase but is not a compiler
+    /// proof. Its source record carries both the producer identity and the
+    /// versioned specification or guarantee it relies on.
+    ExternalProfile,
     /// Evidence attributed to a produced artifact.
     ArtifactEvidence,
     /// A live device runtime.
@@ -308,6 +319,7 @@ impl FactAuthority {
     pub(crate) const fn tag(self) -> u8 {
         match self {
             Self::GovernedProfile => 0x01,
+            Self::ExternalProfile => 0x06,
             Self::ArtifactEvidence => 0x02,
             Self::DeviceRuntime => 0x03,
             Self::PreparedKernel => 0x04,
@@ -340,37 +352,6 @@ impl FactValidityScope {
             Self::PreparedArtifact => 0x03,
             Self::LaunchInstance => 0x04,
         }
-    }
-}
-
-/// Identity of a checked target profile.
-///
-/// The key alone is *not* the profile's identity: ADR 0043 requires the exact
-/// [`CheckedTargetProfile::canonical_descriptor`] beside it, because two
-/// profiles can advertise one key and admit different candidates. This type
-/// names the governed key; the descriptor distinguishes profiles sharing it.
-///
-/// It deliberately carries no version. The rules that decide predicates are
-/// [`GOVERNED_FEASIBILITY_RULE_SET`], which is a property of this authority
-/// rather than of any one profile: a rule change alters every profile's
-/// verdicts at once, so recording it on each profile would claim per-profile
-/// variation that cannot occur. The artifact layer keeps the two apart for the
-/// same reason — one profile may be re-assessed under a new rule set, and one
-/// rule set applies across profiles, so neither identity determines the other.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct TargetProfileIdentity {
-    key: &'static str,
-}
-
-impl TargetProfileIdentity {
-    /// Constructs a target profile identity from a governed key.
-    pub(crate) const fn new(key: &'static str) -> Self {
-        Self { key }
-    }
-
-    /// The governed target profile key.
-    pub(crate) const fn key(self) -> &'static str {
-        self.key
     }
 }
 
@@ -418,25 +399,27 @@ impl FeasibilityRuleSetIdentity {
 /// declares a bound. The rule set governs how a requirement is compared against
 /// that bound; it neither supplies nor admits the bound itself, so citing it
 /// here would attribute the claim to something that never made it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct FactProvenance {
     profile: TargetProfileIdentity,
 }
 
 impl FactProvenance {
     /// Records that a fact was declared by `profile`.
-    pub(crate) const fn declared_by(profile: TargetProfileIdentity) -> Self {
-        Self { profile }
+    pub(crate) fn declared_by(profile: impl Into<TargetProfileIdentity>) -> Self {
+        Self {
+            profile: profile.into(),
+        }
     }
 
     /// The profile that declared the fact.
-    pub(crate) const fn profile(self) -> TargetProfileIdentity {
-        self.profile
+    pub(crate) const fn profile(&self) -> &TargetProfileIdentity {
+        &self.profile
     }
 }
 
 /// A typed capability fact: a bound on one axis, available from a stated phase.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CapabilityFact {
     axis: CapabilityAxis,
     bound: u64,
@@ -467,28 +450,28 @@ impl CapabilityFact {
     }
 
     /// The axis this fact bounds.
-    pub(crate) const fn axis(self) -> CapabilityAxis {
+    pub(crate) const fn axis(&self) -> CapabilityAxis {
         self.axis
     }
 
     /// The phase from which this fact is available.
-    pub(crate) const fn phase(self) -> AvailabilityPhase {
+    pub(crate) const fn phase(&self) -> AvailabilityPhase {
         self.phase
     }
 
     /// The authority vouching for this fact.
-    pub(crate) const fn authority(self) -> FactAuthority {
+    pub(crate) const fn authority(&self) -> FactAuthority {
         self.authority
     }
 
     /// The scope over which this fact is valid.
-    pub(crate) const fn validity(self) -> FactValidityScope {
+    pub(crate) const fn validity(&self) -> FactValidityScope {
         self.validity
     }
 
     /// Where this fact came from.
-    pub(crate) const fn provenance(self) -> FactProvenance {
-        self.provenance
+    pub(crate) const fn provenance(&self) -> &FactProvenance {
+        &self.provenance
     }
 }
 
@@ -502,8 +485,11 @@ pub(crate) struct CheckedTargetProfile {
     identity: TargetProfileIdentity,
     /// Canonical: sorted by `(axis, phase)`, unique per `(axis, phase)`.
     facts: Vec<CapabilityFact>,
-    /// Canonical: sorted by `(dimension, behaviour, phase)`, unique per triple.
+    /// Canonical: sorted by `(dimension, arithmetic, behaviour, phase)`, unique
+    /// per tuple.
     honourability: Vec<NumericalHonourabilityFact>,
+    /// The bounded canonical descriptor, derived once after validation.
+    descriptor: Box<[u8]>,
 }
 
 impl CheckedTargetProfile {
@@ -523,10 +509,11 @@ impl CheckedTargetProfile {
     /// declaration into two profile objects would mint a second identity that
     /// has to be kept in agreement with the first.
     pub(crate) fn new(
-        identity: TargetProfileIdentity,
+        identity: impl Into<TargetProfileIdentity>,
         facts: Vec<CapabilityFact>,
         honourability: Vec<NumericalHonourabilityFact>,
     ) -> Result<Self, FeasibilityError> {
+        let identity = identity.into();
         let mut facts = facts;
         let mut honourability = honourability;
         if identity.key().is_empty() {
@@ -561,7 +548,7 @@ impl CheckedTargetProfile {
                     rule: "declaration-relaxation",
                 });
             }
-            if fact.provenance().profile != identity {
+            if fact.provenance().profile() != &identity {
                 return Err(FeasibilityError::MalformedProfile {
                     rule: "declaration-provenance",
                 });
@@ -599,24 +586,25 @@ impl CheckedTargetProfile {
                 rule: "duplicate-declaration",
             });
         }
-        let checked = Self {
-            identity,
-            facts,
-            honourability,
-        };
-        let descriptor_length = checked.canonical_descriptor().len();
+        let descriptor = canonical_profile_descriptor(&identity, &facts, &honourability);
+        let descriptor_length = descriptor.len();
         if descriptor_length > MAX_TARGET_PROFILE_DESCRIPTOR_BYTES {
             return Err(FeasibilityError::DescriptorTooLong {
-                key: checked.identity.key(),
+                key: identity.key().to_owned(),
                 actual: descriptor_length,
             });
         }
-        Ok(checked)
+        Ok(Self {
+            identity,
+            facts,
+            honourability,
+            descriptor: descriptor.into_boxed_slice(),
+        })
     }
 
     /// The governed identity of this profile.
-    pub(crate) const fn identity(&self) -> TargetProfileIdentity {
-        self.identity
+    pub(crate) const fn identity(&self) -> &TargetProfileIdentity {
+        &self.identity
     }
 
     /// The checked capability facts, in canonical order.
@@ -679,20 +667,8 @@ impl CheckedTargetProfile {
     /// change moves every profile's verdicts at once and is recorded beside the
     /// descriptor as [`GOVERNED_FEASIBILITY_RULE_SET`]; folding it in here would
     /// make a profile appear to have changed when only the rules did.
-    pub(crate) fn canonical_descriptor(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        push_slice(&mut bytes, PROFILE_DESCRIPTOR_DOMAIN);
-        push_slice(&mut bytes, self.identity.key().as_bytes());
-        push_len(&mut bytes, self.facts.len());
-        for fact in &self.facts {
-            bytes.push(fact.axis.tag());
-            bytes.extend_from_slice(&fact.bound.to_be_bytes());
-            bytes.push(fact.phase.tag());
-            bytes.push(fact.authority.tag());
-            bytes.push(fact.validity.tag());
-        }
-        encode_honourability_facts(&mut bytes, &self.honourability);
-        bytes
+    pub(crate) fn canonical_descriptor(&self) -> &[u8] {
+        &self.descriptor
     }
 
     /// Resolves one axis against the facts available through `available_phase`.
@@ -704,7 +680,7 @@ impl CheckedTargetProfile {
                 // Prefer the most refined fact already available.
                 now = Some(match now {
                     Some(current) if current.phase >= fact.phase => current,
-                    _ => *fact,
+                    _ => fact.clone(),
                 });
             } else {
                 // Track the earliest phase that can supply the fact.
@@ -732,12 +708,13 @@ impl CheckedTargetProfile {
     /// an input to this decision, never an output of it (ADR 0076 item 5).
     fn resolve_dimension(
         &self,
-        requirement: NumericalRequirement,
+        requirement: &NumericalRequirement,
         authorized: &[NumericalRequirement],
         available_phase: AvailabilityPhase,
     ) -> DimensionResolution {
         let dimension = requirement.dimension();
         let arithmetic = requirement.arithmetic();
+        let resolved_type = requirement.resolved_type();
         let required = requirement.behaviour();
         let mut now: Option<NumericalHonourabilityFact> = None;
         let mut later: Option<AvailabilityPhase> = None;
@@ -749,6 +726,7 @@ impl CheckedTargetProfile {
         for fact in self.honourability.iter().filter(|fact| {
             fact.dimension() == dimension
                 && fact.arithmetic() == arithmetic
+                && fact.resolved_type() == resolved_type
                 && fact.behaviour() == required
         }) {
             if fact.phase() <= available_phase {
@@ -767,10 +745,17 @@ impl CheckedTargetProfile {
         let Some(fact) = now else {
             return match later {
                 Some(phase) => DimensionResolution::Later(DeferredDimension::new(
-                    dimension, arithmetic, required, phase,
+                    dimension,
+                    arithmetic,
+                    resolved_type.clone(),
+                    required,
+                    phase,
                 )),
                 None => DimensionResolution::NoPath(UndeclaredDimension::new(
-                    dimension, arithmetic, required,
+                    dimension,
+                    arithmetic,
+                    resolved_type.clone(),
+                    required,
                 )),
             };
         };
@@ -782,6 +767,7 @@ impl CheckedTargetProfile {
                 authorized.iter().any(|stated| {
                     stated.dimension() == relaxation.dimension()
                         && stated.arithmetic() == relaxation.arithmetic()
+                        && stated.resolved_type() == relaxation.resolved_type()
                         && stated.behaviour() == relaxation.behaviour()
                 })
             }
@@ -793,10 +779,11 @@ impl CheckedTargetProfile {
             DimensionResolution::Unhonoured(UnhonouredDimension::new(
                 dimension,
                 arithmetic,
+                resolved_type.clone(),
                 required,
                 fact.means(),
-                self.honoured_alternative(dimension, arithmetic, available_phase),
-                self.identity,
+                self.honoured_alternative(dimension, arithmetic, resolved_type, available_phase),
+                self.identity.clone(),
             ))
         }
     }
@@ -816,6 +803,7 @@ impl CheckedTargetProfile {
         &self,
         dimension: NumericalDimension,
         arithmetic: ArithmeticType,
+        resolved_type: &tiler_ir::semantic::ResolvedValueType,
         available_phase: AvailabilityPhase,
     ) -> Option<DimensionBehaviour> {
         self.honourability
@@ -823,6 +811,7 @@ impl CheckedTargetProfile {
             .find(|fact| {
                 fact.dimension() == dimension
                     && fact.arithmetic() == arithmetic
+                    && fact.resolved_type() == resolved_type
                     && fact.phase() <= available_phase
                     && fact.is_unconditionally_honoured()
             })
@@ -878,7 +867,7 @@ impl CheckedTargetProfile {
         let mut undeclared = Vec::new();
         let mut deferred_dimensions = Vec::new();
         for requirement in &proposal.numerical {
-            match self.resolve_dimension(*requirement, &proposal.numerical, available_phase) {
+            match self.resolve_dimension(requirement, &proposal.numerical, available_phase) {
                 DimensionResolution::Honoured(record) => honoured.push(record),
                 DimensionResolution::Unhonoured(record) => unhonoured.push(record),
                 DimensionResolution::Later(record) => deferred_dimensions.push(record),
@@ -951,12 +940,32 @@ impl CheckedTargetProfile {
     }
 }
 
+fn canonical_profile_descriptor(
+    identity: &TargetProfileIdentity,
+    facts: &[CapabilityFact],
+    honourability: &[NumericalHonourabilityFact],
+) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    push_slice(&mut bytes, PROFILE_DESCRIPTOR_DOMAIN);
+    push_slice(&mut bytes, identity.key().as_bytes());
+    push_len(&mut bytes, facts.len());
+    for fact in facts {
+        bytes.push(fact.axis.tag());
+        bytes.extend_from_slice(&fact.bound.to_be_bytes());
+        bytes.push(fact.phase.tag());
+        bytes.push(fact.authority.tag());
+        bytes.push(fact.validity.tag());
+    }
+    encode_honourability_facts(&mut bytes, honourability);
+    bytes
+}
+
 /// Whether a fact authority is consistent with the phase it is available from.
 const fn authority_matches_phase(authority: FactAuthority, phase: AvailabilityPhase) -> bool {
     matches!(
         (authority, phase),
         (
-            FactAuthority::GovernedProfile,
+            FactAuthority::GovernedProfile | FactAuthority::ExternalProfile,
             AvailabilityPhase::CompileProfile
         ) | (
             FactAuthority::ArtifactEvidence,
@@ -1072,7 +1081,7 @@ impl FeasibilityProposal {
         // program may require preservation on the input-subnormal dimension in
         // one dtype and flushing in another, which is a well-formed contract on
         // measured hardware and not a duplicate.
-        numerical.sort_by_key(|requirement| requirement.subject());
+        numerical.sort_by_key(NumericalRequirement::subject);
         if numerical
             .windows(2)
             .any(|pair| pair[0].subject() == pair[1].subject())
@@ -1201,7 +1210,7 @@ pub(crate) struct Rejection {
 }
 
 /// The canonical representative cause of one rejection.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RejectionCause {
     /// A numerical dimension the target declares it cannot honour as required.
     Numerical(UnhonouredDimension),
@@ -1225,7 +1234,7 @@ impl Rejection {
     pub(crate) fn representative(&self) -> RejectionCause {
         self.unhonourable.first().map_or_else(
             || RejectionCause::Capability(self.disproved[0]),
-            |cause| RejectionCause::Numerical(*cause),
+            |cause| RejectionCause::Numerical(cause.clone()),
         )
     }
 
@@ -1266,7 +1275,7 @@ impl DeferredSet {
             .predicates
             .iter()
             .map(|predicate| predicate.phase())
-            .chain(self.dimensions.iter().map(|dimension| dimension.phase()))
+            .chain(self.dimensions.iter().map(DeferredDimension::phase))
             .collect();
         phases.sort_unstable();
         phases.dedup();
@@ -1376,14 +1385,14 @@ impl FeasibleSet {
 /// requires checking the artifact ceiling in the same change.**
 pub(crate) const MAX_TARGET_PROFILE_DESCRIPTOR_BYTES: usize = 1_024;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FeasibilityError {
     /// A target profile was declared inconsistently.
     MalformedProfile { rule: &'static str },
     /// A profile declares more facts than its canonical descriptor may carry.
     DescriptorTooLong {
         /// The profile whose descriptor exceeded the bound.
-        key: &'static str,
+        key: String,
         /// The length it reached.
         actual: usize,
     },
@@ -1401,6 +1410,7 @@ mod tests {
         FactSourceProvenance, MeasurementContext, ProvenanceIdentity, RelaxationRequirement,
     };
     use tiler_ir::schedule::{FlushedZeroSign, NumericalPermission, SubnormalMode};
+    use tiler_ir::semantic::F32;
 
     const BASELINE_KEY: &str = "tiler.test.baseline.v1";
 
@@ -1418,8 +1428,9 @@ mod tests {
     const PERMITTED: DimensionBehaviour =
         DimensionBehaviour::Transform(NumericalPermission::Permitted);
 
-    fn identity() -> TargetProfileIdentity {
-        TargetProfileIdentity::new(BASELINE_KEY)
+    fn identity() -> &'static TargetProfileIdentity {
+        static IDENTITY: std::sync::OnceLock<TargetProfileIdentity> = std::sync::OnceLock::new();
+        IDENTITY.get_or_init(|| TargetProfileIdentity::new(BASELINE_KEY))
     }
 
     fn measured_source(authority: FactAuthority) -> Arc<FactSourceProvenance> {
@@ -1454,7 +1465,11 @@ mod tests {
         ))
     }
 
-    fn compile_fact(id: TargetProfileIdentity, axis: CapabilityAxis, bound: u64) -> CapabilityFact {
+    fn compile_fact(
+        id: &TargetProfileIdentity,
+        axis: CapabilityAxis,
+        bound: u64,
+    ) -> CapabilityFact {
         CapabilityFact::new(
             axis,
             bound,
@@ -1466,17 +1481,23 @@ mod tests {
     }
 
     fn declares(
-        id: TargetProfileIdentity,
+        id: &TargetProfileIdentity,
         dimension: NumericalDimension,
         behaviour: DimensionBehaviour,
         means: HonouringMeans,
     ) -> NumericalHonourabilityFact {
-        DeclaredBehaviour::compile_profile(dimension, ArithmeticType::F32, behaviour, means)
-            .attributed_to(id)
+        DeclaredBehaviour::compile_profile(
+            dimension,
+            ArithmeticType::F32,
+            F32::resolved_type(),
+            behaviour,
+            means,
+        )
+        .attributed_to(id)
     }
 
     /// The baseline's honourability declaration: strict everywhere, exactly.
-    fn baseline_honourability(id: TargetProfileIdentity) -> Vec<NumericalHonourabilityFact> {
+    fn baseline_honourability(id: &TargetProfileIdentity) -> Vec<NumericalHonourabilityFact> {
         vec![
             declares(
                 id,
@@ -1548,21 +1569,25 @@ mod tests {
             NumericalRequirement::new(
                 NumericalDimension::InputSubnormals,
                 ArithmeticType::F32,
+                F32::resolved_type(),
                 PRESERVE,
             ),
             NumericalRequirement::new(
                 NumericalDimension::ResultSubnormals,
                 ArithmeticType::F32,
+                F32::resolved_type(),
                 PRESERVE,
             ),
             NumericalRequirement::new(
                 NumericalDimension::Contraction,
                 ArithmeticType::F32,
+                F32::resolved_type(),
                 FORBIDDEN,
             ),
             NumericalRequirement::new(
                 NumericalDimension::Reassociation,
                 ArithmeticType::F32,
+                F32::resolved_type(),
                 FORBIDDEN,
             ),
         ]
@@ -1581,7 +1606,7 @@ mod tests {
     #[test]
     fn the_canonical_profile_descriptor_separates_profiles_sharing_a_key() {
         let baseline = baseline_profile();
-        let descriptor = baseline.canonical_descriptor();
+        let descriptor = baseline.canonical_descriptor().to_vec();
         let id = identity();
 
         assert_eq!(
@@ -1659,10 +1684,12 @@ mod tests {
                 CheckedTargetProfile::new(id, baseline.facts().to_vec(), declaration).unwrap();
             assert_eq!(variant.identity().key(), baseline.identity().key());
             assert!(
-                !descriptors.contains(&variant.canonical_descriptor()),
+                !descriptors
+                    .iter()
+                    .any(|descriptor| descriptor == variant.canonical_descriptor()),
                 "profiles declaring different honouring means must not share a descriptor",
             );
-            descriptors.push(variant.canonical_descriptor());
+            descriptors.push(variant.canonical_descriptor().to_vec());
         }
 
         // The consumer wraps these bytes directly rather than hashing them, so
@@ -1847,6 +1874,7 @@ mod tests {
                 relaxation: RelaxationRequirement::new(
                     NumericalDimension::Reassociation,
                     ArithmeticType::F32,
+                    F32::resolved_type(),
                     PERMITTED,
                 ),
             },
@@ -1878,6 +1906,7 @@ mod tests {
                 relaxation: RelaxationRequirement::new(
                     NumericalDimension::Reassociation,
                     ArithmeticType::F32,
+                    F32::resolved_type(),
                     PERMITTED,
                 ),
             }
@@ -1888,6 +1917,7 @@ mod tests {
         numerical[3] = NumericalRequirement::new(
             NumericalDimension::Reassociation,
             ArithmeticType::F32,
+            F32::resolved_type(),
             PERMITTED,
         );
         let authorized = FeasibilityProposal::new(
@@ -1939,7 +1969,7 @@ mod tests {
             unknown
                 .dimensions()
                 .iter()
-                .map(|dimension| dimension.dimension())
+                .map(UndeclaredDimension::dimension)
                 .collect::<Vec<_>>(),
             FIXTURE_DIMENSIONS.to_vec(),
         );
@@ -1958,7 +1988,7 @@ mod tests {
             unknown
                 .dimensions()
                 .iter()
-                .map(|dimension| dimension.dimension())
+                .map(UndeclaredDimension::dimension)
                 .collect::<Vec<_>>(),
             vec![NumericalDimension::Contraction],
         );
@@ -2005,6 +2035,7 @@ mod tests {
         declaration[0] = DeclaredBehaviour::new(
             NumericalDimension::InputSubnormals,
             ArithmeticType::F32,
+            F32::resolved_type(),
             PRESERVE,
             HonouringMeans::SupportedExactly,
             Arc::clone(&source),
@@ -2325,10 +2356,9 @@ mod tests {
     #[test]
     fn malformed_profiles_are_intrinsic_errors_not_outcomes() {
         let id = identity();
-        assert_eq!(
-            CheckedTargetProfile::new(TargetProfileIdentity::new(""), Vec::new(), Vec::new()),
-            Err(FeasibilityError::MalformedProfile { rule: "identity" })
-        );
+        // Identity spelling is now rejected by `TargetProfileKey` before an
+        // attributed checked fact can exist; this boundary still rejects the
+        // malformed capability and attribution combinations it owns.
         // A boolean-capability axis with a non-boolean bound is malformed.
         assert_eq!(
             CheckedTargetProfile::new(
@@ -2375,7 +2405,7 @@ mod tests {
         assert_eq!(
             CheckedTargetProfile::new(
                 id,
-                vec![compile_fact(other, CapabilityAxis::Barriers, 0)],
+                vec![compile_fact(&other, CapabilityAxis::Barriers, 0)],
                 Vec::new()
             ),
             Err(FeasibilityError::MalformedProfile {
@@ -2413,6 +2443,7 @@ mod tests {
                         relaxation: RelaxationRequirement::new(
                             NumericalDimension::Reassociation,
                             ArithmeticType::F32,
+                            F32::resolved_type(),
                             PRESERVE,
                         ),
                     },
@@ -2421,7 +2452,7 @@ mod tests {
             ),
             (
                 vec![declares(
-                    other,
+                    &other,
                     NumericalDimension::InputSubnormals,
                     PRESERVE,
                     HonouringMeans::SupportedExactly,
@@ -2433,6 +2464,7 @@ mod tests {
                     DeclaredBehaviour::new(
                         NumericalDimension::InputSubnormals,
                         ArithmeticType::F32,
+                        F32::resolved_type(),
                         PRESERVE,
                         HonouringMeans::SupportedExactly,
                         measured_source(FactAuthority::GovernedProfile),
@@ -2467,13 +2499,14 @@ mod tests {
     }
 
     fn declaration_from_source(
-        id: TargetProfileIdentity,
+        id: &TargetProfileIdentity,
         source: Arc<FactSourceProvenance>,
     ) -> Vec<NumericalHonourabilityFact> {
         vec![
             DeclaredBehaviour::new(
                 NumericalDimension::InputSubnormals,
                 ArithmeticType::F32,
+                F32::resolved_type(),
                 PRESERVE,
                 HonouringMeans::SupportedExactly,
                 source,
@@ -2583,6 +2616,7 @@ mod tests {
             CheckedTargetProfile::new(id, baseline.facts().to_vec(), declarations)
                 .expect("structured source is valid")
                 .canonical_descriptor()
+                .to_vec()
         };
 
         assert_eq!(
@@ -2644,8 +2678,8 @@ mod tests {
 
         assert!(matches!(
             CheckedTargetProfile::new(id, Vec::new(), declaration_from_source(id, source)),
-            Err(FeasibilityError::DescriptorTooLong { key: BASELINE_KEY, actual })
-                if actual > MAX_TARGET_PROFILE_DESCRIPTOR_BYTES
+            Err(FeasibilityError::DescriptorTooLong { key, actual })
+                if key == BASELINE_KEY && actual > MAX_TARGET_PROFILE_DESCRIPTOR_BYTES
         ));
     }
 
@@ -2687,6 +2721,7 @@ mod tests {
                 vec![NumericalRequirement::new(
                     NumericalDimension::Contraction,
                     ArithmeticType::F32,
+                    F32::resolved_type(),
                     PRESERVE
                 )],
             ),
@@ -2704,11 +2739,13 @@ mod tests {
                     NumericalRequirement::new(
                         NumericalDimension::Contraction,
                         ArithmeticType::F32,
+                        F32::resolved_type(),
                         FORBIDDEN,
                     ),
                     NumericalRequirement::new(
                         NumericalDimension::Contraction,
                         ArithmeticType::F32,
+                        F32::resolved_type(),
                         PERMITTED,
                     ),
                 ],
@@ -2725,7 +2762,7 @@ mod tests {
         assert_eq!(profile.identity(), identity());
         assert_eq!(profile.identity().key(), BASELINE_KEY);
         // Facts are sorted into canonical axis order regardless of input order.
-        let axes: Vec<_> = profile.facts().iter().map(|fact| fact.axis()).collect();
+        let axes: Vec<_> = profile.facts().iter().map(CapabilityFact::axis).collect();
         assert_eq!(axes, CANONICAL_AXES.to_vec());
         let dimensions: Vec<_> = profile
             .honourability()

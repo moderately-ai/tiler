@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
+use tiler_ir::semantic::F32;
 use tiler_ir::shape::Shape;
 
 // The target-neutral scheduled-region IR and the backend-consumable structured
@@ -23,9 +24,8 @@ use tiler_ir::schedule::{
 };
 
 use crate::feasibility::{
-    AvailabilityPhase, AxisRequirement, CapabilityAxis, CapabilityFact, CheckedTargetProfile,
-    FactAuthority, FactProvenance, FactValidityScope, FeasibilityError, FeasibilityOutcome,
-    FeasibilityProposal, ProvenEvidence, RejectionCause, TargetProfileIdentity,
+    AvailabilityPhase, AxisRequirement, CapabilityAxis, FeasibilityError, FeasibilityOutcome,
+    FeasibilityProposal, ProvenEvidence, RejectionCause,
 };
 use crate::honourability::{
     DimensionBehaviour, NumericalDimension, NumericalRequirement, UnhonouredDimension,
@@ -34,8 +34,7 @@ use crate::region::SemanticMemberId;
 use crate::request::{
     NormalizedPointwise, NormalizedPointwiseAssociation, NormalizedPointwiseLeaf,
     NormalizedPointwiseOperation, NormalizedProgramSubject, NumericalPermission,
-    PrototypeTargetProfile, StrictF32NumericalContract, VerifiedRequestSubject,
-    VerifiedTargetRequest,
+    StrictF32NumericalContract, TargetProfile, VerifiedRequestSubject, VerifiedTargetRequest,
 };
 
 /// Stable candidate identity used when assessing one scheduled region.
@@ -55,7 +54,7 @@ const CONTRACT_PROPOSAL_CANDIDATE: &str = "tiler.prototype.numerical-contract";
 pub(crate) struct VerifiedScheduledRegion {
     verified: tiler_ir::schedule::VerifiedScheduledRegion,
     semantic_members: Vec<SemanticMemberId>,
-    target_profile_key: &'static str,
+    target_profile: TargetProfile,
     request_subject: VerifiedRequestSubject,
 }
 
@@ -85,8 +84,8 @@ impl VerifiedScheduledRegion {
     ) -> &tiler_ir::schedule::CanonicalScheduledRegionIdentity {
         self.verified.canonical_identity()
     }
-    pub(crate) const fn target_profile_key(&self) -> &'static str {
-        self.target_profile_key
+    pub(crate) const fn target_profile(&self) -> &TargetProfile {
+        &self.target_profile
     }
     /// Returns the exact semantic occurrences this region covers.
     ///
@@ -641,10 +640,7 @@ pub(crate) fn verify_schedule_with_feasibility(
 ) -> Result<(VerifiedScheduledRegion, ProvenEvidence), PhysicalError> {
     let id = region.index.id;
     let subject = request.subject();
-    if !request.reconstructs_its_authority()
-        || request.target_profile() != PrototypeTargetProfile::governed()
-        || !request.numerical_contract().is_governed()
-    {
+    if !request.reconstructs_its_authority() || !request.numerical_contract().is_governed() {
         return intrinsic("request-subject", id);
     }
     let verified = ScheduledRegionBuilder::from_region(region)
@@ -662,13 +658,13 @@ pub(crate) fn verify_schedule_with_feasibility(
         // arithmetic type is the contract's, not a value re-derived here.
         request.numerical_contract().arithmetic,
         verified.region().schedule.work_items,
-        &request.target_profile(),
+        request.target_profile(),
     )?;
     Ok((
         VerifiedScheduledRegion {
             verified,
             semantic_members,
-            target_profile_key: request.target_profile().key,
+            target_profile: request.target_profile().clone(),
             request_subject: subject.clone(),
         },
         evidence,
@@ -819,7 +815,7 @@ fn reduction_access_matches(
 /// region to invent one, and a feasibility rejection attributed to a region that
 /// does not exist is worse than no attribution at all: a reader chasing it finds
 /// nothing.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(
     dead_code,
     reason = "the unattributed verdict; its second caller is the opaque-call admission being built"
@@ -845,12 +841,14 @@ pub(crate) fn assess_resources(
     requirements: ResourceRequirements,
     arithmetic: ArithmeticType,
     work_items: u64,
-    target: &PrototypeTargetProfile,
+    target: &TargetProfile,
 ) -> Result<ProvenEvidence, ResourceVerdict> {
-    let profile = checked_target_profile(target).map_err(ResourceVerdict::Intrinsic)?;
     let proposal = region_proposal(requirements, arithmetic, work_items)
         .map_err(ResourceVerdict::Intrinsic)?;
-    match profile.assess(&proposal, AvailabilityPhase::CompileProfile) {
+    match target
+        .checked()
+        .assess(&proposal, AvailabilityPhase::CompileProfile)
+    {
         FeasibilityOutcome::Proven(evidence) => Ok(evidence),
         FeasibilityOutcome::Rejected(rejection) => {
             Err(ResourceVerdict::Rejected(rejection.representative()))
@@ -867,11 +865,11 @@ pub(crate) fn assess_region(
     requirements: ResourceRequirements,
     arithmetic: ArithmeticType,
     work_items: u64,
-    target: &PrototypeTargetProfile,
+    target: &TargetProfile,
 ) -> Result<ProvenEvidence, PhysicalError> {
     assess_resources(requirements, arithmetic, work_items, target).map_err(
         |verdict| match verdict {
-            ResourceVerdict::Intrinsic(error) => feasibility_intrinsic(error, region),
+            ResourceVerdict::Intrinsic(error) => feasibility_intrinsic(&error, region),
             ResourceVerdict::Rejected(RejectionCause::Numerical(cause)) => {
                 PhysicalError::Numerical { region, cause }
             }
@@ -900,97 +898,31 @@ pub(crate) fn assess_region(
 /// region is assessed again later against the same authority, which is
 /// defence in depth rather than a second decision.
 pub(crate) fn assess_contract(
-    target: &PrototypeTargetProfile,
+    target: &TargetProfile,
     contract: StrictF32NumericalContract,
 ) -> Result<FeasibilityOutcome, FeasibilityError> {
-    let profile = checked_target_profile(target)?;
     let proposal = FeasibilityProposal::new(
         CONTRACT_PROPOSAL_CANDIDATE,
         Vec::new(),
         contract.dimension_requirements(),
     )?;
-    Ok(profile.assess(&proposal, AvailabilityPhase::CompileProfile))
+    Ok(target
+        .checked()
+        .assess(&proposal, AvailabilityPhase::CompileProfile))
 }
 
 /// Returns the canonical descriptor bytes of one target profile.
 ///
-/// Derived from the same [`checked_target_profile`] the feasibility assessment
-/// uses, so the descriptor an artifact records is the profile a variant was
-/// actually assessed against rather than one recomputed from a key that
-/// happens to match.
+/// Borrowed from the same immutable checked profile the feasibility assessment
+/// uses, so this path never reconstructs or revalidates target facts.
 ///
 /// This is only half of what ADR 0043 requires an artifact to record. The other
 /// half — which feasibility rules compared the candidate against these facts —
 /// is [`crate::feasibility::GOVERNED_FEASIBILITY_RULE_SET`], and it is not
 /// derived per target because the rules do not vary by target.
-pub(crate) fn target_profile_descriptor(
-    target: &PrototypeTargetProfile,
-) -> Result<Vec<u8>, FeasibilityError> {
-    let descriptor = checked_target_profile(target)?.canonical_descriptor();
-    // Refused here rather than at packaging. `tiler-artifact` bounds what it
-    // will hold, but it can only report a length; this crate can name the
-    // profile that declared too much, which is the difference between a
-    // diagnostic someone can act on and one they have to trace back.
-    if descriptor.len() > crate::feasibility::MAX_TARGET_PROFILE_DESCRIPTOR_BYTES {
-        return Err(FeasibilityError::DescriptorTooLong {
-            key: target.key,
-            actual: descriptor.len(),
-        });
-    }
-    Ok(descriptor)
-}
-
-/// Builds the immutable checked profile for the prototype baseline target.
-///
-/// The prototype profile has no explicitly stageable local memory or barriers,
-/// so those axes carry a conservative compile-time ceiling of zero. Every axis is
-/// a compile-profile guarantee, keeping the bounded serial-Sum candidate provable
-/// without any later-phase query. The target's numerical honourability
-/// declaration is lifted here too, each line attributed to the declaring profile
-/// exactly as a capability bound is.
-fn checked_target_profile(
-    target: &PrototypeTargetProfile,
-) -> Result<CheckedTargetProfile, FeasibilityError> {
-    let identity = TargetProfileIdentity::new(target.key);
-    let fact = |axis: CapabilityAxis, bound: u64| {
-        CapabilityFact::new(
-            axis,
-            bound,
-            AvailabilityPhase::CompileProfile,
-            FactAuthority::GovernedProfile,
-            FactValidityScope::PortableProfile,
-            FactProvenance::declared_by(identity),
-        )
-    };
-    CheckedTargetProfile::new(
-        identity,
-        vec![
-            fact(
-                CapabilityAxis::GridAxisThreads,
-                target.max_threads_per_grid_axis,
-            ),
-            fact(
-                CapabilityAxis::WorkgroupThreads,
-                u64::from(target.max_threads_per_workgroup),
-            ),
-            fact(
-                CapabilityAxis::BufferBindings,
-                u64::from(target.max_buffer_bindings_per_entry),
-            ),
-            fact(CapabilityAxis::IndexWidthBits, u64::from(target.index_bits)),
-            fact(
-                CapabilityAxis::DeviceAddressSpace,
-                u64::from(target.supports_device_memory),
-            ),
-            fact(CapabilityAxis::LocalMemoryBytes, 0),
-            fact(CapabilityAxis::Barriers, 0),
-        ],
-        target
-            .numerical
-            .iter()
-            .map(|declared| declared.attributed_to(identity))
-            .collect(),
-    )
+#[cfg(test)]
+pub(crate) fn target_profile_descriptor(target: &TargetProfile) -> &[u8] {
+    target.canonical_descriptor()
 }
 
 /// Builds the typed candidate proposal for one scheduled region.
@@ -1033,21 +965,25 @@ fn region_proposal(
             NumericalRequirement::new(
                 NumericalDimension::InputSubnormals,
                 arithmetic,
+                F32::resolved_type(),
                 DimensionBehaviour::Subnormals(requirements.input_subnormals),
             ),
             NumericalRequirement::new(
                 NumericalDimension::ResultSubnormals,
                 arithmetic,
+                F32::resolved_type(),
                 DimensionBehaviour::Subnormals(requirements.result_subnormals),
             ),
             NumericalRequirement::new(
                 NumericalDimension::Contraction,
                 arithmetic,
+                F32::resolved_type(),
                 DimensionBehaviour::Transform(requirements.contraction),
             ),
             NumericalRequirement::new(
                 NumericalDimension::Reassociation,
                 arithmetic,
+                F32::resolved_type(),
                 DimensionBehaviour::Transform(requirements.reassociation),
             ),
         ],
@@ -1058,7 +994,7 @@ fn region_proposal(
 ///
 /// A malformed profile or proposal is a contract violation, not a feasibility
 /// outcome, so it fails closed as an intrinsic scheduling error.
-const fn feasibility_intrinsic(error: FeasibilityError, region: RegionId) -> PhysicalError {
+fn feasibility_intrinsic(error: &FeasibilityError, region: RegionId) -> PhysicalError {
     let rule = match error {
         FeasibilityError::MalformedProfile { .. } => "target-profile-malformed",
         FeasibilityError::MalformedProposal { .. } => "target-proposal-malformed",
@@ -1119,42 +1055,21 @@ mod tests {
     /// with a diff, rather than downstream.
     ///
     /// Regenerate only when the encoding is *deliberately* changed: print
-    /// `target_profile_descriptor(&PrototypeTargetProfile::governed())` as hex
+    /// `target_profile_descriptor(&TargetProfile::governed())` as hex
     /// and step whatever domain tag the change requires in the same commit.
     #[test]
     fn the_governed_descriptor_bytes_do_not_move() {
-        // Rebaselined when structured numerical-fact provenance moved the
-        // descriptor domain from v3 to v4, and recomputed on the shared tree
-        // (never taken from a branch). The 12 numerical behaviours are
-        // unchanged; their encoding now carries one canonical, deduplicated
-        // source record naming the governed authority and guarantee, with every
-        // row referring to that source. The descriptor therefore grows from
-        // 289 to 480 bytes. Every artifact identity and cache entry derived
-        // from it moves too, which is this test's message and the reason the
-        // move is stated here rather than silent.
-        const GOVERNED: &str = concat!(
-            "000000000000002374696c65722e7461726765742d70726f66696c652e646573",
-            "63726970746f722e763400000000000000002a74696c65722e70726f746f7479",
-            "70652d7461726765742d6e65757472616c2d626173656c696e652e7631000000",
-            "000000000701000000000000ffff010101020000000000000001010101030000",
-            "0000000000020101010400000000000000400101010500000000000000010101",
-            "0107000000000000000001010108000000000000000001010100000000000000",
-            "0100000001010101000000000000002a74696c65722e676f7665726e65642d74",
-            "61726765742d70726f66696c652d617574686f726974792e7631000000010100",
-            "0000000000002a74696c65722e70726f746f747970652d7461726765742d6e65",
-            "757472616c2d626173656c696e652e763100000001000000000000000c010301",
-            "0101000000000000000001030102010000000000000000020301010100000000",
-            "0000000002030102010000000000000000030302010100000000000000000303",
-            "0202010000000000000000040302010100000000000000000403020201000000",
-            "0000000000050302010100000000000000000603020101000000000000000009",
-            "0304010100000000000000000a030401010000000000000000",
-        );
+        // Rebaselined from the 480-byte checked v4 descriptor to the final
+        // 846-byte complete v5 declaration. The complete descriptor embeds the
+        // checked v6 row-to-subject grammar and the v2 phase-qualified dispatch
+        // grammar, including the governed target-neutral F32 dispatch fact.
+        // Every artifact identity and cache entry derived from it moves with it.
+        const GOVERNED: &str = "000000000000002474696c65722e7461726765742d70726f66696c652e6465636c61726174696f6e2e76350000000000000001d8000000000000002374696c65722e7461726765742d70726f66696c652e64657363726970746f722e763600000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e7631000000000000000701000000000000ffff010101020000000000000001010101030000000000000002010101040000000000000040010101050000000000000001010101070000000000000000010101080000000000000000010101000000000000000100000002010101000000000000002a74696c65722e676f7665726e65642d7461726765742d70726f66696c652d617574686f726974792e76310000000101000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e7631000000010000000000000001000000000000004303000000000000003a74696c65722e7265736f6c7665642d76616c75652d747970652e76330001000000000000000574696c6572000000000000000366333200000001000000000000000c0100010101000100010201000200010101000200010201000300020101000300020201000400020101000400020201000500020101000600020101000900040101000a0004010100000000000000002574696c65722e7461726765742d70726f66696c652e666163742d736f75726365732e7633000000000000000001000000000000007400000002010101000000000000002a74696c65722e676f7665726e65642d7461726765742d70726f66696c652d617574686f726974792e76310000000101000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e763100000001000000000000000700000000000000000000000000002e74696c65722e7461726765742d70726f66696c652e64747970652d64697370617463686162696c6974792e7632000000000000000001000000000000003a74696c65722e7265736f6c7665642d76616c75652d747970652e76330001000000000000000574696c65720000000000000003663332000000010100";
 
-        let descriptor =
-            target_profile_descriptor(&crate::request::PrototypeTargetProfile::governed())
-                .expect("the governed profile describes");
+        let profile = crate::request::TargetProfile::governed();
+        let descriptor = target_profile_descriptor(&profile);
         let mut actual = String::with_capacity(descriptor.len() * 2);
-        for byte in &descriptor {
+        for byte in descriptor {
             write!(actual, "{byte:02x}").expect("writing to a String cannot fail");
         }
         assert_eq!(
@@ -1214,7 +1129,7 @@ mod tests {
             .unwrap();
         let program = builder.build().unwrap();
         let request = verify_request(CompilationRequest::governed(&program)).unwrap();
-        request.for_target(request.target_profiles()[0]).unwrap()
+        request.for_target(0).unwrap()
     }
 
     fn pointwise_request() -> VerifiedTargetRequest {
@@ -1235,7 +1150,7 @@ mod tests {
             StrictF32NumericalContract::governed_relaxed(),
         ))
         .unwrap();
-        request.for_target(request.target_profiles()[0]).unwrap()
+        request.for_target(0).unwrap()
     }
 
     #[test]

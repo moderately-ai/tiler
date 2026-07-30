@@ -262,7 +262,7 @@ pub(super) fn enumerate_complete_plans(
                         crate::frontier::FrontierRejection::Unhonourable { cause, .. } => {
                             Some(PhysicalError::Numerical {
                                 region: region_id_of(cover, region),
-                                cause: *cause,
+                                cause: cause.clone(),
                             })
                         }
                         // A reserved body variant, an unregistered opaque call,

@@ -252,14 +252,17 @@ fn the_plan_names_its_target_profile_and_its_feasibility_rules_separately() {
 
     // The profile half: a governed key and the exact descriptor of the profile
     // the plan was assessed against.
-    assert_eq!(artifact.target_profile_key, request.target_profile().key);
+    assert_eq!(
+        artifact.target_profile.profile_key(),
+        request.target_profile().profile_key()
+    );
     assert!(!artifact.target_profile_descriptor().is_empty());
 
     // The rule set half: its own governed key and a nonzero revision, neither
     // recoverable from the profile's.
     let rules = artifact.feasibility_rule_set();
     assert!(!rules.key().is_empty());
-    assert_ne!(rules.key(), artifact.target_profile_key);
+    assert_ne!(rules.key(), artifact.target_profile.profile_key().as_str());
     assert!(rules.revision() > 0);
 }
 
@@ -293,7 +296,8 @@ fn compiler_layers_recheck_the_target_and_the_planned_launch() {
     let valid = build_kernel_program(&semantic, &request, &scheduled).unwrap();
 
     let mut wrong_target = valid.clone();
-    wrong_target.target_profile_key = "wrong-target";
+    wrong_target.target_profile =
+        crate::request::TargetProfile::governed_without_numerical_declarations();
     assert_eq!(
         verify_kernel_program_layers(&wrong_target, &request, &scheduled),
         Err(ProgramError::Structure {

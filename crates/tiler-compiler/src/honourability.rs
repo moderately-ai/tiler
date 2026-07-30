@@ -59,6 +59,7 @@ use tiler_ir::schedule::{
     ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, MaterializationRounding,
     NumericalPermission, SubnormalMode,
 };
+use tiler_ir::semantic::ResolvedValueType;
 
 use crate::feasibility::{
     AvailabilityPhase, FactAuthority, FactProvenance, FactValidityScope, TargetProfileIdentity,
@@ -66,12 +67,12 @@ use crate::feasibility::{
 use crate::request::{permission_tag, subnormal_tag};
 
 /// Version of the structured numerical-fact provenance vocabulary.
-const FACT_SOURCE_PROVENANCE_SCHEMA_VERSION: u32 = 1;
+const FACT_SOURCE_PROVENANCE_SCHEMA_VERSION: u32 = 2;
 
 /// Maximum UTF-8 byte length of one descriptive provenance field.
-const MAX_PROVENANCE_TEXT_BYTES: usize = 256;
-const MAX_COMPILER_BUILDS_PER_CONTEXT: usize = 16;
-const MAX_MEASUREMENT_CONTEXTS_PER_SOURCE: usize = 64;
+pub(crate) const MAX_PROVENANCE_TEXT_BYTES: usize = 256;
+pub(crate) const MAX_COMPILER_BUILDS_PER_CONTEXT: usize = 16;
+pub(crate) const MAX_MEASUREMENT_CONTEXTS_PER_SOURCE: usize = 64;
 
 /// A versioned identity naming an authority or governed guarantee.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -142,7 +143,7 @@ impl CompilerBuildRole {
         }
     }
 
-    fn is_valid(&self) -> bool {
+    pub(crate) fn is_valid(&self) -> bool {
         match self {
             Self::ProviderDefined(identity) => identity.is_valid(),
             Self::Frontend
@@ -180,7 +181,7 @@ impl CompilerBuildIdentity {
         }
     }
 
-    fn is_valid(&self) -> bool {
+    pub(crate) fn is_valid(&self) -> bool {
         self.role.is_valid()
             && valid_key(&self.implementation)
             && valid_text(&self.version)
@@ -244,7 +245,7 @@ impl ExecutionEnvironmentIdentity {
         }
     }
 
-    fn is_valid(&self) -> bool {
+    pub(crate) fn is_valid(&self) -> bool {
         valid_key(&self.platform)
             && valid_text(&self.platform_version)
             && valid_text(&self.platform_build)
@@ -304,7 +305,7 @@ impl MeasurementContext {
         }
     }
 
-    fn is_valid(&self) -> bool {
+    pub(crate) fn is_valid(&self) -> bool {
         !self.compiler_builds.is_empty()
             && self.compiler_builds.len() <= MAX_COMPILER_BUILDS_PER_CONTEXT
             && self
@@ -346,6 +347,9 @@ impl MeasurementContext {
 pub(crate) enum FactEvidenceBasis {
     /// A normative guarantee, not an empirical claim.
     GovernedGuarantee { guarantee: ProvenanceIdentity },
+    /// A normative or specification-backed guarantee attributed to an external
+    /// target-profile producer.
+    ExternalGuarantee { reference: ProvenanceIdentity },
     /// One or more exact, independently readable measurement contexts.
     Measurement { contexts: Vec<MeasurementContext> },
 }
@@ -376,6 +380,20 @@ impl FactSourceProvenance {
         }
     }
 
+    pub(crate) fn externally_guaranteed(
+        authority_identity: ProvenanceIdentity,
+        reference: ProvenanceIdentity,
+    ) -> Self {
+        Self {
+            schema_version: FACT_SOURCE_PROVENANCE_SCHEMA_VERSION,
+            phase: AvailabilityPhase::CompileProfile,
+            authority: FactAuthority::ExternalProfile,
+            validity: FactValidityScope::PortableProfile,
+            authority_identity,
+            basis: FactEvidenceBasis::ExternalGuarantee { reference },
+        }
+    }
+
     pub(crate) fn measured(
         phase: AvailabilityPhase,
         authority: FactAuthority,
@@ -400,6 +418,9 @@ impl FactSourceProvenance {
             && match &self.basis {
                 FactEvidenceBasis::GovernedGuarantee { guarantee } => {
                     self.authority == FactAuthority::GovernedProfile && guarantee.is_valid()
+                }
+                FactEvidenceBasis::ExternalGuarantee { reference } => {
+                    self.authority == FactAuthority::ExternalProfile && reference.is_valid()
                 }
                 FactEvidenceBasis::Measurement { contexts } => {
                     !contexts.is_empty()
@@ -445,6 +466,10 @@ impl FactSourceProvenance {
                 bytes.push(0x01);
                 guarantee.encode(bytes);
             }
+            FactEvidenceBasis::ExternalGuarantee { reference } => {
+                bytes.push(0x03);
+                reference.encode(bytes);
+            }
             FactEvidenceBasis::Measurement { contexts } => {
                 bytes.push(0x02);
                 push_len(bytes, contexts.len());
@@ -455,7 +480,7 @@ impl FactSourceProvenance {
         }
     }
 
-    fn canonical_bytes(&self) -> Vec<u8> {
+    pub(crate) fn canonical_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         self.encode(&mut bytes);
         bytes
@@ -825,7 +850,7 @@ impl DimensionBehaviour {
 /// "Backend numerical feasibility"; no term is invented here. The distinction
 /// that forces a separate authority is that emulation is honoured by *emitting
 /// different operations*, which a bound comparison cannot express.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum HonouringMeans {
     /// The target's own arithmetic realizes the behaviour.
     SupportedExactly,
@@ -849,7 +874,7 @@ pub(crate) enum HonouringMeans {
 
 impl HonouringMeans {
     /// The governed canonical key naming this means.
-    pub(crate) const fn key(self) -> &'static str {
+    pub(crate) const fn key(&self) -> &'static str {
         match self {
             Self::SupportedExactly => "supported-exactly",
             Self::SupportedWithExactEmulation => "supported-with-exact-emulation",
@@ -861,7 +886,7 @@ impl HonouringMeans {
     }
 
     /// The governed tag naming this means in a canonical descriptor.
-    const fn tag(self) -> u8 {
+    const fn tag(&self) -> u8 {
         match self {
             Self::SupportedExactly => 0x01,
             Self::SupportedWithExactEmulation => 0x02,
@@ -875,51 +900,63 @@ impl HonouringMeans {
     /// The conditional arm carries its relaxation, because two profiles whose
     /// declarations differ only in *which* relaxation they require admit
     /// different requests and must not share a descriptor.
-    fn encode(self, bytes: &mut Vec<u8>) {
+    pub(crate) fn encode(&self, bytes: &mut Vec<u8>) {
         bytes.push(self.tag());
         if let Self::SupportedOnlyUnderDeclaredRelaxation { relaxation } = self {
             bytes.push(relaxation.dimension.tag());
             bytes.push(relaxation.arithmetic.tag());
+            push_slice(
+                bytes,
+                relaxation.resolved_type.canonical_encoding().as_bytes(),
+            );
             relaxation.behaviour.encode(bytes);
         }
     }
 }
 
 /// A behaviour the caller's contract must already state for a conditional means.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RelaxationRequirement {
     dimension: NumericalDimension,
     arithmetic: ArithmeticType,
+    resolved_type: Arc<ResolvedValueType>,
     behaviour: DimensionBehaviour,
 }
 
 impl RelaxationRequirement {
     /// Names the dimension, arithmetic type, and behaviour a caller must already
     /// have authorized.
-    pub(crate) const fn new(
+    pub(crate) fn new(
         dimension: NumericalDimension,
         arithmetic: ArithmeticType,
+        resolved_type: ResolvedValueType,
         behaviour: DimensionBehaviour,
     ) -> Self {
         Self {
             dimension,
             arithmetic,
+            resolved_type: Arc::new(resolved_type),
             behaviour,
         }
     }
 
     /// The dimension the authorization must be stated on.
-    pub(crate) const fn dimension(self) -> NumericalDimension {
+    pub(crate) const fn dimension(&self) -> NumericalDimension {
         self.dimension
     }
 
     /// The arithmetic type the authorization must be stated for.
-    pub(crate) const fn arithmetic(self) -> ArithmeticType {
+    pub(crate) const fn arithmetic(&self) -> ArithmeticType {
         self.arithmetic
     }
 
+    /// The complete resolved semantic type the authorization is stated for.
+    pub(crate) fn resolved_type(&self) -> &ResolvedValueType {
+        self.resolved_type.as_ref()
+    }
+
     /// The behaviour that dimension must already be resolved to.
-    pub(crate) const fn behaviour(self) -> DimensionBehaviour {
+    pub(crate) const fn behaviour(&self) -> DimensionBehaviour {
         self.behaviour
     }
 }
@@ -935,6 +972,7 @@ impl RelaxationRequirement {
 pub(crate) struct DeclaredBehaviour {
     dimension: NumericalDimension,
     arithmetic: ArithmeticType,
+    resolved_type: ResolvedValueType,
     behaviour: DimensionBehaviour,
     means: HonouringMeans,
     source: Arc<FactSourceProvenance>,
@@ -946,6 +984,7 @@ impl DeclaredBehaviour {
     pub(crate) fn new(
         dimension: NumericalDimension,
         arithmetic: ArithmeticType,
+        resolved_type: ResolvedValueType,
         behaviour: DimensionBehaviour,
         means: HonouringMeans,
         source: Arc<FactSourceProvenance>,
@@ -953,6 +992,7 @@ impl DeclaredBehaviour {
         Self {
             dimension,
             arithmetic,
+            resolved_type,
             behaviour,
             means,
             source,
@@ -966,12 +1006,14 @@ impl DeclaredBehaviour {
     pub(crate) fn compile_profile(
         dimension: NumericalDimension,
         arithmetic: ArithmeticType,
+        resolved_type: ResolvedValueType,
         behaviour: DimensionBehaviour,
         means: HonouringMeans,
     ) -> Self {
         Self::new(
             dimension,
             arithmetic,
+            resolved_type,
             behaviour,
             means,
             governed_profile_source(),
@@ -981,7 +1023,7 @@ impl DeclaredBehaviour {
     /// Binds this declaration to the profile that declared it.
     pub(crate) fn attributed_to(
         &self,
-        profile: TargetProfileIdentity,
+        profile: impl Into<TargetProfileIdentity>,
     ) -> NumericalHonourabilityFact {
         NumericalHonourabilityFact {
             declaration: self.clone(),
@@ -994,11 +1036,20 @@ impl DeclaredBehaviour {
     /// The one encoding of a declared behaviour in this crate. A checked profile
     /// descriptor and a request subject both reach it, so a widened vocabulary
     /// cannot change one and leave the other reading the old shape.
-    fn encode_declaration_body(&self, bytes: &mut Vec<u8>) {
+    fn encode_declaration_body(&self, bytes: &mut Vec<u8>, subject_index: usize) {
         bytes.push(self.dimension.tag());
-        bytes.push(self.arithmetic.tag());
+        encode_compact_index(bytes, subject_index);
         self.behaviour.encode(bytes);
         self.means.encode(bytes);
+    }
+
+    fn subject_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![self.arithmetic.tag()];
+        push_slice(
+            &mut bytes,
+            self.resolved_type.canonical_encoding().as_bytes(),
+        );
+        bytes
     }
 }
 
@@ -1033,21 +1084,48 @@ fn encode_declaration_table(bytes: &mut Vec<u8>, declarations: &[&DeclaredBehavi
         source.encode(bytes);
     }
 
+    let mut subjects: Vec<_> = declarations
+        .iter()
+        .map(|declaration| declaration.subject_bytes())
+        .collect();
+    subjects.sort();
+    subjects.dedup();
+    push_len(bytes, subjects.len());
+    for subject in &subjects {
+        push_slice(bytes, subject);
+    }
+
     let mut rows = Vec::with_capacity(declarations.len());
     for declaration in declarations {
         let source_key = declaration.source.canonical_bytes();
         let source_index = sources
             .binary_search_by(|candidate| candidate.0.cmp(&source_key))
             .expect("every declaration source was collected into the source table");
+        let subject_key = declaration.subject_bytes();
+        let subject_index = subjects
+            .binary_search(&subject_key)
+            .expect("every declaration subject was collected into the subject table");
         let mut row = Vec::new();
-        declaration.encode_declaration_body(&mut row);
-        push_len(&mut row, source_index);
+        declaration.encode_declaration_body(&mut row, subject_index);
+        encode_compact_index(&mut row, source_index);
         rows.push(row);
     }
     rows.sort_unstable();
     push_len(bytes, rows.len());
     for row in rows {
         bytes.extend_from_slice(&row);
+    }
+}
+
+fn encode_compact_index(bytes: &mut Vec<u8>, mut value: usize) {
+    loop {
+        let low = u8::try_from(value & 0x7f).expect("seven masked bits fit in u8");
+        value >>= 7;
+        if value == 0 {
+            bytes.push(low);
+            break;
+        }
+        bytes.push(low | 0x80);
     }
 }
 
@@ -1075,14 +1153,19 @@ impl NumericalHonourabilityFact {
         self.declaration.arithmetic
     }
 
+    /// The complete resolved semantic type this fact speaks about.
+    pub(crate) const fn resolved_type(&self) -> &ResolvedValueType {
+        &self.declaration.resolved_type
+    }
+
     /// The behaviour of that dimension this fact speaks about.
     pub(crate) const fn behaviour(&self) -> DimensionBehaviour {
         self.declaration.behaviour
     }
 
     /// The means by which the behaviour is honoured, if it is.
-    pub(crate) const fn means(&self) -> HonouringMeans {
-        self.declaration.means
+    pub(crate) fn means(&self) -> HonouringMeans {
+        self.declaration.means.clone()
     }
 
     /// The phase from which this fact is available.
@@ -1106,8 +1189,8 @@ impl NumericalHonourabilityFact {
     }
 
     /// Where this fact came from.
-    pub(crate) const fn provenance(&self) -> FactProvenance {
-        self.provenance
+    pub(crate) const fn provenance(&self) -> &FactProvenance {
+        &self.provenance
     }
 
     /// The canonical sort key: dimension, arithmetic type, behaviour, phase.
@@ -1116,10 +1199,15 @@ impl NumericalHonourabilityFact {
     /// tag, because one behaviour space is variable-width: two distinct accuracy
     /// envelopes would tie under a tag, and the duplicate check this key feeds
     /// would then reject a profile that declared both.
-    pub(crate) fn sort_key(&self) -> (u8, u8, Vec<u8>, AvailabilityPhase) {
+    pub(crate) fn sort_key(&self) -> (u8, u8, Vec<u8>, Vec<u8>, AvailabilityPhase) {
         (
             self.declaration.dimension.tag(),
             self.declaration.arithmetic.tag(),
+            self.declaration
+                .resolved_type
+                .canonical_encoding()
+                .as_bytes()
+                .to_vec(),
             self.declaration.behaviour.canonical_key(),
             self.declaration.source.phase,
         )
@@ -1139,45 +1227,57 @@ impl NumericalHonourabilityFact {
 
 /// A candidate requirement: the behaviour the caller's contract needs on one
 /// dimension, in one arithmetic type.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NumericalRequirement {
     dimension: NumericalDimension,
     arithmetic: ArithmeticType,
+    resolved_type: ResolvedValueType,
     behaviour: DimensionBehaviour,
 }
 
 impl NumericalRequirement {
     /// Requires `behaviour` on `dimension`, for `arithmetic`.
-    pub(crate) const fn new(
+    pub(crate) fn new(
         dimension: NumericalDimension,
         arithmetic: ArithmeticType,
+        resolved_type: ResolvedValueType,
         behaviour: DimensionBehaviour,
     ) -> Self {
         Self {
             dimension,
             arithmetic,
+            resolved_type,
             behaviour,
         }
     }
 
     /// The dimension this requirement ranges over.
-    pub(crate) const fn dimension(self) -> NumericalDimension {
+    pub(crate) const fn dimension(&self) -> NumericalDimension {
         self.dimension
     }
 
     /// The arithmetic type this requirement is stated for.
-    pub(crate) const fn arithmetic(self) -> ArithmeticType {
+    pub(crate) const fn arithmetic(&self) -> ArithmeticType {
         self.arithmetic
     }
 
+    /// The complete resolved semantic type this requirement is stated for.
+    pub(crate) const fn resolved_type(&self) -> &ResolvedValueType {
+        &self.resolved_type
+    }
+
     /// The behaviour the contract requires.
-    pub(crate) const fn behaviour(self) -> DimensionBehaviour {
+    pub(crate) const fn behaviour(&self) -> DimensionBehaviour {
         self.behaviour
     }
 
     /// The canonical key this requirement is unique under.
-    pub(crate) const fn subject(self) -> (NumericalDimension, ArithmeticType) {
-        (self.dimension, self.arithmetic)
+    pub(crate) fn subject(&self) -> (NumericalDimension, ArithmeticType, Vec<u8>) {
+        (
+            self.dimension,
+            self.arithmetic,
+            self.resolved_type.canonical_encoding().as_bytes().to_vec(),
+        )
     }
 }
 
@@ -1217,18 +1317,23 @@ impl HonouredDimension {
         self.fact.arithmetic()
     }
 
+    /// The complete resolved semantic type it is honoured in.
+    pub(crate) const fn resolved_type(&self) -> &ResolvedValueType {
+        self.fact.resolved_type()
+    }
+
     /// The behaviour the contract required.
     pub(crate) const fn behaviour(&self) -> DimensionBehaviour {
         self.fact.behaviour()
     }
 
     /// The means by which the target honours it.
-    pub(crate) const fn means(&self) -> HonouringMeans {
+    pub(crate) fn means(&self) -> HonouringMeans {
         self.fact.means()
     }
 
     /// The profile that declared the honouring means.
-    pub(crate) const fn profile(&self) -> TargetProfileIdentity {
+    pub(crate) const fn profile(&self) -> &TargetProfileIdentity {
         self.fact.provenance().profile()
     }
 
@@ -1250,10 +1355,11 @@ impl HonouredDimension {
 /// required behaviour, the behaviour the target does declare, the means the
 /// profile offers for the required behaviour, and the declaring profile's
 /// identity.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct UnhonouredDimension {
     dimension: NumericalDimension,
     arithmetic: ArithmeticType,
+    resolved_type: Arc<ResolvedValueType>,
     required: DimensionBehaviour,
     means: HonouringMeans,
     honoured: Option<DimensionBehaviour>,
@@ -1261,9 +1367,10 @@ pub(crate) struct UnhonouredDimension {
 }
 
 impl UnhonouredDimension {
-    pub(crate) const fn new(
+    pub(crate) fn new(
         dimension: NumericalDimension,
         arithmetic: ArithmeticType,
+        resolved_type: ResolvedValueType,
         required: DimensionBehaviour,
         means: HonouringMeans,
         honoured: Option<DimensionBehaviour>,
@@ -1272,6 +1379,7 @@ impl UnhonouredDimension {
         Self {
             dimension,
             arithmetic,
+            resolved_type: Arc::new(resolved_type),
             required,
             means,
             honoured,
@@ -1280,7 +1388,7 @@ impl UnhonouredDimension {
     }
 
     /// The dimension the contract could not be honoured on.
-    pub(crate) const fn dimension(self) -> NumericalDimension {
+    pub(crate) const fn dimension(&self) -> NumericalDimension {
         self.dimension
     }
 
@@ -1289,18 +1397,23 @@ impl UnhonouredDimension {
     /// Reported because the same dimension can be honoured in one type and
     /// unhonourable in another on one profile: a rejection that named only the
     /// dimension would be false about the other type.
-    pub(crate) const fn arithmetic(self) -> ArithmeticType {
+    pub(crate) const fn arithmetic(&self) -> ArithmeticType {
         self.arithmetic
     }
 
+    /// The complete resolved semantic type it could not be honoured in.
+    pub(crate) fn resolved_type(&self) -> &ResolvedValueType {
+        self.resolved_type.as_ref()
+    }
+
     /// The behaviour the caller's contract required.
-    pub(crate) const fn required(self) -> DimensionBehaviour {
+    pub(crate) const fn required(&self) -> DimensionBehaviour {
         self.required
     }
 
     /// The means the profile declares for the required behaviour.
-    pub(crate) const fn means(self) -> HonouringMeans {
-        self.means
+    pub(crate) fn means(&self) -> HonouringMeans {
+        self.means.clone()
     }
 
     /// The behaviour on this dimension the profile does honour unconditionally,
@@ -1309,13 +1422,13 @@ impl UnhonouredDimension {
     /// It is reported so a caller can see what contract this target would
     /// accept. It is never substituted for the stated one: only the caller may
     /// change what its program means (ADR 0076 item 5).
-    pub(crate) const fn honoured(self) -> Option<DimensionBehaviour> {
+    pub(crate) const fn honoured(&self) -> Option<DimensionBehaviour> {
         self.honoured
     }
 
     /// The profile that declared the means.
-    pub(crate) const fn profile(self) -> TargetProfileIdentity {
-        self.profile
+    pub(crate) const fn profile(&self) -> &TargetProfileIdentity {
+        &self.profile
     }
 }
 
@@ -1329,83 +1442,99 @@ impl UnhonouredDimension {
 /// enumerates both but only for another arithmetic type: nothing declared says
 /// how that behaviour would be realized in this one, and a neighbouring type's
 /// fact is measurably not a substitute.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct UndeclaredDimension {
     dimension: NumericalDimension,
     arithmetic: ArithmeticType,
+    resolved_type: Arc<ResolvedValueType>,
     required: DimensionBehaviour,
 }
 
 impl UndeclaredDimension {
-    pub(crate) const fn new(
+    pub(crate) fn new(
         dimension: NumericalDimension,
         arithmetic: ArithmeticType,
+        resolved_type: ResolvedValueType,
         required: DimensionBehaviour,
     ) -> Self {
         Self {
             dimension,
             arithmetic,
+            resolved_type: Arc::new(resolved_type),
             required,
         }
     }
 
     /// The dimension nothing available declares.
-    pub(crate) const fn dimension(self) -> NumericalDimension {
+    pub(crate) const fn dimension(&self) -> NumericalDimension {
         self.dimension
     }
 
     /// The arithmetic type nothing available declares it for.
-    pub(crate) const fn arithmetic(self) -> ArithmeticType {
+    pub(crate) const fn arithmetic(&self) -> ArithmeticType {
         self.arithmetic
     }
 
+    /// The complete resolved semantic type nothing available declares.
+    pub(crate) fn resolved_type(&self) -> &ResolvedValueType {
+        self.resolved_type.as_ref()
+    }
+
     /// The behaviour the caller's contract required.
-    pub(crate) const fn required(self) -> DimensionBehaviour {
+    pub(crate) const fn required(&self) -> DimensionBehaviour {
         self.required
     }
 }
 
 /// A dimension whose declaration is admissible only from a later phase.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct DeferredDimension {
     dimension: NumericalDimension,
     arithmetic: ArithmeticType,
+    resolved_type: Arc<ResolvedValueType>,
     required: DimensionBehaviour,
     phase: AvailabilityPhase,
 }
 
 impl DeferredDimension {
-    pub(crate) const fn new(
+    pub(crate) fn new(
         dimension: NumericalDimension,
         arithmetic: ArithmeticType,
+        resolved_type: ResolvedValueType,
         required: DimensionBehaviour,
         phase: AvailabilityPhase,
     ) -> Self {
         Self {
             dimension,
             arithmetic,
+            resolved_type: Arc::new(resolved_type),
             required,
             phase,
         }
     }
 
     /// The dimension whose declaration is not yet available.
-    pub(crate) const fn dimension(self) -> NumericalDimension {
+    pub(crate) const fn dimension(&self) -> NumericalDimension {
         self.dimension
     }
 
     /// The arithmetic type whose declaration is not yet available.
-    pub(crate) const fn arithmetic(self) -> ArithmeticType {
+    pub(crate) const fn arithmetic(&self) -> ArithmeticType {
         self.arithmetic
     }
 
+    /// The complete resolved semantic type whose declaration is deferred.
+    pub(crate) fn resolved_type(&self) -> &ResolvedValueType {
+        self.resolved_type.as_ref()
+    }
+
     /// The behaviour the caller's contract required.
-    pub(crate) const fn required(self) -> DimensionBehaviour {
+    pub(crate) const fn required(&self) -> DimensionBehaviour {
         self.required
     }
 
     /// The earliest phase that can supply the declaration.
-    pub(crate) const fn phase(self) -> AvailabilityPhase {
+    pub(crate) const fn phase(&self) -> AvailabilityPhase {
         self.phase
     }
 }

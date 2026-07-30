@@ -491,9 +491,9 @@ mod tests {
         let cache = ExpansionCache::open(directory.join("cache"));
         let (toolchain, counter) = counted_toolchain(&directory);
         let program = semantic_program();
-        let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
+        let compilation = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
             .expect("the governed program compiles");
-        let plan = compilations[0].selected().expect("one selected plan");
+        let plan = compilation.selected().expect("one selected plan");
         let mut outcomes = Vec::new();
 
         for _ in 0..2 {
@@ -532,9 +532,8 @@ mod tests {
         let cache = ExpansionCache::open(directory.join("cache"));
         let (toolchain, _counter) = counted_toolchain(&directory);
         let program = semantic_program();
-        let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
+        let compilation = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
             .expect("the governed program compiles");
-        let compilation = &compilations[0];
         let selected = compilation.selected().expect("one selected plan");
         let materialized = compilation
             .alternatives()
@@ -603,9 +602,9 @@ mod tests {
         let cache = ExpansionCache::open(directory.join("cache"));
         let (toolchain, counter) = counted_toolchain(&directory);
         let program = semantic_program();
-        let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
+        let compilation = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
             .expect("the governed program compiles");
-        let plan = compilations[0].selected().expect("one selected plan");
+        let plan = compilation.selected().expect("one selected plan");
         let mut insufficient = target_facts();
         insufficient.buffer_binding_limit = 1;
 

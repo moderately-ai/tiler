@@ -64,8 +64,8 @@ use crate::lowering::{LoweringError, OccurrenceEvidence, ResolvedLowering, resol
 use crate::normalize::{
     AlgebraicExplorationParts, AlgebraicRuleConfiguration, NORMALIZATION_SUBJECT,
     NormalizationOutcome, NormalizeError, explore_algebraic_alternatives_owned,
-    group_by_resolved_contract, normalize_semantics, readmit_alternatives,
-    record_rewrite_assessment, rewrite_assessment_key,
+    group_by_resolved_contract, normalize_semantics, record_rewrite_assessment,
+    rewrite_assessment_key,
 };
 use crate::physical::{
     PhysicalError, VerifiedKernel, VerifiedScheduledRegion, lower_structured_kernel,
@@ -79,7 +79,7 @@ use crate::region::{
     REGION_FORMATION_SUBJECT, RegionCandidate, RegionError, RegionFormationOutcome,
     form_region_candidates,
 };
-use crate::request::{CompilationRequest, RequestError, verify_request};
+use crate::request::{CompilationRequest, RequestError, VerifiedTargetResolution, verify_request};
 use crate::rewrite::{
     RewriteAssessment, RewriteProposal, RewriteRuleIdentity, record_adopted_alternatives,
 };
@@ -93,7 +93,52 @@ const STRUCTURAL_COST_MODEL_KEY: &str = "tiler.cost.structural.v1";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CompilationProduct {
-    pub(crate) targets: Vec<TargetCompilationProduct>,
+    /// Exactly one ordered outcome per caller-declared target profile.
+    pub(crate) targets: Vec<TargetCompilationOutcome>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum TargetCompilationOutcome {
+    Compiled(TargetCompilationProduct),
+    Rejected {
+        target_profile: crate::request::TargetProfile,
+        failure: CompileError,
+    },
+}
+
+impl TargetCompilationOutcome {
+    pub(crate) const fn target_profile(&self) -> &crate::request::TargetProfile {
+        match self {
+            Self::Compiled(product) => &product.target_profile,
+            Self::Rejected { target_profile, .. } => target_profile,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn compiled(&self) -> Option<&TargetCompilationProduct> {
+        match self {
+            Self::Compiled(product) => Some(product),
+            Self::Rejected { .. } => None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn failure(&self) -> Option<&CompileError> {
+        match self {
+            Self::Compiled(_) => None,
+            Self::Rejected { failure, .. } => Some(failure),
+        }
+    }
+}
+
+#[cfg(test)]
+impl std::ops::Deref for TargetCompilationOutcome {
+    type Target = TargetCompilationProduct;
+
+    fn deref(&self) -> &Self::Target {
+        self.compiled()
+            .expect("this test expected a compiled target outcome")
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -102,9 +147,8 @@ pub(crate) struct TargetCompilationProduct {
     pub(crate) stated_contracts: Vec<crate::request::StrictF32NumericalContract>,
     /// The one contract this target resolved to.
     pub(crate) resolved_contract: crate::request::StrictF32NumericalContract,
-    pub(crate) target_profile_key: &'static str,
-    /// Canonical descriptor bytes of the profile every alternative was assessed
-    /// against, and the rules they were assessed under.
+    /// Immutable profile every alternative was assessed against. Its key and
+    /// exact descriptor remain inseparable.
     ///
     /// Both sit on the target rather than on an alternative because neither is a
     /// function of a plan: one request declares one profile, and the feasibility
@@ -112,7 +156,7 @@ pub(crate) struct TargetCompilationProduct {
     /// lifted from the portfolio rather than re-derived from the request, so the
     /// value a consumer reads is the one the alternatives were actually built
     /// with; [`target_assessment`] proves the portfolio agrees on it.
-    pub(crate) target_profile_descriptor: Vec<u8>,
+    pub(crate) target_profile: crate::request::TargetProfile,
     pub(crate) feasibility_rule_set: FeasibilityRuleSetIdentity,
     pub(crate) portfolio: ProgramPortfolio,
     #[cfg(test)]
@@ -275,6 +319,52 @@ struct SemanticCandidate {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct ResolvedTargetGroup {
+    contract: crate::request::StrictF32NumericalContract,
+    target_indexes: Vec<usize>,
+}
+
+fn resolved_target_groups(
+    request: &crate::request::VerifiedCompilationRequest,
+) -> Vec<ResolvedTargetGroup> {
+    let mut groups: Vec<ResolvedTargetGroup> = Vec::new();
+    for (target_index, slot) in request.target_slots().iter().enumerate() {
+        let VerifiedTargetResolution::Resolved {
+            numerical_contract, ..
+        } = slot.resolution()
+        else {
+            continue;
+        };
+        match groups
+            .iter_mut()
+            .find(|group| group.contract == *numerical_contract)
+        {
+            Some(group) => group.target_indexes.push(target_index),
+            None => groups.push(ResolvedTargetGroup {
+                contract: *numerical_contract,
+                target_indexes: vec![target_index],
+            }),
+        }
+    }
+    groups
+}
+
+#[cfg(test)]
+thread_local! {
+    static CONTRACT_GROUP_COMPILATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn observe_contract_group_compilations<T>(work: impl FnOnce() -> T) -> (T, usize) {
+    CONTRACT_GROUP_COMPILATIONS.with(|count| count.set(0));
+    let value = work();
+    (
+        value,
+        CONTRACT_GROUP_COMPILATIONS.with(std::cell::Cell::get),
+    )
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PortfolioSelection {
     pub(crate) policy_key: &'static str,
     pub(crate) selected_alternative_id: String,
@@ -396,7 +486,8 @@ impl From<RequestError> for CompileError {
             // stated numerical contract, are both hard refusals about the
             // request rather than malformed requests — and neither is a cost.
             RequestError::ShapeProductOverflow { .. }
-            | RequestError::NoResolvableNumericalContract { .. } => {
+            | RequestError::NoResolvableNumericalContract { .. }
+            | RequestError::DTypeNotDispatchable { .. } => {
                 Self::NoFeasiblePlan(NoFeasiblePlanError::Request(value))
             }
             RequestError::BudgetExceeded { .. } => Self::BudgetExhausted(value),
@@ -406,6 +497,8 @@ impl From<RequestError> for CompileError {
             // Stating no contract at all is a malformed request, distinct from
             // stating one the target cannot honour.
             | RequestError::UnstatedNumericalContract
+            | RequestError::DuplicateNumericalContract
+            | RequestError::TooManyNumericalContracts { .. }
             // Stating a contract this build cannot realize is a malformed
             // request too, and for the same reason: no target was consulted, so
             // it is not a statement that any plan was infeasible.
@@ -493,32 +586,56 @@ fn compile_with_algebraic_configuration(
     algebraic_configuration: AlgebraicRuleConfiguration,
 ) -> Result<CompilationProduct, CompileError> {
     let semantic = request.program;
-    let shape_environment = request.shape_environment;
-    let target_profiles = request.target_profiles.clone();
-    let capabilities = request.capabilities.clone();
     let verified = verify_request(request)?;
     verify_semantic_output_type(semantic)?;
-    // `NormalizeSemantics` runs after request verification and before region
-    // formation. It observes only the verified program and never mutates it.
-    // Normalization observes the contract this compilation actually resolved to,
-    // not the caller's preference list: a rewrite's legality depends on the one
-    // contract in force, and the alternatives the caller would also have accepted
-    // grant it nothing. It is program-scoped and runs before any per-target work,
-    // so it fails closed rather than choosing when two targets resolved
-    // differently.
-    let resolved_contract =
-        verified
-            .uniform_resolved_contract()
-            .ok_or(RequestError::UnsupportedCapability {
-                phase: "numerics",
-                rule: "divergent-resolved-contracts",
-            })?;
-    let normalization = normalize_semantics(semantic, verified.budgets(), resolved_contract)?;
+    let mut outcomes: Vec<Option<TargetCompilationOutcome>> = verified
+        .target_slots()
+        .iter()
+        .map(|slot| match slot.resolution() {
+            VerifiedTargetResolution::Resolved { .. } => None,
+            VerifiedTargetResolution::Rejected(error) => Some(TargetCompilationOutcome::Rejected {
+                target_profile: slot.target_profile().clone(),
+                failure: error.clone().into(),
+            }),
+        })
+        .collect();
+    for group in resolved_target_groups(&verified) {
+        #[cfg(test)]
+        CONTRACT_GROUP_COMPILATIONS.with(|count| count.set(count.get() + 1));
+        for (target_index, outcome) in
+            compile_contract_group(semantic, &verified, &group, algebraic_configuration)?
+        {
+            let Some(slot) = outcomes.get_mut(target_index) else {
+                return Err(target_coordination_error("target-outcome-index"));
+            };
+            if slot.replace(outcome).is_some() {
+                return Err(target_coordination_error("target-outcome-duplicate"));
+            }
+        }
+    }
+    let targets = outcomes
+        .into_iter()
+        .map(|outcome| outcome.ok_or_else(|| target_coordination_error("target-outcome-missing")))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(CompilationProduct { targets })
+}
+
+fn compile_contract_group(
+    semantic: &tiler_ir::semantic::SemanticProgram,
+    verified: &crate::request::VerifiedCompilationRequest,
+    group: &ResolvedTargetGroup,
+    algebraic_configuration: AlgebraicRuleConfiguration,
+) -> Result<Vec<(usize, TargetCompilationOutcome)>, CompileError> {
+    // Semantic transformations are legal under one resolved contract. Running
+    // this transaction once per distinct contract gives equal-contract targets
+    // one shared candidate set without granting either the permissions of a
+    // different group.
+    let normalization = normalize_semantics(semantic, verified.budgets(), group.contract)?;
     let canonical = normalization.normalized_program().unwrap_or(semantic);
     let exploration = explore_algebraic_alternatives_owned(
         canonical.clone(),
         verified.budgets(),
-        resolved_contract,
+        group.contract,
         algebraic_configuration,
     )?;
     let baseline_rule =
@@ -533,21 +650,20 @@ fn compile_with_algebraic_configuration(
     let mut proposals = Vec::with_capacity(alternatives.len() + 1);
     proposals.push(RewriteProposal::new(baseline_rule, baseline, 0));
     proposals.extend(alternatives);
-    let readmitted = readmit_alternatives(proposals, |candidate| {
-        verify_request(CompilationRequest {
-            program: candidate,
-            shape_environment,
-            numerical_contracts: verified.numerical_contracts().clone(),
-            budgets: verified.budgets(),
-            target_profiles: target_profiles.clone(),
-            capabilities: capabilities.clone(),
-        })
-        .ok()
-    })?;
-    let candidates = readmitted
+    let candidates = proposals
         .into_iter()
         .enumerate()
-        .map(|(index, (proposal, readmitted))| {
+        .map(|(index, proposal)| {
+            let readmitted = verified
+                .readmit_candidate(proposal.candidate(), &group.target_indexes)
+                .map_err(|_| {
+                    CompileError::InvalidCompilerOutput(CompilerOutputError::Normalization(
+                        NormalizeError::InvalidRewrite {
+                            rule: "request-readmission",
+                        },
+                    ))
+                })?;
+            verify_target_group_coordination(verified, group, &readmitted)?;
             verify_semantic_output_type(proposal.candidate())?;
             let origin = if index == 0 {
                 SemanticAlternativeOrigin::Baseline
@@ -573,39 +689,106 @@ fn compile_with_algebraic_configuration(
             })
         })
         .collect::<Result<Vec<_>, CompileError>>()?;
-    compile_verified(
-        &verified,
-        &normalization,
-        &assessments,
-        budget_stop,
-        &candidates,
-    )
-}
-
-fn compile_verified(
-    original: &crate::request::VerifiedCompilationRequest,
-    normalization: &NormalizationOutcome,
-    assessments: &[RewriteAssessment],
-    budget_stop: Option<(u64, u64)>,
-    candidates: &[SemanticCandidate],
-) -> Result<CompilationProduct, CompileError> {
-    let targets = original
-        .target_profiles()
-        .iter()
-        .copied()
-        .map(|target| {
-            let original_target = original.for_target(target)?;
+    let mut outcomes = Vec::with_capacity(group.target_indexes.len());
+    for (candidate_target_index, original_target_index) in
+        group.target_indexes.iter().copied().enumerate()
+    {
+        let original_target = verified
+            .for_target(original_target_index)
+            .map_err(|_| target_coordination_error("original-target-resolution"))?;
+        let outcome = target_compilation_outcome(
+            original_target.target_profile(),
             compile_semantic_portfolio_target(
                 &original_target,
-                target,
-                normalization,
-                assessments,
+                candidate_target_index,
+                &normalization,
+                &assessments,
                 budget_stop,
-                candidates,
+                &candidates,
+            ),
+        )?;
+        outcomes.push((original_target_index, outcome));
+    }
+    Ok(outcomes)
+}
+
+fn verify_target_group_coordination(
+    original: &crate::request::VerifiedCompilationRequest,
+    group: &ResolvedTargetGroup,
+    candidate: &crate::request::VerifiedCompilationRequest,
+) -> Result<(), CompileError> {
+    if candidate.target_slots().len() != group.target_indexes.len() {
+        return Err(target_coordination_error("target-group-cardinality"));
+    }
+    for (candidate_slot, original_index) in
+        candidate.target_slots().iter().zip(&group.target_indexes)
+    {
+        let Some(original_slot) = original.target_slots().get(*original_index) else {
+            return Err(target_coordination_error("target-group-index"));
+        };
+        if candidate_slot.target_profile() != original_slot.target_profile()
+            || !matches!(
+                candidate_slot.resolution(),
+                VerifiedTargetResolution::Resolved {
+                    numerical_contract,
+                    ..
+                } if numerical_contract == &group.contract
             )
-        })
-        .collect::<Result<_, _>>()?;
-    Ok(CompilationProduct { targets })
+        {
+            return Err(target_coordination_error("target-group-binding"));
+        }
+    }
+    Ok(())
+}
+
+fn target_coordination_error(rule: &'static str) -> CompileError {
+    CompileError::InvalidCompilerOutput(CompilerOutputError::Program(ProgramError::Structure {
+        rule,
+    }))
+}
+
+fn target_compilation_outcome(
+    target_profile: &crate::request::TargetProfile,
+    result: Result<TargetCompilationProduct, TargetCompileFailure>,
+) -> Result<TargetCompilationOutcome, CompileError> {
+    match result {
+        Ok(product) => Ok(TargetCompilationOutcome::Compiled(product)),
+        Err(TargetCompileFailure::Rejected(failure)) => Ok(TargetCompilationOutcome::Rejected {
+            target_profile: target_profile.clone(),
+            failure,
+        }),
+        Err(TargetCompileFailure::Outer(error)) => Err(error),
+    }
+}
+
+/// The scope of a failure produced while compiling one target.
+///
+/// Conversion from ordinary compiler errors is deliberately one-way into
+/// [`Self::Outer`]. A target-local refusal must be constructed explicitly at
+/// the exact point where the target transaction has established that scope;
+/// adding or reusing a [`CompileError`] variant cannot silently change it.
+#[derive(Debug)]
+enum TargetCompileFailure {
+    Rejected(CompileError),
+    Outer(CompileError),
+}
+
+impl From<CompileError> for TargetCompileFailure {
+    fn from(error: CompileError) -> Self {
+        Self::Outer(error)
+    }
+}
+
+impl From<RequestError> for TargetCompileFailure {
+    fn from(error: RequestError) -> Self {
+        Self::Outer(error.into())
+    }
+}
+
+impl From<ExplainError> for TargetCompileFailure {
+    fn from(error: ExplainError) -> Self {
+        Self::Outer(error.into())
+    }
 }
 
 struct CandidateTargetCompilation {
@@ -713,16 +896,16 @@ fn compile_candidate_target(
 
 fn compile_semantic_portfolio_target(
     original: &crate::request::VerifiedTargetRequest,
-    target: crate::request::PrototypeTargetProfile,
+    target_index: usize,
     normalization: &NormalizationOutcome,
     assessments: &[RewriteAssessment],
     budget_stop: Option<(u64, u64)>,
     candidates: &[SemanticCandidate],
-) -> Result<TargetCompilationProduct, CompileError> {
+) -> Result<TargetCompilationProduct, TargetCompileFailure> {
     let targeted = candidates
         .iter()
         .map(|candidate| {
-            let request = candidate.verified.for_target(target)?;
+            let request = candidate.verified.for_target(target_index)?;
             Ok((candidate, request))
         })
         .collect::<Result<Vec<_>, RequestError>>()?;
@@ -757,13 +940,13 @@ fn compile_semantic_portfolio_target(
                 phase: "numerics",
                 rule: "semantic-portfolio-contract-group",
             })?;
-        return Err(CompileError::Explained {
+        return Err(TargetCompileFailure::Rejected(CompileError::Explained {
             source: baseline
                 .failure
                 .clone()
                 .expect("an infeasible baseline retains its failure"),
             explain: baseline.explain.clone(),
-        });
+        }));
     };
     let mut compiled = evaluation
         .evaluated
@@ -809,13 +992,13 @@ fn compile_semantic_portfolio_target(
             .iter()
             .find(|candidate| candidate.key == "semantic:baseline")
             .expect("the semantic portfolio always retains its baseline");
-        return Err(CompileError::Explained {
+        return Err(TargetCompileFailure::Rejected(CompileError::Explained {
             source: baseline
                 .failure
                 .clone()
                 .expect("an infeasible candidate retains its failure"),
             explain: baseline.explain.clone(),
-        });
+        }));
     }
     alternatives.sort_by(|left, right| left.identity.cmp(&right.identity));
     let selected = select_global_non_dominated(&alternatives)?
@@ -912,6 +1095,15 @@ fn compile_semantic_portfolio_target(
     )
     .map_err(|_| ExplainError::StaleIdentity)?;
     let (target_profile_descriptor, feasibility_rule_set) = target_assessment(&portfolio)?;
+    if target_profile_descriptor != original.target_profile().canonical_descriptor() {
+        return Err(TargetCompileFailure::Outer(
+            CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
+                ProgramError::Structure {
+                    rule: "target-profile-descriptor",
+                },
+            )),
+        ));
+    }
     Ok(TargetCompilationProduct {
         stated_contracts: original.numerical_contracts().stated().to_vec(),
         resolved_contract: original
@@ -921,8 +1113,7 @@ fn compile_semantic_portfolio_target(
             .find(|contract| contract.key == selected_contract)
             .copied()
             .expect("selected contract came from the stated preference"),
-        target_profile_key: original.target_profile().key,
-        target_profile_descriptor,
+        target_profile: original.target_profile().clone(),
         feasibility_rule_set,
         portfolio,
         #[cfg(test)]
@@ -1629,6 +1820,10 @@ fn request_failure_details(error: &RequestError) -> (String, SubjectKind, String
         RequestError::DuplicateTargetProfile => "target-profile-duplicate".to_owned(),
         RequestError::UnverifiedTargetSelection => "target-selection-unverified".to_owned(),
         RequestError::UnstatedNumericalContract => "numerics-contract-unstated".to_owned(),
+        RequestError::DuplicateNumericalContract => "numerics-contract-duplicate".to_owned(),
+        RequestError::TooManyNumericalContracts { actual, max } => {
+            format!("numerics-contract-too-many-{actual}-{max}")
+        }
         // The reason names the first stated entry's first failing dimension. The
         // whole per-entry list is on the error's `Display`; a reason code is one
         // stable token, and truncating it to the caller's first choice keeps it
@@ -1649,6 +1844,17 @@ fn request_failure_details(error: &RequestError) -> (String, SubjectKind, String
                 },
             )
         }
+        RequestError::DTypeNotDispatchable { disposition, .. } => match disposition {
+            crate::request::DTypeDispatchRefusalDisposition::Unsupported => {
+                "dtype-dispatch-unsupported".to_owned()
+            }
+            crate::request::DTypeDispatchRefusalDisposition::Deferred { .. } => {
+                "dtype-dispatch-deferred".to_owned()
+            }
+            crate::request::DTypeDispatchRefusalDisposition::Unknown => {
+                "dtype-dispatch-unknown".to_owned()
+            }
+        },
         RequestError::UnrepresentableNumericalDimension { cause } => format!(
             "numerics-unrepresentable-{}-{}-{}",
             cause.dimension().key().replace('.', "-"),

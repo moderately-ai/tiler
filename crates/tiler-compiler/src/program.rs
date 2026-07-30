@@ -42,10 +42,10 @@ use tiler_ir::program::abi::{
 use crate::feasibility::{FeasibilityRuleSetIdentity, GOVERNED_FEASIBILITY_RULE_SET};
 use crate::physical::{
     NumericalRealization, RegionId, VerifiedKernel, VerifiedScheduledRegion,
-    lower_structured_kernel, target_profile_descriptor,
+    lower_structured_kernel,
 };
 use crate::region::SemanticMemberId;
-use crate::request::{LoweringProviderIdentity, VerifiedTargetRequest};
+use crate::request::{LoweringProviderIdentity, TargetProfile, VerifiedTargetRequest};
 
 /// Element byte width of the bounded profile's single tensor element type.
 const ELEMENT_BYTES: u64 = 4;
@@ -93,7 +93,7 @@ impl StageId {
 /// deliberately does not carry: which target profile it was planned for.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct KernelProgram {
-    target_profile_key: &'static str,
+    target_profile: TargetProfile,
     core: VerifiedKernelProgram,
 }
 
@@ -102,12 +102,9 @@ pub(crate) struct ArtifactConstructionPlan {
     semantic_identity: SemanticIdentity,
     numerical_contract_key: &'static str,
     numerical_realizations: Vec<NumericalRealization>,
-    target_profile_key: &'static str,
-    /// Canonical descriptor bytes of the profile the plan was assessed against.
-    ///
-    /// ADR 0043 requires both the key and the exact descriptor: a key alone is
-    /// not evidence that a variant is legal on a device advertising that key.
-    target_profile_descriptor: Vec<u8>,
+    /// The immutable profile the plan was assessed against. Its key and exact
+    /// descriptor remain inseparable throughout artifact construction.
+    target_profile: TargetProfile,
     /// Feasibility rules the plan's candidates were assessed under.
     ///
     /// A second, independent identity beside the profile rather than a field of
@@ -165,7 +162,7 @@ impl ArtifactConstructionPlan {
 
     /// Returns the canonical descriptor bytes of the assessed target profile.
     pub(crate) fn target_profile_descriptor(&self) -> &[u8] {
-        &self.target_profile_descriptor
+        self.target_profile.canonical_descriptor()
     }
 
     /// Returns the feasibility rules this plan's candidates were assessed under.
@@ -276,7 +273,7 @@ pub(crate) fn build_kernel_program(
     };
     let core = build_materialized_core(semantic, request, pointwise, reduction)?;
     let program = KernelProgram {
-        target_profile_key: request.target_profile().key,
+        target_profile: request.target_profile().clone(),
         core,
     };
     verify_kernel_program_layers(&program, request, scheduled)?;
@@ -294,7 +291,7 @@ pub(crate) fn build_fused_kernel_program(
 ) -> Result<KernelProgram, ProgramError> {
     let core = build_fused_core(semantic, request, scheduled)?;
     let program = KernelProgram {
-        target_profile_key: request.target_profile().key,
+        target_profile: request.target_profile().clone(),
         core,
     };
     verify_kernel_program_layers(&program, request, std::slice::from_ref(scheduled))?;
@@ -650,10 +647,10 @@ pub(crate) fn verify_kernel_program_layers(
             rule: "request-subject",
         });
     }
-    if program.target_profile_key != request.target_profile().key
+    if &program.target_profile != request.target_profile()
         || scheduled
             .iter()
-            .any(|region| region.target_profile_key() != program.target_profile_key)
+            .any(|region| region.target_profile() != &program.target_profile)
     {
         return Err(ProgramError::Structure {
             rule: "target-profile",
@@ -803,17 +800,7 @@ pub(crate) fn build_artifact_plan(
             .stages()
             .map(|stage| stage.kernel().numerical())
             .collect(),
-        target_profile_key: program.target_profile_key,
-        // Derived from the request's profile, which `verify_request` proves is
-        // the governed one, and which `verify_kernel_program_layers` proves the
-        // program and every scheduled region were bound to. So this is the
-        // descriptor of the profile the plan was assessed against rather than
-        // one recomputed from a matching key.
-        target_profile_descriptor: target_profile_descriptor(&request.target_profile()).map_err(
-            |_| ProgramError::Structure {
-                rule: "target-profile-descriptor",
-            },
-        )?,
+        target_profile: program.target_profile.clone(),
         // Read from the authority that decides feasibility rather than composed
         // here. It is a constant and not a function of the request because the
         // rules do not vary by target: `CheckedTargetProfile::assess` applies
@@ -900,7 +887,7 @@ fn verify_artifact_refinements(
             rule: "semantic-output-coverage",
         });
     }
-    if program.target_profile_key != request.target_profile().key
+    if &program.target_profile != request.target_profile()
         || program
             .core
             .stages()

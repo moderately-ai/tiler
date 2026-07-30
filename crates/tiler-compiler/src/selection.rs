@@ -77,7 +77,7 @@ use crate::frontier::{
 };
 use crate::honourability::HonouredDimension;
 use crate::region::{RegionFormationOutcome, RegionOccurrenceIdentity};
-use crate::request::DeterministicBudgets;
+use crate::request::{DeterministicBudgets, TargetProfile};
 
 /// Canonical domain-separation tag for one selected-plan identity.
 const SELECTED_PLAN_IDENTITY_TAG: &[u8] = b"tiler.compiler.selected-physical-plan.v2\0";
@@ -1048,16 +1048,16 @@ struct RegionFrontierBinding<'a> {
 ///
 /// A portfolio is a per-target artifact, so covers whose frontiers disagree on the
 /// assessed target profile cannot be joined into one portfolio.
-fn coherent_target_profile(
-    sources: &[CoverFrontiers<'_>],
-) -> Result<Option<&'static str>, SelectionError> {
-    let mut target: Option<&'static str> = None;
+fn coherent_target_profile<'a>(
+    sources: &'a [CoverFrontiers<'_>],
+) -> Result<Option<&'a TargetProfile>, SelectionError> {
+    let mut target: Option<&TargetProfile> = None;
     for source in sources {
         for region in &source.regions {
-            let key = region.frontier.target_profile_key();
+            let profile = region.frontier.target_profile();
             match target {
-                None => target = Some(key),
-                Some(existing) if existing == key => {}
+                None => target = Some(profile),
+                Some(existing) if existing == profile => {}
                 Some(_) => {
                     return Err(SelectionError::Structure {
                         rule: "target-profile",
@@ -1073,7 +1073,7 @@ fn coherent_target_profile(
 fn bind_region_frontiers<'a>(
     cover: &RegionCover,
     regions: &'a [RegionFrontier],
-    target_profile_key: Option<&'static str>,
+    target_profile: Option<&TargetProfile>,
 ) -> Result<Vec<RegionFrontierBinding<'a>>, SelectionError> {
     if regions.len() != cover.regions().len() {
         return Err(SelectionError::FrontierBinding {
@@ -1103,7 +1103,7 @@ fn bind_region_frontiers<'a>(
                     rule: "frontier-region-members",
                 });
             }
-            if target_profile_key.is_some_and(|key| key != admitted.target_profile_key()) {
+            if target_profile.is_some_and(|profile| profile != admitted.target_profile()) {
                 return Err(SelectionError::FrontierBinding {
                     rule: "frontier-region-target",
                 });
@@ -1752,7 +1752,7 @@ mod tests {
 
     fn request_for(program: &SemanticProgram) -> VerifiedTargetRequest {
         let request = verify_request(CompilationRequest::governed(program)).unwrap();
-        request.for_target(request.target_profiles()[0]).unwrap()
+        request.for_target(0).unwrap()
     }
 
     fn provider_identity(name: &str, revision: u32) -> ProviderIdentity {
@@ -2104,6 +2104,54 @@ mod tests {
         verify_selected_portfolio(&program, &formation_of(&program), &portfolio).unwrap();
     }
 
+    /// A target key is not a complete target identity.
+    ///
+    /// Two profiles can retain the same governed key while declaring different
+    /// bounds. Their frontiers must not enter one portfolio merely because the
+    /// presentation key agrees; the immutable checked profile (and therefore
+    /// its exact descriptor) is the consistency boundary.
+    #[test]
+    fn same_key_different_descriptor_frontiers_do_not_join() {
+        let program = serial_sum_program();
+        let governed = request_for(&program);
+        let narrowed = governed.clone().with_target_profile_for_test(
+            crate::request::TargetProfile::governed_with_grid_axis_limit(1),
+        );
+        assert_eq!(
+            governed.target_profile().profile_key(),
+            narrowed.target_profile().profile_key()
+        );
+        assert_ne!(
+            governed.target_profile().canonical_descriptor(),
+            narrowed.target_profile().canonical_descriptor()
+        );
+
+        let cover = cover_with_partitions(&program, &[vec![0, 1, 2, 3], vec![4]]);
+        let source = CoverFrontiers::new(
+            &cover,
+            vec![
+                empty_frontier(
+                    FrontierRegionSubject::new(
+                        "pointwise",
+                        governed.serial_sum().members.pointwise().to_vec(),
+                    ),
+                    &governed,
+                ),
+                empty_frontier(
+                    FrontierRegionSubject::new(
+                        "reduction",
+                        narrowed.serial_sum().members.reduction().to_vec(),
+                    ),
+                    &narrowed,
+                ),
+            ],
+        );
+        let error = select_physical_plans(&program, budgets(), &formation_of(&program), &[source])
+            .expect_err("different target descriptors cannot form one portfolio");
+        assert_eq!(error.class(), "structure");
+        assert_eq!(error.reason(), "target-profile");
+    }
+
     /// Selected-plan identity retains the exact structured source of each
     /// honoured fact, not only its semantic behaviour, means, and profile.
     #[test]
@@ -2146,6 +2194,7 @@ mod tests {
                 DeclaredBehaviour::new(
                     NumericalDimension::InputSubnormals,
                     ArithmeticType::F32,
+                    F32::resolved_type(),
                     DimensionBehaviour::Subnormals(SubnormalMode::Preserve),
                     HonouringMeans::SupportedExactly,
                     source,

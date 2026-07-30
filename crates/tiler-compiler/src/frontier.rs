@@ -71,7 +71,7 @@ use crate::physical::{
     PhysicalError, ResourceVerdict, VerifiedScheduledRegion, verify_schedule_with_feasibility,
 };
 use crate::region::SemanticMemberId;
-use crate::request::{TargetProfileKey, VerifiedTargetRequest};
+use crate::request::{TargetProfile, TargetProfileKey, VerifiedTargetRequest};
 
 /// The single structural cost model the bounded P0 frontier attributes estimates
 /// to. It matches the pipeline's structural cost model so a later selector can
@@ -771,8 +771,8 @@ impl ImplementationContext<'_> {
     }
 
     /// Returns the key of the target profile this frontier assesses.
-    pub(crate) fn target_profile_key(&self) -> &'static str {
-        self.request.target_profile().key
+    pub(crate) fn target_profile_key(&self) -> &str {
+        self.request.target_profile().profile_key().as_str()
     }
 }
 
@@ -940,7 +940,7 @@ pub(crate) struct AdmittedImplementation {
     ///
     /// Here for the same reason as the members: *for where*, which both bodies
     /// have and neither owns.
-    target_profile_key: &'static str,
+    target_profile: TargetProfile,
     body: ImplementationBody,
     feasibility: ProvenEvidence,
     boundary: BoundaryContract,
@@ -965,8 +965,12 @@ impl AdmittedImplementation {
     }
 
     /// The target profile this admission is for.
-    pub(crate) const fn target_profile_key(&self) -> &'static str {
-        self.target_profile_key
+    pub(crate) fn target_profile_key(&self) -> &str {
+        self.target_profile.profile_key().as_str()
+    }
+
+    pub(crate) const fn target_profile(&self) -> &TargetProfile {
+        &self.target_profile
     }
 
     /// The scheduled region this admission lowers, when it is one.
@@ -1089,7 +1093,7 @@ pub(crate) enum FrontierRejection {
         /// The proposal kind that did not apply.
         kind: PhysicalProposalKind,
         /// The assessed target profile key the proposal did not target.
-        target_profile_key: &'static str,
+        target_profile_key: TargetProfileKey,
     },
 }
 
@@ -1099,7 +1103,7 @@ pub(crate) enum OpaqueCallRejectionCause {
     /// The proposal's applicability excludes the assessed target.
     NotApplicable {
         /// The target profile assessed.
-        target_profile_key: &'static str,
+        target_profile_key: TargetProfileKey,
     },
     /// No registered call owns the proposed identity.
     Unregistered,
@@ -1137,6 +1141,10 @@ impl FrontierRejection {
                 encode_provider(output, provider.provider());
                 output.push(cause.dimension().tag());
                 output.push(cause.arithmetic().tag());
+                push_slice(
+                    output,
+                    cause.resolved_type().canonical_encoding().as_bytes(),
+                );
                 cause.required().encode(output);
                 push_slice(output, cause.means().key().as_bytes());
                 match cause.honoured() {
@@ -1171,7 +1179,7 @@ impl FrontierRejection {
                 output.push(3);
                 encode_provider(output, provider.provider());
                 output.push(kind.tag());
-                push_slice(output, target_profile_key.as_bytes());
+                push_slice(output, target_profile_key.as_str().as_bytes());
             }
         }
     }
@@ -1186,7 +1194,7 @@ impl FrontierRejection {
 /// its typed reason for a complete explanation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ImplementationFrontier {
-    target_profile_key: &'static str,
+    target_profile: TargetProfile,
     region_role: &'static str,
     admitted: Vec<AdmittedImplementation>,
     rejections: Vec<FrontierRejection>,
@@ -1198,8 +1206,12 @@ pub(crate) struct ImplementationFrontier {
 )]
 impl ImplementationFrontier {
     /// Returns the assessed target profile key.
-    pub(crate) const fn target_profile_key(&self) -> &'static str {
-        self.target_profile_key
+    pub(crate) fn target_profile_key(&self) -> &str {
+        self.target_profile.profile_key().as_str()
+    }
+
+    pub(crate) const fn target_profile(&self) -> &TargetProfile {
+        &self.target_profile
     }
 
     /// Returns the region presentation role this frontier is an authority for.
@@ -1419,11 +1431,9 @@ pub(crate) fn enumerate_frontier(
 ) -> Result<ImplementationFrontier, FrontierError> {
     #[cfg(test)]
     crate::workcount::FRONTIER_ENUMERATIONS.record();
-    let target_profile_key = request.target_profile().key;
-    // The applicability predicate speaks in `TargetProfileKey`; the rejection
-    // diagnostics below still carry the raw key, which stays a `&'static str`
-    // until the profile itself becomes caller-declared.
-    let applicable_key = TargetProfileKey::governed(target_profile_key);
+    let target_profile = request.target_profile().clone();
+    let target_profile_key = target_profile.profile_key().clone();
+    let applicable_key = target_profile_key.clone();
     let mut admitted = Vec::new();
     let mut rejections = Vec::new();
     for provider in providers {
@@ -1439,7 +1449,9 @@ pub(crate) fn enumerate_frontier(
                         rejections.push(FrontierRejection::OpaqueCall {
                             provider: provenance.clone(),
                             proposal: (**proposed).clone(),
-                            cause: OpaqueCallRejectionCause::NotApplicable { target_profile_key },
+                            cause: OpaqueCallRejectionCause::NotApplicable {
+                                target_profile_key: target_profile_key.clone(),
+                            },
                         });
                     }
                     ProposalBody::ScheduledKernel(_)
@@ -1448,7 +1460,7 @@ pub(crate) fn enumerate_frontier(
                         rejections.push(FrontierRejection::NotApplicable {
                             provider: provenance.clone(),
                             kind,
-                            target_profile_key,
+                            target_profile_key: target_profile_key.clone(),
                         });
                     }
                 }
@@ -1551,7 +1563,7 @@ pub(crate) fn enumerate_frontier(
                         // same derivation the scheduled path uses one layer up.
                         request.numerical_contract().arithmetic,
                         work_items,
-                        &request.target_profile(),
+                        request.target_profile(),
                     ) {
                         Ok(feasibility) => feasibility,
                         Err(verdict) => {
@@ -1576,7 +1588,7 @@ pub(crate) fn enumerate_frontier(
                             kind,
                         },
                         semantic_members: subject.semantic_members.clone(),
-                        target_profile_key,
+                        target_profile: target_profile.clone(),
                         body: ImplementationBody::Opaque(Box::new(registered.clone())),
                         feasibility,
                         boundary,
@@ -1643,7 +1655,7 @@ pub(crate) fn enumerate_frontier(
     admitted.sort_by(|left, right| left.identity.as_bytes().cmp(right.identity.as_bytes()));
     rejections.sort_by_key(encode_rejection);
     Ok(ImplementationFrontier {
-        target_profile_key,
+        target_profile,
         region_role: subject.role,
         admitted,
         rejections,
@@ -1817,7 +1829,7 @@ fn encode_opaque_call_cause(output: &mut Vec<u8>, cause: &OpaqueCallRejectionCau
     match cause {
         OpaqueCallRejectionCause::NotApplicable { target_profile_key } => {
             output.push(0x01);
-            push_slice(output, target_profile_key.as_bytes());
+            push_slice(output, target_profile_key.as_str().as_bytes());
         }
         OpaqueCallRejectionCause::Unregistered => output.push(0x02),
         OpaqueCallRejectionCause::MalformedBinding(fault) => {
@@ -1855,6 +1867,10 @@ fn encode_opaque_call_cause(output: &mut Vec<u8>, cause: &OpaqueCallRejectionCau
             output.push(0x08);
             output.push(cause.dimension().tag());
             output.push(cause.arithmetic().tag());
+            push_slice(
+                output,
+                cause.resolved_type().canonical_encoding().as_bytes(),
+            );
             cause.required().encode(output);
             push_slice(output, cause.means().key().as_bytes());
             match cause.honoured() {
@@ -1993,7 +2009,7 @@ fn admit_verified(
             kind,
         },
         semantic_members: verified.semantic_members().to_vec(),
-        target_profile_key: verified.target_profile_key(),
+        target_profile: verified.target_profile().clone(),
         body: ImplementationBody::Scheduled(Box::new(verified)),
         feasibility,
         boundary,
@@ -2054,9 +2070,8 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
         // A materialized f32 intermediate costs four bytes per element. The
         // estimate is structural and is never a feasibility input.
         let intermediate_bytes = input_elements.saturating_mul(4);
-        let applicability = TargetApplicability::for_targets([TargetProfileKey::governed(
-            request.target_profile().key,
-        )]);
+        let applicability =
+            TargetApplicability::for_targets([request.target_profile().profile_key().clone()]);
         let (region, cost) = if let Some(pointwise) = request.pointwise() {
             if members != pointwise.members {
                 return Vec::new();
@@ -2191,7 +2206,7 @@ mod tests {
             .unwrap();
         let program = builder.build().unwrap();
         let request = verify_request(CompilationRequest::governed(&program)).unwrap();
-        request.for_target(request.target_profiles()[0]).unwrap()
+        request.for_target(0).unwrap()
     }
 
     fn provider_identity(name: &str, revision: u32) -> ProviderIdentity {
@@ -3422,7 +3437,7 @@ mod tests {
             excessive,
             request.numerical_contract().arithmetic,
             1,
-            &request.target_profile(),
+            request.target_profile(),
         )
         .expect_err("the buffer requirement exceeds the target")
         {
@@ -3432,6 +3447,7 @@ mod tests {
         let unhonourable = UnhonouredDimension::new(
             NumericalDimension::Contraction,
             ArithmeticType::F32,
+            F32::resolved_type(),
             DimensionBehaviour::Transform(NumericalPermission::Permitted),
             HonouringMeans::Unsupported,
             Some(DimensionBehaviour::Transform(
@@ -3442,7 +3458,7 @@ mod tests {
 
         let causes = [
             OpaqueCallRejectionCause::NotApplicable {
-                target_profile_key: "tiler.test.other.v1",
+                target_profile_key: TargetProfileKey::governed("tiler.test.other.v1"),
             },
             OpaqueCallRejectionCause::Unregistered,
             OpaqueCallRejectionCause::MalformedBinding(BindingError::UnboundParameter("x")),
@@ -3452,7 +3468,7 @@ mod tests {
                 WorkResolutionError::IntermediateShapeUnavailable { parameter: "x" },
             ),
             OpaqueCallRejectionCause::TargetInfeasible(capability),
-            OpaqueCallRejectionCause::TargetUnhonourable(unhonourable),
+            OpaqueCallRejectionCause::TargetUnhonourable(unhonourable.clone()),
         ];
         let encodings: Vec<Vec<u8>> = causes
             .into_iter()
@@ -3608,12 +3624,12 @@ mod tests {
         assert!(frontier.admitted().is_empty());
         assert_eq!(frontier.rejections().len(), 1);
         assert!(matches!(
-            frontier.rejections()[0],
+            &frontier.rejections()[0],
             FrontierRejection::NotApplicable {
                 kind: PhysicalProposalKind::ScheduledKernel,
-                target_profile_key: GOVERNED_TARGET_KEY,
+                target_profile_key,
                 ..
-            }
+            } if target_profile_key.as_str() == GOVERNED_TARGET_KEY
         ));
     }
 

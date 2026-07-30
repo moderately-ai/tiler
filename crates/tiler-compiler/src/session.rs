@@ -29,58 +29,72 @@
 //!
 //! The seventh — report completeness — is the one that required a change.
 //! A failed compilation now returns the complete trace the compiler had already
-//! sealed, through [`CompileFailure::explain`]; before, the boundary discarded
-//! it and reported [`CompileFailureClass::NoFeasiblePlan`] with nothing
-//! attached, which `docs/compiler/optimizer.md` forbids in terms.
+//! sealed, through [`CompileFailure::explain`]; a target refusal that precedes
+//! that trace boundary instead retains recoverable typed detail through
+//! [`TargetCompileFailure::refusal`].
 //!
-//! Nor does it expose the request. The bounded profile admits exactly one
-//! governed configuration — shape environment, numerical contract, budgets,
-//! target profile, and installed lowering capabilities — and
-//! [`compile_governed`] names that profile rather than letting a caller
-//! assemble a request whose fields have no second admissible value yet.
-//! Widening it belongs to `select-numerical-contract-and-compose-feasibility`
-//! and to the capability-installation work, not to a default this surface
-//! should quietly offer.
+//! The general [`CompileRequest`] exposes the choices that now have more than
+//! one validated value: numerical-contract preference, installed lowering
+//! authority, and an ordered [`TargetRequest`]. Shape environment and budgets
+//! remain governed because they still have no second public admissible value.
+//! [`compile_governed`] is the single-target convenience spelling of that same
+//! path.
 //!
 //! # What a caller gets
 //!
-//! One [`Compilation`] per requested target profile, each carrying its retained
-//! plan alternatives and the policy's selection. Both the fused and the
-//! materialized alternative are exposed rather than the selected one alone,
-//! because the offline slice compiles the selected program *and* keeps the
-//! materialized program as its numerical reference; a selected-only surface
-//! could not express that.
+//! One [`TargetCompilationResult`] per requested target profile. Successful
+//! slots contain a [`Compilation`] carrying retained plan alternatives and the
+//! policy's selection; refused slots retain their exact profile and typed
+//! refusal. Both the fused and the materialized alternative are exposed rather
+//! than the selected one alone, because the offline slice compiles the selected
+//! program *and* keeps the materialized program as its numerical reference; a
+//! selected-only surface could not express that.
 
-use std::fmt;
+use std::{fmt, sync::Arc};
 
 use tiler_ir::kernel::VerifiedKernel;
-use tiler_ir::program::abi::ExprNode;
+use tiler_ir::program::abi::{AvailabilityPhase, ExprNode};
 use tiler_ir::program::{StageRef, VerifiedKernelProgram};
-use tiler_ir::semantic::{ProviderIdentity, SemanticProgram};
+use tiler_ir::schedule::{
+    ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, MaterializationRounding,
+    NumericalPermission, SubnormalMode,
+};
+use tiler_ir::semantic::{ProviderIdentity, ResolvedValueType, SemanticProgram};
 
 use crate::capability::FrozenLoweringCapabilityRegistry;
 pub use crate::explain::VerifiedCompilationExplain;
 use crate::explain::VerifiedExplainTrace;
 use crate::feasibility::FeasibilityRuleSetIdentity;
 use crate::pipeline::{
-    CompilationProduct, CompileError, ProgramAlternative, ProgramAlternativeKind,
-    compile as compile_internal,
+    CompilationProduct, CompileError, NoFeasiblePlanError, ProgramAlternative,
+    ProgramAlternativeKind, TargetCompilationOutcome, compile as compile_internal,
 };
 use crate::policy::NumericalPolicyPreset;
 use crate::program::KernelProgram;
 use crate::request::{
-    CompilationRequest, CompilerCapabilitySnapshot, LoweringProviderIdentity,
+    CompilationRequest, CompilerCapabilitySnapshot, ContractRejection,
+    DTypeDispatchRefusalDisposition, LoweringProviderIdentity,
+    MAX_NUMERICAL_CONTRACT_PREFERENCES as INTERNAL_MAX_NUMERICAL_CONTRACT_PREFERENCES,
     NumericalContractPreference, RequestError, StrictF32NumericalContract,
 };
+use crate::target::{TargetProfile, TargetProfileKey, TargetRequest};
+use crate::{
+    honourability::{DimensionBehaviour, HonouringMeans, NumericalDimension},
+    program::ProgramError,
+};
 use tiler_ir::index::FrozenScalarRegistry;
+
+/// Maximum number of numerical contracts in one caller preference list.
+pub const MAX_NUMERICAL_CONTRACT_PREFERENCES: usize = INTERNAL_MAX_NUMERICAL_CONTRACT_PREFERENCES;
 
 /// Which boundary refused a compilation.
 ///
 /// ADR 0074 convention 1: a typed enumeration rather than a boxed error, so a
 /// caller branches on the boundary that refused instead of matching on text.
-/// The classes are the compiler's own and are deliberately coarse — a caller
-/// that needs the exact internal cause reads [`CompileFailure::explain`], which
-/// is where causes are already typed and attributed.
+/// The classes are the compiler's own and are deliberately coarse. A
+/// post-verification refusal carries its exact attributed trace through
+/// [`CompileFailure::explain`]; a pre-trace target refusal carries typed,
+/// recoverable detail through [`TargetCompileFailure::refusal`].
 ///
 /// # Why `#[non_exhaustive]` and not a versioned schema view
 ///
@@ -208,18 +222,452 @@ impl fmt::Debug for CompileFailure {
     }
 }
 
+impl fmt::Display for CompileFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "compilation refused at {:?} ({})",
+            self.class,
+            if self.explain.is_some() {
+                "complete explain trace available"
+            } else {
+                "before a target-qualified explain trace"
+            }
+        )
+    }
+}
+
+impl std::error::Error for CompileFailure {}
+
 /// One target profile's compilation result.
 #[derive(Clone, Debug)]
 pub struct Compilation {
     stated_contracts: Vec<StrictF32NumericalContract>,
     resolved_contract: StrictF32NumericalContract,
-    offered_providers: Vec<ProviderIdentity>,
-    target_profile_key: &'static str,
-    target_profile_descriptor: Vec<u8>,
+    offered_providers: Arc<[ProviderIdentity]>,
+    target_profile: TargetProfile,
     feasibility_rule_set: FeasibilityRuleSetIdentity,
     alternatives: Vec<ProgramAlternative>,
     selected_alternative_id: String,
     explain: VerifiedCompilationExplain,
+}
+
+/// Ordered outcomes for every target in one caller request.
+#[derive(Clone, Debug)]
+pub struct CompilationBatch {
+    targets: Vec<TargetCompilationResult>,
+}
+
+impl CompilationBatch {
+    /// Returns one outcome per requested target, in request order.
+    #[must_use]
+    pub fn targets(&self) -> impl ExactSizeIterator<Item = &TargetCompilationResult> {
+        self.targets.iter()
+    }
+
+    /// Consumes the batch without separating an outcome from its profile.
+    #[must_use]
+    pub fn into_targets(self) -> Vec<TargetCompilationResult> {
+        self.targets
+    }
+}
+
+/// One target profile inseparably paired with its compilation or refusal.
+#[derive(Clone, Debug)]
+pub struct TargetCompilationResult {
+    target_profile: TargetProfile,
+    outcome: Result<Compilation, TargetCompileFailure>,
+}
+
+impl TargetCompilationResult {
+    /// Returns the exact immutable profile this slot names.
+    #[must_use]
+    pub const fn target_profile(&self) -> &TargetProfile {
+        &self.target_profile
+    }
+
+    /// Borrows the target-local success or failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns the refusal scoped to this target slot.
+    pub const fn outcome(&self) -> Result<&Compilation, &TargetCompileFailure> {
+        match &self.outcome {
+            Ok(compilation) => Ok(compilation),
+            Err(failure) => Err(failure),
+        }
+    }
+
+    /// Consumes the slot while retaining the profile beside its outcome.
+    pub fn into_parts(self) -> (TargetProfile, Result<Compilation, TargetCompileFailure>) {
+        (self.target_profile, self.outcome)
+    }
+}
+
+/// Exact scalar subject named by a target-local numerical refusal.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TargetNumericalSubject {
+    arithmetic: ArithmeticType,
+    resolved_type: ResolvedValueType,
+}
+
+impl TargetNumericalSubject {
+    /// Returns the arithmetic family whose behaviour was required.
+    #[must_use]
+    pub const fn arithmetic(&self) -> ArithmeticType {
+        self.arithmetic
+    }
+
+    /// Returns the complete resolved semantic type, including parameters and
+    /// encoded components.
+    #[must_use]
+    pub const fn resolved_type(&self) -> &ResolvedValueType {
+        &self.resolved_type
+    }
+}
+
+/// A dimension-safe numerical requirement that one target could not honour.
+///
+/// Every arm carries only its dimension's behaviour vocabulary, so an output
+/// cannot pair (for example) contraction with a subnormal mode.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum TargetNumericalRequirement {
+    /// Input-subnormal handling.
+    InputSubnormals {
+        /// Exact scalar subject.
+        subject: TargetNumericalSubject,
+        /// Required input-subnormal mode.
+        required: SubnormalMode,
+    },
+    /// Result-subnormal handling.
+    ResultSubnormals {
+        /// Exact scalar subject.
+        subject: TargetNumericalSubject,
+        /// Required result-subnormal mode.
+        required: SubnormalMode,
+    },
+    /// Contraction permission.
+    Contraction {
+        /// Exact scalar subject.
+        subject: TargetNumericalSubject,
+        /// Required contraction permission.
+        required: NumericalPermission,
+    },
+    /// Reassociation permission.
+    Reassociation {
+        /// Exact scalar subject.
+        subject: TargetNumericalSubject,
+        /// Required reassociation permission.
+        required: NumericalPermission,
+    },
+    /// Operand-permutation permission.
+    Permutation {
+        /// Exact scalar subject.
+        subject: TargetNumericalSubject,
+        /// Required operand-permutation permission.
+        required: NumericalPermission,
+    },
+    /// Signed-zero transformation permission.
+    SignedZero {
+        /// Exact scalar subject.
+        subject: TargetNumericalSubject,
+        /// Required signed-zero transformation permission.
+        required: NumericalPermission,
+    },
+    /// Reciprocal-replacement permission.
+    ReciprocalTransform {
+        /// Exact scalar subject.
+        subject: TargetNumericalSubject,
+        /// Required reciprocal-replacement permission.
+        required: NumericalPermission,
+    },
+    /// Approximate-intrinsic envelope.
+    ApproximateIntrinsics {
+        /// Exact scalar subject.
+        subject: TargetNumericalSubject,
+        /// Required approximation envelope.
+        required: ApproximationEnvelope,
+    },
+    /// NaN assumption.
+    NanAssumptions {
+        /// Exact scalar subject.
+        subject: TargetNumericalSubject,
+        /// Required NaN assumption.
+        required: ExceptionalValueAssumption,
+    },
+    /// Infinity assumption.
+    InfinityAssumptions {
+        /// Exact scalar subject.
+        subject: TargetNumericalSubject,
+        /// Required infinity assumption.
+        required: ExceptionalValueAssumption,
+    },
+    /// Observable materialization rounding.
+    MaterializationRounding {
+        /// Exact scalar subject.
+        subject: TargetNumericalSubject,
+        /// Required materialization rounding.
+        required: MaterializationRounding,
+    },
+}
+
+impl TargetNumericalRequirement {
+    /// Returns the exact scalar subject shared by every requirement arm.
+    #[must_use]
+    pub const fn subject(&self) -> &TargetNumericalSubject {
+        match self {
+            Self::InputSubnormals { subject, .. }
+            | Self::ResultSubnormals { subject, .. }
+            | Self::Contraction { subject, .. }
+            | Self::Reassociation { subject, .. }
+            | Self::Permutation { subject, .. }
+            | Self::SignedZero { subject, .. }
+            | Self::ReciprocalTransform { subject, .. }
+            | Self::ApproximateIntrinsics { subject, .. }
+            | Self::NanAssumptions { subject, .. }
+            | Self::InfinityAssumptions { subject, .. }
+            | Self::MaterializationRounding { subject, .. } => subject,
+        }
+    }
+}
+
+/// Why a stated contract entry did not resolve on one target.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum TargetNumericalRefusalDisposition {
+    /// The target declared a means that does not honour the requirement.
+    DeclaredUnhonourable(Box<TargetDeclaredNumericalRefusal>),
+    /// No declaration named the exact subject and requirement.
+    Unknown,
+    /// A matching declaration exists only at a later phase.
+    Deferred {
+        /// Earliest phase at which the declaration can participate.
+        available_at: AvailabilityPhase,
+    },
+}
+
+/// Exact declaration behind one target's numerical refusal.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TargetDeclaredNumericalRefusal {
+    subject: TargetNumericalSubject,
+    means: TargetNumericalDeclaredMeans,
+    honoured: Option<TargetNumericalHonouredBehaviour>,
+    target_profile: TargetProfileKey,
+}
+
+impl TargetDeclaredNumericalRefusal {
+    /// Returns the exact arithmetic and resolved type the declaration addresses.
+    #[must_use]
+    pub const fn subject(&self) -> &TargetNumericalSubject {
+        &self.subject
+    }
+
+    /// Returns the means the profile declares for the required behaviour.
+    #[must_use]
+    pub const fn means(&self) -> &TargetNumericalDeclaredMeans {
+        &self.means
+    }
+
+    /// Returns the behaviour this dimension honours unconditionally, if any.
+    #[must_use]
+    pub const fn honoured(&self) -> Option<&TargetNumericalHonouredBehaviour> {
+        self.honoured.as_ref()
+    }
+
+    /// Returns the exact profile key that made the declaration.
+    #[must_use]
+    pub const fn target_profile(&self) -> &TargetProfileKey {
+        &self.target_profile
+    }
+}
+
+/// The complete means declared for a required numerical behaviour.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum TargetNumericalDeclaredMeans {
+    /// The target's arithmetic realizes the behaviour directly.
+    SupportedExactly,
+    /// Additional emitted operations realize the behaviour exactly.
+    SupportedWithExactEmulation,
+    /// The means is available only under another caller-authorized requirement.
+    SupportedOnlyUnderDeclaredRelaxation {
+        /// Exact dimension-safe relaxation the caller must already authorize.
+        required: TargetNumericalRequirement,
+    },
+    /// The target declares that it cannot realize the behaviour.
+    Unsupported,
+}
+
+/// A dimension-safe behaviour that a refusing profile does honour.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum TargetNumericalHonouredBehaviour {
+    /// Input-subnormal handling.
+    InputSubnormals(SubnormalMode),
+    /// Result-subnormal handling.
+    ResultSubnormals(SubnormalMode),
+    /// Contraction permission.
+    Contraction(NumericalPermission),
+    /// Reassociation permission.
+    Reassociation(NumericalPermission),
+    /// Operand-permutation permission.
+    Permutation(NumericalPermission),
+    /// Signed-zero transformation permission.
+    SignedZero(NumericalPermission),
+    /// Reciprocal-replacement permission.
+    ReciprocalTransform(NumericalPermission),
+    /// Approximate-intrinsic envelope.
+    ApproximateIntrinsics(ApproximationEnvelope),
+    /// NaN assumption.
+    NanAssumptions(ExceptionalValueAssumption),
+    /// Infinity assumption.
+    InfinityAssumptions(ExceptionalValueAssumption),
+    /// Observable materialization rounding.
+    MaterializationRounding(MaterializationRounding),
+}
+
+/// One entry in the caller's numerical-contract order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TargetNumericalContractRejection {
+    contract_key: &'static str,
+    requirement: TargetNumericalRequirement,
+    disposition: TargetNumericalRefusalDisposition,
+}
+
+impl TargetNumericalContractRejection {
+    /// Returns the rejected contract key.
+    #[must_use]
+    pub const fn contract_key(&self) -> &'static str {
+        self.contract_key
+    }
+
+    /// Returns the exact, dimension-safe requirement.
+    #[must_use]
+    pub const fn requirement(&self) -> &TargetNumericalRequirement {
+        &self.requirement
+    }
+
+    /// Returns whether the exact fact refused, was absent, or was deferred.
+    #[must_use]
+    pub const fn disposition(&self) -> &TargetNumericalRefusalDisposition {
+        &self.disposition
+    }
+}
+
+/// Ordered numerical-contract refusal for one exact target profile.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TargetNumericalContractRefusal {
+    target_profile: TargetProfileKey,
+    rejections: Vec<TargetNumericalContractRejection>,
+}
+
+impl TargetNumericalContractRefusal {
+    /// Returns the target profile that refused the caller's preference.
+    #[must_use]
+    pub const fn target_profile(&self) -> &TargetProfileKey {
+        &self.target_profile
+    }
+
+    /// Returns one rejection per stated contract, in the caller's exact order.
+    #[must_use]
+    pub fn rejections(&self) -> &[TargetNumericalContractRejection] {
+        &self.rejections
+    }
+}
+
+/// Why one exact program dtype cannot dispatch on a target at compile profile.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum TargetDTypeRefusalDisposition {
+    /// The profile explicitly refuses the exact type.
+    Unsupported,
+    /// No declaration names the exact type.
+    Unknown,
+    /// The first exact declaration becomes available only later.
+    Deferred {
+        /// Earliest phase at which the declaration can participate.
+        available_at: AvailabilityPhase,
+    },
+}
+
+/// Target-local dispatch refusal for one exact resolved program dtype.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TargetDTypeDispatchRefusal {
+    target_profile: TargetProfileKey,
+    resolved_type: ResolvedValueType,
+    disposition: TargetDTypeRefusalDisposition,
+}
+
+impl TargetDTypeDispatchRefusal {
+    /// Returns the target profile that cannot dispatch the type.
+    #[must_use]
+    pub const fn target_profile(&self) -> &TargetProfileKey {
+        &self.target_profile
+    }
+
+    /// Returns the complete exact resolved semantic type.
+    #[must_use]
+    pub const fn resolved_type(&self) -> &ResolvedValueType {
+        &self.resolved_type
+    }
+
+    /// Returns whether the exact fact refused, was absent, or was deferred.
+    #[must_use]
+    pub const fn disposition(&self) -> TargetDTypeRefusalDisposition {
+        self.disposition
+    }
+}
+
+/// Recoverable typed detail for a pre-trace target-local refusal.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum TargetCompileRefusal {
+    /// No contract in the caller's stated order resolved on this target.
+    NumericalContract(TargetNumericalContractRefusal),
+    /// One exact program dtype could not dispatch at compile profile.
+    DTypeDispatch(TargetDTypeDispatchRefusal),
+}
+
+/// A refusal scoped to one otherwise valid target-profile slot.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TargetCompileFailure {
+    failure: CompileFailure,
+    refusal: Option<TargetCompileRefusal>,
+}
+
+impl TargetCompileFailure {
+    /// Returns which compiler boundary refused this target.
+    #[must_use]
+    pub const fn class(&self) -> CompileFailureClass {
+        self.failure.class()
+    }
+
+    /// Returns the complete target-qualified explanation, when available.
+    #[must_use]
+    pub fn explain(&self) -> Option<ExplainReport<'_>> {
+        self.failure.explain()
+    }
+
+    /// Returns recoverable typed detail for a pre-trace target refusal.
+    ///
+    /// Post-verification planning failures are explained by [`Self::explain`].
+    #[must_use]
+    pub const fn refusal(&self) -> Option<&TargetCompileRefusal> {
+        self.refusal.as_ref()
+    }
+}
+
+impl fmt::Display for TargetCompileFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "target compilation refused: {:?}", self.class())
+    }
+}
+
+impl std::error::Error for TargetCompileFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.failure)
+    }
 }
 
 impl Compilation {
@@ -228,7 +676,7 @@ impl Compilation {
     /// Keys rather than the public [`NumericalContract`] enum, and deliberately:
     /// mapping a resolved contract back onto that enum needs an inverse of
     /// `resolve`, and the only total spelling of it absorbs an unrecognized key
-    /// into one of the two variants — a silently wrong answer about which
+    /// into one of the three variants — a silently wrong answer about which
     /// numerics a program was compiled under. ADR 0076 makes the key a
     /// contract's governed name, so it is the value that identifies one.
     ///
@@ -239,11 +687,10 @@ impl Compilation {
     /// and a reader seeing only the second cannot tell a compilation that got
     /// its first choice from one that fell back.
     #[must_use]
-    pub fn stated_numerical_contract_keys(&self) -> Vec<&'static str> {
-        self.stated_contracts
-            .iter()
-            .map(|contract| contract.key)
-            .collect()
+    pub fn stated_numerical_contract_keys(
+        &self,
+    ) -> impl ExactSizeIterator<Item = &'static str> + '_ {
+        self.stated_contracts.iter().map(|contract| contract.key)
     }
 
     /// The numerical contract this compilation actually resolved to.
@@ -264,16 +711,22 @@ impl Compilation {
         &self.offered_providers
     }
 
-    /// Returns the governed key of the target profile this result is for.
+    /// Returns the validated declared key of the target profile this result is for.
     #[must_use]
     pub fn target_profile_key(&self) -> &str {
-        self.target_profile_key
+        self.target_profile.profile_key().as_str()
+    }
+
+    /// Returns the exact immutable target profile retained by this compilation.
+    #[must_use]
+    pub const fn target_profile(&self) -> &TargetProfile {
+        &self.target_profile
     }
 
     /// Returns the canonical descriptor bytes of the profile this compilation
     /// was assessed against.
     ///
-    /// ADR 0043 requires a declared target profile to carry both its governed
+    /// ADR 0043 requires a declared target profile to carry both its validated
     /// key and its exact descriptor identity, because two profiles can advertise
     /// one key and admit different candidates — so a key alone is not evidence
     /// that anything here is legal on a device presenting it.
@@ -289,7 +742,7 @@ impl Compilation {
     /// reader to believe two alternatives of one compilation could differ.
     #[must_use]
     pub fn target_profile_descriptor(&self) -> &[u8] {
-        &self.target_profile_descriptor
+        self.target_profile.canonical_descriptor()
     }
 
     /// Returns the governed key of the feasibility rules this compilation was
@@ -695,9 +1148,12 @@ const fn rule_of(error: &RequestError) -> &'static str {
         RequestError::DuplicateTargetProfile => "compile.request.targets.duplicate",
         RequestError::UnverifiedTargetSelection => "compile.request.targets.selection",
         RequestError::UnstatedNumericalContract => "compile.request.numerics.unstated",
+        RequestError::DuplicateNumericalContract => "compile.request.numerics.duplicate",
+        RequestError::TooManyNumericalContracts { .. } => "compile.request.numerics.too-many",
         RequestError::NoResolvableNumericalContract { .. } => {
             "compile.request.numerics.unhonourable"
         }
+        RequestError::DTypeNotDispatchable { .. } => "compile.request.dtype.dispatch",
         RequestError::UnrepresentableNumericalDimension { .. } => {
             "compile.request.numerics.unrepresentable"
         }
@@ -825,15 +1281,15 @@ impl InstalledCapabilities {
 /// submitted twice or mutated after the compiler has begun reading it.
 ///
 /// The inputs a caller may state are deliberately fewer than the internal
-/// request carries. Budgets, the shape environment, and target-profile
-/// *declaration* stay internal: the first two admit exactly one governed value
-/// today, and declaring a target profile is a validation job rather than a
-/// visibility change — `express-metal-honourability-in-the-shared-form` is the
-/// ticket that needs it and it is not delivered here.
+/// request carries. Budgets and the shape environment stay internal because
+/// they admit exactly one governed value today. Target declaration is accepted
+/// only through [`crate::target::TargetProfileBuilder`], which validates and
+/// freezes the whole profile before it can enter this request.
 #[derive(Clone, Debug)]
 pub struct CompileRequest<'a> {
     program: &'a SemanticProgram,
     contracts: Vec<NumericalContract>,
+    targets: TargetRequest,
     capabilities: InstalledCapabilities,
 }
 
@@ -843,10 +1299,15 @@ impl<'a> CompileRequest<'a> {
     /// Capabilities default to [`InstalledCapabilities::governed`], which is
     /// what makes [`compile_governed`] expressible through this same path.
     #[must_use]
-    pub fn new(program: &'a SemanticProgram, contract: NumericalContract) -> Self {
+    pub fn new(
+        program: &'a SemanticProgram,
+        contract: NumericalContract,
+        targets: TargetRequest,
+    ) -> Self {
         Self {
             program,
             contracts: vec![contract],
+            targets,
             capabilities: InstalledCapabilities::governed(),
         }
     }
@@ -875,16 +1336,38 @@ impl<'a> CompileRequest<'a> {
     pub fn preferring(
         program: &'a SemanticProgram,
         contracts: impl IntoIterator<Item = NumericalContract>,
+        targets: TargetRequest,
     ) -> Result<Self, CompileFailure> {
-        let contracts: Vec<NumericalContract> = contracts.into_iter().collect();
+        let contracts: Vec<NumericalContract> = contracts
+            .into_iter()
+            .take(MAX_NUMERICAL_CONTRACT_PREFERENCES + 1)
+            .collect();
         if contracts.is_empty() {
             return Err(CompileFailure::from(CompileError::InvalidRequest(
                 RequestError::UnstatedNumericalContract,
             )));
         }
+        if contracts.len() > MAX_NUMERICAL_CONTRACT_PREFERENCES {
+            return Err(CompileFailure::from(CompileError::InvalidRequest(
+                RequestError::TooManyNumericalContracts {
+                    actual: contracts.len(),
+                    max: MAX_NUMERICAL_CONTRACT_PREFERENCES,
+                },
+            )));
+        }
+        if contracts
+            .iter()
+            .enumerate()
+            .any(|(index, contract)| contracts[..index].contains(contract))
+        {
+            return Err(CompileFailure::from(CompileError::InvalidRequest(
+                RequestError::DuplicateNumericalContract,
+            )));
+        }
         Ok(Self {
             program,
             contracts,
+            targets,
             capabilities: InstalledCapabilities::governed(),
         })
     }
@@ -904,10 +1387,11 @@ impl<'a> CompileRequest<'a> {
 /// Returns a [`CompileFailure`] naming the class of boundary that refused. See
 /// [`CompileFailureClass`] for what each class means and which of them are
 /// statements about the request rather than about Tiler.
-pub fn compile(request: CompileRequest<'_>) -> Result<Vec<Compilation>, CompileFailure> {
+pub fn compile(request: CompileRequest<'_>) -> Result<CompilationBatch, CompileFailure> {
     let CompileRequest {
         program,
         contracts,
+        targets,
         capabilities,
     } = request;
     let stated: Vec<_> = contracts
@@ -916,11 +1400,15 @@ pub fn compile(request: CompileRequest<'_>) -> Result<Vec<Compilation>, CompileF
         .collect();
     let preference = NumericalContractPreference::ordered(stated)
         .map_err(|error| CompileFailure::from(CompileError::InvalidRequest(error)))?;
-    let offered_providers = capabilities.0.lowering().providers();
+    let offered_providers: Arc<[ProviderIdentity]> =
+        Arc::from(capabilities.0.lowering().providers());
     let mut internal = CompilationRequest::governed_preferring(program, preference);
+    let expected_targets = targets.profiles().to_vec();
+    internal.target_profiles = targets.into_profiles();
     internal.capabilities = capabilities.0;
     let product = compile_internal(internal)?;
-    Ok(into_compilations(product, &offered_providers))
+    into_compilation_batch(product, &expected_targets, &offered_providers)
+        .map_err(CompileFailure::from)
 }
 
 /// Compiles one semantic program under a stated numerical contract.
@@ -936,46 +1424,343 @@ pub fn compile(request: CompileRequest<'_>) -> Result<Vec<Compilation>, CompileF
 /// [`compile`]. One path rather than two is what stops the convenient one and
 /// the general one from drifting, and expressing this wrapper through the
 /// general surface is the cheapest proof that surface is usable at all.
+///
+/// # Panics
+///
+/// Panics only if the compiler's built-in governed profile violates its own
+/// construction invariants.
 pub fn compile_governed(
     program: &SemanticProgram,
     contract: NumericalContract,
-) -> Result<Vec<Compilation>, CompileFailure> {
-    compile(CompileRequest::new(program, contract))
+) -> Result<Compilation, CompileFailure> {
+    let targets = TargetRequest::new([TargetProfile::governed()])
+        .expect("the governed singleton target request is valid");
+    let mut batch = compile(CompileRequest::new(program, contract, targets))?.into_targets();
+    if batch.len() != 1 {
+        return Err(CompileFailure::from(CompileError::InvalidCompilerOutput(
+            crate::pipeline::CompilerOutputError::Program(
+                crate::program::ProgramError::Structure {
+                    rule: "public-governed-target-cardinality",
+                },
+            ),
+        )));
+    }
+    let (_, outcome) = batch
+        .pop()
+        .expect("the governed target cardinality was checked")
+        .into_parts();
+    outcome.map_err(|failure| failure.failure)
 }
 
-fn into_compilations(
+fn target_compile_failure(error: CompileError) -> Result<TargetCompileFailure, CompileError> {
+    let refusal = match target_request_refusal(&error) {
+        Some(RequestError::NoResolvableNumericalContract {
+            target_profile,
+            rejections,
+        }) => Some(TargetCompileRefusal::NumericalContract(
+            TargetNumericalContractRefusal {
+                target_profile: target_profile.clone(),
+                rejections: rejections
+                    .iter()
+                    .map(public_numerical_rejection)
+                    .collect::<Result<Vec<_>, _>>()?,
+            },
+        )),
+        Some(RequestError::DTypeNotDispatchable {
+            target_profile,
+            resolved_type,
+            disposition,
+        }) => Some(TargetCompileRefusal::DTypeDispatch(
+            TargetDTypeDispatchRefusal {
+                target_profile: target_profile.clone(),
+                resolved_type: resolved_type.as_ref().clone(),
+                disposition: match disposition {
+                    DTypeDispatchRefusalDisposition::Unsupported => {
+                        TargetDTypeRefusalDisposition::Unsupported
+                    }
+                    DTypeDispatchRefusalDisposition::Deferred { available_at } => {
+                        TargetDTypeRefusalDisposition::Deferred {
+                            available_at: *available_at,
+                        }
+                    }
+                    DTypeDispatchRefusalDisposition::Unknown => {
+                        TargetDTypeRefusalDisposition::Unknown
+                    }
+                },
+            },
+        )),
+        Some(
+            RequestError::UnsupportedRequestVersion
+            | RequestError::EmptyTargetSet
+            | RequestError::DuplicateTargetProfile
+            | RequestError::UnverifiedTargetSelection
+            | RequestError::UnstatedNumericalContract
+            | RequestError::DuplicateNumericalContract
+            | RequestError::TooManyNumericalContracts { .. }
+            | RequestError::UnrepresentableNumericalDimension { .. }
+            | RequestError::BudgetExceeded { .. }
+            | RequestError::UnsupportedCapability { .. }
+            | RequestError::ShapeProductOverflow { .. },
+        )
+        | None => None,
+    };
+    Ok(TargetCompileFailure {
+        failure: CompileFailure::from(error),
+        refusal,
+    })
+}
+
+fn target_request_refusal(error: &CompileError) -> Option<&RequestError> {
+    match error {
+        CompileError::NoFeasiblePlan(NoFeasiblePlanError::Request(error)) => Some(error),
+        CompileError::Explained { source, .. } => target_request_refusal(source),
+        CompileError::InvalidRequest(_)
+        | CompileError::UnsupportedCapability(_)
+        | CompileError::BudgetExhausted(_)
+        | CompileError::NoFeasiblePlan(
+            NoFeasiblePlanError::Physical(_) | NoFeasiblePlanError::Selection(_),
+        )
+        | CompileError::InvalidCompilerOutput(_) => None,
+    }
+}
+
+fn public_numerical_rejection(
+    rejection: &ContractRejection,
+) -> Result<TargetNumericalContractRejection, CompileError> {
+    let subject = TargetNumericalSubject {
+        arithmetic: rejection.arithmetic(),
+        resolved_type: rejection.resolved_type().clone(),
+    };
+    let requirement =
+        public_numerical_requirement(rejection.dimension(), rejection.required(), subject.clone())?;
+    let disposition = match rejection {
+        ContractRejection::Unhonourable { cause, .. } => {
+            let means = match cause.means() {
+                HonouringMeans::SupportedExactly => TargetNumericalDeclaredMeans::SupportedExactly,
+                HonouringMeans::SupportedWithExactEmulation => {
+                    TargetNumericalDeclaredMeans::SupportedWithExactEmulation
+                }
+                HonouringMeans::SupportedOnlyUnderDeclaredRelaxation { relaxation } => {
+                    TargetNumericalDeclaredMeans::SupportedOnlyUnderDeclaredRelaxation {
+                        required: public_numerical_requirement(
+                            relaxation.dimension(),
+                            relaxation.behaviour(),
+                            TargetNumericalSubject {
+                                arithmetic: relaxation.arithmetic(),
+                                resolved_type: relaxation.resolved_type().clone(),
+                            },
+                        )?,
+                    }
+                }
+                HonouringMeans::Unsupported => TargetNumericalDeclaredMeans::Unsupported,
+            };
+            let honoured = cause
+                .honoured()
+                .map(|behaviour| public_honoured_behaviour(rejection.dimension(), behaviour))
+                .transpose()?;
+            TargetNumericalRefusalDisposition::DeclaredUnhonourable(Box::new(
+                TargetDeclaredNumericalRefusal {
+                    subject,
+                    means,
+                    honoured,
+                    target_profile: cause.profile().public_key().clone(),
+                },
+            ))
+        }
+        ContractRejection::Undeclared { .. } => TargetNumericalRefusalDisposition::Unknown,
+        ContractRejection::Deferred { cause, .. } => TargetNumericalRefusalDisposition::Deferred {
+            available_at: cause.phase(),
+        },
+    };
+    Ok(TargetNumericalContractRejection {
+        contract_key: rejection.contract_key(),
+        requirement,
+        disposition,
+    })
+}
+
+fn public_numerical_requirement(
+    dimension: NumericalDimension,
+    behaviour: DimensionBehaviour,
+    subject: TargetNumericalSubject,
+) -> Result<TargetNumericalRequirement, CompileError> {
+    let requirement = match (dimension, behaviour) {
+        (NumericalDimension::InputSubnormals, DimensionBehaviour::Subnormals(required)) => {
+            TargetNumericalRequirement::InputSubnormals { subject, required }
+        }
+        (NumericalDimension::ResultSubnormals, DimensionBehaviour::Subnormals(required)) => {
+            TargetNumericalRequirement::ResultSubnormals { subject, required }
+        }
+        (NumericalDimension::Contraction, DimensionBehaviour::Transform(required)) => {
+            TargetNumericalRequirement::Contraction { subject, required }
+        }
+        (NumericalDimension::Reassociation, DimensionBehaviour::Transform(required)) => {
+            TargetNumericalRequirement::Reassociation { subject, required }
+        }
+        (NumericalDimension::Permutation, DimensionBehaviour::Transform(required)) => {
+            TargetNumericalRequirement::Permutation { subject, required }
+        }
+        (NumericalDimension::SignedZero, DimensionBehaviour::Transform(required)) => {
+            TargetNumericalRequirement::SignedZero { subject, required }
+        }
+        (NumericalDimension::ReciprocalTransform, DimensionBehaviour::Transform(required)) => {
+            TargetNumericalRequirement::ReciprocalTransform { subject, required }
+        }
+        (
+            NumericalDimension::ApproximateIntrinsics,
+            DimensionBehaviour::Approximation(required),
+        ) => TargetNumericalRequirement::ApproximateIntrinsics { subject, required },
+        (NumericalDimension::NanAssumptions, DimensionBehaviour::ExceptionalValue(required)) => {
+            TargetNumericalRequirement::NanAssumptions { subject, required }
+        }
+        (
+            NumericalDimension::InfinityAssumptions,
+            DimensionBehaviour::ExceptionalValue(required),
+        ) => TargetNumericalRequirement::InfinityAssumptions { subject, required },
+        (NumericalDimension::MaterializationRounding, DimensionBehaviour::Rounding(required)) => {
+            TargetNumericalRequirement::MaterializationRounding { subject, required }
+        }
+        _ => {
+            return Err(CompileError::InvalidCompilerOutput(
+                crate::pipeline::CompilerOutputError::Program(ProgramError::Structure {
+                    rule: "public-numerical-requirement-shape",
+                }),
+            ));
+        }
+    };
+    Ok(requirement)
+}
+
+fn public_honoured_behaviour(
+    dimension: NumericalDimension,
+    behaviour: DimensionBehaviour,
+) -> Result<TargetNumericalHonouredBehaviour, CompileError> {
+    let behaviour = match (dimension, behaviour) {
+        (NumericalDimension::InputSubnormals, DimensionBehaviour::Subnormals(value)) => {
+            TargetNumericalHonouredBehaviour::InputSubnormals(value)
+        }
+        (NumericalDimension::ResultSubnormals, DimensionBehaviour::Subnormals(value)) => {
+            TargetNumericalHonouredBehaviour::ResultSubnormals(value)
+        }
+        (NumericalDimension::Contraction, DimensionBehaviour::Transform(value)) => {
+            TargetNumericalHonouredBehaviour::Contraction(value)
+        }
+        (NumericalDimension::Reassociation, DimensionBehaviour::Transform(value)) => {
+            TargetNumericalHonouredBehaviour::Reassociation(value)
+        }
+        (NumericalDimension::Permutation, DimensionBehaviour::Transform(value)) => {
+            TargetNumericalHonouredBehaviour::Permutation(value)
+        }
+        (NumericalDimension::SignedZero, DimensionBehaviour::Transform(value)) => {
+            TargetNumericalHonouredBehaviour::SignedZero(value)
+        }
+        (NumericalDimension::ReciprocalTransform, DimensionBehaviour::Transform(value)) => {
+            TargetNumericalHonouredBehaviour::ReciprocalTransform(value)
+        }
+        (NumericalDimension::ApproximateIntrinsics, DimensionBehaviour::Approximation(value)) => {
+            TargetNumericalHonouredBehaviour::ApproximateIntrinsics(value)
+        }
+        (NumericalDimension::NanAssumptions, DimensionBehaviour::ExceptionalValue(value)) => {
+            TargetNumericalHonouredBehaviour::NanAssumptions(value)
+        }
+        (NumericalDimension::InfinityAssumptions, DimensionBehaviour::ExceptionalValue(value)) => {
+            TargetNumericalHonouredBehaviour::InfinityAssumptions(value)
+        }
+        (NumericalDimension::MaterializationRounding, DimensionBehaviour::Rounding(value)) => {
+            TargetNumericalHonouredBehaviour::MaterializationRounding(value)
+        }
+        _ => {
+            return Err(CompileError::InvalidCompilerOutput(
+                crate::pipeline::CompilerOutputError::Program(ProgramError::Structure {
+                    rule: "public-numerical-honoured-shape",
+                }),
+            ));
+        }
+    };
+    Ok(behaviour)
+}
+
+fn into_compilation_batch(
     product: CompilationProduct,
-    offered_providers: &[ProviderIdentity],
-) -> Vec<Compilation> {
-    product
+    expected_targets: &[TargetProfile],
+    offered_providers: &Arc<[ProviderIdentity]>,
+) -> Result<CompilationBatch, CompileError> {
+    if product.targets.len() != expected_targets.len() {
+        return Err(CompileError::InvalidCompilerOutput(
+            crate::pipeline::CompilerOutputError::Program(
+                crate::program::ProgramError::Structure {
+                    rule: "public-target-outcome-cardinality",
+                },
+            ),
+        ));
+    }
+    for (expected, outcome) in expected_targets.iter().zip(&product.targets) {
+        let actual = outcome.target_profile();
+        if actual.profile_key() != expected.profile_key()
+            || actual.canonical_descriptor() != expected.canonical_descriptor()
+        {
+            return Err(CompileError::InvalidCompilerOutput(
+                crate::pipeline::CompilerOutputError::Program(
+                    crate::program::ProgramError::Structure {
+                        rule: "public-target-outcome-binding",
+                    },
+                ),
+            ));
+        }
+    }
+    let targets = product
         .targets
         .into_iter()
-        .map(|target| Compilation {
-            stated_contracts: target.stated_contracts,
-            resolved_contract: target.resolved_contract,
-            offered_providers: offered_providers.to_vec(),
-            target_profile_key: target.target_profile_key,
-            target_profile_descriptor: target.target_profile_descriptor,
-            feasibility_rule_set: target.feasibility_rule_set,
-            selected_alternative_id: target.portfolio.selection.selected_alternative_id,
-            alternatives: target.portfolio.alternatives,
-            explain: target.compilation_explain,
+        .map(|outcome| match outcome {
+            TargetCompilationOutcome::Compiled(target) => {
+                let target_profile = target.target_profile.clone();
+                let compilation = Compilation {
+                    stated_contracts: target.stated_contracts,
+                    resolved_contract: target.resolved_contract,
+                    offered_providers: Arc::clone(offered_providers),
+                    target_profile: target.target_profile,
+                    feasibility_rule_set: target.feasibility_rule_set,
+                    selected_alternative_id: target.portfolio.selection.selected_alternative_id,
+                    alternatives: target.portfolio.alternatives,
+                    explain: target.compilation_explain,
+                };
+                Ok(TargetCompilationResult {
+                    target_profile,
+                    outcome: Ok(compilation),
+                })
+            }
+            TargetCompilationOutcome::Rejected {
+                target_profile,
+                failure,
+            } => Ok(TargetCompilationResult {
+                target_profile,
+                outcome: Err(target_compile_failure(failure)?),
+            }),
         })
-        .collect()
+        .collect::<Result<Vec<_>, CompileError>>()?;
+    Ok(CompilationBatch { targets })
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::{
         CompilationRequest, CompileFailure, CompileFailureClass, CompileRequest, NumericalContract,
-        StrictF32NumericalContract, compile, compile_governed, compile_internal,
+        StrictF32NumericalContract, TargetCompileRefusal, TargetNumericalRefusalDisposition,
+        TargetNumericalRequirement, compile, compile_governed, compile_internal,
     };
+    use crate::target::{TargetProfile, TargetRequest};
     use tiler_ir::program::abi::ExprNode;
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
         SemanticProgramBuilder, StrictSerialF32Sum,
     };
     use tiler_ir::shape::{Axis, Shape};
+
+    fn governed_targets() -> TargetRequest {
+        TargetRequest::new([TargetProfile::governed()]).unwrap()
+    }
 
     /// Builds the bounded profile's scale-then-reduce program.
     ///
@@ -1006,10 +1791,8 @@ mod tests {
     #[test]
     fn a_governed_program_compiles_to_alternatives_carrying_kernels() {
         let program = semantic_program();
-        let compilations = compile_governed(&program, NumericalContract::StrictF32)
+        let compilation = compile_governed(&program, NumericalContract::StrictF32)
             .expect("the governed program compiles");
-        assert_eq!(compilations.len(), 1);
-        let compilation = &compilations[0];
         assert!(!compilation.target_profile_key().is_empty());
 
         let alternatives: Vec<_> = compilation.alternatives().collect();
@@ -1027,7 +1810,7 @@ mod tests {
         );
         for plan in &alternatives {
             assert!(
-                std::ptr::eq(plan.compilation(), compilation),
+                std::ptr::eq(plan.compilation(), &raw const compilation),
                 "every alternative retains the exact compilation that owns it",
             );
             assert!(
@@ -1060,9 +1843,8 @@ mod tests {
     #[test]
     fn the_selection_names_a_retained_alternative() {
         let program = semantic_program();
-        let compilations = compile_governed(&program, NumericalContract::StrictF32)
+        let compilation = compile_governed(&program, NumericalContract::StrictF32)
             .expect("the governed program compiles");
-        let compilation = &compilations[0];
         let selected = compilation.selected().expect("a selected alternative");
         assert!(
             compilation
@@ -1075,10 +1857,10 @@ mod tests {
     #[test]
     fn a_compilation_renders_its_explain_trace() {
         let program = semantic_program();
-        let compilations = compile_governed(&program, NumericalContract::StrictF32)
+        let compilation = compile_governed(&program, NumericalContract::StrictF32)
             .expect("the governed program compiles");
-        assert_eq!(compilations[0].explain().semantic_candidate_count(), 1);
-        let rendered = compilations[0].explain().render();
+        assert_eq!(compilation.explain().semantic_candidate_count(), 1);
+        let rendered = compilation.explain().render();
         assert!(
             rendered.starts_with("tiler-compilation-explain-v1 "),
             "the composite explanation renders in its deterministic form",
@@ -1155,10 +1937,16 @@ mod tests {
                 NumericalContract::FlushSubnormalsToZeroF32,
                 NumericalContract::StrictF32,
             ],
+            governed_targets(),
         )
         .expect("a non-empty preference is admitted");
         let compilations = compile(request).expect("the governed program compiles");
-        let compilation = compilations.first().expect("one governed target");
+        let compilation = compilations
+            .targets()
+            .next()
+            .expect("one governed target")
+            .outcome()
+            .expect("the governed target compiles");
 
         assert_eq!(
             compilation.stated_numerical_contract_keys().len(),
@@ -1166,7 +1954,10 @@ mod tests {
             "the whole stated list is retained, not only the winner",
         );
         assert_eq!(
-            compilation.stated_numerical_contract_keys()[0],
+            compilation
+                .stated_numerical_contract_keys()
+                .next()
+                .expect("the request stated a contract"),
             compilation.resolved_numerical_contract_key(),
             "the first acceptable contract is the one resolved on this profile",
         );
@@ -1179,22 +1970,163 @@ mod tests {
                 NumericalContract::StrictF32,
                 NumericalContract::FlushSubnormalsToZeroF32,
             ],
+            governed_targets(),
         )
         .expect("a non-empty preference is admitted");
         let reversed = compile(reversed).expect("the governed program compiles");
+        let reversed = reversed
+            .targets()
+            .next()
+            .expect("one governed target")
+            .outcome()
+            .expect("the governed target compiles");
         assert_ne!(
-            reversed[0].stated_numerical_contract_keys(),
-            compilation.stated_numerical_contract_keys(),
+            reversed
+                .stated_numerical_contract_keys()
+                .collect::<Vec<_>>(),
+            compilation
+                .stated_numerical_contract_keys()
+                .collect::<Vec<_>>(),
             "a reordered preference is a different stated list",
         );
 
         // An empty list has no default and no implicit strictest reading.
-        let empty = CompileRequest::preferring(&program, [])
+        let empty = CompileRequest::preferring(&program, [], governed_targets())
             .expect_err("an empty preference states no contract");
         assert!(matches!(
             empty.class(),
             CompileFailureClass::InvalidRequest { .. }
         ));
+    }
+
+    #[test]
+    fn target_outcomes_preserve_request_order_cardinality_and_profile_identity() {
+        let program = semantic_program();
+        let supported = TargetProfile::governed_with_key_for_test("test.supported-target.v1");
+        let unsupported =
+            TargetProfile::without_numerical_declarations_for_test("test.unsupported-target.v1");
+        let targets = TargetRequest::new([supported.clone(), unsupported.clone()]).unwrap();
+
+        let batch = compile(CompileRequest::new(
+            &program,
+            NumericalContract::StrictF32,
+            targets,
+        ))
+        .expect("a target-local refusal does not discard the other target");
+        let outcomes: Vec<_> = batch.targets().collect();
+        assert_eq!(outcomes.len(), 2);
+        assert_eq!(outcomes[0].target_profile(), &supported);
+        assert_eq!(outcomes[1].target_profile(), &unsupported);
+
+        let compilation = outcomes[0]
+            .outcome()
+            .expect("the first profile supports strict f32");
+        assert_eq!(compilation.target_profile(), outcomes[0].target_profile());
+        let failure = outcomes[1]
+            .outcome()
+            .expect_err("the sparse profile has no strict-f32 declaration");
+        assert_eq!(failure.class(), CompileFailureClass::NoFeasiblePlan);
+        assert!(
+            failure.explain().is_none(),
+            "contract honourability is checked before a target trace is opened"
+        );
+        let TargetCompileRefusal::NumericalContract(refusal) = failure
+            .refusal()
+            .expect("a pre-trace contract refusal retains typed detail")
+        else {
+            panic!("the refusal must retain numerical-contract detail");
+        };
+        assert_eq!(refusal.target_profile(), unsupported.profile_key());
+        let [rejection] = refusal.rejections() else {
+            panic!("the one-entry preference has exactly one rejection");
+        };
+        assert_eq!(
+            rejection.contract_key(),
+            StrictF32NumericalContract::governed().key
+        );
+        assert_eq!(
+            rejection.disposition(),
+            &TargetNumericalRefusalDisposition::Unknown
+        );
+        let TargetNumericalRequirement::InputSubnormals { subject, required } =
+            rejection.requirement()
+        else {
+            panic!("canonical-first strict refusal is input subnormals");
+        };
+        assert_eq!(subject.resolved_type(), &F32::resolved_type());
+        assert_eq!(*required, tiler_ir::schedule::SubnormalMode::Preserve);
+    }
+
+    #[test]
+    fn public_conversion_rejects_mutated_target_cardinality_and_binding() {
+        let program = semantic_program();
+        let first = TargetProfile::governed_with_key_for_test("test.binding-first.v1");
+        let second = TargetProfile::governed_with_key_for_test("test.binding-second.v1");
+        let expected = vec![first.clone(), second.clone()];
+        let product = || {
+            let mut request = CompilationRequest::governed_under(
+                &program,
+                StrictF32NumericalContract::governed(),
+            );
+            request.target_profiles = expected.clone();
+            compile_internal(request).expect("both governed-equivalent profiles compile")
+        };
+        let assert_rule = |failure: crate::pipeline::CompileError, expected_rule| {
+            assert!(matches!(
+                failure,
+                crate::pipeline::CompileError::InvalidCompilerOutput(
+                    crate::pipeline::CompilerOutputError::Program(
+                        crate::program::ProgramError::Structure { rule }
+                    )
+                ) if rule == expected_rule
+            ));
+        };
+
+        let mut missing_product = product();
+        missing_product.targets.pop();
+        let missing = super::into_compilation_batch(missing_product, &expected, &Arc::from([]))
+            .expect_err("a missing target outcome is invalid compiler output");
+        assert_rule(missing, "public-target-outcome-cardinality");
+
+        let mut extra = product();
+        extra.targets.push(extra.targets[0].clone());
+        let extra = super::into_compilation_batch(extra, &expected, &Arc::from([]))
+            .expect_err("an extra target outcome is invalid compiler output");
+        assert_rule(extra, "public-target-outcome-cardinality");
+
+        let mut swapped = product();
+        swapped.targets.swap(0, 1);
+        let swapped = super::into_compilation_batch(swapped, &expected, &Arc::from([]))
+            .expect_err("equal-cardinality swapped outcomes are invalid compiler output");
+        assert_rule(swapped, "public-target-outcome-binding");
+
+        let mut substituted = product();
+        match &mut substituted.targets[0] {
+            crate::pipeline::TargetCompilationOutcome::Compiled(target) => {
+                target.target_profile = second.clone();
+            }
+            crate::pipeline::TargetCompilationOutcome::Rejected { target_profile, .. } => {
+                *target_profile = second.clone();
+            }
+        }
+        let substituted = super::into_compilation_batch(substituted, &expected, &Arc::from([]))
+            .expect_err("a substituted target key is invalid compiler output");
+        assert_rule(substituted, "public-target-outcome-binding");
+
+        let same_key_changed_descriptor =
+            TargetProfile::with_grid_axis_limit_for_test(first.profile_key().as_str(), 65_534);
+        let mut mismatched = product();
+        match &mut mismatched.targets[0] {
+            crate::pipeline::TargetCompilationOutcome::Compiled(target) => {
+                target.target_profile = same_key_changed_descriptor;
+            }
+            crate::pipeline::TargetCompilationOutcome::Rejected { target_profile, .. } => {
+                *target_profile = same_key_changed_descriptor;
+            }
+        }
+        let mismatched = super::into_compilation_batch(mismatched, &expected, &Arc::from([]))
+            .expect_err("a same-key descriptor substitution is invalid compiler output");
+        assert_rule(mismatched, "public-target-outcome-binding");
     }
 
     /// The failure vocabulary keeps a Tiler defect distinct from a refused
@@ -1249,8 +2181,13 @@ mod tests {
         // bounded profile implements for no region, so every plan depends on a
         // region that was never formed.
         request.budgets.region_candidates_per_seed = 0;
+        let product =
+            compile_internal(request).expect("target-local failure is retained as an outcome");
         let failure = CompileFailure::from(
-            compile_internal(request).expect_err("a zero region budget has no complete plan"),
+            product.targets[0]
+                .failure()
+                .expect("a zero region budget has no complete plan")
+                .clone(),
         );
 
         assert_eq!(failure.class(), CompileFailureClass::NoFeasiblePlan);
@@ -1311,8 +2248,7 @@ mod tests {
     #[test]
     fn a_compilation_names_its_target_profile_and_its_feasibility_rules() {
         let program = semantic_program();
-        let compilations = compile_governed(&program, NumericalContract::StrictF32).unwrap();
-        let compilation = compilations.first().expect("one governed target");
+        let compilation = compile_governed(&program, NumericalContract::StrictF32).unwrap();
 
         // Both halves of the profile reference, neither invented by a consumer.
         assert!(!compilation.target_profile_key().is_empty());
@@ -1356,8 +2292,7 @@ mod tests {
     #[test]
     fn an_alternative_names_its_capabilities_and_exposes_its_abi_inputs() {
         let program = semantic_program();
-        let compilations = compile_governed(&program, NumericalContract::StrictF32).unwrap();
-        let compilation = compilations.first().expect("one governed target");
+        let compilation = compile_governed(&program, NumericalContract::StrictF32).unwrap();
         let selected = compilation.selected().expect("a selected alternative");
 
         // Every resolved capability is named by a governed key, never blank.

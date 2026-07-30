@@ -10,15 +10,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::schedule::ArithmeticType;
+use tiler_ir::semantic::ResolvedValueType;
 
 use crate::fusion::FusionNumericalProof;
 use crate::request::{LoweringProviderIdentity, VerifiedTargetRequest};
 
-// Schema v5 appends opaque-call and provider subject kinds, the NotApplicable
+// Schema v6 adds the complete resolved dtype to numerical honourability; v5
+// appended opaque-call and provider subject kinds, the NotApplicable
 // check class and disposition, and the arithmetic dtype to numerical
-// honourability. Every earlier tag retains its v4 value. Renderer v4 publishes
-// the new names, disposition, and dtype-qualified honourability spelling.
-pub(crate) const EXPLAIN_SCHEMA_VERSION: u32 = 5;
+// honourability. Every earlier tag retains its v4 value. Renderer v4 already
+// published the complete nominal dtype spelling and remains unchanged.
+pub(crate) const EXPLAIN_SCHEMA_VERSION: u32 = 6;
 pub(crate) const EXPLAIN_RENDERER_VERSION: u32 = 4;
 const COMPILATION_EXPLAIN_SCHEMA_VERSION: u32 = 1;
 const COMPILATION_EXPLAIN_RENDERER_VERSION: u32 = 1;
@@ -639,6 +641,8 @@ pub(crate) enum ExplainEvent {
         dimension: PredicateKey,
         /// Arithmetic dtype in which the behaviour must be honoured.
         arithmetic: ArithmeticType,
+        /// Complete resolved semantic dtype subject.
+        resolved_type: ResolvedValueType,
         required: ReasonCode,
         outcome: HonourabilityOutcome,
         profile: SubjectKey,
@@ -2181,10 +2185,19 @@ fn render_event(output: &mut String, event: &ExplainEvent) {
         ExplainEvent::NumericalHonourability {
             dimension,
             arithmetic,
+            resolved_type,
             required,
             outcome,
             profile,
-        } => render_honourability(output, dimension, *arithmetic, required, outcome, profile),
+        } => render_honourability(
+            output,
+            dimension,
+            *arithmetic,
+            resolved_type,
+            required,
+            outcome,
+            profile,
+        ),
         ExplainEvent::DeferredCapability { predicate, reason } => {
             let _ = write!(
                 output,
@@ -2275,19 +2288,22 @@ fn render_cost(
 fn render_honourability(
     output: &mut String,
     dimension: &PredicateKey,
-    arithmetic: ArithmeticType,
+    _arithmetic: ArithmeticType,
+    resolved_type: &ResolvedValueType,
     required: &ReasonCode,
     outcome: &HonourabilityOutcome,
     profile: &SubjectKey,
 ) {
     use fmt::Write as _;
-    let _ = write!(
-        output,
-        "honourability:{}:{}:{}:",
-        dimension.as_str(),
-        arithmetic.canonical_type_key(),
-        required.as_str()
-    );
+    let _ = write!(output, "honourability:{}:", dimension.as_str());
+    if let Some(key) = resolved_type.nominal_key() {
+        let _ = write!(output, "{key}");
+    } else {
+        for byte in resolved_type.canonical_encoding().as_bytes() {
+            let _ = write!(output, "{byte:02x}");
+        }
+    }
+    let _ = write!(output, ":{}:", required.as_str());
     match outcome {
         HonourabilityOutcome::Honoured { means } => {
             let _ = write!(output, "honoured:{}", means.as_str());
@@ -2650,10 +2666,19 @@ fn encode_event(bytes: &mut Vec<u8>, event: &ExplainEvent) {
         ExplainEvent::NumericalHonourability {
             dimension,
             arithmetic,
+            resolved_type,
             required,
             outcome,
             profile,
-        } => encode_honourability(bytes, dimension, *arithmetic, required, outcome, profile),
+        } => encode_honourability(
+            bytes,
+            dimension,
+            *arithmetic,
+            resolved_type,
+            required,
+            outcome,
+            profile,
+        ),
         ExplainEvent::DeferredCapability { predicate, reason } => {
             bytes.push(4);
             push_slice(bytes, predicate.as_str().as_bytes());
@@ -2740,6 +2765,7 @@ fn encode_honourability(
     bytes: &mut Vec<u8>,
     dimension: &PredicateKey,
     arithmetic: ArithmeticType,
+    resolved_type: &ResolvedValueType,
     required: &ReasonCode,
     outcome: &HonourabilityOutcome,
     profile: &SubjectKey,
@@ -2747,6 +2773,7 @@ fn encode_honourability(
     bytes.push(10);
     push_slice(bytes, dimension.as_str().as_bytes());
     bytes.push(arithmetic.tag());
+    push_slice(bytes, resolved_type.canonical_encoding().as_bytes());
     push_slice(bytes, required.as_str().as_bytes());
     match outcome {
         HonourabilityOutcome::Honoured { means } => {
@@ -2977,7 +3004,7 @@ mod tests {
 
     #[test]
     fn opaque_call_vocabulary_is_append_only_and_versioned() {
-        assert_eq!(EXPLAIN_SCHEMA_VERSION, 5);
+        assert_eq!(EXPLAIN_SCHEMA_VERSION, 6);
         assert_eq!(EXPLAIN_RENDERER_VERSION, 4);
         assert_eq!(subject_kind_tag(SubjectKind::Alternative), 12);
         assert_eq!(subject_kind_tag(SubjectKind::OpaqueCall), 13);
@@ -3014,10 +3041,11 @@ mod tests {
     }
 
     #[test]
-    fn honourability_arithmetic_type_is_canonical_identity() {
-        let event = |arithmetic| ExplainEvent::NumericalHonourability {
+    fn honourability_complete_dtype_is_canonical_identity() {
+        let event = |arithmetic, resolved_type| ExplainEvent::NumericalHonourability {
             dimension: PredicateKey::new("numerics.contraction").unwrap(),
             arithmetic,
+            resolved_type,
             required: ReasonCode::new("forbidden").unwrap(),
             outcome: HonourabilityOutcome::Unhonourable {
                 means: ReasonCode::new("unsupported").unwrap(),
@@ -3025,15 +3053,32 @@ mod tests {
             },
             profile: SubjectKey::new("tiler.test.profile.v1").unwrap(),
         };
-        let f16 = event(ArithmeticType::F16);
-        let f32 = event(ArithmeticType::F32);
+        let f16 = event(
+            ArithmeticType::F16,
+            ResolvedValueType::nominal(
+                tiler_ir::semantic::TypeKey::new("tiler", "f16", 1).unwrap(),
+            ),
+        );
+        let f32 = event(ArithmeticType::F32, F32::resolved_type());
+        let neighbouring_f32 = event(
+            ArithmeticType::F32,
+            ResolvedValueType::nominal(
+                tiler_ir::semantic::TypeKey::new("test", "neighbouring-f32", 1).unwrap(),
+            ),
+        );
         let mut f16_bytes = Vec::new();
         let mut f32_bytes = Vec::new();
+        let mut neighbouring_f32_bytes = Vec::new();
         encode_event(&mut f16_bytes, &f16);
         encode_event(&mut f32_bytes, &f32);
+        encode_event(&mut neighbouring_f32_bytes, &neighbouring_f32);
         assert_ne!(
             f16_bytes, f32_bytes,
             "two dtype-specific honourability claims shared canonical identity"
+        );
+        assert_ne!(
+            f32_bytes, neighbouring_f32_bytes,
+            "same-arithmetic neighbouring resolved types shared explain identity"
         );
         let mut rendered = String::new();
         render_event(&mut rendered, &f16);
@@ -3159,7 +3204,18 @@ mod tests {
                 // Rebaselined when each target honourability declaration gained
                 // its structured, versioned source provenance and the request
                 // subject encoded the canonical deduplicated source table.
-                "tiler-explain-v4 request=f11ac7524742db81\n",
+                // Rebaselined from `f11ac7524742db81` when the complete target
+                // declaration gained distinct external normative provenance
+                // and sparse quantitative rows, each bound to its own source.
+                // The governed profile states the same seven facts, but the
+                // request now commits to every row binding rather than one
+                // shared-source shortcut.
+                // Rebaselined again when each numerical row began binding its
+                // complete resolved dtype subject and governed F32 dispatch
+                // became an explicit phase-qualified target fact. Both are
+                // request-subject facts, so retaining the old digest would
+                // collide targets with different feasibility or dispatch.
+                "tiler-explain-v4 request=a3aff309fd6cc3ba\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

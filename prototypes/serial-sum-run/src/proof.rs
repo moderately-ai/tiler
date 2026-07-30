@@ -1799,10 +1799,9 @@ fn prove_member(
     // The program this build derives for the class, used to compose the host
     // environment and to name what the artifact claims to package.
     let program = serial_sum_program(ROWS, columns);
-    let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
+    let compilation = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
         .map_err(ProofError::Compile)?;
-    let compilation = compilations.first().ok_or(ProofError::NoTarget)?;
-    let environment = host_environment(compilation)?;
+    let environment = host_environment(&compilation)?;
 
     let (expected_entries, expected_shared) = expected_shape(role);
     let mut proved = 0_usize;
@@ -1921,9 +1920,8 @@ fn run() -> Result<(), ProofError> {
     println!("device: {}", device.name());
 
     // ---- the direct path -------------------------------------------------
-    let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
+    let compilation = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
         .map_err(ProofError::Compile)?;
-    let compilation = compilations.first().ok_or(ProofError::NoTarget)?;
     let selected = compilation.selected().ok_or(ProofError::NoSelection)?;
     println!("selected alternative: {}", selected.stable_id());
 
@@ -1963,7 +1961,7 @@ fn run() -> Result<(), ProofError> {
     );
     let (rows, columns, abi) = bind_interface(&decoded)?;
     println!("the artifact declares a {rows} by {columns} input");
-    let environment = host_environment(compilation)?;
+    let environment = host_environment(&compilation)?;
 
     // Established before the positive route is claimed: a loader that accepted
     // these bytes would say nothing about what it refuses, and the refusals are
@@ -1986,14 +1984,12 @@ fn run() -> Result<(), ProofError> {
     // is the one this build derives for the shape the artifact declares, and
     // that is the one binding between the two processes a sidecar cannot forge.
     let envelope_program = serial_sum_program(rows, columns);
-    let envelope_compilations = compile_governed(
+    let envelope_compilation = compile_governed(
         &envelope_program,
         NumericalContract::FlushSubnormalsToZeroF32,
     )
     .map_err(ProofError::Compile)?;
-    let envelope_plan = envelope_compilations
-        .first()
-        .ok_or(ProofError::NoTarget)?
+    let envelope_plan = envelope_compilation
         .selected()
         .ok_or(ProofError::NoSelection)?;
     // Bound rather than chained: the ABI view borrows the plan alternative, so a
@@ -2174,7 +2170,6 @@ enum ProofError {
     },
     SidecarAssociation(ProofAssociationError),
     Compile(CompileFailure),
-    NoTarget,
     NoSelection,
     Emit,
     UnrealizableNumerics,
@@ -2290,7 +2285,6 @@ impl fmt::Display for ProofError {
                 "the proof sidecar does not describe this envelope: {cause}"
             ),
             Self::Compile(failure) => write!(formatter, "the program did not compile: {failure:?}"),
-            Self::NoTarget => formatter.write_str("the compilation returned no target profile"),
             Self::NoSelection => formatter.write_str("the portfolio retained no selected plan"),
             Self::Emit => formatter.write_str("the selected kernels have no Metal realization"),
             Self::UnrealizableNumerics => formatter
@@ -2560,15 +2554,14 @@ mod tests {
     /// out of the envelope would make the corresponding probe a tautology.
     fn fixture() -> Fixture {
         let semantic = serial_sum_program(ROWS, FIXTURE_COLUMNS);
-        let compilations = compile_governed(&semantic, NumericalContract::FlushSubnormalsToZeroF32)
+        let compilation = compile_governed(&semantic, NumericalContract::FlushSubnormalsToZeroF32)
             .expect("the governed program compiles");
-        let compilation = compilations.first().expect("one governed target profile");
         let plan = compilation.selected().expect("a selected plan alternative");
 
-        let artifact = assemble(&semantic, compilation, plan);
+        let artifact = assemble(&semantic, &compilation, plan);
         let bytes = artifact.encode().expect("the envelope encodes");
         let expected = artifact.canonical_identity().as_bytes().to_vec();
-        let environment = host_environment(compilation).expect("the host environment composes");
+        let environment = host_environment(&compilation).expect("the host environment composes");
 
         let decoded = DecodedProgram::decode(&bytes).expect("the assembled envelope decodes");
         let (_, _, abi) = bind_interface(&decoded).expect("the declared interface binds");
@@ -3395,9 +3388,8 @@ mod tests {
     #[test]
     fn a_multi_stage_route_preflights_every_entry_and_pairs_its_shared_storage() {
         let semantic = serial_sum_program(ROWS, FIXTURE_COLUMNS);
-        let compilations = compile_governed(&semantic, NumericalContract::FlushSubnormalsToZeroF32)
+        let compilation = compile_governed(&semantic, NumericalContract::FlushSubnormalsToZeroF32)
             .expect("the governed program compiles");
-        let compilation = compilations.first().expect("one governed target profile");
         let materialized = compilation
             .alternatives()
             .find(|plan| !plan.is_fused())
@@ -3407,10 +3399,10 @@ mod tests {
             "the materialized plan dispatches more than one stage",
         );
 
-        let artifact = assemble(&semantic, compilation, materialized);
+        let artifact = assemble(&semantic, &compilation, materialized);
         let bytes = artifact.encode().expect("the envelope encodes");
         let expected = artifact.canonical_identity().as_bytes().to_vec();
-        let environment = host_environment(compilation).expect("the host environment composes");
+        let environment = host_environment(&compilation).expect("the host environment composes");
         let mut decoded = DecodedProgram::decode(&bytes).expect("the multi-stage envelope decodes");
         let (_, _, abi) = bind_interface(&decoded).expect("the declared interface binds");
 
@@ -3482,20 +3474,19 @@ mod tests {
     #[test]
     fn a_partial_window_route_publishes_and_plans_the_artifact_offset() {
         let semantic = serial_sum_program(ROWS, FIXTURE_COLUMNS);
-        let compilations = compile_governed(&semantic, NumericalContract::FlushSubnormalsToZeroF32)
+        let compilation = compile_governed(&semantic, NumericalContract::FlushSubnormalsToZeroF32)
             .expect("the governed program compiles");
-        let compilation = compilations.first().expect("one governed target profile");
         let materialized = compilation
             .alternatives()
             .find(|plan| !plan.is_fused())
             .expect("the materialized reference alternative is retained");
         let program = partial_window_program(&semantic, materialized.abi().kernel_program());
-        let artifact = assemble_program(&semantic, compilation, materialized, &program);
+        let artifact = assemble_program(&semantic, &compilation, materialized, &program);
         let bytes = artifact
             .encode()
             .expect("the partial-window envelope encodes");
         let expected = artifact.canonical_identity().as_bytes().to_vec();
-        let environment = host_environment(compilation).expect("the host environment composes");
+        let environment = host_environment(&compilation).expect("the host environment composes");
         let mut decoded =
             DecodedProgram::decode(&bytes).expect("the partial-window envelope decodes");
         let (_, _, abi) = bind_interface(&decoded).expect("the declared interface binds");

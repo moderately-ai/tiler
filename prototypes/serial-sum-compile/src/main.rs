@@ -304,9 +304,8 @@ fn run() -> Result<(), ProducerError> {
         // Stated, not defaulted. The strict contract is unhonourable on every
         // governed Apple family, so this producer says which contract its
         // program means rather than discovering that by reading a rejection.
-        let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
+        let compilation = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
             .map_err(ProducerError::Compile)?;
-        let compilation = compilations.first().ok_or(ProducerError::NoTarget)?;
         println!(
             "{class} (reduced extent {columns}): target profile {}",
             compilation.target_profile_key(),
@@ -445,7 +444,6 @@ enum ProducerError {
     Usage,
     Write(String, std::io::Error),
     Compile(CompileFailure),
-    NoTarget,
     NoSelection,
     NoMaterializedAlternative,
     Plan(MetalPlanBuildError),
@@ -463,7 +461,6 @@ impl fmt::Display for ProducerError {
             ),
             Self::Write(path, cause) => write!(formatter, "{path} could not be written: {cause}"),
             Self::Compile(failure) => write!(formatter, "the program did not compile: {failure:?}"),
-            Self::NoTarget => formatter.write_str("the compilation returned no target profile"),
             Self::NoSelection => formatter.write_str("the portfolio retained no selected plan"),
             Self::NoMaterializedAlternative => formatter.write_str(
                 "the portfolio retained no materialized alternative, so the proof cannot compare \
@@ -494,11 +491,17 @@ mod tests {
         CompileFailureClass, CompileRequest, InstalledCapabilities, compile,
     };
     use tiler_compiler::session::{NumericalContract, compile_governed};
+    use tiler_compiler::target::{TargetProfile, TargetRequest};
     use tiler_ir::index::FrozenScalarRegistry;
     use tiler_ir::semantic::multiply_f32_op;
     use tiler_metal::emit::emit_translation_unit;
     use tiler_metal_aot::driver::Toolchain;
     use tiler_metal_aot::input::{NumericalRealization, OptimizationLevel};
+
+    fn governed_targets() -> TargetRequest {
+        TargetRequest::new([TargetProfile::governed()])
+            .expect("the governed singleton target request is valid")
+    }
 
     /// The offline path composes as far as deterministic MSL, without a
     /// toolchain.
@@ -509,9 +512,9 @@ mod tests {
     #[test]
     fn the_selected_program_emits_deterministic_metal_source() {
         let program = serial_sum_program(ROWS, COLUMNS);
-        let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
+        let compilation = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
             .expect("the governed program compiles");
-        let selected = compilations[0].selected().expect("a selected alternative");
+        let selected = compilation.selected().expect("a selected alternative");
         let kernels: Vec<_> = selected.kernels().iter().collect();
 
         let first = emit_translation_unit(&kernels, &target_facts()).expect("the kernels emit");
@@ -837,9 +840,9 @@ mod tests {
         ));
         let cache = ExpansionCache::open(directory.join("cache"));
         let program = serial_sum_program(ROWS, COLUMNS);
-        let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
+        let compilation = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
             .expect("the governed program compiles");
-        let selected = compilations[0].selected().expect("a selected alternative");
+        let selected = compilation.selected().expect("a selected alternative");
         let accepted = tiler_build::accept_or_publish_metal_plan(
             &cache,
             &Toolchain::system(),
@@ -889,14 +892,23 @@ mod tests {
             .expect("the governed capabilities install onto a caller's builder");
         let installed = InstalledCapabilities::installed(builder.freeze(), scalars);
 
-        let compilations = compile(
-            CompileRequest::new(&program, NumericalContract::FlushSubnormalsToZeroF32)
-                .with_capabilities(installed),
+        let batch = compile(
+            CompileRequest::new(
+                &program,
+                NumericalContract::FlushSubnormalsToZeroF32,
+                governed_targets(),
+            )
+            .with_capabilities(installed),
         )
         .expect("a caller-installed registry compiles the governed program");
-        assert_eq!(compilations.len(), 1);
+        let outcomes: Vec<_> = batch.targets().collect();
+        assert_eq!(outcomes.len(), 1);
         assert!(
-            compilations[0].selected().is_some(),
+            outcomes[0]
+                .outcome()
+                .expect("the governed target compiles")
+                .selected()
+                .is_some(),
             "the caller's own registry resolved every occurrence",
         );
     }
@@ -925,8 +937,12 @@ mod tests {
         // compilation, and unwrapping it on failure renders megabytes of plan
         // where one sentence is wanted.
         let outcome = compile(
-            CompileRequest::new(&program, NumericalContract::FlushSubnormalsToZeroF32)
-                .with_capabilities(installed),
+            CompileRequest::new(
+                &program,
+                NumericalContract::FlushSubnormalsToZeroF32,
+                governed_targets(),
+            )
+            .with_capabilities(installed),
         );
         let Err(failure) = outcome else {
             panic!(
@@ -1010,9 +1026,8 @@ mod tests {
     #[test]
     fn metallib_byte_reproducibility_is_measured_and_recorded() {
         let program = serial_sum_program(ROWS, COLUMNS);
-        let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
+        let compilation = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
             .expect("the governed program compiles");
-        let compilation = compilations.first().expect("one governed target");
         let selected = compilation.selected().expect("a selected alternative");
         let kernels: Vec<_> = selected.kernels().iter().collect();
 
@@ -1047,9 +1062,9 @@ mod tests {
         tiler_build::CompiledMetalPayload,
     ) {
         let program = serial_sum_program(ROWS, COLUMNS);
-        let compilations = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
+        let compilation = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
             .expect("the governed program compiles");
-        let plan = compilations[0].selected().expect("a selected alternative");
+        let plan = compilation.selected().expect("a selected alternative");
         let kernels: Vec<_> = plan.kernels().iter().collect();
         super::emit_and_compile(&kernels)
     }
@@ -1074,7 +1089,7 @@ mod tests {
 
         let strict = compile_governed(&program, NumericalContract::StrictF32)
             .expect("the strict program still compiles");
-        let strict_plan = strict[0].selected().expect("a selected alternative");
+        let strict_plan = strict.selected().expect("a selected alternative");
         let strict_kernels: Vec<_> = strict_plan.kernels().iter().collect();
         let strict_unit =
             emit_translation_unit(&strict_kernels, &target_facts()).expect("the kernels emit");
@@ -1093,7 +1108,7 @@ mod tests {
 
         let flushing = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
             .expect("the flush-accepting program compiles");
-        let flush_plan = flushing[0].selected().expect("a selected alternative");
+        let flush_plan = flushing.selected().expect("a selected alternative");
         let flush_kernels: Vec<_> = flush_plan.kernels().iter().collect();
         let flush_unit =
             emit_translation_unit(&flush_kernels, &target_facts()).expect("the kernels emit");

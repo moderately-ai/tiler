@@ -36,6 +36,7 @@ mod request;
 mod rewrite;
 mod selection;
 pub mod session;
+pub mod target;
 #[cfg(test)]
 mod workcount;
 
