@@ -1,7 +1,7 @@
 ---
 id: define-first-metal-lm-workload
 title: Define the first representative Metal language-model workload
-status: awaiting-decision
+status: todo
 priority: p1
 dependencies: [scope-optimized-metal-lm-inference]
 related: [derive-transformer-operation-and-shape-surface, design-model-level-qualification-and-optimization, exercise-qwen35-hybrid-text-tower-after-the-dense-vertical]
@@ -10,7 +10,15 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [research, planning, language-model, workload, metal, inference]
 ---
-## Decision needed (2026-07-28)
+## Outcome (2026-07-30)
+
+**Selected: Option B, `Qwen/Qwen3-0.6B-Base` at immutable revision `da87bfb608c14b7cf20ba1ce41287e8de496c0cd`.** The first complete language-model workload is the pinned dense Qwen checkpoint widened to F32, batch 1, on one Apple GPU, with bounded prompt, context, and decode lengths. This selection makes the first delivery graph prove the reusable modern dense-decoder surface—RMSNorm, Q/K RMSNorm, SwiGLU, RoPE, GQA, ordinary KV cache, and head dimensions independent of `hidden_size / heads`—without importing MoE, vision, hybrid recurrence, quantization, chat templates, sampling, or thinking-mode semantics.
+
+GPT-2-shaped blocks remain useful as narrow diagnostic fixtures because their smaller operation surface makes failures easier to localize, but they are not the representative model workload and cannot weaken the Qwen-derived delivery graph. `exercise-qwen35-hybrid-text-tower-after-the-dense-vertical` owns the subsequent hybrid architecture stress after dense model-level qualification.
+
+The decision releases this ticket to finish its bounded workload profile and durable success envelope; it does not by itself satisfy the closing conditions.
+
+## Accepted decision record (2026-07-28)
 
 **The question, atomic:** which exact model is the first workload — a GPT-2-class checkpoint or `Qwen/Qwen3-0.6B-Base` at immutable revision `da87bfb608c14b7cf20ba1ce41287e8de496c0cd`? Both survivors are small decoder-only transformers executed in `f32`, batch 1, on one Apple GPU; they differ only in operation and shape surface. The earlier generic small-Llama option is superseded by the exact dense Qwen checkpoint because Qwen covers the same RMSNorm, SwiGLU, RoPE, GQA and ordinary KV-cache families while adding Q/K normalization and an independent 128-wide head dimension, and it has direct local Candle evidence.
 
@@ -21,11 +29,11 @@ tags: [research, planning, language-model, workload, metal, inference]
 
 **Recommendation: Option B, the pinned Qwen3-0.6B base checkpoint.** L2's derived surface is inherited by every rung above it, so re-deriving RMSNorm, RoPE, SwiGLU, GQA and Q/K normalization later is the expensive mistake. The checkpoint is still a conventional dense transformer: it does not force MoE, vision, hybrid recurrence, sliding-window attention, quantization, chat templates, sampling or thinking-mode semantics. The counterpoint is real: GPT-2 makes L3 and L4 strictly easier to specify and failures easier to attribute.
 
-**This is a product choice, not a correctness one** — both options are executable and neither is blocked by evidence. It is put to Tom rather than decided here for that reason.
+**This was a product choice, not a correctness one** — both options were executable and neither was blocked by evidence. Tom delegated the final selection on 2026-07-30, and the outcome above records it.
 
 **The activation trigger has fired.** `scope-optimized-metal-lm-inference` is `done`, so the "do not start this before its trigger" instruction recorded below is satisfied and no longer a stop sign; this ticket is waiting on the answer above and on nothing else.
 
-**One thing the decision does not settle, whichever way it goes.** The exact checkpoint's configuration — layer count, head count, head dimension, context length, vocabulary — must be read from the actual model config before L2 derives shapes from it. Nothing here asserts those numbers, and they should not be taken from memory.
+**One thing the decision did not settle by itself.** The exact checkpoint's configuration — layer count, head count, head dimension, context length, vocabulary — had to be read from the actual model config before L2 could derive shapes from it. The Qwen assessment below records those facts from the pinned revision; they must not be taken from memory.
 
 ## Qwen assessment added 2026-07-30
 
@@ -123,6 +131,6 @@ A **small decoder-only transformer, executed in `f32`, single sequence, on one A
 - **Success measures at the model boundary:** predeclared comparison of reference logits at prefill and every decode step under the effective F32 numerical contract, greedy token-sequence equality with an explicit tie policy for a fixed prompt, and decode latency per token plus prefill latency, both as min-of-N on a quiet host. Not a throughput figure, which would need batching.
 - **Excluded, per the ladder's deferral table:** training, distributed execution, speculative decoding, unsupported architectures, unbounded dynamic shapes.
 
-### The one genuine choice, which is Tom's
+### The one genuine choice, now resolved
 
-Two exact candidates survive the corrected elimination and encode different valid priorities: a GPT-2-class checkpoint and pinned Qwen3-0.6B-Base. Both are small decoder-only transformers in `f32`; they differ in operation and shape surface. The choice, its enables and prevents, the recommendation, and the counterpoint are stated at the top of this file under **Decision needed**.
+Two exact candidates survived the corrected elimination and encoded different valid priorities: a GPT-2-class checkpoint and pinned Qwen3-0.6B-Base. Both are small decoder-only transformers in `f32`; they differ in operation and shape surface. The accepted Qwen selection, its enables and prevents, the recommendation, and the counterpoint are stated at the top of this file.

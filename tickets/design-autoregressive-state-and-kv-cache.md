@@ -57,6 +57,6 @@ Do not start this before its trigger fires. Each rung's scope is derived from th
 
 ## Graph maintenance (applies to every LM-ladder rung)
 
-- **These rungs consume Tom's workload selection** (`define-first-metal-lm-workload`, awaiting-decision). If the workload changes after this analysis starts, the analysis is re-derived, not patched — say which parts survived and which did not.
+- **This rung consumes the selected workload**: pinned `Qwen/Qwen3-0.6B-Base` widened to F32, batch 1, with bounded prompt, context, and decode lengths. Its first state contract is an ordinary dense-decoder KV cache; recurrent and convolution state remain owned by the later Qwen3.5 hybrid ticket. If the workload is superseded after this analysis starts, the analysis is re-derived, not patched — say which parts survived and which did not.
 - **Every requirement this analysis finds that Tiler cannot express today becomes a capability ticket**, filed with the exact operation/shape/dtype evidence from the trace, linked here and to the roadmap rung. Do not widen this ticket to implement any of them.
 - **On close, update the ladder table in `docs/roadmap.md`** — its rung for this ticket currently reads "none", and nothing updates it automatically (the docs have no gate; a reader is the only check).
