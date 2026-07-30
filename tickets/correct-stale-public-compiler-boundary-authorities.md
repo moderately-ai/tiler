@@ -4,7 +4,7 @@ title: Correct stale public compiler boundary authorities
 status: todo
 priority: p1
 dependencies: []
-related: [prototype-public-compiler-api, wire-capability-and-refinement-into-compile-path, correct-the-stale-post-vertical-implementation-status]
+related: [prototype-public-compiler-api, wire-capability-and-refinement-into-compile-path, correct-the-stale-post-vertical-implementation-status, record-the-arithmetic-type-in-the-numerical-honourability-contract]
 scopes: [contracts/optimizer, contracts/foundation, contracts/numerics, contracts/decisions, research/program-planning, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
@@ -25,6 +25,8 @@ The compiler, extension, and correctness contracts describe the implemented publ
 - Read every edited contract and source file in full, then derive the public surface from `tiler-compiler` construction and call sites rather than this ticket.
 - Correct the stale passages located by `rg -n -i 'no public compile entry|public compiler.*later|compiler boundary is private|Nor does it expose the request|does not export its own entry point|request boundary is still crate-private|no way to configure it|installation is still not reachable|private bounded compiler slice|current executable model recognizes one exact graph' docs crates/tiler-compiler/src/session.rs`, including the current-tense claims in ADRs 0075, 0076, and 0078 and `general-compilation-boundary.md`.
 - Preserve the exact support limit: one-input/one-output bounded F32 pointwise or scale-bias-strict-sum programs, caller-installed index-access capabilities, internal target-profile choice, and no ordinary scalar-lowering-provider consumption.
+- Correct `docs/numerical-semantics.md` and ADR 0076 to state that the implemented honourability declaration is keyed by a scalar-arithmetic policy subject and arithmetic type as well as dimension. Silence about one arithmetic type is `Unknown` even when the profile speaks about a neighbouring type.
+- Reconcile the canonical scalar-policy sketch with all eleven governed dimensions, including operand permutation, signed zero, and the exceptional-value assumptions, and name the governed approximate-intrinsic envelope vocabulary. Do not generalize this dense scalar contract to integers, booleans, quantized compounds, or other future policy families.
 - Keep reviewed alpha visibility separate from stabilization or publication. Correcting the module documentation is a public module-boundary change and requires Tom's review before acceptance.
 - Prove every new absence or consistency check can fail, then run the targeted `tiler-compiler` tests, per-package Clippy, local documentation checks, `tkt lint`, and one batch `make full`.
 
@@ -37,3 +39,4 @@ Every named normative and source authority agrees with the live public session, 
 - Link any additional stale current authority to the exact completed ticket that falsified it and update it in this scope or split a narrower follow-up.
 - Preserve historical descriptions when they are explicitly historical; qualify them instead of rewriting the past as if the current boundary always existed.
 - Close this ticket when the contracts and source documentation agree; implementation breadth remains owned by its existing tickets.
+- `record-the-arithmetic-type-in-the-numerical-honourability-contract` is superseded after its exact scalar-policy requirements are preserved here.

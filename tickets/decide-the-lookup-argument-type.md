@@ -1,7 +1,7 @@
 ---
 id: decide-the-lookup-argument-type
 title: Decide the cache lookup argument type
-status: awaiting-decision
+status: todo
 priority: p2
 dependencies: []
 related: [accept-the-tiler-cache-public-boundary]
@@ -10,14 +10,14 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [cache, public-boundary, decision]
 ---
-## Decision needed (2026-07-28)
+## Draft the exact signature
 
-**`&ComposedSubject` or `CacheKey`?**
+The public API must preserve two properties together: raw bytes cannot name an entry, and a caller that performs multiple operations for one subject need not pay repeated digest work.
 
-They take a `&ComposedSubject` today so a caller never handles a key it did not derive from one. *Enables (subject):* a raw byte run cannot name an entry, which is the property `CacheKey::derive`'s narrowing established. *Prevents (subject):* the subject is re-digested on each call, so a caller doing a lookup and then a publish under the same key pays the digest twice and has no way to say it already has the key.
+Benchmark and draft a checked prepared-subject/key token derived only from `ComposedSubject` beside the current `&ComposedSubject` API. Do not expose a raw key constructor or make callers coordinate separate subject and key values. If no real call path performs repeated derivation, keep the current signature rather than adding a token without a consumer. `get_or_publish` must continue to derive once for its complete lookup/build/publish operation.
 
 Split from `accept-the-tiler-cache-public-boundary` so one signature can be reshaped without rejecting the whole surface; the parent's ratification checklist, derivations, and history stay there and are not re-litigated here.
 
 ## Closes when
 
-Tom records a decision; the change (or the explicit keep-as-drafted) lands on the surface and the parent's checklist item is marked.
+The real `tiler-build` call path and a repeated-operation fixture establish whether digest reuse exists; the selected draft makes subject/key mismatch unrepresentable, raw bytes cannot reach lookup, no extra allocation appears on the hot path, and the exact signature is carried into `accept-the-tiler-cache-public-boundary` for Tom's review.

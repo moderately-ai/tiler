@@ -3,7 +3,7 @@ id: redesign-the-delivered-realization-record-from-typed-evidence
 title: Redesign the delivered-realization record from typed evidence
 status: todo
 priority: p1
-dependencies: [carry-the-honourability-fact-provenance-into-the-artifact-record]
+dependencies: [carry-the-honourability-fact-provenance-into-the-artifact-record, express-metal-honourability-in-the-shared-form]
 related: [record-delivered-numerical-realization, drive-the-build-orchestrator-from-a-checked-compiler-plan, widen-the-region-realization-to-consumable-dimensions]
 scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/build, contracts/numerics, contracts/artifacts, contracts/decisions]
 shared_scopes: [project/tickets]
@@ -84,8 +84,8 @@ The review packet eliminates the stale draft, defines the exact signatures and c
 
 ## Graph maintenance
 
-- This ticket follows `carry-the-honourability-fact-provenance-into-the-artifact-record`, whose producer-side facts must exist before this design can require them.
+- This ticket follows both structured provenance and `express-metal-honourability-in-the-shared-form`; the review fixture cannot claim compiler-selected Metal evidence until the producer path exists.
 - `accept-the-delivered-realization-artifact-surface` depends on this review packet and owns Tom's exact public-boundary ratification.
 - `wire-the-delivered-realization-record-into-the-artifact` follows acceptance and owns all production integration.
 - Qualify `record-delivered-numerical-realization` as historical evidence: its staged four-dimension outcome was valid for its tree and is not the current candidate.
-- Keep `express-metal-honourability-in-the-shared-form` and its caller-profile decision visible as the upstream gate through the provenance dependency.
+- Keep the caller-profile declaration and checked Metal adapter visible as explicit upstream gates rather than relying on prose or a reversed provenance edge.

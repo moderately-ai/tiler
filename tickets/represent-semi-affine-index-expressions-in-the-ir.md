@@ -1,7 +1,7 @@
 ---
 id: represent-semi-affine-index-expressions-in-the-ir
 title: Represent semi-affine index expressions in the IR
-status: awaiting-decision
+status: closed
 priority: p1
 dependencies: []
 related: []
@@ -9,6 +9,8 @@ scopes: [implementation/ir]
 shared_scopes: []
 paths: []
 tags: [indexing]
+closed_reason: superseded
+closed_note: Requirements consolidated into the coherent sourced-extent and semi-affine public-boundary draft.
 ---
 ## Decision needed (2026-07-28)
 

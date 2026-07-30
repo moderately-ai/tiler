@@ -1,7 +1,7 @@
 ---
 id: admit-a-dtype-dispatchability-capability-axis
 title: Admit a dtype-dispatchability capability axis
-status: awaiting-decision
+status: closed
 priority: p2
 dependencies: []
 related: [register-the-accepted-built-in-dtype-catalog, own-the-dtype-support-maturity-matrix]
@@ -9,6 +9,8 @@ scopes: [implementation/compiler]
 shared_scopes: []
 paths: []
 tags: [metal]
+closed_reason: superseded
+closed_note: Superseded by the coherent target-profile boundary, which owns canonical resolved-type dispatchability facts.
 ---
 ## Decision needed (2026-07-28)
 

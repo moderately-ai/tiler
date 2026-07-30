@@ -1,14 +1,14 @@
 ---
 id: pin-the-admitted-unsafe-sites-in-the-workspace-gate
 title: Decide whether the workspace gate pins admitted unsafe sites
-status: awaiting-decision
-priority: p2
+status: deferred
+priority: p3
 dependencies: []
 related: [record-the-case-by-case-unsafe-boundary, prototype-metal-runtime-execution]
 scopes: [implementation/workspace, contracts/navigation, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
-tags: [implementation, workspace, gate, rust-api, needs-tom]
+tags: [implementation, workspace, gate, rust-api, deferred]
 ---
 ADR 0079 permits unsafe code only at individually admitted sites. The current
 compiler lint enforces that an unsafe block needs a local allow, but
@@ -20,10 +20,9 @@ A former Python workspace gate pinned each admitted
 tests. That gate and its tests were deleted when repository verification moved
 to the root `Makefile`; no implementation is currently in review.
 
-## Decision
+## Deferred boundary
 
-Decide whether to keep review-only enforcement or restore a mechanical
-inventory in the current `make full` gate.
+Keep the current review-only enforcement while the complete admitted population is two sites in one non-published prototype. A mechanical source scanner would add a second parsing authority to the gate before the production population exists, and the obvious grep-shaped implementation demonstrably misses both multi-line attributes.
 
 ## The admitted population today (2026-07-28)
 
@@ -55,9 +54,6 @@ What still carries it: the permission is case-by-case, so a count alone is insuf
 
 If mechanical enforcement is selected, a **negative mutation test must prove the check can fail** for each of addition, move, removal, and reason change — run each mutation and watch it fail, rather than asserting the check compiles. And per the zero-hit fact above, the check must name and count its expected population so that finding nothing fails.
 
-## Closes when
+## Activation trigger
 
-Tom selects review-only or mechanical enforcement. If mechanical enforcement
-is selected, the current gate names every admitted site, documents its parsing
-boundary, and includes a negative test that demonstrates the check can fail.
-The ADR and `AGENTS.md` must describe the resulting enforcement truthfully.
+Reactivate before admitting the first production unsafe site, or when the admitted population grows beyond the two current prototype functions. At activation, derive the inventory mechanism from Rust syntax rather than a zero-observation grep, name and count the expected population, and demonstrate failure for addition, move, removal, and reason change. Tom reviews any resulting workspace-gate or unsafe-policy boundary.

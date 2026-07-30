@@ -1,11 +1,11 @@
 ---
 id: bind-stage-coverage-to-index-refinement-identity
 title: Bind kernel-program stage coverage to its refinement evidence
-status: awaiting-decision
+status: todo
 priority: p1
 dependencies: [correct-adr-0071-retained-lower-layer-identity-cardinality]
 related: [bind-the-scheduled-region-to-the-verified-index-region-identity]
-scopes: [implementation/ir, implementation/compiler, implementation/artifact]
+scopes: [implementation/ir, implementation/compiler, implementation/artifact, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, identity]
@@ -13,7 +13,7 @@ tags: [implementation, ir, identity]
 A verified executable stage must name the exact index-refinement evidence that
 proves each semantic occurrence it claims to implement.
 
-## Decision needed (2026-07-28)
+## Derived record shape
 
 **The question, atomic:** what shape does a covered occurrence take once it must carry its refinement evidence?
 
@@ -29,11 +29,11 @@ Today `StageData::coverage` is `Vec<SemanticOccurrence>` (`crates/tiler-ir/src/p
 
 **Option 3 is still eliminated, on two grounds that do survive the read.** First, the ordered wire encoding is currently a property of the *type* — a `Vec` the builder sorted — and moving to a map makes it a property of an *iteration contract* that must be documented and held identically by two independent encoders, or the program and artifact identities diverge for the same stage. That is a weaker guarantee bought for no gain, since the sort already provides it. Second, and decisively for this ticket: a map insert makes `KernelProgramBuildError::DuplicateCoverage` (`builder.rs:903`, guard opening at `:899`) unreachable, replacing an explicit typed refusal with a silent last-writer-wins overwrite. A duplicate covered occurrence under this ticket's semantics means two different refinement identities claiming the same occurrence — exactly the ambiguity the binding is meant to make impossible — and option 3 resolves it by discarding one without saying so.
 
-**Recommendation: option 2.** The evidence is the point of the change, and a positional pair invites the transposition the binding exists to prevent. **The counterpoint, stated because option 2's cost is real:** it puts a new type on a public surface Tom must review, and it is the only option that admits a half-populated value at all — options 1 and 3 make a pair structurally total. That is not an argument against it; it is the reason to choose it. A value that can be half-populated is a value the builder can *refuse with a typed reason*, and refusing is what this ticket requires. The alternatives do not make the error impossible, they make it unnameable.
+**Outcome: a named record with private fields and proof-derived construction.** The former transposition argument for a tuple was overstated because the two field types differ, and a public named record with two required fields is not half-populatable either. The real invariant is stronger: callers must not be able to pair an arbitrary occurrence with an unrelated refinement identity. Construct `CoveredOccurrence` only through the verified builder/compiler path that derives both from the same `OccurrenceEvidence`; expose borrowed readers, not a free public constructor.
 
 **One constraint the shape must respect, whichever is chosen.** `OccurrenceEvidence::BudgetStopped` means no refinement proof exists. It must be unrepresentable as verified coverage — the candidate is absent or refused with that typed reason — rather than encodable as a placeholder that reads as proved. This binds all three options equally and is not a discriminator between them.
 
-**This is reserved rather than decided here because the ticket says so in terms:** "Changing stage coverage changes the public `tiler_ir::program` surface and the artifact identity that cross-references it. Tom reviews the exact record and builder shape before acceptance." It is `tiler_ir::program`'s public surface *and* an ADR 0075 always-ask, and the program and artifact layers have independent stage encoders, so the choice lands twice.
+The implementation can now proceed as a concrete draft. Tom reviews the exact record, construction boundary, readers, error, and program/artifact identity changes before acceptance.
 
 ## Fact
 
@@ -70,8 +70,8 @@ that differ only in that evidence; proof gaps cannot become verified coverage;
 all affected identity domains are advanced with their reason; and `make full`
 passes.
 
-## Parked 2026-07-27 — awaiting Tom
+## Graph maintenance
 
-The question parked here was hoisted to `## Decision needed (2026-07-28)` at the top of this ticket. It is the same question and the same recommendation; what changed is that option 3's stated elimination was checked against the source, found false, and replaced with two grounds that hold. The recommendation for option 2 also gained the counterpoint it previously lacked.
-
-**Ready to build once decided.** The compiler already derives `IndexRefinementIdentity` from a verified index region and its occurrence; it currently terminates in planning and explain output. What remains is threading it into both stage encoders and advancing the affected identity domains with their reason — the same shape as `bind-the-artifact-variant-abi-to-the-program-abi`, which landed today, and whose `formulas()` lesson applies: expect fixture churn where a caller stops supplying what is now derived.
+- Advance every affected program and artifact identity domain once on the merged tree and recompute pins there.
+- Preserve exhaustive independent encoders so a new coverage field is a compile error in both.
+- Present the exact public draft to Tom before acceptance; no additional shape choice is pending before implementation.

@@ -1,20 +1,20 @@
 ---
 id: state-an-expected-artifact-identity-from-recorded-bytes
 title: State an expected artifact identity from recorded bytes
-status: awaiting-decision
+status: todo
 priority: p2
 dependencies: []
 related: [route-the-runtime-loader-through-the-dispatch-record]
-scopes: [implementation/artifact, implementation/runtime]
+scopes: [implementation/artifact, implementation/runtime, contracts/artifacts]
 shared_scopes: []
 paths: []
-tags: [implementation, artifact, needs-tom]
+tags: [implementation, artifact, public-boundary]
 ---
 `CanonicalArtifactProgramIdentity` can be read and cannot be stated. Only code that *built* an artifact can hold one, so the cold-consumer half of `DecodedProgram::preflight`'s own documented contract was unrepresentable in its own signature.
 
-## Decision needed (2026-07-28)
+## Derived design
 
-**The question, atomic:** should a consumer be able to *state* an expected artifact identity in the type system, and if so as what?
+Use a distinct bounded, domain-checked `RecordedArtifactProgramIdentity` or `ExpectedArtifactProgramIdentity`. It states producer intent without claiming that the bytes were derived from validated artifact content.
 
 | Option | Enables | Prevents |
 | --- | --- | --- |
@@ -22,13 +22,13 @@ tags: [implementation, artifact, needs-tom]
 | **2. A distinct `RecordedArtifactProgramIdentity`.** | Names the concept at the call site while keeping the two evidence classes apart: a derived identity came from validated content, a recorded one is a byte string somebody wrote down. It is the only option under which `preflight` can express both of its documented sources in its signature. | Adds a public type to `tiler_artifact::program`, and the artifact and runtime APIs must adopt the same distinction together — one decision spanning two public boundaries. |
 | **3. Broaden `CanonicalArtifactProgramIdentity` with a checked byte constructor.** | — | Eliminated, on the evidence rather than on taste. A byte constructor cannot prove derivation, so the type would stop meaning "encoder-derived" while still being spelled that way, and every existing reader of one would silently widen what it accepts. That is the second-authority shape ADR 0082 names, and it is exactly why `keys.rs:17-19` states the absence of a constructor as a *decision*: the identity "is derived only by this crate's encoder and has no public constructor." |
 
-**Recommendation: option 2.** It is the only candidate that lets `DecodedProgram::preflight` express the second half of its own documented contract — "the one it obtained by building this artifact, **or recorded when it cached these bytes**" — and the recording case is a real consumer shape, not a hypothetical: `route-the-runtime-proof-through-the-artifact-envelope` has a producer write the identity to a sidecar and a separate consumer process read it back.
+**Outcome: option 2.** It is the only candidate that lets `DecodedProgram::preflight` express the second half of its own documented contract — "the one it obtained by building this artifact, **or recorded when it cached these bytes**" — and the recording case is a real consumer shape, not a hypothetical: `route-the-runtime-proof-through-the-artifact-envelope` has a producer write the identity to a sidecar and a separate consumer process read it back.
 
 **The counterpoint, which the parked version omitted and which is the strongest argument against the recommendation.** `RecordedArtifactProgramIdentity` would be a newtype over `Vec<u8>` whose only possible validation is a length or bound check. It cannot verify that the bytes are a canonical identity of anything, because nothing but the encoder can produce one. So it **names the concept without proving anything the byte slice did not** — the same bytes, the same comparison, the same failure on a wrong input, wrapped in a type that a reader may reasonably mistake for evidence. That risk is not hypothetical; it is the precise reason option 3 is eliminated, arriving one step down. What it buys is call-site intent: a signature that says which of two things it wants, and a wrong argument that fails to compile rather than failing at load.
 
 **Why it still wins.** The comparison is byte equality either way, so nothing about *correctness* changes between options 1 and 2 — this is a decision about whether the API states its own contract. Option 1 leaves a documented contract half-unrepresentable and lets any slice through; option 2 makes the intended argument the easy one to pass. The mistakable-for-evidence risk is real and is answered by naming it in the type's own documentation, in the same terms `LoadRejection::ProgramMismatch` already uses. If Tom judges that documentation insufficient protection against the misreading, option 1 is coherent and nothing is blocked by choosing it.
 
-**Why it cannot proceed without the decision.** Adding a public constructor to a type whose *absence* of one is a stated decision is ADR 0075's always-ask category twice over. The artifact and runtime APIs must also agree on the same evidence distinction, so this is one decision spanning two public boundaries rather than two independent edits.
+**Public review boundary.** Implement and test the distinct assertion type as a concrete draft, then present the exact artifact constructor, runtime preflight signature, rejection type, and producer/consumer call sites to Tom before acceptance. Do not add a constructor to `CanonicalArtifactProgramIdentity`.
 
 **Nothing is blocked in the meantime:** `preflight` works today via `expected: &[u8]`, no comparison is weakened, and the asymmetry in `LoadRejection::ProgramMismatch` is already documented as deliberate.
 
@@ -56,15 +56,10 @@ different loaded artifact with both concepts named clearly.
 
 ## What closes this
 
-Decide whether to keep `expected: &[u8]`, introduce a distinct bounded
-`RecordedArtifactProgramIdentity` (or `ExpectedArtifactProgramIdentity`), or
-explicitly broaden `CanonicalArtifactProgramIdentity` to represent both
-derived and recorded claims. A checked byte constructor cannot prove
-derivation, so prefer a distinct type if typed call-site intent is wanted. The
-artifact and runtime APIs must agree on the selected evidence distinction.
+Introduce the distinct bounded/domain-checked assertion type, adopt it consistently in artifact and runtime APIs, document that it is producer assertion rather than independently derived evidence, and perturb wrong-length, wrong-domain, and mismatched-content checks once each before restoration.
 
-`needs-tom`: it is a public constructor on a type whose absence of one is a stated decision.
+## Graph maintenance
 
-## Parked 2026-07-27 — awaiting Tom
-
-The question parked here was hoisted to `## Decision needed (2026-07-28)` at the top of this ticket. Same question, same three options, same elimination of option 3, same recommendation. What was added is the counterpoint option 2 previously lacked — that a `RecordedArtifactProgramIdentity` newtype can validate nothing the byte slice did not, so it buys call-site intent at the cost of a public type a reader may mistake for evidence — and why the recommendation survives it.
+- Keep encoder-derived and recorded assertion identities as distinct evidence classes in documentation, errors, and call sites.
+- Advance artifact identity or schema versions only if the encoded artifact changes; a host-side assertion wrapper alone does not justify a version bump.
+- Preserve the exact public diff for Tom's acceptance review.

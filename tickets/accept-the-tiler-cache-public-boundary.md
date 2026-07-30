@@ -1,27 +1,24 @@
 ---
 id: accept-the-tiler-cache-public-boundary
 title: Accept the tiler-cache public boundary
-status: awaiting-decision
+status: todo
 priority: p1
-dependencies: [report-cache-publication-state-after-the-rename-boundary]
-related: [implement-the-expansion-cache-protocol]
+dependencies: [report-cache-publication-state-after-the-rename-boundary, decide-the-composed-subject-backend-compilations-shape, decide-where-an-unfillable-subject-facet-is-refused, decide-the-lookup-argument-type]
+related: [implement-the-expansion-cache-protocol, prototype-candle-metal-adapter]
 scopes: [implementation/cache, implementation/artifact]
 shared_scopes: []
 paths: []
 tags: [cache, api, decision]
 ---
-## Decision needed (2026-07-28)
+## User-visible outcome
 
-**Accept `tiler_cache::expansion`'s public surface as reviewed and drop its draft-boundary language, or name the items to change first?**
+Tom receives one exact, consumer-backed `tiler_cache::expansion` public-surface diff after its remaining signature questions are resolved, and accepted documentation replaces reviewed-draft language only for the boundary actually exercised by `tiler-build`.
 
 ADR 0082 admits the crate but not the interface, so `tiler_cache::expansion` documents itself as a **reviewed draft boundary** under ADR 0074 §7 and ADR 0075, on the same footing as `tiler_artifact::program` and `tiler_runtime::load` — `AGENTS.md` keeps admission and interface acceptance separate: "A tested implementation may serve as a concrete draft, but it is not implicit approval of its public interface."
 
-| Option | Enables | Prevents |
-| --- | --- | --- |
-| **Accept as drafted.** The surface below becomes the accepted interface and the draft-boundary language comes out of the module documentation. | `implement-the-expansion-cache-protocol` and every downstream consumer stop coding against a draft. The `#[allow(dead_code)]` at `crates/tiler-cache/src/expansion/preflight.rs:2` and `crates/tiler-cache/src/expansion/collect.rs:102` come off with the promotion, because a `pub` item is not dead code. | The surface becomes a compatibility commitment while three shape questions are still open — the three named under **To be split** below. |
-| **Hold pending the split questions.** Answer the three shape questions first, then accept whatever they leave. | The three shapes stay cheap to revise: an accepted surface is a commitment and a draft one is not, and each of the three changes a signature rather than an implementation. | Nothing can consume the cache in the meantime. `grep -rl tiler-cache crates/*/Cargo.toml prototypes/*/Cargo.toml` returns only `crates/tiler-cache/Cargo.toml` (re-run 2026-07-28), so the surface has no consumer to validate it either way — holding buys revision cheapness against a revision pressure nothing is currently generating. |
+The former recommendation to accept before resolving three split signatures was backwards: acceptance would freeze the interface whose shape the children exist to determine. Its “no consumer” premise is also stale. `tiler-build` now depends on `tiler-cache`; `metal_cache.rs` composes the ordered backend-compilation and artifact-program subject and calls `get_or_publish`, and `metal_plan.rs` carries the resulting subject and resolution through the checked plan path.
 
-**Recommendation: accept as drafted, and decide the three split questions separately.** The "prevents" on the accept row is weakened by the same measurement that weakens the hold row: nothing depends on `tiler-cache`, so a compatibility commitment made today binds no caller, and the three shape questions are split into their own decisions rather than pre-answered by acceptance. **Counterpoint, and it is real:** accepting a surface with no consumer is accepting one nothing has exercised. The review is a reading rather than a use, and the first genuine consumer is the most likely source of a change request — which is exactly what acceptance makes expensive. If the answer is to wait for a consumer, say so, because that is a different reason to hold than the three shape questions and it has a different trigger.
+Resolve the subject cardinality and lookup argument as concrete implementation drafts first. Composition-time refusal is already the tested invariant. Then update the checklist to the exact resulting signatures and present one atomic public-boundary review.
 
 ## Items to ratify
 
@@ -49,9 +46,9 @@ The staged `4f8ce90` constructor was rejected rather than merged: `CompilationId
 
 This makes both `SubjectFacets` fields producible. It does not create the orchestrator that holds both producers and the cache, so the cache remains unused end to end; the frontend orchestration decision still owns that integration.
 
-## Split performed (2026-07-28)
+## Split status (2026-07-30)
 
-The three shape questions were split into their own `awaiting-decision` tickets, each carrying its options and stated costs so one signature can be reshaped without rejecting this whole surface: `decide-the-composed-subject-backend-compilations-shape`, `decide-where-an-unfillable-subject-facet-is-refused`, `decide-the-lookup-argument-type`. This ticket keeps the ratification checklist and the derivations; a decision on any split applies here.
+The three shape questions remain explicit dependencies so acceptance cannot precede them. `decide-where-an-unfillable-subject-facet-is-refused` is done: a composed subject is identity-complete and partial assembly stays in the composer. The two remaining tickets must produce exact consumer-backed signatures before this ticket returns to `awaiting-decision`.
 
 ## Excluded decision
 

@@ -1,7 +1,7 @@
 ---
 id: decide-shapeenv-module-path
 title: Decide the ShapeEnv public module path
-status: awaiting-decision
+status: closed
 priority: p2
 dependencies: []
 related: [promote-the-symbolic-index-profile-to-a-public-boundary]
@@ -9,6 +9,8 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [indexing, public-boundary, decision]
+closed_reason: superseded
+closed_note: Requirements consolidated into the coherent sourced-extent and semi-affine public-boundary draft.
 ---
 ## Decision needed (2026-07-28)
 

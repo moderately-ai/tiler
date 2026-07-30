@@ -1,11 +1,11 @@
 ---
 id: carry-the-honourability-fact-provenance-into-the-artifact-record
-title: Carry the honourability fact provenance into the artifact record
+title: Carry structured target-fact provenance through declaration and selection
 status: todo
 priority: p1
-dependencies: [express-metal-honourability-in-the-shared-form]
+dependencies: []
 related: [record-delivered-numerical-realization, name-the-compiler-and-environment-in-adr-0076-target-facts, record-metal-runtime-compiler-provenance-gap]
-scopes: [implementation/metal, implementation/compiler, contracts/numerics]
+scopes: [implementation/metal, implementation/compiler, implementation/build, contracts/numerics]
 shared_scopes: []
 paths: []
 tags: [implementation, artifact, compiler, numerics, provenance]
@@ -30,11 +30,13 @@ ADR 0076 item 3 fixes a numerical honourability declaration as "a stated, versio
 
 The target/profile declarer produces one structured, versioned provenance value that identifies the measured-fact authority, validity scope, compiler build, and execution environment. The shared honourability declaration validates it; the compiler carries it unchanged with selected evidence and exposes an exact proposed borrowed view for the later public-boundary review. Opaque display keys may supplement identity but cannot replace the structured fields a reader must interpret.
 
-This ticket does not modify the artifact record or encode provenance into artifact identity. `redesign-the-delivered-realization-record-from-typed-evidence` owns the total checked representation and review packet; `wire-the-delivered-realization-record-into-the-artifact` owns production translation, encoding, and identity after Tom accepts the boundary.
+This ticket does not modify the artifact record or encode provenance into artifact identity. Its historical ID predates that split. `redesign-the-delivered-realization-record-from-typed-evidence` owns the total checked representation and review packet; `wire-the-delivered-realization-record-into-the-artifact` owns production translation, encoding, and identity after Tom accepts the boundary.
 
 ## Graph maintenance
 
 - The structured fact is produced at the target/profile declaration boundary and carried by the compiler; do not make the compiler the measured fact's authority merely because it owns feasibility.
+- This is a prerequisite of caller-authored target profiles: an external measured Metal fact cannot honestly use the current compiler-minted `GovernedProfile` and `PortableProfile` provenance.
+- After this lands, `admit-a-caller-declared-target-profile` owns the immutable checked declaration boundary, and `express-metal-honourability-in-the-shared-form` owns the exhaustive `tiler-build` adapter from Metal facts into that boundary.
 - If you find yourself adding a field the producer cannot fill yet, stop — this ticket's own closing text forbids producer-less placeholders. Record what the producer would need instead, on this ticket.
 - When the compiler-build/environment fact type first exists, tell `record-metal-runtime-compiler-provenance-gap` (related) — its gap is the same fact from the runtime side.
 - This producer work precedes `redesign-the-delivered-realization-record-from-typed-evidence`. The former edge to `wire-the-delivered-realization-record-into-the-artifact` was backwards: wiring cannot precede the provenance the required record must carry.

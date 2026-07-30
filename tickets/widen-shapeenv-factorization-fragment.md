@@ -1,20 +1,20 @@
 ---
 id: widen-shapeenv-factorization-fragment
 title: Decide support for factorizations with multiple runtime-unknown terms
-status: awaiting-decision
-priority: p2
+status: deferred
+priority: p3
 dependencies: []
 related: [implement-shapeenv-constraints, implement-shapeenv-index-bindings]
 scopes: [implementation/ir, contracts/foundation]
 shared_scopes: []
 paths: []
-tags: [shapes, indexing, mature-product, needs-tom]
+tags: [shapes, indexing, mature-product, deferred]
 ---
 The current ShapeEnv deliberately accepts a decidable fragment. It rejects a split relation such as `parent == outer * tile` when more than one factor remains unknown at runtime.
 
-## Atomic product decision
+## Deferred product boundary
 
-Must one artifact support a split whose factors remain unknown until launch?
+No admitted product requires one artifact to support a split whose factors all remain unknown until launch. The current fail-closed behavior is correct and tested, so there is no live choice to present.
 
 - **Refuse it.** Every built ShapeEnv remains decided; a frontend specializes on a static factor and that value participates in artifact identity. This is the current fail-closed behavior.
 - **Support it.** First introduce either an explicit specialization input that supplies and identities a compile-time value before ShapeEnv construction, or an `Undecided` constraint state propagated through every consumer. An availability phase alone is not a third option.
@@ -40,8 +40,8 @@ The former proposed resolution—treat a compile-phase caller parameter as known
 
 `BindingSource` has exactly four variants at `crates/tiler-ir/src/shape/env.rs:259-287` — `Static(Extent)`, `InputDimension { input, axis }`, `InterfaceParameter { key }`, and `TargetProperty { key }` — and only the first contributes a constant, which is what the third fact above states and what makes the retired resolution unimplementable rather than merely unimplemented.
 
+**The reopening trigger, supplied 2026-07-28.** Reopen on the first frontend or product requirement for a single artifact to serve arbitrary runtime tile sizes without recompilation — the exact case the counterpoint above names. Until one exists, specialization on a static factor satisfies every requirement this repository has, and the undecided-state cost buys nothing. A demand that can be met by recompiling per tile size is not the trigger; the trigger is a caller for whom recompilation is not available.
+
 ## Closes when
 
-Tom confirms the product requirement. The shape contract records either the explicit refusal and reopening trigger or the admitted value/undecided model, and no implementation infers a known value from availability alone.
-
-**The reopening trigger, supplied 2026-07-28.** Reopen on the first frontend or product requirement for a single artifact to serve arbitrary runtime tile sizes without recompilation — the exact case the counterpoint above names. Until one exists, specialization on a static factor satisfies every requirement this repository has, and the undecided-state cost buys nothing. A demand that can be met by recompiling per tile size is not the trigger; the trigger is a caller for whom recompilation is not available.
+When activated, the shape contract records either the durable explicit refusal or the admitted specialization-input/undecided model, and no implementation infers a known value from availability alone. If the durable refusal and reopening trigger land elsewhere first, close this ticket as superseded by that contract.

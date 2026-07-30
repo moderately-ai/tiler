@@ -5,14 +5,14 @@ status: todo
 priority: p0
 dependencies: [compose-numerical-honourability-and-retire-the-strict-boolean, prototype-public-compiler-api, admit-a-caller-declared-target-profile]
 related: [declare-metal-numerical-honourability, draft-target-honourable-numerical-contract-adr]
-scopes: [implementation/metal, implementation/compiler]
+scopes: [implementation/metal, implementation/compiler, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, metal, numerics, feasibility]
 ---
 The remaining half of `declare-metal-numerical-honourability`, split out when its two settled questions landed. ADR 0076 item 3.
 
-**Not startable today, and the body should say what the frontmatter implies.** Of this ticket's three dependencies, `compose-numerical-honourability-and-retire-the-strict-boolean` and `prototype-public-compiler-api` are `done`, and `admit-a-caller-declared-target-profile` is `awaiting-decision` — a parked state that never satisfies a dependent. So this p0 cannot be claimed until Tom answers that ticket, and the ADR 0076 siting decision recorded at the end of "The ownership decision" below rides on the same approval rather than on separate work. The exact check: `grep -m1 '^status:' tickets/admit-a-caller-declared-target-profile.md` → `status: awaiting-decision`.
+This ticket becomes startable after the checked caller-profile boundary lands. The former three-way ownership question was eliminated by the current dependency graph and project scope: semantic IR must not own Metal target facts, `tiler-build` already depends on both `tiler-compiler` and `tiler-metal`, and a new crate has no independent second consumer.
 
 `declare-metal-numerical-honourability` settled the two questions that did not depend on the shared honourability form: the backend-local conformance step survives alongside the profile declaration with a stated reason, and the four golden fixtures stay governed under the strict declared realization. What it could not do is the piece that gives the ticket its name — express `MetalSubnormalArithmetic` as a per-dimension honourability declaration in the shared form, so `feasibility` can assess it as a peer of `CheckedTargetProfile` *before* emission rather than discovering it during.
 
@@ -32,21 +32,11 @@ emission, keyed by both numerical dimension and arithmetic dtype, while
 retaining one authoritative declaration and preserving backend
 re-verification.
 
-## The ownership decision
+## Ownership derivation
 
-**Inference — no existing crate can hold both the shared honourability form and the Metal fact.** The form is a compiler authority and the fact is a Metal target property, so a declaration expressed in the shared form has three candidate sitings and they are not equivalent:
+The checked adapter belongs in `tiler-build`, the existing orchestrator that can see both the Metal authority and the compiler declaration boundary. Putting the declaration in `tiler-ir` would widen semantic IR into target vocabulary and violate the compiler/backend separation. Creating a third crate before a second orchestrator consumer exists would add a boundary without reducing coupling. An unchecked consumer-owned translation is invalid because it cannot prove exhaustive, faithful coverage.
 
-- **`tiler-ir` owns the vocabulary.** The honourability declaration becomes a target-neutral IR type both crates already depend on, and `tiler-metal` states its value. This keeps the compiler free of Metal types and gives one declaration both sides read. It widens `tiler-ir`'s remit from program vocabulary toward target vocabulary, which needs an argument rather than an assumption. `FlushedZeroSign` already lives there, which is evidence the boundary is not obviously wrong.
-- **A checked adapter owned by an orchestrator.** A component depending on both
-  reads `MetalTargetFacts` and constructs the compiler profile, but only if the
-  adapter is total, versioned, and tested against every vocabulary member. An
-  unchecked consumer-written translation is eliminated because it cannot prove
-  completeness or faithfulness.
-- **A third crate owns the declaration.** Clean dependency-wise, and previously priced as "the most machinery for the least immediate return". **That price should be re-read against the edges above.** It was set when `tiler-metal` depended on exactly two crates and a third looked like new infrastructure; `tiler-metal` now depends on three, having acquired `tiler-metal-aot` for the golden-MSL compile in the gate, so the marginal cost of a further edge is a manifest line rather than a new kind of thing. The option is still the most machinery of the three, but "least immediate return" was an argument about a closure that has since widened, and it should be restated or dropped rather than carried forward unexamined.
-
-Do not pick by convenience. Whichever siting is chosen must keep the fact declared exactly once: `declare-metal-numerical-honourability` recorded that a second declaration of the same target property is the failure mode to avoid, because two checkpoints reading one declaration cannot diverge and two declarations can.
-
-**This also decides ADR 0076's open question.** That ADR leaves the siting of the profile declaration mechanism explicitly open, and `declare-metal-numerical-honourability` deliberately did not answer it by omission. Whatever this ticket decides must be recorded there as an accepted decision rather than left implicit in the code.
+The adapter reads the single authoritative `MetalTargetFacts`, constructs the compiler profile through its checked builder, and is exhaustive over every relevant source and destination variant. Metal backend re-verification reads the same declaration and stays in place. Record this ownership correction in ADR 0076 when the implementation lands.
 
 ## Constraints inherited, not up for renegotiation
 
@@ -58,3 +48,9 @@ Do not pick by convenience. Whichever siting is chosen must keep the fact declar
 ## Closes when
 
 The Metal subnormal fact is expressed as a per-dimension honourability declaration in the shared form; `feasibility` assesses it before emission and rejects with the shape `compose-numerical-honourability-and-retire-the-strict-boolean` defines — naming the dimension, the required behaviour, the declared target behaviour, and the declaring profile's versioned identity; the siting is recorded in ADR 0076; and `make full` passes.
+
+## Graph maintenance
+
+- Follow `admit-a-caller-declared-target-profile`; do not invent a parallel declaration surface in `tiler-build`.
+- Make `redesign-the-delivered-realization-record-from-typed-evidence` depend on this producer path before its fixtures claim compiler-selected Metal evidence.
+- If a second non-build orchestrator needs the same exhaustive adaptation, file the evidence for extracting a shared adapter crate then; do not create one speculatively.

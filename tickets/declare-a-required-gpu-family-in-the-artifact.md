@@ -1,7 +1,7 @@
 ---
 id: declare-a-required-gpu-family-in-the-artifact
-title: Decide which live-device requirements an artifact route must declare
-status: awaiting-decision
+title: Declare backend-neutral live-device route requirements
+status: todo
 priority: p2
 dependencies: []
 related: [prototype-metal-runtime-preflight, carry-the-stage-execution-order-in-the-envelope]
@@ -10,11 +10,17 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [artifact, runtime, metal, correctness]
 ---
-## Decision needed (2026-07-28)
+## User-visible outcome
 
-**What, if anything, must an artifact declare about the device a route requires — a governed family key, numeric floors, or nothing beyond the recorded provenance?**
+A runtime refuses a route before commitment when the selected live device lacks a backend feature or numerical resource floor the artifact declares, and the refusal names the exact unmet requirement without putting Apple-specific vocabulary in the neutral artifact core.
 
-A user should receive an explainable preflight refusal before committing a route the selected device cannot execute. The decision is the smallest readable requirement set sufficient to make that refusal precise without putting Apple-specific semantics in the neutral artifact layer.
+## Correctness derivation
+
+Provenance alone is eliminated because it permits a known device mismatch to survive until pipeline creation after routing. Numeric floors and backend feature requirements are complementary rather than alternatives: floors express quantities such as threadgroup capacity and accessible buffer range, while a backend-scoped governed feature key expresses non-quantitative capabilities that equal floors cannot distinguish.
+
+Define a backend-neutral, versioned route-requirement family. Core quantitative rows carry typed dimensions and minima. Backend-scoped qualitative rows carry an owner namespace, governed requirement key/version, and canonical payload validated by the owning runtime adapter. The neutral artifact layer does not interpret an Apple family enum; the Metal adapter maps its governed requirements to `supportsFamily` or a more exact supported-feature query and produces a typed preflight refusal.
+
+The artifact records only requirements consumed by the selected executable route. It does not copy a whole target profile, infer support from provenance, or treat an unknown requirement as skippable. Unknown owner, requirement kind, version, or payload rejects fail-closed.
 
 **Measurement — the deciding experiment is not producible on available hardware.** This ticket said the question would be decided by "a kernel that builds a pipeline successfully on one family and not on another". Both devices reachable from this workspace report the **same family**:
 
@@ -25,17 +31,7 @@ A user should receive an explainable preflight refusal before committing a route
 
 Produced by `prototypes/serial-sum-run`'s own `device_facts` (`prototypes/serial-sum-run/src/proof.rs:1545`) on each host, **recorded at commit `c0f35b4`**. Attributed to that commit rather than to "`main`", because `main` moves and the producing source has moved with it: `git log --oneline c0f35b4..HEAD -- prototypes/serial-sum-run/src/proof.rs` returns `e400e37`, so a rerun today is a rerun of different source. The two devices differ only in buffer and working-set size, which track installed memory rather than family, and their threadgroup limits are identical. **So no kernel can be written here that builds on one and not the other on family grounds** — the experiment needs a device of a different Apple generation, which this workspace does not have.
 
-That is new and it changes the shape of the question rather than answering it: the ticket recorded that nothing had produced the measurement, and this records *why*, so nobody re-attempts it on these two machines.
-
-**The three candidates, merged into one list with the verdict the measurement supports.** Do not settle this by picking the cheapest.
-
-- **A governed family key on the target profile.** Readable, comparable against `supportsFamily`, and it turns the host's check into a real one. It also puts an Apple vocabulary into a consumer-agnostic artifact layer, which `AGENTS.md` guards against, so it needs a neutral spelling or an explicit backend-scoped extension point — and that spelling is itself an ADR 0075 public-boundary decision. **Survives, with a cost.**
-- **Numeric floors rather than a family.** A minimum threadgroup size and a minimum buffer length are backend-neutral and directly checkable. They under-describe a family — two devices with equal limits can differ in features a kernel used — and the measurement above shows that risk is live rather than theoretical: the two devices here have *identical* threadgroup limits, so floors would distinguish nothing between them. **Survives, but is measurably weaker than it looks.**
-- **Leave it undeclared and keep the provenance.** Honest and cheap. A kernel needing an absent feature fails at pipeline creation rather than at a readable refusal — which the preflight now classifies as a route miss, so it is not silently wrong, only late and imprecisely explained. **Survives, and is the status quo.**
-
-All three survive, which is why this is Tom's. The elimination that *would* have decided it needs hardware this workspace lacks.
-
-**No recommendation is offered, deliberately.** The ticket says not to settle it by picking the cheapest, and with the deciding measurement unavailable, any recommendation from here would be exactly that — a cost argument wearing an evidence argument's clothes. What can be said is that option 2's neutrality is worth less than it appears, because the only two devices available to test it are indistinguishable by the floors it would declare.
+This measurement cannot qualify a particular Apple cross-generation requirement, but it does not block the architecture: the two hosts already demonstrate why floors cannot replace feature rows. Preserve a deferred qualification trigger for access to a different GPU generation or an observed feature-specific pipeline refusal.
 
 ## What is true today
 
@@ -49,6 +45,10 @@ Split from `prototype-metal-runtime-preflight`, which added the device-side pref
 
 ## Closes when
 
-Either the artifact declares what a route requires of a device and the runtime preflight checks it with a typed refusal in the class `prototype-metal-runtime-preflight` defines, or the question is closed with a recorded decision that it stays undeclared and why, with the provenance left as the durable answer. `make full` passes.
+The artifact carries canonical quantitative and backend-scoped qualitative route requirements; the Metal runtime checks every row before route commitment; missing, unknown, malformed, duplicate, and unmet rows reject with typed causes; neutral artifact code contains no Apple family enum; representative checks are perturbed and observed failing; the exact artifact vocabulary, codec, runtime preflight, and refusal boundary receive Tom's public review; and `make full` passes.
 
-**Trigger to reopen:** access to an Apple device of a different GPU generation, or a kernel whose pipeline creation is observed to fail for a feature reason on any reachable device.
+## Graph maintenance
+
+- Split Apple cross-generation qualification into a bounded measurement when another GPU generation or a feature-specific pipeline refusal becomes available.
+- Keep route requirements distinct from target-fact provenance: provenance explains why a route was produced, while requirements are executable preconditions.
+- Advance artifact schema and identity once on the merged tree and recompute every affected pin there.

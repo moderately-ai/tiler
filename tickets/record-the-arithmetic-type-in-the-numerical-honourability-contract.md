@@ -1,7 +1,7 @@
 ---
 id: record-the-arithmetic-type-in-the-numerical-honourability-contract
 title: Record the arithmetic type in the numerical honourability contract
-status: todo
+status: closed
 priority: p2
 dependencies: []
 related: [implement-first-profile-numerical-policies, carry-the-dtype-on-the-metal-subnormal-flush-fact]
@@ -9,6 +9,8 @@ scopes: [contracts/numerics]
 shared_scopes: []
 paths: []
 tags: [documentation, numerics]
+closed_reason: superseded
+closed_note: Requirements merged into the broader stale public compiler and ADR 0076 authority correction.
 ---
 `docs/numerical-semantics.md`'s "Per-dimension honourability, and how it composes with feasibility" section says a target profile declares, "for each dimension of the contract it can be asked about, which behaviour it honours and by which of the four means above". It names no arithmetic type, and the implementation now keys every declaration by one.
 

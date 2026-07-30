@@ -1,7 +1,7 @@
 ---
 id: report-per-target-compilation-outcomes
 title: Report per-target compilation outcomes instead of aborting on the first refusal
-status: awaiting-decision
+status: closed
 priority: p2
 dependencies: []
 related: [prototype-public-compiler-api]
@@ -9,6 +9,8 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler-api]
+closed_reason: superseded
+closed_note: Superseded by the target-profile request/result boundary, which must design cardinality and outcomes together.
 ---
 ## Decision needed (2026-07-28)
 

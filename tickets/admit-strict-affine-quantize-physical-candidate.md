@@ -3,7 +3,7 @@ id: admit-strict-affine-quantize-physical-candidate
 title: Admit strict-affine Quantize as a committed physical candidate
 status: todo
 priority: p2
-dependencies: [produce-typed-strict-affine-quantize-semantic-preconditions, group-internal-compound-materializations-by-logical-value, scope-first-quantized-lm-profile, admit-a-dtype-dispatchability-capability-axis]
+dependencies: [produce-typed-strict-affine-quantize-semantic-preconditions, group-internal-compound-materializations-by-logical-value, scope-first-quantized-lm-profile, admit-a-caller-declared-target-profile]
 related: [implement-first-quantized-backend-profile, implement-first-runtime-semantic-value-precondition-enforcement, own-the-dtype-support-maturity-matrix]
 scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/reference, implementation/metal, implementation/build, implementation/runtime, contracts/numerics, contracts/artifacts]
 shared_scopes: [project/tickets]
@@ -48,6 +48,7 @@ The selected strict-affine `Quantize` candidate performs real result work agains
 ## Graph maintenance
 
 - Add the exact dtype-dispatchability, physical-vocabulary, numerical-policy, and cost tickets selected by `scope-first-quantized-lm-profile` before claiming this ticket.
+- If `scope-first-quantized-lm-profile` does not select a strict-affine `Quantize` producer with a real downstream consumer, close this ticket as obsolete; do not manufacture an operation to keep the enforcement chain alive.
 - Release `carry-semantic-enforcement-plans-through-program-and-artifact` when the real candidate exists.
 - Make `implement-first-quantized-backend-profile` depend on this candidate and the completed runtime-enforcement vertical. That later profile owns broader workload coverage, conformance, calibrated performance, and any claim of backend optimality.
 - Update the dtype maturity matrix only for the exact candidate cells proven here.
