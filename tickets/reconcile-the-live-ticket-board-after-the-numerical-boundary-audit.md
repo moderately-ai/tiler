@@ -1,7 +1,7 @@
 ---
 id: reconcile-the-live-ticket-board-after-the-numerical-boundary-audit
 title: Reconcile the live ticket board after the numerical boundary audit
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: []
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: codex-root
-lease_expires_at: 1785427894
 ---
 # Reconcile the live ticket board after the numerical boundary audit
 
@@ -35,6 +32,14 @@ Several active tickets still describe an earlier two-variant numerical vocabular
 ## Acceptance
 
 Every changed ticket has a current user-visible outcome, source-backed implementation keys, and graph maintenance instructions; the nonterminal dependency graph is acyclic and lint-clean; reproduced stale claims no longer appear in active tickets; no live outcome is lost; each edited check is perturbed once and observed failing; `tkt guard`, `git diff --check`, and `make full` pass.
+
+## Outcome
+
+The awaiting-decision queue fell from twenty tickets to the two genuine product choices: the first Metal LM workload and inline macro syntax. Five ShapeEnv/index splits, dtype dispatchability, per-target outcomes, and one numerical-contract documentation ticket were consolidated without losing their requirements. The caller-profile/provenance/Metal/delivered-record chain now runs producer to consumer. Premature unsafe and dynamic-factorization work is deferred behind explicit triggers, the cache boundary waits on its two concrete signature drafts, and conditional quantized dependencies stay conditional.
+
+No ticket was deleted because every candidate retained useful rationale or history. Forty-three stale `tkt/*` branches were separately proven to have zero unique commits and no attached worktree; they were not deleted because branch administration is outside this ticket cleanup.
+
+The lint check's failure path was demonstrated with a temporary self-cycle and then restored. Detached review at `3fad568e76d48c0cdfb0dd1709e519308d7a03ed` found no blocking issue or lost outcome. `tkt guard` found no under-declared scope, `git diff --check` passed, and `make full` passed with 1,296 workspace tests, the doc-tests, and 487 release numerical tests.
 
 ## Refs
 
