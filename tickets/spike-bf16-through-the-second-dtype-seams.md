@@ -3,7 +3,7 @@ id: spike-bf16-through-the-second-dtype-seams
 title: Spike BF16 through the second-dtype seams
 status: todo
 priority: p1
-dependencies: [register-the-accepted-built-in-dtype-catalog, express-metal-honourability-in-the-shared-form]
+dependencies: [register-the-accepted-built-in-dtype-catalog, construct-and-bind-the-first-authoritative-metal-compile-profile]
 related: [preserve-primary-dtype-standards-evidence, own-the-dtype-support-maturity-matrix, own-operation-family-support-matrix, measure-the-apple-subnormal-flush-for-the-remaining-mature-dtypes, widen-the-f16-operation-vocabulary-to-contraction-and-reassociation, admit-a-caller-declared-target-profile, decide-per-dtype-dispatchability-as-a-target-capability, redesign-the-delivered-realization-record-from-typed-evidence, measure-apple-numerics-on-physical-ios-device]
 scopes: [research/numerics, research/apple-targets, contracts/navigation]
 shared_scopes: [project/tickets]
@@ -54,7 +54,7 @@ The pure-BF16 workload, exact semantics, reference corpus, macOS success route, 
 ## Graph maintenance
 
 - Consume BF16 identity only after `register-the-accepted-built-in-dtype-catalog`, whose own dependency on `preserve-primary-dtype-standards-evidence` keeps the normative source reproducible. Do not copy BF16 format tables into implementation tickets.
-- Consume production target facts only after `express-metal-honourability-in-the-shared-form`; the spike is its first non-F32 downstream proof and must not add a parallel backend dtype list.
+- Consume production target facts only after `construct-and-bind-the-first-authoritative-metal-compile-profile`; the F32 projection ticket provides a low-level caller-vouched seam rather than the authoritative construction and runtime-applicability mechanism this spike must widen. The spike remains the first non-F32 downstream proof and must not add a parallel backend dtype list.
 - Relate every child to `own-the-dtype-support-maturity-matrix` and update only the cells its delivered evidence advances.
 - Connect target-profile, dispatchability, numerical-honourability, delivered-realization, artifact, runtime, and Metal children to their existing owners instead of creating parallel vocabularies.
 - Close this spike once its bounded evidence and child graph are complete; production implementation continues in those children rather than keeping the spike in review.

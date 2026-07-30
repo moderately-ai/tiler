@@ -12,16 +12,16 @@ tags: [implementation, metal, numerics]
 ---
 ADR 0076 item 3, on the one target that has a measured unhonourable dimension. This is the ticket that gives the Apple row a positive conformance story for the first time: a flush-tolerant `f32` contract compiles and conforms, a preserving one rejects with a named cause.
 
-## What is implemented today, and why it is not enough
+## Decision-time problem statement — superseded by the outcome and resolution below
 
-`MetalNumericalGap::SubnormalFlushInArithmetic` records the unhonourable obligation, is written into the generated MSL provenance header, and is enforced by `MetalTranslationUnit::require_declared_realization`, which fails closed with `MetalEmitError::UnrealizableNumericalObligation`. That is correct as far as it reaches and was the honest thing to build at the time. It is insufficient as a durable answer for four reasons, each independently sufficient:
+At the time this ticket was opened, `MetalNumericalGap::SubnormalFlushInArithmetic` recorded the unhonourable obligation, was written into the generated MSL provenance header, and was enforced by `MetalTranslationUnit::require_declared_realization`, which failed closed with `MetalEmitError::UnrealizableNumericalObligation`. That historical backend-local checkpoint was correct as far as it reached and insufficient as a durable answer for four reasons, each independently sufficient:
 
 - it is one gap variant that cannot distinguish input flushing from result flushing;
 - it names no target-profile identity, so a rejection cannot say who declared the fact;
 - emission still succeeds, so a caller that never asks for conformance never sees the rejection;
-- nothing above `tiler-metal` can select a contract the target would honour instead, so the only reachable outcomes on Apple are a refused conformance claim or a caller that never asks.
+- nothing above `tiler-metal` could state a contract the target honoured, so the only reachable outcomes on Apple were a refused conformance claim or a caller that never asked.
 
-## The work
+## Historical work statement
 
 Express `MetalSubnormalArithmetic` as a per-dimension honourability declaration in the shared form `select-numerical-contract-and-compose-feasibility` establishes, rather than a backend-local target fact — so the compiler can assess it *before* emission rather than discovering it during. Retire `MetalNumericalGap` and `require_declared_realization` in favour of the typed rejection, **or** state precisely why a backend-local conformance step survives alongside the profile declaration. Either is acceptable; leaving both without saying which is authoritative is not.
 
@@ -33,11 +33,11 @@ Keep the measurements recorded on the declaring types. `MetalTargetFacts` alread
 
 `MetalTargetFacts::subnormal_arithmetic` already takes the correct approach: a required caller-stated fact with the measurement recorded on the type. Generalize that; do not replace it with anything inferred.
 
-## The contract half
+## Historical contract-half statement
 
 `docs/backends/metal.md` records the strict flag row and states that the compatibility probe "did not observe the numerical behavior these flags request". The re-verified measurement in ADR 0076 closes that gap in one direction and the contract must record it: **the strict row does not deliver subnormal preservation.** `-fmetal-math-mode=safe` emits `air.compile.denorms_disable` alongside `air.compile.fast_math_disable`, under `safe`, `relaxed`, and `fast` alike; no offline flag and no runtime `MTLCompileOptions` setting clears it. Materialization is unaffected — a load-then-store round trip preserves every subnormal — so the limit is a property of arithmetic specifically, and the contract should say that rather than a blanket claim about the target.
 
-ADR 0076 leaves as an open question whether the profile *declaration mechanism* belongs in `docs/backends/metal.md` or in the architecture contract. Recording the measured flag behaviour there is not in question; siting the mechanism is. If you conclude it belongs elsewhere, say so and add the scope rather than writing it where it does not belong.
+At this checkpoint ADR 0076 left open whether the profile *declaration mechanism* belonged in `docs/backends/metal.md` or in the architecture contract. The ratified resolution below supersedes that siting question.
 
 ## A knock-on you will hit immediately
 
@@ -77,17 +77,17 @@ Behaviour on the governed path is unchanged: the registered contract is still `P
 
 **Do not close the gap by widening the rule.** Making the fourth arm return no gap regardless of sign, or dropping `zero_sign` from `SubnormalMode`, would let a program that specifies positive-zero flushing run on a sign-preserving target and return `0x80000000` where it asked for `0x00000000`. That is a wrong answer, not a relaxed one.
 
-## Progress — the target fact now names its zero; it is still backend-local
+## Historical progress checkpoint — the target fact named its zero but was still backend-local
 
 **Landed at `a56bff8`.** `MetalSubnormalArithmetic::FlushesToZero` became `FlushesToZero { zero_sign: MetalFlushedZeroSign }`, and `subnormal_gap` compares the declared zero against the target's through an exhaustive `flushed_zero_gap`. Agreement is now a positive conformance claim; only a genuine sign mismatch is a gap, renamed `FlushedZeroSignMismatch`. Previously the target stated *that* it flushes and not *to what*, so a `SubnormalMode::FlushToZero` — which always names a zero — could never be established, and every flush contract failed closed as `UndeclaredFlushedZeroSign`. Four golden MSL provenance headers were rebaselined; the gate recompiles them through `xcrun`.
 
 That change plus a selectable contract is what let a real program reach an Apple M4 Max and return bits identical to the reference oracle.
 
-**Why this ticket is still open.** What landed is a *backend-local target fact*, which is exactly what this ticket exists to replace. `MetalSubnormalArithmetic` still lives in `tiler-metal` and is still consulted only during emission, so the compiler cannot assess honourability *before* emitting — it discovers unhonourability from `require_declared_realization` after a translation unit already exists. The per-dimension honourability declaration in the shared form, expressed so `feasibility` can assess it as a peer of `CheckedTargetProfile`, is not built; that is `compose-numerical-honourability-and-retire-the-strict-boolean`'s peer authority, and this ticket owns the Metal side of it.
+**Historical bound — superseded by the resolution below.** At this checkpoint what had landed was a *backend-local target fact*. `MetalSubnormalArithmetic` lived in `tiler-metal` and was consulted only during emission, so the compiler could not assess honourability *before* emitting: it discovered unhonourability from `require_declared_realization` after a translation unit already existed. The per-dimension honourability declaration in the shared form was not yet built.
 
 Also unchanged: whether `MetalNumericalGap` and `require_declared_realization` are retired in favour of the typed rejection, or whether a backend-local conformance step survives alongside it with a stated reason. The measurements stay recorded on the declaring types either way.
 
-## Contract half landed; the declaration mechanism is what remains
+## Historical contract checkpoint — the declaration mechanism was what remained
 
 **Done — `docs/backends/metal.md`'s numerical realization section.** The ticket names this half as "not in question", and the contract was stating something the re-verified measurement contradicts: it said the compatibility probe "did not observe the numerical behavior these flags request" without recording that a *different* measurement since has.
 
@@ -100,15 +100,15 @@ Four things are now recorded there, each separated from the others because they 
 
 The compiler-provenance section's cross-reference, which described the subnormal behaviour as still unobserved and pointed at this ticket, was corrected in the same pass rather than left to contradict the section above it.
 
-**Siting, as the ticket required stating.** The measured flag behaviour went in `docs/backends/metal.md`, which the ticket says is not in question. The profile *declaration mechanism* is not written there, so ADR 0076's open question about where it belongs stays open and is not answered by omission.
+**Historical siting state — superseded by the resolution below.** The measured flag behaviour went in `docs/backends/metal.md`, while the profile declaration mechanism had not yet been sited.
 
-**What remains, and why the ticket stays open.** The two substantive halves are untouched: expressing `MetalSubnormalArithmetic` as a per-dimension honourability declaration in the shared form so `feasibility` can assess it before emission rather than discovering it after, and deciding whether `MetalNumericalGap`/`require_declared_realization` retire in favour of the typed rejection or survive alongside it with a stated reason. Both wait on `compose-numerical-honourability-and-retire-the-strict-boolean`'s peer authority, which this ticket already lists as the shared form it must adopt.
+**Historical remainder.** At that checkpoint, expressing `MetalSubnormalArithmetic` in the shared form and deciding the backend-local checkpoint were both unresolved. The outcome and ratified projection below close those questions at their stated bounds.
 
 **Evidence.** `uv run --locked python scripts/check_repository.py` passes. The run also caught a broken link in the first draft of this amendment — `0076-target-honourable-numerical-realizations.md` against the real `0076-declare-target-honourable-numerical-realizations.md` — which is the gate doing its job on a hand-written cross-reference.
 
-## Outcome
+## Historical outcome checkpoint — superseded by the final resolution below
 
-Two of the three open questions are settled and recorded; the third — expressing `MetalSubnormalArithmetic` in the shared honourability form — is split into `express-metal-honourability-in-the-shared-form`, which depends on `compose-numerical-honourability-and-retire-the-strict-boolean`. This ticket goes to `review`, not `done`: its title names the half that moved out.
+At this checkpoint two of the three open questions were settled and recorded; the third — expressing `MetalSubnormalArithmetic` in the shared honourability form — was split into `express-metal-honourability-in-the-shared-form`. This ticket then moved to `review`; it has since completed, and the final resolution below records the bounded declaration mechanism.
 
 ### Decided — the backend-local conformance step survives, and the profile declaration is authoritative
 
@@ -142,16 +142,26 @@ A consequence that was implicit and is now stated in `crates/tiler-metal/src/gol
 - a flush contract on a preserving target is refused as `SubnormalPreservationInArithmetic`;
 - the two subnormal dimensions are compared independently — declared as a *mismatched* flush on one dimension and preservation on the other, so one kernel yields two *different* gaps, which a pair of cases producing the same gap could not distinguish from a coupled comparison. It also pins the documented rejection order.
 
-### Not decided, deliberately
+### Historical unresolved siting — superseded
 
-ADR 0076's open question on where the profile *declaration mechanism* is sited stays open. `docs/backends/metal.md` records the relationship between the two checkpoints, which is a Metal backend contract matter, and says explicitly that it does not site the declaration. `express-metal-honourability-in-the-shared-form` carries that decision, along with the finding that forces it: neither `tiler-metal` nor `tiler-compiler` can hold both the shared form and the Metal fact, so the siting is a real choice between `tiler-ir`, a consumer-constructed translation, and a third crate.
+At this checkpoint ADR 0076's declaration-mechanism siting question remained open. `express-metal-honourability-in-the-shared-form` subsequently eliminated the invalid candidates and Tom ratified `tiler-build` as the owner of the bounded adaptation.
 
-### Nothing retracted
+### Historical audit conclusion
 
-No prior claim in this ticket was found to be wrong. The Progress and contract-half sections stand as written.
+At that checkpoint no earlier measurement claim was retracted. Later state changes are now labeled as historical rather than left in the present tense.
 
 ### Evidence
 
 `uv run --locked python scripts/check_repository.py` passes, and the five new tests run within it.
 
 The gate captures test output, so toolchain resolution is not readable from its log and was confirmed separately rather than inferred: `cargo nextest run -p tiler-metal --lib -E 'test(golden_compilation)' --no-capture` resolves `metal`/`metallib` `32023.883` (`metalfe-32023.883`) against macOS SDK 26.5 build 25F70, links all four fixtures (3683/3715/3747/3859 bytes) and the four-entry-point portfolio (14716 bytes). These tests self-skip where no qualified toolchain resolves, so that command is the check to repeat on another host.
+
+## Resolution of the deferred declaration mechanism
+
+**Fact — ratified after this ticket closed:** the shared-form projection now lives in `tiler-build`, the existing orchestrator that depends on both `tiler-compiler` and `tiler-metal`. The compiler exposes target-neutral, per-dimension measured subnormal declarations; Metal owns a total conversion from its target-side behaviour into the shared `SubnormalMode`; and `tiler-build::declare_metal_f32_subnormal_behaviour` applies the exact F32 input/result rows transactionally without freezing the caller's profile builder.
+
+**Fact:** the backend-local conformance step remains. It reads the same `MetalTargetFacts` and protects direct emission paths that never call the compiler adapter.
+
+**Inference:** the resolved ownership preserves the decision above: the profile declaration is the pre-emission feasibility authority, while the backend recheck is defence in depth over an emitted translation unit. Neither semantic IR nor a new adapter crate acquires Metal target vocabulary.
+
+**Bound:** this resolution is a caller-vouched F32 projection seam. It does not construct an authoritative production profile, source quantitative or F32-dispatchability facts, bind the compiler profile to a Metal plan/artifact or runtime environment, or project F16/BF16. Those obligations belong to `construct-and-bind-the-first-authoritative-metal-compile-profile`.

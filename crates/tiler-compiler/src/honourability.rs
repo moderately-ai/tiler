@@ -67,7 +67,7 @@ use crate::feasibility::{
 use crate::request::{permission_tag, subnormal_tag};
 
 /// Version of the structured numerical-fact provenance vocabulary.
-const FACT_SOURCE_PROVENANCE_SCHEMA_VERSION: u32 = 2;
+const FACT_SOURCE_PROVENANCE_SCHEMA_VERSION: u32 = 3;
 
 /// Maximum UTF-8 byte length of one descriptive provenance field.
 pub(crate) const MAX_PROVENANCE_TEXT_BYTES: usize = 256;
@@ -423,7 +423,30 @@ impl FactSourceProvenance {
                     self.authority == FactAuthority::ExternalProfile && reference.is_valid()
                 }
                 FactEvidenceBasis::Measurement { contexts } => {
-                    !contexts.is_empty()
+                    matches!(
+                        (self.phase, self.authority, self.validity),
+                        (
+                            AvailabilityPhase::CompileProfile,
+                            FactAuthority::MeasuredProfile,
+                            FactValidityScope::MeasuredEnvironment,
+                        ) | (
+                            AvailabilityPhase::ArtifactEvidence,
+                            FactAuthority::ArtifactEvidence,
+                            FactValidityScope::PreparedArtifact,
+                        ) | (
+                            AvailabilityPhase::LiveDevicePreflight,
+                            FactAuthority::DeviceRuntime,
+                            FactValidityScope::DeviceInstance,
+                        ) | (
+                            AvailabilityPhase::PreparedKernelPreflight,
+                            FactAuthority::PreparedKernel,
+                            FactValidityScope::PreparedArtifact,
+                        ) | (
+                            AvailabilityPhase::LaunchPreflight,
+                            FactAuthority::LaunchInstance,
+                            FactValidityScope::LaunchInstance,
+                        )
+                    ) && !contexts.is_empty()
                         && contexts.len() <= MAX_MEASUREMENT_CONTEXTS_PER_SOURCE
                         && contexts.iter().all(MeasurementContext::is_valid)
                         && strictly_increasing(contexts, MeasurementContext::canonical_bytes)

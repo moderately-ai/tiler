@@ -3,7 +3,7 @@ id: wire-the-delivered-realization-record-into-the-artifact
 title: Wire the delivered-realization record into the artifact
 status: todo
 priority: p1
-dependencies: [accept-the-delivered-realization-artifact-surface]
+dependencies: [accept-the-delivered-realization-artifact-surface, construct-and-bind-the-first-authoritative-metal-compile-profile]
 related: [record-delivered-numerical-realization, redesign-the-delivered-realization-record-from-typed-evidence]
 scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/build, contracts/numerics, contracts/artifacts, contracts/decisions]
 shared_scopes: []
@@ -12,7 +12,7 @@ tags: [implementation, artifact, numerics]
 ---
 `record-delivered-numerical-realization` built the first delivered-realization record and staged it crate-private in `crates/tiler-artifact/src/program/realization.rs`. That four-dimension, dtype-free draft was later disproved and is historical evidence rather than the shape to wire. `redesign-the-delivered-realization-record-from-typed-evidence` owns its replacement. This ticket makes a produced artifact carry the replacement boundary Tom accepts, which is what ADR 0076 item 4 asks for and what a staged draft alone does not supply.
 
-Blocked on `accept-the-delivered-realization-artifact-surface`: every step below adds a public item, and ADR 0075 reserves that to Tom.
+Blocked on two independent prerequisites. `accept-the-delivered-realization-artifact-surface` ratifies every public item below under ADR 0075. `construct-and-bind-the-first-authoritative-metal-compile-profile` supplies real Metal evidence whose quantitative, dispatchability, numerical, compiler, and environment claims are authoritative enough to package. The record redesign may use checked synthetic evidence; production wiring must not turn the low-level caller-vouched F32 projection into an authenticated target claim.
 
 ## The work
 

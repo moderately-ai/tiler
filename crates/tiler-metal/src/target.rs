@@ -64,6 +64,8 @@
 
 use core::fmt;
 
+use tiler_ir::schedule::{FlushedZeroSign, SubnormalMode};
+
 /// The selected Metal Shading Language standard.
 ///
 /// MSL 3.1 is the standard the Apple artifact-compatibility probe measured. The
@@ -507,6 +509,29 @@ pub enum MetalSubnormalArithmetic {
 }
 
 impl MetalSubnormalArithmetic {
+    /// Projects this target fact into the shared numerical-behaviour vocabulary.
+    ///
+    /// This owner-side projection is total even though the target vocabulary is
+    /// deliberately `#[non_exhaustive]` to downstream crates. Consumers can
+    /// therefore declare compiler honourability without a wildcard that would
+    /// guess what a future Metal behaviour means.
+    #[must_use]
+    pub const fn subnormal_mode(self) -> SubnormalMode {
+        match self {
+            Self::FlushesToZero {
+                zero_sign: MetalFlushedZeroSign::PreservesSign,
+            } => SubnormalMode::FlushToZero {
+                zero_sign: FlushedZeroSign::PreservesSign,
+            },
+            Self::FlushesToZero {
+                zero_sign: MetalFlushedZeroSign::AlwaysPositive,
+            } => SubnormalMode::FlushToZero {
+                zero_sign: FlushedZeroSign::AlwaysPositive,
+            },
+            Self::PreservesSubnormals => SubnormalMode::Preserve,
+        }
+    }
+
     /// Returns a stable lowercase identifier for this behaviour.
     #[must_use]
     pub const fn as_str(self) -> &'static str {

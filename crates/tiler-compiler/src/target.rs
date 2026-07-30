@@ -120,12 +120,12 @@ pub(crate) const GOVERNED_TARGET_PROFILE_KEY: &str = "tiler.prototype-target-neu
 ///
 /// This is a new grammar, not a continuation of feasibility's
 /// `tiler.target-profile.descriptor.v6`: the v6 descriptor remains an embedded
-/// checked capability-and-numerics component, while this v5 envelope additionally
+/// checked capability-and-numerics component, while this v6 envelope additionally
 /// binds each quantitative row to structured source attribution and exact,
 /// phase-qualified dtype-dispatch facts. A reader of
 /// the old domain therefore cannot mistake these bytes for the old grammar.
-const COMPLETE_PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.declaration.v5\0";
-const PROFILE_SOURCE_DOMAIN: &[u8] = b"tiler.target-profile.fact-sources.v3\0";
+const COMPLETE_PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.declaration.v6\0";
+const PROFILE_SOURCE_DOMAIN: &[u8] = b"tiler.target-profile.fact-sources.v4\0";
 const DISPATCHABILITY_DOMAIN: &[u8] = b"tiler.target-profile.dtype-dispatchability.v2\0";
 
 /// Maximum byte length of one target-profile key.
@@ -543,6 +543,36 @@ impl TargetMeasurementContext {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TargetFactSource(Arc<FactSourceProvenance>);
 
+/// Empirical compiler-profile provenance bound to exact measurement contexts.
+///
+/// Unlike [`TargetFactSource::external_guarantee`], this source cannot claim
+/// portable normative authority. Its phase, authority, and validity are fixed
+/// to compile profile, measured profile, and measured environment.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TargetCompileProfileMeasurementSource(Arc<FactSourceProvenance>);
+
+impl TargetCompileProfileMeasurementSource {
+    /// Constructs compiler-profile measurement provenance.
+    ///
+    /// # Errors
+    ///
+    /// Returns a set-specific diagnostic for an empty, duplicated, or oversized
+    /// measurement-context collection.
+    pub fn new(
+        producer: TargetFactProducerIdentity,
+        contexts: impl IntoIterator<Item = TargetMeasurementContext>,
+    ) -> Result<Self, TargetFactSourceError> {
+        let contexts = collect_measurement_contexts(contexts)?;
+        Ok(Self(Arc::new(FactSourceProvenance::measured(
+            AvailabilityPhase::CompileProfile,
+            FactAuthority::MeasuredProfile,
+            FactValidityScope::MeasuredEnvironment,
+            producer.0,
+            contexts,
+        ))))
+    }
+}
+
 impl TargetFactSource {
     /// Attributes a portable normative/spec-backed guarantee to an external
     /// producer.
@@ -574,35 +604,37 @@ impl TargetFactSource {
         contexts: impl IntoIterator<Item = TargetMeasurementContext>,
     ) -> Result<Self, TargetFactSourceError> {
         let (phase, authority, validity) = authority.internal();
-        let contexts = contexts
-            .into_iter()
-            .take(MAX_TARGET_MEASUREMENT_CONTEXTS_PER_SOURCE + 1)
-            .collect::<Vec<_>>();
-        if contexts.is_empty() {
-            return Err(TargetFactSourceError::EmptyMeasurementContextSet);
-        }
-        if contexts.len() > MAX_TARGET_MEASUREMENT_CONTEXTS_PER_SOURCE {
-            return Err(TargetFactSourceError::TooManyMeasurementContexts {
-                actual: contexts.len(),
-                max: MAX_TARGET_MEASUREMENT_CONTEXTS_PER_SOURCE,
-            });
-        }
-        if contexts
-            .iter()
-            .enumerate()
-            .any(|(index, context)| contexts[..index].contains(context))
-        {
-            return Err(TargetFactSourceError::DuplicateMeasurementContext);
-        }
-        let value = FactSourceProvenance::measured(
-            phase,
-            authority,
-            validity,
-            producer.0,
-            contexts.into_iter().map(|context| context.0).collect(),
-        );
+        let contexts = collect_measurement_contexts(contexts)?;
+        let value =
+            FactSourceProvenance::measured(phase, authority, validity, producer.0, contexts);
         Ok(Self(Arc::new(value)))
     }
+}
+
+fn collect_measurement_contexts(
+    contexts: impl IntoIterator<Item = TargetMeasurementContext>,
+) -> Result<Vec<MeasurementContext>, TargetFactSourceError> {
+    let contexts = contexts
+        .into_iter()
+        .take(MAX_TARGET_MEASUREMENT_CONTEXTS_PER_SOURCE + 1)
+        .collect::<Vec<_>>();
+    if contexts.is_empty() {
+        return Err(TargetFactSourceError::EmptyMeasurementContextSet);
+    }
+    if contexts.len() > MAX_TARGET_MEASUREMENT_CONTEXTS_PER_SOURCE {
+        return Err(TargetFactSourceError::TooManyMeasurementContexts {
+            actual: contexts.len(),
+            max: MAX_TARGET_MEASUREMENT_CONTEXTS_PER_SOURCE,
+        });
+    }
+    if contexts
+        .iter()
+        .enumerate()
+        .any(|(index, context)| contexts[..index].contains(context))
+    {
+        return Err(TargetFactSourceError::DuplicateMeasurementContext);
+    }
+    Ok(contexts.into_iter().map(|context| context.0).collect())
 }
 
 /// Typed refusal from external target-fact source construction.
@@ -1244,6 +1276,132 @@ impl TargetProfileBuilder {
             support,
             source,
         )
+    }
+
+    /// Declares the one measured scalar input-subnormal realization delivered
+    /// by a compiler profile, and explicitly refuses the other two realizations.
+    ///
+    /// The input-subnormal dimension receives a complete, exclusive three-row
+    /// table. If that dimension already contains any row for the exact subject
+    /// at any phase or behaviour, this operation refuses before inserting
+    /// anything.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed conflict naming the exact subject, dimension, and phase
+    /// of the first pre-existing row, without mutating the builder.
+    pub fn declare_measured_input_subnormal_behaviour(
+        &mut self,
+        subject: ScalarArithmetic,
+        delivered: SubnormalMode,
+        source: TargetCompileProfileMeasurementSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_measured_subnormal_dimension(
+            subject,
+            NumericalDimension::InputSubnormals,
+            delivered,
+            source,
+        )
+    }
+
+    /// Declares the one measured scalar result-subnormal realization delivered
+    /// by a compiler profile, and explicitly refuses the other two realizations.
+    ///
+    /// The result-subnormal dimension receives a complete, exclusive three-row
+    /// table. If that dimension already contains any row for the exact subject
+    /// at any phase or behaviour, this operation refuses before inserting
+    /// anything.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed conflict naming the exact subject, dimension, and phase
+    /// of the first pre-existing row, without mutating the builder.
+    pub fn declare_measured_result_subnormal_behaviour(
+        &mut self,
+        subject: ScalarArithmetic,
+        delivered: SubnormalMode,
+        source: TargetCompileProfileMeasurementSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        self.declare_measured_subnormal_dimension(
+            subject,
+            NumericalDimension::ResultSubnormals,
+            delivered,
+            source,
+        )
+    }
+
+    fn declare_measured_subnormal_dimension(
+        &mut self,
+        subject: ScalarArithmetic,
+        dimension: NumericalDimension,
+        delivered: SubnormalMode,
+        source: TargetCompileProfileMeasurementSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        debug_assert!(matches!(
+            dimension,
+            NumericalDimension::InputSubnormals | NumericalDimension::ResultSubnormals
+        ));
+        if let Some(existing) = self
+            .scalar
+            .iter()
+            .find(|existing| existing.subject == subject && existing.dimension == dimension)
+        {
+            return Err(TargetProfileBuildError::ConflictingSubnormalDeclaration {
+                subject: Box::new(subject),
+                dimension: existing.dimension.key(),
+                phase: existing.source.phase(),
+            });
+        }
+
+        let (preserve, signed, positive) = match delivered {
+            SubnormalMode::Preserve => (
+                ScalarSupport::Exact,
+                ScalarSupport::Unsupported,
+                ScalarSupport::Unsupported,
+            ),
+            SubnormalMode::FlushToZero {
+                zero_sign: FlushedZeroSign::PreservesSign,
+            } => (
+                ScalarSupport::Unsupported,
+                ScalarSupport::Exact,
+                ScalarSupport::Unsupported,
+            ),
+            SubnormalMode::FlushToZero {
+                zero_sign: FlushedZeroSign::AlwaysPositive,
+            } => (
+                ScalarSupport::Unsupported,
+                ScalarSupport::Unsupported,
+                ScalarSupport::Exact,
+            ),
+        };
+        let rows = [
+            (SubnormalMode::Preserve, preserve),
+            (
+                SubnormalMode::FlushToZero {
+                    zero_sign: FlushedZeroSign::PreservesSign,
+                },
+                signed,
+            ),
+            (
+                SubnormalMode::FlushToZero {
+                    zero_sign: FlushedZeroSign::AlwaysPositive,
+                },
+                positive,
+            ),
+        ];
+        let source = source.0;
+        let declarations = rows.map(|(behaviour, support)| ScalarHonourabilityDeclaration {
+            subject: subject.clone(),
+            dimension,
+            behaviour: DimensionBehaviour::Subnormals(behaviour),
+            means: support.means(),
+            source: Arc::clone(&source),
+        });
+        for declaration in &declarations {
+            declaration.validate()?;
+        }
+        self.scalar.extend(declarations);
+        Ok(())
     }
 
     /// Declares support for one contraction permission.
@@ -2008,6 +2166,15 @@ pub enum TargetProfileBuildError {
     },
     /// The same numerical behaviour was declared twice at the same phase.
     DuplicateScalarDeclaration,
+    /// A complete measured subnormal table would overlap an existing row.
+    ConflictingSubnormalDeclaration {
+        /// Exact scalar subject whose table was already partially declared.
+        subject: Box<ScalarArithmetic>,
+        /// Stable numerical-dimension key of the conflicting row.
+        dimension: &'static str,
+        /// Availability phase of the conflicting row.
+        phase: AvailabilityPhase,
+    },
     /// The same exact resolved type received more than one dispatch verdict at
     /// one availability phase.
     DuplicateDispatchability,
@@ -2131,6 +2298,34 @@ mod tests {
             .unwrap();
         builder.declare_barriers(16, source).unwrap();
         builder
+    }
+
+    fn compile_profile_measurement_source(
+        compiler_version: &str,
+        platform_build: &str,
+    ) -> TargetCompileProfileMeasurementSource {
+        let compiler = TargetCompilerBuild::new(
+            TargetCompilerRole::CodeGenerator,
+            "test-code-generator".to_owned(),
+            compiler_version.to_owned(),
+            Some("exact-build".to_owned()),
+        )
+        .unwrap();
+        let environment = TargetExecutionEnvironment::builder()
+            .platform("test-platform".to_owned())
+            .platform_version("1.0".to_owned())
+            .platform_build(platform_build.to_owned())
+            .architecture("test-architecture".to_owned())
+            .hardware("test-hardware".to_owned())
+            .build()
+            .unwrap();
+        let context = TargetMeasurementContext::new([compiler], environment).unwrap();
+        TargetCompileProfileMeasurementSource::new(
+            TargetFactProducerIdentity::new("test.compile-profile-measurement.v1".to_owned(), 1)
+                .unwrap(),
+            [context],
+        )
+        .unwrap()
     }
 
     #[test]
@@ -2385,6 +2580,161 @@ mod tests {
             assert_eq!(source.0.authority(), internal_authority);
             assert_eq!(source.0.validity(), validity);
         }
+    }
+
+    #[test]
+    fn compiler_profile_measurement_source_fixes_empirical_authority_and_scope() {
+        let source = compile_profile_measurement_source("1.0", "build-1");
+        assert_eq!(source.0.phase(), AvailabilityPhase::CompileProfile);
+        assert_eq!(source.0.authority(), FactAuthority::MeasuredProfile);
+        assert_eq!(source.0.validity(), FactValidityScope::MeasuredEnvironment);
+        assert!(matches!(
+            source.0.basis(),
+            crate::honourability::FactEvidenceBasis::Measurement { contexts }
+                if contexts.len() == 1
+                    && contexts[0].compiler_builds()[0].version() == "1.0"
+                    && contexts[0].environment().platform_build() == "build-1"
+        ));
+    }
+
+    #[test]
+    fn measured_scalar_subnormal_declarations_build_independent_exclusive_tables() {
+        let behaviours = [
+            SubnormalMode::Preserve,
+            SubnormalMode::FlushToZero {
+                zero_sign: FlushedZeroSign::PreservesSign,
+            },
+            SubnormalMode::FlushToZero {
+                zero_sign: FlushedZeroSign::AlwaysPositive,
+            },
+        ];
+        for delivered in behaviours {
+            let mut builder = TargetProfileBuilder::new(
+                TargetProfileKey::new("test.measured-subnormal-table.v1".to_owned()).unwrap(),
+            );
+            builder
+                .declare_measured_input_subnormal_behaviour(
+                    ScalarArithmetic::f32(),
+                    delivered,
+                    compile_profile_measurement_source("1.0", "build-1"),
+                )
+                .unwrap();
+            builder
+                .declare_measured_result_subnormal_behaviour(
+                    ScalarArithmetic::f32(),
+                    delivered,
+                    compile_profile_measurement_source("1.0", "build-1"),
+                )
+                .unwrap();
+            assert_eq!(builder.scalar.len(), 6);
+            for dimension in [
+                NumericalDimension::InputSubnormals,
+                NumericalDimension::ResultSubnormals,
+            ] {
+                for behaviour in behaviours {
+                    let row = builder
+                        .scalar
+                        .iter()
+                        .find(|row| {
+                            row.dimension == dimension
+                                && row.behaviour == DimensionBehaviour::Subnormals(behaviour)
+                        })
+                        .expect("every destination row is explicit");
+                    assert_eq!(
+                        row.means,
+                        if behaviour == delivered {
+                            HonouringMeans::SupportedExactly
+                        } else {
+                            HonouringMeans::Unsupported
+                        }
+                    );
+                    assert_eq!(row.source.phase(), AvailabilityPhase::CompileProfile);
+                    assert_eq!(row.source.authority(), FactAuthority::MeasuredProfile);
+                    assert_eq!(
+                        row.source.validity(),
+                        FactValidityScope::MeasuredEnvironment
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn measured_scalar_subnormal_dimension_rejects_cross_phase_rows_atomically() {
+        let subject = ScalarArithmetic::f32();
+        let mut builder = TargetProfileBuilder::new(
+            TargetProfileKey::new("test.measured-subnormal-conflict.v1".to_owned()).unwrap(),
+        );
+        builder
+            .declare_result_subnormals(
+                subject.clone(),
+                SubnormalMode::FlushToZero {
+                    zero_sign: FlushedZeroSign::AlwaysPositive,
+                },
+                ScalarSupport::Unsupported,
+                TargetFactSource(measured_capability_source()),
+            )
+            .unwrap();
+        let before = builder.scalar.clone();
+        assert_eq!(
+            builder.declare_measured_result_subnormal_behaviour(
+                subject.clone(),
+                SubnormalMode::Preserve,
+                compile_profile_measurement_source("1.0", "build-1"),
+            ),
+            Err(TargetProfileBuildError::ConflictingSubnormalDeclaration {
+                subject: Box::new(subject),
+                dimension: "numerics.result-subnormals",
+                phase: AvailabilityPhase::LiveDevicePreflight,
+            })
+        );
+        assert_eq!(
+            builder.scalar, before,
+            "refusal must insert no partial table"
+        );
+    }
+
+    #[test]
+    fn measured_subnormal_table_identity_binds_behaviour_build_and_environment() {
+        let descriptor = |delivered, compiler_version, platform_build| {
+            let mut builder = TargetProfileBuilder::new(
+                TargetProfileKey::new("test.measured-subnormal-identity.v1".to_owned()).unwrap(),
+            );
+            builder
+                .declare_measured_input_subnormal_behaviour(
+                    ScalarArithmetic::f32(),
+                    delivered,
+                    compile_profile_measurement_source(compiler_version, platform_build),
+                )
+                .unwrap();
+            builder
+                .declare_measured_result_subnormal_behaviour(
+                    ScalarArithmetic::f32(),
+                    delivered,
+                    compile_profile_measurement_source(compiler_version, platform_build),
+                )
+                .unwrap();
+            builder.build().unwrap().canonical_descriptor().to_vec()
+        };
+        let baseline = descriptor(SubnormalMode::Preserve, "1.0", "build-1");
+        assert_ne!(
+            baseline,
+            descriptor(
+                SubnormalMode::FlushToZero {
+                    zero_sign: FlushedZeroSign::AlwaysPositive,
+                },
+                "1.0",
+                "build-1",
+            )
+        );
+        assert_ne!(
+            baseline,
+            descriptor(SubnormalMode::Preserve, "2.0", "build-1")
+        );
+        assert_ne!(
+            baseline,
+            descriptor(SubnormalMode::Preserve, "1.0", "build-2")
+        );
     }
 
     #[test]

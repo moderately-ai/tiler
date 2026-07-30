@@ -5,7 +5,7 @@ kind: "contract"
 title: "Metal AOT backend"
 topics: ["backends", "metal", "aot", "apple-targets"]
 contract_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 evidence: ["tiler.research.apple-targets.compatibility", "tiler.research.apple-targets.numerical-behaviour", "tiler.research.artifacts.target-neutral-envelope", "tiler.research.macro-environment.build-environment"]
 ticket: "synthesize-artifact-contracts"
 ---
@@ -86,6 +86,8 @@ Numerical capabilities are keyed by operation, dtype, effective accuracy,
 special-value and subnormal contracts, implementation/helper revision, and
 toolchain profile. A generic claim that a target supports `fast` or `precise`
 math is not a feasibility fact.
+
+**Implemented bound — caller-vouched F32 subnormal projection.** The compiler owns target-neutral, per-dimension measured declarations; `tiler-metal` owns a total conversion from `MetalSubnormalArithmetic` to shared `SubnormalMode`; and `tiler-build` projects the exact F32 input/result rows transactionally. The adapter leaves the caller's profile builder open for other facts and dtypes. Its separately supplied measurement contexts are caller-vouched: the adapter validates their structure but cannot prove they produced the independently supplied `MetalTargetFacts`. It therefore does not construct the conservative production profile described above, populate quantitative or F32-dispatchability rows, bind a plan/artifact/runtime environment, or project F16/BF16.
 
 Some limits are known only after pipeline creation, such as execution width or
 maximum threads for a compiled function. The manifest records corresponding
@@ -191,16 +193,7 @@ identically, so nothing readable on the compile side distinguishes them. Finding
 21 of the [Apple numerical behaviour
 record](../research/apple-targets/numerical-behaviour.md) owns the measurement.
 
-**Inference — an unmeasured dtype is `Unknown` and must reject, not default.**
-Two dtypes disagreeing establishes that the flush depends on the dtype and
-establishes nothing about which dtypes flush; `bf16`, `f64`, and every integer
-and quantized format remain unmeasured. A target profile therefore states the
-subnormal behavior once per floating-point arithmetic type, and a type it says
-nothing about is refused at the conformance claim rather than answered from a
-neighbouring type's fact. Reading the `f32` fact for `f16` over-rejects — it
-reports a flush against a value the device carries exactly — and the same
-substitution on the *reference* side, where an evaluation flushes to match a
-device that does not, is what would return a wrong tensor.
+**Inference — an unstated dtype is `Unknown` and must reject, not default.** Two dtypes disagreeing establishes that the behavior depends on dtype and establishes nothing about a third. The retained record now measures BF16 flushing on the exact macOS row, but BF16 is not projected into the shared profile by the bounded F32 adapter and remains unknown on both iOS families; F64 and other floating formats remain unmeasured. Integer and quantized families do not inherit scalar floating subnormal semantics. A profile therefore states behavior once per exact arithmetic type, and a type it says nothing about is refused rather than answered from a neighbour. Reading the F32 fact for F16 over-rejects, while making a reference evaluator flush to match a device that preserves would return a wrong tensor.
 
 **The flush is sign-preserving.** On an Apple M4 Max under macOS 27.0 with
 Metal 32023.883, an emitted `x * 2.0f` returns `0x80000000` for the operand
@@ -275,11 +268,7 @@ is a public entry point a caller can drive from `tiler-ir` alone. Retiring the
 backend step would leave that path emitting source under a refused contract with
 no conformance claim anywhere in reach.
 
-**What this does not decide.** Where the profile *declaration mechanism* is
-sited remains [ADR 0076](../decisions/0076-declare-target-honourable-numerical-realizations.md)'s
-open question. This section records the relationship between the two
-checkpoints, which is a Metal backend contract matter; it does not site the
-declaration and must not be read as having answered that by omission.
+**Resolved ownership, bounded implementation.** The profile declaration mechanism is sited in `tiler-build`, which already depends on both sibling authorities. The compiler exposes target-neutral checked declarations and Metal keeps its target fact. This section owns the relationship between the two checkpoints; [architecture](../architecture.md) owns the dependency direction. The implemented adapter is only a caller-vouched F32 projection. `construct-and-bind-the-first-authoritative-metal-compile-profile` owns the authoritative quantitative/dispatchability sources, complete profile/Metal binding, independent runtime applicability, and serial-sum migration.
 
 ## Compiler provenance and the runtime compiler
 

@@ -302,6 +302,9 @@ pub(crate) enum FactAuthority {
     /// proof. Its source record carries both the producer identity and the
     /// versioned specification or guarantee it relies on.
     ExternalProfile,
+    /// An empirical compiler-profile measurement tied to exact compiler builds
+    /// and execution environments.
+    MeasuredProfile,
     /// Evidence attributed to a produced artifact.
     ArtifactEvidence,
     /// A live device runtime.
@@ -320,6 +323,7 @@ impl FactAuthority {
         match self {
             Self::GovernedProfile => 0x01,
             Self::ExternalProfile => 0x06,
+            Self::MeasuredProfile => 0x07,
             Self::ArtifactEvidence => 0x02,
             Self::DeviceRuntime => 0x03,
             Self::PreparedKernel => 0x04,
@@ -333,6 +337,8 @@ impl FactAuthority {
 pub(crate) enum FactValidityScope {
     /// Valid for any device matching the portable profile.
     PortableProfile,
+    /// Valid only for the exact measured compiler/environment population.
+    MeasuredEnvironment,
     /// Valid for one device instance only.
     DeviceInstance,
     /// Valid for one prepared artifact only.
@@ -348,6 +354,7 @@ impl FactValidityScope {
     pub(crate) const fn tag(self) -> u8 {
         match self {
             Self::PortableProfile => 0x01,
+            Self::MeasuredEnvironment => 0x05,
             Self::DeviceInstance => 0x02,
             Self::PreparedArtifact => 0x03,
             Self::LaunchInstance => 0x04,
@@ -965,7 +972,9 @@ const fn authority_matches_phase(authority: FactAuthority, phase: AvailabilityPh
     matches!(
         (authority, phase),
         (
-            FactAuthority::GovernedProfile | FactAuthority::ExternalProfile,
+            FactAuthority::GovernedProfile
+                | FactAuthority::ExternalProfile
+                | FactAuthority::MeasuredProfile,
             AvailabilityPhase::CompileProfile
         ) | (
             FactAuthority::ArtifactEvidence,

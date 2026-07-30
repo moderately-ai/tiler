@@ -77,9 +77,7 @@ use crate::record::{
     MetalBufferBinding, MetalEntryPoint, MetalNumericalGap, MetalNumericalRequirement,
     MetalTranslationUnit,
 };
-use crate::target::{
-    MetalFloatArithmeticType, MetalFlushedZeroSign, MetalSubnormalArithmetic, MetalTargetFacts,
-};
+use crate::target::{MetalFloatArithmeticType, MetalTargetFacts};
 
 /// One level of emitted indentation.
 const INDENT: &str = "    ";
@@ -663,60 +661,63 @@ const fn exceptional_values_require_safe_math(assumption: ExceptionalValueAssump
 /// behaviour without a type would answer for whichever one happened to be
 /// stated.
 ///
-/// The comparison is total in both arguments and every arm is a decision the
-/// measurement supports, so a widened contract vocabulary or a widened target
-/// vocabulary stops the build here. `MetalSubnormalArithmetic` is
-/// `#[non_exhaustive]`, which constrains matches outside this crate but not
-/// this one, so the match stays wildcard-free.
+/// The target owner projects its fact totally into [`SubnormalMode`] before
+/// this comparison. The comparison is therefore exhaustive in one shared
+/// vocabulary: widening either vocabulary stops the owner-side projection or
+/// this match rather than falling through a wildcard.
 ///
-/// A declared flush is honoured when the target flushes to the *same* zero the
-/// program named. The two zero vocabularies are distinct types — one is a
-/// declaration a program makes, the other a fact a target states — and this is
-/// the one place they are compared, so a mismatch is a decision rather than an
-/// assumed agreement. A program asking for `AlwaysPositive` on the measured
-/// sign-preserving Apple flush is a gap, because running it would return
-/// `0x80000000` where the program asked for `0x00000000`.
+/// A declared flush is honoured when the owner-projected target behaviour names
+/// the *same* zero the program named. The target-side zero vocabulary remains a
+/// distinct type at the declaration boundary;
+/// [`MetalSubnormalArithmetic::subnormal_mode`](crate::target::MetalSubnormalArithmetic::subnormal_mode)
+/// performs its total conversion before this shared-vocabulary comparison. A
+/// program asking for `AlwaysPositive` on the measured sign-preserving Apple
+/// flush is a gap, because running it would return `0x80000000` where the
+/// program asked for `0x00000000`.
 const fn subnormal_gap(
     declared: SubnormalMode,
-    target: MetalSubnormalArithmetic,
+    target: SubnormalMode,
 ) -> Option<MetalNumericalGap> {
     match (declared, target) {
-        (SubnormalMode::Preserve, MetalSubnormalArithmetic::PreservesSubnormals) => None,
-        (SubnormalMode::Preserve, MetalSubnormalArithmetic::FlushesToZero { .. }) => {
+        (SubnormalMode::Preserve, SubnormalMode::FlushToZero { .. }) => {
             Some(MetalNumericalGap::SubnormalFlushInArithmetic)
         }
-        (
-            SubnormalMode::FlushToZero { zero_sign: _ },
-            MetalSubnormalArithmetic::PreservesSubnormals,
-        ) => Some(MetalNumericalGap::SubnormalPreservationInArithmetic),
+        (SubnormalMode::FlushToZero { zero_sign: _ }, SubnormalMode::Preserve) => {
+            Some(MetalNumericalGap::SubnormalPreservationInArithmetic)
+        }
+        (SubnormalMode::Preserve, SubnormalMode::Preserve)
+        | (
+            SubnormalMode::FlushToZero {
+                zero_sign: FlushedZeroSign::PreservesSign,
+            },
+            SubnormalMode::FlushToZero {
+                zero_sign: FlushedZeroSign::PreservesSign,
+            },
+        )
+        | (
+            SubnormalMode::FlushToZero {
+                zero_sign: FlushedZeroSign::AlwaysPositive,
+            },
+            SubnormalMode::FlushToZero {
+                zero_sign: FlushedZeroSign::AlwaysPositive,
+            },
+        ) => None,
         (
             SubnormalMode::FlushToZero {
-                zero_sign: declared,
+                zero_sign: FlushedZeroSign::PreservesSign,
             },
-            MetalSubnormalArithmetic::FlushesToZero {
-                zero_sign: honoured,
+            SubnormalMode::FlushToZero {
+                zero_sign: FlushedZeroSign::AlwaysPositive,
             },
-        ) => flushed_zero_gap(declared, honoured),
-    }
-}
-
-/// Compares a declared flushed zero against the zero a target flushes to.
-///
-/// Exhaustive in both arguments and wildcard-free, so a widened zero vocabulary
-/// on either side stops the build rather than falling into whichever arm a
-/// catch-all named. Agreement is the only honoured case; a mismatch returns a
-/// different value, not a less precise one.
-const fn flushed_zero_gap(
-    declared: FlushedZeroSign,
-    honoured: MetalFlushedZeroSign,
-) -> Option<MetalNumericalGap> {
-    match (declared, honoured) {
-        (FlushedZeroSign::PreservesSign, MetalFlushedZeroSign::PreservesSign)
-        | (FlushedZeroSign::AlwaysPositive, MetalFlushedZeroSign::AlwaysPositive) => None,
-        (FlushedZeroSign::PreservesSign, MetalFlushedZeroSign::AlwaysPositive)
-        | (FlushedZeroSign::AlwaysPositive, MetalFlushedZeroSign::PreservesSign) => {
-            Some(MetalNumericalGap::FlushedZeroSignMismatch)
-        }
+        )
+        | (
+            SubnormalMode::FlushToZero {
+                zero_sign: FlushedZeroSign::AlwaysPositive,
+            },
+            SubnormalMode::FlushToZero {
+                zero_sign: FlushedZeroSign::PreservesSign,
+            },
+        ) => Some(MetalNumericalGap::FlushedZeroSignMismatch),
     }
 }
 
@@ -1010,7 +1011,7 @@ impl KernelEmitter<'_> {
         };
         let realization = self.kernel.numerical();
         for mode in [realization.input_subnormals, realization.result_subnormals] {
-            if let Some(gap) = subnormal_gap(mode, target) {
+            if let Some(gap) = subnormal_gap(mode, target.subnormal_mode()) {
                 self.gaps.insert(gap);
             }
         }

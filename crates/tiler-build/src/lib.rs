@@ -16,6 +16,7 @@ mod metal_assembly;
 mod metal_cache;
 mod metal_payload;
 mod metal_plan;
+mod metal_profile;
 
 pub use metal_assembly::{
     CompiledMetalPayload, MetalAssemblyError, PreparedMetalPayload, metal_compile_request,
@@ -29,3 +30,4 @@ pub use metal_payload::{MetalPayloadFact, MetalPayloadMismatch, validate_prepare
 pub use metal_plan::{
     AcceptedMetalPlanArtifact, MetalPlanBuildError, accept_or_publish_metal_plan,
 };
+pub use metal_profile::{MetalF32TargetProfileError, declare_metal_f32_subnormal_behaviour};
