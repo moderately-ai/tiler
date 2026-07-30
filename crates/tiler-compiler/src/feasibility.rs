@@ -70,6 +70,7 @@ use crate::explain::Quantity;
 use crate::honourability::{
     DeferredDimension, DimensionBehaviour, HonouredDimension, HonouringMeans, NumericalDimension,
     NumericalHonourabilityFact, NumericalRequirement, UndeclaredDimension, UnhonouredDimension,
+    encode_honourability_facts,
 };
 
 /// Domain separator of a canonical target profile descriptor.
@@ -77,14 +78,12 @@ use crate::honourability::{
 /// Trailing NUL so no descriptor can be a prefix of a differently-domained
 /// encoding, matching the framing the rest of the workspace's identities use.
 ///
-/// `v3` because the encoding grew the profile's per-dimension numerical
-/// honourability declaration when `CapabilityAxis::StrictF32Arithmetic` was
-/// retired (ADR 0076 item 3). A descriptor is durable identity, so an encoding
-/// that no longer means what `v2` meant must not be able to collide with one
-/// that does — and `v2` could not distinguish two profiles that declare
-/// different honourable behaviours, which is exactly what the retired boolean
-/// axis was unable to say.
-const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v3\0";
+/// `v4` because the encoding now carries each numerical fact's versioned
+/// authority and its governed-guarantee or measured compiler/environment source.
+/// `v3` distinguished per-dimension behaviours after the strict-arithmetic
+/// boolean was retired, but two profiles resting on different measured builds
+/// still collided under it.
+const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v4\0";
 
 /// Governed key of the feasibility rule set this authority applies.
 ///
@@ -288,7 +287,7 @@ const fn satisfies(relation: Relation, required: u64, available: u64) -> bool {
 }
 
 /// The entity vouching for a capability fact.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum FactAuthority {
     /// A governed, conservative compile-time profile guarantee.
     GovernedProfile,
@@ -318,7 +317,7 @@ impl FactAuthority {
 }
 
 /// The scope over which a capability fact is valid.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum FactValidityScope {
     /// Valid for any device matching the portable profile.
     PortableProfile,
@@ -428,6 +427,11 @@ impl FactProvenance {
     /// Records that a fact was declared by `profile`.
     pub(crate) const fn declared_by(profile: TargetProfileIdentity) -> Self {
         Self { profile }
+    }
+
+    /// The profile that declared the fact.
+    pub(crate) const fn profile(self) -> TargetProfileIdentity {
+        self.profile
     }
 }
 
@@ -567,6 +571,11 @@ impl CheckedTargetProfile {
                     rule: "declaration-authority",
                 });
             }
+            if !fact.source().is_valid() {
+                return Err(FeasibilityError::MalformedProfile {
+                    rule: "declaration-source",
+                });
+            }
         }
         facts.sort_by(|left, right| {
             left.axis
@@ -581,7 +590,7 @@ impl CheckedTargetProfile {
                 rule: "duplicate-fact",
             });
         }
-        honourability.sort_by_key(|fact| fact.sort_key());
+        honourability.sort_by_key(NumericalHonourabilityFact::sort_key);
         if honourability
             .windows(2)
             .any(|pair| pair[0].sort_key() == pair[1].sort_key())
@@ -590,11 +599,19 @@ impl CheckedTargetProfile {
                 rule: "duplicate-declaration",
             });
         }
-        Ok(Self {
+        let checked = Self {
             identity,
             facts,
             honourability,
-        })
+        };
+        let descriptor_length = checked.canonical_descriptor().len();
+        if descriptor_length > MAX_TARGET_PROFILE_DESCRIPTOR_BYTES {
+            return Err(FeasibilityError::DescriptorTooLong {
+                key: checked.identity.key(),
+                actual: descriptor_length,
+            });
+        }
+        Ok(checked)
     }
 
     /// The governed identity of this profile.
@@ -644,9 +661,12 @@ impl CheckedTargetProfile {
     /// other. That is the same defect the descriptor exists to prevent for
     /// bounds.
     ///
-    /// A fact's [`FactProvenance`] is excluded: it cites this profile's own
-    /// identity, so folding it in would make the descriptor depend on a value
-    /// derived from the descriptor's own subject.
+    /// A fact's declaring-profile citation ([`FactProvenance`]) is excluded: it
+    /// cites this profile's own identity, so folding it in would make the
+    /// descriptor depend on a value derived from the descriptor's own subject.
+    /// The structured source supplied by that declarer is included and
+    /// deduplicated. It is not circular: it names the authority, validity, and
+    /// evidence basis that qualify the claim, not the descriptor being minted.
     ///
     /// The feasibility rule set is excluded, and that exclusion is load-bearing
     /// rather than an omission. [`Self::assess`] is a function of the facts this
@@ -671,10 +691,7 @@ impl CheckedTargetProfile {
             bytes.push(fact.authority.tag());
             bytes.push(fact.validity.tag());
         }
-        push_len(&mut bytes, self.honourability.len());
-        for fact in &self.honourability {
-            fact.encode_declaration(&mut bytes);
-        }
+        encode_honourability_facts(&mut bytes, &self.honourability);
         bytes
     }
 
@@ -738,7 +755,7 @@ impl CheckedTargetProfile {
                 // Prefer the most refined declaration already available.
                 now = Some(match now {
                     Some(current) if current.phase() >= fact.phase() => current,
-                    _ => *fact,
+                    _ => fact.clone(),
                 });
             } else {
                 later = Some(match later {
@@ -771,13 +788,7 @@ impl CheckedTargetProfile {
             HonouringMeans::Unsupported => false,
         };
         if honoured {
-            DimensionResolution::Honoured(HonouredDimension::new(
-                dimension,
-                arithmetic,
-                required,
-                fact.means(),
-                self.identity,
-            ))
+            DimensionResolution::Honoured(HonouredDimension::new(fact))
         } else {
             DimensionResolution::Unhonoured(UnhonouredDimension::new(
                 dimension,
@@ -815,7 +826,7 @@ impl CheckedTargetProfile {
                     && fact.phase() <= available_phase
                     && fact.is_unconditionally_honoured()
             })
-            .map(|fact| fact.behaviour())
+            .map(NumericalHonourabilityFact::behaviour)
     }
 
     /// Assesses one candidate proposal against this profile.
@@ -1353,7 +1364,7 @@ impl FeasibleSet {
 /// that can only report a length.
 ///
 /// **Measurement** on this checkout: the standard
-/// `tiler.prototype-target-neutral-baseline.v1` descriptor is 249 bytes, and it
+/// `tiler.prototype-target-neutral-baseline.v1` descriptor is 480 bytes, and it
 /// does not vary with the program because it is a property of the profile.
 ///
 /// **Why this number.** It is the largest value `tiler-artifact` will hold: that
@@ -1383,7 +1394,12 @@ pub(crate) enum FeasibilityError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::honourability::{DeclaredBehaviour, RelaxationRequirement};
+    use std::sync::Arc;
+
+    use crate::honourability::{
+        CompilerBuildIdentity, CompilerBuildRole, DeclaredBehaviour, ExecutionEnvironmentIdentity,
+        FactSourceProvenance, MeasurementContext, ProvenanceIdentity, RelaxationRequirement,
+    };
     use tiler_ir::schedule::{FlushedZeroSign, NumericalPermission, SubnormalMode};
 
     const BASELINE_KEY: &str = "tiler.test.baseline.v1";
@@ -1404,6 +1420,38 @@ mod tests {
 
     fn identity() -> TargetProfileIdentity {
         TargetProfileIdentity::new(BASELINE_KEY)
+    }
+
+    fn measured_source(authority: FactAuthority) -> Arc<FactSourceProvenance> {
+        measured_source_with(authority, "1.0", "build-1")
+    }
+
+    fn measured_source_with(
+        authority: FactAuthority,
+        compiler_version: &str,
+        platform_build: &str,
+    ) -> Arc<FactSourceProvenance> {
+        Arc::new(FactSourceProvenance::measured(
+            AvailabilityPhase::LiveDevicePreflight,
+            authority,
+            FactValidityScope::DeviceInstance,
+            ProvenanceIdentity::new("tiler.test.measurement-authority.v1", 1),
+            vec![MeasurementContext::new(
+                vec![CompilerBuildIdentity::new(
+                    CompilerBuildRole::RuntimeCompiler,
+                    "test-compiler",
+                    compiler_version,
+                    Some("build-1".to_owned()),
+                )],
+                ExecutionEnvironmentIdentity::new(
+                    "test-platform",
+                    "1.0",
+                    platform_build,
+                    "test-architecture",
+                    "test-hardware",
+                ),
+            )],
+        ))
     }
 
     fn compile_fact(id: TargetProfileIdentity, axis: CapabilityAxis, bound: u64) -> CapabilityFact {
@@ -1725,14 +1773,12 @@ mod tests {
             .honoured()
             .iter()
             .find(|honoured| honoured.dimension() == NumericalDimension::ResultSubnormals)
-            .copied()
             .expect("the result-subnormal dimension is honoured");
         assert_eq!(result.means(), HonouringMeans::SupportedWithExactEmulation);
         let input = evidence
             .honoured()
             .iter()
             .find(|honoured| honoured.dimension() == NumericalDimension::InputSubnormals)
-            .copied()
             .expect("the input-subnormal dimension is honoured");
         assert_eq!(input.means(), HonouringMeans::SupportedExactly);
         assert_ne!(input.means(), result.means());
@@ -1955,14 +2001,13 @@ mod tests {
     fn a_later_phase_honourability_declaration_defers_then_resolves() {
         let id = identity();
         let mut declaration = baseline_honourability(id);
+        let source = measured_source(FactAuthority::DeviceRuntime);
         declaration[0] = DeclaredBehaviour::new(
             NumericalDimension::InputSubnormals,
             ArithmeticType::F32,
             PRESERVE,
             HonouringMeans::SupportedExactly,
-            AvailabilityPhase::LiveDevicePreflight,
-            FactAuthority::DeviceRuntime,
-            FactValidityScope::DeviceInstance,
+            Arc::clone(&source),
         )
         .attributed_to(id);
         let profile =
@@ -1992,7 +2037,11 @@ mod tests {
         );
         assert!(matches!(
             profile.assess(&proposal, AvailabilityPhase::LiveDevicePreflight),
-            FeasibilityOutcome::Proven(_),
+            FeasibilityOutcome::Proven(ref evidence)
+                if evidence.honoured().iter().any(|honoured| {
+                    honoured.dimension() == NumericalDimension::InputSubnormals
+                        && honoured.fact().source() == source.as_ref()
+                }),
         ));
     }
 
@@ -2386,9 +2435,7 @@ mod tests {
                         ArithmeticType::F32,
                         PRESERVE,
                         HonouringMeans::SupportedExactly,
-                        AvailabilityPhase::LiveDevicePreflight,
-                        FactAuthority::GovernedProfile,
-                        FactValidityScope::PortableProfile,
+                        measured_source(FactAuthority::GovernedProfile),
                     )
                     .attributed_to(id),
                 ],
@@ -2417,6 +2464,189 @@ mod tests {
                 Err(FeasibilityError::MalformedProfile { rule }),
             );
         }
+    }
+
+    fn declaration_from_source(
+        id: TargetProfileIdentity,
+        source: Arc<FactSourceProvenance>,
+    ) -> Vec<NumericalHonourabilityFact> {
+        vec![
+            DeclaredBehaviour::new(
+                NumericalDimension::InputSubnormals,
+                ArithmeticType::F32,
+                PRESERVE,
+                HonouringMeans::SupportedExactly,
+                source,
+            )
+            .attributed_to(id),
+        ]
+    }
+
+    #[test]
+    fn malformed_structured_fact_sources_are_intrinsic_errors() {
+        let id = identity();
+        let context = |builds| {
+            MeasurementContext::new(
+                builds,
+                ExecutionEnvironmentIdentity::new(
+                    "test-platform",
+                    "1.0",
+                    "build-1",
+                    "test-architecture",
+                    "test-hardware",
+                ),
+            )
+        };
+        let build = || {
+            CompilerBuildIdentity::new(
+                CompilerBuildRole::RuntimeCompiler,
+                "test-compiler",
+                "1.0",
+                Some("build-1".to_owned()),
+            )
+        };
+        let measured = |authority_identity, contexts| {
+            Arc::new(FactSourceProvenance::measured(
+                AvailabilityPhase::LiveDevicePreflight,
+                FactAuthority::DeviceRuntime,
+                FactValidityScope::DeviceInstance,
+                authority_identity,
+                contexts,
+            ))
+        };
+
+        let invalid = [
+            measured(
+                ProvenanceIdentity::new("tiler.test.measurement-authority.v1", 0),
+                vec![context(vec![build()])],
+            ),
+            measured(
+                ProvenanceIdentity::new("tiler.test.measurement-authority.v1", 1),
+                Vec::new(),
+            ),
+            measured(
+                ProvenanceIdentity::new("tiler.test.measurement-authority.v1", 1),
+                vec![context(Vec::new())],
+            ),
+            measured(
+                ProvenanceIdentity::new("tiler.test.measurement-authority.v1", 1),
+                vec![context(vec![build(), build()])],
+            ),
+            measured(
+                ProvenanceIdentity::new("tiler.test.measurement-authority.v1", 1),
+                vec![context(vec![CompilerBuildIdentity::new(
+                    CompilerBuildRole::RuntimeCompiler,
+                    "Test Compiler",
+                    "1.0",
+                    None,
+                )])],
+            ),
+            measured(
+                ProvenanceIdentity::new("tiler.test.measurement-authority.v1", 1),
+                vec![context(vec![CompilerBuildIdentity::new(
+                    CompilerBuildRole::RuntimeCompiler,
+                    "test-compiler",
+                    " 1.0",
+                    None,
+                )])],
+            ),
+            Arc::new(FactSourceProvenance::governed(
+                ProvenanceIdentity::new("tiler.test.governed-authority.v1", 1),
+                ProvenanceIdentity::new("tiler.test.guarantee.v1", 0),
+            )),
+        ];
+
+        for source in invalid {
+            assert_eq!(
+                CheckedTargetProfile::new(id, Vec::new(), declaration_from_source(id, source),),
+                Err(FeasibilityError::MalformedProfile {
+                    rule: "declaration-source",
+                }),
+            );
+        }
+    }
+
+    #[test]
+    fn structured_fact_source_is_canonical_and_identity_relevant() {
+        let id = identity();
+        let baseline = baseline_profile();
+        let build_one = measured_source_with(FactAuthority::DeviceRuntime, "1.0", "build-1");
+        let same_build = measured_source_with(FactAuthority::DeviceRuntime, "1.0", "build-1");
+        let build_two = measured_source_with(FactAuthority::DeviceRuntime, "2.0", "build-1");
+        let environment_two = measured_source_with(FactAuthority::DeviceRuntime, "1.0", "build-2");
+
+        let descriptor = |source| {
+            let mut declarations = baseline_honourability(id);
+            declarations[0] = declaration_from_source(id, source)
+                .pop()
+                .expect("one declaration");
+            CheckedTargetProfile::new(id, baseline.facts().to_vec(), declarations)
+                .expect("structured source is valid")
+                .canonical_descriptor()
+        };
+
+        assert_eq!(
+            descriptor(Arc::clone(&build_one)),
+            descriptor(same_build),
+            "allocation identity must not enter canonical profile identity",
+        );
+        assert_ne!(
+            descriptor(Arc::clone(&build_one)),
+            descriptor(build_two),
+            "the compiler build qualifies the numerical fact",
+        );
+        assert_ne!(
+            descriptor(build_one),
+            descriptor(environment_two),
+            "the execution environment qualifies the numerical fact",
+        );
+
+        let mut reversed = baseline_honourability(id);
+        reversed.reverse();
+        assert_eq!(
+            CheckedTargetProfile::new(id, baseline.facts().to_vec(), reversed)
+                .unwrap()
+                .canonical_descriptor(),
+            baseline.canonical_descriptor(),
+            "declaration encounter order must not enter identity",
+        );
+    }
+
+    #[test]
+    fn oversized_structured_fact_source_is_refused_at_profile_admission() {
+        let id = identity();
+        let contexts = (0..16)
+            .map(|index| {
+                MeasurementContext::new(
+                    vec![CompilerBuildIdentity::new(
+                        CompilerBuildRole::RuntimeCompiler,
+                        "test-compiler",
+                        format!("1.{index}"),
+                        Some(format!("compiler-build-{index}")),
+                    )],
+                    ExecutionEnvironmentIdentity::new(
+                        "test-platform",
+                        "1.0",
+                        format!("platform-build-{index}"),
+                        "test-architecture",
+                        format!("test-hardware-{}", "x".repeat(64)),
+                    ),
+                )
+            })
+            .collect();
+        let source = Arc::new(FactSourceProvenance::measured(
+            AvailabilityPhase::LiveDevicePreflight,
+            FactAuthority::DeviceRuntime,
+            FactValidityScope::DeviceInstance,
+            ProvenanceIdentity::new("tiler.test.measurement-authority.v1", 1),
+            contexts,
+        ));
+
+        assert!(matches!(
+            CheckedTargetProfile::new(id, Vec::new(), declaration_from_source(id, source)),
+            Err(FeasibilityError::DescriptorTooLong { key: BASELINE_KEY, actual })
+                if actual > MAX_TARGET_PROFILE_DESCRIPTOR_BYTES
+        ));
     }
 
     #[test]
@@ -2500,7 +2730,7 @@ mod tests {
         let dimensions: Vec<_> = profile
             .honourability()
             .iter()
-            .map(|fact| fact.dimension())
+            .map(NumericalHonourabilityFact::dimension)
             .collect();
         assert_eq!(dimensions, FIXTURE_DIMENSIONS.to_vec());
     }

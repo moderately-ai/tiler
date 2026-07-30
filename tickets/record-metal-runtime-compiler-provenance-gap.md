@@ -4,7 +4,7 @@ title: Record that Metal artifact toolchain provenance names only the offline co
 status: done
 priority: p2
 dependencies: []
-related: [probe-metal-runtime-compilation-numerics, declare-metal-numerical-honourability, repoint-adr-0076-evidence-at-the-numerical-record, prototype-metal-bundle-assembly]
+related: [probe-metal-runtime-compilation-numerics, declare-metal-numerical-honourability, repoint-adr-0076-evidence-at-the-numerical-record, prototype-metal-bundle-assembly, carry-the-honourability-fact-provenance-into-the-artifact-record]
 scopes: [contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []

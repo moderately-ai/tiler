@@ -24,7 +24,7 @@ use crate::capability::{
 use crate::governed::{governed_lowering_capabilities, governed_scalars};
 use crate::honourability::{
     DeclaredBehaviour, DeferredDimension, DimensionBehaviour, HonouringMeans, NumericalDimension,
-    NumericalRequirement, UndeclaredDimension, UnhonouredDimension,
+    NumericalRequirement, UndeclaredDimension, UnhonouredDimension, encode_declared_behaviours,
 };
 use crate::policy::{NumericalPolicyPreset, UnrepresentableDimension};
 use crate::region::SemanticMemberId;
@@ -623,84 +623,89 @@ impl Eq for CompilerCapabilitySnapshot {}
 /// subnormals in `f32` and preserves them in `f16`. A contract stating any other
 /// arithmetic type therefore finds nothing declared and resolves to `Unknown`,
 /// which is the fail-closed direction and not an omission.
-const GOVERNED_TARGET_HONOURABILITY: &[DeclaredBehaviour] = &[
-    DeclaredBehaviour::compile_profile(
-        NumericalDimension::InputSubnormals,
-        ArithmeticType::F32,
-        DimensionBehaviour::Subnormals(SubnormalMode::Preserve),
-        HonouringMeans::SupportedExactly,
-    ),
-    DeclaredBehaviour::compile_profile(
-        NumericalDimension::InputSubnormals,
-        ArithmeticType::F32,
-        DimensionBehaviour::Subnormals(SubnormalMode::FlushToZero {
-            zero_sign: FlushedZeroSign::PreservesSign,
-        }),
-        HonouringMeans::SupportedExactly,
-    ),
-    DeclaredBehaviour::compile_profile(
-        NumericalDimension::ResultSubnormals,
-        ArithmeticType::F32,
-        DimensionBehaviour::Subnormals(SubnormalMode::Preserve),
-        HonouringMeans::SupportedExactly,
-    ),
-    DeclaredBehaviour::compile_profile(
-        NumericalDimension::ResultSubnormals,
-        ArithmeticType::F32,
-        DimensionBehaviour::Subnormals(SubnormalMode::FlushToZero {
-            zero_sign: FlushedZeroSign::PreservesSign,
-        }),
-        HonouringMeans::SupportedExactly,
-    ),
-    DeclaredBehaviour::compile_profile(
-        NumericalDimension::Contraction,
-        ArithmeticType::F32,
-        DimensionBehaviour::Transform(NumericalPermission::Forbidden),
-        HonouringMeans::SupportedExactly,
-    ),
-    DeclaredBehaviour::compile_profile(
-        NumericalDimension::Contraction,
-        ArithmeticType::F32,
-        DimensionBehaviour::Transform(NumericalPermission::Permitted),
-        HonouringMeans::SupportedExactly,
-    ),
-    DeclaredBehaviour::compile_profile(
-        NumericalDimension::Reassociation,
-        ArithmeticType::F32,
-        DimensionBehaviour::Transform(NumericalPermission::Forbidden),
-        HonouringMeans::SupportedExactly,
-    ),
-    DeclaredBehaviour::compile_profile(
-        NumericalDimension::Reassociation,
-        ArithmeticType::F32,
-        DimensionBehaviour::Transform(NumericalPermission::Permitted),
-        HonouringMeans::SupportedExactly,
-    ),
-    DeclaredBehaviour::compile_profile(
-        NumericalDimension::Permutation,
-        ArithmeticType::F32,
-        DimensionBehaviour::Transform(NumericalPermission::Forbidden),
-        HonouringMeans::SupportedExactly,
-    ),
-    DeclaredBehaviour::compile_profile(
-        NumericalDimension::SignedZero,
-        ArithmeticType::F32,
-        DimensionBehaviour::Transform(NumericalPermission::Forbidden),
-        HonouringMeans::SupportedExactly,
-    ),
-    DeclaredBehaviour::compile_profile(
-        NumericalDimension::NanAssumptions,
-        ArithmeticType::F32,
-        DimensionBehaviour::ExceptionalValue(ExceptionalValueAssumption::MakeNoAssumption),
-        HonouringMeans::SupportedExactly,
-    ),
-    DeclaredBehaviour::compile_profile(
-        NumericalDimension::InfinityAssumptions,
-        ArithmeticType::F32,
-        DimensionBehaviour::ExceptionalValue(ExceptionalValueAssumption::MakeNoAssumption),
-        HonouringMeans::SupportedExactly,
-    ),
-];
+fn governed_target_honourability() -> &'static [DeclaredBehaviour] {
+    static GOVERNED: OnceLock<Vec<DeclaredBehaviour>> = OnceLock::new();
+    GOVERNED.get_or_init(|| {
+        vec![
+            DeclaredBehaviour::compile_profile(
+                NumericalDimension::InputSubnormals,
+                ArithmeticType::F32,
+                DimensionBehaviour::Subnormals(SubnormalMode::Preserve),
+                HonouringMeans::SupportedExactly,
+            ),
+            DeclaredBehaviour::compile_profile(
+                NumericalDimension::InputSubnormals,
+                ArithmeticType::F32,
+                DimensionBehaviour::Subnormals(SubnormalMode::FlushToZero {
+                    zero_sign: FlushedZeroSign::PreservesSign,
+                }),
+                HonouringMeans::SupportedExactly,
+            ),
+            DeclaredBehaviour::compile_profile(
+                NumericalDimension::ResultSubnormals,
+                ArithmeticType::F32,
+                DimensionBehaviour::Subnormals(SubnormalMode::Preserve),
+                HonouringMeans::SupportedExactly,
+            ),
+            DeclaredBehaviour::compile_profile(
+                NumericalDimension::ResultSubnormals,
+                ArithmeticType::F32,
+                DimensionBehaviour::Subnormals(SubnormalMode::FlushToZero {
+                    zero_sign: FlushedZeroSign::PreservesSign,
+                }),
+                HonouringMeans::SupportedExactly,
+            ),
+            DeclaredBehaviour::compile_profile(
+                NumericalDimension::Contraction,
+                ArithmeticType::F32,
+                DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+                HonouringMeans::SupportedExactly,
+            ),
+            DeclaredBehaviour::compile_profile(
+                NumericalDimension::Contraction,
+                ArithmeticType::F32,
+                DimensionBehaviour::Transform(NumericalPermission::Permitted),
+                HonouringMeans::SupportedExactly,
+            ),
+            DeclaredBehaviour::compile_profile(
+                NumericalDimension::Reassociation,
+                ArithmeticType::F32,
+                DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+                HonouringMeans::SupportedExactly,
+            ),
+            DeclaredBehaviour::compile_profile(
+                NumericalDimension::Reassociation,
+                ArithmeticType::F32,
+                DimensionBehaviour::Transform(NumericalPermission::Permitted),
+                HonouringMeans::SupportedExactly,
+            ),
+            DeclaredBehaviour::compile_profile(
+                NumericalDimension::Permutation,
+                ArithmeticType::F32,
+                DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+                HonouringMeans::SupportedExactly,
+            ),
+            DeclaredBehaviour::compile_profile(
+                NumericalDimension::SignedZero,
+                ArithmeticType::F32,
+                DimensionBehaviour::Transform(NumericalPermission::Forbidden),
+                HonouringMeans::SupportedExactly,
+            ),
+            DeclaredBehaviour::compile_profile(
+                NumericalDimension::NanAssumptions,
+                ArithmeticType::F32,
+                DimensionBehaviour::ExceptionalValue(ExceptionalValueAssumption::MakeNoAssumption),
+                HonouringMeans::SupportedExactly,
+            ),
+            DeclaredBehaviour::compile_profile(
+                NumericalDimension::InfinityAssumptions,
+                ArithmeticType::F32,
+                DimensionBehaviour::ExceptionalValue(ExceptionalValueAssumption::MakeNoAssumption),
+                HonouringMeans::SupportedExactly,
+            ),
+        ]
+    })
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct PrototypeTargetProfile {
@@ -719,7 +724,7 @@ pub(crate) struct PrototypeTargetProfile {
 }
 
 impl PrototypeTargetProfile {
-    pub(crate) const fn governed() -> Self {
+    pub(crate) fn governed() -> Self {
         Self {
             key: TARGET_PROFILE_KEY,
             max_threads_per_grid_axis: 65_535,
@@ -727,7 +732,7 @@ impl PrototypeTargetProfile {
             max_buffer_bindings_per_entry: 2,
             index_bits: 64,
             supports_device_memory: true,
-            numerical: GOVERNED_TARGET_HONOURABILITY,
+            numerical: governed_target_honourability(),
         }
     }
 }
@@ -1235,13 +1240,10 @@ impl VerifiedRequestSubject {
         bytes.push(self.target_profile.index_bits);
         bytes.push(u8::from(self.target_profile.supports_device_memory));
         // The honourability declaration replaces the retired `supports_strict_f32`
-        // byte. It is encoded per line rather than summarized, because that is
-        // exactly what the boolean could not say: which dimension, which
-        // behaviour, and by what means.
-        push_len(&mut bytes, self.target_profile.numerical.len());
-        for declared in self.target_profile.numerical {
-            declared.encode_declaration(&mut bytes);
-        }
+        // byte. Its complete rows and deduplicated source table are encoded rather
+        // than summarized, because that is exactly what the boolean could not say:
+        // which dimension, which behaviour, by what means, and on whose evidence.
+        encode_declared_behaviours(&mut bytes, self.target_profile.numerical);
         bytes.extend_from_slice(&self.capability_schema_version.to_be_bytes());
         push_slice(&mut bytes, self.lowering_registry.as_bytes());
         bytes
@@ -3317,12 +3319,9 @@ mod subject_budget {
             ),
         ];
         let lowering = subject.lowering_registry.as_bytes().len();
-        let mut numerical = 0_usize;
-        for declared in subject.target_profile.numerical {
-            let mut line = Vec::new();
-            declared.encode_declaration(&mut line);
-            numerical += line.len();
-        }
+        let mut numerical_bytes = Vec::new();
+        encode_declared_behaviours(&mut numerical_bytes, subject.target_profile.numerical);
+        let numerical = numerical_bytes.len();
         let declaration_lines = subject.target_profile.numerical.len();
         let total = subject.canonical_explain_subject_bytes().len();
         let embedded: usize = components.iter().map(|(_, size)| size).sum();

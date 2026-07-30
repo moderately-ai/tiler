@@ -1123,25 +1123,31 @@ mod tests {
     /// and step whatever domain tag the change requires in the same commit.
     #[test]
     fn the_governed_descriptor_bytes_do_not_move() {
-        // Rebaselined on the numerical-policies merge and recomputed on the
-        // merged tree (never taken from a branch): the contract widened from
-        // four numerical dimensions to the docs/numerical-semantics.md set,
-        // each keyed by the arithmetic type it resolves, so the descriptor's
-        // numerical rows grew from 8 to 12 entries and gained the type key.
-        // Every artifact identity and cache entry derived from the descriptor
-        // moves with it, which is this test's message and the reason the move
-        // is stated here rather than silent.
+        // Rebaselined when structured numerical-fact provenance moved the
+        // descriptor domain from v3 to v4, and recomputed on the shared tree
+        // (never taken from a branch). The 12 numerical behaviours are
+        // unchanged; their encoding now carries one canonical, deduplicated
+        // source record naming the governed authority and guarantee, with every
+        // row referring to that source. The descriptor therefore grows from
+        // 289 to 480 bytes. Every artifact identity and cache entry derived
+        // from it moves too, which is this test's message and the reason the
+        // move is stated here rather than silent.
         const GOVERNED: &str = concat!(
             "000000000000002374696c65722e7461726765742d70726f66696c652e646573",
-            "63726970746f722e763300000000000000002a74696c65722e70726f746f7479",
+            "63726970746f722e763400000000000000002a74696c65722e70726f746f7479",
             "70652d7461726765742d6e65757472616c2d626173656c696e652e7631000000",
             "000000000701000000000000ffff010101020000000000000001010101030000",
             "0000000000020101010400000000000000400101010500000000000000010101",
             "0107000000000000000001010108000000000000000001010100000000000000",
-            "0c01030101010101010103010201010101020301010101010102030102010101",
-            "0103030201010101010303020201010101040302010101010104030202010101",
-            "010503020101010101060302010101010109030401010101010a030401010101",
-            "01",
+            "0100000001010101000000000000002a74696c65722e676f7665726e65642d74",
+            "61726765742d70726f66696c652d617574686f726974792e7631000000010100",
+            "0000000000002a74696c65722e70726f746f747970652d7461726765742d6e65",
+            "757472616c2d626173656c696e652e763100000001000000000000000c010301",
+            "0101000000000000000001030102010000000000000000020301010100000000",
+            "0000000002030102010000000000000000030302010100000000000000000303",
+            "0202010000000000000000040302010100000000000000000403020201000000",
+            "0000000000050302010100000000000000000603020101000000000000000009",
+            "0304010100000000000000000a030401010000000000000000",
         );
 
         let descriptor =

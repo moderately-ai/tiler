@@ -41,12 +41,12 @@
 //! - **A non-forgeable, deterministic receipt.** A [`SelectedPlan`] is produced
 //!   only by the checked constructor [`select_physical_plans`]; its
 //!   [`SelectedPlanIdentity`] folds the cover identity, the per-region
-//!   implementation identities, the satisfied handoffs, the aggregate guards, and
-//!   the aggregate structural cost in a canonical length-prefixed byte encoding
-//!   over content-derived coordinates, excluding transient ordinals and any
-//!   `HashMap` order. [`verify_selected_plan`] re-derives the whole plan and must
-//!   reproduce it exactly, so a tampered field or a foreign implementation fails
-//!   closed.
+//!   implementation identities, the satisfied handoffs, the aggregate guards,
+//!   the exact honoured numerical facts, and the aggregate structural cost in a
+//!   canonical length-prefixed byte encoding over content-derived coordinates,
+//!   excluding transient ordinals and any `HashMap` order.
+//!   [`verify_selected_plan`] re-derives the whole plan and must reproduce it
+//!   exactly, so a tampered field or a foreign implementation fails closed.
 //!
 //! This receipt is deliberately *not* the final executable-program authority. It
 //! is a selection-level receipt over verified scheduled regions, distinct from
@@ -75,12 +75,12 @@ use crate::feasibility::ResolvedPredicate;
 use crate::frontier::{
     AdmittedImplementation, BoundaryOwnership, FrontierRegionSubject, ImplementationFrontier,
 };
-use crate::honourability::HonouredDimension;
+use crate::honourability::{HonouredDimension, encode_honourability_facts};
 use crate::region::{RegionFormationOutcome, RegionOccurrenceIdentity};
 use crate::request::DeterministicBudgets;
 
 /// Canonical domain-separation tag for one selected-plan identity.
-const SELECTED_PLAN_IDENTITY_TAG: &[u8] = b"tiler.compiler.selected-physical-plan.v1\0";
+const SELECTED_PLAN_IDENTITY_TAG: &[u8] = b"tiler.compiler.selected-physical-plan.v2\0";
 /// Canonical domain-separation tag for one selected-portfolio identity.
 const SELECTED_PORTFOLIO_IDENTITY_TAG: &[u8] = b"tiler.compiler.selected-physical-portfolio.v1\0";
 /// The structural-Pareto selection policy this authority applies. It matches the
@@ -1565,11 +1565,12 @@ fn aggregate_guards(selections: &[RegionSelection]) -> Vec<ResolvedPredicate> {
 
 /// Aggregates the deduplicated honoured numerical dimensions of one plan.
 ///
-/// Sorted by dimension, then behaviour, then means, then declaring profile —
-/// every field, because two entries agreeing on a dimension and disagreeing on
-/// how it was honoured are two different claims and must both survive.
+/// Sorted and deduplicated by the canonical encoding of the exact checked fact
+/// plus its declaring profile. The fact encoding includes its complete
+/// structured source provenance, validity, phase, behaviour, and means, so two
+/// entries disagreeing on any selected evidence remain distinct claims.
 fn aggregate_honoured(selections: &[RegionSelection]) -> Vec<HonouredDimension> {
-    let mut honoured: Vec<HonouredDimension> = selections
+    let mut honoured: Vec<(Vec<u8>, HonouredDimension)> = selections
         .iter()
         .flat_map(|selection| {
             selection
@@ -1577,20 +1578,17 @@ fn aggregate_honoured(selections: &[RegionSelection]) -> Vec<HonouredDimension> 
                 .feasibility()
                 .honoured()
                 .iter()
-                .copied()
+                .cloned()
+        })
+        .map(|entry| {
+            let mut key = Vec::new();
+            encode_honoured(&mut key, &entry);
+            (key, entry)
         })
         .collect();
-    honoured.sort_by_key(|entry| {
-        (
-            entry.dimension(),
-            entry.arithmetic(),
-            entry.behaviour().canonical_key(),
-            entry.means().key(),
-            entry.profile().key(),
-        )
-    });
-    honoured.dedup();
-    honoured
+    honoured.sort_by(|left, right| left.0.cmp(&right.0));
+    honoured.dedup_by(|left, right| left.0 == right.0);
+    honoured.into_iter().map(|(_, entry)| entry).collect()
 }
 
 fn encode_plan_identity(
@@ -1618,7 +1616,7 @@ fn encode_plan_identity(
     }
     push_len(&mut bytes, honoured.len());
     for entry in honoured {
-        encode_honoured(&mut bytes, *entry);
+        encode_honoured(&mut bytes, entry);
     }
     cost.encode(&mut bytes);
     SelectedPlanIdentity {
@@ -1645,15 +1643,13 @@ fn encode_guard(output: &mut Vec<u8>, guard: ResolvedPredicate) {
 
 /// Encodes one honoured numerical dimension into a plan identity.
 ///
-/// The means and the declaring profile are both encoded. Two plans that honour
-/// one behaviour natively and by emulation emit different operations, and two
-/// that rely on declarations from different profiles rest on different evidence;
-/// either omission would give distinguishable plans one identity.
-fn encode_honoured(output: &mut Vec<u8>, honoured: HonouredDimension) {
-    push_slice(output, honoured.dimension().key().as_bytes());
-    output.push(honoured.arithmetic().tag());
-    honoured.behaviour().encode(output);
-    push_slice(output, honoured.means().key().as_bytes());
+/// The checked fact is encoded by the honourability authority itself rather
+/// than reconstructed here. That encoding carries the complete structured
+/// source provenance, phase, validity, behaviour, and means; selection adds
+/// only the declaring profile, which checked-fact encoding deliberately omits
+/// because a profile descriptor already supplies it as the enclosing subject.
+fn encode_honoured(output: &mut Vec<u8>, honoured: &HonouredDimension) {
+    encode_honourability_facts(output, std::slice::from_ref(honoured.fact()));
     push_slice(output, honoured.profile().key().as_bytes());
 }
 
@@ -2118,6 +2114,96 @@ mod tests {
 
         verify_selected_plan(&program, &formation_of(&program), plan).unwrap();
         verify_selected_portfolio(&program, &formation_of(&program), &portfolio).unwrap();
+    }
+
+    /// Selected-plan identity retains the exact structured source of each
+    /// honoured fact, not only its semantic behaviour, means, and profile.
+    #[test]
+    fn honoured_fact_compiler_and_environment_provenance_enter_plan_identity() {
+        use std::sync::Arc;
+
+        use crate::feasibility::{
+            AvailabilityPhase, FactAuthority, FactValidityScope, TargetProfileIdentity,
+        };
+        use crate::honourability::{
+            CompilerBuildIdentity, CompilerBuildRole, DeclaredBehaviour, DimensionBehaviour,
+            ExecutionEnvironmentIdentity, FactSourceProvenance, HonouredDimension, HonouringMeans,
+            MeasurementContext, NumericalDimension, ProvenanceIdentity,
+        };
+        use tiler_ir::schedule::{ArithmeticType, SubnormalMode};
+
+        fn honoured(compiler_build: &str, environment_build: &str) -> HonouredDimension {
+            let source = Arc::new(FactSourceProvenance::measured(
+                AvailabilityPhase::CompileProfile,
+                FactAuthority::GovernedProfile,
+                FactValidityScope::PortableProfile,
+                ProvenanceIdentity::new("tiler.test.measured-profile-authority.v1", 1),
+                vec![MeasurementContext::new(
+                    vec![CompilerBuildIdentity::new(
+                        CompilerBuildRole::Frontend,
+                        "metalfe",
+                        "32023",
+                        Some(compiler_build.to_owned()),
+                    )],
+                    ExecutionEnvironmentIdentity::new(
+                        "macos",
+                        "27.0",
+                        environment_build,
+                        "arm64",
+                        "Apple M4 Max",
+                    ),
+                )],
+            ));
+            HonouredDimension::new(
+                DeclaredBehaviour::new(
+                    NumericalDimension::InputSubnormals,
+                    ArithmeticType::F32,
+                    DimensionBehaviour::Subnormals(SubnormalMode::Preserve),
+                    HonouringMeans::SupportedExactly,
+                    source,
+                )
+                .attributed_to(TargetProfileIdentity::new(GOVERNED_TARGET_KEY)),
+            )
+        }
+
+        let program = serial_sum_program();
+        let portfolio = opaque_fused_portfolio(&program);
+        let plan = &portfolio.plans()[0];
+        let identity = |fact: &HonouredDimension| {
+            super::encode_plan_identity(
+                plan.cover(),
+                plan.selections(),
+                plan.handoffs(),
+                plan.guards(),
+                std::slice::from_ref(fact),
+                plan.cost(),
+            )
+        };
+
+        let baseline = honoured("metalfe-32023.883", "26A5388g");
+        let compiler_changed = honoured("metalfe-32023.921", "26A5388g");
+        let environment_changed = honoured("metalfe-32023.883", "26A5390a");
+        for changed in [&compiler_changed, &environment_changed] {
+            assert_eq!(changed.dimension(), baseline.dimension());
+            assert_eq!(changed.arithmetic(), baseline.arithmetic());
+            assert_eq!(changed.behaviour(), baseline.behaviour());
+            assert_eq!(changed.means(), baseline.means());
+            assert_eq!(changed.profile(), baseline.profile());
+            assert_eq!(changed.fact().phase(), baseline.fact().phase());
+            assert_eq!(changed.fact().validity(), baseline.fact().validity());
+        }
+
+        let baseline = identity(&baseline);
+        assert_ne!(
+            identity(&compiler_changed),
+            baseline,
+            "changing only the measured compiler build preserved selected-plan identity",
+        );
+        assert_ne!(
+            identity(&environment_changed),
+            baseline,
+            "changing only the measured execution environment preserved selected-plan identity",
+        );
     }
 
     /// Selection retains a scheduled implementation and an opaque call as two

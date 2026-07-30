@@ -3156,7 +3156,10 @@ mod tests {
                 // qualifier would erase a runtime-relevant semantic contract.
                 // Rebaselined again when registry v7 bound the host-sealed
                 // static-evidence authority into registry provenance.
-                "tiler-explain-v4 request=e9bbe3c9404464af\n",
+                // Rebaselined when each target honourability declaration gained
+                // its structured, versioned source provenance and the request
+                // subject encoded the canonical deduplicated source table.
+                "tiler-explain-v4 request=f11ac7524742db81\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

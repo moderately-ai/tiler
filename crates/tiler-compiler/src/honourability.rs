@@ -52,6 +52,9 @@
 //! contract and may never rank contracts against each other, because that would
 //! price meaning.
 
+use std::sync::{Arc, OnceLock};
+
+use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::schedule::{
     ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, MaterializationRounding,
     NumericalPermission, SubnormalMode,
@@ -61,6 +64,443 @@ use crate::feasibility::{
     AvailabilityPhase, FactAuthority, FactProvenance, FactValidityScope, TargetProfileIdentity,
 };
 use crate::request::{permission_tag, subnormal_tag};
+
+/// Version of the structured numerical-fact provenance vocabulary.
+const FACT_SOURCE_PROVENANCE_SCHEMA_VERSION: u32 = 1;
+
+/// Maximum UTF-8 byte length of one descriptive provenance field.
+const MAX_PROVENANCE_TEXT_BYTES: usize = 256;
+const MAX_COMPILER_BUILDS_PER_CONTEXT: usize = 16;
+const MAX_MEASUREMENT_CONTEXTS_PER_SOURCE: usize = 64;
+
+/// A versioned identity naming an authority or governed guarantee.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct ProvenanceIdentity {
+    key: String,
+    revision: u32,
+}
+
+impl ProvenanceIdentity {
+    /// Constructs a versioned identity. Validation occurs at the checked-profile boundary.
+    pub(crate) fn new(key: impl Into<String>, revision: u32) -> Self {
+        Self {
+            key: key.into(),
+            revision,
+        }
+    }
+
+    pub(crate) fn is_valid(&self) -> bool {
+        valid_key(&self.key) && self.revision != 0
+    }
+
+    pub(crate) fn key(&self) -> &str {
+        &self.key
+    }
+
+    pub(crate) const fn revision(&self) -> u32 {
+        self.revision
+    }
+
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        push_slice(bytes, self.key.as_bytes());
+        bytes.extend_from_slice(&self.revision.to_be_bytes());
+    }
+}
+
+/// The role one compiler build performed in a measured execution.
+///
+/// Roles are semantic pipeline positions rather than vendor executable names:
+/// several roles may resolve to one binary, and one vendor may split a role
+/// across binaries without changing what the record says that build did.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum CompilerBuildRole {
+    Frontend,
+    Optimizer,
+    IntermediateTranslator,
+    CodeGenerator,
+    Assembler,
+    Linker,
+    RuntimeCompiler,
+    /// A versioned provider-defined role not yet in the governed common set.
+    ProviderDefined(ProvenanceIdentity),
+}
+
+impl CompilerBuildRole {
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        match self {
+            Self::Frontend => bytes.push(0x01),
+            Self::Optimizer => bytes.push(0x02),
+            Self::CodeGenerator => bytes.push(0x03),
+            Self::Assembler => bytes.push(0x04),
+            Self::Linker => bytes.push(0x05),
+            Self::RuntimeCompiler => bytes.push(0x06),
+            Self::IntermediateTranslator => bytes.push(0x07),
+            Self::ProviderDefined(identity) => {
+                bytes.push(0xff);
+                identity.encode(bytes);
+            }
+        }
+    }
+
+    fn is_valid(&self) -> bool {
+        match self {
+            Self::ProviderDefined(identity) => identity.is_valid(),
+            Self::Frontend
+            | Self::Optimizer
+            | Self::IntermediateTranslator
+            | Self::CodeGenerator
+            | Self::Assembler
+            | Self::Linker
+            | Self::RuntimeCompiler => true,
+        }
+    }
+}
+
+/// One compiler component build participating in a measured fact.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct CompilerBuildIdentity {
+    role: CompilerBuildRole,
+    implementation: String,
+    version: String,
+    build: Option<String>,
+}
+
+impl CompilerBuildIdentity {
+    pub(crate) fn new(
+        role: CompilerBuildRole,
+        implementation: impl Into<String>,
+        version: impl Into<String>,
+        build: Option<String>,
+    ) -> Self {
+        Self {
+            role,
+            implementation: implementation.into(),
+            version: version.into(),
+            build,
+        }
+    }
+
+    fn is_valid(&self) -> bool {
+        self.role.is_valid()
+            && valid_key(&self.implementation)
+            && valid_text(&self.version)
+            && self.build.as_deref().is_none_or(valid_text)
+    }
+
+    pub(crate) const fn role(&self) -> &CompilerBuildRole {
+        &self.role
+    }
+
+    pub(crate) fn implementation(&self) -> &str {
+        &self.implementation
+    }
+
+    pub(crate) fn version(&self) -> &str {
+        &self.version
+    }
+
+    pub(crate) fn build(&self) -> Option<&str> {
+        self.build.as_deref()
+    }
+
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        self.role.encode(bytes);
+        push_slice(bytes, self.implementation.as_bytes());
+        push_slice(bytes, self.version.as_bytes());
+        encode_optional_text(bytes, self.build.as_deref());
+    }
+
+    fn canonical_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        self.encode(&mut bytes);
+        bytes
+    }
+}
+
+/// The execution environment on which one numerical behaviour was measured.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct ExecutionEnvironmentIdentity {
+    platform: String,
+    platform_version: String,
+    platform_build: String,
+    architecture: String,
+    hardware: String,
+}
+
+impl ExecutionEnvironmentIdentity {
+    pub(crate) fn new(
+        platform: impl Into<String>,
+        platform_version: impl Into<String>,
+        platform_build: impl Into<String>,
+        architecture: impl Into<String>,
+        hardware: impl Into<String>,
+    ) -> Self {
+        Self {
+            platform: platform.into(),
+            platform_version: platform_version.into(),
+            platform_build: platform_build.into(),
+            architecture: architecture.into(),
+            hardware: hardware.into(),
+        }
+    }
+
+    fn is_valid(&self) -> bool {
+        valid_key(&self.platform)
+            && valid_text(&self.platform_version)
+            && valid_text(&self.platform_build)
+            && valid_key(&self.architecture)
+            && valid_text(&self.hardware)
+    }
+
+    pub(crate) fn platform(&self) -> &str {
+        &self.platform
+    }
+
+    pub(crate) fn platform_version(&self) -> &str {
+        &self.platform_version
+    }
+
+    pub(crate) fn platform_build(&self) -> &str {
+        &self.platform_build
+    }
+
+    pub(crate) fn architecture(&self) -> &str {
+        &self.architecture
+    }
+
+    pub(crate) fn hardware(&self) -> &str {
+        &self.hardware
+    }
+
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        for field in [
+            &self.platform,
+            &self.platform_version,
+            &self.platform_build,
+            &self.architecture,
+            &self.hardware,
+        ] {
+            push_slice(bytes, field.as_bytes());
+        }
+    }
+}
+
+/// One measured compiler-build set paired with the environment it executed in.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct MeasurementContext {
+    compiler_builds: Vec<CompilerBuildIdentity>,
+    environment: ExecutionEnvironmentIdentity,
+}
+
+impl MeasurementContext {
+    pub(crate) fn new(
+        mut compiler_builds: Vec<CompilerBuildIdentity>,
+        environment: ExecutionEnvironmentIdentity,
+    ) -> Self {
+        compiler_builds.sort_by_key(CompilerBuildIdentity::canonical_bytes);
+        Self {
+            compiler_builds,
+            environment,
+        }
+    }
+
+    fn is_valid(&self) -> bool {
+        !self.compiler_builds.is_empty()
+            && self.compiler_builds.len() <= MAX_COMPILER_BUILDS_PER_CONTEXT
+            && self
+                .compiler_builds
+                .iter()
+                .all(CompilerBuildIdentity::is_valid)
+            && strictly_increasing(
+                &self.compiler_builds,
+                CompilerBuildIdentity::canonical_bytes,
+            )
+            && self.environment.is_valid()
+    }
+
+    pub(crate) fn compiler_builds(&self) -> &[CompilerBuildIdentity] {
+        &self.compiler_builds
+    }
+
+    pub(crate) const fn environment(&self) -> &ExecutionEnvironmentIdentity {
+        &self.environment
+    }
+
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        push_len(bytes, self.compiler_builds.len());
+        for build in &self.compiler_builds {
+            build.encode(bytes);
+        }
+        self.environment.encode(bytes);
+    }
+
+    fn canonical_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        self.encode(&mut bytes);
+        bytes
+    }
+}
+
+/// Why the authority may make the fact.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum FactEvidenceBasis {
+    /// A normative guarantee, not an empirical claim.
+    GovernedGuarantee { guarantee: ProvenanceIdentity },
+    /// One or more exact, independently readable measurement contexts.
+    Measurement { contexts: Vec<MeasurementContext> },
+}
+
+/// Structured, versioned provenance shared by numerical declaration rows.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct FactSourceProvenance {
+    schema_version: u32,
+    phase: AvailabilityPhase,
+    authority: FactAuthority,
+    validity: FactValidityScope,
+    authority_identity: ProvenanceIdentity,
+    basis: FactEvidenceBasis,
+}
+
+impl FactSourceProvenance {
+    pub(crate) fn governed(
+        authority_identity: ProvenanceIdentity,
+        guarantee: ProvenanceIdentity,
+    ) -> Self {
+        Self {
+            schema_version: FACT_SOURCE_PROVENANCE_SCHEMA_VERSION,
+            phase: AvailabilityPhase::CompileProfile,
+            authority: FactAuthority::GovernedProfile,
+            validity: FactValidityScope::PortableProfile,
+            authority_identity,
+            basis: FactEvidenceBasis::GovernedGuarantee { guarantee },
+        }
+    }
+
+    pub(crate) fn measured(
+        phase: AvailabilityPhase,
+        authority: FactAuthority,
+        validity: FactValidityScope,
+        authority_identity: ProvenanceIdentity,
+        mut contexts: Vec<MeasurementContext>,
+    ) -> Self {
+        contexts.sort_by_key(MeasurementContext::canonical_bytes);
+        Self {
+            schema_version: FACT_SOURCE_PROVENANCE_SCHEMA_VERSION,
+            phase,
+            authority,
+            validity,
+            authority_identity,
+            basis: FactEvidenceBasis::Measurement { contexts },
+        }
+    }
+
+    pub(crate) fn is_valid(&self) -> bool {
+        self.schema_version == FACT_SOURCE_PROVENANCE_SCHEMA_VERSION
+            && self.authority_identity.is_valid()
+            && match &self.basis {
+                FactEvidenceBasis::GovernedGuarantee { guarantee } => {
+                    self.authority == FactAuthority::GovernedProfile && guarantee.is_valid()
+                }
+                FactEvidenceBasis::Measurement { contexts } => {
+                    !contexts.is_empty()
+                        && contexts.len() <= MAX_MEASUREMENT_CONTEXTS_PER_SOURCE
+                        && contexts.iter().all(MeasurementContext::is_valid)
+                        && strictly_increasing(contexts, MeasurementContext::canonical_bytes)
+                }
+            }
+    }
+
+    pub(crate) const fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+
+    pub(crate) const fn phase(&self) -> AvailabilityPhase {
+        self.phase
+    }
+
+    pub(crate) const fn authority(&self) -> FactAuthority {
+        self.authority
+    }
+
+    pub(crate) const fn validity(&self) -> FactValidityScope {
+        self.validity
+    }
+
+    pub(crate) const fn authority_identity(&self) -> &ProvenanceIdentity {
+        &self.authority_identity
+    }
+
+    pub(crate) const fn basis(&self) -> &FactEvidenceBasis {
+        &self.basis
+    }
+
+    fn encode(&self, bytes: &mut Vec<u8>) {
+        bytes.extend_from_slice(&self.schema_version.to_be_bytes());
+        bytes.push(self.phase.tag());
+        bytes.push(self.authority.tag());
+        bytes.push(self.validity.tag());
+        self.authority_identity.encode(bytes);
+        match &self.basis {
+            FactEvidenceBasis::GovernedGuarantee { guarantee } => {
+                bytes.push(0x01);
+                guarantee.encode(bytes);
+            }
+            FactEvidenceBasis::Measurement { contexts } => {
+                bytes.push(0x02);
+                push_len(bytes, contexts.len());
+                for context in contexts {
+                    context.encode(bytes);
+                }
+            }
+        }
+    }
+
+    fn canonical_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        self.encode(&mut bytes);
+        bytes
+    }
+}
+
+fn valid_key(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_PROVENANCE_TEXT_BYTES
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'-' | b'_')
+        })
+}
+
+fn valid_text(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_PROVENANCE_TEXT_BYTES
+        && value.trim() == value
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_graphic() || byte == b' ')
+}
+
+fn encode_optional_text(bytes: &mut Vec<u8>, value: Option<&str>) {
+    bytes.push(u8::from(value.is_some()));
+    if let Some(value) = value {
+        push_slice(bytes, value.as_bytes());
+    }
+}
+
+fn strictly_increasing<T>(values: &[T], canonical_bytes: impl Fn(&T) -> Vec<u8>) -> bool {
+    values
+        .windows(2)
+        .all(|pair| canonical_bytes(&pair[0]) < canonical_bytes(&pair[1]))
+}
+
+pub(crate) fn governed_profile_source() -> Arc<FactSourceProvenance> {
+    static SOURCE: OnceLock<Arc<FactSourceProvenance>> = OnceLock::new();
+    Arc::clone(SOURCE.get_or_init(|| {
+        Arc::new(FactSourceProvenance::governed(
+            ProvenanceIdentity::new("tiler.governed-target-profile-authority.v1", 1),
+            ProvenanceIdentity::new("tiler.prototype-target-neutral-baseline.v1", 1),
+        ))
+    }))
+}
 
 /// The behaviour space one numerical dimension ranges over.
 ///
@@ -484,44 +924,38 @@ impl RelaxationRequirement {
     }
 }
 
-/// One line of a target profile's honourability declaration, before provenance.
+/// One line of a target profile's honourability declaration.
 ///
-/// A profile states these as `&'static` data; [`NumericalHonourabilityFact`] is
-/// what a checked profile holds, after each line has been attributed to the
-/// declaring profile's identity. The split mirrors how a
+/// Rows share one immutable structured source record; a checked profile then
+/// attributes each row to the declaring profile's identity.
+/// [`NumericalHonourabilityFact`] is that attributed form. The split mirrors how a
 /// [`crate::feasibility::CapabilityFact`]'s provenance is bound at checking time
 /// rather than restated by every declarer.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct DeclaredBehaviour {
     dimension: NumericalDimension,
     arithmetic: ArithmeticType,
     behaviour: DimensionBehaviour,
     means: HonouringMeans,
-    phase: AvailabilityPhase,
-    authority: FactAuthority,
-    validity: FactValidityScope,
+    source: Arc<FactSourceProvenance>,
 }
 
 impl DeclaredBehaviour {
     /// Declares how a target honours one behaviour of one dimension, in one
     /// arithmetic type.
-    pub(crate) const fn new(
+    pub(crate) fn new(
         dimension: NumericalDimension,
         arithmetic: ArithmeticType,
         behaviour: DimensionBehaviour,
         means: HonouringMeans,
-        phase: AvailabilityPhase,
-        authority: FactAuthority,
-        validity: FactValidityScope,
+        source: Arc<FactSourceProvenance>,
     ) -> Self {
         Self {
             dimension,
             arithmetic,
             behaviour,
             means,
-            phase,
-            authority,
-            validity,
+            source,
         }
     }
 
@@ -529,7 +963,7 @@ impl DeclaredBehaviour {
     ///
     /// The overwhelmingly common shape: a portable profile fact known before any
     /// artifact exists. A later-phase declaration states its phase explicitly.
-    pub(crate) const fn compile_profile(
+    pub(crate) fn compile_profile(
         dimension: NumericalDimension,
         arithmetic: ArithmeticType,
         behaviour: DimensionBehaviour,
@@ -540,19 +974,17 @@ impl DeclaredBehaviour {
             arithmetic,
             behaviour,
             means,
-            AvailabilityPhase::CompileProfile,
-            FactAuthority::GovernedProfile,
-            FactValidityScope::PortableProfile,
+            governed_profile_source(),
         )
     }
 
     /// Binds this declaration to the profile that declared it.
-    pub(crate) const fn attributed_to(
-        self,
+    pub(crate) fn attributed_to(
+        &self,
         profile: TargetProfileIdentity,
     ) -> NumericalHonourabilityFact {
         NumericalHonourabilityFact {
-            declaration: self,
+            declaration: self.clone(),
             provenance: FactProvenance::declared_by(profile),
         }
     }
@@ -562,14 +994,60 @@ impl DeclaredBehaviour {
     /// The one encoding of a declared behaviour in this crate. A checked profile
     /// descriptor and a request subject both reach it, so a widened vocabulary
     /// cannot change one and leave the other reading the old shape.
-    pub(crate) fn encode_declaration(&self, bytes: &mut Vec<u8>) {
+    fn encode_declaration_body(&self, bytes: &mut Vec<u8>) {
         bytes.push(self.dimension.tag());
         bytes.push(self.arithmetic.tag());
         self.behaviour.encode(bytes);
         self.means.encode(bytes);
-        bytes.push(self.phase.tag());
-        bytes.push(self.authority.tag());
-        bytes.push(self.validity.tag());
+    }
+}
+
+/// Encodes declared rows with one canonical, deduplicated source table.
+pub(crate) fn encode_declared_behaviours(bytes: &mut Vec<u8>, declarations: &[DeclaredBehaviour]) {
+    let declarations: Vec<_> = declarations.iter().collect();
+    encode_declaration_table(bytes, &declarations);
+}
+
+/// Encodes checked facts with one canonical, deduplicated source table.
+pub(crate) fn encode_honourability_facts(
+    bytes: &mut Vec<u8>,
+    facts: &[NumericalHonourabilityFact],
+) {
+    let declarations: Vec<_> = facts.iter().map(|fact| &fact.declaration).collect();
+    encode_declaration_table(bytes, &declarations);
+}
+
+fn encode_declaration_table(bytes: &mut Vec<u8>, declarations: &[&DeclaredBehaviour]) {
+    let mut sources: Vec<_> = declarations
+        .iter()
+        .map(|declaration| {
+            let source = declaration.source.as_ref();
+            (source.canonical_bytes(), source)
+        })
+        .collect();
+    sources.sort_by(|left, right| left.0.cmp(&right.0));
+    sources.dedup_by(|left, right| left.0 == right.0);
+
+    push_len(bytes, sources.len());
+    for (_, source) in &sources {
+        source.encode(bytes);
+    }
+
+    let mut rows = Vec::with_capacity(declarations.len());
+    for declaration in declarations {
+        let source_key = declaration.source.canonical_bytes();
+        let source_index = sources
+            .binary_search_by(|candidate| candidate.0.cmp(&source_key))
+            .expect("every declaration source was collected into the source table");
+        let mut row = Vec::new();
+        declaration.encode_declaration_body(&mut row);
+        push_len(&mut row, source_index);
+        rows.push(row);
+    }
+    rows.sort_unstable();
+    push_len(bytes, rows.len());
+    for row in rows {
+        bytes.extend_from_slice(&row);
     }
 }
 
@@ -580,7 +1058,7 @@ impl DeclaredBehaviour {
 /// [`crate::feasibility::CapabilityFact`] does — an availability phase, a fact
 /// authority, a validity scope, and the declaring profile's identity — so a
 /// rejection can name where the claim came from (ADR 0076 item 3).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NumericalHonourabilityFact {
     declaration: DeclaredBehaviour,
     provenance: FactProvenance,
@@ -588,37 +1066,47 @@ pub(crate) struct NumericalHonourabilityFact {
 
 impl NumericalHonourabilityFact {
     /// The dimension this fact speaks about.
-    pub(crate) const fn dimension(self) -> NumericalDimension {
+    pub(crate) const fn dimension(&self) -> NumericalDimension {
         self.declaration.dimension
     }
 
     /// The arithmetic type this fact speaks about.
-    pub(crate) const fn arithmetic(self) -> ArithmeticType {
+    pub(crate) const fn arithmetic(&self) -> ArithmeticType {
         self.declaration.arithmetic
     }
 
     /// The behaviour of that dimension this fact speaks about.
-    pub(crate) const fn behaviour(self) -> DimensionBehaviour {
+    pub(crate) const fn behaviour(&self) -> DimensionBehaviour {
         self.declaration.behaviour
     }
 
     /// The means by which the behaviour is honoured, if it is.
-    pub(crate) const fn means(self) -> HonouringMeans {
+    pub(crate) const fn means(&self) -> HonouringMeans {
         self.declaration.means
     }
 
     /// The phase from which this fact is available.
-    pub(crate) const fn phase(self) -> AvailabilityPhase {
-        self.declaration.phase
+    pub(crate) fn phase(&self) -> AvailabilityPhase {
+        self.declaration.source.phase
     }
 
     /// The authority vouching for this fact.
-    pub(crate) const fn authority(self) -> FactAuthority {
-        self.declaration.authority
+    pub(crate) fn authority(&self) -> FactAuthority {
+        self.declaration.source.authority
+    }
+
+    /// The scope over which this fact remains valid.
+    pub(crate) fn validity(&self) -> FactValidityScope {
+        self.declaration.source.validity
+    }
+
+    /// The structured source statement supplied by the declaring authority.
+    pub(crate) fn source(&self) -> &FactSourceProvenance {
+        &self.declaration.source
     }
 
     /// Where this fact came from.
-    pub(crate) const fn provenance(self) -> FactProvenance {
+    pub(crate) const fn provenance(&self) -> FactProvenance {
         self.provenance
     }
 
@@ -628,12 +1116,12 @@ impl NumericalHonourabilityFact {
     /// tag, because one behaviour space is variable-width: two distinct accuracy
     /// envelopes would tie under a tag, and the duplicate check this key feeds
     /// would then reject a profile that declared both.
-    pub(crate) fn sort_key(self) -> (u8, u8, Vec<u8>, AvailabilityPhase) {
+    pub(crate) fn sort_key(&self) -> (u8, u8, Vec<u8>, AvailabilityPhase) {
         (
             self.declaration.dimension.tag(),
             self.declaration.arithmetic.tag(),
             self.declaration.behaviour.canonical_key(),
-            self.declaration.phase,
+            self.declaration.source.phase,
         )
     }
 
@@ -641,19 +1129,11 @@ impl NumericalHonourabilityFact {
     ///
     /// A conditional means is deliberately excluded: whether it honours anything
     /// depends on the request, so it is not an alternative the profile *offers*.
-    pub(crate) const fn is_unconditionally_honoured(self) -> bool {
+    pub(crate) const fn is_unconditionally_honoured(&self) -> bool {
         matches!(
             self.declaration.means,
             HonouringMeans::SupportedExactly | HonouringMeans::SupportedWithExactEmulation
         )
-    }
-
-    /// Appends this fact's declaration to a canonical profile descriptor.
-    ///
-    /// The provenance is excluded for the same reason a capability fact's is: it
-    /// cites the descriptor's own subject.
-    pub(crate) fn encode_declaration(&self, bytes: &mut Vec<u8>) {
-        self.declaration.encode_declaration(bytes);
     }
 }
 
@@ -707,55 +1187,44 @@ impl NumericalRequirement {
 /// an artifact record and a cost model both need: an emulated dimension is
 /// honoured by emitted operations, which is work that a satisfied predicate
 /// alone would hide.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct HonouredDimension {
-    dimension: NumericalDimension,
-    arithmetic: ArithmeticType,
-    behaviour: DimensionBehaviour,
-    means: HonouringMeans,
-    profile: TargetProfileIdentity,
+    fact: NumericalHonourabilityFact,
 }
 
 impl HonouredDimension {
-    pub(crate) const fn new(
-        dimension: NumericalDimension,
-        arithmetic: ArithmeticType,
-        behaviour: DimensionBehaviour,
-        means: HonouringMeans,
-        profile: TargetProfileIdentity,
-    ) -> Self {
-        Self {
-            dimension,
-            arithmetic,
-            behaviour,
-            means,
-            profile,
-        }
+    pub(crate) const fn new(fact: NumericalHonourabilityFact) -> Self {
+        Self { fact }
     }
 
     /// The dimension honoured.
-    pub(crate) const fn dimension(self) -> NumericalDimension {
-        self.dimension
+    pub(crate) const fn dimension(&self) -> NumericalDimension {
+        self.fact.dimension()
     }
 
     /// The arithmetic type it is honoured in.
-    pub(crate) const fn arithmetic(self) -> ArithmeticType {
-        self.arithmetic
+    pub(crate) const fn arithmetic(&self) -> ArithmeticType {
+        self.fact.arithmetic()
     }
 
     /// The behaviour the contract required.
-    pub(crate) const fn behaviour(self) -> DimensionBehaviour {
-        self.behaviour
+    pub(crate) const fn behaviour(&self) -> DimensionBehaviour {
+        self.fact.behaviour()
     }
 
     /// The means by which the target honours it.
-    pub(crate) const fn means(self) -> HonouringMeans {
-        self.means
+    pub(crate) const fn means(&self) -> HonouringMeans {
+        self.fact.means()
     }
 
     /// The profile that declared the honouring means.
-    pub(crate) const fn profile(self) -> TargetProfileIdentity {
-        self.profile
+    pub(crate) const fn profile(&self) -> TargetProfileIdentity {
+        self.fact.provenance().profile()
+    }
+
+    /// The exact checked fact that justified selection.
+    pub(crate) const fn fact(&self) -> &NumericalHonourabilityFact {
+        &self.fact
     }
 }
 
