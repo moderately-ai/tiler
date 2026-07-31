@@ -21,6 +21,10 @@ ticket: "define-dtype-namespace-admission-policy"
 - **Normative owner:** [Numerical semantics](../numerical-semantics.md).
 - **Evidence:** [mature dtype taxonomy](../research/numerics/mature-dtype-taxonomy.md).
 - **Work record:** [define-dtype-namespace-admission-policy](../../tickets/define-dtype-namespace-admission-policy.md).
+- **Preserved primary sources:** [dtype primary-source record](../research/numerics/sources/README.md).
+  IEEE 754-2019 is recorded there as metadata-only with an official acquisition
+  route; its terms permit no local copy, so this decision's normative reference
+  cannot be checked against a vendored file.
 
 
 ## Context

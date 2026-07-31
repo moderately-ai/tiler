@@ -27,6 +27,11 @@ selected for several families, while executable support sets remain unselected
 - **Normative destination:** [Numerical semantics](../../numerical-semantics.md).
 - **Adoption:** [ADR 0026](../../decisions/0026-dtype-representability-vs-operation-support.md), [ADR 0028](../../decisions/0028-recognize-sub-byte-integers.md), [ADR 0035](../../decisions/0035-recognize-ieee-decimal-floating-formats.md), [ADR 0036](../../decisions/0036-recognize-standard-binary-and-microscaling-formats.md), [ADR 0037](../../decisions/0037-parameterize-complex-dtype-identity.md), [ADR 0038](../../decisions/0038-recognize-ocp-mx-schemes.md).
 - **Work record:** [enumerate-the-mature-tensor-dtype-taxonomy](../../../tickets/enumerate-the-mature-tensor-dtype-taxonomy.md).
+- **Preserved primary sources:** [dtype primary-source record](sources/README.md).
+  Each "Primary sources" list below names the ids preserved there. A URL in
+  this document locates a document; the preservation record is what pins the
+  exact edition, licence verdict, and digest, and it says which sources have no
+  local copy.
 
 
 ## Purpose and boundary
@@ -144,6 +149,9 @@ Primary sources: [StableHLO element types](https://openxla.org/stablehlo/spec#el
 [MLIR integer types](https://mlir.llvm.org/docs/Dialects/Builtin/#integer-type),
 [PyTorch tensor attributes](https://docs.pytorch.org/docs/stable/tensor_attributes),
 and [PyTorch `ScalarType`](https://github.com/pytorch/pytorch/blob/main/c10/core/ScalarType.h).
+Preserved as `stablehlo-spec-v1.18.0`, `onnx-ir-v1.22.0`, and
+`mlir-builtin-types-llvmorg-22.1.8`; the PyTorch precedents are deferred to
+[preserve-ecosystem-dtype-precedent-sources](../../../tickets/preserve-ecosystem-dtype-precedent-sources.md).
 
 Signless compiler integers are intentionally absent from the canonical value
 catalog. Signedness affects comparisons, division, overflow interpretation, and
@@ -191,6 +199,11 @@ Primary sources: [IEEE 754-2019](https://standards.ieee.org/ieee/754/6210/),
 [OCP MX specification](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf),
 [StableHLO element types](https://openxla.org/stablehlo/spec#element-types),
 and [MLIR built-in types](https://mlir.llvm.org/docs/Dialects/Builtin/).
+Preserved as `stablehlo-spec-v1.18.0` and `mlir-builtin-types-llvmorg-22.1.8`.
+IEEE 754-2019 is `ieee-754-2019`, metadata-only with no local copy and no
+digest; both OCP specifications are `ocp-ofp8-v1.0` and `ocp-mx-v1.0`,
+pending-acquisition after a failed retrieval. Re-deriving those value sets
+today needs the acquisition routes in the [preservation record](sources/README.md).
 
 Suffixes are naming conventions, not a universally compositional grammar. The
 full nominal format definition is authoritative. In particular, `FN` formats
@@ -203,6 +216,7 @@ than reconstruct it from suffix text.
 
 Primary definitions: [MLIR FP4/FP6 built-in types](https://mlir.llvm.org/docs/Dialects/Builtin/#float4e2m1fntype)
 and [StableHLO element types](https://openxla.org/stablehlo/spec#element-types).
+Preserved as `mlir-builtin-types-llvmorg-22.1.8` and `stablehlo-spec-v1.18.0`.
 
 ### Target ABI and execution-only floating formats
 
@@ -223,6 +237,11 @@ NVIDIA documents TF32 as an execution precision for Tensor Core paths.
 Primary sources: [LLVM floating-point types](https://llvm.org/docs/LangRef.html#floating-point-types),
 [PTX alternate floating-point formats](https://docs.nvidia.com/cuda/parallel-thread-execution/#alternate-floating-point-data-formats),
 and [NVIDIA TensorRT accuracy considerations](https://docs.nvidia.com/deeplearning/tensorrt/latest/inference-library/accuracy-considerations.html).
+LLVM is preserved as `llvm-langref-llvmorg-22.1.8`. The PTX link above always
+serves the current toolkit; the record pins `nvidia-ptx-isa-cuda-13.3.0`
+(PTX ISA 9.3) as metadata-only, since NVIDIA grants no redistribution. The
+TensorRT guide is deferred to
+[preserve-ecosystem-dtype-precedent-sources](../../../tickets/preserve-ecosystem-dtype-precedent-sources.md).
 
 ### Decimal floating point
 
@@ -242,6 +261,9 @@ the same logical decimal format.
 
 Primary sources: [IEEE 754-2019](https://standards.ieee.org/ieee/754/6210/)
 and [GCC decimal floating types](https://gcc.gnu.org/onlinedocs/gcc/Decimal-Float.html).
+IEEE 754-2019 is `ieee-754-2019`, metadata-only with no local copy; the GCC
+manual is deferred to
+[preserve-ecosystem-dtype-precedent-sources](../../../tickets/preserve-ecosystem-dtype-precedent-sources.md).
 
 ### Complex scalars
 
@@ -272,6 +294,10 @@ Primary sources: [StableHLO element types](https://openxla.org/stablehlo/spec#el
 [PyTorch complex numbers](https://docs.pytorch.org/docs/stable/complex_numbers.html),
 [DLPack C API](https://dmlc.github.io/dlpack/latest/c_api.html), and
 [MLIR complex type](https://mlir.llvm.org/docs/Dialects/Builtin/#complex-type).
+Preserved as `stablehlo-spec-v1.18.0`, `dlpack-header-v1.3`, and
+`mlir-builtin-types-llvmorg-22.1.8`; the DLPack link above renders a mutable
+"latest" view of the pinned header. PyTorch is deferred to
+[preserve-ecosystem-dtype-precedent-sources](../../../tickets/preserve-ecosystem-dtype-precedent-sources.md).
 
 ### Posit and other tapered formats
 
@@ -287,6 +313,9 @@ semantics and are outside the finite mature catalog until an ecosystem or
 target use case appears.
 
 Primary source: [Posit Standard 2022](https://posithub.org/docs/posit_standard-2.pdf).
+Preserved as `posit-standard-2022`, metadata-only: the document states no
+licence or redistribution grant, so it is identified by digest and acquisition
+route rather than copied here.
 
 ## Numeric interpretations over scalar storage
 
@@ -333,6 +362,8 @@ optimization instead of inheriting those ambiguities.
 Primary sources: [StableHLO quantized tensor types](https://openxla.org/stablehlo/spec#quantized-tensor-types),
 [MLIR Quant dialect](https://mlir.llvm.org/docs/Dialects/QuantDialect/), and
 [ONNX `QuantizeLinear`](https://onnx.ai/onnx/operators/onnx__QuantizeLinear.html).
+Preserved as `stablehlo-spec-v1.18.0`, `mlir-quant-base-llvmorg-22.1.8`, and
+`onnx-operators-v1.22.0`.
 
 The focused review in
 [Quantization representation in tensor IRs](quantization-ir-precedents.md)
@@ -358,6 +389,8 @@ reserved/specialized for Tiler taxonomy; decimal32/64/128/256 fixed-point is
 mature in Arrow but not general GPU arithmetic.
 
 Primary source: [Arrow columnar types](https://arrow.apache.org/docs/format/Columnar.html).
+Preservation is deferred to
+[preserve-ecosystem-dtype-precedent-sources](../../../tickets/preserve-ecosystem-dtype-precedent-sources.md).
 
 ## Packed and block-scaled encoded tensors
 
@@ -390,6 +423,8 @@ encodings.
 Primary sources: [ONNX int4](https://onnx.ai/onnx/technical/int4.html),
 [ONNX int2](https://onnx.ai/onnx/technical/int2.html), and
 [DLPack C API](https://dmlc.github.io/dlpack/latest/c_api.html).
+Preserved as `onnx-int4-v1.22.0`, `onnx-int2-v1.22.0`, and
+`dlpack-header-v1.3`.
 
 ### OCP microscaling formats
 
@@ -407,6 +442,9 @@ and physical packing participate in identity. `MXFP4` is not an alias for a
 tensor of independent `f4E2M1FN` values.
 
 Primary source: [OCP MX specification](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf).
+Recorded as `ocp-mx-v1.0`, pending-acquisition: retrieval failed, so no local
+copy and no digest exist and the [preservation record](sources/README.md) names
+the acquisition route instead.
 
 ### NVIDIA NVFP4
 
@@ -418,6 +456,8 @@ the storage/ABI contract cannot assume one universal signed E4M3 byte. NVFP4 is
 not OCP MXFP4, whose group size and scale format differ.
 
 Primary source: [NVIDIA Transformer Engine NVFP4](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/features/low_precision_training/nvfp4/nvfp4.html).
+Preserved as `nvidia-te-nvfp4-v2.17` from the Apache-2.0 source of that page.
+It is the format owner's own description, not a ratified specification.
 
 Other weight-only formats used by model runtimes—grouped int8/int4/int2,
 binary/ternary weights, codebook/palette quantization, and project-specific
@@ -444,6 +484,8 @@ the initial tensor-kernel optimizer.
 Primary sources: [ONNX IR](https://onnx.ai/onnx/repo-docs/IR.html),
 [NumPy dtype classes](https://numpy.org/doc/stable/reference/routines.dtypes.html),
 and [Arrow columnar format](https://arrow.apache.org/docs/format/Columnar.html).
+ONNX is preserved as `onnx-ir-v1.22.0`; NumPy and Arrow are deferred to
+[preserve-ecosystem-dtype-precedent-sources](../../../tickets/preserve-ecosystem-dtype-precedent-sources.md).
 
 ## Values that are not tensor element dtypes
 
@@ -465,6 +507,9 @@ when their physical representation is i64.
 Primary sources: [JAX typed keys](https://docs.jax.dev/en/latest/jep/9263-typed-keys.html),
 [StableHLO token type](https://openxla.org/stablehlo/spec#token-type), and
 [DLPack C API](https://dmlc.github.io/dlpack/latest/c_api.html).
+StableHLO and DLPack are preserved as `stablehlo-spec-v1.18.0` and
+`dlpack-header-v1.3`; JAX is deferred to
+[preserve-ecosystem-dtype-precedent-sources](../../../tickets/preserve-ecosystem-dtype-precedent-sources.md).
 
 ## Cross-system inventory snapshot
 
@@ -488,6 +533,10 @@ Backend primary sources: [Metal capabilities](https://developer.apple.com/metal/
 [CUDA PTX ISA](https://docs.nvidia.com/cuda/parallel-thread-execution/index.html),
 [SPIR-V specification](https://registry.khronos.org/SPIR-V/specs/unified1/SPIRV.html),
 and [WGSL](https://www.w3.org/TR/WGSL/).
+The Metal documents are preserved under
+[Apple Metal sources](../apple-targets/sources/README.md); PTX is
+`nvidia-ptx-isa-cuda-13.3.0`, metadata-only; SPIR-V and WGSL are deferred to
+[preserve-ecosystem-dtype-precedent-sources](../../../tickets/preserve-ecosystem-dtype-precedent-sources.md).
 
 ## Capability levels to decide later
 

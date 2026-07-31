@@ -21,6 +21,10 @@ ticket: "define-dtype-namespace-admission-policy"
 - **Normative owner:** [Numerical semantics](../numerical-semantics.md).
 - **Evidence:** [mature dtype taxonomy](../research/numerics/mature-dtype-taxonomy.md).
 - **Work record:** [define-dtype-namespace-admission-policy](../../tickets/define-dtype-namespace-admission-policy.md).
+- **Preserved primary sources:** [dtype primary-source record](../research/numerics/sources/README.md).
+  The RISC-V BF16 contract is vendored there; IEEE 754-2019 is metadata-only
+  and both OCP specifications are pending-acquisition, so those pins resolve to
+  an official acquisition route rather than a local copy.
 
 
 ## Context

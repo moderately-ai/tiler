@@ -1,0 +1,33 @@
+#	Expected primary-source population for Tiler's recognized dtype catalog. One row per preserved unit.
+#	Columns: id <TAB> classification <TAB> path <TAB> sha256
+#	classification: vendored | metadata-only | pending-acquisition
+#	path: path under this directory, or "-" when no bytes are retained here.
+#	sha256: digest over the exact retrieved byte stream, or "-" when no bytes were ever retrieved.
+#	Provenance for each id — owner, edition, retrieval URL and date, licence, verdict — is in README.md.
+#	`verify-sources.sh` enforces the row count, the per-classification counts, id uniqueness, every
+#	vendored digest, and that no file on disk escapes this manifest.
+ieee-754-2019	metadata-only	-	-
+ocp-ofp8-v1.0	pending-acquisition	-	-
+ocp-mx-v1.0	pending-acquisition	-	-
+posit-standard-2022	metadata-only	-	ac844cb993d74af29b0fd5eed3e4e2b60240d77b3df348dec3a9574e00c0026b
+nvidia-ptx-isa-cuda-13.3.0	metadata-only	-	40026f79b65fee3f8c8b3e717c6f80c6385e8d97215318d6e4b7f6106f58d5a4
+riscv-unprivileged-isa-20260120	vendored	riscv-isa/riscv-unprivileged-20260120.pdf	06bb3c23074f72060a0ec061a80933af948cae7ceafdcd9d1fe177b05fd150bc
+riscv-isa-manual-license	vendored	riscv-isa/LICENSE	380a72cc58f5771de8cd849b928ceef1c48c737bf51d71ddbe063db141d93ef5
+stablehlo-spec-v1.18.0	vendored	stablehlo-v1.18.0/spec.md	e8f967da3f72a26b5ec119331b58a134f30af265b15e0a082ade03da8e3a8028
+stablehlo-license-v1.18.0	vendored	stablehlo-v1.18.0/LICENSE	c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4
+mlir-builtin-types-llvmorg-22.1.8	vendored	llvm-project-llvmorg-22.1.8/BuiltinTypes.td	a81118e68c8eb9ed39f544d58f17d627c89eb17dbaeb76692bd4b1b707b67fb5
+mlir-quant-base-llvmorg-22.1.8	vendored	llvm-project-llvmorg-22.1.8/QuantBase.td	52faf25394542c77af408e92f0ebdc67a589f1d507261662b5d80fdfdffc960c
+llvm-langref-llvmorg-22.1.8	vendored	llvm-project-llvmorg-22.1.8/LangRef.rst	0f62c10776c9017e8805e561fdfdb780cfb814d3ff509a66ca14f3900c7101c4
+llvm-project-license-llvmorg-22.1.8	vendored	llvm-project-llvmorg-22.1.8/LICENSE.TXT	8d85c1057d742e597985c7d4e6320b015a9139385cff4cbae06ffc0ebe89afee
+onnx-ir-v1.22.0	vendored	onnx-v1.22.0/IR.md	7313f4338edc960cdb177a9b4f57dd48fb9bd62394c05e94c183166583119ab1
+onnx-operators-v1.22.0	vendored	onnx-v1.22.0/Operators.md	2629778e886992538c0cb2359ce3accc9ebbbac49d037545d80f3ca8c3875a3b
+onnx-int4-v1.22.0	vendored	onnx-v1.22.0/int4.md	241c130c4487ff71a92bca5f1aae480f9e80810efcb3a87184d83b787a3d64c8
+onnx-int2-v1.22.0	vendored	onnx-v1.22.0/int2.md	fe35d0875fbbe2b64c8fe3a3227858cd20b03901555ae86814ab69a66ee60dd2
+onnx-license-v1.22.0	vendored	onnx-v1.22.0/LICENSE	cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30
+onnx-notice-v1.22.0	vendored	onnx-v1.22.0/NOTICE	4d680fb1f48f07f134c9f7a8d715303b8f5160b5757bc9eec4cac783703ea592
+dlpack-header-v1.3	vendored	dlpack-v1.3/dlpack.h	62052bef24bd69bb7b52e95428f9e99bd7951783850c36c5f2a41e71fd63c2fc
+dlpack-c-api-v1.3	vendored	dlpack-v1.3/c_api.rst	6da6cab4bd5e2408d784da26355bec8bec298b6163ef9ee26eed0e417fdf49b9
+dlpack-license-v1.3	vendored	dlpack-v1.3/LICENSE	3e8f6bc39276a586d60c8c5aaece2ff989262181cf2b3d2a128db58f97a9300c
+nvidia-te-nvfp4-v2.17	vendored	transformer-engine-v2.17/nvfp4.rst	af7d7592109ee855b91fdf8dea77421c71f5990ff6fdf6b2a4a86a8cca19a7e7
+nvidia-te-license-v2.17	vendored	transformer-engine-v2.17/LICENSE	bea1b4266f1499fa4bbb16d6e7577e6b5b53d1ef010835a9d460876022cc8722
+tosa-spec-1.0.1	vendored	tosa-1.0.1/tosa_spec_1_0_1.html	16c774695cf9e42cd7592b4d595bcbcc8f0268412c1eebd46f03dcca7f5b9726

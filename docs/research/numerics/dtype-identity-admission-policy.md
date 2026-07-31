@@ -24,6 +24,9 @@ ticket: "define-dtype-namespace-admission-policy"
 - **Normative destination:** [Numerical semantics](../../numerical-semantics.md).
 - **Adoption:** [ADR 0027](../../decisions/0027-uniform-nominal-dtype-identity.md), [ADR 0034](../../decisions/0034-tiler-governed-built-in-dtype-keys.md), [ADR 0035](../../decisions/0035-recognize-ieee-decimal-floating-formats.md), [ADR 0036](../../decisions/0036-recognize-standard-binary-and-microscaling-formats.md), [ADR 0037](../../decisions/0037-parameterize-complex-dtype-identity.md), [ADR 0038](../../decisions/0038-recognize-ocp-mx-schemes.md).
 - **Work record:** [define-dtype-namespace-admission-policy](../../../tickets/define-dtype-namespace-admission-policy.md).
+- **Preserved primary sources:** [dtype primary-source record](sources/README.md),
+  which pins the exact edition behind each normative reference this policy
+  requires and states which sources have no local copy.
 
 
 ## Problem
@@ -54,6 +57,11 @@ Primary sources: [DLPack C API](https://dmlc.github.io/dlpack/latest/c_api.html)
 [StableHLO compatibility](https://openxla.org/stablehlo/compatibility),
 [MLIR language reference](https://mlir.llvm.org/docs/LangRef/),
 and [Arrow canonical extensions](https://arrow.apache.org/docs/format/CanonicalExtensions.html).
+DLPack and ONNX are preserved as `dlpack-header-v1.3` and `onnx-ir-v1.22.0`.
+The StableHLO compatibility page, the MLIR language reference, and the Arrow
+extension registry are namespace-governance precedents rather than format
+definitions; they are deferred to
+[preserve-ecosystem-dtype-precedent-sources](../../../tickets/preserve-ecosystem-dtype-precedent-sources.md).
 
 ## Proposed admission gates
 
@@ -90,6 +98,12 @@ change updates provider provenance.
 - OCP OFP8 E4M3 and E5M2;
 - OCP MX E2M3, E3M2, E2M1, and E8M0 constituents;
 - OCP MX block-format scheme identities, separately from scalar `TypeKey`s.
+
+The RISC-V BF16 contract is preserved as `riscv-unprivileged-isa-20260120`
+(chapter 25, "BF16 Extensions for BFloat16-precision Floating-Point, Version
+1.0"). IEEE 754-2019 is metadata-only and both OCP specifications are
+pending-acquisition, so those three normative references currently resolve to
+an acquisition route rather than a local copy.
 
 ADR 0036 records the scalar-format admissions. Compound OCP MX schemes use
 separate `QuantSchemeKey`s; ADR 0038 admits the OCP version 1.0 MXFP8, MXFP6,

@@ -26,6 +26,10 @@ ticket: "define-initial-affine-quantization-semantics"
 - **Normative destination:** [Numerical semantics](../../numerical-semantics.md) and [Correctness and testing](../../correctness-and-testing.md).
 - **Adoption:** [ADR 0031](../../decisions/0031-strict-affine-quantization-rejects-nan.md), [ADR 0032](../../decisions/0032-strict-affine-quantization-evaluation.md), [ADR 0033](../../decisions/0033-semantic-validation-enforcement.md).
 - **Work record:** [define-initial-affine-quantization-semantics](../../../tickets/define-initial-affine-quantization-semantics.md).
+- **Preserved primary sources:** [dtype primary-source record](sources/README.md).
+  The StableHLO, MLIR Quant, ONNX, and TOSA documents cited below are vendored
+  there as `stablehlo-spec-v1.18.0`, `mlir-quant-base-llvmorg-22.1.8`,
+  `onnx-operators-v1.22.0`, and `tosa-spec-1.0.1`.
 
 
 ## Why the formula is insufficient

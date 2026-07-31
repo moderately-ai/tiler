@@ -21,6 +21,9 @@ ticket: "define-dtype-namespace-admission-policy"
 - **Normative owner:** [Numerical semantics](../numerical-semantics.md).
 - **Evidence:** [dtype identity admission policy](../research/numerics/dtype-identity-admission-policy.md).
 - **Work record:** [define-dtype-namespace-admission-policy](../../tickets/define-dtype-namespace-admission-policy.md).
+- **Preserved primary sources:** [dtype primary-source record](../research/numerics/sources/README.md),
+  which pins the exact edition behind each mandatory normative-definition
+  reference this decision requires, and names those with no local copy.
 
 
 ## Context
