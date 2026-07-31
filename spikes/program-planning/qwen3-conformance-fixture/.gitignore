@@ -1,0 +1,11 @@
+# Regenerable local run products: the complete F32 logit bytes (18 positions x
+# 607,744 bytes = 10.43 MiB) and the uv-managed virtual environment. Both are
+# reconstructed by the recorded invocation from the checked-in `pyproject.toml`
+# and `uv.lock`, and neither is evidence -- the evidence is the per-position
+# SHA-256 over exactly these bytes, which is retained under `results/`.
+#
+# The rule covers this one directory and nothing broader, per the workload
+# profile's storage policy: no checkpoint, tokenizer, or reference-source bytes
+# are stored in this repository at any path, and a spike that needs them
+# declares its own local directory and ignores exactly that.
+/local-work/
