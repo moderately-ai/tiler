@@ -6,7 +6,7 @@ title: "Frontend and proc-macro integration"
 topics: ["integrations", "frontends", "proc-macros", "aot"]
 contract_status: "accepted"
 implementation_status: "partial"
-evidence: ["tiler.research.macro-environment.build-environment", "tiler.research.embedding.artifact-costs", "tiler.research.cache.crash-race-protocol", "tiler.research.shapes.nightly-const-shape-parameters"]
+evidence: ["tiler.research.macro-environment.build-environment", "tiler.research.embedding.artifact-costs", "tiler.research.cache.crash-race-protocol", "tiler.research.cache.root-policy", "tiler.research.shapes.nightly-const-shape-parameters"]
 ticket: "synthesize-artifact-contracts"
 ---
 
@@ -14,7 +14,7 @@ ticket: "synthesize-artifact-contracts"
 
 **Status:** accepted inline AOT contract; rust-analyzer performance remains unmeasured
 
-`implementation_status` moved from `not-started` to `partial` on 2026-07-31, and the boundary of that word is narrow. What exists is the crate pair this contract's inline delivery routes through — `tiler` and `tiler-macros`, admitted by [ADR 0088](../decisions/0088-admit-tiler-and-tiler-macros-as-the-frontend-pair.md) — and one clause of the target policy below: an expansion states a delivery policy, validates it through the single canonical `ArtifactFamilySelection` constructor, and refuses rather than silently falling back when it cannot deliver a selected family. Nothing else here is implemented. There is no region grammar, no semantic translation, no expansion-time AOT flow, no byte embedding, and no fallback expression; every example in this document describes the contract rather than reporting a landed path.
+`implementation_status` moved from `not-started` to `partial` on 2026-07-31, and the boundary of that word is narrow. What exists is the crate pair this contract's inline delivery routes through — `tiler` and `tiler-macros`, admitted by [ADR 0088](../decisions/0088-admit-tiler-and-tiler-macros-as-the-frontend-pair.md) — and one clause of the target policy below: an expansion states a delivery policy, validates it through the single canonical `ArtifactFamilySelection` constructor, and refuses rather than silently falling back when it cannot deliver a selected family. The cache-root policy the Compiler cache section states exactly is decided and implemented as a crate-private resolver in `tiler-macros`, but it is not delivered behaviour: nothing calls it, because no expansion opens a cache. Nothing else here is implemented. There is no region grammar, no semantic translation, no expansion-time AOT flow, no byte embedding, and no fallback expression; every example in this document describes the contract rather than reporting a landed path.
 
 Frontends translate user-facing tensor languages into Tiler's public semantic
 tensor graph. `candle-einops` is the first proposed frontend. For that Rust
@@ -184,13 +184,13 @@ Its key includes:
 - Metal platform/profile/language version;
 - `xcrun`/Metal compiler fingerprint and flags.
 
-A default macOS user cache is used rather than consumer `OUT_DIR`. A documented
-override supports CI and sandboxed builds. One immutable self-validating bundle
-is stored per complete key. A miss uses a stable per-key OS advisory lock,
-locked recheck, create-new same-filesystem temporary file, full temporary
-validation, and atomic rename. Readers validate every hit without taking the
-lock. Identical invocations share external compiler work even when expanded in
-different rustc processes.
+A default macOS user cache is used rather than consumer `OUT_DIR`. A documented override supports CI and sandboxed builds. [ADR 0089](../decisions/0089-resolve-the-expansion-cache-root-from-an-override-or-the-user-cache.md) fixes the exact derivation, accepted on 2026-07-31: an expansion reads `TILER_EXPANSION_CACHE_DIR` and, only when that is unset, `$HOME`, and reads nothing else. A stated override is the root **verbatim** — Tiler appends nothing to it — except for the exact value `off`, which expands with no cache at all; otherwise the root is `$HOME/Library/Caches/ai.moderately.tiler/expansion`. Precedence is override-first and total, so a stated override decides the root whether or not the default would have worked, and an empty override is a refusal rather than an absence. A root that is relative, that lies at or under `/tmp`, `/private/tmp`, `/var/tmp`, `/private/var/tmp`, or `/Users/Shared` — the trees macOS makes writable by every user of the machine, which the cache's privacy requirement forbids — or that cannot be derived because `HOME` is unset or empty is a typed refusal at the invocation naming the offending input and both remedies, never a silent miss and never a second location. `$TMPDIR` is per-user on macOS and stays usable, which is what makes that refusal affordable in CI. The root is deliberately not part of the key above: moving it changes where entries live and never what they mean.
+
+One immutable self-validating bundle is stored per complete key. A miss uses a
+stable per-key OS advisory lock, locked recheck, create-new same-filesystem
+temporary file, full temporary validation, and atomic rename. Readers validate
+every hit without taking the lock. Identical invocations share external compiler
+work even when expanded in different rustc processes.
 
 Locking suppresses duplicate work; complete identity, immutable bytes,
 validation, and atomic publication provide correctness. Corruption is a miss.
