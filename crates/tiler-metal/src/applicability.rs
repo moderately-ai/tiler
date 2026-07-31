@@ -14,13 +14,13 @@
 //! `Unknown` on every macOS row currently observable, and that a positive
 //! host-applicability receipt requires either an attributable identity for the
 //! private translating component or exact host attestation. Neither exists on
-//! current APIs, so [`evaluate_metal_host_applicability`] returns
-//! [`MetalHostApplicabilityRefusal::UnknownNativeTranslationAuthority`] even for
+//! current APIs, so [`evaluate_metal_host_applicability`](crate::applicability::evaluate_metal_host_applicability) returns
+//! [`MetalHostApplicabilityRefusal::UnknownNativeTranslationAuthority`](crate::applicability::MetalHostApplicabilityRefusal::UnknownNativeTranslationAuthority) even for
 //! an observation that matches the measured row in every public field.
 //!
 //! That refusal is ADR 0043's existing disposal of `Unknown` applied, not a new
 //! outcome class: it names the exact unsatisfied predicate
-//! ([`MetalHostPredicate::NativeTranslationAuthority`]) so explain output can
+//! ([`MetalHostPredicate::NativeTranslationAuthority`](crate::applicability::MetalHostPredicate::NativeTranslationAuthority)) so explain output can
 //! tell it from a disproved hard predicate and from a cost disadvantage.
 //!
 //! The environment predicates are still evaluated, and still refused precisely,
@@ -30,7 +30,7 @@
 //!
 //! # The measured row
 //!
-//! The required values of [`MetalHostApplicabilityPolicy::FIRST_MACOS_APPLE9`]
+//! The required values of [`MetalHostApplicabilityPolicy::FIRST_MACOS_APPLE9`](crate::applicability::MetalHostApplicabilityPolicy::FIRST_MACOS_APPLE9)
 //! are transcribed from two retained records, which agree field for field:
 //!
 //! - `spikes/apple-targets/aot-runtime-compiler-observer/results/2026-07-31-macos27-m4max/clean-1.tsv`,
