@@ -48,6 +48,7 @@ use super::super::facts::AbiFactBinder;
 use super::super::model::{
     BindingTargetData, canonical_deferred_order, deferred_predicate_matches_requirement,
 };
+use super::super::requirement::canonical_requirement_order;
 use super::error::{ArtifactCodecError, OrderedSubject};
 use super::model::{
     ArtifactEnvelope, EntryRow, VariantRow, expression_keys, node_operands, position,
@@ -541,6 +542,7 @@ fn check_variant(
             false,
         )?;
     }
+    check_route_requirements(variant)?;
     check_ordered(
         &variant
             .entries
@@ -551,6 +553,37 @@ fn check_variant(
     )?;
     for (index, entry) in variant.entries.iter().enumerate() {
         check_entry(envelope, entry, index, facts, keys, static_facts)?;
+    }
+    Ok(())
+}
+
+/// Re-proves one variant's route requirements are canonical and non-contradictory.
+///
+/// Two checks, because they refuse different things. The order check refuses a
+/// well-formed encoding that is not *the* encoding of this artifact, which is
+/// what keeps one artifact to one byte identity. The subject check refuses two
+/// rows that constrain one subject: they state two answers to one question, and
+/// nothing in the envelope can say which the producer meant, so admitting them
+/// would let a reader satisfy the weaker row and route.
+///
+/// Both are re-proven here rather than inherited from construction, because the
+/// envelope being validated may have been decoded from bytes no builder wrote.
+fn check_route_requirements(variant: &VariantRow) -> Result<(), ArtifactCodecError> {
+    if canonical_requirement_order(&variant.route_requirements)
+        != (0..variant.route_requirements.len()).collect::<Vec<_>>()
+    {
+        return Err(ArtifactCodecError::NonCanonicalOrder {
+            subject: OrderedSubject::RouteRequirement,
+        });
+    }
+    // Canonical order puts equal subjects adjacent, because a row's canonical
+    // bytes lead with its subject, so neighbours decide distinctness.
+    for pair in variant.route_requirements.windows(2) {
+        if pair[0].subject() == pair[1].subject() {
+            return Err(rule(ArtifactBuildError::DuplicateRouteRequirementSubject {
+                subject: Box::new(pair[0].subject()),
+            }));
+        }
     }
     Ok(())
 }

@@ -109,7 +109,8 @@ use metal::{
 use tiler_artifact::program::{
     AbiFactBinder, AbiFacts, ArtifactCodecFailure, AvailabilityPhase, BackendKey, BindingTarget,
     RecordedArtifactIdentityError, RecordedArtifactProgramIdentity, RepresentationKey,
-    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
+    RouteRequirement, RouteResourceDimension, TargetProfileDescriptorDigest, TargetProfileKey,
+    TargetProfileRef,
 };
 use tiler_artifact::proof::{
     DecodedProofSidecar, ProofAssociationError, ProofCodecError, decode_proof_sidecar,
@@ -139,8 +140,9 @@ use tiler_reference::{
     FloatBitOrder, InputBinding, ReferenceElement, ReferenceEvaluator, Tensor, TensorPayloadView,
 };
 use tiler_runtime::load::{
-    DecodedProgram, ExecutionEnvironment, LoadRejection, Preflight, RoutePreparation,
-    RoutedDispatch, RoutedEntry, TargetCompatibility, TargetDeclaration,
+    DecodedProgram, ExecutionEnvironment, LiveDeviceObservation, LiveDeviceQualification,
+    LiveDeviceRequest, LoadRejection, Preflight, RoutePreparation, RoutedDispatch, RoutedEntry,
+    TargetCompatibility, TargetDeclaration,
 };
 
 /// Rows of the direct path's input; each row reduces to one output element.
@@ -846,6 +848,13 @@ fn probe_accepted_baseline(subject: &ProbeSubject<'_>) -> Result<String, ProofEr
     let mut decoded = DecodedProgram::decode(subject.bytes).map_err(ProofError::ProbeBaseline)?;
     let preflight = decoded
         .prepare(subject.environment, subject.expected, subject.abi)
+        .and_then(|qualification| {
+            // This subject declares no live-device requirement, so the stage is
+            // passed through. The resolver is still supplied rather than
+            // skipped, because the stage is not skippable — which is what keeps
+            // a route that *does* declare one from reaching a commit unchecked.
+            qualification.resolve_live_device_requirements(|_| LiveDeviceObservation::Unrecognized)
+        })
         .and_then(|preparation| preparation.resolve_target_properties(|_| u64::MAX))
         .map_err(ProofError::ProbeBaseline)?;
     let entries = preflight.entries();
@@ -1520,11 +1529,104 @@ fn prepare_pipelines(
         .collect()
 }
 
+/// Governed key of the Metal requirement naming a minimum Apple GPU family.
+///
+/// Owned by `tiler.metal`, which is the backend key this host states, so the
+/// loader refuses a row owned by anything else before this adapter is asked.
+const METAL_MINIMUM_GPU_FAMILY: &str = "tiler.metal.route-requirement.minimum-gpu-family";
+
+/// Governed version of [`METAL_MINIMUM_GPU_FAMILY`]'s meaning.
+///
+/// Matched exactly. A version this adapter does not know is `Unrecognized`
+/// rather than approximated, because one key at two versions can mean two
+/// things and guessing which is how a route runs on a device it was refused on.
+const METAL_MINIMUM_GPU_FAMILY_VERSION: u32 = 1;
+
+/// Decides one live-device route requirement from normalized device facts.
+///
+/// Pure, and split from the device exactly as
+/// [`tiler_metal::applicability`] splits its policy: an adapter observes, this
+/// decides, and every case — including the ones no machine in this workspace can
+/// produce — runs in the ordinary gate without Metal.
+///
+/// # What Metal cannot answer here, stated rather than approximated
+///
+/// [`RouteResourceDimension::SubgroupThreads`] is a live-device property in
+/// general — Vulkan publishes `subgroupSize` on the physical device — and Metal
+/// publishes no device-scoped equivalent: `MTLDevice.h` in the macOS 26.5 SDK
+/// declares no execution-width property, and `threadExecutionWidth` lives on
+/// `MTLComputePipelineState`, which is a *prepared-kernel* fact. So this adapter
+/// answers `Unrecognized`, which refuses the route. A route that genuinely needs
+/// that width on Metal must state it as a `PreparedEntryTargetRequirement`
+/// against the prepared pipeline, which is the authority that has it; answering
+/// it from a family table here would report a documentation constant as a device
+/// observation.
+fn decide_live_device_requirement(
+    facts: &DeviceFacts,
+    request: LiveDeviceRequest<'_>,
+) -> LiveDeviceObservation {
+    // Exhaustive on both the kind and the dimension: a row this adapter has
+    // never seen must stop this build rather than reach an arm that guesses.
+    match request.requirement() {
+        RouteRequirement::ResourceFloor(floor) => match floor.dimension() {
+            RouteResourceDimension::SubgroupThreads => LiveDeviceObservation::Unrecognized,
+        },
+        RouteRequirement::BackendFeature(feature) => {
+            if feature.key().as_str() != METAL_MINIMUM_GPU_FAMILY
+                || feature.version() != METAL_MINIMUM_GPU_FAMILY_VERSION
+            {
+                return LiveDeviceObservation::Unrecognized;
+            }
+            let Some(required) = gpu_family_from_payload(feature.payload()) else {
+                return LiveDeviceObservation::Unrecognized;
+            };
+            // Cumulative families, which is the same property
+            // `highest_apple_family` already relies on: the highest supported
+            // family implies every lower one, so the ordering decides support
+            // without a second device call. A device naming none of them
+            // satisfies no family requirement.
+            let supported = match facts.highest_apple_family {
+                MetalGpuFamilySupport::Highest(highest) => highest >= required,
+                MetalGpuFamilySupport::NoneNamed => false,
+            };
+            LiveDeviceObservation::Feature(supported)
+        }
+    }
+}
+
+/// Reads a canonical family payload through the governed vocabulary's own spelling.
+///
+/// Scanned against `MetalGpuFamily::ALL` rather than matched against a second
+/// table of names written here: one spelling authority, so a family added to
+/// that vocabulary cannot be silently unreadable at this boundary.
+fn gpu_family_from_payload(payload: &[u8]) -> Option<MetalGpuFamily> {
+    MetalGpuFamily::ALL
+        .into_iter()
+        .find(|family| family.as_str().as_bytes() == payload)
+}
+
+/// Answers every live-device requirement of a route from this device.
+fn qualify_live_device<'a>(
+    device: &Device,
+    qualification: LiveDeviceQualification<'a>,
+) -> Result<RoutePreparation<'a>, ProofError> {
+    let facts = device_facts(device);
+    qualification
+        .resolve_live_device_requirements(|request| decide_live_device_requirement(&facts, request))
+        .map_err(ProofError::Load)
+}
+
 /// Answers each requirement from its exact prepared pipeline and preserves the pipelines for execution.
+///
+/// Two device stages in the order their facts become true: the live-device rows
+/// first, from the bound device alone, and only then the prepared-entry
+/// properties, which need a pipeline to exist. Nothing here is irreversible, so
+/// abandoning between them is still the permitted fallback.
 fn resolve_prepared_route<'a>(
     device: &Device,
-    preparation: RoutePreparation<'a>,
+    qualification: LiveDeviceQualification<'a>,
 ) -> Result<(Preflight<'a>, Vec<ComputePipelineState>), ProofError> {
+    let preparation = qualify_live_device(device, qualification)?;
     let pipelines = prepare_pipelines(device, preparation.entries())
         .map_err(|refusal| ProofError::DevicePreflight(Box::new(refusal)))?;
     let preflight = preparation
@@ -2655,21 +2757,25 @@ mod tests {
     //! hardware run is what would notice.
 
     use super::{
-        BACKEND_KEY, LoadRejection, MetalGpuFamily, MetalGpuFamilySupport,
-        MetalHostApplicabilityPolicy, PLAN_ROLES, Path, ProbeSubject, REDUCTION_CLASSES,
-        REPRESENTATION_KEY, ROWS, bind_interface, evaluate_metal_host_applicability,
-        expected_shape, host_environment, normalized_architecture, observe_host_environment,
-        probe_accepted_baseline, probe_damaged_interior_byte, probe_damaged_section_content,
+        BACKEND_KEY, DeviceFacts, LiveDeviceObservation, LiveDeviceQualification, LoadRejection,
+        METAL_MINIMUM_GPU_FAMILY, METAL_MINIMUM_GPU_FAMILY_VERSION, MetalGpuFamily,
+        MetalGpuFamilySupport, MetalHostApplicabilityPolicy, PLAN_ROLES, Path, ProbeSubject,
+        REDUCTION_CLASSES, REPRESENTATION_KEY, ROWS, RoutePreparation, RouteRequirement,
+        RouteResourceDimension, bind_interface, decide_live_device_requirement,
+        evaluate_metal_host_applicability, expected_shape, host_environment,
+        normalized_architecture, observe_host_environment, probe_accepted_baseline,
+        probe_damaged_interior_byte, probe_damaged_section_content,
         probe_foreign_expected_identity, probe_other_backend_family,
         probe_other_profile_descriptor, probe_truncated_envelope, proof_member, serial_sum_program,
     };
     use tiler_artifact::program::{
         AbiExprId, AbiFacts, ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey,
-        BackendEntryRef, BackendKey, BindingKind, BindingSpec, BindingTarget, BufferAccess,
-        CapabilityKey, CompilationEnvironment, DeferredPredicateSpec, EntrySpec,
-        FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec, PayloadContent,
+        BackendEntryRef, BackendFeatureRequirement, BackendKey, BindingKind, BindingSpec,
+        BindingTarget, BufferAccess, CapabilityKey, CompilationEnvironment, DeferredPredicateSpec,
+        EntrySpec, FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec, PayloadContent,
         PayloadEntryMapping, PayloadMetadata, PayloadProvenance, PayloadSdkIdentity,
-        RecordedArtifactProgramIdentity, RepresentationKey, SchemaVersion, SelectedProvider,
+        RecordedArtifactProgramIdentity, RepresentationKey, RouteFeatureKey,
+        RouteRequirementSubject, RouteResourceFloor, SchemaVersion, SelectedProvider,
         TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, ToolComponent,
         VariantSpec, VerifiedArtifactProgram,
     };
@@ -2793,7 +2899,13 @@ mod tests {
         compilation: &Compilation,
         plan: PlanAlternative<'_>,
     ) -> VerifiedArtifactProgram {
-        assemble_program(semantic, compilation, plan, plan.abi().kernel_program())
+        assemble_program(
+            semantic,
+            compilation,
+            plan,
+            plan.abi().kernel_program(),
+            &[],
+        )
     }
 
     /// Packages one explicit program under a compiled alternative's provenance.
@@ -2812,6 +2924,7 @@ mod tests {
         compilation: &Compilation,
         plan: PlanAlternative<'_>,
         program: &VerifiedKernelProgram,
+        route_requirements: &[RouteRequirement],
     ) -> VerifiedArtifactProgram {
         let profile = TargetProfileRef {
             key: TargetProfileKey::new(compilation.target_profile_key())
@@ -2950,7 +3063,7 @@ mod tests {
             })
             .collect();
 
-        builder
+        let variant = builder
             .push_variant(
                 program,
                 VariantSpec {
@@ -2967,7 +3080,106 @@ mod tests {
                 },
             )
             .expect("the variant packages the plan it was built from");
+        for requirement in route_requirements {
+            builder
+                .require_route(variant, requirement.clone())
+                .expect("each declared route requirement names a distinct subject");
+        }
         builder.build().expect("the assembled artifact verifies")
+    }
+
+    /// Passes a route with no live-device requirement through the qualification stage.
+    ///
+    /// The resolver panics rather than answering, so a fixture that grows a row
+    /// says so instead of silently accepting whatever this closure returns. The
+    /// stage is not skippable even when empty, and that is what these device-free
+    /// cases are exercising as much as anything.
+    fn qualify_without_requirements(
+        qualification: LiveDeviceQualification<'_>,
+    ) -> RoutePreparation<'_> {
+        assert_eq!(
+            qualification.live_device_requirements().len(),
+            0,
+            "this fixture declares no live-device route requirement",
+        );
+        qualification
+            .resolve_live_device_requirements(|request| {
+                panic!("an unexpected live-device requirement arrived: {request:?}")
+            })
+            .expect("a route requiring nothing of the device qualifies")
+    }
+
+    /// Builds a backend feature row naming a minimum Apple family.
+    fn family_requirement(
+        owner: &str,
+        key: &str,
+        version: u32,
+        payload: &[u8],
+    ) -> RouteRequirement {
+        RouteRequirement::BackendFeature(
+            BackendFeatureRequirement::new(
+                BackendKey::new(owner).expect("a governed backend key"),
+                RouteFeatureKey::new(key).expect("a governed route feature key"),
+                version,
+                payload,
+            )
+            .expect("a well-formed backend feature requirement"),
+        )
+    }
+
+    /// Builds the well-formed Metal row this adapter owns, at one family.
+    fn metal_family_requirement(family: MetalGpuFamily) -> RouteRequirement {
+        family_requirement(
+            BACKEND_KEY,
+            METAL_MINIMUM_GPU_FAMILY,
+            METAL_MINIMUM_GPU_FAMILY_VERSION,
+            family.as_str().as_bytes(),
+        )
+    }
+
+    /// Synthesizes the device facts the adapter decides from, without a device.
+    fn observed_facts(highest: MetalGpuFamilySupport) -> DeviceFacts {
+        DeviceFacts {
+            name: "tiler.probe.device".to_owned(),
+            max_threads_per_threadgroup: 1_024,
+            max_buffer_length: 1 << 30,
+            recommended_working_set: 1 << 30,
+            highest_apple_family: highest,
+        }
+    }
+
+    /// One decoded fixture carrying the given live-device route requirements.
+    struct RequiringFixture {
+        bytes: Vec<u8>,
+        expected: RecordedArtifactProgramIdentity,
+        environment: ExecutionEnvironment,
+        abi: AbiFacts,
+    }
+
+    /// Packages the ordinary fused plan with route requirements attached.
+    fn requiring_fixture(requirements: &[RouteRequirement]) -> RequiringFixture {
+        let semantic = serial_sum_program(ROWS, FIXTURE_COLUMNS);
+        let compilation = compile_governed(&semantic, NumericalContract::FlushSubnormalsToZeroF32)
+            .expect("the governed program compiles");
+        let plan = compilation.selected().expect("a selected plan alternative");
+        let artifact = assemble_program(
+            &semantic,
+            &compilation,
+            plan,
+            plan.abi().kernel_program(),
+            requirements,
+        );
+        let bytes = artifact.encode().expect("the requiring envelope encodes");
+        let expected = recorded_identity(&artifact);
+        let environment = host_environment(&compilation).expect("the host environment composes");
+        let decoded = DecodedProgram::decode(&bytes).expect("the requiring envelope decodes");
+        let (_, _, abi) = bind_interface(&decoded).expect("the declared interface binds");
+        RequiringFixture {
+            bytes,
+            expected,
+            environment,
+            abi,
+        }
     }
 
     /// Returns the arena positions one variant names directly.
@@ -3627,9 +3839,11 @@ mod tests {
         );
         let mut decoded =
             DecodedProgram::decode(&bytes).expect("the multi-stage envelope decodes again");
-        let preparation = decoded
-            .prepare(&environment, &expected, &abi)
-            .expect("every entry of the multi-stage route prepares");
+        let preparation = qualify_without_requirements(
+            decoded
+                .prepare(&environment, &expected, &abi)
+                .expect("every entry of the multi-stage route prepares"),
+        );
         let requests: Vec<_> = preparation.target_property_requests().collect();
         assert_eq!(
             requests.len(),
@@ -3668,11 +3882,13 @@ mod tests {
 
         let mut decoded =
             DecodedProgram::decode(&bytes).expect("the multi-stage envelope decodes again");
-        let preflight = decoded
-            .prepare(&environment, &expected, &abi)
-            .expect("every entry of the multi-stage route prepares")
-            .resolve_target_properties(|_| u64::MAX)
-            .expect("both exact-entry requirements hold");
+        let preflight = qualify_without_requirements(
+            decoded
+                .prepare(&environment, &expected, &abi)
+                .expect("every entry of the multi-stage route prepares"),
+        )
+        .resolve_target_properties(|_| u64::MAX)
+        .expect("both exact-entry requirements hold");
 
         assert_eq!(
             preflight.entries().len(),
@@ -3745,7 +3961,7 @@ mod tests {
             .find(|plan| !plan.is_fused())
             .expect("the materialized reference alternative is retained");
         let program = partial_window_program(&semantic, materialized.abi().kernel_program());
-        let artifact = assemble_program(&semantic, &compilation, materialized, &program);
+        let artifact = assemble_program(&semantic, &compilation, materialized, &program, &[]);
         let bytes = artifact
             .encode()
             .expect("the partial-window envelope encodes");
@@ -3754,11 +3970,13 @@ mod tests {
         let mut decoded =
             DecodedProgram::decode(&bytes).expect("the partial-window envelope decodes");
         let (_, _, abi) = bind_interface(&decoded).expect("the declared interface binds");
-        let preflight = decoded
-            .prepare(&environment, &expected, &abi)
-            .expect("the partial-window route prepares")
-            .resolve_target_properties(|_| u64::MAX)
-            .expect("the partial-window target requirement holds");
+        let preflight = qualify_without_requirements(
+            decoded
+                .prepare(&environment, &expected, &abi)
+                .expect("the partial-window route prepares"),
+        )
+        .resolve_target_properties(|_| u64::MAX)
+        .expect("the partial-window target requirement holds");
 
         let [shared] = preflight.shared_allocations() else {
             panic!("the two stages share exactly one scratch allocation");
@@ -3956,5 +4174,256 @@ mod tests {
             !matches!(refusal, MetalHostApplicabilityRefusal::Unobserved { .. }),
             "the adapter left a predicate unanswered: {refusal}",
         );
+    }
+
+    /// A route requiring a live-device fact is refused on the device-free path.
+    ///
+    /// The counterpart of the deferred-predicate refusal one phase earlier.
+    /// `preflight` binds no device, so it can observe no device requirement, and
+    /// routing past one would be assuming a fact nothing read.
+    #[test]
+    fn a_live_device_requirement_refuses_the_device_free_path() {
+        let fixture = requiring_fixture(&[metal_family_requirement(MetalGpuFamily::Apple9)]);
+        let mut decoded = DecodedProgram::decode(&fixture.bytes).expect("the envelope decodes");
+        let rejection = decoded
+            .preflight(&fixture.environment, &fixture.expected, &fixture.abi)
+            .expect_err("a device-free path cannot observe a device");
+        assert!(
+            matches!(
+                rejection,
+                LoadRejection::UnansweredRouteRequirements {
+                    variant: 0,
+                    required: 1,
+                },
+            ),
+            "expected an unanswered route-requirement refusal, got {rejection}",
+        );
+    }
+
+    /// A row owned by another backend is refused before any adapter is asked.
+    ///
+    /// Decidable from the host's own declaration, so it needs neither a device
+    /// nor an adapter — and asking an adapter about a namespace it does not own
+    /// would be inviting it to answer for someone else.
+    #[test]
+    fn a_foreign_owner_is_refused_without_consulting_an_adapter() {
+        let fixture = requiring_fixture(&[family_requirement(
+            "tiler.cuda",
+            "tiler.cuda.route-requirement.compute-capability",
+            1,
+            b"9.0",
+        )]);
+        let mut decoded = DecodedProgram::decode(&fixture.bytes).expect("the envelope decodes");
+        let rejection = decoded
+            .prepare(&fixture.environment, &fixture.expected, &fixture.abi)
+            .err()
+            .expect("a row owned by another backend cannot be decided here");
+        let LoadRejection::ForeignRouteRequirementOwner {
+            variant,
+            position,
+            owner,
+            host_backend,
+        } = &rejection
+        else {
+            panic!("expected a foreign-owner refusal, got {rejection}");
+        };
+        assert_eq!((*variant, *position), (0, 0));
+        assert_eq!(owner, "tiler.cuda");
+        assert_eq!(host_backend, BACKEND_KEY);
+    }
+
+    /// Every way one row can fail to decide is a refusal, and each is distinct.
+    ///
+    /// One fixture, four resolvers. Naming the population is what makes this a
+    /// check rather than four assertions that happen to pass: the three refusal
+    /// classes plus the satisfying case are exactly the outcomes
+    /// `resolve_live_device_requirements` can produce for a well-formed row.
+    #[test]
+    fn each_undecidable_route_requirement_refuses_by_its_own_class() {
+        let fixture = requiring_fixture(&[metal_family_requirement(MetalGpuFamily::Apple9)]);
+        let subject = RouteRequirementSubject::BackendFeature {
+            owner: BackendKey::new(BACKEND_KEY).expect("a governed backend key"),
+            key: RouteFeatureKey::new(METAL_MINIMUM_GPU_FAMILY).expect("a governed key"),
+            version: METAL_MINIMUM_GPU_FAMILY_VERSION,
+        };
+
+        let mut answered = 0;
+        for (answer, expected) in [
+            (
+                LiveDeviceObservation::Unrecognized,
+                LoadRejection::UnownedRouteRequirement {
+                    variant: 0,
+                    position: 0,
+                    subject: subject.clone(),
+                },
+            ),
+            (
+                LiveDeviceObservation::Quantity(64),
+                LoadRejection::MisansweredRouteRequirement {
+                    variant: 0,
+                    position: 0,
+                    subject: subject.clone(),
+                },
+            ),
+            (
+                LiveDeviceObservation::Feature(false),
+                LoadRejection::UnsatisfiedRouteRequirement {
+                    variant: 0,
+                    position: 0,
+                    subject: subject.clone(),
+                },
+            ),
+        ] {
+            let mut decoded = DecodedProgram::decode(&fixture.bytes).expect("the envelope decodes");
+            let rejection = decoded
+                .prepare(&fixture.environment, &fixture.expected, &fixture.abi)
+                .expect("the route prepares")
+                .resolve_live_device_requirements(|_| answer)
+                .err()
+                .expect("an undecided requirement refuses the route");
+            assert_eq!(rejection, expected, "answer {answer:?} refused wrongly");
+            assert!(
+                rejection.to_string().contains(METAL_MINIMUM_GPU_FAMILY),
+                "a refusal must name the exact unmet requirement: {rejection}",
+            );
+            answered += 1;
+        }
+        assert_eq!(answered, 3, "every refusal class was exercised");
+
+        // The satisfying neighbour, without which the three above prove only
+        // that this route refuses everything.
+        let mut decoded = DecodedProgram::decode(&fixture.bytes).expect("the envelope decodes");
+        let mut asked = 0;
+        let _qualified = decoded
+            .prepare(&fixture.environment, &fixture.expected, &fixture.abi)
+            .expect("the route prepares")
+            .resolve_live_device_requirements(|request| {
+                asked += 1;
+                assert_eq!(request.position(), 0);
+                LiveDeviceObservation::Feature(true)
+            })
+            .expect("a satisfied requirement qualifies the route");
+        assert_eq!(asked, 1, "each row is answered exactly once");
+    }
+
+    /// A route with no rows still passes through the stage, and asks nothing.
+    #[test]
+    fn a_route_requiring_nothing_qualifies_without_a_question() {
+        let fixture = requiring_fixture(&[]);
+        let mut decoded = DecodedProgram::decode(&fixture.bytes).expect("the envelope decodes");
+        let qualification = decoded
+            .prepare(&fixture.environment, &fixture.expected, &fixture.abi)
+            .expect("the route prepares");
+        assert_eq!(qualification.live_device_requirements().len(), 0);
+        let _qualified = qualify_without_requirements(qualification);
+    }
+
+    /// The Metal adapter decides a family row from the family it observed.
+    ///
+    /// Device-free, because the adapter is split into an observation and this
+    /// pure decision. Cumulative families are the property under test: a host
+    /// reporting Apple9 satisfies an Apple8 requirement, and an Apple7 host does
+    /// not satisfy an Apple9 one.
+    #[test]
+    fn the_metal_adapter_decides_a_family_row_from_the_family_it_observed() {
+        let cases = [
+            (
+                MetalGpuFamilySupport::Highest(MetalGpuFamily::Apple9),
+                MetalGpuFamily::Apple9,
+                true,
+            ),
+            (
+                MetalGpuFamilySupport::Highest(MetalGpuFamily::Apple9),
+                MetalGpuFamily::Apple8,
+                true,
+            ),
+            (
+                MetalGpuFamilySupport::Highest(MetalGpuFamily::Apple7),
+                MetalGpuFamily::Apple9,
+                false,
+            ),
+            (
+                MetalGpuFamilySupport::NoneNamed,
+                MetalGpuFamily::Apple5,
+                false,
+            ),
+        ];
+        for (observed, required, expected) in cases {
+            let requirement = metal_family_requirement(required);
+            let facts = observed_facts(observed);
+            let fixture = requiring_fixture(std::slice::from_ref(&requirement));
+            let mut decoded = DecodedProgram::decode(&fixture.bytes).expect("the envelope decodes");
+            let qualification = decoded
+                .prepare(&fixture.environment, &fixture.expected, &fixture.abi)
+                .expect("the route prepares");
+            let answers: Vec<_> = qualification
+                .live_device_requirements()
+                .map(|request| decide_live_device_requirement(&facts, request))
+                .collect();
+            assert_eq!(
+                answers,
+                vec![LiveDeviceObservation::Feature(expected)],
+                "{observed:?} against {required:?}",
+            );
+        }
+    }
+
+    /// Anything the Metal adapter does not own is `Unrecognized`, never a guess.
+    ///
+    /// The population is named: every row shape this adapter can be handed that
+    /// it does not own — a foreign key, a version it predates, a payload naming
+    /// no family — plus every neutral dimension it cannot observe.
+    #[test]
+    fn the_metal_adapter_refuses_every_row_it_does_not_own() {
+        let facts = observed_facts(MetalGpuFamilySupport::Highest(MetalGpuFamily::Apple9));
+        let mut unowned: Vec<RouteRequirement> = vec![
+            family_requirement(
+                BACKEND_KEY,
+                "tiler.metal.route-requirement.invented",
+                1,
+                b"apple9",
+            ),
+            family_requirement(
+                BACKEND_KEY,
+                METAL_MINIMUM_GPU_FAMILY,
+                METAL_MINIMUM_GPU_FAMILY_VERSION + 1,
+                b"apple9",
+            ),
+            family_requirement(
+                BACKEND_KEY,
+                METAL_MINIMUM_GPU_FAMILY,
+                METAL_MINIMUM_GPU_FAMILY_VERSION,
+                b"apple10",
+            ),
+        ];
+        // Every neutral dimension, enumerated from the vocabulary rather than
+        // listed here, so a dimension added to it lands in this check.
+        unowned.extend(RouteResourceDimension::ALL.into_iter().map(|dimension| {
+            RouteRequirement::ResourceFloor(
+                RouteResourceFloor::new(dimension, 32).expect("a nonzero floor"),
+            )
+        }));
+        assert_eq!(
+            unowned.len(),
+            3 + RouteResourceDimension::ALL.len(),
+            "the enumerated population is the one this case claims to cover",
+        );
+
+        for requirement in &unowned {
+            let fixture = requiring_fixture(std::slice::from_ref(requirement));
+            let mut decoded = DecodedProgram::decode(&fixture.bytes).expect("the envelope decodes");
+            let qualification = decoded
+                .prepare(&fixture.environment, &fixture.expected, &fixture.abi)
+                .expect("the route prepares");
+            let answers: Vec<_> = qualification
+                .live_device_requirements()
+                .map(|request| decide_live_device_requirement(&facts, request))
+                .collect();
+            assert_eq!(
+                answers,
+                vec![LiveDeviceObservation::Unrecognized],
+                "{requirement:?} must not be decided by an adapter that does not own it",
+            );
+        }
     }
 }

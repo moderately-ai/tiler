@@ -17,6 +17,7 @@ use super::super::model::{
     element_type_tag, push_binding_target, push_component_role, push_numerical, push_resources,
     push_shape, push_storage_encoding, storage_scalar_tag,
 };
+use super::super::requirement::RouteRequirement;
 use super::budget::check_budgets;
 use super::digest::{DIGEST_BYTES, Digest, DigestAlgorithm};
 use super::error::{ArtifactCodecError, CodecLimitKind, codec_limit};
@@ -46,8 +47,10 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 /// roles, physical storage scalars, complete storage encodings, and kernel
 /// access types, to `8.0` when the entry resource record stopped carrying the
 /// invalid numeric barrier count, and to `9.0` when each deferred predicate
-/// gained its exact prepared-entry subject and complete target-property query.
-/// All eight are deliberately **major** steps rather than the minor ones they
+/// gained its exact prepared-entry subject and complete target-property query,
+/// and to `10.0` when each plan variant gained the additional requirements its
+/// route places on a live device.
+/// All nine are deliberately **major** steps rather than the minor ones they
 /// might look like: the reader admits `minor <= implemented`, so a minor bump
 /// would have left it accepting an older manifest whose rows it can no longer
 /// parse. A field changed *or added* inside a fixed-width record is not
@@ -55,8 +58,11 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 /// `4.0` reader would consume the offset as the extent and lose framing for
 /// everything after it, the `6.0` step appends fields inside each entry before
 /// its bindings, and the `8.0` step removes four bytes ahead of existing fields
-/// — and the `4.0` step also moved a field's width.
-pub(super) const MANIFEST_SCHEMA: (u16, u16) = (9, 0);
+/// — and the `4.0` step also moved a field's width. The `10.0` step inserts a
+/// counted run inside each variant record ahead of its entries, so a `9.0`
+/// reader would consume the route-requirement count as the entry count and lose
+/// framing for the rest of the manifest.
+pub(super) const MANIFEST_SCHEMA: (u16, u16) = (10, 0);
 
 /// Versioned domain tag opening the canonical manifest bytes.
 pub(super) const MANIFEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.manifest.v1\0";
@@ -369,6 +375,7 @@ fn encode_variants(bytes: &mut Vec<u8>, envelope: &ArtifactEnvelope) {
                 TargetPropertyRequirementRelation::RequiredImpliesObserved => 0x03,
             });
         }
+        encode_route_requirements(bytes, &variant.route_requirements);
         push_len(bytes, variant.entries.len());
         for entry in &variant.entries {
             encode_entry(bytes, entry);
@@ -382,6 +389,30 @@ fn encode_variants(bytes: &mut Vec<u8>, envelope: &ArtifactEnvelope) {
             bytes.extend_from_slice(&edge.predecessor.to_be_bytes());
             bytes.extend_from_slice(&edge.successor.to_be_bytes());
             bytes.push(edge.reason.tag());
+        }
+    }
+}
+
+/// Encodes one variant's live-device route requirements in canonical order.
+///
+/// The kind tag leads each row so a reader frames the rest of it before reading
+/// any field, which is what lets an unknown kind be refused by name rather than
+/// mis-framed into the row after it.
+fn encode_route_requirements(bytes: &mut Vec<u8>, requirements: &[RouteRequirement]) {
+    push_len(bytes, requirements.len());
+    for requirement in requirements {
+        bytes.push(requirement.tag());
+        match requirement {
+            RouteRequirement::ResourceFloor(floor) => {
+                bytes.push(floor.dimension().tag());
+                bytes.extend_from_slice(&floor.minimum().to_be_bytes());
+            }
+            RouteRequirement::BackendFeature(feature) => {
+                push_slice(bytes, feature.owner().as_str().as_bytes());
+                push_slice(bytes, feature.key().as_str().as_bytes());
+                bytes.extend_from_slice(&feature.version().to_be_bytes());
+                push_slice(bytes, feature.payload());
+            }
         }
     }
 }

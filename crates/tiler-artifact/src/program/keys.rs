@@ -204,6 +204,11 @@ governed_key!(
     ArtifactKeyKind::Capability,
     "A governed capability key one provider was selected for."
 );
+governed_key!(
+    RouteFeatureKey,
+    ArtifactKeyKind::RouteFeature,
+    "A governed backend-scoped route-requirement key, in its owner's namespace."
+);
 // `TargetPropertyKey` is not defined here. It moved to `tiler_ir::program::abi`
 // with the expression domain that names it (ADR 0068, via
 // `relocate-abi-expressions-into-tiler-ir`); leaving the key behind would have

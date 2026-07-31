@@ -12,9 +12,11 @@
 //! for the same limit, and the two would drift.
 
 use super::super::model::BindingTargetData;
+use super::super::requirement::RouteRequirement;
 use super::super::{
     MAX_ABI_EXPRESSIONS, MAX_ARTIFACT_PAYLOADS, MAX_ARTIFACT_VARIANTS, MAX_DEFERRED_PREDICATES,
-    MAX_ENTRY_BINDINGS, MAX_LAUNCH_PRECONDITIONS, MAX_SELECTED_PROVIDERS, MAX_VARIANT_ENTRIES,
+    MAX_ENTRY_BINDINGS, MAX_LAUNCH_PRECONDITIONS, MAX_ROUTE_FEATURE_PAYLOAD_BYTES,
+    MAX_ROUTE_REQUIREMENTS, MAX_SELECTED_PROVIDERS, MAX_VARIANT_ENTRIES,
 };
 use super::error::{ArtifactCodecError, CodecLimitKind, codec_limit};
 use super::model::{
@@ -97,6 +99,20 @@ pub(super) fn check_budgets(envelope: &ArtifactEnvelope) -> Result<(), ArtifactC
             MAX_DEFERRED_PREDICATES,
             CodecLimitKind::DeferredPredicates,
         )?;
+        codec_limit(
+            variant.route_requirements.len(),
+            MAX_ROUTE_REQUIREMENTS,
+            CodecLimitKind::RouteRequirements,
+        )?;
+        for requirement in &variant.route_requirements {
+            if let RouteRequirement::BackendFeature(feature) = requirement {
+                codec_limit(
+                    feature.payload().len(),
+                    MAX_ROUTE_FEATURE_PAYLOAD_BYTES,
+                    CodecLimitKind::RouteFeaturePayloadBytes,
+                )?;
+            }
+        }
         for entry in &variant.entries {
             codec_limit(
                 entry.bindings.len(),
@@ -155,6 +171,12 @@ fn check_text_budgets(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecEr
             texts.push(predicate.requirement.query().key().as_str());
             texts.push(predicate.requirement.query().provider().namespace());
             texts.push(predicate.requirement.query().provider().name());
+        }
+        for requirement in &variant.route_requirements {
+            if let RouteRequirement::BackendFeature(feature) = requirement {
+                texts.push(feature.owner().as_str());
+                texts.push(feature.key().as_str());
+            }
         }
         for entry in &variant.entries {
             texts.push(entry.numerical.profile_key.as_str());

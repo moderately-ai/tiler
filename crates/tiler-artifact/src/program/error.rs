@@ -27,6 +27,7 @@ use super::expr::{
     TargetPropertyKeyError,
 };
 use super::model::ARTIFACT_DOMAIN_LABEL;
+use super::requirement::{RouteRequirementError, RouteRequirementSubject};
 
 /// An artifact-owned entity category used by typed handle and closure errors.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -44,6 +45,8 @@ pub enum ArtifactEntityKind {
     Binding,
     /// One selected capability provider.
     Provider,
+    /// One live-device route requirement of a plan variant.
+    RouteRequirement,
 }
 
 impl fmt::Display for ArtifactEntityKind {
@@ -72,6 +75,8 @@ pub enum ArtifactLimitKind {
     EnvironmentProviders,
     /// Deferred feasibility predicate count of one plan variant.
     DeferredPredicates,
+    /// Live-device route-requirement count of one plan variant.
+    RouteRequirements,
     /// Launch precondition count of one executable entry.
     LaunchPreconditions,
     /// Bound input-axis extent count of one ABI fact environment.
@@ -106,6 +111,8 @@ pub enum ArtifactKeyKind {
     FeasibilityRuleSet,
     /// The governed capability key one provider was selected for.
     Capability,
+    /// The governed backend-scoped route-requirement key.
+    RouteFeature,
     /// The governed target-property key an ABI expression root names.
     TargetProperty,
     /// The opaque backend entry key of one executable entry.
@@ -417,6 +424,20 @@ pub enum ArtifactBuildError {
     },
     /// A plan variant with the same program and applicability guard exists.
     DuplicateVariant,
+    /// Two live-device route requirements of one variant constrain one subject.
+    ///
+    /// Contradictory rather than redundant: two rows naming one subject state
+    /// two answers to one question, and nothing in the artifact can say which
+    /// the producer meant.
+    DuplicateRouteRequirementSubject {
+        /// The subject both rows named.
+        subject: Box<RouteRequirementSubject>,
+    },
+    /// A route requirement was rejected by the route-requirement vocabulary.
+    InvalidRouteRequirement {
+        /// Typed cause from that vocabulary.
+        cause: RouteRequirementError,
+    },
 }
 
 /// Classifies the ABI domain's own key rejection into this crate's vocabulary.
@@ -452,6 +473,7 @@ impl Error for ArtifactBuildError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::StaticEvaluation { cause, .. } => Some(cause),
+            Self::InvalidRouteRequirement { cause } => Some(cause),
             Self::BuilderIdentityExhausted
             | Self::ForeignHandle { .. }
             | Self::InvalidHandle { .. }
@@ -484,6 +506,7 @@ impl Error for ArtifactBuildError {
             | Self::AliasedInternalBinding { .. }
             | Self::AccessibleBytesDisagreement { .. }
             | Self::LaunchDisagreement { .. }
+            | Self::DuplicateRouteRequirementSubject { .. }
             | Self::DuplicateVariant => None,
         }
     }

@@ -4,9 +4,11 @@
 //!
 //! [`DecodedProgram::decode`] takes bytes and returns a fully validated read
 //! view, or a typed rejection naming the class of failure.
-//! [`DecodedProgram::preflight`] is the device-free path and refuses a selected variant with unanswered deferred predicates. [`DecodedProgram::prepare`] instead returns a [`RoutePreparation`] that exposes exact entries for reversible pipeline preparation and binds every property request to the entry that must answer it. Resolving those answers yields the same [`Preflight`], whose [`Preflight::commit`] consumes it infallibly.
+//! [`DecodedProgram::preflight`] is the device-free path and refuses a selected variant with unanswered deferred predicates or unobserved live-device route requirements. [`DecodedProgram::prepare`] instead returns a [`LiveDeviceQualification`], which publishes every live-device requirement of the route; resolving those yields a [`RoutePreparation`] that exposes exact entries for reversible pipeline preparation and binds every property request to the entry that must answer it. Resolving those answers in turn yields the [`Preflight`], whose [`Preflight::commit`] consumes it infallibly.
 //!
-//! This crate allocates nothing and touches no device. A host may create reversible pipeline state while holding [`RoutePreparation`], but no program buffer, encoding, submission, or other irreversible program work belongs before the commit.
+//! The two device stages are ordered by when their facts become true rather than by convenience: a live-device fact is readable as soon as a device is bound, and a prepared-entry fact only once its pipeline exists. Making the first a distinct stage is also what stops a host from skipping it — a `RoutePreparation` can only have come from a resolved qualification, including for a route whose requirement set is empty.
+//!
+//! This crate allocates nothing and touches no device — including for the live-device stage, where it publishes the rows and checks the answers a host brings back but never observes a device itself, and never interprets a backend-scoped payload. A host may bind a device while holding [`LiveDeviceQualification`] and create reversible pipeline state while holding [`RoutePreparation`], but no program buffer, encoding, submission, or other irreversible program work belongs before the commit.
 //!
 //! # One authority per attempt, not merely one use per authority
 //!
@@ -78,6 +80,14 @@
 //!   successor a fresh buffer and it reads uninitialised device memory, which is
 //!   plausible garbage rather than an error.
 //! - **A deferred variant on the device-free path.** [`DecodedProgram::preflight`] has no prepared entry to query and refuses rather than guessing. [`DecodedProgram::prepare`] publishes each exact-entry request for a capable host to answer.
+//! - **A route requiring live-device facts, on the device-free path.** The same
+//!   argument one phase earlier: `preflight` binds no device, so it can observe
+//!   no device requirement and refuses instead of assuming one holds.
+//! - **A route requirement no adapter decides.** An unknown owner is refused
+//!   here without consulting anything, because the host stated which backend it
+//!   is. An unknown key, version, or payload *within* that backend is the
+//!   adapter's own `Unrecognized`, and is equally a refusal: a requirement
+//!   nothing evaluated has not been met.
 //! - **Every guard false.** An artifact whose own guards exclude the bound facts
 //!   has nothing applicable to route to, and taking a variant anyway is how a
 //!   plan gets executed on a host it was proven not to fit.
@@ -89,16 +99,18 @@ mod route;
 
 pub use host::{ExecutionEnvironment, TargetCompatibility};
 pub use route::{
-    EntrySlot, Preflight, RoutePreparation, RoutedBinding, RoutedDispatch, RoutedEntry,
-    RoutedLaunch, SharedAllocation, TargetPropertyRequest,
+    EntrySlot, LiveDeviceObservation, LiveDeviceQualification, LiveDeviceRequest, Preflight,
+    RoutePreparation, RoutedBinding, RoutedDispatch, RoutedEntry, RoutedLaunch, SharedAllocation,
+    TargetPropertyRequest,
 };
 
+use route::RouteRequirementRefusal;
 use tiler_artifact::program::{
     AbiEvaluationError, AbiFacts, AbiValue, ArtifactCodecFailure, ArtifactExecutionPolicy,
     BackendPayloadDescriptor, BindingTarget, BufferAccess, CanonicalArtifactProgramIdentity,
     DecodedArtifact, DecodedEntry, DecodedExpr, DecodedInput, DecodedOutput, DecodedVariant,
-    RecordedArtifactProgramIdentity, RoutingPolicy, SectionView, StageDependencyReason,
-    decode_artifact,
+    RecordedArtifactProgramIdentity, RouteRequirement, RouteRequirementSubject, RoutingPolicy,
+    SectionView, StageDependencyReason, decode_artifact,
 };
 
 use std::error::Error;
@@ -291,16 +303,31 @@ impl DecodedProgram {
     ) -> Result<Preflight<'_>, LoadRejection> {
         let (identity, variant) = self.select_route(environment, expected, facts)?;
 
+        // The earlier phase first. Both are unanswerable here, and a host that
+        // learns it needs a bound device before it learns it needs a prepared
+        // pipeline is told the first thing it is short of rather than the last.
+        refuse_route_requirements(variant)?;
+        refuse_deferred(variant)?;
+
         // Every entry, in the order the variant says they run — not the entry
         // table's canonical stage-key order, which is identity's and carries no
         // execution meaning.
-        refuse_deferred(variant)?;
         let ordered: Vec<_> = variant.execution_order().collect();
         let candidate = self.route_candidate(identity, variant, &ordered, environment, facts)?;
         Ok(Preflight::from_candidate(candidate))
     }
 
-    /// Routes all artifact-only obligations and publishes exact-entry property requests for a device host to answer before commit.
+    /// Routes all artifact-only obligations and publishes what a device host must answer before commit.
+    ///
+    /// Returns the first of two device stages. The live-device requirements are
+    /// published here and the prepared-entry property requests are carried
+    /// through, so a host answers each at the phase its facts become readable.
+    ///
+    /// One check is discharged here rather than passed to an adapter: a
+    /// backend-scoped requirement owned by a backend this host did not state is
+    /// refused outright. That is decidable from the host's own declaration, and
+    /// asking an adapter about another backend's namespace would invite it to
+    /// answer.
     ///
     /// # Errors
     ///
@@ -314,8 +341,9 @@ impl DecodedProgram {
         environment: &ExecutionEnvironment,
         expected: &RecordedArtifactProgramIdentity,
         facts: &AbiFacts,
-    ) -> Result<RoutePreparation<'_>, LoadRejection> {
+    ) -> Result<LiveDeviceQualification<'_>, LoadRejection> {
         let (identity, variant) = self.select_route(environment, expected, facts)?;
+        let requirements = route_requirements(variant, environment)?;
         let ordered: Vec<_> = variant.execution_order().collect();
         let mut requests = Vec::with_capacity(variant.deferred_predicates().len());
         for (predicate, deferred) in variant.deferred_predicates().enumerate() {
@@ -331,8 +359,9 @@ impl DecodedProgram {
             });
         }
         let candidate = self.route_candidate(identity, variant, &ordered, environment, facts)?;
-        Ok(RoutePreparation {
+        Ok(LiveDeviceQualification {
             candidate,
+            requirements,
             requests,
         })
     }
@@ -521,6 +550,56 @@ fn refuse_deferred(variant: DecodedVariant<'_>) -> Result<(), LoadRejection> {
     }
 
     Ok(())
+}
+
+/// Refuses a selected variant whose route requires facts no device-free path can observe.
+///
+/// Separate from [`refuse_deferred`] because the two name different phases, and
+/// a host reading a refusal has to know which one it is short of: a deferred
+/// predicate needs a prepared pipeline, and a route requirement needs only a
+/// bound device. Falling through to a lower-priority variant is wrong here for
+/// the same reason it is wrong there — the guard that held selected *this*
+/// variant, and substituting another is a plan change the producer did not rank.
+fn refuse_route_requirements(variant: DecodedVariant<'_>) -> Result<(), LoadRejection> {
+    let required = variant.route_requirements().len();
+    if required > 0 {
+        return Err(LoadRejection::UnansweredRouteRequirements {
+            variant: variant.routing_rank(),
+            required,
+        });
+    }
+    Ok(())
+}
+
+/// Binds each of a variant's route requirements to a request, or refuses the route.
+///
+/// The one refusal available without a device is the owner check: the host
+/// stated the backend family it can execute, so a row owned by another backend
+/// describes a host this is not.
+fn route_requirements<'a>(
+    variant: DecodedVariant<'a>,
+    environment: &ExecutionEnvironment,
+) -> Result<Vec<LiveDeviceRequest<'a>>, LoadRejection> {
+    let rank = variant.routing_rank();
+    let mut requests = Vec::with_capacity(variant.route_requirements().len());
+    for (position, requirement) in variant.route_requirements().iter().enumerate() {
+        if let RouteRequirement::BackendFeature(feature) = requirement
+            && *feature.owner() != environment.backend
+        {
+            return Err(LoadRejection::ForeignRouteRequirementOwner {
+                variant: rank,
+                position,
+                owner: feature.owner().as_str().to_owned(),
+                host_backend: environment.backend.as_str().to_owned(),
+            });
+        }
+        requests.push(LiveDeviceRequest {
+            variant: rank,
+            position,
+            requirement,
+        });
+    }
+    Ok(requests)
 }
 
 /// Pairs the slots that must be backed by one allocation, or refuses the route.
@@ -915,6 +994,75 @@ pub enum LoadRejection {
         /// Position of the queried entry in the route's execution order.
         entry: usize,
     },
+    /// The selected variant requires live-device facts this device-free path
+    /// cannot observe.
+    ///
+    /// The route-requirement counterpart of
+    /// [`Self::UnansweredDeferredPredicates`], and refused for the same reason:
+    /// observing one means binding a device, and
+    /// [`DecodedProgram::preflight`] binds none. A capable host reaches the
+    /// rows through [`DecodedProgram::prepare`].
+    UnansweredRouteRequirements {
+        /// Zero-based routing rank of the selected variant.
+        variant: usize,
+        /// How many live-device requirements it declares.
+        required: usize,
+    },
+    /// A backend-scoped route requirement is owned by a backend this host is not.
+    ///
+    /// Decided without a device and without consulting any adapter: the host
+    /// states the backend family it can execute, so a row owned by another one
+    /// can only mean the artifact expects a host this is not. Distinct from
+    /// [`Self::UnownedRouteRequirement`], which is this host's own backend
+    /// failing to recognize a key, version, or payload within its namespace.
+    ForeignRouteRequirementOwner {
+        /// Zero-based routing rank of the selected variant.
+        variant: usize,
+        /// Zero-based position among that variant's route requirements.
+        position: usize,
+        /// Governed backend key that owns the requirement.
+        owner: String,
+        /// Governed backend key this host stated.
+        host_backend: String,
+    },
+    /// No adapter on this host claimed one live-device route requirement.
+    ///
+    /// The fail-closed outcome of an unknown owner, key, version, or payload.
+    /// A requirement nothing evaluated is not a requirement that holds.
+    UnownedRouteRequirement {
+        /// Zero-based routing rank of the selected variant.
+        variant: usize,
+        /// Zero-based position among that variant's route requirements.
+        position: usize,
+        /// The exact subject nothing decided.
+        subject: RouteRequirementSubject,
+    },
+    /// A host's answer disagreed in shape with the requirement's own kind.
+    ///
+    /// A measured quantity offered for a qualitative row, or a capability
+    /// verdict offered for a floor. Refused rather than coerced: either coercion
+    /// would invent a comparison the producer did not state.
+    MisansweredRouteRequirement {
+        /// Zero-based routing rank of the selected variant.
+        variant: usize,
+        /// Zero-based position among that variant's route requirements.
+        position: usize,
+        /// The subject that was answered in the wrong shape.
+        subject: RouteRequirementSubject,
+    },
+    /// The live device does not satisfy one requirement of the selected route.
+    ///
+    /// Names the exact unmet requirement, which is the whole point of carrying
+    /// the subject: a host that learns only "a requirement failed" cannot tell a
+    /// missing GPU capability from a capacity floor.
+    UnsatisfiedRouteRequirement {
+        /// Zero-based routing rank of the selected variant.
+        variant: usize,
+        /// Zero-based position among that variant's route requirements.
+        position: usize,
+        /// The exact unmet subject.
+        subject: RouteRequirementSubject,
+    },
     /// The routed entry's payload is not one this host stated it can execute.
     UnexecutablePayload {
         /// Governed backend family key the packaged payload declares.
@@ -1018,6 +1166,48 @@ impl fmt::Display for LoadRejection {
                 "runtime.unsatisfied-deferred-predicate: variant {variant}'s predicate \
                  {predicate} does not hold for prepared entry {entry}",
             ),
+            Self::UnansweredRouteRequirements { variant, required } => write!(
+                formatter,
+                "runtime.route-requirements: variant {variant} requires {required} live-device \
+                 fact(s), and a device-free loader binds no device",
+            ),
+            Self::ForeignRouteRequirementOwner {
+                variant,
+                position,
+                owner,
+                host_backend,
+            } => write!(
+                formatter,
+                "runtime.foreign-route-requirement: variant {variant}'s requirement {position} is \
+                 owned by {owner} and this host states {host_backend}",
+            ),
+            Self::UnownedRouteRequirement {
+                variant,
+                position,
+                subject,
+            } => write!(
+                formatter,
+                "runtime.unowned-route-requirement: no adapter decided variant {variant}'s \
+                 requirement {position}, {subject}",
+            ),
+            Self::MisansweredRouteRequirement {
+                variant,
+                position,
+                subject,
+            } => write!(
+                formatter,
+                "runtime.misanswered-route-requirement: variant {variant}'s requirement \
+                 {position}, {subject}, was answered in the wrong shape",
+            ),
+            Self::UnsatisfiedRouteRequirement {
+                variant,
+                position,
+                subject,
+            } => write!(
+                formatter,
+                "runtime.unsatisfied-route-requirement: this device does not satisfy variant \
+                 {variant}'s requirement {position}, {subject}",
+            ),
             Self::UnexecutablePayload {
                 declared_backend,
                 declared_representation,
@@ -1071,12 +1261,47 @@ impl Error for LoadRejection {
             | Self::NoApplicableVariant { .. }
             | Self::UnansweredDeferredPredicates { .. }
             | Self::UnsatisfiedDeferredPredicate { .. }
+            | Self::UnansweredRouteRequirements { .. }
+            | Self::ForeignRouteRequirementOwner { .. }
+            | Self::UnownedRouteRequirement { .. }
+            | Self::MisansweredRouteRequirement { .. }
+            | Self::UnsatisfiedRouteRequirement { .. }
             | Self::UnexecutablePayload { .. }
             | Self::IncompatibleTarget { .. }
             | Self::UndeliverableExecutionPolicy { .. }
             | Self::ObjectNotCarried
             | Self::LaunchPrecondition { .. }
             | Self::UnpairableSharedAllocation { .. } => None,
+        }
+    }
+}
+
+impl LoadRejection {
+    /// Builds the rejection one refused live-device request produces.
+    ///
+    /// Minted from the row itself rather than from anything a host supplied, so
+    /// the refusal names the exact requirement the artifact declared and cannot
+    /// name one it does not.
+    fn from_request(refusal: RouteRequirementRefusal, request: LiveDeviceRequest<'_>) -> Self {
+        let variant = request.variant();
+        let position = request.position();
+        let subject = request.requirement().subject();
+        match refusal {
+            RouteRequirementRefusal::Unowned => Self::UnownedRouteRequirement {
+                variant,
+                position,
+                subject,
+            },
+            RouteRequirementRefusal::Misanswered => Self::MisansweredRouteRequirement {
+                variant,
+                position,
+                subject,
+            },
+            RouteRequirementRefusal::Unsatisfied => Self::UnsatisfiedRouteRequirement {
+                variant,
+                position,
+                subject,
+            },
         }
     }
 }
