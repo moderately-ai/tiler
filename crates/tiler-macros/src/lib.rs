@@ -12,13 +12,25 @@
 //!
 //! The expansion entry point, the two behaviours [`tensor`] documents, the
 //! frontend's statement of its artifact-family delivery policy, in the
-//! crate-private `delivery` module, and its statement of where an expansion
-//! looks for the expansion cache, in the crate-private `cache_root` module.
-//! There is no grammar here: token parsing, span mapping onto a tensor
-//! program, and ahead-of-time expansion are owned by
-//! `define-inline-symbol-binding-and-runtime-value-adaptation` and
-//! `prototype-inline-proc-macro-frontend`, and this crate rejects rather than
-//! guesses at input those tickets have not defined.
+//! crate-private `delivery` module, its statement of where an expansion
+//! looks for the expansion cache, in the crate-private `cache_root` module, and
+//! what `sym n;` means, in the crate-private `binding` module.
+//! There is still no grammar here: token parsing and span mapping onto a tensor
+//! program are owned by `prototype-inline-proc-macro-frontend`, and this crate
+//! rejects rather than guesses at input that ticket has not defined.
+//!
+//! # What `sym n;` binds, and where the environment comes from
+//!
+//! `binding` owns the meaning Tom ratified on 2026-07-30: a symbol's value is
+//! unified from every operand axis that names it, one canonical axis sources it,
+//! and every other axis owes an equality. It composes with the promoted
+//! `tiler_ir::shape::ShapeEnv` profile rather than restating any of it — the
+//! environment declares and binds the symbols, and what this crate adds is the
+//! part ADR 0008's one-root-binding rule makes unrepresentable there: an
+//! additional occurrence is a runtime obligation, not a second binding.
+//!
+//! It is a reviewed draft under ADR 0074 convention 7 until Tom accepts it, and
+//! nothing constructs one from real tokens yet.
 //!
 //! # The cache root is chosen here, and opened nowhere yet
 //!
@@ -63,6 +75,7 @@
 
 use proc_macro::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenStream, TokenTree};
 
+mod binding;
 mod cache_root;
 mod delivery;
 

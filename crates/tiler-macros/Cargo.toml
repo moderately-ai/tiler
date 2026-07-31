@@ -22,7 +22,15 @@ doc = true
 # instead. `crates/tiler/tests/dependency_direction.rs` keeps the facade free of
 # it. The edge is normal rather than development because the expansion itself
 # states the policy, not only its tests.
+#
+# `tiler-ir` is a second host-built edge, paid for the same way. `binding`
+# derives a real `ShapeEnv` — the promoted symbolic index profile — instead of
+# restating symbol declarations, root bindings, and availability phases inside
+# the frontend, and it names `StorageScalar` so a declared operand's stored
+# scalar is stated in the workspace's one authority over that subject rather than
+# in a frontend-local copy.
 [dependencies]
+tiler-ir.workspace = true
 tiler-metal-aot.workspace = true
 
 [lints]
