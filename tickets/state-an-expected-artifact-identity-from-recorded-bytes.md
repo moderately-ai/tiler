@@ -4,7 +4,7 @@ title: State an expected artifact identity from recorded bytes
 status: todo
 priority: p2
 dependencies: []
-related: [route-the-runtime-loader-through-the-dispatch-record]
+related: [route-the-runtime-loader-through-the-dispatch-record, reconcile-the-empty-domain-proof-member-between-the-two-serial-sum-prototypes]
 scopes: [implementation/artifact, implementation/runtime, contracts/artifacts, research/target-profiles, project/tickets]
 shared_scopes: []
 paths: []
