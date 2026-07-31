@@ -1,7 +1,7 @@
 ---
 id: state-an-expected-artifact-identity-from-recorded-bytes
 title: State an expected artifact identity from recorded bytes
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [route-the-runtime-loader-through-the-dispatch-record]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact, implementation/runtime, contracts/artifacts]
 shared_scopes: []
 paths: []
 tags: [implementation, artifact, public-boundary]
+claimed_from: todo
+assignee: loop-state-an-exp
+lease_expires_at: 1785520599
 ---
 `CanonicalArtifactProgramIdentity` can be read and cannot be stated. Only code that *built* an artifact can hold one, so the cold-consumer half of `DecodedProgram::preflight`'s own documented contract was unrepresentable in its own signature.
 
