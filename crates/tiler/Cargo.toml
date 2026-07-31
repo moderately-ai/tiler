@@ -12,7 +12,16 @@ test = true
 doctest = true
 doc = true
 
+# `tiler-ir` is here for one type, deliberately. `tiler_ir::program::StorageScalar`
+# is the authority over the scalar a storage position holds, and `value`
+# re-exports it rather than minting a second element-type vocabulary. A
+# facade-local enum would leave the correspondence between what an expansion
+# decides and what this crate means held by the text of the emitted tokens and
+# nothing else, because `tiler-macros` cannot depend back on this crate. See the
+# crate documentation for the derivation and for the cost this edge carries into
+# a consumer's build graph.
 [dependencies]
+tiler-ir.workspace = true
 tiler-macros.workspace = true
 
 [dev-dependencies]

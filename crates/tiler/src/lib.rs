@@ -33,11 +33,36 @@
 //!
 //! # What is here today
 //!
-//! The re-export and the generated-path anchor, and nothing else. No frontend
-//! or runtime types are re-exported yet: those are selected by
-//! `define-inline-symbol-binding-and-runtime-value-adaptation`, and
-//! re-exporting anything before then would publish a boundary its ticket did
-//! not review.
+//! The re-export, the generated-path anchor, and [`value`] — the runtime-value
+//! boundary an integration implements, selected by
+//! `define-inline-symbol-binding-and-runtime-value-adaptation`. Every item in
+//! [`value`] is a **reviewed draft boundary** (ADR 0074 §7, ADR 0075): it is
+//! `pub` because the seam only works if a crate outside this one can implement
+//! it, and it is not an accepted public facade until Tom accepts the exact
+//! interface.
+//!
+//! # Why this crate depends on `tiler-ir`
+//!
+//! For one type. An adapter reports the scalar its storage holds, and a region
+//! declares the scalar an operand must hold; that subject already has an
+//! authority, `tiler_ir::program::StorageScalar`, and [`value`] re-exports it
+//! rather than minting a second one.
+//!
+//! The alternative was a facade-local element-type enum, and it fails on
+//! correctness rather than on taste. `tiler-macros` cannot name anything in this
+//! crate — the facade depends on it, so the edge cannot run back — which means
+//! the correspondence between what an expansion decides and what this crate
+//! means would be held by nothing but the text of the emitted tokens. Sharing
+//! one enum instead makes the macro's token emitter an exhaustive match over the
+//! real vocabulary, so widening it is a build error rather than a variant no
+//! expansion can spell.
+//!
+//! The cost is real and bounded: `tiler-ir` and its three `num-*` dependencies
+//! enter a consumer's build graph. It is also a cost a consumer that executes an
+//! embedded artifact pays anyway, because decoding one goes through
+//! `tiler-artifact`, which depends on `tiler-ir`. `tests/dependency_direction.rs`
+//! is what keeps the *forbidden* edge — the process-spawning Apple toolchain
+//! driver — off this crate.
 //!
 //! # The artifact-family selection is deliberately *not* re-exported here
 //!
@@ -70,6 +95,14 @@
 
 pub use tiler_macros::tensor;
 
+mod expansion;
+
+// Deliberately no outer doc comment here: the module documents itself with
+// `//!`, and adding a `///` on the item would move intra-doc link resolution for
+// the whole merged doc string up to the crate root, where the module's own item
+// names do not resolve.
+pub mod value;
+
 /// Implementation detail named by generated code; not a public interface.
 ///
 /// A procedural macro has no `$crate`, so its expansion has to spell an
@@ -81,6 +114,11 @@ pub use tiler_macros::tensor;
 /// consumer should write these paths by hand.
 #[doc(hidden)]
 pub mod __private {
+    pub use crate::expansion::{
+        AxisRef, BoundExtents, OperandFacts, RegionFacts, ResultAxis, ResultFacts, SymbolFacts,
+        bind_region, build_result,
+    };
+
     /// The inert value a current `tensor!` expansion evaluates to.
     ///
     /// It carries no tensor semantics and holds no data. It exists so that the

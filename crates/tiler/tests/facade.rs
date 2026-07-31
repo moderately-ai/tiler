@@ -13,6 +13,14 @@
 //! *emits* names anything but `tiler` — while the resolved-graph invariant is
 //! `dependency_direction`'s job.
 
+//! The `bind_*` cases carry a second claim beyond compiling: each defines its
+//! own adapter over its own value type, in a crate that depends on `tiler`
+//! alone. That is what "an arbitrary external consumer supplies the adapter
+//! without a facade change or a global registration" means, checked rather than
+//! asserted. Their `FACTS` constants are byte-identical to what
+//! `tiler_macros::binding` emits, and the macro crate's tests read these files
+//! to keep the two ends from drifting apart.
+
 #[test]
 fn facade_reexport_contract() {
     let cases = trybuild::TestCases::new();
