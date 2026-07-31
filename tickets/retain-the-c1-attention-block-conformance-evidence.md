@@ -1,0 +1,40 @@
+---
+id: retain-the-c1-attention-block-conformance-evidence
+title: Retain the C1 attention-block conformance evidence
+status: todo
+priority: p2
+dependencies: [integrate-the-attention-block-into-the-runtime]
+related: [design-attention-program-vertical, retain-contraction-conformance-evidence, retain-the-qwen-conformance-reference-logit-fixture, admit-the-softmax-family, scope-causal-structure-aware-attention-schedules]
+scopes: [implementation/reference, implementation/compiler, contracts/numerics, research/program-planning]
+shared_scopes: [project/tickets]
+paths: []
+tags: [implementation, testing, conformance, attention, numerics, language-model]
+---
+## User-visible outcome
+
+A later change to the block's schedule, emitter, or toolchain is a *failure* rather than a drift, because the exact bits the C1 attention block produces today are retained and compared — including the three cases where a plausible reimplementation would silently differ.
+
+## Why three cases matter more than the corpus size
+
+**Inference — from the [L4 design](../docs/research/program-planning/first-attention-program-vertical.md).** A broad corpus of ordinary attention rows would pass under several materially different implementations, because the differences this program admits are concentrated at boundaries an ordinary row never reaches. Three cases carry almost all of the discriminating power, and one of them is not even reachable from the workload:
+
+1. **The masked-position signed zero.** At query position 0 the probability row is `0x3f800000` followed by nine exact `0x00000000`. With a negative `v` at the attended key, the value contraction's seed — the first product, since the profile declares no `initial` — is `0x80000000`, and the completed strict ascending fold is `0x00000000`. **Measurement**, retained by the [attention-block probe](../spikes/program-planning/attention-block-reference/README.md). A schedule that skipped masked contributors as a causal-structure optimization returns the other sign, and no ordinary row would notice.
+2. **The fully masked row, which C1 cannot reach.** **Measurement — the finite mask fill and a `-inf` fill produce bit-identical results at all 1,600 C1 score elements**, because every masked argument drives `Exp` to exactly zero under both. The same comparison at a fully masked width-10 row returns uniform `0x3dcccccd` under the finite fill and ten `0x7fc00000` NaNs under `-inf`. **Inference — so a corpus that only ran C1 would pass with the wrong mask convention installed.** The synthetic row is the only case that tests decision D-1's answer at all.
+3. **The row sum.** **Measurement — 111 of the C1 score tensor's 160 rows sum to exactly `0x3f800000` and 49 do not.** [The L3′ record](../docs/research/numerics/transformer-nonlinear-normalization-and-reductions.md)'s four-wide worked example sums to `0x3f7ffffe`. Both are correct; whether a softmax row sums to exactly one in F32 is a per-row accident, so a check may assert neither, and one written from either example alone is wrong on the other.
+
+## Required delivery
+
+- **The retained record**: exact F32 bit patterns for the block's three outputs at the C1 prefill shape over a recorded operand seed, plus a SHA-256 over each, plus the per-stage intermediates the design's worked example names — the raw score row, the scaled row, the masked row, and the probability row at query head 0, position 2.
+- **The three discriminating cases above**, each as a test that fails before the behaviour it protects exists. The mask-convention case is a synthetic fully masked row and is not part of the workload; state that it is deliberate coverage of an unreached case rather than a workload row.
+- **The structural equivalences and their perturbations**, so that a later refactor of the structural families is caught: the rotary composition at 0 of 20,480 with its swap-removed and sign-reversed perturbations at 20,480; the grouped-query mapping at 0 differing with the `h mod 8` reading at 17,920.
+- **The realization boundary, stated per row.** Every retained bit pattern names the exact host, offline toolchain, numerical realization, and selected schedule. A record whose boundary is implicit generalizes itself the first time someone reads it.
+- **A `direct`-versus-`tiled` cross-check where both are admissible**, because two realizations attributed to the same topology must return identical bits and a divergence is a defect rather than a tolerance. At `S = 10` only `direct` is admissible, so the cross-check runs at a B1 extent and says so.
+- **The link from the design record to the retained evidence**, so a reader can reach the bits from the claim.
+
+## Non-goals
+
+A model-level tolerance or a whole-model comparison, which are [`design-model-level-qualification-and-optimization`](design-model-level-qualification-and-optimization.md)'s and [`retain-the-qwen-conformance-reference-logit-fixture`](retain-the-qwen-conformance-reference-logit-fixture.md)'s. Any B1-row conformance retention — those rows exist to be measured, not retained. Portability: the digests are bound to one host and a mismatch elsewhere is expected and is not by itself a defect.
+
+## Closes when
+
+The C1 block's exact bits are retained with their complete boundary, the three discriminating cases each fail before their fix, and the structural perturbations are demonstrated differing.

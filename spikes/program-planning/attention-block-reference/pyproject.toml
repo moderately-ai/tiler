@@ -1,0 +1,26 @@
+# Environment for the C1 attention-block reference probe.
+#
+# The pins are the two the C1 conformance fixture and the reference-semantics
+# probe already use, for the same reason: the observation *is* the evidence, so
+# a floating resolution would silently re-baseline it. `transformers` is 4.51.0
+# because the checkpoint's own `config.json` declares that version, which makes
+# it the definitional reference rather than one candidate; `torch` is 2.6.0
+# because every bit-level answer below is an answer about its CPU F32 kernels.
+#
+# This probe loads no checkpoint and touches no network. Every question it asks
+# is about the reference's own attention composition -- head layout, rotary
+# application, mask values, softmax, and the value contraction's signed zeros --
+# on synthetic operands at the C1 row's exact shapes, so it needs no weights.
+[project]
+name = "attention-block-reference"
+version = "0.1.0"
+description = "What the pinned Qwen3 reference computes for one C1-shaped causal self-attention block"
+requires-python = "==3.11.*"
+dependencies = [
+    "torch==2.6.0",
+    "transformers==4.51.0",
+    "numpy==2.2.5",
+]
+
+[tool.uv]
+environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
