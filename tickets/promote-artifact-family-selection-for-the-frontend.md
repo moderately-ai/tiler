@@ -1,7 +1,7 @@
 ---
 id: promote-artifact-family-selection-for-the-frontend
 title: Promote artifact-family selection for the frontend
-status: in-progress
+status: done
 priority: p1
 dependencies: [prototype-artifact-family-delivery, admit-the-tiler-facade-and-proc-macro-crate-boundary]
 related: [prototype-inline-proc-macro-frontend, generate-cfg-gated-artifact-family-delivery]
@@ -9,9 +9,6 @@ scopes: [implementation/frontend, implementation/metal-aot, implementation/cargo
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: loop-promote-arti
-lease_expires_at: 1785520143
 ---
 ## User-visible outcome
 
@@ -26,6 +23,10 @@ If exposing the type from `tiler-metal-aot` would make the facade depend on driv
 ## Public boundary for Tom
 
 Present the exact owner/module/type/constructor/reader/error path and frontend call site before acceptance. This review does not reopen the already accepted family selection semantics or one-envelope/N-payload decision.
+
+## Accepted (2026-07-31)
+
+Tom accepted the boundary as merged: `tiler_metal_aot::family` promoted in place as the single canonical encoder, the frontend edge held by host-built `tiler-macros`, no facade re-export (consumers never name the type), and the fail-closed `tensor!` delivery statement. The draft disclosures in the module doc, the dependency-direction test, and the frontends contract were flipped to the accepted state in the closing change, and `record-the-frontend-crate-admission-in-the-design-corpus` documents the ratified edge.
 
 ## Closes when
 

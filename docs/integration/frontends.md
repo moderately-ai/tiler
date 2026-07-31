@@ -229,8 +229,8 @@ frontend states a policy by validating it through
 `ArtifactFamilySelection::new`. Canonical family ordering, duplicate and empty
 refusal, the per-family deployment minimum and Metal language standard, and the
 selection's identity bytes are that module's; a frontend that restated any of
-them would be a second authority over one subject. The surface is a reviewed
-draft rather than a stable API until Tom accepts it.
+them would be a second authority over one subject. Tom accepted the surface and
+its placement on 2026-07-31 under `promote-artifact-family-selection-for-the-frontend`.
 
 The frontend edge to that module belongs to the proc-macro crate, not to the
 consumer-facing facade. A `proc-macro` crate and its dependencies are built for

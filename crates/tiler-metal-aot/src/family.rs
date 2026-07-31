@@ -43,10 +43,9 @@
 //!
 //! # Why this module is public, and why it is public *here*
 //!
-//! Every public item here is a reviewed *draft* boundary under ADR 0074
-//! convention 7: it is not a stable request API and must not be treated as one
-//! until Tom accepts the exact surface that
-//! `promote-artifact-family-selection-for-the-frontend` presents.
+//! Tom accepted this public boundary on 2026-07-31 under
+//! `promote-artifact-family-selection-for-the-frontend`: the surface, the
+//! in-place owner, and the `tiler-macros` edge that consumes it.
 //!
 //! The frontend has to state this policy, and three of the four ways to give it
 //! the vocabulary fail before the fourth is chosen. Copying the types into the

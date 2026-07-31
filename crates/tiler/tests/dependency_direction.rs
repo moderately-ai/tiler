@@ -33,8 +33,8 @@ const FRONTEND_PACKAGES: [&str; 2] = ["tiler", "tiler-macros"];
 /// build graph. This list is therefore about this crate specifically, not about
 /// the frontend as a whole.
 ///
-/// **Draft.** The placement it encodes is presented for acceptance by
-/// `promote-artifact-family-selection-for-the-frontend` and is not yet ratified.
+/// Tom accepted the placement this encodes on 2026-07-31 under
+/// `promote-artifact-family-selection-for-the-frontend`.
 const FACADE_FORBIDDEN_DEPENDENCIES: [&str; 1] = ["tiler-metal-aot"];
 
 /// One `[[package]]` block's name and its direct dependency names.
