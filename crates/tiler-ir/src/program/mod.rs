@@ -301,9 +301,10 @@ pub use model::{
     AllocationOwnership, AllocationRef, AllocationSpec, BitPackedEncoding, ByteWindow,
     CanonicalKernelProgramIdentity, DependencyReasonView, DependencyRef, MaterializedComponentSpec,
     MaterializedOrigin, MaterializedValueRef, MaterializedValueSpec, MemorySpace, PackedBitOrder,
-    PackedTailRule, ProgramOutputRef, RoutingCommitState, RoutingCommitTransition,
-    SemanticOccurrence, StageAccess, StageAccessMode, StageAccessRef, StageLaunch, StageLaunchView,
-    StageRef, StorageEncoding, StorageScalar, ValueRole, VerifiedKernelProgram, ViewRef,
+    PackedTailRule, PartialReduction, PartialReductionRef, ProgramOutputRef, RoutingCommitState,
+    RoutingCommitTransition, SemanticOccurrence, StageAccess, StageAccessMode, StageAccessRef,
+    StageLaunch, StageLaunchView, StageRef, StorageEncoding, StorageScalar, ValueRole,
+    VerifiedKernelProgram, ViewRef,
 };
 
 /// Maximum stages admitted by one kernel program.
@@ -316,6 +317,10 @@ pub const MAX_PROGRAM_VIEWS: usize = 65_536;
 pub const MAX_PROGRAM_ALLOCATIONS: usize = 65_536;
 /// Maximum typed dependency edges admitted by one kernel program.
 pub const MAX_PROGRAM_DEPENDENCIES: usize = 262_144;
+/// Maximum split-reduction contracts admitted by one kernel program.
+///
+/// One contract per stage pair at most, so the stage ceiling bounds it.
+pub const MAX_PROGRAM_PARTIAL_REDUCTIONS: usize = 4_096;
 /// Maximum named outputs admitted by one kernel program.
 pub const MAX_PROGRAM_OUTPUTS: usize = 4_096;
 /// Maximum accesses admitted by one program stage.

@@ -17,11 +17,12 @@ use super::handles::RegionId;
 use super::model::{
     Access, AccessMode, BoundsProof, BoundsProofKind, CanonicalScheduledRegionIdentity,
     ExecutionBinding, IndexRegion, KernelSchedule, LogicalAccess, OwnershipProof,
-    OwnershipProofKind, ReductionTopology, ResourceRequirements, ScalarProgram, ScheduledRegion,
-    TailPolicy, TensorRole, VerifiedScheduledRegion, derive_requirements, element_count,
-    encode_identity,
+    OwnershipProofKind, ReductionPass, ReductionTopology, ResourceRequirements, ScalarProgram,
+    ScheduledRegion, TailPolicy, TensorRole, VerifiedScheduledRegion, contributor_count,
+    derive_requirements, element_count, encode_identity, partial_reduction_axis,
+    partial_reduction_shape,
 };
-use super::numerics::{ExceptionalValueAssumption, NumericalRealization};
+use super::numerics::{ArithmeticType, ExceptionalValueAssumption, NumericalRealization};
 use super::{MAX_SCHEDULE_ACCESSES, MAX_SCHEDULE_BOUNDS_PROOFS};
 use crate::semantic::{
     STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
@@ -383,6 +384,12 @@ fn verify_access_and_semantics(
         return Err(ScheduledRegionDiagnostic::AccessContract);
     }
     verify_proof_records(region, &[read], write)?;
+    if matches!(
+        region.schedule.reduction,
+        ReductionTopology::MultiPass { .. }
+    ) {
+        return verify_multi_pass_semantics(region, read, write);
+    }
     let numerical = &region.index.numerical;
     match (
         &region.index.scalar_program,
@@ -463,6 +470,150 @@ fn verify_access_and_semantics(
     Ok(())
 }
 
+/// Verifies one pass of a split, multi-dispatch reduction.
+///
+/// The two passes are checked together here rather than as two more arms of the
+/// serial match because every obligation they carry is stated relative to the
+/// same [`ContributorPartition`]: the partial pass proves the split covers its
+/// contributor sequence exactly, and the final pass proves it combines exactly
+/// one contributor per partition of that same split. Splitting them across
+/// unrelated arms would let one pass be verified against a partition the other
+/// never agreed to.
+fn verify_multi_pass_semantics(
+    region: &ScheduledRegion,
+    read: &Access,
+    write: &Access,
+) -> Result<(), ScheduledRegionDiagnostic> {
+    let ReductionTopology::MultiPass {
+        pass,
+        partition,
+        axes: scheduled_axes,
+        order: scheduled_order,
+        accumulation,
+        permits_reassociation,
+        permits_permutation,
+    } = &region.schedule.reduction
+    else {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    };
+    let numerical = &region.index.numerical;
+    // Reassociation is what the split consumes, and it is checked on its own:
+    // contributor order is preserved by construction, so a permitted
+    // permutation neither grants nor substitutes for this permission.
+    if *permits_reassociation != numerical.permits_reassociation()
+        || *permits_permutation != numerical.permits_permutation()
+        || !*permits_reassociation
+        // The bounded profile combines at the element width. A narrower
+        // accumulation is a different computation and is refused rather than
+        // silently accepted as equivalent.
+        || *accumulation != ArithmeticType::F32
+    {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+
+    // A fused prologue belongs to the pass that reads the original inputs. The
+    // final pass reads partial sums, so re-applying scale and bias there would
+    // scale each partial a second time.
+    let (axes, order, empty_identity_bits, read_tensor) = match (&region.index.scalar_program, pass)
+    {
+        (
+            ScalarProgram::StrictSerialSum {
+                axes,
+                order,
+                empty_identity_bits,
+                ..
+            },
+            ReductionPass::Partial | ReductionPass::Final,
+        ) => (axes, order, *empty_identity_bits, TensorRole::Intermediate),
+        (
+            ScalarProgram::FusedMultiplyAddSerialSum {
+                axes,
+                order,
+                empty_identity_bits,
+                contraction,
+                ..
+            },
+            ReductionPass::Partial,
+        ) if !contraction => (axes, order, *empty_identity_bits, TensorRole::Input),
+        _ => return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement),
+    };
+
+    let LogicalAccess::ReductionContributor {
+        input_shape,
+        output_shape,
+        axes: access_axes,
+        order: access_order,
+    } = &read.map
+    else {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    };
+    if axes != scheduled_axes
+        || axes != access_axes
+        || order != scheduled_order
+        || order != access_order
+        || empty_identity_bits != 0.0_f32.to_bits()
+        || input_shape.without_axes(axes) != *output_shape
+        || read.tensor != read_tensor
+    {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+    let contributors = contributor_count(axes, &read.map)
+        .map_err(|_| ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?;
+    let partial_shape = partial_reduction_shape(output_shape, *partition)
+        .ok_or(ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?;
+
+    let admitted = match pass {
+        // The partial pass proves the split covers its own contributor
+        // sequence exactly once each, and stages one partial per partition.
+        ReductionPass::Partial => {
+            partition.covers(contributors)
+                && region.index.iteration_shape == partial_shape
+                && write.tensor == TensorRole::Intermediate
+        }
+        // The final pass proves it combines exactly one contributor per
+        // partition of that same split, reading the staged partial tensor.
+        ReductionPass::Final => {
+            partial_reduction_axis(output_shape)
+                .is_some_and(|axis| axes.as_slice() == [axis].as_slice())
+                && *input_shape == partial_shape
+                && contributors == partition.partitions
+                && region.index.iteration_shape == *output_shape
+                && write.tensor == TensorRole::Output
+        }
+    };
+    if admitted {
+        Ok(())
+    } else {
+        Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement)
+    }
+}
+
+/// Returns the reduction output shape this region's iteration domain realizes.
+///
+/// A serial or final pass iterates the reduction's own output; a partial pass
+/// iterates it once per partition, so its iteration shape carries one trailing
+/// axis the reduction domain does not. Reading the domain back from the
+/// iteration shape is what lets one bounds-proof rule serve both.
+fn reduction_output_shape(region: &ScheduledRegion) -> Option<crate::shape::Shape> {
+    let shape = &region.index.iteration_shape;
+    match &region.schedule.reduction {
+        ReductionTopology::MultiPass {
+            pass: ReductionPass::Partial,
+            partition,
+            ..
+        } => {
+            let kept = shape.rank().checked_sub(1)?;
+            let trailing = shape.extents().get(kept)?;
+            (trailing.get() == partition.partitions)
+                .then(|| crate::shape::Shape::try_new(shape.extents()[..kept].iter().copied()).ok())
+                .flatten()
+        }
+        ReductionTopology::None
+        | ReductionTopology::Serial { .. }
+        | ReductionTopology::MultiPass { .. } => Some(shape.clone()),
+    }
+}
+
 fn verify_proof_records(
     region: &ScheduledRegion,
     reads: &[&Access],
@@ -536,9 +687,9 @@ fn bounds_proof_refines_access(
         ) => {
             input_shape == access_input
                 && output_shape == access_output
+                && reduction_output_shape(region).is_some_and(|domain| *output_shape == domain)
                 && axes == access_axes
                 && order == access_order
-                && output_shape == &region.index.iteration_shape
                 && input_shape.without_axes(axes) == *output_shape
         }
         _ => false,
@@ -552,10 +703,10 @@ mod tests {
 
     use crate::schedule::PointwiseF32ExpressionBuilder;
     use crate::schedule::handles::{BoundsWitnessId, OwnershipWitnessId};
-    use crate::schedule::model::{ContributorOrder, LaunchPlan};
+    use crate::schedule::model::{ContributorOrder, ContributorPartition, LaunchPlan};
     use crate::schedule::numerics::{
-        ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, SubnormalMode,
-        ValueDomainProvenance,
+        ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
+        SubnormalMode, ValueDomainProvenance,
     };
     use crate::shape::{Axis, Shape};
 
@@ -1071,6 +1222,514 @@ mod tests {
                 component: ScheduleComponent::IterationShape,
             }]
         );
+    }
+
+    /// A realization that permits exactly the freedoms a split consumes.
+    ///
+    /// Reassociation is permitted and every other dimension stays at its strict
+    /// resolution, so a region admitted under it is admitted for reassociation
+    /// alone. Permutation in particular stays forbidden, which is what makes
+    /// the admission tests below evidence of independence rather than of a
+    /// generally relaxed contract.
+    fn reassociating_numerical() -> NumericalRealization {
+        NumericalRealization {
+            reassociation: NumericalPermission::Permitted,
+            ..strict_numerical()
+        }
+    }
+
+    /// The split every multi-pass fixture below declares: `6 = 3 x 2`.
+    const SPLIT: ContributorPartition = ContributorPartition {
+        partitions: 3,
+        contributors_per_partition: 2,
+    };
+
+    /// Builds the partial pass of a `[2, 6] -> [2]` reduction split three ways.
+    fn partial_pass_builder(partition: ContributorPartition) -> ScheduledRegionBuilder {
+        let partial_elements = 2 * partition.partitions;
+        let mut builder = ScheduledRegionBuilder::new(RegionId::new(2));
+        builder
+            .iteration_shape(
+                partial_reduction_shape(&Shape::from_dims([2]), partition)
+                    .expect("a rank-two partial shape is within the governed bound"),
+            )
+            .unwrap();
+        builder
+            .push_access(Access {
+                tensor: TensorRole::Intermediate,
+                component_role: None,
+                mode: AccessMode::Read,
+                map: LogicalAccess::ReductionContributor {
+                    input_shape: Shape::from_dims([2, 6]),
+                    output_shape: Shape::from_dims([2]),
+                    axes: vec![Axis::new(1)],
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                },
+                bounds: BoundsWitnessId::new(0),
+                ownership: None,
+            })
+            .unwrap();
+        builder
+            .push_access(Access {
+                tensor: TensorRole::Intermediate,
+                component_role: None,
+                mode: AccessMode::Write,
+                map: LogicalAccess::LinearIdentity,
+                bounds: BoundsWitnessId::new(1),
+                ownership: Some(OwnershipWitnessId::new(0)),
+            })
+            .unwrap();
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(0),
+                tensor: TensorRole::Intermediate,
+                component_role: None,
+                kind: BoundsProofKind::ReductionDomain {
+                    input_shape: Shape::from_dims([2, 6]),
+                    output_shape: Shape::from_dims([2]),
+                    axes: vec![Axis::new(1)],
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                },
+            })
+            .unwrap();
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(1),
+                tensor: TensorRole::Intermediate,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange {
+                    element_count: partial_elements,
+                },
+            })
+            .unwrap();
+        builder
+            .ownership_proof(OwnershipProof {
+                id: OwnershipWitnessId::new(0),
+                tensor: TensorRole::Intermediate,
+                kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                    output_count: partial_elements,
+                },
+            })
+            .unwrap();
+        builder
+            .scalar_program(ScalarProgram::StrictSerialSum {
+                axes: vec![Axis::new(1)],
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: 0x7fc0_0000,
+                empty_identity_bits: 0.0_f32.to_bits(),
+            })
+            .unwrap();
+        builder.numerical(reassociating_numerical()).unwrap();
+        builder
+            .schedule(KernelSchedule {
+                reduction: ReductionTopology::MultiPass {
+                    pass: ReductionPass::Partial,
+                    partition,
+                    axes: vec![Axis::new(1)],
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    accumulation: ArithmeticType::F32,
+                    permits_reassociation: true,
+                    permits_permutation: false,
+                },
+                ..linear_schedule(partial_elements, OwnershipWitnessId::new(0))
+            })
+            .unwrap();
+        builder
+    }
+
+    /// Builds the final pass that combines those partials into `[2]`.
+    fn final_pass_builder(partition: ContributorPartition) -> ScheduledRegionBuilder {
+        let partial_shape = partial_reduction_shape(&Shape::from_dims([2]), partition)
+            .expect("a rank-two partial shape is within the governed bound");
+        let axes = vec![partial_reduction_axis(&Shape::from_dims([2])).expect("rank one fits u32")];
+        let mut builder = ScheduledRegionBuilder::new(RegionId::new(3));
+        builder.iteration_shape(Shape::from_dims([2])).unwrap();
+        builder
+            .push_access(Access {
+                tensor: TensorRole::Intermediate,
+                component_role: None,
+                mode: AccessMode::Read,
+                map: LogicalAccess::ReductionContributor {
+                    input_shape: partial_shape.clone(),
+                    output_shape: Shape::from_dims([2]),
+                    axes: axes.clone(),
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                },
+                bounds: BoundsWitnessId::new(0),
+                ownership: None,
+            })
+            .unwrap();
+        builder
+            .push_access(Access {
+                tensor: TensorRole::Output,
+                component_role: None,
+                mode: AccessMode::Write,
+                map: LogicalAccess::LinearIdentity,
+                bounds: BoundsWitnessId::new(1),
+                ownership: Some(OwnershipWitnessId::new(0)),
+            })
+            .unwrap();
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(0),
+                tensor: TensorRole::Intermediate,
+                component_role: None,
+                kind: BoundsProofKind::ReductionDomain {
+                    input_shape: partial_shape,
+                    output_shape: Shape::from_dims([2]),
+                    axes: axes.clone(),
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                },
+            })
+            .unwrap();
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(1),
+                tensor: TensorRole::Output,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange { element_count: 2 },
+            })
+            .unwrap();
+        builder
+            .ownership_proof(OwnershipProof {
+                id: OwnershipWitnessId::new(0),
+                tensor: TensorRole::Output,
+                kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 2 },
+            })
+            .unwrap();
+        builder
+            .scalar_program(ScalarProgram::StrictSerialSum {
+                axes: axes.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: 0x7fc0_0000,
+                empty_identity_bits: 0.0_f32.to_bits(),
+            })
+            .unwrap();
+        builder.numerical(reassociating_numerical()).unwrap();
+        builder
+            .schedule(KernelSchedule {
+                reduction: ReductionTopology::MultiPass {
+                    pass: ReductionPass::Final,
+                    partition,
+                    axes,
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    accumulation: ArithmeticType::F32,
+                    permits_reassociation: true,
+                    permits_permutation: false,
+                },
+                ..linear_schedule(2, OwnershipWitnessId::new(0))
+            })
+            .unwrap();
+        builder
+    }
+
+    fn linear_schedule(work_items: u64, owner: OwnershipWitnessId) -> KernelSchedule {
+        KernelSchedule {
+            binding: ExecutionBinding::GlobalLinearInvocation,
+            work_items,
+            threads_per_workgroup: 1,
+            tail: TailPolicy::Exact,
+            output_owner: owner,
+            reduction: ReductionTopology::None,
+            launch: LaunchPlan {
+                grid_threads: work_items,
+                threads_per_workgroup: 1,
+                zero_work_skips_dispatch: true,
+            },
+        }
+    }
+
+    /// Both passes of a split verify, and neither needs a barrier to do so.
+    ///
+    /// The partial pass runs one invocation per (output, partition) pair and the
+    /// final pass one per output; the values move between them through the
+    /// materialized partial tensor alone, which is what makes the split a
+    /// dispatch-boundary strategy rather than a workgroup one.
+    #[test]
+    fn both_passes_of_a_split_reduction_verify() {
+        let partial = partial_pass_builder(SPLIT).build().unwrap();
+        let combine = final_pass_builder(SPLIT).build().unwrap();
+        assert_eq!(partial.region().schedule.work_items, 6);
+        assert_eq!(combine.region().schedule.work_items, 2);
+        assert_eq!(partial.requirements().local_memory_bytes, 0);
+        assert_eq!(combine.requirements().local_memory_bytes, 0);
+        // The split reports the freedom it consumes and only that freedom.
+        assert_eq!(
+            partial.requirements().reassociation,
+            NumericalPermission::Permitted
+        );
+        assert_eq!(
+            partial.requirements().permutation,
+            NumericalPermission::Forbidden
+        );
+    }
+
+    /// A split has an identity distinct from the serial reduction it replaces.
+    #[test]
+    fn a_split_pass_is_not_identical_to_a_serial_pass() {
+        let split = partial_pass_builder(SPLIT).build().unwrap();
+        let mut serial = partial_pass_builder(SPLIT);
+        // The same region under the same contract, differing only in whether
+        // its contributor sequence is split.
+        serial.schedule.as_mut().unwrap().reduction = ReductionTopology::Serial {
+            axes: vec![Axis::new(1)],
+            order: ContributorOrder::OriginalAxisLexicographic,
+            permits_reassociation: true,
+            permits_permutation: false,
+        };
+        // The serial reading of that region is itself rejected, and the rule it
+        // names is the bounds proof: a serial reduction's iteration domain *is*
+        // its reduction domain, so a proof over `[2]` no longer refines an
+        // access whose region iterates `[2, 3]`. The two topologies are
+        // therefore not interchangeable even before identity is compared.
+        assert_eq!(
+            serial.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::BoundsProof]
+        );
+        let final_pass = final_pass_builder(SPLIT).build().unwrap();
+        assert_ne!(
+            split.canonical_identity().as_bytes(),
+            final_pass.canonical_identity().as_bytes()
+        );
+    }
+
+    /// Reassociation is what a split consumes, and denying it rejects the split.
+    #[test]
+    fn a_split_is_rejected_when_reassociation_is_denied() {
+        for mut builder in [partial_pass_builder(SPLIT), final_pass_builder(SPLIT)] {
+            builder.numerical = Some(strict_numerical());
+            let ReductionTopology::MultiPass {
+                permits_reassociation,
+                ..
+            } = &mut builder.schedule.as_mut().unwrap().reduction
+            else {
+                panic!("expected a split topology")
+            };
+            *permits_reassociation = false;
+            assert_eq!(
+                builder.build().unwrap_err().diagnostics(),
+                [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
+            );
+        }
+    }
+
+    /// Permutation is a separate permission the split neither needs nor uses.
+    ///
+    /// Both directions are driven, because checking one permission and
+    /// consuming the other is invisible when only the permitted case is tested:
+    /// a contract that permits permutation but forbids reassociation must still
+    /// reject the split, and one that forbids permutation but permits
+    /// reassociation must still admit it.
+    #[test]
+    fn permutation_neither_admits_nor_blocks_a_split() {
+        let mut permuting_only = partial_pass_builder(SPLIT);
+        permuting_only.numerical = Some(NumericalRealization {
+            permutation: NumericalPermission::Permitted,
+            ..strict_numerical()
+        });
+        let ReductionTopology::MultiPass {
+            permits_reassociation,
+            permits_permutation,
+            ..
+        } = &mut permuting_only.schedule.as_mut().unwrap().reduction
+        else {
+            panic!("expected a split topology")
+        };
+        *permits_reassociation = false;
+        *permits_permutation = true;
+        assert_eq!(
+            permuting_only.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "permutation must not stand in for the reassociation a split consumes"
+        );
+
+        // The complementary direction: the default fixture already forbids
+        // permutation and permits reassociation, and it verifies.
+        assert!(partial_pass_builder(SPLIT).build().is_ok());
+    }
+
+    /// A split whose product does not cover the contributor sequence rejects.
+    ///
+    /// The two cases reach different rules, and both are the right one. A split
+    /// that changes the *partition count* also changes the partial tensor the
+    /// region iterates, so its bounds proof stops refining its access first; a
+    /// split that keeps the count and misstates the per-partition share reaches
+    /// the coverage check itself. Driving both is what shows neither an
+    /// over-covering nor an under-covering split can slip through on the other
+    /// one's silence.
+    #[test]
+    fn an_inexact_split_is_rejected() {
+        for (partition, expected) in [
+            // Six contributors, five covered, and a partial tensor of five.
+            (
+                ContributorPartition {
+                    partitions: 5,
+                    contributors_per_partition: 1,
+                },
+                ScheduledRegionDiagnostic::BoundsProof,
+            ),
+            // A split of nothing covers nothing, and stages nothing.
+            (
+                ContributorPartition {
+                    partitions: 0,
+                    contributors_per_partition: 2,
+                },
+                ScheduledRegionDiagnostic::BoundsProof,
+            ),
+            // Three partitions, as the region stages, but nine contributors
+            // claimed where the access supplies six.
+            (
+                ContributorPartition {
+                    partitions: 3,
+                    contributors_per_partition: 3,
+                },
+                ScheduledRegionDiagnostic::NumericalOrAccessRefinement,
+            ),
+            // The same count, four covered where the access supplies six.
+            (
+                ContributorPartition {
+                    partitions: 3,
+                    contributors_per_partition: 1,
+                },
+                ScheduledRegionDiagnostic::NumericalOrAccessRefinement,
+            ),
+        ] {
+            let mut builder = partial_pass_builder(SPLIT);
+            let ReductionTopology::MultiPass {
+                partition: declared,
+                ..
+            } = &mut builder.schedule.as_mut().unwrap().reduction
+            else {
+                panic!("expected a split topology")
+            };
+            *declared = partition;
+            assert_eq!(
+                builder.build().unwrap_err().diagnostics(),
+                [expected],
+                "{partition:?} does not cover six contributors exactly once each"
+            );
+        }
+    }
+
+    /// An accumulation narrower than the element width is rejected, not accepted.
+    #[test]
+    fn a_narrowed_accumulation_width_is_rejected() {
+        for narrower in [ArithmeticType::F16, ArithmeticType::Bf16] {
+            let mut builder = partial_pass_builder(SPLIT);
+            let ReductionTopology::MultiPass { accumulation, .. } =
+                &mut builder.schedule.as_mut().unwrap().reduction
+            else {
+                panic!("expected a split topology")
+            };
+            *accumulation = narrower;
+            assert_eq!(
+                builder.build().unwrap_err().diagnostics(),
+                [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+                "{narrower:?} is narrower than the width the contract admits"
+            );
+        }
+    }
+
+    /// The final pass must combine exactly one contributor per partition.
+    #[test]
+    fn a_final_pass_reading_the_wrong_partition_count_is_rejected() {
+        let mut builder = final_pass_builder(SPLIT);
+        // A partial tensor with a fourth partition the split never produced.
+        let LogicalAccess::ReductionContributor { input_shape, .. } = &mut builder.accesses[0].map
+        else {
+            panic!("expected a reduction access")
+        };
+        *input_shape = Shape::from_dims([2, 4]);
+        let BoundsProofKind::ReductionDomain { input_shape, .. } =
+            &mut builder.bounds_proofs[0].kind
+        else {
+            panic!("expected a reduction proof")
+        };
+        *input_shape = Shape::from_dims([2, 4]);
+        assert_eq!(
+            builder.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
+        );
+    }
+
+    /// A partial pass that writes the program output is not a partial pass.
+    #[test]
+    fn a_partial_pass_may_not_write_the_program_output() {
+        let mut builder = partial_pass_builder(SPLIT);
+        builder.accesses[1].tensor = TensorRole::Output;
+        builder.bounds_proofs[1].tensor = TensorRole::Output;
+        builder.ownership_proof.as_mut().unwrap().tensor = TensorRole::Output;
+        assert_eq!(
+            builder.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
+        );
+    }
+
+    /// Every field of a split separates canonical scheduled-region identity.
+    #[test]
+    fn every_split_field_separates_scheduled_region_identity() {
+        let baseline = partial_pass_builder(SPLIT)
+            .build()
+            .unwrap()
+            .region()
+            .clone();
+        let mut seen = vec![encode_identity(&baseline)];
+        for reduction in [
+            ReductionTopology::MultiPass {
+                pass: ReductionPass::Final,
+                partition: SPLIT,
+                axes: vec![Axis::new(1)],
+                order: ContributorOrder::OriginalAxisLexicographic,
+                accumulation: ArithmeticType::F32,
+                permits_reassociation: true,
+                permits_permutation: false,
+            },
+            ReductionTopology::MultiPass {
+                pass: ReductionPass::Partial,
+                partition: ContributorPartition {
+                    partitions: 2,
+                    contributors_per_partition: 3,
+                },
+                axes: vec![Axis::new(1)],
+                order: ContributorOrder::OriginalAxisLexicographic,
+                accumulation: ArithmeticType::F32,
+                permits_reassociation: true,
+                permits_permutation: false,
+            },
+            ReductionTopology::MultiPass {
+                pass: ReductionPass::Partial,
+                partition: SPLIT,
+                axes: vec![Axis::new(1)],
+                order: ContributorOrder::OriginalAxisLexicographic,
+                accumulation: ArithmeticType::F64,
+                permits_reassociation: true,
+                permits_permutation: false,
+            },
+            ReductionTopology::MultiPass {
+                pass: ReductionPass::Partial,
+                partition: SPLIT,
+                axes: vec![Axis::new(1)],
+                order: ContributorOrder::OriginalAxisLexicographic,
+                accumulation: ArithmeticType::F32,
+                permits_reassociation: true,
+                permits_permutation: true,
+            },
+            ReductionTopology::Serial {
+                axes: vec![Axis::new(1)],
+                order: ContributorOrder::OriginalAxisLexicographic,
+                permits_reassociation: true,
+                permits_permutation: false,
+            },
+        ] {
+            let mut candidate = baseline.clone();
+            candidate.schedule.reduction = reduction.clone();
+            let identity = encode_identity(&candidate);
+            assert!(
+                !seen.contains(&identity),
+                "{reduction:?} collided with an earlier topology"
+            );
+            seen.push(identity);
+        }
     }
 
     #[test]

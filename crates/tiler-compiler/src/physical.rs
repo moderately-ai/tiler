@@ -15,10 +15,10 @@ use tiler_ir::kernel::KernelType;
 pub(crate) use tiler_ir::kernel::VerifiedKernel;
 pub(crate) use tiler_ir::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
-    ExecutionBinding, IndexRegion, KernelSchedule, LaunchPlan, LogicalAccess, NumericalRealization,
-    OwnershipProof, OwnershipProofKind, OwnershipWitnessId, PointwiseF32Expression,
-    PointwiseF32ExpressionBuilder, PointwiseF32Node, ReductionTopology, RegionId,
-    ResourceRequirements, ScalarProgram, ScheduledRegion, TailPolicy, TensorRole,
+    ContributorPartition, ExecutionBinding, IndexRegion, KernelSchedule, LaunchPlan, LogicalAccess,
+    NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
+    PointwiseF32Expression, PointwiseF32ExpressionBuilder, PointwiseF32Node, ReductionTopology,
+    RegionId, ResourceRequirements, ScalarProgram, ScheduledRegion, TailPolicy, TensorRole,
 };
 use tiler_ir::schedule::{
     ArithmeticType, ScheduledRegionBuildError, ScheduledRegionBuilder, ScheduledRegionDiagnostic,
@@ -492,6 +492,265 @@ pub(crate) fn fused_region(
     (region, request.serial_sum().members.all())
 }
 
+/// Chooses the split a multi-pass reduction proposal offers for one extent.
+///
+/// The chosen contributors-per-partition is the divisor of `contributors`
+/// nearest to its integer square root from below, which is the balanced exact
+/// split: among splits that cover the sequence exactly once each, it keeps both
+/// passes' per-invocation folds as short as one choice can.
+///
+/// It is deliberately *a* choice and not a calibrated one.
+/// `calibrate-and-activate-parallel-reduction-selection` owns replacing it with
+/// measured evidence, and nothing in this slice makes a split win on
+/// preference.
+///
+/// Returns `None` when no exact split with at least two partitions and at least
+/// two contributors per partition exists — every contributor count below four,
+/// and every prime one. A partition holding a single contributor folds nothing,
+/// so offering it would add a dispatch that does no work, and an inexact split
+/// would leave a ragged final partition this profile does not lower.
+#[allow(
+    dead_code,
+    reason = "the split-choosing authority the multi-pass region constructors and their tests consume; frontier enumeration of the alternative is its own ticket"
+)]
+pub(crate) fn governed_partition(contributors: u64) -> Option<ContributorPartition> {
+    if contributors < 4 {
+        return None;
+    }
+    let mut candidate = contributors.isqrt();
+    while candidate >= 2 {
+        if contributors.is_multiple_of(candidate) {
+            let partitions = contributors / candidate;
+            if partitions >= 2 {
+                return Some(ContributorPartition {
+                    partitions,
+                    contributors_per_partition: candidate,
+                });
+            }
+        }
+        candidate -= 1;
+    }
+    None
+}
+
+/// Builds the canonical partial pass of a split reduction for one request.
+///
+/// It splits the *materialized* strategy's reduction rather than the fused one:
+/// it reads the pointwise temporary and writes the partial tensor, so the split
+/// replaces one dispatch with two and leaves the prologue where it was. Fusing
+/// the prologue into this pass would additionally have to reconcile the
+/// contraction permission the fused scalar program carries, which is a
+/// different question from splitting a contributor sequence.
+#[allow(
+    dead_code,
+    reason = "the canonical multi-pass region constructor, exercised by its own tests; frontier enumeration of the alternative is its own ticket"
+)]
+pub(crate) fn partial_reduction_region(
+    request: &VerifiedTargetRequest,
+    partition: ContributorPartition,
+) -> Option<(ScheduledRegion, Vec<SemanticMemberId>)> {
+    let subject = request.serial_sum();
+    let partial_shape =
+        tiler_ir::schedule::partial_reduction_shape(&subject.output_shape, partition)?;
+    let partial_elements = subject.output_elements.checked_mul(partition.partitions)?;
+    let region = ScheduledRegion {
+        index: IndexRegion {
+            id: RegionId::new(2),
+            iteration_shape: partial_shape,
+            accesses: vec![
+                Access {
+                    tensor: TensorRole::Intermediate,
+                    component_role: None,
+                    mode: AccessMode::Read,
+                    map: LogicalAccess::ReductionContributor {
+                        input_shape: subject.input_shape.clone(),
+                        output_shape: subject.output_shape.clone(),
+                        axes: subject.reduction_axes.clone(),
+                        order: ContributorOrder::OriginalAxisLexicographic,
+                    },
+                    bounds: BoundsWitnessId::new(4),
+                    ownership: None,
+                },
+                Access {
+                    tensor: TensorRole::Intermediate,
+                    component_role: None,
+                    mode: AccessMode::Write,
+                    map: LogicalAccess::LinearIdentity,
+                    bounds: BoundsWitnessId::new(5),
+                    ownership: Some(OwnershipWitnessId::new(2)),
+                },
+            ],
+            bounds_proofs: vec![
+                BoundsProof {
+                    id: BoundsWitnessId::new(4),
+                    tensor: TensorRole::Intermediate,
+                    component_role: None,
+                    kind: BoundsProofKind::ReductionDomain {
+                        input_shape: subject.input_shape.clone(),
+                        output_shape: subject.output_shape.clone(),
+                        axes: subject.reduction_axes.clone(),
+                        order: ContributorOrder::OriginalAxisLexicographic,
+                    },
+                },
+                BoundsProof {
+                    id: BoundsWitnessId::new(5),
+                    tensor: TensorRole::Intermediate,
+                    component_role: None,
+                    kind: BoundsProofKind::LinearRange {
+                        element_count: partial_elements,
+                    },
+                },
+            ],
+            ownership_proof: OwnershipProof {
+                id: OwnershipWitnessId::new(2),
+                tensor: TensorRole::Intermediate,
+                kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                    output_count: partial_elements,
+                },
+            },
+            scalar_program: ScalarProgram::StrictSerialSum {
+                axes: subject.reduction_axes.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
+                empty_identity_bits: 0.0_f32.to_bits(),
+            },
+            numerical: request.numerical_contract().realization(),
+        },
+        schedule: KernelSchedule {
+            reduction: multi_pass_topology(
+                request,
+                tiler_ir::schedule::ReductionPass::Partial,
+                partition,
+                subject.reduction_axes.clone(),
+            ),
+            ..linear_schedule(partial_elements, OwnershipWitnessId::new(2))
+        },
+    };
+    Some((region, subject.members.reduction().to_vec()))
+}
+
+/// Builds the canonical final pass of a split reduction for one request.
+///
+/// It reduces the single partition axis of the staged partial tensor, so its
+/// axes are deliberately not the request's reduction axes: those were already
+/// consumed by the partial pass.
+#[allow(
+    dead_code,
+    reason = "the canonical multi-pass region constructor, exercised by its own tests; frontier enumeration of the alternative is its own ticket"
+)]
+pub(crate) fn final_reduction_region(
+    request: &VerifiedTargetRequest,
+    partition: ContributorPartition,
+) -> Option<(ScheduledRegion, Vec<SemanticMemberId>)> {
+    let subject = request.serial_sum();
+    let partial_shape =
+        tiler_ir::schedule::partial_reduction_shape(&subject.output_shape, partition)?;
+    let axes = vec![tiler_ir::schedule::partial_reduction_axis(
+        &subject.output_shape,
+    )?];
+    let region = ScheduledRegion {
+        index: IndexRegion {
+            id: RegionId::new(3),
+            iteration_shape: subject.output_shape.clone(),
+            accesses: vec![
+                Access {
+                    tensor: TensorRole::Intermediate,
+                    component_role: None,
+                    mode: AccessMode::Read,
+                    map: LogicalAccess::ReductionContributor {
+                        input_shape: partial_shape.clone(),
+                        output_shape: subject.output_shape.clone(),
+                        axes: axes.clone(),
+                        order: ContributorOrder::OriginalAxisLexicographic,
+                    },
+                    bounds: BoundsWitnessId::new(6),
+                    ownership: None,
+                },
+                Access {
+                    tensor: TensorRole::Output,
+                    component_role: None,
+                    mode: AccessMode::Write,
+                    map: LogicalAccess::LinearIdentity,
+                    bounds: BoundsWitnessId::new(7),
+                    ownership: Some(OwnershipWitnessId::new(3)),
+                },
+            ],
+            bounds_proofs: vec![
+                BoundsProof {
+                    id: BoundsWitnessId::new(6),
+                    tensor: TensorRole::Intermediate,
+                    component_role: None,
+                    kind: BoundsProofKind::ReductionDomain {
+                        input_shape: partial_shape,
+                        output_shape: subject.output_shape.clone(),
+                        axes: axes.clone(),
+                        order: ContributorOrder::OriginalAxisLexicographic,
+                    },
+                },
+                BoundsProof {
+                    id: BoundsWitnessId::new(7),
+                    tensor: TensorRole::Output,
+                    component_role: None,
+                    kind: BoundsProofKind::LinearRange {
+                        element_count: subject.output_elements,
+                    },
+                },
+            ],
+            ownership_proof: OwnershipProof {
+                id: OwnershipWitnessId::new(3),
+                tensor: TensorRole::Output,
+                kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                    output_count: subject.output_elements,
+                },
+            },
+            scalar_program: ScalarProgram::StrictSerialSum {
+                axes: axes.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
+                empty_identity_bits: 0.0_f32.to_bits(),
+            },
+            numerical: request.numerical_contract().realization(),
+        },
+        schedule: KernelSchedule {
+            reduction: multi_pass_topology(
+                request,
+                tiler_ir::schedule::ReductionPass::Final,
+                partition,
+                axes,
+            ),
+            ..linear_schedule(subject.output_elements, OwnershipWitnessId::new(3))
+        },
+    };
+    Some((region, Vec::new()))
+}
+
+/// Builds the reduction topology one pass of a split declares.
+///
+/// Both permissions are read from the resolved contract and carried
+/// independently. Permutation is reported as the contract resolves it rather
+/// than hardcoded, because the split neither needs nor consumes it: the schedule
+/// verifier admits the topology on reassociation alone, so a build that later
+/// registers a permuting contract does not silently start admitting splits for
+/// the wrong reason.
+fn multi_pass_topology(
+    request: &VerifiedTargetRequest,
+    pass: tiler_ir::schedule::ReductionPass,
+    partition: ContributorPartition,
+    axes: Vec<tiler_ir::shape::Axis>,
+) -> ReductionTopology {
+    ReductionTopology::MultiPass {
+        pass,
+        partition,
+        axes,
+        order: ContributorOrder::OriginalAxisLexicographic,
+        accumulation: request.numerical_contract().arithmetic,
+        permits_reassociation: request.numerical_contract().reassociation
+            != NumericalPermission::Forbidden,
+        permits_permutation: request.numerical_contract().permutation
+            != NumericalPermission::Forbidden,
+    }
+}
+
 fn linear_schedule(work_items: u64, owner: OwnershipWitnessId) -> KernelSchedule {
     KernelSchedule {
         binding: ExecutionBinding::GlobalLinearInvocation,
@@ -729,6 +988,22 @@ fn verify_region_subject_binding(
             {
                 return intrinsic("request-subject-shape", region.index.id);
             }
+            // A split reduction's two passes bind to the same subject as the
+            // fused region does — they realize the same occurrences by a
+            // different physical route — but neither has the fused region's
+            // iteration shape, so they are matched on their own terms rather
+            // than by relaxing the single-dispatch rules below.
+            if matches!(
+                region.schedule.reduction,
+                ReductionTopology::MultiPass { .. }
+            ) {
+                return verify_multi_pass_subject_binding(
+                    region,
+                    semantic_members,
+                    normalized,
+                    subject,
+                );
+            }
             match scalar {
                 ScalarProgram::PointwiseF32(expression) => {
                     semantic_members == normalized.members().pointwise()
@@ -773,6 +1048,64 @@ fn verify_region_subject_binding(
                 ScalarProgram::StrictAffineU4Dequantize { .. } => false,
             }
         }
+    };
+    if !expected {
+        return intrinsic("request-binding", region.index.id);
+    }
+    Ok(())
+}
+
+/// Binds one pass of a split reduction to the request subject it refines.
+///
+/// The partial pass claims the reduction occurrence, exactly as the
+/// materialized strategy's single reduction region does; the final pass claims
+/// none, because that occurrence is already covered and claiming it again would
+/// double-cover the graph. That asymmetry is what lets the two passes together
+/// contribute the same coverage the one region they replace contributed.
+fn verify_multi_pass_subject_binding(
+    region: &ScheduledRegion,
+    semantic_members: &[SemanticMemberId],
+    normalized: &crate::request::NormalizedSerialSumSubject,
+    subject: &VerifiedRequestSubject,
+) -> Result<(), PhysicalError> {
+    let ReductionTopology::MultiPass {
+        pass, partition, ..
+    } = &region.schedule.reduction
+    else {
+        return intrinsic("request-binding", region.index.id);
+    };
+    let expected = match pass {
+        tiler_ir::schedule::ReductionPass::Partial => {
+            matches!(
+                &region.index.scalar_program,
+                ScalarProgram::StrictSerialSum { axes, canonical_nan_bits, .. }
+                    if axes == normalized.reduction_axes()
+                        && *canonical_nan_bits
+                            == subject.numerical_contract().canonical_arithmetic_nan_bits
+            ) && semantic_members == normalized.members().reduction()
+                && region.index.id == RegionId::new(2)
+                && reduction_access_matches(&region.index.accesses[0], normalized)
+                && tiler_ir::schedule::partial_reduction_shape(
+                    normalized.output_shape(),
+                    *partition,
+                )
+                .is_some_and(|shape| shape == region.index.iteration_shape)
+        }
+        tiler_ir::schedule::ReductionPass::Final => {
+            matches!(
+                &region.index.scalar_program,
+                ScalarProgram::StrictSerialSum { canonical_nan_bits, .. }
+                    if *canonical_nan_bits
+                        == subject.numerical_contract().canonical_arithmetic_nan_bits
+            ) && semantic_members.is_empty()
+                && region.index.id == RegionId::new(3)
+                && region.index.iteration_shape == *normalized.output_shape()
+        }
+        // A pass role this compilation does not construct binds to no subject.
+        // Refusing rather than guessing keeps a role added later from being
+        // silently accepted under the rules the two known roles were checked
+        // against.
+        _ => false,
     };
     if !expected {
         return intrinsic("request-binding", region.index.id);

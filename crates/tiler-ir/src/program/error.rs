@@ -93,6 +93,8 @@ pub enum ProgramLimitKind {
     Views,
     /// Dependency-edge count of one program.
     Dependencies,
+    /// Split-reduction contract count of one program.
+    PartialReductions,
     /// Named-output count of one program.
     Outputs,
     /// Access count of one stage.
@@ -256,8 +258,6 @@ pub enum KernelProgramBuildError {
     /// Views are canonically deduplicated so consumers of one window share one
     /// view and the view arena stays a function of program content.
     DuplicateView,
-    /// A stage covered no semantic occurrence.
-    EmptyCoverage,
     /// A covered occurrence is not an operation of the bound semantic program.
     CoverageOutOfRange {
         /// Rejected occurrence.
@@ -326,6 +326,8 @@ pub enum KernelProgramBuildError {
     SelfDependency,
     /// An identical dependency edge is already declared.
     DuplicateDependency,
+    /// A partial tensor is already split by another declared reduction.
+    DuplicatePartialReduction,
     /// A named output used a key the bound semantic program does not declare.
     UnknownOutputKey {
         /// Rejected interface key.
@@ -494,6 +496,33 @@ pub enum KernelProgramDiagnostic {
     /// whole subtree, so a node no use site reaches would be retained bytes
     /// that identity does not cover.
     UnreferencedAbiExpression,
+    /// A stage covers no semantic occurrence and combines no declared split.
+    ///
+    /// A split reduction's final pass legitimately computes no operation of its
+    /// own: the pass it combines already claims the reduction, and claiming it
+    /// twice would double-cover the graph. Any *other* uncovering stage is a
+    /// dispatch the program cannot account for.
+    UncoveringStage,
+    /// A split reduction's partial value is not initialized by its producer.
+    ///
+    /// Either no stage writes it, or the writer is not the stage the contract
+    /// names — so the pass that reads the partials would read values some other
+    /// stage produced, or none at all.
+    PartialNotInitializedByProducer,
+    /// A split reduction's result is not produced by its combiner.
+    PartialResultNotProducedByCombiner,
+    /// A split reduction's combiner never reads the partial values it names.
+    PartialNotConsumedByCombiner,
+    /// A split reduction stages its partials somewhere the program may not.
+    ///
+    /// Partials are internal to the split: staging them in an externally bound
+    /// input or a published output would put a value the caller owns between
+    /// the two passes.
+    PartialNotMaterialized,
+    /// A split reduction's partial extent is not its result extent per partition.
+    PartialExtentMismatch,
+    /// A split reduction covers no contributors, or its coverage overflows `u64`.
+    PartialCoverageUnrepresentable,
     /// The routing-commit transitions do not span the whole ordered lifecycle.
     IncompleteRoutingCommitContract {
         /// Transitions the program declares.
@@ -537,6 +566,13 @@ impl KernelProgramDiagnostic {
             Self::AmbiguousCanonicalKey { .. } => "ambiguous-canonical-key",
             Self::MissingApplicabilityGuard => "missing-applicability-guard",
             Self::UnreferencedAbiExpression => "unreferenced-abi-expression",
+            Self::UncoveringStage => "uncovering-stage",
+            Self::PartialNotInitializedByProducer => "partial-not-initialized-by-producer",
+            Self::PartialResultNotProducedByCombiner => "partial-result-not-produced-by-combiner",
+            Self::PartialNotConsumedByCombiner => "partial-not-consumed-by-combiner",
+            Self::PartialNotMaterialized => "partial-not-materialized",
+            Self::PartialExtentMismatch => "partial-extent-mismatch",
+            Self::PartialCoverageUnrepresentable => "partial-coverage-unrepresentable",
             Self::IncompleteRoutingCommitContract { .. } => "incomplete-routing-commit-contract",
             Self::IdentityLimit { .. } => "identity-limit",
         }

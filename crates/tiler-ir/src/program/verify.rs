@@ -62,6 +62,11 @@ pub(super) fn verify_program(
     let execution_order = canonical_execution_order(data, &keys.stages, &successors)
         .ok_or(KernelProgramDiagnostic::DependencyCycle)?;
 
+    // After the dependency phase, so a split whose passes are unordered reports
+    // the missing edge rather than the split, and before storage, so a split
+    // that stages its partials in an aliasable place is named as a split.
+    verify_partial_reductions(data, &accesses, &definitions)?;
+
     verify_usage(data, &accesses)?;
     verify_storage(data)?;
     verify_reuse(data, &accesses, &definitions, &execution_order, &successors)?;
@@ -369,6 +374,81 @@ fn verify_dependencies(
             if !declared {
                 return Err(KernelProgramDiagnostic::MissingDataDependency);
             }
+        }
+    }
+    Ok(())
+}
+
+/// Proves every declared split reduction is one the program actually realizes.
+///
+/// The obligations here are exactly the ones a single region cannot see. That
+/// the partial is initialized before it is used is proven in two parts: the
+/// named producer is its *unique* defining stage, and the named combiner reads
+/// it — for which the dependency phase already required a data edge from the
+/// definer, which is the visibility transition across the dispatch boundary.
+/// That the final pass covers every contributor exactly once is proven by the
+/// partition count agreeing with the two materialized extents and the split's
+/// own coverage product being representable.
+fn verify_partial_reductions(
+    data: &KernelProgramData,
+    accesses: &[Vec<ValueAccess>],
+    definitions: &[Option<ValueDefinition>],
+) -> Result<(), KernelProgramDiagnostic> {
+    // A dispatch that computes no operation of the bound graph has to be
+    // accounted for. The only account this profile admits is being the final
+    // pass of a declared split, whose partial pass already claims the reduction
+    // both of them realize.
+    for (index, stage) in data.stages.iter().enumerate() {
+        if stage.coverage.is_empty()
+            && !data
+                .partial_reductions
+                .iter()
+                .any(|split| split.combiner == ordinal(index))
+        {
+            return Err(KernelProgramDiagnostic::UncoveringStage);
+        }
+    }
+    for split in &data.partial_reductions {
+        let partial = position(split.partial);
+        let result = position(split.result);
+        if definitions[partial].is_none_or(|writer| writer.stage != split.producer) {
+            return Err(KernelProgramDiagnostic::PartialNotInitializedByProducer);
+        }
+        if definitions[result].is_none_or(|writer| writer.stage != split.combiner) {
+            return Err(KernelProgramDiagnostic::PartialResultNotProducedByCombiner);
+        }
+        if !accesses[partial]
+            .iter()
+            .any(|access| access.stage == split.combiner && access.mode == StageAccessMode::Read)
+        {
+            return Err(KernelProgramDiagnostic::PartialNotConsumedByCombiner);
+        }
+        if data.values[partial].role != ValueRole::Temporary {
+            return Err(KernelProgramDiagnostic::PartialNotMaterialized);
+        }
+        // A split covering nothing has no final pass to speak of, and one whose
+        // product is unrepresentable states a coverage no reader can check.
+        if split
+            .partitions
+            .checked_mul(split.contributors_per_partition)
+            .is_none()
+            || split.partitions == 0
+        {
+            return Err(KernelProgramDiagnostic::PartialCoverageUnrepresentable);
+        }
+        // Exactly one partial per (result position, partition): more would
+        // leave partials no pass combines, fewer would drop contributors.
+        let expected = data.values[result]
+            .shape
+            .element_count()
+            .and_then(|results| u64::try_from(results).ok())
+            .and_then(|results| results.checked_mul(split.partitions));
+        let staged = data.values[partial]
+            .shape
+            .element_count()
+            .and_then(|partials| u64::try_from(partials).ok());
+        if expected.is_none() || expected != staged {
+            return Err(KernelProgramDiagnostic::PartialExtentMismatch);
         }
     }
     Ok(())

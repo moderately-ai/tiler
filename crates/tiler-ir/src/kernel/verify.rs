@@ -18,8 +18,8 @@ use std::collections::BTreeSet;
 
 use crate::schedule::{
     Access, AccessMode, BoundsProofKind, BoundsWitnessId, CanonicalScheduledRegionIdentity,
-    ExecutionBinding, OwnershipWitnessId, ReductionTopology, ResourceRequirements, ScheduledRegion,
-    contributor_count, element_count,
+    ExecutionBinding, OwnershipWitnessId, ReductionPass, ReductionTopology, ResourceRequirements,
+    ScheduledRegion, contributor_count, element_count,
 };
 
 use super::error::KernelDiagnostic;
@@ -385,33 +385,52 @@ fn verify_reduction(
                 Err(KernelDiagnostic::ReductionContract)
             }
         }
-        ReductionTopology::Serial { axes, .. } => {
+        ReductionTopology::Serial { axes, .. }
+        | ReductionTopology::MultiPass {
+            pass: ReductionPass::Final,
+            axes,
+            ..
+        } => {
             let [read] = reads else {
                 return Err(KernelDiagnostic::ReductionContract);
             };
             let contributors = contributor_count(axes, &read.map)
                 .map_err(|_| KernelDiagnostic::ContributorDomain)?;
-            // Zero contributors commit the reduction identity and exactly one
-            // contributor commits the single loaded value; neither admits a
-            // bounded loop, whose range would have to be empty.
-            if contributors <= 1 {
-                return if walk.loops.is_empty() {
-                    Ok(())
-                } else {
-                    Err(KernelDiagnostic::ReductionContract)
-                };
-            }
-            let [reduction] = walk.loops.as_slice() else {
-                return Err(KernelDiagnostic::ReductionContract);
-            };
-            if reduction.start != 1
-                || reduction.end != contributors
-                || reduction.accumulators != [KernelType::F32]
-                || reduction.block_depth != 1
-            {
-                return Err(KernelDiagnostic::ReductionContract);
-            }
-            Ok(())
+            verify_contributor_loop(walk, contributors)
         }
+        // A partial pass combines its own partition's share, which the split
+        // states directly. Counting the access's contributors here would count
+        // the whole sequence and reject every partition but a trivial one.
+        ReductionTopology::MultiPass {
+            pass: ReductionPass::Partial,
+            partition,
+            ..
+        } => verify_contributor_loop(walk, partition.contributors_per_partition),
     }
+}
+
+/// Proves the body realizes exactly the scheduled contributor fold.
+///
+/// Zero contributors commit the reduction identity and exactly one contributor
+/// commits the single loaded value; neither admits a bounded loop, whose range
+/// would have to be empty.
+fn verify_contributor_loop(walk: &Walk, contributors: u64) -> Result<(), KernelDiagnostic> {
+    if contributors <= 1 {
+        return if walk.loops.is_empty() {
+            Ok(())
+        } else {
+            Err(KernelDiagnostic::ReductionContract)
+        };
+    }
+    let [reduction] = walk.loops.as_slice() else {
+        return Err(KernelDiagnostic::ReductionContract);
+    };
+    if reduction.start != 1
+        || reduction.end != contributors
+        || reduction.accumulators != [KernelType::F32]
+        || reduction.block_depth != 1
+    {
+        return Err(KernelDiagnostic::ReductionContract);
+    }
+    Ok(())
 }
