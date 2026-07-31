@@ -1,7 +1,7 @@
 ---
 id: carry-structured-provenance-through-numerical-rejections
 title: Carry structured provenance through numerical rejections
-status: in-progress
+status: done
 priority: p1
 dependencies: [carry-the-honourability-fact-provenance-into-the-artifact-record]
 related: [redesign-the-delivered-realization-record-from-typed-evidence]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, numerics, provenance]
-claimed_from: todo
-assignee: loop-carry-struct
-lease_expires_at: 1785517250
 ---
 ## User-visible outcome
 
@@ -47,4 +44,6 @@ This follows the selected-evidence foundation rather than expanding it. It must 
 
 **Fact — explain advanced.** `EXPLAIN_SCHEMA_VERSION` 8 → 9 and `EXPLAIN_RENDERER_VERSION` 6 → 7, because `HonourabilityOutcome::Unhonourable` now encodes and renders the complete refusing fact. Under v8 two profiles refusing the same behaviour on different measured compiler builds produced identical trace identities and identical renderings. `PROFILE_DESCRIPTOR_DOMAIN` and `GOVERNED_FEASIBILITY_RULE_SET` are deliberately unchanged: the profile's declared facts and the rules comparing them are what those name, and neither changed.
 
-**Decision for Tom — the public diagnostic facade is a concrete draft, not self-accepted.** `session::TargetDeclaredNumericalRefusal` gains `declared()` and `evidence()`; `evidence()` returns the borrowed `target::TargetNumericalRefusalEvidence<'_>`, whose read-side vocabulary (`TargetFactAuthority`, `TargetFactValidityScope`, `TargetProvenanceReference`, `TargetNumericalEvidenceBasis`, `TargetMeasurementContexts`, `TargetMeasurementContextReference`, `TargetCompilerBuilds`, `TargetCompilerBuildReference`, `TargetCompilerRoleReference`, `TargetExecutionEnvironmentReference`) lives in `target` beside the write-side declaration vocabulary it mirrors. Two shapes need review with the same facade pass as `redesign-the-delivered-realization-record-from-typed-evidence`: whether the read-side authority and validity enums belong beside `MeasuredFactAuthority` in `target` or on the session facade, and whether the caller-required behaviour should be restated on the refusal view. It is not restated today — it lives one level up on `TargetNumericalContractRejection::requirement`, which every disposition shares — and duplicating it would put one fact in two public places.
+**Accepted by Tom (2026-07-31).** Tom accepted the facade and directed that the two flagged shapes be resolved by whichever is most correct, performant, maintainable, and idiomatic regardless of change size. Both implemented shapes survive that elimination and stand: the read-side vocabulary stays in `target` because the whole target-fact vocabulary lives there and the exhaustive `from_internal` conversions sit beside the internal types they mirror, so a widened vocabulary is one module's build error; and the caller-required behaviour is not restated on the refusal view because it lives once on `TargetNumericalContractRejection::requirement` — a restated copy would silently misreport the caller's contract if the fact-resolution rule ever changed, and would put one fact in two public places with no authority between them. The paragraph below is the review packet as presented.
+
+**Review packet — the public diagnostic facade as accepted.** `session::TargetDeclaredNumericalRefusal` gains `declared()` and `evidence()`; `evidence()` returns the borrowed `target::TargetNumericalRefusalEvidence<'_>`, whose read-side vocabulary (`TargetFactAuthority`, `TargetFactValidityScope`, `TargetProvenanceReference`, `TargetNumericalEvidenceBasis`, `TargetMeasurementContexts`, `TargetMeasurementContextReference`, `TargetCompilerBuilds`, `TargetCompilerBuildReference`, `TargetCompilerRoleReference`, `TargetExecutionEnvironmentReference`) lives in `target` beside the write-side declaration vocabulary it mirrors. Two shapes need review with the same facade pass as `redesign-the-delivered-realization-record-from-typed-evidence`: whether the read-side authority and validity enums belong beside `MeasuredFactAuthority` in `target` or on the session facade, and whether the caller-required behaviour should be restated on the refusal view. It is not restated today — it lives one level up on `TargetNumericalContractRejection::requirement`, which every disposition shares — and duplicating it would put one fact in two public places.
