@@ -61,9 +61,9 @@ VALIDATOR = importlib.util.module_from_spec(_VALIDATOR_SPEC)
 _VALIDATOR_SPEC.loader.exec_module(VALIDATOR)
 
 RESULTS = HERE / "results"
-RECORD = RESULTS / "2026-07-27-numerics-covering-xcode26.6-metal32023.883" / "record.tsv"
+RECORD = RESULTS / "2026-07-31-numerics-covering-xcode26.6-metal32023.883" / "record.tsv"
 EXHAUSTIVE_RECORD = (
-    RESULTS / "2026-07-27-numerics-exhaustive-xcode26.6-metal32023.883" / "record.tsv"
+    RESULTS / "2026-07-31-numerics-exhaustive-xcode26.6-metal32023.883" / "record.tsv"
 )
 RECORDS = {PROBE.COVERING: RECORD, PROBE.EXHAUSTIVE_MATRIX: EXHAUSTIVE_RECORD}
 """The retained record for each case matrix, because a run measures exactly one of them.
@@ -1290,6 +1290,8 @@ PAIRED_REGISTRY_IDS: dict[str, str] = {
     "2026-07-25-numerics-exhaustive-xcode26.6-metal32023.883": "4294968621",
     "2026-07-27-numerics-covering-xcode26.6-metal32023.883": "4294968452",
     "2026-07-27-numerics-exhaustive-xcode26.6-metal32023.883": "4294968452",
+    "2026-07-31-numerics-covering-xcode26.6-metal32023.883": "4294968452",
+    "2026-07-31-numerics-exhaustive-xcode26.6-metal32023.883": "4294968452",
 }
 """Every retained record that dispatched both macOS and the iOS Simulator, with the ID it measured.
 
@@ -1297,13 +1299,15 @@ The values are transcribed from the records rather than derived, so a record
 rewritten to agree with this table fails the completeness assertion below rather
 than passing quietly. They deliberately disagree across measurements: the same
 named Apple M4 Max reported `4294968621` on 2026-07-24 and 2026-07-25 and
-`4294968452` on 2026-07-27 and 2026-07-30. That disagreement is the measured
-fact, not decay, which is why it is asserted positively.
+`4294968452` on 2026-07-27, 2026-07-30, and 2026-07-31. That disagreement is the
+measured fact, not decay, which is why it is asserted positively.
 """
 
 MACOS_ONLY_REGISTRY_IDS: dict[str, str] = {
     "2026-07-30-numerics-covering-apple9-f32-unified-msl4-macos26-xcode26.6-metal32023.883": "4294968452",
     "2026-07-30-numerics-exhaustive-apple9-f32-unified-msl4-macos26-xcode26.6-metal32023.883": "4294968452",
+    "2026-07-31-numerics-covering-apple9-f32-unified-msl4-macos26-xcode26.6-metal32023.883": "4294968452",
+    "2026-07-31-numerics-exhaustive-apple9-f32-unified-msl4-macos26-xcode26.6-metal32023.883": "4294968452",
 }
 """The named-profile records, which select the macOS family alone and so have no pair to check.
 

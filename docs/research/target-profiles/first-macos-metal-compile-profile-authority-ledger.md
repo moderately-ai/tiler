@@ -48,7 +48,9 @@ A compile-profile row is scoped by *where the evidence came from*, and two diffe
 | Device | `Apple M4 Max` |
 | Apple GPU family | `apple9` (`device_apple9_support supported`) |
 
-Both rows are transcribed from `spikes/apple-targets/results/2026-07-30-numerics-covering-apple9-f32-unified-msl4-macos26-xcode26.6-metal32023.883/record.tsv`, keys `environment.*` and `probe.*`, run `environment.date_utc 2026-07-30T21:15:27Z`, harness `probe.harness_sha256 ef224faf467be9321e4f2086d47543916ddae78c5bcca67eb42ebedcf2fc91e1` at repository base revision `0cd85ce5f01470fe8410c61d3ff4128a0633b207`.
+Both rows are transcribed from `spikes/apple-targets/results/2026-07-31-numerics-covering-apple9-f32-unified-msl4-macos26-xcode26.6-metal32023.883/record.tsv`, keys `environment.*` and `probe.*`, run `environment.date_utc 2026-07-31T20:35:47Z`, harness `probe.harness_sha256 e7b831d61024efcad712bce1495c0f2d078ef9ac766308e20d4a424e2d547d04` at repository base revision `93ddc4a31271d70fffd85fbbfc52ac612dad0c89`.
+
+**Why this is the 2026-07-31 record and not the 2026-07-30 one it replaces.** `close-or-retype-the-operand-permutation-inference` widened the harness by one kernel pair to isolate the operand-permutation row below, which moved the harness digest and therefore required a new run. Both environment tables above are byte-identical between the two records, and so is every case, comparison, and hazard row the 2026-07-30 record carried: the newer record differs from it in exactly 84 added `permutation_chain*` rows and the four provenance rows — date, harness digest, input-manifest digest, and base revision. The 2026-07-30 pair is retained beside it as the previous row. No measured value moved, which is the check that separates a widened harness from a changed one.
 
 **The `macos26` in that directory name is the deployment minimum of the offline request, not the host OS version.** The host ran macOS 27.0. A reader reconciling the two should not "correct" either. The same warning is already carried by `crates/tiler-metal/src/applicability.rs`, and it is repeated here because this is the other document a reader arrives at with both numbers in view.
 
@@ -180,11 +182,14 @@ That is a direct, isolated observation of what the selected realization permits,
 
 - **Measurement.** `nnan` and `ninf` appear only in the `fast` attribute strings. The `safe` cases this profile compiles under carry neither, so the compiler is making no finite-math assumption.
 
-### Operand permutation — forbidden, and this row is an `Inference`
+### Operand permutation — forbidden, delivered exactly
 
-- **No retained case isolates it.** The four rows above each have an attribute or a result lane that separates the modes; operand permutation has neither. It is delivered by the same `safe` compilation, whose attribute strings carry no relaxation at all, so a permutation relaxation would have to be one the front end applied without recording it.
-- **Inference, labelled as one.** Sound enough to construct a profile with, and not the same class of evidence as the five rows above. A reader must not quote this row as an isolated measurement.
-- **What would close it.** One retained kernel whose result distinguishes an operand order, compiled under the exact offline compiler, or a citation to MSL 4.0's normative statement of what `-fmetal-math-mode=safe` guarantees about operand order.
+- **Measurement.** The `permutation_chain` and `permutation_chain_reordered` kernels carry the same three contributors — `2**30`, `2.0`, and `-2**30` — in two orders and differ in nothing else. Under `safe`/`contract-off` each keeps three bare `fadd`s and returns its own left-deep fold: `case.macos.permutation_chain.safe.O2.contract-off.results` is `00000000` on all eight lanes, and `case.macos.permutation_chain_reordered.safe.O2.contract-off.results` is `40000000` on all eight. The cancelling pair absorbs the `2.0` when the order is canonical and cancels first when the `2.0` is moved past the negation.
+- **Why the pair and not one expression.** A single kernel's value cannot show that its contributors were *not* reordered; a source-permuted twin whose value differs can. That the result lane moves when — and only when — the source order moves is what makes the canonical kernel's `00000000` a preserved order rather than a shape nothing could disturb.
+- **Why this is not a second reading of the reassociation row.** ADR 0014 keeps reassociation and contributor permutation as independent permissions, and this pair separates them. The permuted value `40000000` is unreachable by *any* parenthesization of the canonical leaf order: four leaves admit exactly five full binary trees, and `test_the_permutation_probe_is_unreachable_by_reassociating_the_canonical_order` enumerates all five for every operand in the vector and holds `40000000` to being absent from each. Reassociating the canonical order reaches only `00000000` or the operand itself.
+- **Execution witness.** Both kernels witness on `80000000`, reading `operand=80000000,expected=00000000,observed=00000000,status=executed` and `operand=80000000,expected=40000000,observed=40000000,status=executed`. Negative zero is the one non-subnormal operand whose result survives the relaxed licence folding the cancelling pair away, so the witness guards against deletion rather than measuring the licence under test.
+- **The relaxed modes are a boundary here, not a second data point.** Under `relaxed` and `fast` the canonical chain's `float_operations` is `none` — the licence folds the cancelling pair to zero and then removes the surviving identity add — so those cases return every operand unchanged, witness `not-executed`, and are inadmissible by the guard's first layer. The reordered twin keeps one `fadd+reassoc+…` and returns `40172fdf` and `40400000` on the two ordinary normals, which is `x + 2.0`. "The relaxed modes did not permute" and "the relaxed modes deleted the question" are different claims and only the second is supported.
+- **Validity:** the exact offline compiler and the `safe`/`contract-off` selection, exactly as the four rows above.
 
 ## Metal target facts, and which of them project
 
@@ -246,7 +251,17 @@ Per the repository's research contract, this record closes with named outcomes r
 1. **Contract update, applied.** Every quantitative, index-arithmetic, dispatchability, and F32 subnormal row above has a named authority, an exact validity scope, and a reproducible reference, and the section above names the owner that constructed the bound declaration from exactly these rows and no others.
 2. **Explicitly deferred, with a trigger.** The device-address-width row stays absent until a KIR operation consumes it.
 3. **Explicitly deferred, with a trigger.** The runtime host offer stays unavailable until one of ADR 0086's three reconsideration triggers supplies the missing authority. No implementation task closes it.
-4. **Open question, with the evidence that would close it.** One row — operand permutation — is an `Inference` rather than a `Measurement`, because no retained case isolates it and the emitted attribute strings that isolate its four neighbours have nothing to say about operand order. It closes either by a retained kernel whose result distinguishes an operand order under the exact offline compiler, or by a citation to MSL 4.0's normative statement of what `-fmetal-math-mode=safe` guarantees about it. Until then the row is constructible as stated, carrying the `Inference` label, and must not be quoted as an isolated measurement.
+4. **Closed by the retained kernel, after the citation route was eliminated.** The operand-permutation row was an `Inference` because no retained case isolated it, and this outcome named two things that would close it. `close-or-retype-the-operand-permutation-inference` attempted the cheaper one — the MSL citation — first, and eliminated it: the vendored MSL 4.0 and 4.1 specifications contain no normative statement about operand order at all, and the sentence that comes closest is refuted on this very row by evidence already in this ledger. The derivation is recorded under "The route this row did not close by" below, so a later reader can refute the elimination rather than only the conclusion. The row is now an isolated `Measurement` beside its four neighbours, established by the retained `permutation_chain`/`permutation_chain_reordered` pair, and the numerical section above states it as one. Every numerical row on this profile is now a measurement under the exact offline compiler; none is an inference.
+
+## The route this row did not close by
+
+Recording the eliminated route, because the next reader tempted by it needs the refutation and not only the conclusion.
+
+**Fact — the vendored specifications say nothing about operand order.** Neither `apple-metal-shading-language-specification-v4-2025-10-23.pdf` nor `apple-metal-shading-language-specification-v4.1-2026-06-04.pdf` contains the string `operand order`, any occurrence of `commut`, or any occurrence of `evaluation order` or `order of evaluation`, case-insensitively, in their extracted text. The exact command is in "Reproducible checks" below; it prints `0` for each document, and printing nothing is what this claim consists of.
+
+**Fact — what the MSL 4.0 specification does say.** §1.6.3 (page 15) enumerates six fast-math relaxations — no NaNs, no INFs, no signed zeroes, allow reciprocal, allow reassociation, allow contract — and describes the strictest mode as: "If you set the option to safe, it disables unsafe floating-point optimizations by preventing the compiler from making any transformations that might affect the results. This sets the FP contract to on."
+
+**Inference — that sentence cannot be quoted as this row's normative authority, and the refutation is in this ledger.** Read strongly, "any transformations that might affect the results" is a universal claim, and it is false of the compilation this profile actually consumes: under `safe` the emitted module declares `air.compile.denorms_disable`, and the F32 subnormal rows above measure that declaration changing results. A sentence whose universal quantifier the retained evidence already contradicts on this exact toolchain is not evidence of the strength `external_guarantee` asserts. Read narrowly — as scoped to the six enumerated relaxations — it establishes only that the enumerated relaxations are off, and absence from a list of things a *relaxed* mode enables is not a statement about what the strict mode *guarantees*. Neither reading yields a normative operand-order guarantee, so the row is sourced as a measurement.
 
 ## Reproducible checks
 
@@ -264,13 +279,32 @@ rg -n 'maxTotalThreadsPerThreadgroup' \
   "$(xcrun --sdk macosx --show-sdk-path)/System/Library/Frameworks/Metal.framework/Headers/MTLComputePipeline.h"
 
 # The two environments and the measured numerical rows.
-cd spikes/apple-targets/results/2026-07-30-numerics-covering-apple9-f32-unified-msl4-macos26-xcode26.6-metal32023.883
+cd spikes/apple-targets/results/2026-07-31-numerics-covering-apple9-f32-unified-msl4-macos26-xcode26.6-metal32023.883
 rg -n '^(probe|environment)\.' record.tsv
 rg -n 'case\.macos\.(multiply_two|multiply_half|materialize)\.safe\.O2\.contract-off\.(results|execution_witness)' record.tsv
 
 # The attribute strings that isolate contraction, reassociation, signed zero, NaN, and infinity.
 # Every `safe` row is bare; `relaxed` adds reassoc/nsz/arcp/afn; `fast` adds nnan/ninf.
 rg -n 'float_operations' record.tsv | rg -o '(safe|relaxed|fast)\.O2\.contract-off\.float_operations\t.*' | sort -u
+
+# The permutation pair: three bare adds each, `00000000` for the canonical order
+# and `40000000` for the source-permuted twin, both with an executed witness.
+rg -n 'case\.macos\.permutation_chain(_reordered)?\.safe\.O2\.contract-off\.' record.tsv
+```
+
+The eliminated normative route, from the repository root. The first command prints
+`0` once per vendored specification — a counted absence rather than a silent one,
+so "no match" and "the command did not run" are distinguishable. The second prints
+the sentence that comes closest, and that the F32 subnormal rows above refute as a
+universal claim.
+
+```sh
+for pdf in docs/research/apple-targets/sources/apple-metal-shading-language-specification-v4*.pdf; do
+  pdftotext -layout "$pdf" - | rg -i -c 'operand order|commut|evaluation order|order of evaluation' || echo "0 $pdf"
+done
+
+pdftotext -layout docs/research/apple-targets/sources/apple-metal-shading-language-specification-v4-2025-10-23.pdf - \
+  | rg -n -A2 'If you set the option to safe'
 ```
 
 The feature-table check is a positive check on four rows. The `maxTotalThreadsPerThreadgroup` check is deliberately *not* a source for the workgroup row: it is the evidence that the value lives on a prepared pipeline, which is why the row is a query rather than a fact.
