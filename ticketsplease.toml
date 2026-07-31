@@ -120,7 +120,7 @@ satisfies_dependents = false
 "implementation/runtime" = ["crates/tiler-runtime/**", "prototypes/serial-sum-run/**"]
 "implementation/cache" = ["crates/tiler-cache/**"]
 "implementation/build" = ["crates/tiler-build/**"]
-"implementation/frontend" = ["crates/tiler-macros/**", "crates/tiler-frontend-*/**"]
+"implementation/frontend" = ["crates/tiler/**", "crates/tiler-macros/**", "crates/tiler-frontend-*/**"]
 "implementation/candle" = ["crates/tiler-candle/**", "prototypes/candle-*/**"]
 
 # Optionally map a scope to its owning crate so the Rust backend can expand
@@ -135,8 +135,15 @@ satisfies_dependents = false
 "implementation/metal-aot" = "tiler-metal-aot"
 "implementation/runtime" = "tiler-runtime"
 "implementation/build" = "tiler-build"
+"implementation/frontend" = "tiler-macros"
 
-# Frontend and Candle scopes have no crate mapping until their owning crates are admitted. The Metal-AOT, runtime, cache, and build mappings now name their real owners, tiler-metal-aot, tiler-runtime, tiler-cache, and tiler-build. Each crate-admission ticket must atomically add the real workspace package and add or move its mapping here.
+# The Candle scope has no crate mapping until its owning crate is admitted. The Metal-AOT, runtime, cache, and build mappings now name their real owners, tiler-metal-aot, tiler-runtime, tiler-cache, and tiler-build. Each crate-admission ticket must atomically add the real workspace package and add or move its mapping here.
+#
+# The frontend scope owns two crates, `tiler` and `tiler-macros`, and both are
+# covered by its globs above. It maps to `tiler-macros` because that is the one
+# with reverse dependents to expand: `tiler` re-exports from it, while nothing
+# may depend on `tiler` itself -- the `dependency_direction` test in that crate
+# is what holds the frontend at the top of the graph.
 #
 # The runtime scope's globs still cover `prototypes/serial-sum-run/**` as well,
 # because the proof executable and the loader it drives are edited together;

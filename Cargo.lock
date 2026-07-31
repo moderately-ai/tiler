@@ -359,6 +359,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tiler"
+version = "0.0.0"
+dependencies = [
+ "tiler-macros",
+ "trybuild",
+]
+
+[[package]]
 name = "tiler-artifact"
 version = "0.0.0"
 dependencies = [
@@ -405,6 +413,10 @@ dependencies = [
  "num-traits",
  "trybuild",
 ]
+
+[[package]]
+name = "tiler-macros"
+version = "0.0.0"
 
 [[package]]
 name = "tiler-metal"
