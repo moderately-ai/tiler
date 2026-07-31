@@ -1,7 +1,7 @@
 ---
 id: derive-transformer-operation-and-shape-surface
 title: Derive the transformer operation and shape surface from the selected workload
-status: in-progress
+status: done
 priority: p1
 dependencies: [define-first-metal-lm-workload]
 related: [own-operation-family-support-matrix, scope-einsum-contraction-support, promote-the-symbolic-index-profile-to-a-public-boundary]
@@ -9,9 +9,6 @@ scopes: [contracts/foundation, contracts/navigation, research/shapes, research/i
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, semantics, shapes, transformer, language-model, breadth]
-claimed_from: todo
-assignee: loop-derive-trans
-lease_expires_at: 1785520599
 ---
 ## User-visible outcome
 
