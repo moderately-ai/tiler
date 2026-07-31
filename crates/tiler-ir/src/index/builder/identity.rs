@@ -78,12 +78,12 @@ pub(super) fn structural_index_key(node: &IndexNode, expressions: &[DraftIndexEx
         IndexNode::FloorDiv { dividend, divisor } => {
             output.push(4);
             push_slice(&mut output, &expressions[*dividend as usize].structural_key);
-            output.extend_from_slice(&divisor.to_be_bytes());
+            divisor.encode(&mut output);
         }
         IndexNode::Modulo { dividend, divisor } => {
             output.push(5);
             push_slice(&mut output, &expressions[*dividend as usize].structural_key);
-            output.extend_from_slice(&divisor.to_be_bytes());
+            divisor.encode(&mut output);
         }
     }
     output
@@ -277,7 +277,7 @@ pub(super) fn alpha_expr_key_impl(
                 &mut output,
                 &alpha_expr_key_impl(*dividend, expressions, dimension_map, dimensions),
             );
-            output.extend_from_slice(&divisor.to_be_bytes());
+            divisor.encode(&mut output);
         }
         IndexNode::Modulo { dividend, divisor } => {
             output.push(5);
@@ -285,7 +285,7 @@ pub(super) fn alpha_expr_key_impl(
                 &mut output,
                 &alpha_expr_key_impl(*dividend, expressions, dimension_map, dimensions),
             );
-            output.extend_from_slice(&divisor.to_be_bytes());
+            divisor.encode(&mut output);
         }
     }
     output
@@ -315,11 +315,11 @@ pub(super) fn remap_node(
         },
         IndexNode::FloorDiv { dividend, divisor } => IndexNode::FloorDiv {
             dividend: expression_map[dividend],
-            divisor: *divisor,
+            divisor: divisor.clone(),
         },
         IndexNode::Modulo { dividend, divisor } => IndexNode::Modulo {
             dividend: expression_map[dividend],
-            divisor: *divisor,
+            divisor: divisor.clone(),
         },
     }
 }
@@ -643,7 +643,12 @@ pub(super) fn encoded_index_node_len(node: &IndexNode) -> usize {
                     .map(|term| encoded_integer_len(&term.coefficient).saturating_add(4))
                     .fold(0_usize, usize::saturating_add),
             ),
-        IndexNode::FloorDiv { .. } | IndexNode::Modulo { .. } => 13,
+        // One tag byte, the dividend's index, and the divisor's own tagged
+        // encoding — read from the divisor rather than fixed at eight bytes,
+        // because a symbolic one carries its scope and name.
+        IndexNode::FloorDiv { divisor, .. } | IndexNode::Modulo { divisor, .. } => {
+            5_usize.saturating_add(divisor.encoded_len())
+        }
     }
 }
 
@@ -780,12 +785,12 @@ pub(super) fn encode_index_node(out: &mut Vec<u8>, node: &IndexNode) {
         IndexNode::FloorDiv { dividend, divisor } => {
             out.push(4);
             out.extend_from_slice(&dividend.to_be_bytes());
-            out.extend_from_slice(&divisor.to_be_bytes());
+            divisor.encode(out);
         }
         IndexNode::Modulo { dividend, divisor } => {
             out.push(5);
             out.extend_from_slice(&dividend.to_be_bytes());
-            out.extend_from_slice(&divisor.to_be_bytes());
+            divisor.encode(out);
         }
     }
 }

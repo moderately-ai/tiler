@@ -11,20 +11,25 @@ use tiler_ir::index::{
     ScalarArity, ScalarAttributeField, ScalarAttributeSchema, ScalarAttributes, ScalarEffect,
     ScalarInferenceError, ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey,
     ScalarOperationContract, ScalarOperationDefinition, ScalarOperationInferencer,
-    ScalarRegistryBuilder, ScalarValueId, TensorRole, VerifiedIndexRegion, VerifiedTensorId,
+    ScalarRegistryBuilder, ScalarValueId, SourcedExtent, TensorRole, VerifiedIndexRegion,
+    VerifiedTensorId,
 };
+use tiler_ir::program::abi::AvailabilityPhase;
 use tiler_ir::semantic::{
     AttributeFieldId, CANONICAL_F32_ARITHMETIC_NAN_BITS, CanonicalField, CanonicalValue,
     CanonicalValueKind, CanonicalValueView, F32, FrozenSemanticRegistry, NormativeDefinitionRef,
     ProviderDiagnosticCode, ProviderIdentity, ResolvedValueType, TypeKey,
 };
-use tiler_ir::shape::{Extent, Shape};
+use tiler_ir::shape::{
+    BindingSource, Extent, ExtentRelation, ExtentTerm, FactProvenance, InterfaceParameterKey,
+    RootBinding, SemanticInputConstraint, Shape, ShapeEnvBuilder, ShapeSymbol, SymbolScope,
+};
 use tiler_reference::{
     FloatBitOrder, FrozenReferenceRegistry, FrozenScalarReferenceRegistry, IndexRegionAuthority,
     IndexRegionEvaluationError, IndexRegionEvaluator, IndexRegionInput,
     ReferenceCapabilityRevision, ReferenceElement, ReferenceOperationError, ReferenceSignature,
     ScalarReferenceOperation, ScalarReferenceOutputs, ScalarReferenceRegistryBuilder,
-    ScalarReferenceRequest, Tensor, TensorPayloadView,
+    ScalarReferenceRequest, Tensor, TensorPayloadView, UnsupportedRegionFeature,
 };
 
 const CONSTANT_BITS: AttributeFieldId = AttributeFieldId::new(1);
@@ -518,8 +523,9 @@ fn scaled_and_quasi_affine_coordinates_resolve_through_exact_index_arithmetic() 
     assert_eq!(gather(&scaled, &scalars, &source), [1.0, 3.0, 5.0]);
 
     let folded = gather_region(&scalars, 6, 7, |builder, _, index| {
-        let quotient = builder.floor_div(index, 3)?;
-        let remainder = builder.modulo(index, 3)?;
+        let three = SourcedExtent::Static(Extent::new(3));
+        let quotient = builder.floor_div(index, three.clone())?;
+        let remainder = builder.modulo(index, three)?;
         Ok(builder.linear_combination(
             IndexInteger::from_i128(0),
             &[
@@ -533,6 +539,94 @@ fn scaled_and_quasi_affine_coordinates_resolve_through_exact_index_arithmetic() 
         gather(&folded, &scalars, &source),
         [0.0, 2.0, 4.0, 1.0, 3.0, 5.0],
         "floor division and modulo transpose a 2x3 view of the flat source"
+    );
+}
+
+/// This oracle declines a semi-affine coordinate instead of resolving it.
+///
+/// **The refusal is deliberate even though the value is derivable.** The
+/// environment below pins `d == 2`, so the oracle could ask the region's shape
+/// environment what the divisor resolves to and evaluate the quotient exactly.
+/// It must not: this evaluator is the correctness oracle other results are
+/// compared against, and a value it derived from a second authority would be a
+/// value the comparison could no longer distinguish from the subject's own
+/// derivation of it. ADR 0046 admits exactly this conservative decline.
+///
+/// The neighbour is the same region with the divisor written as a literal,
+/// which evaluates — so the refusal is about the divisor's *form* and not about
+/// floor division or about the region failing to verify.
+#[test]
+fn a_semi_affine_divisor_is_declined_rather_than_resolved() {
+    let scalars = scalar_registry(1);
+    let source = f32_tensor(Shape::from_dims([6]), [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]);
+
+    let divisor = ShapeSymbol::new(SymbolScope::new("region/0").unwrap(), "d").unwrap();
+    let mut draft = ShapeEnvBuilder::new();
+    draft.declare(divisor.clone()).unwrap();
+    draft
+        .bind(
+            &divisor,
+            RootBinding::new(
+                BindingSource::InterfaceParameter {
+                    key: InterfaceParameterKey::new("d").unwrap(),
+                },
+                AvailabilityPhase::LiveDevicePreflight,
+                FactProvenance::RuntimeValidated,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    draft
+        .require(SemanticInputConstraint::new(
+            ExtentRelation::interval(ExtentTerm::Symbol(divisor.clone()), 2, 2).unwrap(),
+            FactProvenance::FrontendRequired,
+        ))
+        .unwrap();
+    let environment = Arc::new(draft.build().unwrap());
+
+    let build = |divisor: SourcedExtent| -> VerifiedIndexRegion {
+        let mut builder = IndexRegionBuilder::new_with_shape_environment(
+            scalars.clone(),
+            Arc::clone(&environment),
+        )
+        .unwrap();
+        let i = builder
+            .dimension(DomainRole::Parallel, Extent::new(6))
+            .unwrap();
+        let input = builder
+            .tensor(TensorRole::Input, f32_type(), Shape::from_dims([6]))
+            .unwrap();
+        let output = builder
+            .tensor(TensorRole::Output, f32_type(), Shape::from_dims([6]))
+            .unwrap();
+        let index = builder.dimension_expr(i).unwrap();
+        let quotient = builder.floor_div(index, divisor).unwrap();
+        let value = builder.read(input, &[i], &[quotient]).unwrap();
+        let write = builder.write(output, &[i], &[index]).unwrap();
+        builder.output(write, value).unwrap();
+        builder.build().unwrap()
+    };
+
+    let symbolic = build(SourcedExtent::Symbol(divisor));
+    let ids = input_ids(&symbolic);
+    assert_eq!(
+        evaluator(&scalars)
+            .evaluate(
+                &symbolic,
+                IndexRegionAuthority::new(&scalars),
+                &[IndexRegionInput::new(ids[0], &source)],
+            )
+            .unwrap_err(),
+        IndexRegionEvaluationError::Unsupported {
+            feature: UnsupportedRegionFeature::SymbolicIndexDivisor,
+        },
+    );
+
+    let literal = build(SourcedExtent::Static(Extent::new(2)));
+    assert_eq!(
+        gather(&literal, &scalars, &source),
+        [0.0, 0.0, 1.0, 1.0, 2.0, 2.0],
+        "the same arithmetic with a literal divisor evaluates exactly",
     );
 }
 

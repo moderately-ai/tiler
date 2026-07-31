@@ -19,7 +19,7 @@ use tiler_ir::index::{
     IndexExprView, MAX_INDEX_INTEGER_BYTES, ReducerBodyValueDefinitionView, ReductionTraversal,
     ScalarAttributeField, ScalarAttributes, ScalarAuthorityEvidence, ScalarOpKey,
     ScalarOperationDefinition, ScalarOperationKindRef, ScalarOperationRef, ScalarReductionRef,
-    ScalarRegistryError, ScalarValueDefinitionView, TensorAccessRef, TensorRole,
+    ScalarRegistryError, ScalarValueDefinitionView, SourcedExtent, TensorAccessRef, TensorRole,
     VerifiedDimensionId, VerifiedIndexExprId, VerifiedIndexHandleError, VerifiedIndexRegion,
     VerifiedReducerBodyOperationId, VerifiedReducerBodyValueId, VerifiedScalarOperationId,
     VerifiedScalarValueId, VerifiedTensorAccessId, VerifiedTensorId, add_f32_scalar_op,
@@ -29,7 +29,7 @@ use tiler_ir::semantic::{
     CanonicalField, CanonicalValue, CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE,
     FrozenSemanticRegistry, ProviderIdentity, ResolvedValueType, TypeKey,
 };
-use tiler_ir::shape::Shape;
+use tiler_ir::shape::{Extent, Shape};
 
 use crate::arithmetic::{ExactInteger, MagnitudeExceeded};
 use crate::evaluate::{decode_f32, f32_element};
@@ -101,6 +101,14 @@ pub enum UnsupportedRegionFeature {
     ScalarOperationKind,
     /// The region used an index-expression form added after this oracle.
     IndexExpressionForm,
+    /// A floor division or modulo divided by a symbolic extent.
+    ///
+    /// This oracle evaluates one exact point at a time against concrete input
+    /// tensors, so a divisor it cannot read is a value it would have to invent.
+    /// ADR 0046 admits exactly this refusal: a pass may "conservatively decline
+    /// semi-affine maps they cannot analyze", and declining is the only
+    /// alternative to returning a coordinate nothing established.
+    SymbolicIndexDivisor,
     /// The region used a scalar value definition added after this oracle.
     ScalarValueForm,
     /// The region used a reducer-body value definition added after this oracle.
@@ -116,6 +124,7 @@ impl fmt::Display for UnsupportedRegionFeature {
             Self::CompoundValueRepresentation => "compound reference value representation",
             Self::ScalarOperationKind => "unimplemented scalar operation kind",
             Self::IndexExpressionForm => "unimplemented index-expression form",
+            Self::SymbolicIndexDivisor => "symbolic index floor-division or modulo divisor",
             Self::ScalarValueForm => "unimplemented scalar value definition",
             Self::ReducerBodyValueForm => "unimplemented reducer-body value definition",
         })
@@ -1145,6 +1154,21 @@ fn unsupported(feature: UnsupportedRegionFeature) -> IndexRegionEvaluationError 
     IndexRegionEvaluationError::Unsupported { feature }
 }
 
+/// Reads a floor-division or modulo divisor this oracle can actually divide by.
+///
+/// The one place the affine-only boundary of this evaluator is drawn. A divisor
+/// the region names symbolically is refused rather than resolved through the
+/// region's shape environment: this evaluator is the correctness oracle other
+/// results are compared against, so a value it derived from a second authority
+/// would be a value the comparison could not distinguish from the subject's own
+/// derivation of it.
+fn constant_divisor(divisor: &SourcedExtent) -> Result<u64, IndexRegionEvaluationError> {
+    divisor
+        .as_static()
+        .map(Extent::get)
+        .ok_or_else(|| unsupported(UnsupportedRegionFeature::SymbolicIndexDivisor))
+}
+
 /// Host evaluator for verified canonical index regions.
 #[derive(Clone, Debug)]
 pub struct IndexRegionEvaluator {
@@ -1317,7 +1341,8 @@ impl<'a> RegionEvaluation<'a> {
                 return Err(IndexRegionEvaluationError::InputBoundary { input_index });
             }
             let shape = declaration
-                .static_shape()
+                .shape()
+                .as_static()
                 .ok_or_else(|| unsupported(UnsupportedRegionFeature::SymbolicTensorShape))?;
             if binding.value().shape() != shape {
                 return Err(IndexRegionEvaluationError::InputShape {
@@ -1580,7 +1605,7 @@ impl<'a> RegionEvaluation<'a> {
                     .region
                     .dimension(id)
                     .map_err(IndexRegionEvaluationError::Handle)?;
-                let extent = dimension.static_extent().ok_or_else(|| {
+                let extent = dimension.extent().as_static().ok_or_else(|| {
                     unsupported(UnsupportedRegionFeature::SymbolicDimensionExtent)
                 })?;
                 Ok((id, extent.get()))
@@ -1603,7 +1628,8 @@ impl<'a> RegionEvaluation<'a> {
                 .tensor(access.tensor())
                 .map_err(IndexRegionEvaluationError::Handle)?;
             let shape = tensor
-                .static_shape()
+                .shape()
+                .as_static()
                 .ok_or_else(|| unsupported(UnsupportedRegionFeature::SymbolicTensorShape))?;
             let count = shape.element_count().ok_or_else(|| {
                 resource(
@@ -1736,13 +1762,13 @@ impl<'a> RegionEvaluation<'a> {
             }
             IndexExprView::FloorDiv { dividend, divisor } => {
                 self.expression(frame, dividend)?
-                    .div_mod_floor(divisor)
+                    .div_mod_floor(constant_divisor(divisor)?)
                     .ok_or(IndexRegionEvaluationError::MalformedRegion)?
                     .0
             }
             IndexExprView::Modulo { dividend, divisor } => {
                 self.expression(frame, dividend)?
-                    .div_mod_floor(divisor)
+                    .div_mod_floor(constant_divisor(divisor)?)
                     .ok_or(IndexRegionEvaluationError::MalformedRegion)?
                     .1
             }
@@ -1815,7 +1841,8 @@ impl<'a> RegionEvaluation<'a> {
             return Err(IndexRegionEvaluationError::MalformedRegion);
         }
         let shape = tensor
-            .static_shape()
+            .shape()
+            .as_static()
             .ok_or_else(|| unsupported(UnsupportedRegionFeature::SymbolicTensorShape))?;
         let offset = self.access_offset(frame, access, shape)?;
         let bound = *self

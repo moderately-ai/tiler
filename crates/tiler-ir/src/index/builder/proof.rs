@@ -207,7 +207,15 @@ impl IndexRegionBuilder {
                 // predicates; a write still refuses unresolved ownership. This
                 // is deliberately not a proof-resource outcome because no
                 // finite enumeration was available to stop.
-                let enumerable = points.is_some() && self.boundary_extents(shape).is_some();
+                //
+                // A divisor the environment does not fix blocks the walk for the
+                // same reason and is refused in the same place: there is no
+                // arithmetic to perform at a point, and charging a budget for a
+                // walk that cannot happen would report an absent proof as a
+                // resource limit.
+                let enumerable = points.is_some()
+                    && self.boundary_extents(shape).is_some()
+                    && self.coordinates_are_evaluable(&access.coordinates);
                 let Some(points) = points.filter(|_| enumerable) else {
                     if unresolved_ownership {
                         diagnostics.push(IndexRegionDiagnostic::WriteOwnershipNotProven {
@@ -621,6 +629,14 @@ impl IndexRegionBuilder {
             }
             return false;
         };
+        // Fail closed rather than walking: the caller's `enumerable` gate
+        // already excluded an undetermined divisor, so reaching this returns
+        // "not proved" with no diagnostic — a write's ownership requirement is
+        // refused separately by that same gate, and inventing an
+        // out-of-bounds refutation here would be a claim nothing established.
+        let Some(divisors) = self.plan_divisors(expression_plan) else {
+            return false;
+        };
         let mut seen =
             (access.mode == AccessMode::Write).then(|| vec![0_u64; elements.div_ceil(64)]);
         let mut point = vec![0_u64; extents.len()];
@@ -631,7 +647,7 @@ impl IndexRegionBuilder {
                 .copied()
                 .zip(point.iter().copied())
                 .collect();
-            let evaluated = self.evaluate_expressions(expression_plan, &assignments);
+            let evaluated = self.evaluate_expressions(expression_plan, &assignments, &divisors);
             let mut linear = 0_usize;
             let mut in_bounds = true;
             for (coordinate, extent) in access.coordinates.iter().zip(axes) {
@@ -697,10 +713,59 @@ impl IndexRegionBuilder {
         true
     }
 
+    /// Returns whether every expression reachable from these coordinates has a
+    /// value at a domain point.
+    ///
+    /// The only way it can fail is a semi-affine divisor the environment does
+    /// not pin to one value: with no divisor there is no quotient, and a walk
+    /// that produced no value for a coordinate would be indistinguishable, to
+    /// [`Self::verify_access_exhaustively`], from a coordinate that landed out
+    /// of bounds. Deciding it before the walk is what keeps a missing proof from
+    /// being reported as a refutation.
+    pub(super) fn coordinates_are_evaluable(&self, coordinates: &[u32]) -> bool {
+        let mut reached = BTreeSet::new();
+        for coordinate in coordinates {
+            self.mark_expr(*coordinate, &mut reached);
+        }
+        reached.into_iter().all(
+            |expression| match &*self.expressions[expression as usize].node {
+                IndexNode::FloorDiv { divisor, .. } | IndexNode::Modulo { divisor, .. } => {
+                    self.determined(divisor).is_some()
+                }
+                IndexNode::Constant(_)
+                | IndexNode::Dimension(_)
+                | IndexNode::LinearCombination { .. } => true,
+            },
+        )
+    }
+
+    /// Resolves every divisor an enumeration plan will need.
+    ///
+    /// `None` when one of them is undetermined, which
+    /// [`Self::coordinates_are_evaluable`] already excluded before any budget
+    /// was taken. Resolving them once, up front, is what lets the point loop
+    /// below be total arithmetic rather than a per-point lookup that could fail
+    /// halfway through a walk.
+    fn plan_divisors(&self, plan: &[u32]) -> Option<BTreeMap<u32, u64>> {
+        let mut divisors = BTreeMap::new();
+        for index in plan {
+            match &*self.expressions[*index as usize].node {
+                IndexNode::FloorDiv { divisor, .. } | IndexNode::Modulo { divisor, .. } => {
+                    divisors.insert(*index, self.determined(divisor)?);
+                }
+                IndexNode::Constant(_)
+                | IndexNode::Dimension(_)
+                | IndexNode::LinearCombination { .. } => {}
+            }
+        }
+        Some(divisors)
+    }
+
     pub(super) fn evaluate_expressions(
         &self,
         plan: &[u32],
         dimensions: &BTreeMap<u32, u64>,
+        divisors: &BTreeMap<u32, u64>,
     ) -> BTreeMap<u32, BigInt> {
         let mut values: BTreeMap<u32, BigInt> = BTreeMap::new();
         for index in plan {
@@ -715,11 +780,11 @@ impl IndexRegionBuilder {
                         sum + &term.coefficient.0 * &values[&term.value]
                     })
                 }
-                IndexNode::FloorDiv { dividend, divisor } => {
-                    values[dividend].div_floor(&BigInt::from(*divisor))
+                IndexNode::FloorDiv { dividend, .. } => {
+                    values[dividend].div_floor(&BigInt::from(divisors[index]))
                 }
-                IndexNode::Modulo { dividend, divisor } => {
-                    values[dividend].mod_floor(&BigInt::from(*divisor))
+                IndexNode::Modulo { dividend, .. } => {
+                    values[dividend].mod_floor(&BigInt::from(divisors[index]))
                 }
             };
             values.insert(*index, value);

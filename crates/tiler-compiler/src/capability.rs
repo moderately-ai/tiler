@@ -40,7 +40,8 @@ use tiler_ir::index::{
     CanonicalScalarDefinitionProjection, CanonicalScalarRegistrySnapshotIdentity, DimensionId,
     DomainRole, FrozenScalarRegistry, IndexBuildError, IndexExprId, IndexInteger,
     IndexRegionBuilder, ScalarAttributes, ScalarOpKey, ScalarReducerBodyBuilder,
-    ScalarRegistryError, ScalarResults, ScalarValueId, TensorAccessId, TensorId, TensorRole,
+    ScalarRegistryError, ScalarResults, ScalarValueId, SourcedExtent, SymbolicExtentError,
+    TensorAccessId, TensorId, TensorRole,
 };
 use tiler_ir::semantic::{
     FrozenSemanticRegistry, OpKey, OperationAttributes, ProviderIdentity, RegistryError,
@@ -350,6 +351,15 @@ impl ScalarLoweringResults {
 pub enum LoweringEmitError {
     /// The canonical builder rejected an emission.
     Build(IndexBuildError),
+    /// The canonical builder refused a sourced extent.
+    ///
+    /// Separate from [`Self::Build`] because the two name different
+    /// authorities: a structural limit says the emitted region grew too large,
+    /// while a source refusal says this region's shape environment does not
+    /// declare, supply in time, or prove what the extent needs. Folding the
+    /// second into the first would report the environment's answer under the
+    /// index layer's name.
+    Extent(SymbolicExtentError),
     /// The provider refused the occurrence facts it was handed.
     ///
     /// A provider raises this when the occurrence is outside the exact form it
@@ -368,6 +378,9 @@ impl fmt::Display for LoweringEmitError {
             Self::Build(source) => {
                 write!(formatter, "canonical builder rejected emission: {source}")
             }
+            Self::Extent(source) => {
+                write!(formatter, "canonical builder refused an extent: {source}")
+            }
             Self::Occurrence { rule } => {
                 write!(formatter, "provider refused occurrence fact {rule}")
             }
@@ -379,6 +392,7 @@ impl Error for LoweringEmitError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Build(source) => Some(source),
+            Self::Extent(source) => Some(source),
             Self::Occurrence { .. } => None,
         }
     }
@@ -387,6 +401,12 @@ impl Error for LoweringEmitError {
 impl From<IndexBuildError> for LoweringEmitError {
     fn from(source: IndexBuildError) -> Self {
         Self::Build(source)
+    }
+}
+
+impl From<SymbolicExtentError> for LoweringEmitError {
+    fn from(source: SymbolicExtentError) -> Self {
+        Self::Extent(source)
     }
 }
 
@@ -684,7 +704,15 @@ impl<'a> IndexAccessLoweringContext<'a> {
         Ok(self.builder.linear_combination(constant, terms)?)
     }
 
-    /// Creates Euclidean floor division by a positive constant.
+    /// Creates Euclidean floor division by a proven-positive extent.
+    ///
+    /// The divisor is the canonical index vocabulary rather than a bare integer,
+    /// so a provider spells a literal as [`SourcedExtent::Static`]. A symbolic
+    /// divisor is refused for as long as this context's region is built without
+    /// a shape environment — as a
+    /// [`tiler_ir::index::ExtentSourceError::UndeclaredSymbol`], which is
+    /// exactly what it is here — rather than being unrepresentable and so
+    /// unable to say why.
     ///
     /// # Errors
     ///
@@ -692,12 +720,12 @@ impl<'a> IndexAccessLoweringContext<'a> {
     pub fn floor_div(
         &mut self,
         dividend: IndexExprId,
-        divisor: u64,
+        divisor: SourcedExtent,
     ) -> Result<IndexExprId, LoweringEmitError> {
         Ok(self.builder.floor_div(dividend, divisor)?)
     }
 
-    /// Creates Euclidean modulo by a positive constant.
+    /// Creates Euclidean modulo by a proven-positive extent.
     ///
     /// # Errors
     ///
@@ -705,7 +733,7 @@ impl<'a> IndexAccessLoweringContext<'a> {
     pub fn modulo(
         &mut self,
         dividend: IndexExprId,
-        divisor: u64,
+        divisor: SourcedExtent,
     ) -> Result<IndexExprId, LoweringEmitError> {
         Ok(self.builder.modulo(dividend, divisor)?)
     }

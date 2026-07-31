@@ -1145,7 +1145,8 @@ fn bind_operands(
     }
     for (position, (operand, input)) in distinct.iter().zip(&inputs).enumerate() {
         let shape = input
-            .static_shape()
+            .shape()
+            .as_static()
             .ok_or(RefinementError::SymbolicBoundary)?;
         if input.value_type() != &operand.value_type || shape != &operand.shape {
             return Err(RefinementError::OperandInterface { position });
@@ -1190,7 +1191,8 @@ fn bind_results(
         }
         let output = region.tensor(access.tensor())?;
         let shape = output
-            .static_shape()
+            .shape()
+            .as_static()
             .ok_or(RefinementError::SymbolicBoundary)?;
         if output.role() != TensorRole::Output
             || output.value_type() != &result.value_type
@@ -1436,7 +1438,7 @@ mod tests {
         DomainRole, FrozenScalarRegistry, IndexDomainSoundProof, ScalarArity,
         ScalarAttributeSchema, ScalarAttributes, ScalarEffect, ScalarInferenceError,
         ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract,
-        ScalarOperationDefinition, ScalarOperationInferencer, ScalarRegistryBuilder,
+        ScalarOperationDefinition, ScalarOperationInferencer, ScalarRegistryBuilder, SourcedExtent,
         UnknownIndexDomainPredicate, VerifiedIndexRegion,
     };
     use tiler_ir::semantic::{
@@ -1672,8 +1674,9 @@ mod tests {
             let row = context.dimension_expr(i)?;
             let mut read = row;
             for _ in 0..self.rounds {
-                let modulo = context.modulo(read, 2)?;
-                let quotient = context.floor_div(read, 2)?;
+                let two = SourcedExtent::Static(Extent::new(2));
+                let modulo = context.modulo(read, two.clone())?;
+                let quotient = context.floor_div(read, two)?;
                 read = context.linear_combination(
                     0_i128.into(),
                     &[(2_i128.into(), quotient), (1_i128.into(), modulo)],
