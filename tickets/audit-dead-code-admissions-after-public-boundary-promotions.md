@@ -25,8 +25,8 @@ promotion wave makes the intended producers and consumers reachable.
 | `crates/tiler-cache/src/expansion/preflight.rs` | 1 | `accept-the-tiler-cache-public-boundary` |
 | `crates/tiler-compiler/src/boundary.rs` | 1 | a top-down property search or a second execution profile |
 | `crates/tiler-compiler/src/explain.rs` | 1 | a trace consumer, for the presentation renderer and the reserved vocabulary |
-| `crates/tiler-compiler/src/feasibility.rs` | 1 | a later-phase assessment: artifact-evidence, device-runtime, prepared-kernel, launch |
-| `crates/tiler-compiler/src/honourability.rs` | 1 | `declare-metal-numerical-honourability`, first to reach a non-exact honouring means |
+| `crates/tiler-compiler/src/target/feasibility.rs` | 1 | a later-phase assessment: artifact-evidence, device-runtime, prepared-kernel, launch |
+| `crates/tiler-compiler/src/target/honourability.rs` | 1 | `declare-metal-numerical-honourability`, first to reach a non-exact honouring means |
 | `crates/tiler-ir/src/index/sourced.rs` | 1 | `promote-the-symbolic-index-profile-to-a-public-boundary` |
 | `crates/tiler-ir/src/shape/env.rs` | 1 | `promote-the-symbolic-index-profile-to-a-public-boundary` |
 | `crates/tiler-metal-aot/src/family.rs` | 44 | `prototype-inline-proc-macro-frontend`, via `record-that-the-frontend-axis-is-review-gated` |
