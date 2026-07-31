@@ -1,7 +1,7 @@
 ---
 id: choose-the-expansion-cache-root-policy
 title: Choose the expansion-cache root policy
-status: todo
+status: in-progress
 priority: p2
 dependencies: [admit-the-tiler-facade-and-proc-macro-crate-boundary]
 related: [exercise-the-expansion-cache-under-cargo-and-rust-analyzer, prototype-inline-proc-macro-frontend, prototype-macro-embedding-and-cargo-behavior]
@@ -9,6 +9,9 @@ scopes: [implementation/frontend, research/cache, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [cache, frontend, proc-macro]
+claimed_from: todo
+assignee: loop-cache-root
+lease_expires_at: 1785523879
 ---
 ## User-visible outcome
 

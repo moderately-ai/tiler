@@ -1,7 +1,7 @@
 ---
 id: scope-transformer-nonlinear-normalization-and-reductions
 title: Scope the workload's transformer nonlinear, normalization, and reduction families
-status: todo
+status: in-progress
 priority: p1
 dependencies: [derive-transformer-operation-and-shape-surface]
 related: [implement-parallel-reduction-strategies, research-region-accuracy-contracts-and-analyzable-error-budgets, own-operation-family-support-matrix]
@@ -9,6 +9,9 @@ scopes: [research/numerics, contracts/numerics, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, numerics, transformer, normalization, softmax, language-model]
+claimed_from: todo
+assignee: loop-scope-l3
+lease_expires_at: 1785523879
 ---
 ## User-visible outcome
 
