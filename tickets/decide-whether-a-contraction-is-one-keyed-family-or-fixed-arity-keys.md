@@ -1,7 +1,7 @@
 ---
 id: decide-whether-a-contraction-is-one-keyed-family-or-fixed-arity-keys
 title: Decide whether a contraction is one keyed family or fixed-arity keys per shape class
-status: todo
+status: done
 priority: p1
 dependencies: [derive-transformer-operation-and-shape-surface]
 related: [scope-einsum-contraction-support, spike-first-metal-contraction-vertical, decide-whether-to-admit-a-distributivity-permission, own-operation-family-support-matrix]
@@ -32,6 +32,10 @@ The reserved question that rung L3 cannot start without is put to Tom as one ato
 - Do not bundle the other two reserved choices. Whether a contraction node may consume more than two operands is independent, and this workload supplies no evidence on it, which is worth saying rather than manufacturing pressure. Distributivity has its own ticket.
 - Record the answer in an ADR under `docs/decisions/`, with its acceptance carried by a separate `accept-adr-NNNN-*` ticket so the work graph can distinguish written from decided.
 - Update Q-SEM-015, the Milestone 6 framing's reserved-decisions section, and the contraction row of the [support matrix](../docs/roadmap.md#operation-family-support-matrix) in the same change that accepts the ADR.
+
+## Decided (2026-07-31)
+
+Tom selected the single keyed family after a standalone two-sided implications walkthrough, with an explicit rider that the implementation take no shortcuts and fail nowhere silently — maximum build-time safety. [ADR 0087](../docs/decisions/0087-model-contraction-as-one-keyed-family-with-an-index-structure.md) is the accepted record; because the decision was taken live before the ADR was written, written and decided coincide and no separate acceptance ticket is needed — the distinction that delivery step protects (a written-but-undecided record) never existed here. Q-SEM-015, the Milestone 6 reserved-decisions section, and the support-matrix contraction row were updated in the same change. The multi-operand choice stays reserved, and the family stays at R1: identity is decided, nothing is admitted.
 
 ## Non-goals
 
