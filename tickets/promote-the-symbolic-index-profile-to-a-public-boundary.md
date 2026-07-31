@@ -1,7 +1,7 @@
 ---
 id: promote-the-symbolic-index-profile-to-a-public-boundary
 title: Promote the sourced-extent and semi-affine index profile to a reviewed public boundary
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [implement-shapeenv-index-bindings, implement-shapeenv-core, decide-shapeenv-builder-attachment, decide-symbolic-extent-error-siting, decide-domain-dimension-symbolic-view, decide-shapeenv-module-path, represent-semi-affine-index-expressions-in-the-ir]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, shapes, indexing, api]
-claimed_from: todo
-assignee: loop-promote-the-
-lease_expires_at: 1785517249
 ---
 ## User-visible outcome
 
@@ -63,6 +60,10 @@ Draft `dead_code` allowances were removed only where the accepted subset made th
 **Two named deviations from the implementation keys.** First, the ticket names a `as_constant` divisor projection; `SourcedExtent::as_static` already is that projection and adding a second near-identical accessor would be the duplicate the guidance warns against, so consumers call `as_static`. Second, the shape-vocabulary variant is `SymbolicExtentError::ShapeVocabulary`, not `Shape`: a public variant named `Shape` puts a second `Shape` in the crate's exported name table and rustc then stops printing the short path for the `Shape` type, which broke `tests/shape-evidence/fail/shape_array_rank_limit.stderr`. That was observed, bisected to this variant, and fixed by the rename rather than by re-blessing the golden.
 
 **Not attempted.** Nothing widens the admitted profile: a sourced extent is still a literal or one declared symbol, symbolic divisor positivity still comes only from semantic input constraints, and no nonlinear `ShapeEnv` solving was added.
+
+## Accepted (2026-07-31)
+
+Tom accepted the exact surface as merged, including both recorded deviations (no `as_constant` beside `as_static`; `SymbolicExtentError::ShapeVocabulary` naming) and the disclosed scope widening to `implementation/compiler` and `implementation/reference` for the mechanical migration the evidence clause required. The index-region identity domain advance to v9 was verified on the merged tree by the full suite.
 
 ## Graph maintenance
 
