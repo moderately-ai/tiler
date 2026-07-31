@@ -291,3 +291,19 @@ legality matrices, barrier scope and convergence, deferred-query timing,
 specialization-specific facts, generic fallback retention, and the invariant
 that an estimate never proves legality. The current private prototype does not
 establish this full test matrix.
+
+## Executable evidence for a non-GPU profile
+
+The [bounded scalar CPU backend vertical](../../../spikes/target-profiles/scalar-cpu-vertical/README.md)
+declares a second target profile through the accepted builder and carries one
+payload from it to execution, so the target-neutral claim above has been
+exercised against a target that is not a GPU. Two of its findings bear directly
+on this model. A profile whose workgroup bound is an *available* compile-time
+fact rather than a deferred prepared-entry query mints no deferred predicate at
+all, which is the phased query behaving as optional rather than universal. And
+the quantitative axis set has no referent for a target triple, an ABI or data
+layout, a vector width, a mask/tail policy, or a scalable-vector length, so a
+CPU profile carries those only inside its key string -- the gap this document
+anticipates and the CPU contract sketch names, now observed rather than
+predicted. The vertical covers the scalar half alone; every vector and threading
+claim in it remains undeclared and therefore `Unknown`.
