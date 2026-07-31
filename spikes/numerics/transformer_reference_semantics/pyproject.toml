@@ -1,0 +1,25 @@
+# Environment for the transformer reference-semantics probe.
+#
+# The pins are the same two the C1 conformance fixture uses and for the same
+# reason: the observation *is* the evidence, so a floating resolution would
+# silently re-baseline it. `transformers` is 4.51.0 because the checkpoint's own
+# `config.json` declares that version, which makes it the definitional reference
+# rather than one candidate; `torch` is 2.6.0 because the exceptional-value and
+# bit-level answers below are answers about its CPU F32 kernels.
+#
+# Unlike the conformance fixture this probe never loads the checkpoint: every
+# question it asks is about the reference's formulas and their behaviour on
+# hand-authored boundary inputs, so it needs no weights and no network.
+[project]
+name = "transformer-reference-semantics"
+version = "0.1.0"
+description = "What the pinned Qwen3 reference computes for softmax, RMS normalization, masking, and SiLU"
+requires-python = "==3.11.*"
+dependencies = [
+    "torch==2.6.0",
+    "transformers==4.51.0",
+    "numpy==2.2.5",
+]
+
+[tool.uv]
+environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]

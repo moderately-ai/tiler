@@ -6,7 +6,7 @@ title: "Numerical semantics"
 topics: ["numerics", "semantics", "dtypes", "accuracy"]
 contract_status: "mixed"
 implementation_status: "partial"
-evidence: ["tiler.research.numerics.affine-quantization-semantics","tiler.research.numerics.dtype-identity-admission-policy","tiler.research.numerics.dtype-resolution-precedents","tiler.research.numerics.float-to-integer-conversion-precedents","tiler.research.numerics.floating-point-extrema-precedents","tiler.research.numerics.integer-division-precedents","tiler.research.numerics.integer-overflow-precedents","tiler.research.numerics.mature-dtype-taxonomy","tiler.research.numerics.operation-conformance-matrix","tiler.research.numerics.quantization-ir-precedents","tiler.research.numerics.quantized-value-and-transform-contract","tiler.research.numerics.reduction-semantics-and-legality","tiler.research.numerics.region-accuracy-contract","tiler.research.numerics.sound-region-analyzer-spike","tiler.research.numerics.transcendental-accuracy-precedents"]
+evidence: ["tiler.research.numerics.affine-quantization-semantics","tiler.research.numerics.dtype-identity-admission-policy","tiler.research.numerics.dtype-resolution-precedents","tiler.research.numerics.float-to-integer-conversion-precedents","tiler.research.numerics.floating-point-extrema-precedents","tiler.research.numerics.integer-division-precedents","tiler.research.numerics.integer-overflow-precedents","tiler.research.numerics.mature-dtype-taxonomy","tiler.research.numerics.operation-conformance-matrix","tiler.research.numerics.quantization-ir-precedents","tiler.research.numerics.quantized-value-and-transform-contract","tiler.research.numerics.reduction-semantics-and-legality","tiler.research.numerics.region-accuracy-contract","tiler.research.numerics.sound-region-analyzer-spike","tiler.research.numerics.transcendental-accuracy-precedents","tiler.research.numerics.transformer-nonlinear-normalization-and-reductions"]
 ticket: "numerical-policy-contract"
 ---
 
@@ -310,6 +310,8 @@ semantic optimization, not a boolean or a later license to weaken meaning.
 Proof, exhaustive finite-domain testing, or an applicable normative
 guarantee can establish hard feasibility. Empirical qualification remains
 labeled empirical and cannot establish an unmeasured worst-case bound.
+
+**A composite operation's own formula is part of its contract, not a choice left to whoever spells it.** [Transformer non-linear, normalization, and reduction contracts](research/numerics/transformer-nonlinear-normalization-and-reductions.md) derives the first worked instance: an admitted `Softmax` must pin whether the row maximum is subtracted before exponentiation, and whether the result divides by the denominator or multiplies by its reciprocal, because the alternatives differ observably in F32 — the first as a finite value against NaN, the second at measured discriminating elements. The reciprocal choice in particular is *not* an exercise of the `reciprocal_math` permission when it is the pinned formula; the permission governs replacing a stated division, and a contract that stated the wrong one would diverge while consuming no permission at all. The same rule reaches an admitted `RmsNorm`'s `eps` placement and its choice of a reciprocal square root, and an admitted activation's choice between two conventional spellings that measurement separates by one ULP.
 
 Local operation contracts are mandatory and authoritative. The initial
 optimizer does not redistribute an end-to-end error budget across operations.
@@ -682,6 +684,8 @@ Unsupported
 Target defaults such as TF32 input precision, reduced-precision accumulation,
 floating-point contraction, flush-to-zero, or conversion rounding cannot
 expand the program's permissions.
+
+**Measurement — a backend default that would expand them, at one pinned compiler.** The [transformer non-linear derivation](research/numerics/transformer-nonlinear-normalization-and-reductions.md) records that at offline compiler `metalfe-32023.883` an unqualified MSL `exp`, `rsqrt`, or `fmax` selects `air.exp.f32`, `air.rsqrt.f32`, and `air.fmax.f32` under the governed `-fmetal-math-mode=safe -fmetal-math-fp32-functions=precise` flag set, and selects `air.fast_exp.f32`, `air.fast_rsqrt.f32`, and `air.fast_fmax.f32` — with LLVM `fast` flags on each call — when the flags are omitted, because the compiler predefines the fast-function selector by default. Intrinsic selection and call-site fast-math licence move independently: `-fmetal-math-mode=relaxed` changes the first without the second. A profile that recorded one "fast math" bit would conflate two freedoms, which the rule above already forbids; the operational consequence is that emitting a transcendental for a precise-family contract requires stating the flag rather than inheriting it. The observation is compile-side and bounded to that compiler; it establishes which intrinsic is selected and nothing about what any of them returns.
 
 ### The contract is a required input, stated before planning
 

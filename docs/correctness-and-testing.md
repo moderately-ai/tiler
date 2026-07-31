@@ -6,7 +6,7 @@ title: "Correctness and testing"
 topics: ["correctness", "testing", "verification"]
 contract_status: "accepted"
 implementation_status: "partial"
-evidence: ["tiler.research.numerics.operation-conformance-matrix", "tiler.research.numerics.region-accuracy-contract", "tiler.research.numerics.sound-region-analyzer-spike"]
+evidence: ["tiler.research.numerics.operation-conformance-matrix", "tiler.research.numerics.region-accuracy-contract", "tiler.research.numerics.sound-region-analyzer-spike", "tiler.research.numerics.transformer-nonlinear-normalization-and-reductions"]
 ticket: "prototype-optimizer-conformance-gate"
 ---
 
@@ -166,6 +166,8 @@ verification protocol are maintained in the
 Random programs should be small enough to shrink into useful counterexamples.
 Every optimizer rule needs positive tests, negative precondition tests, and a
 semantic equivalence property.
+
+**A corpus that reports uniform agreement has usually failed to ask the question.** Two formulas that a reader would call the same operation typically agree on almost every input and differ in a narrow band, so an unrestricted agreement rate mostly measures how often the corpus avoided the boundary. The [transformer non-linear derivation](research/numerics/transformer-nonlinear-normalization-and-reductions.md) produced both failure modes while separating lookalikes: two SiLU spellings reported identical over a corpus with no input near the exponential's overflow threshold and one ULP apart once one was added, and a softmax's divide-versus-reciprocal question was decidable only after the count was restricted to elements where the two forms actually differ and stratified by a row width narrow enough that the denominator's own accumulation order could not contribute. So a differential corpus separating two candidate contracts states which inputs discriminate and counts only those, and a comparison that cannot name a discriminating input has not yet established agreement.
 
 For curated graphs of at most eight operations, the exhaustive region oracle
 enumerates all legal candidates, exact partitions, multi-output alternatives,

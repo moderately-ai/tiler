@@ -67,3 +67,24 @@ Do not start this before its trigger fires. Each rung's scope is derived from th
 - **On close, update the ladder table in `docs/roadmap.md`** — its rung for this ticket currently reads "none", and nothing updates it automatically (the docs have no gate; a reader is the only check).
 
 - **Softmax and normalization are reductions** — their order/accuracy contracts feed `implement-parallel-reduction-strategies` (accumulation dtype, deterministic vs relaxed order). Cross-link findings there rather than duplicating the contract in two places.
+
+## Delivered outcome (2026-07-31)
+
+The derivation is [Transformer non-linear, normalization, and reduction contracts](../docs/research/numerics/transformer-nonlinear-normalization-and-reductions.md). It gives softmax, RMS normalization (both extent classes), SiLU, causal-mask application, and the attention scale an exact formula, dtype signature, conversion behaviour, exceptional-value behaviour, and an order or accuracy contract, and names five unresolved decisions (D-1 to D-5) with what would close each. Two retained probes support it: [Metal transcendental emission](../spikes/numerics/metal_transcendental_emission/README.md) and [transformer reference semantics](../spikes/numerics/transformer_reference_semantics/README.md).
+
+Three findings correct what a competent implementer would otherwise have assumed, and each was established by measurement rather than by reading a formula:
+
+- The causal mask's fill value is the most negative **finite** F32 (`0xff7fffff`), not `-inf`, and an attended entry is **negative zero**. The two conventions disagree observably on a fully masked row — uniform against NaN.
+- The reference softmax multiplies by the denominator's **reciprocal**; it does not divide. At row widths 2 and 3, where the denominator has no accumulation-order freedom left, every discriminating element matches the reciprocal form and none matches division.
+- `x * sigmoid(x)` and `x / (1 + exp(-x))` are one ULP apart at `-88.0`; the reference matches the second. An earlier corpus without an input near the exponential's overflow threshold reported them identical.
+
+Capability tickets filed, in dependency order: [`admit-the-silu-activation-family`](admit-the-silu-activation-family.md) → [`admit-the-rms-normalization-family`](admit-the-rms-normalization-family.md) → [`admit-the-softmax-family`](admit-the-softmax-family.md). Accumulation-dtype and order findings are cross-linked into [`implement-parallel-reduction-strategies`](implement-parallel-reduction-strategies.md) rather than duplicated. Masking files nothing: its two composed families are already delivered by [`admit-the-reindex-and-broadcast-operation-families`](admit-the-reindex-and-broadcast-operation-families.md) and `tiler::add-f32@1`, and what this rung adds to them is the mask's value rather than a new requirement.
+
+**Two edits this rung owes and did not make**, because both files are held exclusively by other live tickets:
+
+- `docs/roadmap.md` (`contracts/navigation`) — the L3′ ladder row's maturity cell still reads "none" and should read: `non-linear, normalization, and reduction contracts derived; three capability verticals filed; nothing executes`.
+- `docs/research/README.md` (`contracts/navigation`) — the *Numerical operations* catalog group needs the line below, in alphabetical position after "Sound region-accuracy analyzer integration spike". It is fenced rather than inline because its link targets are relative to `docs/research/README.md` and would not resolve from this file:
+
+```text
+- [Transformer non-linear, normalization, and reduction contracts](numerics/transformer-nonlinear-normalization-and-reductions.md) — pending; primary-source-synthesis, bounded-measurement; informs: [Numerical semantics](../numerical-semantics.md), [Correctness and testing](../correctness-and-testing.md); experiments: [Metal transcendental emission probe](../../spikes/numerics/metal_transcendental_emission/README.md), [Transformer reference semantics](../../spikes/numerics/transformer_reference_semantics/README.md)
+```
