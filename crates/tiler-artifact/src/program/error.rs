@@ -7,6 +7,10 @@
 //! [`ArtifactVerificationError`] carrying the whole-artifact
 //! [`ArtifactDiagnostic`] set and the intact builder.
 //!
+//! [`RecordedArtifactIdentityError`] is a third and separate boundary: it
+//! rejects a *host assertion* about which artifact a consumer expects, which is
+//! neither an insertion nor a verification of anything this crate built.
+//!
 //! No variant erases its cause into a message: each names the rejected entity,
 //! the exhausted resource with its attempted and permitted quantities, or the
 //! expected and actual quantity a rule required.
@@ -22,6 +26,7 @@ use super::expr::{
     AbiEvaluationError, AbiType, AvailabilityPhase, MAX_TARGET_PROPERTY_KEY_BYTES,
     TargetPropertyKeyError,
 };
+use super::model::ARTIFACT_DOMAIN_LABEL;
 
 /// An artifact-owned entity category used by typed handle and closure errors.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -483,6 +488,69 @@ impl Error for ArtifactBuildError {
         }
     }
 }
+
+/// Failure while stating recorded bytes as an expected artifact identity.
+///
+/// Its own boundary rather than an [`ArtifactBuildError`] variant, because
+/// nothing is being built: no draft is amended, no entity is inserted, and the
+/// caller holds no builder to recover. A consumer that reads an identity beside
+/// cached bytes and finds it unusable is diagnosing its own recording, and the
+/// three answers it can act on — nothing was recorded, the recording is beyond
+/// what this build admits, and the recording is of something else — are all
+/// here.
+///
+/// `#[non_exhaustive]` because a later check on a recorded assertion lands as a
+/// new variant rather than by widening one of these.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum RecordedArtifactIdentityError {
+    /// No bytes were recorded.
+    ///
+    /// Distinct from the domain rejection below: an empty recording is a
+    /// producer that wrote nothing, not one that wrote the wrong thing.
+    Empty,
+    /// The recorded bytes exceed what any artifact identity may occupy.
+    TooLong {
+        /// Recorded byte length.
+        bytes: usize,
+        /// Maximum admitted byte length.
+        limit: usize,
+    },
+    /// The leading frame is not this build's artifact-identity domain.
+    ///
+    /// The recorded bytes are some other identity, digest, or key, or an
+    /// artifact identity from a superseded domain. Recognizing the domain is
+    /// syntax and type separation and proves nothing about the remainder.
+    ForeignDomain {
+        /// Recorded byte length. The bytes themselves are not carried: the
+        /// governed bound is 64 MiB, and an error is not a place to copy one.
+        bytes: usize,
+    },
+}
+
+impl fmt::Display for RecordedArtifactIdentityError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str(
+                "artifact.recorded-identity: no bytes were recorded as the expected artifact \
+                 identity",
+            ),
+            Self::TooLong { bytes, limit } => write!(
+                formatter,
+                "artifact.recorded-identity: {bytes} recorded byte(s) exceed the {limit}-byte \
+                 bound on an artifact identity",
+            ),
+            Self::ForeignDomain { bytes } => write!(
+                formatter,
+                "artifact.recorded-identity: {bytes} recorded byte(s) do not lead with the \
+                 `{ARTIFACT_DOMAIN_LABEL}` domain, so they are not an artifact identity this \
+                 build can be asked about",
+            ),
+        }
+    }
+}
+
+impl Error for RecordedArtifactIdentityError {}
 
 /// One deterministic whole-artifact verification failure.
 ///

@@ -97,7 +97,8 @@ use tiler_artifact::program::{
     AbiEvaluationError, AbiFacts, AbiValue, ArtifactCodecFailure, ArtifactExecutionPolicy,
     BackendPayloadDescriptor, BindingTarget, BufferAccess, CanonicalArtifactProgramIdentity,
     DecodedArtifact, DecodedEntry, DecodedExpr, DecodedInput, DecodedOutput, DecodedVariant,
-    RoutingPolicy, SectionView, StageDependencyReason, decode_artifact,
+    RecordedArtifactProgramIdentity, RoutingPolicy, SectionView, StageDependencyReason,
+    decode_artifact,
 };
 
 use std::error::Error;
@@ -223,26 +224,25 @@ impl DecodedProgram {
     /// the artifact alone is reported before any that is a property of what the
     /// caller bound.
     ///
-    /// `expected` is the canonical identity bytes of the artifact the caller
-    /// means to run — [`CanonicalArtifactProgramIdentity::as_bytes`] from
-    /// whatever named it. This is the binding-by-identity path a decoded
-    /// envelope supports: it proves the loaded bytes *are* that artifact without
-    /// reconstructing anything, because [`Self::decode`] already re-derived the
-    /// identity from content rather than reading it from the manifest. Its
-    /// strength is exactly the strength of whatever recorded it. An identity
-    /// re-read from these same bytes is a tautology, and this method cannot tell
-    /// the difference, so a caller passing [`Self::identity`] has checked
-    /// nothing.
+    /// `expected` is the identity of the artifact the caller means to run,
+    /// stated as a [`RecordedArtifactProgramIdentity`]. This is the
+    /// binding-by-identity path a decoded envelope supports: it proves the
+    /// loaded bytes *are* that artifact without reconstructing anything, because
+    /// [`Self::decode`] already re-derived the identity from content rather than
+    /// reading it from the manifest. Its strength is exactly the strength of
+    /// whatever recorded it. An identity re-read from these same bytes is a
+    /// tautology, and this method cannot tell the difference, so a caller
+    /// restating [`Self::identity`] has checked nothing.
     ///
-    /// **Bytes rather than a [`CanonicalArtifactProgramIdentity`], and the
-    /// reason is a limitation rather than a preference.** That type has no
-    /// public constructor — `grep -n "impl CanonicalArtifactProgramIdentity" -A
-    /// 8 crates/tiler-artifact/src/program/model.rs` shows `as_bytes` and
-    /// nothing else — so only code that *built* an artifact can hold one. Taking
-    /// it here would make the second source this method documents, an identity
-    /// recorded beside cached bytes, unrepresentable, which is the whole cold-
-    /// consumer case. `state-an-expected-artifact-identity-from-recorded-bytes`
-    /// tracks giving the type a checked constructor so this can be typed again.
+    /// **An assertion type rather than a
+    /// [`CanonicalArtifactProgramIdentity`], and the asymmetry is the point.**
+    /// The canonical type has no public constructor, so only code that *built*
+    /// or decoded an artifact can hold one; taking it here would make the second
+    /// source this method documents — an identity recorded beside cached bytes —
+    /// unrepresentable, which is the whole cold-consumer case. Taking bytes
+    /// instead named nothing at the call site. The recorded type states which of
+    /// the two this argument is, and deliberately does not claim it was derived
+    /// from validated content.
     ///
     /// `facts` are the ABI facts the caller has bound — input extents, target
     /// properties. They are taken here rather than after the commit because
@@ -286,7 +286,7 @@ impl DecodedProgram {
     pub fn preflight(
         &mut self,
         environment: &ExecutionEnvironment,
-        expected: &[u8],
+        expected: &RecordedArtifactProgramIdentity,
         facts: &AbiFacts,
     ) -> Result<Preflight<'_>, LoadRejection> {
         let (identity, variant) = self.select_route(environment, expected, facts)?;
@@ -312,7 +312,7 @@ impl DecodedProgram {
     pub fn prepare(
         &mut self,
         environment: &ExecutionEnvironment,
-        expected: &[u8],
+        expected: &RecordedArtifactProgramIdentity,
         facts: &AbiFacts,
     ) -> Result<RoutePreparation<'_>, LoadRejection> {
         let (identity, variant) = self.select_route(environment, expected, facts)?;
@@ -340,13 +340,13 @@ impl DecodedProgram {
     fn select_route<'a>(
         &'a self,
         environment: &ExecutionEnvironment,
-        expected: &[u8],
+        expected: &RecordedArtifactProgramIdentity,
         facts: &AbiFacts,
     ) -> Result<(CanonicalArtifactProgramIdentity, DecodedVariant<'a>), LoadRejection> {
         let identity = self.identity();
-        if identity.as_bytes() != expected {
+        if identity.as_bytes() != expected.as_bytes() {
             return Err(LoadRejection::ProgramMismatch {
-                expected: expected.to_vec(),
+                expected: expected.clone(),
                 loaded: identity,
             });
         }
@@ -880,8 +880,8 @@ pub enum LoadRejection {
     /// expected side is a byte string somebody *recorded*. Spelling both as one
     /// type would suggest the two carry equal evidence.
     ProgramMismatch {
-        /// Canonical identity bytes the caller expected these bytes to have.
-        expected: Vec<u8>,
+        /// The identity the caller recorded and stated as its expectation.
+        expected: RecordedArtifactProgramIdentity,
         /// Identity re-derived from the bytes that were actually loaded.
         loaded: CanonicalArtifactProgramIdentity,
     },
@@ -996,7 +996,7 @@ impl fmt::Display for LoadRejection {
                 formatter,
                 "runtime.program-mismatch: expected an artifact of {} identity bytes, loaded one \
                  of {}, and they differ",
-                expected.len(),
+                expected.as_bytes().len(),
                 loaded.as_bytes().len(),
             ),
             Self::NoApplicableVariant { packaged } => write!(

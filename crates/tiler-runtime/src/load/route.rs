@@ -510,13 +510,13 @@ impl<'a> Preflight<'a> {
     /// preflighting it again does not compile (`E0499`):
     ///
     /// ```compile_fail,E0499
-    /// use tiler_artifact::program::AbiFacts;
+    /// use tiler_artifact::program::{AbiFacts, RecordedArtifactProgramIdentity};
     /// use tiler_runtime::load::{DecodedProgram, ExecutionEnvironment};
     ///
     /// fn commit_then_mint_another(
     ///     program: &mut DecodedProgram,
     ///     environment: &ExecutionEnvironment,
-    ///     expected: &[u8],
+    ///     expected: &RecordedArtifactProgramIdentity,
     ///     facts: &AbiFacts,
     /// ) {
     ///     let route = program.preflight(environment, expected, facts).unwrap().commit();

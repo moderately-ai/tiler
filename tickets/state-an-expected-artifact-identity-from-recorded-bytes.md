@@ -5,7 +5,7 @@ status: todo
 priority: p2
 dependencies: []
 related: [route-the-runtime-loader-through-the-dispatch-record]
-scopes: [implementation/artifact, implementation/runtime, contracts/artifacts]
+scopes: [implementation/artifact, implementation/runtime, contracts/artifacts, research/target-profiles]
 shared_scopes: []
 paths: []
 tags: [implementation, artifact, public-boundary]
@@ -46,6 +46,8 @@ That rule is right for what it was protecting — nobody should mint an artifact
 
 ## What was done instead, and what it costs
 
+**Superseded by this ticket's implementation.** The two paragraphs below record the interim state the ticket existed to replace. `preflight` and `prepare` now take `&RecordedArtifactProgramIdentity` and `ProgramMismatch` carries one.
+
 `preflight` takes `expected: &[u8]` and compares against `identity().as_bytes()`. `LoadRejection::ProgramMismatch` (`crates/tiler-runtime/src/load.rs:820-825`) carries `expected: Vec<u8>` beside `loaded: CanonicalArtifactProgramIdentity`, and the asymmetry is documented as deliberate at `:816-819`: the loaded side was derived from validated content, the expected side is a byte string somebody recorded, and spelling both as one type would suggest they carry equal evidence.
 
 No comparison is weakened — byte equality of canonical identity is exactly what the typed comparison did. What is lost is that the call site no longer names the concept, so a caller can pass any slice and the compiler will not object.
@@ -62,8 +64,23 @@ Introduce the distinct assertion type with immutable shared byte storage so repe
 
 Adopt it consistently in artifact and runtime APIs, document that it is producer assertion rather than independently derived evidence, and use a dedicated assertion-validation error rather than `ArtifactBuildError`. `ProgramMismatch` carries the recorded assertion beside the encoder-derived loaded identity. Perturb empty, over-bound, wrong-domain, and mismatched-content checks once each before restoration; “wrong length” is not a valid generic case because canonical artifact identities are variable-length.
 
+## What landed
+
+`RecordedArtifactProgramIdentity` (`crates/tiler-artifact/src/program/model.rs`, beside `CanonicalArtifactProgramIdentity`) stores `Arc<[u8]>` and has one constructor, `from_bytes`, checking empty → over-bound → foreign-domain in that order so each refusal is independently reachable and distinguishable. Rejections are a dedicated `#[non_exhaustive] RecordedArtifactIdentityError` in `program/error.rs`, whose `ForeignDomain` message renders the current domain from a new `pub(super) ARTIFACT_DOMAIN_LABEL` — derived from `ARTIFACT_DOMAIN` in a const block rather than written a second time, so a domain bump cannot leave the error naming the previous version. `MAX_ARTIFACT_IDENTITY_BYTES` was already public and unchanged; no encoding, domain, or schema version moved, per the rule below.
+
+`DecodedProgram::preflight`, `DecodedProgram::prepare`, the private `select_route`, and `LoadRejection::ProgramMismatch` all take or carry the new type. The `compile_fail,E0499` doc-test at `crates/tiler-runtime/src/load/route.rs` spells the signature and was updated with it — left stale it would have stopped compiling for the wrong reason, which is the failure mode of compile-fail evidence.
+
+**Every check was perturbed once and observed failing**, then restored: disabling the empty check made `an_empty_recording_is_refused` report `ForeignDomain` instead of `Empty` (proving the two are distinguishable, not just both refusals); disabling the bound check made the over-bound case report `ForeignDomain`; disabling the domain check made both domain tests accept; and disabling the runtime's `identity != expected` comparison made the prototype's `a_foreign_expected_identity_is_a_program_mismatch` route past the mismatch into a deferred-predicate refusal. Mismatched content is covered by that existing probe rather than by a new test — it flips the *trailing* identity byte, which stays valid under a leading-frame domain check, and both the prototype and the spike now say so in a comment so a future edit does not move the perturbation to a leading byte and silently convert a loader probe into an assertion-boundary probe.
+
+## Eliminations, recorded so review reads the reasoning
+
+**`From<&CanonicalArtifactProgramIdentity> for RecordedArtifactProgramIdentity` — rejected.** It would have removed an `expect` at the six sites that hold a derived identity and want to state it (the prototype's fixture helper and the spike's `run`). But those six are exactly the tautological case `preflight`'s own documentation warns about — restating an identity read from the artifact about to be loaded checks nothing — and a blanket conversion makes that the *frictionless* path while the honest cold-consumer path keeps its `from_bytes`. The ratified surface stays one constructor; the six sites carry an `expect` whose message says what is being assumed.
+
+**`DecodedProofSidecar::artifact_identity_bytes()` left returning `&[u8]` — deliberate.** The recorded assertion is constructed at the runtime call site instead. Changing the accessor's return type would pull the proof codec's own internal comparisons (`crates/tiler-artifact/src/proof/codec.rs`, the two `artifact.…identity().as_bytes() != self.artifact_identity_bytes()` checks) into scope, and those compare against a *derived* identity — they are integrity checks inside one container, not host assertions, and typing them as assertions would blur precisely the distinction this ticket exists to draw. The producer side needed no change at all: `proof/builder.rs` already derives the sidecar's identity from a `VerifiedArtifactProgram`.
+
 ## Graph maintenance
 
 - Keep encoder-derived and recorded assertion identities as distinct evidence classes in documentation, errors, and call sites.
-- Advance artifact identity or schema versions only if the encoded artifact changes; a host-side assertion wrapper alone does not justify a version bump.
-- Preserve the exact public diff for Tom's acceptance review.
+- Advance artifact identity or schema versions only if the encoded artifact changes; a host-side assertion wrapper alone does not justify a version bump. **Nothing was bumped:** the change is entirely host-side, and `docs/artifact-abi.md` records the distinction under "Identity is derived from the canonical envelope" without touching the encoding sections.
+- **`research/target-profiles` was added to this ticket's scopes during implementation.** `spikes/target-profiles/scalar-cpu-vertical` is a separate workspace that path-depends on `tiler-runtime` and calls `preflight` at seven sites, so the signature change breaks it — and no `make` target reaches `spikes/`, so the gate would have stayed green over a spike that no longer compiles. Recorded as a dispatch gap acknowledged rather than absorbed: the scope was added explicitly and the spike's call sites, `ProbeSubject`, and `VerticalError` were updated in the same change, verified with `cargo check --all-targets` run from the spike's own directory.
+- Preserve the exact public diff for Tom's acceptance review. The consequential surface is: `RecordedArtifactProgramIdentity` with `from_bytes`/`as_bytes`, `RecordedArtifactIdentityError` with its three variants, the two `DecodedProgram` signatures, and `LoadRejection::ProgramMismatch`'s changed field type. **Not self-accepted.**

@@ -44,7 +44,8 @@ use tiler_artifact::program::{
     AvailabilityPhase, BackendEntryKey, BackendEntryRef, BackendKey, BindingKind, BindingSpec,
     BindingTarget, CapabilityKey, CompilationEnvironment, EntrySpec, FeasibilityRuleSetKey,
     FeasibilityRuleSetRef, LaunchSpec, PayloadContent, PayloadEntryMapping, PayloadMetadata,
-    PayloadProvenance, PayloadSdkIdentity, RepresentationKey, SchemaVersion, SelectedProvider,
+    PayloadProvenance, PayloadSdkIdentity, RecordedArtifactIdentityError,
+    RecordedArtifactProgramIdentity, RepresentationKey, SchemaVersion, SelectedProvider,
     TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, ToolComponent, VariantSpec,
     VerifiedArtifactProgram,
 };
@@ -604,6 +605,8 @@ pub enum VerticalError {
     Package(&'static str),
     HostProfile,
     Encode,
+    /// The identity stated as the expected one is not statable as a recording.
+    RecordedIdentity(RecordedArtifactIdentityError),
     Load(LoadRejection),
     ProbeBaseline(LoadRejection),
     NotFailedClosed {
@@ -655,6 +658,10 @@ impl fmt::Display for VerticalError {
                 formatter.write_str("the compiler's target profile does not compose an environment")
             }
             Self::Encode => formatter.write_str("the artifact envelope did not encode"),
+            Self::RecordedIdentity(error) => write!(
+                formatter,
+                "the expected artifact identity is not statable as a recording: {error}"
+            ),
             Self::Load(rejection) => write!(formatter, "the artifact was refused: {rejection}"),
             Self::ProbeBaseline(rejection) => write!(
                 formatter,
@@ -803,12 +810,19 @@ pub fn run() -> Result<Report, VerticalError> {
 
     // ---- the artifact ----------------------------------------------------
     let artifact = assemble(&program, &compilation, plan, image_bytes.clone(), source)?;
-    let expected = artifact.canonical_identity().as_bytes().to_vec();
+    // Stated as a recording rather than carried as the derivation it came from:
+    // this vertical is one process, so the assertion is a tautology here, and
+    // spelling it the way a cold consumer would is what keeps the spike a
+    // measurement of the loader's boundary rather than of an in-process shortcut.
+    let expected = RecordedArtifactProgramIdentity::from_bytes(
+        artifact.canonical_identity().as_bytes(),
+    )
+    .map_err(VerticalError::RecordedIdentity)?;
     let envelope = artifact.encode().map_err(|_| VerticalError::Encode)?;
     println!(
         "packaged {} envelope byte(s), artifact identity {} byte(s)",
         envelope.len(),
-        expected.len(),
+        expected.as_bytes().len(),
     );
 
     // ---- device-free validation ------------------------------------------
@@ -955,7 +969,7 @@ pub fn run() -> Result<Report, VerticalError> {
         deferred_predicates: plan.prepared_entry_target_requirements().count(),
         image_bytes: image_bytes.len(),
         envelope_bytes: envelope.len(),
-        artifact_identity_bytes: expected.len(),
+        artifact_identity_bytes: expected.as_bytes().len(),
         reference_identity_bytes: reference_identity.len(),
         elements: reference.len(),
         output_bits: reference,
@@ -987,7 +1001,7 @@ pub struct Report {
 #[derive(Clone, Copy)]
 struct ProbeSubject<'a> {
     bytes: &'a [u8],
-    expected: &'a [u8],
+    expected: &'a RecordedArtifactProgramIdentity,
     environment: &'a ExecutionEnvironment,
     abi: &'a AbiFacts,
 }
@@ -1054,13 +1068,18 @@ fn probe_fail_closed(subject: &ProbeSubject<'_>) -> Result<Vec<String>, Vertical
         }
     });
 
-    // An artifact that is not the expected one is a program mismatch.
+    // An artifact that is not the expected one is a program mismatch. The
+    // trailing byte is perturbed deliberately: a recorded identity is
+    // domain-checked when it is stated, so a leading-byte flip would be refused
+    // at the assertion boundary and never reach the loader.
     let mut decoded =
         DecodedProgram::decode(subject.bytes).map_err(VerticalError::ProbeBaseline)?;
-    let mut foreign = subject.expected.to_vec();
-    if let Some(last) = foreign.last_mut() {
+    let mut bytes = subject.expected.as_bytes().to_vec();
+    if let Some(last) = bytes.last_mut() {
         *last ^= 0x01;
     }
+    let foreign = RecordedArtifactProgramIdentity::from_bytes(&bytes)
+        .map_err(VerticalError::RecordedIdentity)?;
     outcomes.push(
         match decoded.preflight(subject.environment, &foreign, subject.abi) {
             Err(rejection @ LoadRejection::ProgramMismatch { .. }) => {
