@@ -1,7 +1,7 @@
 ---
 id: choose-the-expansion-cache-root-policy
 title: Choose the expansion-cache root policy
-status: in-progress
+status: done
 priority: p2
 dependencies: [admit-the-tiler-facade-and-proc-macro-crate-boundary]
 related: [exercise-the-expansion-cache-under-cargo-and-rust-analyzer, prototype-inline-proc-macro-frontend, prototype-macro-embedding-and-cargo-behavior]
@@ -9,9 +9,6 @@ scopes: [implementation/frontend, research/cache, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [cache, frontend, proc-macro]
-claimed_from: todo
-assignee: loop-cache-root
-lease_expires_at: 1785523879
 ---
 ## User-visible outcome
 
@@ -71,6 +68,10 @@ The exact text a consumer sees, in `compile_error!` form:
 - **No `HOME`** — ``` `HOME` is unset or empty, so `tiler::tensor!` cannot derive its default expansion cache root `$HOME/Library/Caches/ai.moderately.tiler/expansion`, and it will neither pick another location nor quietly expand without a cache. Set `TILER_EXPANSION_CACHE_DIR` to an absolute directory path only you can write, or to `off` to expand without a cache ```
 
 **The one judgement call worth Tom's eye beyond the spellings.** A missing `HOME` *refuses* rather than silently disabling the cache. The counter-argument, which the root policy note records rather than hides: `tiler-cache`'s own preflight module warns that refusing an unrecognized root "would make an optional accelerator a correctness dependency", and this refusal does exactly that in an environment where `HOME` is absent. It was chosen anyway because the alternative is an undiagnosable slowdown, the remedy is one environment variable named in the message itself, and `off` makes the remedy always available.
+
+## Accepted (2026-07-31)
+
+Tom accepted the complete boundary packet as merged: `TILER_EXPANSION_CACHE_DIR` (verbatim absolute path, exact `off` disable, empty is a refusal), the `$HOME/Library/Caches/ai.moderately.tiler/expansion` default, override-first total precedence, the five-tree non-private refusal set, the verbatim-override rule, and the judgement call that a missing `HOME` refuses rather than silently disabling. `record-the-expansion-cache-root-policy-decision` now records ADR 0089 and propagates the accepted spellings into the frontend contract.
 
 ## Public boundary for Tom
 
