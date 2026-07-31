@@ -81,6 +81,32 @@
 //!
 //! [`decode_artifact`]: tiler_artifact::program::decode_artifact
 //!
+//! # What holds the published shape, and where it is checked
+//!
+//! Nothing routed here fixes a shape: [`bind_interface`] reads one from the
+//! artifact, and [`ROWS`] is the direct path's alone. That discipline is the
+//! whole defence, and it is exactly what failed — [`prove_member`] compiled
+//! `serial_sum_program(ROWS, columns)` against artifacts published with one row,
+//! so every packaged program was foreign and the matrix proved nothing for a
+//! month. The proof still passed everywhere it ran, because it ran only on
+//! hardware, by hand.
+//!
+//! The shape is therefore held by a fixture the repository gate reaches:
+//! `the_published_shape_matrix_survives_this_builds_shape_handling` assembles an
+//! envelope at every shape the producer publishes, runs
+//! [`compile_for_declared_shape`] and [`require_derived_program`] — the two
+//! functions [`prove_member`] itself calls — and requires the packaged program
+//! to be derived, then requires the same check to *refuse* when [`ROWS`] is
+//! substituted for the declared rows. Both halves are device-free and
+//! toolchain-free.
+//!
+//! Its validity condition is a pinned pair, in the same idiom as
+//! [`SIDECAR_SUFFIX`]: the published shape matrix is asserted here and in
+//! `prototypes/serial-sum-compile`, so a producer that moves to another shape
+//! fails rather than leaving this fixture assembling envelopes nobody publishes.
+//! That pair is not a second mechanism — on its own it would have watched both
+//! halves agree on one row while the code used four.
+//!
 //! # Where the routing commit falls, and why it falls there
 //!
 //! ADR 0051 permits a fallback only before the commit, so every question this
@@ -169,14 +195,20 @@ use tiler_runtime::load::{
 };
 
 /// Rows of the direct path's input; each row reduces to one output element.
+///
+/// The direct path's own number, and deliberately not the one the producer
+/// publishes. Nothing on the envelope path may read it: an envelope's shape is
+/// the artifact's to declare, and substituting this constant for the declared
+/// rows is the exact defect the gate's published-shape case catches.
 const ROWS: u64 = 4;
 /// Columns of the direct path's input; the reduced axis.
 ///
 /// The direct path fixes its own shape because its job is the *numerical*
 /// claim, and three contributors per row is what makes a serial reduction's
-/// ordering observable. The envelope path still does not fix one — it takes
-/// whatever shape the artifact declares — and the two now coincide, which is
-/// the property [`bind_interface`] proves rather than assumes.
+/// ordering observable. The envelope path fixes none — it takes whatever shape
+/// the artifact declares — and the two agree on the reduced extent while
+/// deliberately disagreeing on the row count, which is what the gate's
+/// published-shape case relies on.
 const COLUMNS: u64 = 3;
 /// Interface key of the program's one input.
 const INPUT_KEY: &str = "input";
@@ -473,7 +505,9 @@ fn read_artifact(path: &Path) -> Result<(Vec<u8>, DecodedProofSidecar), ProofErr
 /// then agree because they were told to rather than because one packaged what
 /// the other runs.
 ///
-/// They do agree today. They did not until
+/// The reduced extents agree today and the row counts do not: the producer
+/// publishes one row and the direct path reduces [`ROWS`]. The
+/// extents did not agree until
 /// `bound-the-backend-entry-key-by-the-identity-it-carries`, because the
 /// artifact layer bounded a `BackendEntryKey` at 1,024 bytes while a
 /// two-or-more-contributor serial sum's kernel identity measures 1,121, so the
@@ -538,6 +572,56 @@ fn bind_interface(decoded: &DecodedProgram) -> Result<(u64, u64, AbiFacts), Proo
             ProofError::Interface(format!("the declared input shape does not bind: {cause}"))
         })?;
     Ok((rows.get(), columns.get(), binder.build()))
+}
+
+/// Compiles this build's alternatives for the shape *the artifact* declares.
+///
+/// **The one place a declared shape becomes a program, and the reason it is a
+/// function rather than four lines inside [`prove_member`].** The historic
+/// defect was those four lines compiling `serial_sum_program(ROWS, columns)` —
+/// this crate's own row count against a producer that had moved to one row — so
+/// every packaged program was foreign and the whole
+/// matrix pass could prove nothing. Nothing in the repository could see it,
+/// because the matrix runs only against real published members on hardware.
+///
+/// Routing it through one named function is what lets the gate run the same
+/// code: `the_published_shape_matrix_survives_this_builds_shape_handling`
+/// assembles an envelope at each shape the producer publishes and requires this
+/// function's compilation to derive the packaged program, and requires the
+/// substitution to be refused. Both halves need no device.
+fn compile_for_declared_shape(
+    declaration: &BoundMetalCompileDeclaration,
+    decoded: &DecodedProgram,
+) -> Result<(u64, u64, Compilation), ProofError> {
+    let (rows, columns, _) = bind_interface(decoded)?;
+    let compilation = compile_under(declaration, &serial_sum_program(rows, columns))?;
+    Ok((rows, columns, compilation))
+}
+
+/// Requires a packaged kernel program to be one this build derived for that
+/// declared shape.
+///
+/// The packaged program is matched against *some* alternative rather than
+/// against the selected one: the producer legitimately packages a plan the
+/// portfolio did not rank first, and demanding `selected` would refuse the
+/// materialized member for being exactly what it is meant to be. The set is
+/// still this build's own governed compilation of the shape the artifact
+/// declares, so this is a narrower claim than "some program" by a wide margin.
+fn require_derived_program(compilation: &Compilation, packaged: &[u8]) -> Result<(), ProofError> {
+    if compilation.alternatives().any(|alternative| {
+        alternative
+            .abi()
+            .kernel_program()
+            .canonical_identity()
+            .as_bytes()
+            == packaged
+    }) {
+        return Ok(());
+    }
+    Err(ProofError::ForeignProgram {
+        packaged: packaged.len(),
+        alternatives: compilation.alternatives().count(),
+    })
 }
 
 /// The environment the **diagnostic** envelope path routes under.
@@ -2150,23 +2234,14 @@ fn prove_member(
     let (bytes, sidecar) = read_artifact(&path)?;
 
     // The shape is read from the artifact, exactly as the deep proof reads it,
-    // and never taken from this crate's own `ROWS`. The two prototypes fix their
-    // row counts independently: the producer publishes one row so the
-    // materialized plan's pointwise stage stays inside the declared four-thread
-    // grid guarantee, and the direct path here uses four. Compiling `ROWS` rows
-    // against a one-row artifact makes every packaged program foreign, which is
-    // what this pass did between 0b7e59d (2026-07-30, which moved the producer to
-    // one row) and this change; no gate reaches it, because the matrix runs only
-    // against real published members on hardware.
-    let declared_shape = DecodedProgram::decode(&bytes).map_err(ProofError::Load)?;
-    let (rows, columns, _) = bind_interface(&declared_shape)?;
-    drop(declared_shape);
-
-    // Compiled only to *name* what the artifact claims to package. The routed
-    // environment comes from the declaration, not from this compilation: see
+    // and never taken from this crate's own `ROWS`; `compile_for_declared_shape`
+    // is where that discipline lives and where the gate reaches it. Compiled
+    // only to *name* what the artifact claims to package: the routed environment
+    // comes from the declaration, not from this compilation, per
     // `declared_route_environment`.
-    let program = serial_sum_program(rows, columns);
-    let compilation = compile_under(declaration, &program)?;
+    let declared_shape = DecodedProgram::decode(&bytes).map_err(ProofError::Load)?;
+    let (rows, columns, compilation) = compile_for_declared_shape(declaration, &declared_shape)?;
+    drop(declared_shape);
     let environment = declared_route_environment(declaration)?;
 
     // The cold-consumer assertion, stated once: these bytes were written beside
@@ -2207,28 +2282,8 @@ fn prove_member(
 
         // Checked before the commit, because a route to a program this process
         // did not derive is a reason to abandon rather than to execute and
-        // compare. The packaged program is matched against *some* alternative
-        // this build derives rather than against the selected one: the producer
-        // legitimately packages a plan the portfolio did not rank first, and
-        // demanding `selected` would refuse the materialized member for being
-        // exactly what it is meant to be. The set is still this build's own
-        // governed compilation of the shape the artifact declares, so this is a
-        // narrower claim than "some program" by a wide margin.
-        let packaged = preflight.kernel_program_identity();
-        let derived = compilation.alternatives().any(|alternative| {
-            alternative
-                .abi()
-                .kernel_program()
-                .canonical_identity()
-                .as_bytes()
-                == packaged
-        });
-        if !derived {
-            return Err(ProofError::ForeignProgram {
-                packaged: packaged.len(),
-                alternatives: compilation.alternatives().count(),
-            });
-        }
+        // compare.
+        require_derived_program(&compilation, preflight.kernel_program_identity())?;
 
         let plan = plan_route(&preflight)?;
         let prepared = device_preflight(device, &preflight, &pipelines, &plan, &inputs, rows)
@@ -2262,8 +2317,8 @@ fn prove_member(
         return Err(ProofError::SidecarWithoutCases);
     }
     println!(
-        "  {class}.{role}: {proved} case(s) agree, {expected_entries} dispatch(es), \
-         {expected_shared} shared allocation(s)",
+        "  {class}.{role}: {rows}x{columns} declared, {proved} case(s) agree, \
+         {expected_entries} dispatch(es), {expected_shared} shared allocation(s)",
     );
     Ok(proved)
 }
@@ -2971,18 +3026,43 @@ mod tests {
     use tiler_metal::applicability::{MetalHostApplicabilityRefusal, MetalHostPredicate};
     use tiler_runtime::load::{DecodedProgram, ExecutionEnvironment};
 
-    /// Columns of the fixture's input; the reduced axis.
+    /// Columns of the **loader** fixtures' input; the reduced axis.
     ///
-    /// **One, and not by choice**, for the same measured reason
-    /// `prototypes/serial-sum-compile` packages one: a `BackendEntryKey` is
-    /// bounded at `MAX_OPAQUE_IDENTITY_BYTES` = 1,024 and the canonical kernel
-    /// identity of a serial sum with two or more contributors measures 1,113
-    /// bytes, so an entry keyed on it does not construct. The fixture keys its
-    /// entry on that identity rather than on a short synthetic string precisely
-    /// so it inherits the producer's real constraint instead of quietly routing
-    /// around it. `bound-the-backend-entry-key-by-the-identity-it-carries` owns
-    /// closing the gap; when it does, this becomes [`super::COLUMNS`].
+    /// **One, and now by choice.** It was one under duress: a `BackendEntryKey`
+    /// was bounded at `MAX_OPAQUE_IDENTITY_BYTES` = 1,024 while the canonical
+    /// kernel identity of a serial sum with two or more contributors measures
+    /// 1,121 bytes, so an entry keyed on it did not construct.
+    /// `bound-the-backend-entry-key-by-the-identity-it-carries` closed that by
+    /// bounding the key at `tiler_ir::kernel::MAX_KERNEL_IDENTITY_BYTES`, and
+    /// any reduced extent constructs now.
+    ///
+    /// It stays one because the cases that use it — the fail-closed probes, the
+    /// multi-stage pairing, and the partial window — assert refusal classes,
+    /// shared-allocation pairing, and byte offsets, none of which the reduced
+    /// extent participates in, and each of them compiles a program. The extents
+    /// the producer actually publishes are covered where they are load-bearing,
+    /// by `the_published_shape_matrix_survives_this_builds_shape_handling`,
+    /// which assembles at every one of them.
     const FIXTURE_COLUMNS: u64 = 1;
+
+    /// Rows of every member `prototypes/serial-sum-compile` publishes.
+    ///
+    /// **One, and deliberately not [`ROWS`].** The producer packages one row so
+    /// the materialized plan's pointwise stage stays inside the declared
+    /// four-thread grid guarantee; the direct path reduces four.
+    ///
+    /// It lives under `#[cfg(test)]`, and that is the enforcement rather than a
+    /// filing decision: the envelope path may take a shape from the artifact and
+    /// from nowhere else, so a constant naming the producer's rows must be
+    /// unreachable from [`super::prove_member`] by construction. What it is for
+    /// is letting the gate assemble an envelope shaped like the ones the
+    /// producer writes; `prototypes/serial-sum-compile` pins the same value in a
+    /// test naming this side, exactly as [`super::SIDECAR_SUFFIX`] is pinned.
+    ///
+    /// The inequality with [`ROWS`] is load-bearing rather than incidental, and
+    /// is asserted as such: it is what tells a runner that reads the artifact's
+    /// declared shape apart from one that substituted its own row count.
+    const PUBLISHED_ROWS: u64 = 1;
 
     /// First addressed byte of the partial-window fixture's scratch value.
     const PARTIAL_WINDOW_OFFSET: u64 = ROWS * FIXTURE_COLUMNS * super::F32_BYTES;
@@ -3049,7 +3129,19 @@ mod tests {
     /// The environment here is producer-declared equality, NOT host-earned
     /// eligibility — the same labelled diagnostic the binary routes under.
     fn fixture() -> Fixture {
-        let semantic = serial_sum_program(ROWS, FIXTURE_COLUMNS);
+        assembled_fixture(ROWS, FIXTURE_COLUMNS)
+    }
+
+    /// Compiles, packages, and encodes one valid envelope at an exact shape.
+    ///
+    /// Parameterized because the reduced extent is a *program*, not an operand
+    /// set: it lives in the input shape, so it changes the semantic graph, the
+    /// kernels, and the artifact identity. The published-shape cases need one
+    /// envelope per class the producer publishes, and they must be the same
+    /// assembly the loader cases route, or they would prove something about a
+    /// second assembler instead.
+    fn assembled_fixture(rows: u64, columns: u64) -> Fixture {
+        let semantic = serial_sum_program(rows, columns);
         let declaration = declared();
         let compilation =
             compile_under(&declaration, &semantic).expect("the declared program compiles");
@@ -3744,6 +3836,125 @@ mod tests {
     #[test]
     fn the_sidecar_suffix_is_the_one_the_producer_writes() {
         assert_eq!(super::SIDECAR_SUFFIX, ".proof");
+    }
+
+    /// This half of the published *shape* interface, pinned.
+    ///
+    /// `prototypes/serial-sum-compile` carries the identical assertion over its
+    /// own `ROWS` and `REDUCTION_CLASSES`, for the reason the filename pins
+    /// exist: the two crates share no code, so a value each states separately is
+    /// compared by nothing else.
+    ///
+    /// **What this pin protects is the case below, not the proof.** A producer
+    /// that published a different shape would still run — the envelope path
+    /// reads every shape from the artifact — but the gate's published-shape
+    /// fixture would quietly be assembling envelopes nobody publishes, which is
+    /// the stale-fixture failure this module's own header warns about. Pinning
+    /// the matrix on both sides is what makes that drift a red gate instead of a
+    /// silently weaker check.
+    ///
+    /// The final assertion is the one that keeps the case below able to fail;
+    /// see [`PUBLISHED_ROWS`].
+    #[test]
+    fn the_published_shape_matrix_is_the_one_the_producer_writes() {
+        assert_eq!(
+            PUBLISHED_ROWS, 1,
+            "`prototypes/serial-sum-compile` publishes one row; a fixture assembled at any other \
+             row count stands in for envelopes nobody writes",
+        );
+        assert_eq!(
+            REDUCTION_CLASSES,
+            [("empty-domain", 0), ("singleton", 1), ("nontrivial", 3)],
+            "`prototypes/serial-sum-compile` states this same matrix; a class or reduced extent \
+             changed there must change here too",
+        );
+        assert_ne!(
+            PUBLISHED_ROWS, ROWS,
+            "the published row count and this crate's own must differ, or substituting one for \
+             the other becomes undetectable",
+        );
+    }
+
+    /// Every shape the producer publishes survives this build's shape handling,
+    /// and this build's own row count does not pass for it.
+    ///
+    /// **This is the case that would have caught the defect the ticket is
+    /// about.** `prove_member` compiled `serial_sum_program(ROWS, columns)` from
+    /// this crate's own four rows against artifacts published with one, so every
+    /// packaged program was foreign and the whole matrix — six members, thirty
+    /// operand cases — proved nothing for a month. Nothing saw it, because the
+    /// matrix runs only against real published members on hardware.
+    ///
+    /// It runs [`compile_for_declared_shape`] and [`require_derived_program`],
+    /// which are the two functions [`super::prove_member`] itself calls, over an
+    /// envelope assembled at each published class. Every step is device-free and
+    /// toolchain-free: the packaged identity comes from a `prepare`, which needs
+    /// neither, so this holds wherever the workspace's tests do.
+    ///
+    /// **The refusal half is why the acceptance half means anything.** A shape
+    /// handler that ignored the artifact and used [`ROWS`] would still compile,
+    /// still route, and still produce a `Compilation` — it would simply be for
+    /// another program. So the same check is run against exactly that
+    /// substitution and required to refuse; without it, this case would pass
+    /// against a handler that read nothing.
+    ///
+    /// [`compile_for_declared_shape`]: super::compile_for_declared_shape
+    /// [`require_derived_program`]: super::require_derived_program
+    #[test]
+    fn the_published_shape_matrix_survives_this_builds_shape_handling() {
+        let declaration = declared();
+        let mut covered = 0_usize;
+        for (class, extent) in REDUCTION_CLASSES {
+            let fixture = assembled_fixture(PUBLISHED_ROWS, extent);
+
+            let decoded = DecodedProgram::decode(&fixture.bytes)
+                .expect("the published-shape envelope decodes");
+            let (rows, columns, compilation) =
+                super::compile_for_declared_shape(&declaration, &decoded)
+                    .unwrap_or_else(|failure| panic!("{class}: {failure}"));
+            assert_eq!(
+                (rows, columns),
+                (PUBLISHED_ROWS, extent),
+                "{class}: the shape must be the artifact's own, not this build's",
+            );
+
+            // The packaged identity, read off the route rather than off the
+            // compilation: taking it from the same `Compilation` the check
+            // compares against would make the comparison a tautology.
+            let mut routed = DecodedProgram::decode(&fixture.bytes)
+                .expect("the published-shape envelope decodes again");
+            let packaged = routed
+                .prepare(&fixture.environment, &fixture.expected, &fixture.abi)
+                .unwrap_or_else(|rejection| panic!("{class}: {rejection}"))
+                .kernel_program_identity()
+                .to_vec();
+
+            // The shape is named as well as the class, because the whole point
+            // of a refusal here is which shape was compiled: `ForeignProgram`
+            // carries identity lengths deliberately, and a reader diagnosing a
+            // drift needs the declared extents beside them.
+            super::require_derived_program(&compilation, &packaged).unwrap_or_else(|failure| {
+                panic!(
+                    "{class}: the artifact declares {rows}x{columns} and this build compiled \
+                     something else for it: {failure}"
+                )
+            });
+
+            let substituted = compile_under(&declaration, &serial_sum_program(ROWS, columns))
+                .expect("this crate's own row count compiles a program too");
+            let refusal = super::require_derived_program(&substituted, &packaged)
+                .expect_err("this build's own row count is not the published shape");
+            assert!(
+                matches!(refusal, super::ProofError::ForeignProgram { .. }),
+                "{class}: a substituted shape must be reported as a foreign program: {refusal}",
+            );
+            covered += 1;
+        }
+        assert_eq!(
+            covered,
+            REDUCTION_CLASSES.len(),
+            "every published reduction class is covered, not the ones that happened to run",
+        );
     }
 
     /// A payload that is not exactly the declared element count is refused as a
