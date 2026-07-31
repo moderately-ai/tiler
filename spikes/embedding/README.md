@@ -2,16 +2,24 @@
 schema: "tiler-doc/v1"
 id: "tiler.spike.embedding"
 kind: "experiment"
-title: "Embedded-artifact cost probe"
-topics: ["embedding", "rustc", "binary-size"]
+title: "Embedded-artifact cost and self-containment probes"
+topics: ["embedding", "rustc", "binary-size", "proc-macros", "cargo", "rust-analyzer"]
 experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement"]
-supports: ["tiler.research.embedding.artifact-costs"]
-entrypoints: ["spikes/embedding/measure.py"]
-last_verified: "2026-07-21"
+supports: ["tiler.research.embedding.artifact-costs", "tiler.research.embedding.self-contained"]
+entrypoints: ["spikes/embedding/measure.py", "spikes/embedding/self_contained.py"]
+last_verified: "2026-07-31"
 ticket: "embedded-artifact-costs"
 ---
+
+# Embedded-artifact cost and self-containment probes
+
+Two harnesses answer two different questions about one representation. `measure.py`
+asks what a byte-string embedding *costs* — build time, peak RSS, binary and
+constant-section size, retained copies. `self_contained.py` asks whether it is
+*self-contained*: whether the expanded code carries the artifact rather than
+referring to it, and how Cargo and rust-analyzer behave around that.
 
 # Embedded-artifact cost probe
 
@@ -79,3 +87,54 @@ That verification does not reconstruct missing raw evidence or prove exact
 reproducibility on a later toolchain. Reported linker folding remains an
 observation of the recorded host and flags, not a Rust, LLVM, Mach-O, or linker
 guarantee.
+
+# Self-contained embedding probe
+
+`self_contained.py` drives the Cargo workspace at `self-contained/`, whose proc
+macro resolves a real artifact envelope through the real public
+`tiler_cache::expansion::ExpansionCache` and emits it as one
+`Literal::byte_string` token. Unlike the cost probe above, the payload is not
+synthetic: the driver runs `prototypes/serial-sum-compile`, which drives the
+offline Metal toolchain and writes envelopes carrying compiled `metallib`
+objects, so every cache hit is validated by the real `decode_artifact` over
+production-shaped bytes.
+
+```sh
+python3 spikes/embedding/self_contained.py --record macos-27.0-2026-07-31
+uv run --with pytest pytest spikes/embedding/test_self_contained.py
+```
+
+`--skip-analyzer` runs the Cargo half alone. The pin declares
+`profile = "minimal"` and ships no `rust-analyzer`, so the driver asks every
+installed toolchain for one rather than trusting the rustup shim, which resolves
+this directory's toolchain and fails; `--analyzer <path>` states one directly.
+The expanding process is the pin's `libexec/rust-analyzer-proc-macro-srv` in
+either case. The driver never installs, selects, or mutates a toolchain: a
+missing `nightly-2026-07-20` or a missing analyzer stops the run with what is
+needed, so an unreached axis is recorded as a boundary rather than assumed.
+
+The run reconstructs everything it needs under a fresh run root — artifacts,
+cache, target directories, and the generated standalone crate — and removes it
+unless `--keep-root` is given. The fixture's `Cargo.lock` is generated once and
+gitignored; every build after that is `--offline`.
+
+What it records, and where. Fifteen scenario rows go to
+`results/self-contained-embedding-<label>.tsv`: cold and warm embedding, the
+three deletion cases, the standalone rebuild, and the four axes under both
+drivers. The verbatim rendered text of seven failure classes goes to
+`results/self-contained-diagnostics-<label>.txt`; each was reached by a build
+that had to fail, and a class whose build succeeded fails the run.
+
+Every deletion is proved in both directions: the same path must hold at least
+one file before removal and none afterwards, so a mistyped path fails before
+anything is deleted rather than passing an after-check for free. Every scenario
+declares its expansion count, over one event file per expansion. The consumer's
+printed length and checksum are compared against the producer's file as computed
+independently by the driver, not only against the numbers the expansion recorded
+beside the payload. `test_self_contained.py` runs each of those predicates
+against inputs that must be rejected, including a per-byte representation, an
+empty directory, and a literal containing escaped quotes.
+
+See the [research report](../../docs/research/embedding/self-contained-embedding.md)
+for the recorded results, the size and diagnostic gates as numbers, and the
+complete list of what was not reached.

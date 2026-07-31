@@ -1,0 +1,16 @@
+[package]
+name = "embed-consumer-b"
+description = "A second embedding crate, so repeated and unique artifacts across crates are separable"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "embed-consumer-b"
+path = "src/main.rs"
+
+[dependencies]
+embed-macro.workspace = true
+
+[lints]
+workspace = true

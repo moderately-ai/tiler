@@ -1,0 +1,16 @@
+[package]
+name = "embed-consumer-a"
+description = "Crate whose compilation embeds one Tiler artifact and whose run proves it carries the bytes"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "embed-consumer-a"
+path = "src/main.rs"
+
+[dependencies]
+embed-macro.workspace = true
+
+[lints]
+workspace = true
