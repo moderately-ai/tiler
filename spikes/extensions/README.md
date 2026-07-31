@@ -8,7 +8,7 @@ experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["executable-model", "bounded-measurement"]
 supports: ["tiler.research.extensions.operation-extension-surface", "tiler.research.extensions.operation-extension-api", "tiler.research.extensions.proc-macro-extension-visibility"]
-entrypoints: ["spikes/extensions/run.py", "spikes/extensions/non-exhaustive-visibility/Cargo.toml"]
+entrypoints: ["spikes/extensions/run.py", "spikes/extensions/non-exhaustive-visibility/Cargo.toml", "spikes/extensions/forkless-physical-provider/Cargo.toml"]
 last_verified: "2026-07-25"
 ticket: "operation-extension-surface"
 ---
@@ -18,7 +18,7 @@ ticket: "operation-extension-surface"
 The `operation-api` crate compile-checks the proposed capability boundary. The
 `proc-macro-visibility` workspace demonstrates which providers a stable proc
 macro can observe across host and consumer crate boundaries. The
-`non-exhaustive-visibility` workspace measures what `#[non_exhaustive]` does and does not constrain across a crate boundary, which is the evidence behind ADR 0074's amended convention 5.
+`non-exhaustive-visibility` workspace measures what `#[non_exhaustive]` does and does not constrain across a crate boundary, which is the evidence behind ADR 0074's amended convention 5. The `forkless-physical-provider` workspace answers whether a separately authored crate can contribute one specialized Metal physical implementation alongside the governed provider, and records the exact private surfaces that say no.
 
 Run from the repository root:
 
@@ -65,3 +65,15 @@ python3 spikes/extensions/run.py --suite non-exhaustive-visibility
 [`results/`](non-exhaustive-visibility/results) records the exact toolchain each retained diagnostic was captured on, and the runner refuses to reuse a measurement whose channel is no longer the one `rust-toolchain.toml` pins. `non_exhaustive_omitted_patterns` is an unstable lint ([rust-lang/rust#89554](https://github.com/rust-lang/rust/issues/89554)) whose behaviour may change, so the pin comparison is deliberately fail-closed: bumping the toolchain must force a fresh run rather than let the old conclusion carry forward. Refresh a diagnostic with `TRYBUILD=overwrite` **only** after deciding the claim still holds, and re-record the toolchain in the same commit.
 
 `run.py --self-test` verifies the retained evidence against that record without invoking Cargo. That predicate checks the record against the retained diagnostic; it cannot see whether the fixture beside it still *produces* that diagnostic, because only a Cargo run compares the two. Nothing runs either half automatically — no `make` target reaches `spikes/`. Run `run.py --self-test` for the record check and `cargo test --locked` in `non-exhaustive-visibility/` for the reproduction, and treat the retained diagnostics as evidence of what was measured until you have.
+
+## The `forkless-physical-provider` workspace
+
+Two crates: `acme-provider` is a separately authored provider that depends on `tiler-compiler` and `tiler-ir` by path with no private access, and `probe` drives it as far as the public surface reaches. Its own [`README`](forkless-physical-provider/README.md) states the question, the answer, and the measurement boundary; [`results/`](forkless-physical-provider/results) records the toolchain, the blocking surfaces with their declaration sites, and the two falsification runs. It is not covered by `run.py`, which predates it:
+
+```sh
+cargo nextest run --workspace   # from spikes/extensions/forkless-physical-provider/
+```
+
+**Result, at `7b1e3a7` on 2026-07-31 — falsified, and localized.** Nothing in `tiler-metal` is in the way: the probe reuses stock emission unchanged, and a proposal body is fully constructible from the public `tiler_ir::schedule` surface. Two independent blockers in `tiler-compiler` are. `mod frontier;` is private, so the whole provider vocabulary and the governed cost-model key are unreachable as a set; and the provider array is a hardcoded one-element literal with no request field behind it, so publishing the trait alone would still leave a provider uninstallable. That second half is the same asymmetry ADR 0078 item 4 named for lowering providers and closed with `CompileRequest::with_capabilities` — which is why the compile-fail case is paired with a compiling contrast that installs a lowering authority through that exact method.
+
+**Measurement boundary.** The `.stderr` goldens render one compiler's diagnostics and are not a stability guarantee; they are retained so that a public `frontier`, or an added installation method, turns this suite red rather than leaving a stale conclusion in the corpus. A red run means the question has been reopened, not that a golden should be blessed.

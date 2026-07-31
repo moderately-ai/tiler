@@ -1,0 +1,13 @@
+error[E0599]: no method named `with_physical_providers` found for struct `CompileRequest<'a>` in the current scope
+  --> tests/ui/fail/no_physical_provider_installation_seam.rs:38:6
+   |
+33 |       let _ = CompileRequest::new(
+   |  _____________-
+34 | |         &program,
+35 | |         NumericalContract::FlushSubnormalsToZeroF32,
+36 | |         targets,
+37 | |     )
+38 | |     .with_physical_providers([&acme_provider::identity()]);
+   | |     -^^^^^^^^^^^^^^^^^^^^^^^ method not found in `CompileRequest<'_>`
+   | |_____|
+   |

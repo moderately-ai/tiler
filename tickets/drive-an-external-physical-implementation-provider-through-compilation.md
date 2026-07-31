@@ -29,6 +29,16 @@ An out-of-crate caller can install a physical implementation provider into the o
 
 An external provider reaches `enumerate_frontier` through `session::compile`, the selected plan records its non-forgeable identity, every negative control fails for the intended reason, targeted nextest and Clippy pass, and one final `make full` passes for the batch.
 
+## What blocks this today
+
+Measured by `prototype-a-forkless-custom-metal-physical-provider` at commit `7b1e3a7e15b09dd3ea65c88759699655c462be4a`, with retained compile-fail evidence at [`spikes/extensions/forkless-physical-provider/`](../spikes/extensions/forkless-physical-provider/README.md). Two independent changes are needed, and the second is the one a reader is likely to miss.
+
+Visibility: `crates/tiler-compiler/src/lib.rs:19` declares `mod frontier;` private, and the closure a provider needs reaches four more private modules — `request::VerifiedTargetRequest`, `region::SemanticMemberId`, `physical::{pointwise_region, verify_schedule_with_feasibility}`, and `pipeline::compile`. The governed cost-model key `tiler.cost.structural.v1` is a private constant (`frontier.rs:80`) and the only admissible one, so it needs a public spelling too.
+
+Installation: the provider array is a hardcoded one-element literal at `crates/tiler-compiler/src/pipeline/planning.rs:171`, and the internal `CompilationRequest` (`request.rs:542`) carries no provider field, so publishing the trait alone would leave a provider uninstallable. The out-of-crate compile fixture this ticket asks for should keep the spike's pairing: a compile-fail case for the absent physical installation method beside a compiling one for `CompileRequest::with_capabilities`, so the fixture states the asymmetry rather than a bare absence.
+
+The spike also establishes what does *not* need work: `tiler-metal` is reusable unchanged by an out-of-tree provider, the proposal body type is already public, and the schedule axis a specialization varies is free under the intrinsic verifier and folded into canonical identity.
+
 ## Graph maintenance
 
 - Unblock payload production and final provider composition only through the accepted public seam.
