@@ -2226,7 +2226,7 @@ fn prove_member(
         if !derived {
             return Err(ProofError::ForeignProgram {
                 packaged: packaged.len(),
-                compiled: compilation.alternatives().count(),
+                alternatives: compilation.alternatives().count(),
             });
         }
 
@@ -2414,9 +2414,9 @@ fn run() -> Result<(), ProofError> {
     // Checked before the commit, because a route to a program this process did
     // not derive is a reason to abandon rather than to execute and compare.
     if preparation.kernel_program_identity() != local {
-        return Err(ProofError::ForeignProgram {
-            packaged: preparation.kernel_program_identity().len(),
-            compiled: local.len(),
+        return Err(ProofError::ForeignRoutedProgram {
+            routed: preparation.kernel_program_identity().len(),
+            derived: local.len(),
         });
     }
 
@@ -2614,9 +2614,26 @@ enum ProofError {
         outcome: String,
     },
     Interface(String),
+    /// The packaged program's identity matches none of the alternatives this
+    /// process compiles for the artifact's own declared shape.
+    ///
+    /// Two variants rather than one, because the two mismatches carry different
+    /// numbers: this one compares one identity against a *count* of candidate
+    /// alternatives, and rendering that count beside a byte length once read as
+    /// "compiled one of 2 [bytes]" — a misdirection at exactly the moment
+    /// somebody is diagnosing a drift.
     ForeignProgram {
+        /// Byte length of the packaged program's canonical identity.
         packaged: usize,
-        compiled: usize,
+        /// How many compiled alternatives were checked, none of which matched.
+        alternatives: usize,
+    },
+    /// The routed program's identity is not the one this process constructed.
+    ForeignRoutedProgram {
+        /// Byte length of the identity the route prepared.
+        routed: usize,
+        /// Byte length of the identity this process derived.
+        derived: usize,
     },
     /// A member routed to a different number of dispatches than its role means.
     ///
@@ -2762,10 +2779,19 @@ impl fmt::Display for ProofError {
                 "{member} routed {entries} dispatch(es) over {shared} shared allocation(s), and \
                  its role means {expected_entries} over {expected_shared}",
             ),
-            Self::ForeignProgram { packaged, compiled } => write!(
+            Self::ForeignProgram {
+                packaged,
+                alternatives,
+            } => write!(
                 formatter,
-                "the artifact packages a kernel program of {packaged} identity bytes and this \
-                 process compiled one of {compiled}; the two prototypes have drifted",
+                "the artifact packages a kernel program whose {packaged}-byte identity matches \
+                 none of the {alternatives} alternative(s) this process compiled for the \
+                 artifact's own declared shape; the two prototypes have drifted",
+            ),
+            Self::ForeignRoutedProgram { routed, derived } => write!(
+                formatter,
+                "the route prepared a kernel program of {routed} identity bytes and this process \
+                 derived one of {derived}; the routed program is not this build's",
             ),
             Self::UnboundBinding {
                 entry,

@@ -1,7 +1,7 @@
 ---
 id: reconcile-the-empty-domain-proof-member-between-the-two-serial-sum-prototypes
 title: Reconcile the empty-domain proof member between the two serial-sum prototypes
-status: todo
+status: done
 priority: p1
 dependencies: []
 related: []
@@ -47,3 +47,11 @@ No `make` target runs either prototype binary. `make full` builds and unit-tests
 ## Outcome
 
 Establish which prototype is wrong for the zero-extent class and correct it, so the full six-member matrix runs; fix the `ForeignProgram` message; and record whether the matrix result should be reachable by something other than a hand run.
+
+## Outcome (2026-07-31)
+
+**The drift was the runner's, and it is already fixed.** `construct-and-bind-the-first-authoritative-metal-compile-profile` established the cause while migrating the prototypes: `prove_member` compiled the runner's own `ROWS = 4` against artifacts the producer publishes with one row — introduced by `0b7e59d` (2026-07-30) — so every packaged program was foreign, the empty-domain member merely being the first the matrix reached. The fix (commit `f81c7f2`) reads the shape from the artifact, as the deep proof already did. Reproduced on current main, Apple M4 Max: the full run passes — `30 case(s) proved across 6 member(s); fused and materialized agree bit for bit with the published reference`, with `empty-domain.selected: 5 case(s) agree` first among them. The producer was never wrong; nothing about the zero-extent compilation diverged.
+
+**The second defect is fixed here.** `ProofError::ForeignProgram` rendered a count of alternatives beside a byte length ("compiled one of 2" reading as two bytes). It is now two variants carrying what they mean: `ForeignProgram { packaged, alternatives }` for the matrix path's none-of-N mismatch, and `ForeignRoutedProgram { routed, derived }` for the routed-identity mismatch, each with a message naming its own quantities.
+
+**Gate reachability is deliberately not absorbed.** Whether the matrix should be reachable by something other than a hand run is exactly the question `pin-the-serial-sum-producer-runner-shape-interface` (filed by the profile ticket, with three candidate mechanisms and their trade-offs) owns; this ticket defers to it rather than duplicating the decision.
