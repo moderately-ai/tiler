@@ -1166,6 +1166,146 @@ def test_the_record_comparison_detects_a_changed_cross_path_verdict() -> None:
     )
 
 
+REGISTRY_ID_FAMILIES = ("macos", "ios-device", "ios-simulator")
+"""Every family whose record may carry a `device_registry_id` row."""
+
+PAIRED_REGISTRY_IDS: dict[str, str] = {
+    "2026-07-24-numerics-families-xcode26.6-metal32023.883": "4294968621",
+    "2026-07-25-numerics-covering-xcode26.6-metal32023.883": "4294968621",
+    "2026-07-25-numerics-exhaustive-xcode26.6-metal32023.883": "4294968621",
+    "2026-07-27-numerics-covering-xcode26.6-metal32023.883": "4294968452",
+    "2026-07-27-numerics-exhaustive-xcode26.6-metal32023.883": "4294968452",
+}
+"""Every retained record that dispatched both macOS and the iOS Simulator, with the ID it measured.
+
+The values are transcribed from the records rather than derived, so a record
+rewritten to agree with this table fails the completeness assertion below rather
+than passing quietly. They deliberately disagree across measurements: the same
+named Apple M4 Max reported `4294968621` on 2026-07-24 and 2026-07-25 and
+`4294968452` on 2026-07-27 and 2026-07-30. That disagreement is the measured
+fact, not decay, which is why it is asserted positively.
+"""
+
+MACOS_ONLY_REGISTRY_IDS: dict[str, str] = {
+    "2026-07-30-numerics-covering-apple9-f32-unified-msl4-macos26-xcode26.6-metal32023.883": "4294968452",
+    "2026-07-30-numerics-exhaustive-apple9-f32-unified-msl4-macos26-xcode26.6-metal32023.883": "4294968452",
+}
+"""The named-profile records, which select the macOS family alone and so have no pair to check.
+
+They are enumerated rather than skipped, and the absence of their simulator row
+is asserted, because "excluded from the pair check" has to be a checked property
+of the record instead of a claim in a comment that a later profile could quietly
+falsify.
+"""
+
+
+def registry_id_rows(directory: str) -> dict[str, str]:
+    """Read one enumerated record's registry-ID rows, failing when the record is absent.
+
+    A missing record must fail rather than contribute nothing: an enumeration
+    that silently loses a member reports the same green result as one that
+    checked every member, which is the failure mode this whole check exists to
+    avoid.
+    """
+    path = RESULTS / directory / "record.tsv"
+    assert path.is_file(), f"an enumerated retained record is missing: {path}"
+    rows = PROBE.read_record(path)
+    return {
+        family: rows[f"environment.family.{family}.device_registry_id"]
+        for family in REGISTRY_ID_FAMILIES
+        if f"environment.family.{family}.device_registry_id" in rows
+    }
+
+
+def registry_id_violations(observed: dict[str, dict[str, str]]) -> list[str]:
+    """Every way an observed population departs from the enumerated one, named exactly.
+
+    Taking the parsed rows as an argument is what lets the test perturb one
+    within-measurement value and watch this refuse it, without touching a
+    retained record on disk.
+    """
+    violations = []
+    for directory, expected in sorted(PAIRED_REGISTRY_IDS.items()):
+        rows = observed[directory]
+        for family in ("macos", "ios-simulator"):
+            if rows.get(family) != expected:
+                violations.append(f"{directory}: {family}={rows.get(family)!r}, expected {expected}")
+        if not rows.get("ios-device", "").startswith("unavailable:"):
+            violations.append(f"{directory}: ios-device is not recorded as unavailable")
+    for directory, expected in sorted(MACOS_ONLY_REGISTRY_IDS.items()):
+        rows = observed[directory]
+        if rows.get("macos") != expected:
+            violations.append(f"{directory}: macos={rows.get('macos')!r}, expected {expected}")
+        if "ios-simulator" in rows:
+            violations.append(f"{directory}: has a simulator row, so it is not macOS-only")
+    return violations
+
+
+def test_the_registry_id_agrees_within_a_measurement_and_is_free_between_them() -> None:
+    """The two families that dispatch report one registry ID per run, and runs may differ.
+
+    `registryID` is documented by `MTLDevice.h` as "the IORegistry ID for the
+    Metal device", "global to all tasks", and usable "to identify the GPU across
+    task boundaries". That is a correlation handle inside one active
+    environment, and it is the only property the retained records support: the
+    same named Apple M4 Max reports two different IDs across them. So the
+    invariant worth pinning is equality between the macOS host and the iOS
+    Simulator *within* one measurement — finding 13's evidence that the
+    simulator dispatches on the host GPU — and explicitly not stability of the
+    value between measurements.
+
+    The population is enumerated and counted rather than discovered, because a
+    check that iterates whatever it happens to find reports the same success
+    when it finds nothing. The enumeration is then held to covering every
+    retained record that carries a registry-ID row, so a new record cannot join
+    the results directory without joining this check.
+    """
+    enumerated = {**PAIRED_REGISTRY_IDS, **MACOS_ONLY_REGISTRY_IDS}
+    assert len(enumerated) == len(PAIRED_REGISTRY_IDS) + len(MACOS_ONLY_REGISTRY_IDS), (
+        "a directory is enumerated as both paired and macOS-only"
+    )
+    carrying = sorted(
+        directory.name
+        for directory in RESULTS.iterdir()
+        if directory.is_dir()
+        and (directory / "record.tsv").is_file()
+        and any(
+            key.endswith(".device_registry_id")
+            for key in PROBE.read_record(directory / "record.tsv")
+        )
+    )
+    assert carrying == sorted(enumerated), (
+        f"the enumerated registry-ID population ({len(enumerated)} records) is not the retained "
+        f"one ({len(carrying)} records). Add the new record to `PAIRED_REGISTRY_IDS` or "
+        f"`MACOS_ONLY_REGISTRY_IDS` with the value it measured. Enumerated: {sorted(enumerated)}. "
+        f"Retained: {carrying}"
+    )
+    observed = {directory: registry_id_rows(directory) for directory in enumerated}
+    assert not registry_id_violations(observed), registry_id_violations(observed)
+    assert len(set(PAIRED_REGISTRY_IDS.values()) | set(MACOS_ONLY_REGISTRY_IDS.values())) > 1, (
+        "the retained records no longer disagree across measurements. Either a raw measurement was "
+        "rewritten to make them agree, which is forbidden, or the historical rows were dropped -- "
+        "and the evidence that registry ID is not a durable hardware identity went with them"
+    )
+    perturbed = {directory: dict(rows) for directory, rows in observed.items()}
+    paired = min(PAIRED_REGISTRY_IDS)
+    borrowed = next(
+        value for value in PAIRED_REGISTRY_IDS.values() if value != PAIRED_REGISTRY_IDS[paired]
+    )
+    perturbed[paired]["ios-simulator"] = borrowed
+    assert registry_id_violations(perturbed), (
+        "a macOS/simulator disagreement inside one measurement was accepted, so this check cannot "
+        "detect the one thing it pins"
+    )
+    macos_only = min(MACOS_ONLY_REGISTRY_IDS)
+    perturbed = {directory: dict(rows) for directory, rows in observed.items()}
+    perturbed[macos_only]["ios-simulator"] = MACOS_ONLY_REGISTRY_IDS[macos_only]
+    assert registry_id_violations(perturbed), (
+        "a macOS-only record that gained a simulator row was accepted, so its exclusion from the "
+        "pair check is an assumption rather than a checked property"
+    )
+
+
 def test_an_absent_xcrun_is_classified_as_an_absent_toolchain() -> None:
     """Resolution must refuse with the skip classification, not a bare exception."""
     original = os.environ.get("PATH", "")
