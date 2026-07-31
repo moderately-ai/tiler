@@ -1,17 +1,14 @@
 ---
 id: authorize-macos-environment-identity-for-native-metal-translation
 title: Authorize macOS environment identity for native Metal translation
-status: in-progress
+status: done
 priority: p0
 dependencies: [prove-an-aot-compatible-metal-runtime-compiler-observer]
 related: [validate-macos-metal-profile-host-applicability]
-scopes: [contracts/artifacts, contracts/decisions, research/apple-targets]
+scopes: [contracts/artifacts, contracts/decisions, research/apple-targets, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: loop-authorize-ma
-lease_expires_at: 1785517248
 ---
 ## User-visible outcome
 
@@ -45,9 +42,13 @@ No positive applicability receipt exists until Apple exposes a stable responsibl
 
 **Counterpoint:** it demands a stronger identity than the direct end-to-end measurement itself needed and provides no known path to implementation. It also does not solve host authenticity; a named component still needs trustworthy observation.
 
-## Recommendation
+## Recommendation — superseded by the decision below
 
-Choose Option 1. Correctness comes from the direct native result and its deliberately narrow validity scope, not from guessing the private component's name. Performance is unaffected because the policy reads only preflight host/device facts and performs no source JIT or binary scanning. Long-term maintainability is stronger because the distinction is explicit: offline compiler provenance remains artifact-owned, private native translation identity remains `Unknown`, and a changed public execution row requires fresh evidence. Reconsider if Apple publishes a stable translator identity API, if the same reported row produces a numerical or compatibility divergence, or if Tiler adopts a host-attestation threat model.
+This section recommended Option 1 before Tom decided. It is retained as history and is not the outcome: Tom rejected public-row equivalence in this ticket's 2026-07-31 comment and reconfirmed that rejection on 2026-07-31 after an acceptance-conflict escalation surfaced both the comment and the ADR 0043 derivation that the measured environment row is a validity scope, not an authority.
+
+## Decision (2026-07-31): the strict policy is accepted as ADR 0086
+
+Tom selected the strict applicability policy: a positive host-applicability receipt requires an attributable identity for the private translating component or exact host attestation, and the first authoritative native Metal profile stays unavailable until one exists. [ADR 0086](../docs/decisions/0086-require-attributable-or-attested-native-translation.md) is the accepted record; it refines ADR 0043's runtime-translation-policy clause by applying its own `Unknown` disposal rather than amending it, names every excluded substitute identity, and carries the reconsideration triggers. The decision catalog, the Metal backend contract, the numerical-behaviour and observer research records, and the dependent host-applicability ticket were updated in the same change. Per the Option-2 clause above, no observer/authority ticket is filed because no concrete new evidence source exists; the ADR's reconsideration triggers are the durable reopening condition.
 
 ## Required evidence
 

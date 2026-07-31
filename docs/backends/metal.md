@@ -19,6 +19,16 @@ MSL. The frontend proc macro invokes Apple's offline tools during expansion,
 then embeds the completed bytes. Runtime pipeline creation remains necessary,
 but runtime source compilation does not.
 
+Native device translation of the embedded metallib during pipeline creation is
+a typed capability fact whose authority and provenance are `Unknown` on every
+macOS row currently observable: per
+[ADR 0086](../decisions/0086-require-attributable-or-attested-native-translation.md),
+a positive host-applicability receipt requires an attributable identity for the
+private translating component or exact host attestation, and the first
+authoritative native Metal profile stays unavailable until one exists. The
+exact measured execution environment remains a necessary validity scope and is
+explicitly not sufficient authority.
+
 ## Pipeline
 
 ```text
