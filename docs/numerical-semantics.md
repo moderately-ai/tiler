@@ -156,22 +156,53 @@ effective_permissions(op)
   ∩ operation_capabilities(op)
 ```
 
-The resulting canonical contract is granular, for example:
+The resulting canonical contract is granular. The implemented scalar-arithmetic
+contract resolves **eleven** governed dimensions, in this canonical order:
 
 ```rust
-struct NumericPolicy {
-    reassociation: Reassociation,
-    contraction: Contraction,
-    approximate_intrinsics: ForbidOrAccuracyEnvelopeKey,
-    reciprocal_math: ReciprocalMath,
-    nan_assumptions: NaNAssumptions,
-    infinity_assumptions: InfinityAssumptions,
-    signed_zero: SignedZeroPolicy,
-    subnormals: SubnormalContract,
+struct ScalarNumericPolicy {
+    // The contract speaks for exactly one arithmetic type; see below.
+    arithmetic: ArithmeticType,
+    input_subnormals: SubnormalMode,          // Preserve | FlushToZero { zero_sign }
+    result_subnormals: SubnormalMode,
+    contraction: NumericalPermission,         // Forbidden | Permitted
+    reassociation: NumericalPermission,
+    permutation: NumericalPermission,
+    signed_zero: NumericalPermission,
+    reciprocal_transform: NumericalPermission,
+    approximate_intrinsics: ApproximationEnvelope,
+    nan_assumptions: ExceptionalValueAssumption,
+    infinity_assumptions: ExceptionalValueAssumption,
+    materialization_rounding: MaterializationRounding,
 }
 ```
 
-The example is descriptive rather than a committed API. A user-facing named
+Operand permutation, signed zero, and the two exceptional-value assumptions are
+first-class dimensions of the resolved contract rather than only prose elsewhere
+in this document; the [Reductions](#reductions) section defines what separates
+permutation from reassociation, and both are resolved here. The two subnormal
+dimensions stay independent even where a target couples them. Distributivity is
+deliberately absent — the [Distributivity](#distributivity-is-outside-the-order-contract)
+subsection states why, and adding a field here would convert a reserved question
+into an admitted permission.
+
+Two things the sketch names but does not resolve are properties of the contract
+rather than dimensions a target declares honourability over: its own versioned
+governed key, and the canonical arithmetic-NaN bits. A key names the governing
+contract and the bits are a produced value, so neither is a behaviour a profile
+can be asked whether it honours.
+
+**The dense contract is `f32` and is not a general policy shape.** Every
+resolution above is stated for exactly one `ArithmeticType`, because subnormal
+behaviour is measurably per-dtype: one Apple row flushes in `f32`, preserves in
+`f16`, and flushes in `bf16`, so a dtype-free contract would state something
+already known to be false for one of them. Nothing here generalizes to integer,
+boolean, quantized-compound, or any other future policy family — those have their
+own semantics elsewhere in this document, and this dimension set is not a
+template for them. The three governed presets that populate it are strict,
+flush-to-zero, and relaxed, all `f32`, each with its own versioned key.
+
+The sketch is descriptive rather than a committed API. A user-facing named
 mode may initialize the program ceiling, but an overlapping `fast_math`
 boolean is avoided. Frontends may expose per-region or per-operation controls;
 those controls resolve to the same canonical per-operation representation.
@@ -310,6 +341,8 @@ semantic optimization, not a boolean or a later license to weaken meaning.
 Proof, exhaustive finite-domain testing, or an applicable normative
 guarantee can establish hard feasibility. Empirical qualification remains
 labeled empirical and cannot establish an unmeasured worst-case bound.
+
+**Fact — the implemented envelope vocabulary is governed and closed, not a free-form key.** `tiler_ir::schedule::ApproximationEnvelope` has exactly two resolutions today: `Forbidden`, keyed `approximation.forbidden`, under which every elementary function follows its own resolved accuracy contract; and `BackendElementary`, keyed `tiler::backend-elementary@1`, which is the backend-elementary conformance level named under [Conformance levels](#conformance-levels) and bounds the approximation by the backend's own *stated* accuracy, so a backend that states none cannot honour it. The two are not two settings of one field: `Forbidden` authorizes no envelope at all, which is a different claim from authorizing an empty one, and the type reports that difference by returning no envelope key for it rather than a sentinel. Closedness is what makes the dimension identity-safe — a named envelope enters the contract's canonical identity, where a tolerance spelled inline could be widened without changing it. The governed relaxed preset authorizes `BackendElementary`; nothing in this build emits an approximate intrinsic, so that authorization is expressible and unconsumed. A third envelope is a new named resolution with its own key, never a re-reading of one of these two.
 
 **A composite operation's own formula is part of its contract, not a choice left to whoever spells it.** [Transformer non-linear, normalization, and reduction contracts](research/numerics/transformer-nonlinear-normalization-and-reductions.md) derives the first worked instance: an admitted `Softmax` must pin whether the row maximum is subtracted before exponentiation, and whether the result divides by the denominator or multiplies by its reciprocal, because the alternatives differ observably in F32 — the first as a finite value against NaN, the second at measured discriminating elements. The reciprocal choice in particular is *not* an exercise of the `reciprocal_math` permission when it is the pinned formula; the permission governs replacing a stated division, and a contract that stated the wrong one would diverge while consuming no permission at all. The same rule reaches an admitted `RmsNorm`'s `eps` placement and its choice of a reciprocal square root, and an admitted activation's choice between two conventional spellings that measurement separates by one ULP.
 
@@ -702,13 +735,20 @@ A caller states one resolved contract, or an explicitly ordered preference list 
 
 ### Per-dimension honourability, and how it composes with feasibility
 
-A target profile declares, for each dimension of the contract it can be asked
-about, which behaviour it honours and by which of the four means above. The
-declaration is a stated, versioned profile fact carrying the same provenance a
-capability bound does — an availability phase, a fact authority, a validity
-scope, and the declaring profile's identity — so a rejection can name where the
-claim came from, and it participates in the profile's canonical descriptor, so
-two profiles that honour different behaviours cannot share an identity.
+A target profile declares, for each **scalar-arithmetic policy subject** and each
+dimension of the contract it can be asked about in that subject, which behaviour
+it honours and by which of the four means above. The declaration is a stated,
+versioned profile fact carrying the same provenance a capability bound does — an
+availability phase, a fact authority, a validity scope, and the declaring
+profile's identity — so a rejection can name where the claim came from, and it
+participates in the profile's canonical descriptor, so two profiles that honour
+different behaviours cannot share an identity.
+
+**The key is `(subject, dimension)`, and the subject is load-bearing rather than symmetric.** A subject is an arithmetic type paired with the complete resolved semantic value type it computes in, spelled `tiler_compiler::target::ScalarArithmetic`; the compiler registers exactly one today, the governed `f32`, and refuses to construct any other pair, because a similar-sounding name is not evidence that a registry admitted an `f16`, `bf16`, or `f64` semantic type. The reason for the key is measured, not structural: on one Apple row — same GPU, same math modes, modules declaring denormals disabled identically — `f32` arithmetic flushes subnormals, `f16` preserves them, and `bf16` flushes. So on that one profile input-subnormal handling is honoured exactly for `f16` and unsupported for `f32`, and a declaration keyed by dimension alone would have to state one of the two wrongly.
+
+**Silence about an arithmetic type is silence, on exactly the terms silence about a dimension is.** The fail-closed clause below applies to all three coordinates of a query — subject, dimension, and required behaviour — and a profile that has spoken about a neighbouring one has said nothing about the one asked for. A profile declaring `f16` preservation says nothing about `f32`; resolution matches the arithmetic type rather than filtering after the fact, and the alternative behaviour a rejection may report is likewise matched on the subject, so a behaviour honoured in a neighbouring width is never offered as an alternative for the width the caller asked about.
+
+**This is the scalar-arithmetic contract and does not generalize.** The subject vocabulary covers floating-point scalar arithmetic. Integer overflow families, boolean semantics, quantized compound schemes, and any future policy family have their own contracts elsewhere in this document and acquire no honourability declaration by standing beside this one.
 
 **Fact — a refusal retains the exact refusing fact rather than a summary of it.** `UnhonouredDimension` in `crates/tiler-compiler/src/target/honourability.rs` holds the checked `NumericalHonourabilityFact` that refused, by shared immutable ownership, beside the behaviour the *caller* required and any behaviour the profile does honour unconditionally. The required value is kept separate from the fact because the two answer different questions: the fact states what the target declares, and the required value states what was asked for. Every rejection that carries the refusal onward — the request boundary's `ContractRejection`, the feasibility authority's `RejectionCause`, the frontier's `FrontierRejection` and `OpaqueCallRejectionCause` — carries the same instance rather than rebuilding one, and every canonical encoder and explain record spells the whole of it, so two profiles refusing the same behaviour on different measured compiler builds share neither a rejection identity nor a rendered explanation. There is no provenance-free way to construct a refusal: a fact exists only once a declaration has been attributed to a declaring profile, and a profile whose declaration source is malformed is refused at construction under the `declaration-source` rule.
 
@@ -728,15 +768,18 @@ predicate would discard the one outcome that carries work. The composition is:
   and cannot arrive at a later phase;
 - a dimension the profile declares unhonourable contributes a disproved
   predicate; and
-- a dimension the profile does not speak to at all contributes `Unknown` in
-  ADR 0043's exact sense — no admissible proof path — so it may appear in search
-  and explain state and never in an executable frontier.
+- a dimension the profile does not speak to at all, in the arithmetic type asked
+  about, contributes `Unknown` in ADR 0043's exact sense — no admissible proof
+  path — so it may appear in search and explain state and never in an executable
+  frontier.
 
-That last clause is what makes an unenumerated dimension fail closed instead of
+That last clause is what makes an unenumerated declaration fail closed instead of
 defaulting to honoured, and it applies equally to a profile that enumerates a
-dimension but not the behaviour required: silence about a behaviour is silence,
-not a refusal, and nothing may be inferred from the profile having spoken about a
-neighbouring behaviour.
+dimension but not the behaviour required, and to one that enumerates a dimension
+in one arithmetic type but not in the type the caller's contract is stated for:
+silence about a behaviour, a dimension, or an arithmetic type is silence, not a
+refusal, and nothing may be inferred from the profile having spoken about a
+neighbouring one.
 
 **Fact — one bounded F32 projection path now implements this separation.** `tiler-build` owns the adapter because it is the first crate that can depend on both the target-neutral compiler profile vocabulary and Metal's independently defined numerical facts. A caller supplies a `TargetCompileProfileMeasurementSource` separately from the profile under construction. Independent input-subnormal and result-subnormal declaration operations each consume one exact scalar subject, mode, and source and insert either a complete exact three-row declaration or no profile change. The convenience operation `declare_metal_f32_subnormal_behaviour` reads the one stated F32 Metal fact, uses Metal's owner-side total conversion including the zero sign of any flush, stages both dimensions on a clone, and publishes only if both succeed. None of these operations finalize the profile.
 

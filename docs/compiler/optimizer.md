@@ -13,7 +13,7 @@ evidence: ["tiler.research.region-search.exhaustive-region-oracle", "tiler.resea
 
 **Status:** accepted research contract; bounded prototype implementation
 
-The first private compiler slice now retains complete materialized and fused program alternatives, carries exact structural metrics, and selects the fused program only when it strictly Pareto-dominates the baseline. Its stable policy key makes no latency claim. A missing per-operation *fusion numerical* capability, candidate-budget exhaustion, or fused target infeasibility rejects only the fused alternative; failure of a compiler-produced verifier remains a hard compiler error. General memo search, partitioning, and calibrated cost estimation remain unimplemented.
+The first bounded compiler slice — reached from outside the crate through the reviewed public `tiler_compiler::session` boundary since [`prototype-public-compiler-api`](../../tickets/prototype-public-compiler-api.md) landed it, not a private one — retains complete materialized and fused program alternatives, carries exact structural metrics, and selects the fused program only when it strictly Pareto-dominates the baseline. Its stable policy key makes no latency claim. A missing per-operation *fusion numerical* capability, candidate-budget exhaustion, or fused target infeasibility rejects only the fused alternative; failure of a compiler-produced verifier remains a hard compiler error. General memo search, partitioning, and calibrated cost estimation remain unimplemented.
 
 **Fact — no installed-provider constant gates the fused alternative.** `crates/tiler-compiler/src/request.rs` used to carry two named lowering-provider constants, one materialized and one optionally installed fused serial-sum provider, and an absent fused constant suppressed the whole-program candidate before its numerical equivalence was ever proved. Both constants are gone. Whether a whole-program candidate is retained is now decided by [fusion legality](fusion-and-scheduling.md#legality) and typed target feasibility alone, and each retained alternative's lowering authority is whatever the request's installed registry resolved for its member occurrences. A missing *lowering* capability is not in this class at all and never rejects a single alternative; [capability resolution](#lowering-capability-resolution-and-index-region-refinement) states what it does instead.
 
@@ -342,12 +342,18 @@ Implementation rules produce schedules such as:
 - serial, subgroup, threadgroup, or multi-pass reduction;
 - direct or GEMM-backed contraction.
 
-The bounded P0 frontier admits only checked `ScheduledKernel` proposals and
-rejects opaque-call proposals explicitly. Its provider/body representation
-must retain an additive sum-type seam so the later reviewed
-[`implement-opaque-physical-call-providers`](../../tickets/implement-opaque-physical-call-providers.md)
-ticket can add opaque implementations without weakening scheduled-kernel
-verification.
+The bounded frontier admits checked `ScheduledKernel` and `KernelSubprogram`
+proposals and rejects the reserved `View` variant explicitly, while `OpaqueCall`
+is admitted through its own compiler-owned declaration and registration path.
+[Fusion and scheduling](fusion-and-scheduling.md) owns that admission model; this
+contract states only that the provider/body representation retains an additive
+sum-type seam, so a further body variant lands without weakening scheduled-kernel
+verification. [`enumerate-the-split-reduction-on-the-planning-frontier`](../../tickets/enumerate-the-split-reduction-on-the-planning-frontier.md)
+promoted `KernelSubprogram` out of the reserved set and
+[`integrate-opaque-calls-into-the-physical-frontier`](../../tickets/integrate-opaque-calls-into-the-physical-frontier.md)
+did the same for `OpaqueCall`. Opaque-call declaration and registration are
+compiler-owned and crate-private, so admission is not an out-of-crate seam: no
+caller supplies its own opaque provider today.
 
 Each implementation candidate advertises a machine-checkable numerical
 guarantee, realization/provider identity, and scoped evidence. It is admitted
@@ -595,8 +601,14 @@ module of `tiler-compiler`, not a separate `tiler-explain` crate. The compiler
 owns record construction, canonical identity, causal integrity, and the versioned
 renderer. Emission is compiler-owned: sibling compiler modules obtain record
 handles from a writer, and no provider-facing emission trait is published. Module
-visibility is a public-facade question rather than a packaging one; the module is
-private while the compiler boundary is private.
+visibility is a public-facade question rather than a packaging one, and the two
+questions have since separated: the compiler boundary is public — `session` is a
+`pub mod` and [`prototype-public-compiler-api`](../../tickets/prototype-public-compiler-api.md)
+made it so — while `explain` stays a private module. What crosses that boundary is
+the read-only result, not the vocabulary: `session` re-exports
+`VerifiedCompilationExplain` and hands out an opaque `ExplainReport` whose only
+capability is rendering, so no record, subject, stage, disposition, or reason-key
+type is nameable outside the crate.
 
 If a second crate must ever read canonical traces, the record, subject, and
 disposition vocabulary moves into `tiler-ir` following the `AbiExpr` co-location
@@ -609,7 +621,7 @@ Canonical trace content is data and the renderer is presentation. Nothing in thi
 contract requires an explain trace to be serialized into an artifact envelope,
 and the artifact contract does not carry one.
 
-**Fact — the implemented trace format is v3.** `tiler-explain-v3` adds semantic-selection and numerical-contract-preference events to the typed trace. The top-level semantic-selection ledger embeds each candidate's exact full canonical compilation subject, and `VerifiedCompilationExplain` accepts the composite only when every keyed nested trace carries that same subject. A key-preserving splice of one candidate trace into another is therefore rejected rather than authenticated by a short label or digest. Each nested trace records only the normalization or algebraic payload adopted by that candidate; declined rules and portfolio budget stops remain in the top-level exploration trace.
+**Fact — the implemented renderer is `tiler-explain-v7` over trace schema v9, and a compilation's composite renders as `tiler-compilation-explain-v1`.** `crates/tiler-compiler/src/explain.rs` is the single authority for all three numbers and `explain_vocabulary_is_append_only_and_versioned` pins them; the two move independently, because a record added without changing the rendering advances only the schema. The v3 renderer named below is the historical step that added semantic-selection and numerical-contract-preference events; the versions have advanced since, most recently when [`carry-structured-provenance-through-numerical-rejections`](../../tickets/carry-structured-provenance-through-numerical-rejections.md) put the complete provenance of a refusing numerical fact into every rejection record. The top-level semantic-selection ledger embeds each candidate's exact full canonical compilation subject, and `VerifiedCompilationExplain` accepts the composite only when every keyed nested trace carries that same subject. A key-preserving splice of one candidate trace into another is therefore rejected rather than authenticated by a short label or digest. Each nested trace records only the normalization or algebraic payload adopted by that candidate; declined rules and portfolio budget stops remain in the top-level exploration trace.
 
 ### What the public compiler boundary exposes of a trace
 

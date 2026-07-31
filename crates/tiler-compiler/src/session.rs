@@ -1971,14 +1971,16 @@ mod tests {
 
     /// Which of ADR 0069's five classes the public surface can actually produce.
     ///
-    /// **Reachability is a property worth pinning, not an assumption.** Two of
-    /// the five are reached here from `compile_governed`; the other three are
-    /// recorded below with the reason, because a class nothing can produce is a
-    /// different claim from one that is merely untested.
+    /// **Reachability is a property worth pinning, not an assumption.** Three of
+    /// the five are reached from the public surface by tests in this module; the
+    /// other two are recorded below with the reason, because a class nothing can
+    /// produce is a different claim from one that is merely untested.
     ///
-    /// - `UnsupportedCapability` — reached by
-    ///   `an_identity_program_is_refused_as_unsupported`.
-    /// - `NoFeasiblePlan` — reached by the target-failure test above.
+    /// - `UnsupportedCapability` — reached by this test's identity program, and
+    ///   again by `a_refusal_before_the_trace_boundary_carries_no_trace`.
+    /// - `NoFeasiblePlan` — reached by
+    ///   `target_outcomes_preserve_request_order_cardinality_and_profile_identity`
+    ///   through a profile that declares no strict-`f32` behaviour.
     /// - `BudgetExhausted` — reached only by a program that exceeds a
     ///   deterministic budget. `RequestError::BudgetExceeded` is its sole
     ///   source and the governed budgets admit every program this profile
@@ -1988,16 +1990,15 @@ mod tests {
     ///   call, deliberately.** It reports that Tiler's own verifier refused
     ///   Tiler's own output, so reaching it from the public surface would mean
     ///   shipping the defect it exists to report.
-    /// - `InvalidRequest` — **unreachable from today's public surface**, and
-    ///   this is the interesting one. Its five sources are all structural facts
-    ///   about the request — an unsupported schema version, an empty or
-    ///   duplicated target set, an unverified target selection, an unstated
-    ///   contract — and `compile` builds that structure itself through
-    ///   `CompilationRequest::governed_under`. A caller supplies a program, a
-    ///   contract, and capabilities, none of which can produce any of them.
-    ///   The class is still correct and still distinct: it becomes reachable
-    ///   the moment a caller can declare its own target profiles, which is
-    ///   `admit-a-caller-declared-target-profile`.
+    /// - `InvalidRequest` — reached by
+    ///   `a_stated_preference_is_carried_and_both_halves_are_readable`, whose
+    ///   empty preference list states no contract. It was recorded here as
+    ///   unreachable while `compile` built the whole request structure itself
+    ///   and a caller supplied only a program, a contract, and capabilities;
+    ///   the caller now states an ordered contract preference and its own
+    ///   target profiles, so the structural facts this class reports — an
+    ///   unstated, duplicated, or overlong contract list, an empty or
+    ///   duplicated target set — are the caller's to get wrong.
     #[test]
     fn the_reachable_failure_classes_are_reached_from_the_public_surface() {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
