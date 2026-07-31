@@ -59,6 +59,7 @@ Only `spikes/numerics/check_witnesses.py` and
 - [Bounded scalar CPU backend vertical](target-profiles/scalar-cpu-vertical/README.md) — reproducible; executable-model, bounded-measurement; supports: [Target profiles and phased physical feasibility](../docs/research/target-profiles/physical-feasibility-model.md), [Proposed CPU/SIMD target profile](../docs/backends/cpu.md)
 - [Exhaustive fusion-region oracle experiment](region-search/README.md) — reproducible; exhaustive-finite, executable-model; supports: [Exhaustive fusion-region oracle](../docs/research/region-search/exhaustive-region-oracle.md)
 - [Kernel-program planning experiment](program-planning/README.md) — reproducible; executable-model; supports: [KernelProgram and conservative buffer planning](../docs/research/program-planning/kernel-program-buffer-plan.md)
+- [Qwen3 conformance reference logit fixture](program-planning/qwen3-conformance-fixture/README.md) — reproducible; bounded-measurement; supports: [First Metal language-model workload profile](../docs/research/program-planning/first-metal-lm-workload.md)
 - [Scheduled-region model experiment](scheduling/README.md) — reproducible; executable-model; supports: [First-class scheduled-region model](../docs/research/scheduling/scheduled-region-model.md)
 - [Structured kernel-IR verifier experiment](kernel-ir/README.md) — reproducible; executable-model; supports: [Structured kernel IR and verifier boundary](../docs/research/kernel-ir/structured-kernel-ir-verifier.md)
 

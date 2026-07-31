@@ -1,7 +1,7 @@
 ---
 id: retain-the-qwen-conformance-reference-logit-fixture
 title: Retain the Qwen conformance reference logit fixture
-status: in-progress
+status: done
 priority: p1
 dependencies: [define-first-metal-lm-workload]
 related: [derive-transformer-operation-and-shape-surface, design-model-level-qualification-and-optimization]
@@ -9,9 +9,6 @@ scopes: [research/program-planning, implementation/workspace]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, language-model, conformance, fixture, qwen, numerics]
-claimed_from: todo
-assignee: loop-retain-the-q
-lease_expires_at: 1785520598
 ---
 ## User-visible outcome
 
