@@ -1,7 +1,7 @@
 ---
 id: source-or-rephase-first-metal-launch-limits
 title: Source or rephase the first Metal launch limits
-status: in-progress
+status: done
 priority: p0
 dependencies: []
 related: [restore-replayable-apple-compatibility-evidence, prototype-metal-runtime-proof]
@@ -9,9 +9,6 @@ scopes: [research/apple-targets, implementation/ir, implementation/compiler, imp
 shared_scopes: [project/tickets]
 paths: []
 tags: [metal, launch, feasibility, target-profiles]
-claimed_from: todo
-assignee: codex-root
-lease_expires_at: 1785457900
 ---
 ## User-visible outcome
 
