@@ -391,7 +391,7 @@ pub(crate) use codec::envelope_digest;
 pub(crate) use codec::{ENVELOPE_DIGEST_DOMAIN, MANIFEST_DIGEST_DOMAIN, SECTION_DIGEST_DOMAIN};
 pub use error::{
     AbiExprUse, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind, ArtifactKeyKind,
-    ArtifactLimitKind, ArtifactVerificationError,
+    ArtifactLimitKind, ArtifactVerificationError, RecordedArtifactIdentityError,
 };
 pub use expr::{
     AbiBinaryOp, AbiEvaluationError, AbiFacts, AbiRoot, AbiType, AbiUnaryOp, AbiValue,
@@ -411,8 +411,8 @@ pub use model::{
     AbiExprRef, AbiExprView, ArtifactExecutionPolicy, ArtifactInputRef, ArtifactOutputRef,
     ArtifactSchema, BackendEntryRef, BackendPayloadDescriptor, BindingKind, BindingRef,
     BindingTarget, CanonicalArtifactProgramIdentity, DeferredPredicateRef, EntryRef,
-    InterfaceComponentRef, RoutingPolicy, SchemaVersion, SelectedProvider, StageDependencyReason,
-    VariantRef, VerifiedArtifactProgram,
+    InterfaceComponentRef, RecordedArtifactProgramIdentity, RoutingPolicy, SchemaVersion,
+    SelectedProvider, StageDependencyReason, VariantRef, VerifiedArtifactProgram,
 };
 
 /// Maximum plan variants admitted by one artifact program.

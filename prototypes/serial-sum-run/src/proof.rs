@@ -108,7 +108,8 @@ use metal::{
 };
 use tiler_artifact::program::{
     AbiFactBinder, AbiFacts, ArtifactCodecFailure, AvailabilityPhase, BackendKey, BindingTarget,
-    RepresentationKey, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
+    RecordedArtifactIdentityError, RecordedArtifactProgramIdentity, RepresentationKey,
+    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
 };
 use tiler_artifact::proof::{
     DecodedProofSidecar, ProofAssociationError, ProofCodecError, decode_proof_sidecar,
@@ -690,8 +691,8 @@ fn dispatch_direct(
 struct ProbeSubject<'a> {
     /// The exact encoded envelope bytes under test.
     bytes: &'a [u8],
-    /// The canonical identity bytes whatever named this artifact recorded.
-    expected: &'a [u8],
+    /// The identity whatever named this artifact recorded, stated as such.
+    expected: &'a RecordedArtifactProgramIdentity,
     /// What the host running these probes independently states it offers.
     environment: &'a ExecutionEnvironment,
     /// The ABI facts bound from the artifact's own declared interface.
@@ -842,12 +843,19 @@ fn probe_truncated_envelope(subject: &ProbeSubject<'_>) -> Result<String, ProofE
 /// are internally consistent; what is wrong is that they are some other valid
 /// artifact, which is a stale cache entry or a mixed-up path rather than a plan
 /// to rebuild.
+///
+/// The perturbation is in the *trailing* byte deliberately. A recorded identity
+/// is domain-checked when it is stated, so flipping a leading byte would be
+/// refused at the assertion boundary and never reach the loader — a different
+/// refusal, and not the one this probe is about.
 fn probe_foreign_expected_identity(subject: &ProbeSubject<'_>) -> Result<String, ProofError> {
     let mut decoded = DecodedProgram::decode(subject.bytes).map_err(ProofError::ProbeBaseline)?;
-    let mut foreign = subject.expected.to_vec();
-    if let Some(last) = foreign.last_mut() {
+    let mut bytes = subject.expected.as_bytes().to_vec();
+    if let Some(last) = bytes.last_mut() {
         *last ^= 0x01;
     }
+    let foreign = RecordedArtifactProgramIdentity::from_bytes(&bytes)
+        .map_err(ProofError::RecordedIdentity)?;
     match decoded.preflight(subject.environment, &foreign, subject.abi) {
         Err(rejection @ LoadRejection::ProgramMismatch { .. }) => Ok(format!(
             "an expected identity that is not this artifact's: {rejection}"
@@ -1836,6 +1844,13 @@ fn prove_member(
         .map_err(ProofError::Compile)?;
     let environment = host_environment(&compilation)?;
 
+    // The cold-consumer assertion, stated once: these bytes were written beside
+    // the artifact by the producing process, and this process is stating them as
+    // the identity it expects. Checked as a recording — non-empty, bounded, under
+    // this build's artifact domain — and not thereby evidence of anything.
+    let recorded = RecordedArtifactProgramIdentity::from_bytes(sidecar.artifact_identity_bytes())
+        .map_err(ProofError::RecordedIdentity)?;
+
     let (expected_entries, expected_shared) = expected_shape(role);
     let mut proved = 0_usize;
 
@@ -1858,7 +1873,7 @@ fn prove_member(
             .and_then(|payload| decode_f32_bits("expected", rows, payload.bytes()))?;
 
         let preparation = decoded
-            .prepare(&environment, sidecar.artifact_identity_bytes(), &abi)
+            .prepare(&environment, &recorded, &abi)
             .map_err(ProofError::Load)?;
         let (preflight, pipelines) = resolve_prepared_route(device, preparation)?;
 
@@ -1998,19 +2013,25 @@ fn run() -> Result<(), ProofError> {
     println!("the artifact declares a {rows} by {columns} input");
     let environment = host_environment(&compilation)?;
 
+    // The identity the producing process recorded beside these bytes, stated by
+    // this process as the one it expects. See `prove_member` for why it is a
+    // recording rather than a derivation.
+    let recorded = RecordedArtifactProgramIdentity::from_bytes(sidecar.artifact_identity_bytes())
+        .map_err(ProofError::RecordedIdentity)?;
+
     // Established before the positive route is claimed: a loader that accepted
     // these bytes would say nothing about what it refuses, and the refusals are
     // half of what makes the acceptance mean anything.
     println!("fail-closed probes against these exact bytes:");
     probe_fail_closed(&ProbeSubject {
         bytes: &bytes,
-        expected: sidecar.artifact_identity_bytes(),
+        expected: &recorded,
         environment: &environment,
         abi: &abi,
     })?;
 
     let preparation = decoded
-        .prepare(&environment, sidecar.artifact_identity_bytes(), &abi)
+        .prepare(&environment, &recorded, &abi)
         .map_err(ProofError::Load)?;
 
     // Compiled here only to *name* the program the artifact claims to package.
@@ -2205,6 +2226,12 @@ enum ProofError {
         recorded: usize,
     },
     SidecarAssociation(ProofAssociationError),
+    /// The identity recorded beside the artifact is not statable as one.
+    ///
+    /// Its own class rather than a load rejection: nothing was loaded. What
+    /// failed is this process's *assertion* about which artifact it wants, so
+    /// the repair is in the recording rather than in the envelope.
+    RecordedIdentity(RecordedArtifactIdentityError),
     Compile(CompileFailure),
     NoSelection,
     Emit,
@@ -2319,6 +2346,10 @@ impl fmt::Display for ProofError {
             Self::SidecarAssociation(cause) => write!(
                 formatter,
                 "the proof sidecar does not describe this envelope: {cause}"
+            ),
+            Self::RecordedIdentity(cause) => write!(
+                formatter,
+                "the recorded artifact identity is not statable: {cause}"
             ),
             Self::Compile(failure) => write!(formatter, "the program did not compile: {failure:?}"),
             Self::NoSelection => formatter.write_str("the portfolio retained no selected plan"),
@@ -2517,8 +2548,9 @@ mod tests {
         CapabilityKey, CompilationEnvironment, DeferredPredicateSpec, EntrySpec,
         FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec, PayloadContent,
         PayloadEntryMapping, PayloadMetadata, PayloadProvenance, PayloadSdkIdentity,
-        RepresentationKey, SchemaVersion, SelectedProvider, TargetProfileDescriptorDigest,
-        TargetProfileKey, TargetProfileRef, ToolComponent, VariantSpec, VerifiedArtifactProgram,
+        RecordedArtifactProgramIdentity, RepresentationKey, SchemaVersion, SelectedProvider,
+        TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, ToolComponent,
+        VariantSpec, VerifiedArtifactProgram,
     };
     use tiler_compiler::session::{
         Compilation, NumericalContract, PlanAlternative, compile_governed,
@@ -2564,7 +2596,7 @@ mod tests {
     /// case can hold the subject after the `Compilation` has been dropped.
     struct Fixture {
         bytes: Vec<u8>,
-        expected: Vec<u8>,
+        expected: RecordedArtifactProgramIdentity,
         environment: ExecutionEnvironment,
         abi: AbiFacts,
     }
@@ -2578,6 +2610,19 @@ mod tests {
                 abi: &self.abi,
             }
         }
+    }
+
+    /// States a fixture artifact's derived identity as a recording.
+    ///
+    /// Every case below holds the very artifact it routes, so its recording is
+    /// trivially correct — the tautology `DecodedProgram::preflight` documents,
+    /// and the right shape for a fixture whose subject is the loader rather than
+    /// the recording. [`probe_foreign_expected_identity`] is where a *wrong*
+    /// recording is exercised, and the binary above is where a genuinely
+    /// separate process supplies one.
+    fn recorded_identity(artifact: &VerifiedArtifactProgram) -> RecordedArtifactProgramIdentity {
+        RecordedArtifactProgramIdentity::from_bytes(artifact.canonical_identity().as_bytes())
+            .expect("an encoder-derived identity is statable as a recording")
     }
 
     /// Compiles, packages, and encodes one valid envelope for the probes.
@@ -2596,7 +2641,7 @@ mod tests {
 
         let artifact = assemble(&semantic, &compilation, plan);
         let bytes = artifact.encode().expect("the envelope encodes");
-        let expected = artifact.canonical_identity().as_bytes().to_vec();
+        let expected = recorded_identity(&artifact);
         let environment = host_environment(&compilation).expect("the host environment composes");
 
         let decoded = DecodedProgram::decode(&bytes).expect("the assembled envelope decodes");
@@ -3443,7 +3488,7 @@ mod tests {
 
         let artifact = assemble(&semantic, &compilation, materialized);
         let bytes = artifact.encode().expect("the envelope encodes");
-        let expected = artifact.canonical_identity().as_bytes().to_vec();
+        let expected = recorded_identity(&artifact);
         let environment = host_environment(&compilation).expect("the host environment composes");
         let mut decoded = DecodedProgram::decode(&bytes).expect("the multi-stage envelope decodes");
         let (_, _, abi) = bind_interface(&decoded).expect("the declared interface binds");
@@ -3582,7 +3627,7 @@ mod tests {
         let bytes = artifact
             .encode()
             .expect("the partial-window envelope encodes");
-        let expected = artifact.canonical_identity().as_bytes().to_vec();
+        let expected = recorded_identity(&artifact);
         let environment = host_environment(&compilation).expect("the host environment composes");
         let mut decoded =
             DecodedProgram::decode(&bytes).expect("the partial-window envelope decodes");

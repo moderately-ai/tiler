@@ -14,6 +14,8 @@
 //! Only [`super::ArtifactProgramBuilder::build`] can bind a draft into an
 //! opaque [`VerifiedArtifactProgram`].
 
+use std::sync::Arc;
+
 use tiler_ir::kernel::{AddressSpace, BufferAccess, CanonicalKernelIdentity, KernelType};
 use tiler_ir::program::abi::{PreparedEntryTargetRequirement, TargetPropertyRequirementRelation};
 use tiler_ir::program::{
@@ -38,7 +40,7 @@ use super::MAX_ARTIFACT_IDENTITY_BYTES;
 use super::codec::{
     ArtifactEnvelope, EntryRow, NumericalFacts, PayloadContent, VariantRow, position as node_at,
 };
-use super::error::{ArtifactDiagnostic, ArtifactEntityKind};
+use super::error::{ArtifactDiagnostic, ArtifactEntityKind, RecordedArtifactIdentityError};
 use super::expr::{
     AbiBinaryOp, AbiEvaluationError, AbiFacts, AbiRoot, AbiType, AbiUnaryOp, AbiValue, ExprNode,
     evaluate,
@@ -152,6 +154,24 @@ use super::keys::{
 /// value. The new subject is deliberately incomparable with that incomplete
 /// route.
 const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v11\0";
+
+/// [`ARTIFACT_DOMAIN`] without its terminator, for rendering in a diagnostic.
+///
+/// Derived from the separator rather than written a second time. A domain bump
+/// is a one-line edit above, and an error message that named the previous
+/// version would be a defect no test could be expected to notice.
+pub(super) const ARTIFACT_DOMAIN_LABEL: &str = {
+    let (label, terminator) = ARTIFACT_DOMAIN.split_at(ARTIFACT_DOMAIN.len() - 1);
+    assert!(
+        terminator[0] == 0,
+        "the artifact domain separator ends with its NUL terminator"
+    );
+    match str::from_utf8(label) {
+        Ok(label) => label,
+        Err(_) => panic!("the artifact domain separator is ASCII"),
+    }
+};
+
 const STAGE_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.stage.v1\0";
 const PAYLOAD_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.payload.v1\0";
 /// Versioned domain separator of one selected provider's canonical key.
@@ -760,6 +780,83 @@ pub struct CanonicalArtifactProgramIdentity(Vec<u8>);
 
 impl CanonicalArtifactProgramIdentity {
     /// Returns the canonical identity bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+/// An artifact identity a consumer *recorded*, stated as the one it expects.
+///
+/// [`CanonicalArtifactProgramIdentity`] can only be held by code that built or
+/// decoded an artifact, because this crate's encoder is its only constructor.
+/// That rule is right — nobody should mint an artifact identity — and it leaves
+/// the cold-consumer case unrepresentable: a producer writes the identity beside
+/// the cached bytes, a separate process reads it back, and what it holds is a
+/// byte string rather than a derivation. This type is that byte string, named.
+///
+/// # It is an assertion, not evidence
+///
+/// Read this before treating one as proof of anything. The two types are
+/// deliberately distinct and deliberately not convertible: an encoder-derived
+/// identity was computed from content this crate validated, and a recorded one
+/// is what somebody wrote down. Equal bytes mean the same thing in both cases —
+/// the comparison is byte equality either way — but the *warrant* behind the
+/// bytes is not the same. A runtime's program-mismatch rejection carries the two
+/// sides as two types for exactly this reason, and no conversion between them is
+/// offered in either direction.
+///
+/// So a consumer that recorded the wrong bytes gets a mismatch it can act on,
+/// and a consumer that recorded bytes re-read from the very artifact it is about
+/// to load has checked nothing. Neither this type nor any check below can tell
+/// those apart; only the provenance of the recording can.
+///
+/// # What the constructor does prove
+///
+/// [`Self::from_bytes`] rejects empty input, input above
+/// [`MAX_ARTIFACT_IDENTITY_BYTES`], and bytes whose leading frame is not the
+/// current artifact-identity domain separator. The last is syntax and type
+/// separation: it distinguishes an artifact identity from a kernel identity, a
+/// content digest, a cache key, or an identity recorded under a superseded
+/// domain — all of which are byte strings a caller might plausibly have to hand.
+/// It is not a claim that the remainder is canonical, that it decodes, or that
+/// any artifact with these bytes exists.
+///
+/// Storage is shared and immutable, because the governed bound is 64 MiB and a
+/// retry loop or a mismatch error should not copy that.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct RecordedArtifactProgramIdentity(Arc<[u8]>);
+
+impl RecordedArtifactProgramIdentity {
+    /// States recorded bytes as the artifact identity a consumer expects.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RecordedArtifactIdentityError::Empty`] for empty bytes,
+    /// [`RecordedArtifactIdentityError::TooLong`] above
+    /// [`MAX_ARTIFACT_IDENTITY_BYTES`], or
+    /// [`RecordedArtifactIdentityError::ForeignDomain`] when the leading frame
+    /// is not this build's artifact-identity domain separator.
+    pub fn from_bytes(value: impl AsRef<[u8]>) -> Result<Self, RecordedArtifactIdentityError> {
+        let value = value.as_ref();
+        if value.is_empty() {
+            return Err(RecordedArtifactIdentityError::Empty);
+        }
+        // Bounded before the domain frame is inspected, so a hostile length is
+        // refused by the cheap check rather than after reading into it.
+        if value.len() > MAX_ARTIFACT_IDENTITY_BYTES {
+            return Err(RecordedArtifactIdentityError::TooLong {
+                bytes: value.len(),
+                limit: MAX_ARTIFACT_IDENTITY_BYTES,
+            });
+        }
+        if !value.starts_with(ARTIFACT_DOMAIN) {
+            return Err(RecordedArtifactIdentityError::ForeignDomain { bytes: value.len() });
+        }
+        Ok(Self(Arc::from(value)))
+    }
+
+    /// Returns the recorded identity bytes.
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
