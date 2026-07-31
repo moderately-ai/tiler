@@ -1,17 +1,14 @@
 ---
 id: validate-macos-metal-profile-host-applicability
 title: Validate macOS Metal profile host applicability independently
-status: in-progress
+status: todo
 priority: p0
-dependencies: [measure-macos-apple9-f32-under-unified-msl4-profile]
+dependencies: [measure-macos-apple9-f32-under-unified-msl4-profile, prove-an-aot-compatible-metal-runtime-compiler-observer]
 related: [record-metal-runtime-compiler-provenance-gap, prototype-metal-runtime-proof, restore-replayable-apple-compatibility-evidence]
 scopes: [implementation/build, implementation/runtime, implementation/metal, contracts/artifacts, research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: [runtime, metal, target-profiles, provenance]
-claimed_from: todo
-assignee: codex-root
-lease_expires_at: 1785508770
 ---
 ## User-visible outcome
 
@@ -29,11 +26,11 @@ A pure policy and a platform observer independently establish whether the curren
 
 ## Implementation keys
 
-Define a deterministic pure applicability policy over normalized observations and a platform adapter that observes only predicates established by the retained measurement: OS family/version/build, architecture, exact reported device name, supported GPU family, and runtime compiler/environment identity. Registry ID is correlation evidence and no unmeasured “stable hardware class” may be invented.
+Define a deterministic pure applicability policy over normalized observations and a platform adapter that observes only predicates established by the retained measurement: OS family/version/build, architecture, exact reported device name, supported GPU family, and runtime compiler/environment identity. The runtime-compiler evidence class must first be established by `prove-an-aot-compatible-metal-runtime-compiler-observer`; runtime source compilation, OS-build substitution, and loaded-image presence alone are not admissible shortcuts. Registry ID is correlation evidence and no unmeasured “stable hardware class” may be invented.
 
 The policy returns a non-forgeable eligibility receipt scoped to its versioned policy and exact normalized observation, or a typed reason for refusal. It does not return or contain a target-profile key or descriptor, because `construct-and-bind-the-first-authoritative-metal-compile-profile` owns that declaration and currently depends on this ticket. The parent consumes a successful receipt and binds it to the exact profile it constructs; this removes the circular requirement for a dependency to return a value its dependent creates.
 
-Keep observation separate from decision so all positive and negative cases run on non-Apple CI. Keep Metal device observation out of device-free `tiler-runtime`; the current prototype may host the first adapter, while any reusable Metal runtime adapter requires its own reviewed ownership boundary. Preserve live-device and prepared-pipeline checks as distinct later obligations.
+Keep observation separate from decision so positive and negative policy cases run without Metal hardware or framework access. This repository currently has no CI, so do not describe those portable unit cases as a CI guarantee. Keep Metal device observation out of device-free `tiler-runtime`; the current prototype may host the first adapter, while any reusable Metal runtime adapter requires its own reviewed ownership boundary. Preserve live-device and prepared-pipeline checks as distinct later obligations.
 
 ## Required evidence
 
@@ -45,4 +42,4 @@ The pure policy and observer independently produce a checked policy-scoped eligi
 
 ## Graph maintenance
 
-This ticket depends on `measure-macos-apple9-f32-under-unified-msl4-profile` and blocks `construct-and-bind-the-first-authoritative-metal-compile-profile`. Keep `record-metal-runtime-compiler-provenance-gap`, `prototype-metal-runtime-proof`, and `restore-replayable-apple-compatibility-evidence` related; they establish adjacent provenance and preflight contracts but do not implement host eligibility.
+This ticket depends on `measure-macos-apple9-f32-under-unified-msl4-profile` and the AOT-compatible runtime-compiler observer spike, and blocks `construct-and-bind-the-first-authoritative-metal-compile-profile`. Keep `record-metal-runtime-compiler-provenance-gap`, `prototype-metal-runtime-proof`, and `restore-replayable-apple-compatibility-evidence` related; they establish adjacent provenance and preflight contracts but do not implement host eligibility.
