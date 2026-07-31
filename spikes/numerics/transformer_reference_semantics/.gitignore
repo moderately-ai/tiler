@@ -1,0 +1,8 @@
+# The uv-managed virtual environment, reconstructed by the recorded invocation
+# from the checked-in `pyproject.toml` and `uv.lock`. uv also writes its own
+# `.venv/.gitignore`, so this rule is redundant today; it is stated anyway
+# because the alternative is that a several-hundred-megabyte tree stays out of
+# diffs only through a tool's internal convention. The rule covers this one
+# directory and nothing broader. Nothing else here is regenerable: the
+# `record.tsv` under `results/` is the retained evidence and is tracked.
+/.venv/
