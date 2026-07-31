@@ -1,7 +1,7 @@
 ---
 id: declare-a-required-gpu-family-in-the-artifact
 title: Declare backend-neutral live-device route requirements
-status: in-progress
+status: done
 priority: p2
 dependencies: [source-or-rephase-first-metal-launch-limits]
 related: [prototype-metal-runtime-preflight, carry-the-stage-execution-order-in-the-envelope]
@@ -9,9 +9,6 @@ scopes: [contracts/artifacts, implementation/artifact, implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifact, runtime, metal, correctness]
-claimed_from: todo
-assignee: loop-gpu-family
-lease_expires_at: 1785524875
 ---
 ## User-visible outcome
 
@@ -59,6 +56,10 @@ The artifact carries canonical quantitative and backend-scoped qualitative route
 **Fact — one core dimension survives and Metal cannot answer it.** `RouteResourceDimension::SubgroupThreads` is not derivable (the neutral kernel IR admits only `ExecutionBinding::GlobalLinearInvocation` and has no subgroup) and is a live-device property in general (Vulkan publishes `subgroupSize` on the physical device). Metal publishes no device-scoped equivalent — `threadExecutionWidth` is on `MTLComputePipelineState`, a prepared-kernel fact — so the first Metal adapter answers `Unrecognized`, which refuses the route. A Metal route needing that width must state it as a `PreparedEntryTargetRequirement`. This is a typed reservation with one implemented "cannot decide", not a tested guarantee.
 
 **Measurement — device-free, in the ordinary gate.** The Metal adapter is split into an observation and a pure decision, as `tiler_metal::applicability` is, so every policy case runs without hardware: cumulative-family satisfaction (Apple9 host meets Apple8, Apple7 host does not meet Apple9, a host naming no family meets nothing) and the whole unowned population (a foreign key, a version the adapter predates, a payload naming no family, and every member of `RouteResourceDimension::ALL`). No hardware run is claimed for this ticket.
+
+## Accepted (2026-07-31)
+
+Tom accepted the reviewed boundary as merged at `d715d5d`: the `tiler_artifact::program` route-requirement vocabulary (`RouteRequirement`, `RouteResourceFloor`/`RouteResourceDimension`, `BackendFeatureRequirement`, `RouteFeatureKey`, `require_route`, the decoded/verified views), the identity steps (`tiler.artifact-program.v12`, manifest 10.0, target-requirement component 3.0, the required feature key), and the `tiler_runtime::load` two-stage surface (`LiveDeviceQualification`, `LiveDeviceRequest`, `LiveDeviceObservation`, the five typed refusals). The prototype adapter's promotion and `tiler-build` row-minting remain the recorded follow-ons.
 
 ## Graph maintenance
 

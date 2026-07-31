@@ -1,7 +1,7 @@
 ---
 id: enumerate-the-split-reduction-on-the-planning-frontier
 title: Enumerate the split reduction as a retained frontier alternative
-status: in-progress
+status: done
 priority: p1
 dependencies: [implement-the-target-neutral-multi-pass-reduction-strategy]
 related: [calibrate-and-activate-parallel-reduction-selection, realize-parallel-reduction-strategies-on-metal, implement-parallel-reduction-strategies]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, implementation/ir, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [compiler, scheduling, reductions, frontier]
-claimed_from: todo
-assignee: loop-frontier
-lease_expires_at: 1785524875
 ---
 ## User-visible outcome
 
@@ -47,6 +44,10 @@ The frontier enumerates serial and split alternatives with distinct identities f
 **Out of scope, observed.** `docs/architecture.md:195` still says the bounded frontier "admits only checked `ScheduledKernel` values and rejects the other variants"; that was already false for `OpaqueCall` and is now also false for `KernelSubprogram`. `docs/architecture.md` is `contracts/foundation`, not this ticket's `contracts/optimizer`.
 
 **Public boundary changes for Tom, none self-accepted.** No `tiler-ir` item changed and no `tiler-compiler` *public* item changed — `session`, `target`, `legality`, and `capability` are untouched. Every changed item is `pub(crate)` within `tiler-compiler`; the consequential crate-internal boundary is `PhysicalImplementationProvider::propose`'s new return type and the `ProposalBody::KernelSubprogram` payload.
+
+## Closed (2026-07-31)
+
+Integrated at `5fba576` with no public-boundary change (every touched item stayed `pub(crate)`), so closure is on the ticket's own terms: the frontier retains serial and split alternatives with distinct identities, the budget widening is explicit and enforced, explain covers accepted and declined candidates, and assembly matches `strict_partitioned_sum` bit for bit. The compile-reachability gap is `admit-a-reassociating-contract-without-contraction`.
 
 ## Graph maintenance
 
