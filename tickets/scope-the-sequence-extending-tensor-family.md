@@ -1,7 +1,7 @@
 ---
 id: scope-the-sequence-extending-tensor-family
 title: Scope the sequence-extending tensor family the KV cache needs
-status: todo
+status: in-progress
 priority: p2
 dependencies: [derive-transformer-operation-and-shape-surface]
 related: [design-autoregressive-state-and-kv-cache, own-operation-family-support-matrix]
@@ -9,6 +9,9 @@ scopes: [contracts/foundation, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, semantics, structural, language-model, breadth]
+claimed_from: todo
+assignee: worker-seq-extend
+lease_expires_at: 1785538652
 ---
 ## User-visible outcome
 
