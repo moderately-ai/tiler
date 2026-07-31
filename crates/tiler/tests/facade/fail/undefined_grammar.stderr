@@ -1,5 +1,0 @@
-error: `tiler::tensor!` has no grammar yet, so this input is rejected rather than guessed at; the region syntax and its expansion are owned by `define-inline-symbol-binding-and-runtime-value-adaptation` and `prototype-inline-proc-macro-frontend`
- --> tests/facade/fail/undefined_grammar.rs:5:34
-  |
-5 |     let _region = tiler::tensor!(y = softmax(x));
-  |                                  ^

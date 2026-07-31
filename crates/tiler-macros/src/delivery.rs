@@ -14,20 +14,28 @@
 //! bytes; [`ArtifactFamilySelection::new`] is the only way a value of that type
 //! comes into being, on this side of the boundary as on the driver's.
 //!
-//! # What the current expansion states, and why it is `FallbackOnly`
+//! # What every region states, and why it is `FallbackOnly`
 //!
-//! [`tensor`](crate::tensor) has no grammar yet, so an invocation names no
-//! family and the expansion compiles nothing. ADR 0053 makes that an explicit
-//! policy rather than an absence: "`FallbackOnly` is an explicit valid policy
-//! and invokes no backend compiler". Saying it in the type is what distinguishes
-//! it from a producer that assembled a selection and forgot to put a family in
-//! it — which the driver rejects as `EmptySelection` — so the current expansion
-//! states `FallbackOnly` outright instead of leaving its delivery unstated.
+//! The approved region grammar has no syntax for naming an artifact family, so
+//! every invocation's tokens resolve to the same policy. ADR 0053 makes that an
+//! explicit policy rather than an absence: "`FallbackOnly` is an explicit valid
+//! policy and invokes no backend compiler". Saying it in the type is what
+//! distinguishes it from a producer that assembled a selection and forgot to put
+//! a family in it — which the driver rejects as `EmptySelection` — so every
+//! expansion states `FallbackOnly` outright instead of leaving its delivery
+//! unstated.
+//!
+//! Adding that syntax is a public-boundary decision rather than an omission
+//! here: it publishes Apple family, deployment-minimum, and language-standard
+//! vocabulary on the consumer-facing region surface, and the generated
+//! `#[cfg]`-gated delivery it would drive is owned by
+//! `generate-cfg-gated-artifact-family-delivery`, which depends on this
+//! frontend.
 //!
 //! [`stated_delivery`] is deliberately a function of a *policy* rather than a
-//! constant, so the grammar ticket supplies a parsed policy without changing
-//! what validates it, and so both refusal paths are exercised by the tests below
-//! rather than only by the one policy today's expansion happens to state.
+//! constant, so that ticket supplies a parsed policy without changing what
+//! validates it, and so both refusal paths are exercised by the tests below
+//! rather than only by the one policy every expansion states today.
 
 use core::fmt;
 
@@ -35,12 +43,14 @@ use tiler_metal_aot::family::{
     ArtifactDeliveryPolicy, ArtifactFamilySelection, FamilySelectionError,
 };
 
-/// The delivery policy this expansion states for an invocation.
+/// The delivery policy an invocation's tokens resolve to.
 ///
-/// Fixed at [`ArtifactDeliveryPolicy::FallbackOnly`] while `tensor!` has no
-/// grammar: an invocation cannot yet name a family, and this expansion performs
-/// no backend compiler work. `prototype-inline-proc-macro-frontend` replaces
-/// this with the policy an invocation's tokens resolve to.
+/// Nullary rather than a function of the parsed region, and that is the honest
+/// signature: the approved grammar admits no family statement, so every region
+/// resolves to [`ArtifactDeliveryPolicy::FallbackOnly`] and a parameter it
+/// ignored would claim a dependence that does not exist. It becomes a function
+/// of the region when `generate-cfg-gated-artifact-family-delivery` adds the
+/// syntax and the `#[cfg]`-gated delivery that syntax would drive.
 pub(crate) const fn stated_policy() -> ArtifactDeliveryPolicy {
     ArtifactDeliveryPolicy::FallbackOnly
 }
@@ -78,9 +88,8 @@ impl fmt::Display for DeliveryRefusal {
                 formatter,
                 "`tiler::tensor!` states an artifact-family selection naming {}, but this \
                  expansion performs no backend compilation yet and a selected family must not \
-                 silently become fallback on a matching target; the grammar and the \
+                 silently become fallback on a matching target; the family syntax and the \
                  `#[cfg]`-gated delivery half are owned by \
-                 `prototype-inline-proc-macro-frontend` and \
                  `generate-cfg-gated-artifact-family-delivery`",
                 families.join(", "),
             ),

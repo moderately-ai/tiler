@@ -33,13 +33,19 @@
 //!
 //! # What is here today
 //!
-//! The re-export, the generated-path anchor, and [`value`] — the runtime-value
-//! boundary an integration implements, selected by
-//! `define-inline-symbol-binding-and-runtime-value-adaptation`. Every item in
-//! [`value`] is a **reviewed draft boundary** (ADR 0074 §7, ADR 0075): it is
-//! `pub` because the seam only works if a crate outside this one can implement
-//! it, and it is not an accepted public facade until Tom accepts the exact
-//! interface.
+//! The re-export, [`value`] — the runtime-value boundary an integration
+//! implements, selected by
+//! `define-inline-symbol-binding-and-runtime-value-adaptation` — and the
+//! [`__private`] items a `tensor!` expansion names. Every item in [`value`] is
+//! a **reviewed draft boundary** (ADR 0074 §7, ADR 0075): it is `pub` because
+//! the seam only works if a crate outside this one can implement it, and it is
+//! not an accepted public facade until Tom accepts the exact interface.
+//!
+//! The inert `expansion_anchor` this crate carried while `tensor!` had no
+//! grammar is gone rather than retained beside the real expansion:
+//! `prototype-inline-proc-macro-frontend` delivered the grammar it was standing
+//! in for, and a superseded path kept for company is a second thing a reader has
+//! to rule out.
 //!
 //! # Why this crate depends on `tiler-ir`
 //!
@@ -88,9 +94,46 @@
 //! this property true rather than merely intended.
 //!
 //! ```
-//! // The re-export resolves, and the tokens it expands to reach back into
-//! // this crate. The value is inert: `tensor!` has no grammar yet.
-//! let _region = tiler::tensor!();
+//! # use tiler::value::{
+//! #     AdapterCapability, ResultRequest, StorageScalar, Tensor, TensorAdapter, ValueMetadata,
+//! # };
+//! # #[derive(Debug, PartialEq)]
+//! # struct Buffer { scalar: StorageScalar, extents: Vec<u64> }
+//! # #[derive(Debug)]
+//! # struct Refused;
+//! # impl core::fmt::Display for Refused {
+//! #     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result { f.write_str("refused") }
+//! # }
+//! # impl std::error::Error for Refused {}
+//! # struct Toy;
+//! # impl TensorAdapter for Toy {
+//! #     type Value = Buffer;
+//! #     type Context = ();
+//! #     type Error = Refused;
+//! #     fn supports(capability: AdapterCapability) -> bool {
+//! #         match capability {
+//! #             AdapterCapability::DenseRowMajorStorage | AdapterCapability::ResultConstruction => true,
+//! #         }
+//! #     }
+//! #     fn metadata(value: &Buffer) -> Result<ValueMetadata, Refused> {
+//! #         Ok(ValueMetadata::new(value.scalar, value.extents.iter().copied()))
+//! #     }
+//! #     fn build(_: &(), request: &ResultRequest<'_>) -> Result<Buffer, Refused> {
+//! #         Ok(Buffer { scalar: request.storage_scalar(), extents: request.extents().to_vec() })
+//! #     }
+//! # }
+//! # fn operand(extent: u64) -> Tensor<Toy> {
+//! #     Tensor::new(Buffer { scalar: StorageScalar::F32, extents: vec![extent] }, ())
+//! # }
+//! let (a, b, c) = (operand(3), operand(3), operand(3));
+//!
+//! let d = tiler::tensor! {
+//!     sym n;
+//!     in a: f32[n], b: f32[n], c: f32[n];
+//!     out (a * b) + c
+//! };
+//!
+//! assert_eq!(d.expect("the operands agree").extents, vec![3]);
 //! ```
 
 pub use tiler_macros::tensor;
@@ -116,21 +159,6 @@ pub mod value;
 pub mod __private {
     pub use crate::expansion::{
         AxisRef, BoundExtents, OperandFacts, RegionFacts, ResultAxis, ResultFacts, SymbolFacts,
-        bind_region, build_result,
+        bind_and_build, bind_region, build_result,
     };
-
-    /// The inert value a current `tensor!` expansion evaluates to.
-    ///
-    /// It carries no tensor semantics and holds no data. It exists so that the
-    /// facade re-export and the generated path are checked by the compiler
-    /// before there is a grammar to check them with, and the grammar tickets
-    /// replace it with a real expansion result.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub struct ExpansionAnchor;
-
-    /// Returns the anchor that `tiler::tensor!` currently expands to.
-    #[must_use]
-    pub const fn expansion_anchor() -> ExpansionAnchor {
-        ExpansionAnchor
-    }
 }

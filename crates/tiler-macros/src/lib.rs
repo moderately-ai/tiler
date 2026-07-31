@@ -8,47 +8,43 @@
 //! `tiler-macros` — not in a manifest, not in an import, and not through a
 //! path this macro expands to.
 //!
-//! # What this crate implements today
+//! # The pipeline, and why it is four modules
 //!
-//! The expansion entry point, the two behaviours [`tensor`] documents, the
-//! frontend's statement of its artifact-family delivery policy, in the
-//! crate-private `delivery` module, its statement of where an expansion
-//! looks for the expansion cache, in the crate-private `cache_root` module, and
-//! what `sym n;` means, in the crate-private `binding` module.
-//! There is still no grammar here: token parsing and span mapping onto a tensor
-//! program are owned by `prototype-inline-proc-macro-frontend`, and this crate
-//! rejects rather than guesses at input that ticket has not defined.
+//! An expansion runs `tokens` → `grammar` → `region` → emission, and each step
+//! is separated from the next by what it is allowed to know:
 //!
-//! # What `sym n;` binds, and where the environment comes from
+//! - `tokens` copies the invocation into a span-generic form, because
+//!   `proc_macro::Span` cannot be constructed and `TokenStream::from_str` cannot
+//!   be called outside an expanding macro, so anything written directly against
+//!   those types has diagnostics no test can observe.
+//! - `grammar` decides the *shape* of the approved region text and nothing about
+//!   what any name means, so a syntax refusal lands on the token that is wrong.
+//! - `region` resolves every name — element types, operands, and the governed
+//!   semantic operations `*` and `+` denote — derives the result, drives
+//!   `binding`'s symbol unification, and constructs the region as a public
+//!   logical program wherever the fixed-extent semantic layer can represent it.
+//! - emission, below, turns that into tokens, keeping each operand's own span on
+//!   the identifier that names the Rust value it will be supplied from.
 //!
-//! `binding` owns the meaning Tom ratified on 2026-07-30: a symbol's value is
-//! unified from every operand axis that names it, one canonical axis sources it,
-//! and every other axis owes an equality. It composes with the promoted
-//! `tiler_ir::shape::ShapeEnv` profile rather than restating any of it — the
-//! environment declares and binds the symbols, and what this crate adds is the
-//! part ADR 0008's one-root-binding rule makes unrepresentable there: an
-//! additional occurrence is a runtime obligation, not a second binding.
+//! `binding` owns what `sym n;` means, `delivery` owns the artifact-family
+//! policy an expansion states, and `cache_root` owns where an expansion would
+//! look for an expansion cache.
 //!
-//! It is a reviewed draft under ADR 0074 convention 7 until Tom accepts it, and
-//! nothing constructs one from real tokens yet.
+//! # What an invocation evaluates to
 //!
-//! # The cache root is chosen here, and opened nowhere yet
+//! `Result<A::Value, tiler::value::BindError<A::Error>>`, where `A` is the
+//! adapter the supplied operands carry. It is a `Result` because the checks a
+//! region owes — operand count, rank, stored scalar, and every symbol's equality
+//! obligations — are decidable only against the values the invocation is handed,
+//! and a region that cannot honour its declared interface must refuse rather
+//! than return a value derived from a shape it did not verify.
 //!
-//! `tiler-cache` takes a root from its caller and never consults the
-//! environment, so choosing one is the frontend's. `cache_root` states that
-//! choice — an override variable, a per-user macOS default, and a typed refusal
-//! for every root that is unusable or not private — as a pure function of an
-//! environment snapshot. Today's expansion opens no cache, so the resolver's
-//! only caller is its own test module; `prototype-inline-proc-macro-frontend` is
-//! the slice that calls it. Its consumer-visible spellings are a reviewed draft
-//! under ADR 0075 until Tom accepts them.
+//! # Expansion is self-contained
 //!
-//! What the current expansion does prove is the part a later grammar cannot
-//! re-litigate cheaply: that `tiler::tensor!` resolves through the facade's
-//! re-export, that generated tokens reach a stable path inside the facade the
-//! consumer already depends on, and that the delivery policy an expansion
-//! performs is a stated, validated, canonical value rather than an unstated
-//! consequence of what the expansion happens to do.
+//! Expansion runs entirely inside this process from the tokens it is given. It
+//! does not scan the consumer's sources, require a `build.rs`, consult a
+//! registry, or compile anything at runtime, and the only crate the generated
+//! tokens name is the `tiler` facade the consumer already declared.
 //!
 //! # Why this crate, and not the facade, depends on the offline driver
 //!
@@ -73,13 +69,20 @@
 //! `dependency_direction` test in the `tiler` crate checks the resolved graph
 //! and fails if an inward edge ever appears.
 
+use core::fmt;
+
 use proc_macro::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenStream, TokenTree};
 
 mod binding;
 mod cache_root;
 mod delivery;
+mod grammar;
+mod region;
+mod tokens;
 
-/// The path generated tokens use to reach the facade.
+use region::{Expansion, RegionError};
+
+/// The path generated tokens use to reach the facade's expansion entry point.
 ///
 /// It is absolute and leading-`::` so it resolves the same way from any
 /// consumer module, and it names `tiler` rather than this crate because
@@ -91,72 +94,238 @@ mod delivery;
 /// error at the call site rather than a wrong result. See
 /// `resolve-the-generated-facade-path-under-crate-renaming` for the bounded
 /// question of whether that stays acceptable.
-const FACADE_ANCHOR_PATH: &str = "::tiler::__private::expansion_anchor()";
+const FACADE_ENTRY_PATH: &str = "::tiler::__private::bind_and_build";
+
+/// The type generated tokens name for the region facts they carry.
+const FACADE_FACTS_TYPE: &str = "::tiler::__private::RegionFacts";
+
+/// The name of the block-local constant holding one region's facts.
+///
+/// Block-scoped, so it cannot collide with anything outside the expansion, and
+/// spelled unlike a name a consumer would write, so it does not shadow one
+/// inside the block either.
+const REGION_FACTS_BINDING: &str = "__TILER_REGION_FACTS";
 
 /// Expands an inline Tiler tensor region.
 ///
-/// # Current behaviour
+/// # The region
 ///
-/// The grammar is not defined yet, and this macro does not invent one:
+/// A declaration block followed by one result expression:
 ///
-/// - Empty input states its artifact-family delivery policy
-///   (`delivery::stated_policy`, `FallbackOnly` today), validates it into a
-///   canonical `ArtifactFamilySelection`, and — because that selection invokes
-///   no backend compiler — expands to an inert anchor value,
-///   `::tiler::__private::expansion_anchor()`, which carries no tensor
-///   semantics and exists so the facade re-export and the generated path are
-///   compiler-checked. A policy this expansion cannot deliver becomes a
-///   spanned compile error rather than a silent fallback.
-/// - Any non-empty input is a compile error spanned at its first token. The
-///   message names the tickets that own the grammar.
+/// ```text
+/// tiler::tensor! {
+///     sym n;
+///     in a: f32[n], b: f32[n], c: f32[n];
+///     out (a * b) + c
+/// }
+/// ```
 ///
-/// Both behaviours are placeholders. Empty input is a sentinel for "no region
-/// yet", not a case the eventual grammar is expected to accept, and the
-/// grammar tickets replace this entire body rather than extending it.
+/// `sym` declares one symbolic extent, unified from every operand axis naming
+/// it. `in` declares the region's operands, each with its element type and its
+/// axes; an axis is a declared symbol or a literal extent. `out` names the
+/// single result expression, built from the declared operands with `*` and `+`.
+/// Both statements may be repeated, and `out` is terminal.
 ///
-/// # Expansion is self-contained
+/// # What it evaluates to
 ///
-/// Expansion runs entirely inside this process from the tokens it is given. It
-/// does not scan the consumer's sources, require a `build.rs`, consult a
-/// registry, or compile anything at runtime, and the only crate the generated
-/// tokens name is the `tiler` facade the consumer already declared.
+/// `Result<A::Value, tiler::value::BindError<A::Error>>` — the consumer's own
+/// tensor type, or a typed refusal naming the operand and axis that failed.
+///
+/// # Refusals
+///
+/// Every refusal carries the span of the token that caused it: a rejected
+/// element type lands on the element type, an undeclared symbol on the axis that
+/// names it, an unsupported operator on the operator.
 #[proc_macro]
 pub fn tensor(input: TokenStream) -> TokenStream {
-    match input.into_iter().next() {
-        None => expand_region(),
-        Some(first) => spanned_compile_error(
-            first.span(),
-            "`tiler::tensor!` has no grammar yet, so this input is rejected rather than \
-             guessed at; the region syntax and its expansion are owned by \
-             `define-inline-symbol-binding-and-runtime-value-adaptation` and \
-             `prototype-inline-proc-macro-frontend`",
-        ),
+    let region = Span::call_site();
+    match expand(&tokens::read(input), region) {
+        Ok(expanded) => expanded,
+        Err(refusal) => spanned_compile_error(refusal.span(), &refusal.to_string()),
     }
 }
 
-/// Expands one region, after stating and validating its delivery policy.
-///
-/// The policy is stated before any tokens are produced, and a policy this
-/// expansion cannot deliver returns the refusal instead of the anchor. Emitting
-/// the fallback anyway would be the one thing ADR 0053 forbids outright: a
-/// selected family "cannot silently turn a selected-family build failure into
-/// fallback on the matching target".
-fn expand_region() -> TokenStream {
-    match delivery::stated_delivery(delivery::stated_policy()) {
-        // Not `expect`: a panic here aborts rustc with "proc macro panicked"
-        // and no span, which is the worst diagnostic this crate could produce.
-        // The path is a fixed valid expression and this branch is not expected
-        // to be reachable, but the cost of routing it to a real error is one
-        // line and the cost of getting it wrong is a useless compiler message.
-        Ok(_no_backend_work) => FACADE_ANCHOR_PATH.parse().unwrap_or_else(|_| {
-            spanned_compile_error(
-                Span::call_site(),
-                "`tiler-macros` failed to lex its own facade anchor path; this is a defect in \
-                 `tiler-macros`, not in the invocation",
-            )
-        }),
-        Err(refusal) => spanned_compile_error(Span::call_site(), &refusal.to_string()),
+/// Expands one region, or returns the first refusal with its span.
+fn expand(trees: &[tokens::Tree<Span>], region: Span) -> Result<TokenStream, Refusal> {
+    let syntax = grammar::parse(trees, region).map_err(RegionError::from)?;
+    let expansion = region::lower(&syntax)?;
+
+    // The delivery policy is stated and validated before any token is produced,
+    // and a policy this expansion cannot deliver returns the refusal instead of
+    // the region. Emitting anyway would be the one thing ADR 0053 forbids
+    // outright: a selected family "cannot silently turn a selected-family build
+    // failure into fallback on the matching target".
+    let _selection = delivery::stated_delivery(delivery::stated_policy()).map_err(|source| {
+        Refusal::Delivery {
+            span: region,
+            source,
+        }
+    })?;
+
+    emit(&expansion, region)
+}
+
+/// Why an invocation did not expand.
+enum Refusal {
+    /// The tokens are not a region this frontend admits.
+    Region(RegionError<Span>),
+    /// The artifact-family delivery policy this expansion states is not one it
+    /// can deliver.
+    Delivery {
+        /// The invocation.
+        span: Span,
+        /// The delivery module's own refusal.
+        source: delivery::DeliveryRefusal,
+    },
+    /// This crate produced tokens it cannot itself lex.
+    ///
+    /// A defect in `tiler-macros`, routed to a spanned error rather than to a
+    /// panic: a panic inside an expansion aborts rustc with "proc macro
+    /// panicked" and no span, which is the worst diagnostic this crate could
+    /// produce.
+    MalformedEmission {
+        /// The invocation.
+        span: Span,
+        /// The source text that failed to lex.
+        source: String,
+    },
+}
+
+impl Refusal {
+    /// Returns the span this refusal must be reported at.
+    const fn span(&self) -> Span {
+        match self {
+            Self::Region(source) => *source.span(),
+            Self::Delivery { span, .. } | Self::MalformedEmission { span, .. } => *span,
+        }
     }
+}
+
+impl fmt::Display for Refusal {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Region(source) => source.fmt(formatter),
+            Self::Delivery { source, .. } => source.fmt(formatter),
+            Self::MalformedEmission { source, .. } => write!(
+                formatter,
+                "`tiler-macros` produced source it cannot lex (`{source}`); this is a defect in \
+                 `tiler-macros`, not in the invocation"
+            ),
+        }
+    }
+}
+
+impl From<RegionError<Span>> for Refusal {
+    fn from(source: RegionError<Span>) -> Self {
+        Self::Region(source)
+    }
+}
+
+/// Builds the block one region expands to.
+///
+/// The shape is fixed:
+///
+/// ```text
+/// {
+///     const __TILER_REGION_FACTS: ::tiler::__private::RegionFacts = …;
+///     ::tiler::__private::bind_and_build(&__TILER_REGION_FACTS, &[&a, &b, &c])
+/// }
+/// ```
+///
+/// The operand identifiers carry the spans the region's own `in` list wrote
+/// them at, so a value that is not in scope is reported at the declaration that
+/// named it rather than at the invocation as a whole. Everything else is
+/// scaffolding and carries the call site.
+fn emit(expansion: &Expansion<Span>, region: Span) -> Result<TokenStream, Refusal> {
+    let facts = lex(
+        &format!(
+            "const {REGION_FACTS_BINDING}: {FACADE_FACTS_TYPE} = {};",
+            expansion.facts
+        ),
+        region,
+    )?;
+    let entry = lex(FACADE_ENTRY_PATH, region)?;
+    let facts_reference = lex(&format!("&{REGION_FACTS_BINDING}"), region)?;
+
+    let mut operands = TokenStream::new();
+    for (position, operand) in expansion.operands.iter().enumerate() {
+        if position != 0 {
+            operands.extend([TokenTree::Punct(spanned_punct(',', region))]);
+        }
+        operands.extend([
+            TokenTree::Punct(spanned_punct('&', operand.span)),
+            TokenTree::Ident(Ident::new(&operand.text, operand.span)),
+        ]);
+    }
+    let mut operand_slice = TokenStream::new();
+    operand_slice.extend([
+        TokenTree::Punct(spanned_punct('&', region)),
+        TokenTree::Group(spanned_group(Delimiter::Bracket, operands, region)),
+    ]);
+
+    let mut arguments = TokenStream::new();
+    arguments.extend(facts_reference);
+    arguments.extend([TokenTree::Punct(spanned_punct(',', region))]);
+    arguments.extend(operand_slice);
+
+    let mut body = TokenStream::new();
+    body.extend(facts);
+    body.extend(entry);
+    body.extend([TokenTree::Group(spanned_group(
+        Delimiter::Parenthesis,
+        arguments,
+        region,
+    ))]);
+
+    let mut expanded = TokenStream::new();
+    expanded.extend([TokenTree::Group(spanned_group(
+        Delimiter::Brace,
+        body,
+        region,
+    ))]);
+    Ok(expanded)
+}
+
+/// Lexes one piece of generated source, carrying the call site on every token.
+fn lex(source: &str, span: Span) -> Result<TokenStream, Refusal> {
+    let stream: TokenStream = source.parse().map_err(|_| Refusal::MalformedEmission {
+        span,
+        source: source.to_owned(),
+    })?;
+    Ok(respan(stream, span))
+}
+
+/// Replaces every span in a stream, so generated scaffolding is attributed to
+/// the invocation rather than to a source file the consumer cannot open.
+fn respan(stream: TokenStream, span: Span) -> TokenStream {
+    stream
+        .into_iter()
+        .map(|tree| match tree {
+            TokenTree::Group(group) => TokenTree::Group(spanned_group(
+                group.delimiter(),
+                respan(group.stream(), span),
+                span,
+            )),
+            mut other => {
+                other.set_span(span);
+                other
+            }
+        })
+        .collect()
+}
+
+/// Builds one punctuation token at a span.
+fn spanned_punct(character: char, span: Span) -> Punct {
+    let mut punct = Punct::new(character, Spacing::Alone);
+    punct.set_span(span);
+    punct
+}
+
+/// Builds one delimited group at a span.
+fn spanned_group(delimiter: Delimiter, stream: TokenStream, span: Span) -> Group {
+    let mut group = Group::new(delimiter, stream);
+    group.set_span(span);
+    group
 }
 
 /// Builds `compile_error! { "<message>" }` with every token carrying `span`.
@@ -171,9 +340,6 @@ fn spanned_compile_error(span: Span, message: &str) -> TokenStream {
     let mut body = TokenStream::new();
     body.extend([TokenTree::Literal(literal)]);
 
-    let mut group = Group::new(Delimiter::Brace, body);
-    group.set_span(span);
-
     let mut bang = Punct::new('!', Spacing::Alone);
     bang.set_span(span);
 
@@ -181,7 +347,7 @@ fn spanned_compile_error(span: Span, message: &str) -> TokenStream {
     expanded.extend([
         TokenTree::Ident(Ident::new("compile_error", span)),
         TokenTree::Punct(bang),
-        TokenTree::Group(group),
+        TokenTree::Group(spanned_group(Delimiter::Brace, body, span)),
     ]);
     expanded
 }

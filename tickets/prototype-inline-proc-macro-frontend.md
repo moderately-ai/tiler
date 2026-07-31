@@ -102,3 +102,129 @@ Tom's approval of candidate B released the syntax question. The ticket becomes r
 - Keep all five declared prerequisites complete before claiming this implementation; syntax approval alone does not create its public compiler, value, or artifact authorities.
 - File broader fusion as a larger explicit inline-region ticket rather than inspecting surrounding Rust or creating an ambient registry.
 - Keep consumer-specific adapters and model integration downstream of this consumer-neutral frontend proof.
+
+## Outcome (2026-07-31)
+
+`tiler::tensor!` parses the approved candidate-B grammar, resolves it against the governed semantic operation registry, derives and binds every symbolic extent through `ShapeEnv`, states and validates its artifact-family delivery, and expands to code that binds an out-of-tree consumer's own tensors and returns one. The approved example runs end to end from a crate that depends on `tiler` alone.
+
+### What expands
+
+```
+region    := statement* body
+statement := "sym" ident ("," ident)* ";" | "in" operand ("," operand)* ";"
+body      := "out" expression
+operand   := ident ":" element-type "[" axis? ("," axis)* ","? "]"
+axis      := ident | integer-literal
+expression:= operand-reference | "(" expression ")" | expression ("*"|"+") expression
+```
+
+`sym` and `in` repeat; `out` is terminal and takes the rest of the invocation. `*` binds tighter than `+`, as in Rust. An invocation evaluates to `Result<A::Value, tiler::value::BindError<A::Error>>` — the consumer's own tensor type, or a typed refusal naming the operand and axis that failed. It is a `Result` because the operand-count, rank, stored-scalar and symbol-equality checks a region owes are decidable only against the values it is handed, and a region that cannot honour its declared interface must refuse rather than return a value derived from a shape it never verified.
+
+### Two findings that shaped the scope, both measured
+
+**The semantic layer is fixed-extent, so a symbolic region has no expansion-time program.** `tiler_ir::shape::Shape` is "Target-independent **fixed** shape vocabulary" and `Extent` wraps a `u64`; a region's `sym n` binds at `LiveDevicePreflight` from operand metadata. A region whose every extent is a literal is therefore constructed and verified as a real `SemanticProgram` through `SemanticProgramBuilder` and the governed `F32Multiply`/`F32Add` facades, and the shape its registry *infers* for the result is required to equal the shape this frontend *derived*. A region carrying a symbolic extent is recorded as `ProgramEvidence::DeferredSymbolicExtent` rather than built over invented extents, because a program over substituted extents is a different program and its identity would name something no consumer wrote. Filed as `carry-symbolic-extents-into-the-semantic-program`.
+
+**The compiler is not invoked, and that is measurement rather than descoping.** This ticket's settled text says the frontend "invoke[s] the ordinary compiler boundary". A temporary `tiler-compiler` integration test at base `b623670` built the approved region as a semantic program over three `f32[4]` inputs and called `compile_governed` under all four `NumericalContract` values and `compile` under the governed target profile. All five returned `UnsupportedCapability { rule: "signature" }` before any target-qualified trace: `normalize_pointwise` and `normalize_serial_sum` both open with `program.input_count() != 1`, so a three-input region matches neither recognizer. Since `docs/integration/frontends.md` requires target-neutral optimizer and verifier failures to be *unconditional* `compile_error!` diagnostics, wiring the compiler in would have made the region Tom approved a compile error at every call site. No `tiler-macros` → `tiler-compiler` edge was added. Filed as `admit-multi-input-elementwise-programs-at-the-compiler-boundary`.
+
+### Where the code went
+
+- `crates/tiler-macros/src/tokens.rs` — a span-generic copy of the invocation's tokens. It exists because `proc_macro::Span` cannot be constructed and `TokenStream::from_str` panics outside an expanding macro, so a parser written against those types would have diagnostics no test could observe. The conversion is the only untestable part and decides nothing.
+- `crates/tiler-macros/src/grammar.rs` — the shape of the region text, and nothing about meaning. Fifteen refusal variants, each carrying the span of the token that caused it.
+- `crates/tiler-macros/src/region.rs` — meaning: element types, operand references, the registry's own elementwise rule, `RegionDeclarations` → `BoundRegion`, the specialized `SemanticProgram` where representable, and the emitted facts.
+- `crates/tiler-macros/src/lib.rs` — emission. Operand identifiers carry the spans the region's `in` list wrote them at; everything else carries the call site.
+- `crates/tiler/src/expansion.rs` — `bind_and_build`, the one item generated code calls.
+
+`binding`'s `RegionDeclarations` is now populated from real tokens, so its crate-wide `#![allow(dead_code)]` is gone, replaced by three narrow item-level allows that name what actually reserves each. `cache_root`'s allow was corrected: it named this ticket as its consumer, and this ticket does not consume it — every region states `FallbackOnly`, which invokes no backend compiler, so there is nothing to cache, and resolving a root anyway would let an unset `HOME` refuse an expansion that opens no cache. `generate-cfg-gated-artifact-family-delivery` is the slice that consumes it. `delivery::stated_policy`'s "while `tensor!` has no grammar" reasoning was replaced with the real one: the approved grammar admits no family statement.
+
+The inert `ExpansionAnchor` and `expansion_anchor` are removed rather than kept beside the real expansion — their own documentation said the grammar tickets replace them.
+
+### Public surface added
+
+**Accepted surface** — nothing. The `tiler::tensor!` path, `tiler::value`, and the `__private` region-facts items were accepted on 2026-07-31 and are used unchanged.
+
+**Needs acceptance** (ADR 0075), one item and one contract:
+
+| Item | Form |
+| --- | --- |
+| `tiler::__private::bind_and_build` | `pub fn bind_and_build<A: TensorAdapter>(facts: &RegionFacts, operands: &[&Tensor<A>]) -> Result<A::Value, BindError<A::Error>>` |
+
+It is `#[doc(hidden)]` and carries no compatibility claim, but it is publicly reachable and the accepted packet enumerated the `__private` items by name, so adding one is not self-accepted. It exists because generated code cannot name the adapter: `build_result`'s `A` appears only in `&A::Context` and in its return type, and an associated type is not injective, so `A` is inferable only from a `&[&Tensor<A>]`. The accepted pair stays public and unchanged, and `runtime_value_adapter.rs` exercises both directly and asserts the composition agrees with them.
+
+The second is not an item but is consequential: **an invocation evaluates to a `Result`**. Tom approved the syntax, not the evaluated type, and `let d = tiler::tensor! { … }` binding a `Result` is what a consumer sees.
+
+**Removed:** `tiler::__private::ExpansionAnchor` and `tiler::__private::expansion_anchor`.
+
+**Not added:** no new public item on `tiler-macros` (every module is crate-private), and no new public hook on `tiler-compiler` — the frontend needed none, because it does not reach it.
+
+### Grammar implemented vs deferred
+
+Implemented: `sym`, `in` with element type and mixed symbolic/literal axes including rank 0, repeated declaration statements, trailing commas, `out` with `*`, `+`, parentheses, and Rust precedence.
+
+Deferred, each failing closed with a span-typed error rather than an invented meaning: named operation calls (`relu(a)`) — the approved syntax reserves the form and this profile registers no such operation; every operator but `*` and `+`; every element type but `f32`, because `F32` is the only value-type marker the governed profile registers for plain tensor arithmetic; raw identifiers, which `Ident::new` panics on; invisible groups, which is how another macro hands over an already-parsed expression a region cannot see the operand names of; and any syntax for stating an artifact family, which is a public-boundary decision owned by `generate-cfg-gated-artifact-family-delivery`.
+
+### Diagnostic evidence
+
+`crates/tiler/tests/facade/fail/` holds three compile-fail fixtures with byte-compared goldens, out of tree. The span targets:
+
+| Refusal | Caret |
+| --- | --- |
+| unregistered element type | the element type (`f64`), not the operand — the granularity that eliminated candidate C |
+| unsupported operator | the operator (`-`), and a compound operator (`+=`) reported whole rather than as its first character |
+| named operation call | the name (`relu`) |
+| malformed literal extent | the literal (`4usize`) |
+| undeclared symbol | the axis that names it (`k`, inside the brackets) |
+| unsourced symbol | its `sym` declaration |
+| duplicate operand / duplicate symbol | the second declaration |
+| unknown operand reference | the reference in the body |
+| incompatible operand shapes | the operator that would have combined them |
+| trailing tokens, non-keyword statement | the offending token |
+| empty region, missing body | the invocation |
+
+`generated_operand_reference_spans.rs` is the emission half and nothing else covers it: an operand with no Rust binding produces `cannot find value 'a' in this scope` with the caret on `a` in the `in` list, because that is the only part of a region that says where its values come from.
+
+### Commands
+
+- `cargo fmt --all --check`
+- `cargo clippy -p tiler -p tiler-macros --all-targets --locked -- -D warnings` — clean
+- `cargo nextest run -p tiler -p tiler-macros` — 81 tests, all passing (65 in `tiler-macros`, up from 41)
+- `cargo test -p tiler -p tiler-macros --doc` — the facade's crate doc-test is now the approved region executing, not an inert anchor
+- `tkt lint`, `git diff --check`, `tkt guard --base b623670`
+- `make full`
+
+### Perturbation evidence
+
+Eleven perturbations, each applied alone, run, and restored.
+
+| Perturbation | Result |
+| --- | --- |
+| `STATEMENT_PUNCT` neutralized | FAIL `tokens_after_the_result_are_refused` — `;` misreported as an unsupported operator |
+| joint-operator refusal disabled | FAIL `an_unsupported_operator_is_refused_at_the_operator` — `a += b` read as `a + (= b)` |
+| `literal_extent` digit check removed | FAIL `a_literal_extent_must_be_a_plain_integer` — `4u64` silently became extent **464** |
+| named-call detection removed | FAIL `a_named_operation_call_is_refused_at_its_name` — `relu(a)` parsed as operand `relu` |
+| `+`/`*` precedence inverted | FAIL ×5 including `precedence_matches_rust` |
+| `ELEMENT_TYPES` widened with `f64` | FAIL `an_unregistered_element_type_is_refused_at_its_own_token` |
+| elementwise shape rule disabled | FAIL ×2: `incompatible_operand_shapes_are_refused_at_the_operator` **and** `a_scalar_operand_broadcasts_and_the_result_takes_the_shaped_side` with `ResultShapeDisagreement { derived: "[]", inferred: "[4]" }` |
+| early undeclared-symbol check removed | FAIL `an_undeclared_symbol_is_refused_at_the_axis_that_names_it` |
+| program construction always deferred | FAIL ×2 including `a_static_region_is_constructed_as_a_public_logical_program` |
+| operand identifiers respanned to the call site | FAIL `generated_operand_reference_spans` golden — both carets degraded to the whole invocation |
+| `stated_policy` returns a selected macOS family | FAIL: every pass fixture refused with a spanned `compile_error!`, and no region expanded |
+
+The seventh is the strongest and was not anticipated. With the frontend's elementwise rule disabled, the *static* case was caught independently by the semantic registry itself — `provider tiler::standard-semantics@7 rejected operation tiler::multiply-f32@1: binary.shape: operand shapes must match or one operand must be scalar` — which is the exact sentence the frontend rule quotes. That is direct evidence the rule is the registry's rule restated for the symbolic case, not a second authority with its own opinion.
+
+### Unsupported cases, refusing explicitly
+
+- A symbolic region has no expansion-time public logical program (above), and therefore no semantic identity, optimizer pass, or artifact.
+- A region's operand names must be bindings of type `Tensor<A>`; the expansion emits `&a`, so a binding already of type `&Tensor<A>` does not compile. Not refused with a typed error — rustc reports the type mismatch at the `in` list.
+- `RegionBindError::NoOperands` is unreachable through the grammar: every body atom is an operand reference, so a region with no `in` statement is refused as an unknown operand first. It remains `binding`'s authority for any other caller and its own test exercises it.
+- More than one result, operands on different adapter contexts, per-value storage properties, and storage access of any kind remain outside the bounded profile, unchanged from `define-inline-symbol-binding-and-runtime-value-adaptation`.
+- Two axes naming *different* symbols are not one shape. Nothing at expansion time proves `n` and `m` take one value, so treating them as compatible would defer a shape error into a wrong result.
+
+### Deliberately not done
+
+No expansion cache is opened, no backend compiler is invoked, no artifact bytes are embedded, and no `#[cfg]`-gated delivery is emitted. Every region states `FallbackOnly`, which ADR 0053 defines as an explicit valid policy invoking no backend compiler; the delivery half is `generate-cfg-gated-artifact-family-delivery`'s and the embedding half is `prototype-macro-embedding-and-cargo-behavior`'s, and both depend on this ticket.
+
+### Graph maintenance performed
+
+- Filed `carry-symbolic-extents-into-the-semantic-program` (p1, research) and `admit-multi-input-elementwise-programs-at-the-compiler-boundary` (p1, implementation), both with the reproducing check in the body.
+- Corrected `cache_root`'s and `binding`'s `allow(dead_code)` reasons, which named this ticket as their consumer.
+- `generate-cfg-gated-artifact-family-delivery`'s two stated implementation blockers are now cleared: `crates/tiler-macros/**` exists and this ticket, its remaining dependency, is complete.

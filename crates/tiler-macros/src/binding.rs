@@ -1,15 +1,3 @@
-#![allow(
-    dead_code,
-    reason = "the symbol-binding vocabulary is a reviewed draft under ADR 0074 convention 7: \
-              `tensor!` has no grammar, so nothing constructs a `RegionDeclarations` from real \
-              tokens yet and this module's only callers today are its own test module and the \
-              facade's compile-pass fixtures. `prototype-inline-proc-macro-frontend` is the slice \
-              that consumes it, and the surface it reserves is the whole of the binding decision \
-              — the declaration vocabulary, the canonical-source rule, the equality obligations, \
-              the derived `ShapeEnv`, and the token form the facade's `__private` items are named \
-              through"
-)]
-
 //! Expansion-time binding of a region's declared symbols, operands, and result.
 //!
 //! # What `sym n;` means, and why it is decided here
@@ -666,6 +654,19 @@ pub(crate) struct BoundResult {
 /// is evidence the whole region was decided rather than partly checked.
 #[derive(Clone, Debug)]
 pub(crate) struct BoundRegion {
+    /// The verified environment, retained rather than dropped after it has
+    /// decided. Building it is what *makes* the binding decision — `declare`
+    /// and `bind` are where ADR 0008's one-root-binding rule is enforced and
+    /// where a second occurrence proves to be an obligation rather than a
+    /// binding — and the value itself is what a lowering slice hands to
+    /// `IndexRegionBuilder::new_with_shape_environment`, which is why it is kept
+    /// beside the lowered facts instead of being reconstructed later from them.
+    #[allow(
+        dead_code,
+        reason = "read by this module's tests and reserved for the lowering slice; no expansion \
+                  builds an index region yet, because every region states `FallbackOnly` and \
+                  invokes no backend compiler"
+    )]
     environment: ShapeEnv,
     operands: Vec<BoundOperand>,
     symbols: Vec<BoundSymbol>,
@@ -678,6 +679,11 @@ impl BoundRegion {
     /// This is the value a frontend hands to
     /// `IndexRegionBuilder::new_with_shape_environment`; nothing here duplicates
     /// what the environment decides.
+    #[allow(
+        dead_code,
+        reason = "see the `environment` field: reserved for the lowering slice and read by this \
+                  module's tests"
+    )]
     pub(crate) const fn environment(&self) -> &ShapeEnv {
         &self.environment
     }
@@ -687,11 +693,22 @@ impl BoundRegion {
     /// Equal for two regions declaring one interface, whatever order their `in`
     /// list or their `sym` lines were written in, because a binding names an
     /// [`InputKey`] and an [`Axis`] and never a position.
+    #[allow(
+        dead_code,
+        reason = "the identity a region's cache subject will be a function of; nothing composes a \
+                  cache subject yet, and this module's tests are what keep the order-independence \
+                  it exists to state from regressing"
+    )]
     pub(crate) const fn environment_identity(&self) -> &ShapeEnvIdentity {
         self.environment.identity()
     }
 
     /// Returns the declared symbols in the environment's canonical order.
+    #[allow(
+        dead_code,
+        reason = "read by this module's tests, which assert the canonical source and the equality \
+                  obligations directly rather than only through the rendered facts"
+    )]
     pub(crate) fn symbols(&self) -> &[BoundSymbol] {
         &self.symbols
     }
