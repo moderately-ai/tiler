@@ -1,10 +1,12 @@
 [workspace]
 members = [
+    "crates/tiler",
     "crates/tiler-artifact",
     "crates/tiler-build",
     "crates/tiler-cache",
     "crates/tiler-compiler",
     "crates/tiler-ir",
+    "crates/tiler-macros",
     "crates/tiler-metal",
     "crates/tiler-metal-aot",
     "crates/tiler-reference",
@@ -38,11 +40,16 @@ num-traits = "0.2.19"
 # instructions `sha2` selects at runtime, because workspace policy forbids
 # unsafe code. Bytes are identical by specification and pinned by test.
 sha2 = "0.11.0"
+# `tiler` sorts here and is deliberately absent. It is the consumer-facing
+# facade, so nothing in this workspace may depend on it, and an entry here would
+# only make that edge easy to add by accident.
+# `crates/tiler/tests/dependency_direction.rs` is what actually enforces it.
 tiler-artifact = { path = "crates/tiler-artifact" }
 tiler-build = { path = "crates/tiler-build" }
 tiler-cache = { path = "crates/tiler-cache" }
 tiler-compiler = { path = "crates/tiler-compiler" }
 tiler-ir = { path = "crates/tiler-ir" }
+tiler-macros = { path = "crates/tiler-macros" }
 tiler-metal = { path = "crates/tiler-metal" }
 tiler-metal-aot = { path = "crates/tiler-metal-aot" }
 tiler-reference = { path = "crates/tiler-reference" }

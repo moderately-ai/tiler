@@ -1,0 +1,22 @@
+[package]
+name = "tiler"
+description = "Consumer-facing facade for Tiler's inline tensor frontend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+test = true
+doctest = true
+doc = true
+
+[dependencies]
+tiler-macros.workspace = true
+
+[dev-dependencies]
+trybuild.workspace = true
+
+[lints]
+workspace = true
