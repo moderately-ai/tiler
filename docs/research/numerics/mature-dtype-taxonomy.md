@@ -149,9 +149,11 @@ Primary sources: [StableHLO element types](https://openxla.org/stablehlo/spec#el
 [MLIR integer types](https://mlir.llvm.org/docs/Dialects/Builtin/#integer-type),
 [PyTorch tensor attributes](https://docs.pytorch.org/docs/stable/tensor_attributes),
 and [PyTorch `ScalarType`](https://github.com/pytorch/pytorch/blob/main/c10/core/ScalarType.h).
-Preserved as `stablehlo-spec-v1.18.0`, `onnx-ir-v1.22.0`, and
-`mlir-builtin-types-llvmorg-22.1.8`; the PyTorch precedents are deferred to
-[preserve-ecosystem-dtype-precedent-sources](../../../tickets/preserve-ecosystem-dtype-precedent-sources.md).
+Preserved as `stablehlo-spec-v1.18.0`, `onnx-ir-v1.22.0`,
+`mlir-builtin-types-llvmorg-22.1.8`, `pytorch-tensor-attributes-v2.13.0`, and
+`pytorch-scalar-type-v2.13.0`. The `ScalarType.h` link above points at PyTorch's
+main branch; the preserved copy is pinned to tag `v2.13.0` and is where the
+`UInt1`–`UInt7` and barebones `Bits*` widths can be re-read.
 
 Signless compiler integers are intentionally absent from the canonical value
 catalog. Signedness affects comparisons, division, overflow interpretation, and
@@ -237,11 +239,11 @@ NVIDIA documents TF32 as an execution precision for Tensor Core paths.
 Primary sources: [LLVM floating-point types](https://llvm.org/docs/LangRef.html#floating-point-types),
 [PTX alternate floating-point formats](https://docs.nvidia.com/cuda/parallel-thread-execution/#alternate-floating-point-data-formats),
 and [NVIDIA TensorRT accuracy considerations](https://docs.nvidia.com/deeplearning/tensorrt/latest/inference-library/accuracy-considerations.html).
-LLVM is preserved as `llvm-langref-llvmorg-22.1.8`. The PTX link above always
-serves the current toolkit; the record pins `nvidia-ptx-isa-cuda-13.3.0`
-(PTX ISA 9.3) as metadata-only, since NVIDIA grants no redistribution. The
-TensorRT guide is deferred to
-[preserve-ecosystem-dtype-precedent-sources](../../../tickets/preserve-ecosystem-dtype-precedent-sources.md).
+LLVM is preserved as `llvm-langref-llvmorg-22.1.8`. The PTX and TensorRT links
+above always serve the current release; the record pins
+`nvidia-ptx-isa-cuda-13.3.0` (PTX ISA 9.3) and
+`nvidia-tensorrt-accuracy-11.2.1` to version-qualified paths, both
+metadata-only, since NVIDIA grants no redistribution for either.
 
 ### Decimal floating point
 
@@ -261,9 +263,11 @@ the same logical decimal format.
 
 Primary sources: [IEEE 754-2019](https://standards.ieee.org/ieee/754/6210/)
 and [GCC decimal floating types](https://gcc.gnu.org/onlinedocs/gcc/Decimal-Float.html).
-IEEE 754-2019 is `ieee-754-2019`, metadata-only with no local copy; the GCC
-manual is deferred to
-[preserve-ecosystem-dtype-precedent-sources](../../../tickets/preserve-ecosystem-dtype-precedent-sources.md).
+IEEE 754-2019 is `ieee-754-2019`, metadata-only with no local copy. The GCC
+manual is preserved as `gcc-manual-16.1.0` — the complete GFDL manual rather
+than the single linked page, because the licence permits verbatim copying of
+the whole document only. It records a compiler's exposure of `_Decimal32`,
+`_Decimal64`, and `_Decimal128`, not a definition of the formats.
 
 ### Complex scalars
 
@@ -294,10 +298,11 @@ Primary sources: [StableHLO element types](https://openxla.org/stablehlo/spec#el
 [PyTorch complex numbers](https://docs.pytorch.org/docs/stable/complex_numbers.html),
 [DLPack C API](https://dmlc.github.io/dlpack/latest/c_api.html), and
 [MLIR complex type](https://mlir.llvm.org/docs/Dialects/Builtin/#complex-type).
-Preserved as `stablehlo-spec-v1.18.0`, `dlpack-header-v1.3`, and
-`mlir-builtin-types-llvmorg-22.1.8`; the DLPack link above renders a mutable
-"latest" view of the pinned header. PyTorch is deferred to
-[preserve-ecosystem-dtype-precedent-sources](../../../tickets/preserve-ecosystem-dtype-precedent-sources.md).
+Preserved as `stablehlo-spec-v1.18.0`, `dlpack-header-v1.3`,
+`mlir-builtin-types-llvmorg-22.1.8`, and
+`pytorch-complex-numbers-v2.13.0`; the DLPack link above renders a mutable
+"latest" view of the pinned header. The `complex32`/`chalf` spelling itself is
+in `pytorch-tensor-attributes-v2.13.0`.
 
 ### Posit and other tapered formats
 
@@ -389,8 +394,9 @@ reserved/specialized for Tiler taxonomy; decimal32/64/128/256 fixed-point is
 mature in Arrow but not general GPU arithmetic.
 
 Primary source: [Arrow columnar types](https://arrow.apache.org/docs/format/Columnar.html).
-Preservation is deferred to
-[preserve-ecosystem-dtype-precedent-sources](../../../tickets/preserve-ecosystem-dtype-precedent-sources.md).
+Preserved as `arrow-columnar-25.0.0`. That page parameterizes `Decimal` by bit
+width and delegates the accepted widths to `Schema.fbs`, preserved beside it as
+`arrow-schema-fbs-25.0.0`, which records 32, 64, 128, and 256.
 
 ## Packed and block-scaled encoded tensors
 
@@ -484,8 +490,8 @@ the initial tensor-kernel optimizer.
 Primary sources: [ONNX IR](https://onnx.ai/onnx/repo-docs/IR.html),
 [NumPy dtype classes](https://numpy.org/doc/stable/reference/routines.dtypes.html),
 and [Arrow columnar format](https://arrow.apache.org/docs/format/Columnar.html).
-ONNX is preserved as `onnx-ir-v1.22.0`; NumPy and Arrow are deferred to
-[preserve-ecosystem-dtype-precedent-sources](../../../tickets/preserve-ecosystem-dtype-precedent-sources.md).
+Preserved as `onnx-ir-v1.22.0`, `numpy-dtype-classes-v2.5.1`, and
+`arrow-columnar-25.0.0`.
 
 ## Values that are not tensor element dtypes
 
@@ -507,9 +513,9 @@ when their physical representation is i64.
 Primary sources: [JAX typed keys](https://docs.jax.dev/en/latest/jep/9263-typed-keys.html),
 [StableHLO token type](https://openxla.org/stablehlo/spec#token-type), and
 [DLPack C API](https://dmlc.github.io/dlpack/latest/c_api.html).
-StableHLO and DLPack are preserved as `stablehlo-spec-v1.18.0` and
-`dlpack-header-v1.3`; JAX is deferred to
-[preserve-ecosystem-dtype-precedent-sources](../../../tickets/preserve-ecosystem-dtype-precedent-sources.md).
+Preserved as `stablehlo-spec-v1.18.0`, `dlpack-header-v1.3`, and
+`jax-typed-keys-v0.11.0`; the JAX link above tracks the project's `latest`
+documentation branch, while the preserved copy is pinned to tag `jax-v0.11.0`.
 
 ## Cross-system inventory snapshot
 
@@ -535,8 +541,12 @@ Backend primary sources: [Metal capabilities](https://developer.apple.com/metal/
 and [WGSL](https://www.w3.org/TR/WGSL/).
 The Metal documents are preserved under
 [Apple Metal sources](../apple-targets/sources/README.md); PTX is
-`nvidia-ptx-isa-cuda-13.3.0`, metadata-only; SPIR-V and WGSL are deferred to
-[preserve-ecosystem-dtype-precedent-sources](../../../tickets/preserve-ecosystem-dtype-precedent-sources.md).
+`nvidia-ptx-isa-cuda-13.3.0`, metadata-only; SPIR-V and WGSL are preserved as
+`spirv-unified-1.6-rev7` and `wgsl-crd-20260716`. The WGSL link above is the
+mutable latest-version pointer, and the preserved copy is the dated 16 July
+2026 Candidate Recommendation Draft. The SPIR-V registry serves a per-request
+nonce, so that record's digest verifies the local copy rather than a fresh
+download; the [preservation record](sources/README.md) states the boundary.
 
 ## Capability levels to decide later
 

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 #
-# Verifies the preserved dtype primary-source population against expected-sources.tsv.
+# Verifies the preserved dtype source population against expected-sources.tsv. That population
+# covers both the format-defining specifications and the ecosystem spelling, exposure, and
+# namespace-governance precedents the dtype research cites.
 #
 # The check counts its population before it inspects it. An empty or truncated manifest,
 # a deleted vendored file, an unreferenced stray file, or a mutated digest each fail with
@@ -15,9 +17,9 @@ manifest="$here/expected-sources.tsv"
 
 # The expected population, declared here rather than derived from the manifest, so that a
 # manifest that lost rows fails instead of agreeing with itself.
-expect_total=25
-expect_vendored=20
-expect_metadata_only=3
+expect_total=46
+expect_vendored=40
+expect_metadata_only=4
 expect_pending=2
 
 # Files that are the record itself rather than preserved upstream bytes.
