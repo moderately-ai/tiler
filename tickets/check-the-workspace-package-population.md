@@ -1,7 +1,7 @@
 ---
 id: check-the-workspace-package-population
 title: Check the workspace package population beside the dependency-direction test
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [correct-stale-post-vertical-integration-inventories]
@@ -9,6 +9,9 @@ scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, inventory, correctness]
+claimed_from: todo
+assignee: coordinator
+lease_expires_at: 1785522836
 ---
 ## User-visible outcome
 
