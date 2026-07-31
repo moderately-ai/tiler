@@ -1,18 +1,13 @@
-#![allow(
-    dead_code,
-    reason = "ADR 0074 convention 7 draft: this is the ShapeEnv authority, and its consumers do not exist yet. `implement-shapeenv-index-bindings` is the ticket that makes index lowering read it, and until then nothing on the compile path can construct one — the bounded profile's shapes are static literals with no symbols and no constraints at all. Wiring a premature consumer to satisfy the lint would make the authority look adopted while proving nothing"
-)]
-
 //! The `ShapeEnv` authority: scoped symbols, typed root bindings, semantic
 //! constraints, and identity.
 //!
-//! # Draft status
+//! # Where this surface is reachable from
 //!
-//! This module is `pub(crate)` under ADR 0074 convention 7. `implement-shapeenv-core`
-//! states that "any consequential public or cross-crate boundary remains a draft
-//! until Tom reviews and accepts the exact implementation commit", so nothing
-//! here is reachable outside `tiler-ir` yet and promoting it is a separate
-//! reviewed step rather than a consequence of it compiling.
+//! The accepted subset is re-exported flat from [`crate::shape`]; this module
+//! itself is `pub(crate)`, so the decision procedure, its disjoint-set forest,
+//! and its per-class domains stay inside it. A frontend constructs an
+//! environment through [`ShapeEnvBuilder`] and reads it through [`ShapeEnv`]'s
+//! queries.
 //!
 //! # What this module owns
 //!
@@ -77,9 +72,14 @@ use crate::semantic::InputKey;
 
 pub(crate) mod constraint;
 
-use constraint::{
-    ConstraintConflict, ExtentInterval, ExtentRelation, FragmentViolation, SemanticInputConstraint,
-    VariantGuard,
+// Flat re-export rather than a published `constraint` module: the constraint
+// vocabulary is part of the accepted `ShapeEnv` surface, while the decision
+// procedure, its disjoint-set forest, and its per-class domains are not. A
+// module published because its file exists would carry the second along with
+// the first.
+pub use constraint::{
+    ConstraintConflict, ExtentInterval, ExtentRelation, ExtentTerm, FragmentViolation,
+    GuardApplicability, SemanticInputConstraint, VariantGuard,
 };
 
 /// Domain separator of a canonical shape-environment encoding.
@@ -88,9 +88,13 @@ use constraint::{
 /// a version field beside its already-versioned key, so a binding encodes to
 /// different bytes than it did. Bumping states that rather than letting two
 /// encodings share one domain. As with the `v1` to `v2` change, no durable
-/// artifact, cache, or cross-process reader ever observed an earlier version —
-/// the module is `pub(crate)` and unreachable outside `tiler-ir` — so this
-/// records the change rather than migrating anything.
+/// artifact, cache, or cross-process reader ever observed an earlier version, so
+/// this records the change rather than migrating anything.
+///
+/// Publishing this vocabulary did not move the version. No byte an environment
+/// encodes changed, and a domain that advanced for a visibility change alone
+/// would make two identical subjects carry different domains — which is the
+/// defect a domain separator exists to prevent.
 const SHAPE_ENV_DOMAIN: &[u8] = b"tiler.shape-env.v3\0";
 
 /// Largest number of bytes a symbol name may occupy.
@@ -104,7 +108,7 @@ const MAX_SYMBOL_NAME_BYTES: usize = 128;
 /// those symbols becoming equal, which the contract requires and which a bare
 /// name cannot express.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct SymbolScope(Vec<u8>);
+pub struct SymbolScope(Vec<u8>);
 
 impl SymbolScope {
     /// Creates a scope from opaque bytes.
@@ -113,7 +117,7 @@ impl SymbolScope {
     ///
     /// Returns [`ShapeEnvError::EmptyScope`] for an empty scope, which would
     /// otherwise be indistinguishable from an absent one.
-    pub(crate) fn new(bytes: impl AsRef<[u8]>) -> Result<Self, ShapeEnvError> {
+    pub fn new(bytes: impl AsRef<[u8]>) -> Result<Self, ShapeEnvError> {
         let bytes = bytes.as_ref();
         if bytes.is_empty() {
             return Err(ShapeEnvError::EmptyScope);
@@ -122,7 +126,8 @@ impl SymbolScope {
     }
 
     /// Returns the scope's opaque bytes.
-    pub(crate) fn as_bytes(&self) -> &[u8] {
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 }
@@ -133,7 +138,7 @@ impl SymbolScope {
 /// contract's rule that equal spelling in different scopes never implies
 /// equality is enforced by this pairing rather than by callers remembering it.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct ShapeSymbol {
+pub struct ShapeSymbol {
     scope: SymbolScope,
     name: String,
 }
@@ -145,7 +150,7 @@ impl ShapeSymbol {
     ///
     /// Returns [`ShapeEnvError::EmptySymbolName`] for an empty name, or
     /// [`ShapeEnvError::SymbolNameTooLong`] past the governed bound.
-    pub(crate) fn new(scope: SymbolScope, name: impl Into<String>) -> Result<Self, ShapeEnvError> {
+    pub fn new(scope: SymbolScope, name: impl Into<String>) -> Result<Self, ShapeEnvError> {
         let name = name.into();
         if name.is_empty() {
             return Err(ShapeEnvError::EmptySymbolName);
@@ -160,15 +165,23 @@ impl ShapeSymbol {
     }
 
     /// Returns the scope this symbol is declared in.
-    pub(crate) const fn scope(&self) -> &SymbolScope {
+    #[must_use]
+    pub const fn scope(&self) -> &SymbolScope {
         &self.scope
     }
 
     /// Returns the symbol's name within its scope.
-    pub(crate) fn name(&self) -> &str {
+    #[must_use]
+    pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// Appends this symbol's canonical bytes.
+    ///
+    /// Crate-internal: an identity encoder establishes what the bytes mean, and
+    /// ADR 0074 keeps that authority with the module that defines the meaning
+    /// rather than exposing it to a caller who could derive an identity under
+    /// different rules.
     pub(crate) fn encode(&self, bytes: &mut Vec<u8>) {
         push_slice(bytes, self.scope.as_bytes());
         push_slice(bytes, self.name.as_bytes());
@@ -207,7 +220,7 @@ const MAX_INTERFACE_PARAMETER_KEY_BYTES: usize = 1_024;
 /// one; an input tensor's interface key is [`InputKey`] and a governed device
 /// property is [`TargetPropertyKey`], and the contract keeps all three apart.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct InterfaceParameterKey(String);
+pub struct InterfaceParameterKey(String);
 
 impl InterfaceParameterKey {
     /// Creates a nonempty stable interface-parameter key.
@@ -217,7 +230,7 @@ impl InterfaceParameterKey {
     /// Returns [`ShapeEnvError::EmptyInterfaceParameterKey`] for an empty key,
     /// or [`ShapeEnvError::InterfaceParameterKeyTooLong`] past the governed
     /// bound.
-    pub(crate) fn new(value: impl AsRef<str>) -> Result<Self, ShapeEnvError> {
+    pub fn new(value: impl AsRef<str>) -> Result<Self, ShapeEnvError> {
         let value = value.as_ref();
         if value.is_empty() {
             return Err(ShapeEnvError::EmptyInterfaceParameterKey);
@@ -232,7 +245,8 @@ impl InterfaceParameterKey {
     }
 
     /// Returns the exact key text.
-    pub(crate) fn as_str(&self) -> &str {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
         &self.0
     }
 }
@@ -256,7 +270,7 @@ impl fmt::Display for InterfaceParameterKey {
 /// mandate. That is what lets a consumer check an `InputDimension` binding
 /// against the input a region actually declares instead of comparing strings.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) enum BindingSource {
+pub enum BindingSource {
     /// An extent fixed at graph construction.
     Static(Extent),
     /// One axis extent of a bound program input's shape metadata.
@@ -325,7 +339,8 @@ impl BindingSource {
     /// Only [`Self::Static`] does. Every other class names a value the compiler
     /// does not hold, which is the distinction a consumer needs before it can
     /// treat a symbol as a literal.
-    pub(crate) const fn static_extent(&self) -> Option<Extent> {
+    #[must_use]
+    pub const fn static_extent(&self) -> Option<Extent> {
         match self {
             Self::Static(extent) => Some(*extent),
             Self::InputDimension { .. }
@@ -356,7 +371,7 @@ impl BindingSource {
 /// "silently becoming additional frontend-required semantics", which is only
 /// expressible if the three are separate.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) enum FactProvenance {
+pub enum FactProvenance {
     /// Established by the compiler from the program itself.
     StaticallyProven,
     /// Demanded by the frontend as a condition of the program's meaning.
@@ -378,7 +393,7 @@ impl FactProvenance {
 
 /// The single typed root binding of one extent symbol.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct RootBinding {
+pub struct RootBinding {
     source: BindingSource,
     phase: AvailabilityPhase,
     provenance: FactProvenance,
@@ -394,7 +409,7 @@ impl RootBinding {
     /// device property were readable from the compile profile would let a
     /// consumer evaluate it before any device exists, which is the failure the
     /// availability ladder is for.
-    pub(crate) fn new(
+    pub fn new(
         source: BindingSource,
         phase: AvailabilityPhase,
         provenance: FactProvenance,
@@ -414,17 +429,20 @@ impl RootBinding {
     }
 
     /// Returns where this binding's value comes from.
-    pub(crate) const fn source(&self) -> &BindingSource {
+    #[must_use]
+    pub const fn source(&self) -> &BindingSource {
         &self.source
     }
 
     /// Returns the phase at which this binding becomes readable.
-    pub(crate) const fn phase(&self) -> AvailabilityPhase {
+    #[must_use]
+    pub const fn phase(&self) -> AvailabilityPhase {
         self.phase
     }
 
     /// Returns how this binding was established.
-    pub(crate) const fn provenance(&self) -> FactProvenance {
+    #[must_use]
+    pub const fn provenance(&self) -> FactProvenance {
         self.provenance
     }
 
@@ -438,7 +456,7 @@ impl RootBinding {
 /// A typed failure of shape-environment construction.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub(crate) enum ShapeEnvError {
+pub enum ShapeEnvError {
     /// A scope was empty, which is indistinguishable from an absent scope.
     EmptyScope,
     /// A symbol name was empty.
@@ -597,11 +615,12 @@ impl Error for ShapeEnvError {}
 /// Opaque bytes with no public constructor, per ADR 0074: only the encoder that
 /// establishes what the identity means produces one.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct ShapeEnvIdentity(Vec<u8>);
+pub struct ShapeEnvIdentity(Vec<u8>);
 
 impl ShapeEnvIdentity {
     /// Returns the identity's canonical bytes.
-    pub(crate) fn as_bytes(&self) -> &[u8] {
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 }
@@ -613,7 +632,7 @@ impl ShapeEnvIdentity {
 /// until bound, and the constraints over it are a different kind of statement
 /// than the guards that only qualify one optimization.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct ShapeEnvBuilder {
+pub struct ShapeEnvBuilder {
     entries: Vec<(ShapeSymbol, Option<RootBinding>)>,
     constraints: Vec<SemanticInputConstraint>,
     guards: Vec<VariantGuard>,
@@ -621,7 +640,8 @@ pub(crate) struct ShapeEnvBuilder {
 
 impl ShapeEnvBuilder {
     /// Opens an empty draft.
-    pub(crate) fn new() -> Self {
+    #[must_use]
+    pub fn new() -> Self {
         Self::default()
     }
 
@@ -631,7 +651,7 @@ impl ShapeEnvBuilder {
     ///
     /// Returns [`ShapeEnvError::DuplicateDeclaration`] when the symbol is
     /// already declared. The check leaves the draft unchanged.
-    pub(crate) fn declare(&mut self, symbol: ShapeSymbol) -> Result<(), ShapeEnvError> {
+    pub fn declare(&mut self, symbol: ShapeSymbol) -> Result<(), ShapeEnvError> {
         if self.position(&symbol).is_some() {
             return Err(ShapeEnvError::DuplicateDeclaration { symbol });
         }
@@ -646,7 +666,7 @@ impl ShapeEnvBuilder {
     /// Returns [`ShapeEnvError::UndeclaredSymbol`] when the symbol was never
     /// declared, or [`ShapeEnvError::AlreadyBound`] when it already has a root
     /// binding. Both leave the draft unchanged.
-    pub(crate) fn bind(
+    pub fn bind(
         &mut self,
         symbol: &ShapeSymbol,
         binding: RootBinding,
@@ -676,10 +696,7 @@ impl ShapeEnvBuilder {
     /// Returns [`ShapeEnvError::ConstraintOnUndeclaredSymbol`] when the relation
     /// names a symbol this draft has not declared. The check leaves the draft
     /// unchanged.
-    pub(crate) fn require(
-        &mut self,
-        constraint: SemanticInputConstraint,
-    ) -> Result<(), ShapeEnvError> {
+    pub fn require(&mut self, constraint: SemanticInputConstraint) -> Result<(), ShapeEnvError> {
         self.check_declared(constraint.relation())?;
         self.constraints.push(constraint);
         Ok(())
@@ -696,7 +713,7 @@ impl ShapeEnvBuilder {
     /// Returns [`ShapeEnvError::ConstraintOnUndeclaredSymbol`] when the relation
     /// names a symbol this draft has not declared. The check leaves the draft
     /// unchanged.
-    pub(crate) fn guard(&mut self, guard: VariantGuard) -> Result<(), ShapeEnvError> {
+    pub fn guard(&mut self, guard: VariantGuard) -> Result<(), ShapeEnvError> {
         self.check_declared(guard.relation())?;
         self.guards.push(guard);
         Ok(())
@@ -716,7 +733,7 @@ impl ShapeEnvBuilder {
     /// a constraint or guard lies outside the supported fragment; and
     /// [`ShapeEnvError::ContradictoryConstraints`] when the semantic input
     /// constraints and root bindings cannot all hold.
-    pub(crate) fn build(self) -> Result<ShapeEnv, ShapeEnvError> {
+    pub fn build(self) -> Result<ShapeEnv, ShapeEnvError> {
         // Canonical order first, so both the rejection and the identity are
         // functions of the environment rather than of how it was authored.
         let mut entries = self.entries;
@@ -805,7 +822,7 @@ fn guard_verdict(
 /// Immutable and unforgeable — private fields, no unchecked constructor, and no
 /// mutable access to a draft — per the ADR 0071 lifecycle.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ShapeEnv {
+pub struct ShapeEnv {
     entries: Vec<(ShapeSymbol, RootBinding)>,
     constraints: Vec<SemanticInputConstraint>,
     guards: Vec<VariantGuard>,
@@ -823,12 +840,14 @@ impl ShapeEnv {
     /// two environments describing the same program must have the same identity
     /// whether or not a planner happened to record predicates for optimizations
     /// it was considering.
-    pub(crate) const fn identity(&self) -> &ShapeEnvIdentity {
+    #[must_use]
+    pub const fn identity(&self) -> &ShapeEnvIdentity {
         &self.identity
     }
 
     /// Returns every semantic input constraint, in canonical order.
-    pub(crate) fn constraints(&self) -> impl ExactSizeIterator<Item = &SemanticInputConstraint> {
+    #[must_use]
+    pub fn constraints(&self) -> impl ExactSizeIterator<Item = &SemanticInputConstraint> {
         self.constraints.iter()
     }
 
@@ -838,16 +857,15 @@ impl ShapeEnv {
     /// additional frontend-required semantics", so the set a consumer must
     /// treat as frontend-imposed is read through provenance rather than assumed
     /// from membership in the constraint list.
-    pub(crate) fn frontend_required_constraints(
-        &self,
-    ) -> impl Iterator<Item = &SemanticInputConstraint> {
+    pub fn frontend_required_constraints(&self) -> impl Iterator<Item = &SemanticInputConstraint> {
         self.constraints
             .iter()
             .filter(|constraint| constraint.provenance() == FactProvenance::FrontendRequired)
     }
 
     /// Returns every variant guard, in canonical order.
-    pub(crate) fn guards(&self) -> impl ExactSizeIterator<Item = &VariantGuard> {
+    #[must_use]
+    pub fn guards(&self) -> impl ExactSizeIterator<Item = &VariantGuard> {
         self.guards.iter()
     }
 
@@ -861,7 +879,7 @@ impl ShapeEnv {
     /// A guard listed here selects another valid plan or fallback; it does not
     /// make the program invalid, which is the distinction the contract draws
     /// between a variant guard and a semantic input constraint.
-    pub(crate) fn unsatisfiable_guards(&self) -> Vec<&VariantGuard> {
+    pub fn unsatisfiable_guards(&self) -> Vec<&VariantGuard> {
         let relations: Vec<&ExtentRelation> = self
             .constraints
             .iter()
@@ -874,14 +892,16 @@ impl ShapeEnv {
     }
 
     /// Returns every symbol and its root binding, in canonical order.
-    pub(crate) fn bindings(&self) -> impl ExactSizeIterator<Item = (&ShapeSymbol, &RootBinding)> {
+    #[must_use]
+    pub fn bindings(&self) -> impl ExactSizeIterator<Item = (&ShapeSymbol, &RootBinding)> {
         self.entries
             .iter()
             .map(|(symbol, binding)| (symbol, binding))
     }
 
     /// Resolves one symbol's root binding.
-    pub(crate) fn binding(&self, symbol: &ShapeSymbol) -> Option<&RootBinding> {
+    #[must_use]
+    pub fn binding(&self, symbol: &ShapeSymbol) -> Option<&RootBinding> {
         self.entries
             .iter()
             .find(|(held, _)| held == symbol)
@@ -892,7 +912,8 @@ impl ShapeEnv {
     ///
     /// A consumer that can only read facts through some phase compares against
     /// this rather than walking the bindings itself.
-    pub(crate) fn latest_required_phase(&self) -> Option<AvailabilityPhase> {
+    #[must_use]
+    pub fn latest_required_phase(&self) -> Option<AvailabilityPhase> {
         self.entries
             .iter()
             .map(|(_, binding)| binding.phase())
@@ -915,7 +936,7 @@ impl ShapeEnv {
     /// Returns `None` for an undeclared symbol, and for a class whose bound
     /// left the extent domain, which carries nothing a consumer can prove
     /// against.
-    pub(crate) fn extent_interval(&self, symbol: &ShapeSymbol) -> Option<ExtentInterval> {
+    pub fn extent_interval(&self, symbol: &ShapeSymbol) -> Option<ExtentInterval> {
         let slot = self.entries.iter().position(|(held, _)| held == symbol)?;
         let relations: Vec<&ExtentRelation> = self
             .constraints
@@ -957,7 +978,7 @@ impl ShapeEnv {
     /// Unknown symbols are not proved, so the answer is `false` rather than an
     /// error: a caller asking about a symbol this environment never declared
     /// has not been told the divisor is positive.
-    pub(crate) fn proves_positive(&self, symbol: &ShapeSymbol) -> bool {
+    pub fn proves_positive(&self, symbol: &ShapeSymbol) -> bool {
         let Some(slot) = self.entries.iter().position(|(held, _)| held == symbol) else {
             return false;
         };
@@ -992,7 +1013,7 @@ impl ShapeEnv {
     /// Returns `false` for a symbol this environment does not declare, which is
     /// the fail-closed answer: an undeclared symbol has no binding here and
     /// nothing this environment says can bear on it.
-    pub(crate) fn proves_equal(&self, left: &ShapeSymbol, right: &ShapeSymbol) -> bool {
+    pub fn proves_equal(&self, left: &ShapeSymbol, right: &ShapeSymbol) -> bool {
         let Some(left) = self.entries.iter().position(|(held, _)| held == left) else {
             return false;
         };

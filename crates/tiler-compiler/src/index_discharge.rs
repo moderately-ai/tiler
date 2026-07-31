@@ -333,7 +333,8 @@ fn assess_finite_domain(
             region
                 .dimension(dimension)
                 .expect("a verified access domain names its own dimensions")
-                .static_extent()
+                .extent()
+                .as_static()
                 .map(|extent| (dimension, extent.get()))
         })
         .collect::<Option<Vec<_>>>();
@@ -424,8 +425,14 @@ fn collect_expression_plan(
         IndexExprView::LinearCombination { terms, .. } => terms
             .map(tiler_ir::index::LinearTermRef::value)
             .all(|child| collect_expression_plan(region, child, reached)),
-        IndexExprView::FloorDiv { dividend, .. } | IndexExprView::Modulo { dividend, .. } => {
-            collect_expression_plan(region, dividend, reached)
+        // A divisor this region names symbolically has no value here: the
+        // enumeration below assigns domain coordinates and nothing else, so a
+        // semi-affine expression is declined at the plan stage and reaches the
+        // caller as `UnsupportedFragment` rather than as an evaluation that
+        // quietly picked a divisor.
+        IndexExprView::FloorDiv { dividend, divisor }
+        | IndexExprView::Modulo { dividend, divisor } => {
+            divisor.as_static().is_some() && collect_expression_plan(region, dividend, reached)
         }
         _ => false,
     }
@@ -455,13 +462,17 @@ fn evaluate_expression(
             }
             total
         }
+        // `collect_expression_plan` already declined a symbolic divisor, so a
+        // `None` here would mean the two disagreed; it is propagated as "no
+        // value" rather than unwrapped, which leaves the obligation open
+        // instead of crashing or inventing a coordinate.
         IndexExprView::FloorDiv { dividend, divisor } => {
             evaluate_expression(region, dividend, environment, values)?
-                .div_floor(&BigInt::from(divisor))
+                .div_floor(&BigInt::from(divisor.as_static()?.get()))
         }
         IndexExprView::Modulo { dividend, divisor } => {
             evaluate_expression(region, dividend, environment, values)?
-                .mod_floor(&BigInt::from(divisor))
+                .mod_floor(&BigInt::from(divisor.as_static()?.get()))
         }
         _ => return None,
     };
@@ -499,14 +510,16 @@ fn resolve_extent(region: &VerifiedIndexRegion, extent: IndexExtentRef) -> u64 {
         IndexExtentRef::Dimension(dimension) => region
             .dimension(dimension)
             .expect("a verified predicate names its own dimension")
-            .static_extent()
+            .extent()
+            .as_static()
             .expect("the finite discharge rejected symbolic dimensions")
             .get(),
         IndexExtentRef::TensorAxis { tensor, axis } => {
             let shape = region
                 .tensor(tensor)
                 .expect("a verified predicate names its own tensor")
-                .static_shape()
+                .shape()
+                .as_static()
                 .expect("the finite discharge rejected symbolic boundaries");
             shape.extents()[usize::try_from(axis).expect("a verified tensor axis fits usize")].get()
         }
@@ -629,7 +642,8 @@ fn encode_provider(output: &mut Vec<u8>, provider: &ProviderIdentity) {
 #[cfg(test)]
 mod tests {
     use tiler_ir::index::{
-        DomainRole, FrozenScalarRegistry, IndexRegionBuilder, ScalarRegistryBuilder, TensorRole,
+        DomainRole, FrozenScalarRegistry, IndexRegionBuilder, ScalarRegistryBuilder, SourcedExtent,
+        TensorRole,
     };
     use tiler_ir::semantic::{
         AttributeFieldId, CanonicalField, CanonicalValue, EncodedNumericContract,
@@ -732,8 +746,9 @@ mod tests {
         let second_coordinate = builder.dimension_expr(second).unwrap();
         let mut conservative = first_coordinate;
         for _ in 0..rounds {
-            let modulo = builder.modulo(conservative, 2).unwrap();
-            let quotient = builder.floor_div(conservative, 2).unwrap();
+            let two = SourcedExtent::Static(Extent::new(2));
+            let modulo = builder.modulo(conservative, two.clone()).unwrap();
+            let quotient = builder.floor_div(conservative, two).unwrap();
             conservative = builder
                 .linear_combination(
                     0_i128.into(),

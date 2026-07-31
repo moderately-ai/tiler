@@ -3,7 +3,7 @@
 use tiler_ir::index::{
     DomainRole, FrozenScalarRegistry, IndexDomainEvidence, IndexDomainPredicate,
     IndexDomainSoundProof, IndexDomainUnknownReason, IndexExtentRef, IndexRegionBuilder,
-    ScalarRegistryBuilder, TensorRole, VerifiedIndexHandleError,
+    ScalarRegistryBuilder, SourcedExtent, TensorRole, VerifiedIndexHandleError,
 };
 use tiler_ir::semantic::{
     AttributeFieldId, CanonicalField, CanonicalValue, EncodedNumericContract, F32,
@@ -215,8 +215,9 @@ fn verified_budget_limited_copy(
         .dimension(DomainRole::Parallel, Extent::new(domain_extent))
         .unwrap();
     let coordinate = builder.dimension_expr(dimension).unwrap();
-    let modulo = builder.modulo(coordinate, 2).unwrap();
-    let quotient = builder.floor_div(coordinate, 2).unwrap();
+    let two = SourcedExtent::Static(Extent::new(2));
+    let modulo = builder.modulo(coordinate, two.clone()).unwrap();
+    let quotient = builder.floor_div(coordinate, two).unwrap();
     let conservative = builder
         .linear_combination(
             0_i128.into(),

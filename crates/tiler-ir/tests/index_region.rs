@@ -13,7 +13,7 @@ use tiler_ir::index::{
     ScalarAttributeSchema, ScalarAttributes, ScalarEffect, ScalarInferenceError,
     ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract,
     ScalarOperationDefinition, ScalarOperationInferencer, ScalarRegistryBuilder,
-    ScalarRegistryError, TensorRole, WriteOwnershipProofView,
+    ScalarRegistryError, SourcedExtent, SymbolicExtentError, TensorRole, WriteOwnershipProofView,
 };
 use tiler_ir::semantic::{
     AttributeFieldId, CanonicalField, CanonicalValue, CanonicalValueKind, FrozenSemanticRegistry,
@@ -1104,7 +1104,9 @@ fn linear_normalization_is_independent_of_nested_construction_form() {
                 )
                 .unwrap()
         };
-        let coordinate = builder.modulo(doubled, 7).unwrap();
+        let coordinate = builder
+            .modulo(doubled, SourcedExtent::Static(Extent::new(7)))
+            .unwrap();
         let read = builder.read(input, &[dimension], &[coordinate]).unwrap();
         let write = builder.write(output, &[dimension], &[expression]).unwrap();
         builder.output(write, read).unwrap();
@@ -1367,8 +1369,9 @@ fn conservative_interval_overlap_uses_finite_proof() {
         .dimension(DomainRole::Parallel, Extent::new(5))
         .unwrap();
     let expression = builder.dimension_expr(dimension).unwrap();
-    let modulo = builder.modulo(expression, 2).unwrap();
-    let quotient = builder.floor_div(expression, 2).unwrap();
+    let two = SourcedExtent::Static(Extent::new(2));
+    let modulo = builder.modulo(expression, two.clone()).unwrap();
+    let quotient = builder.floor_div(expression, two).unwrap();
     let coordinate = builder
         .linear_combination(
             0_i128.into(),
@@ -1632,8 +1635,9 @@ fn aggregate_read_budget_builder(include_unrooted_output: bool) -> IndexRegionBu
         .dimension(DomainRole::Parallel, Extent::new(extent))
         .unwrap();
     let expression = builder.dimension_expr(dimension).unwrap();
-    let modulo = builder.modulo(expression, 2).unwrap();
-    let quotient = builder.floor_div(expression, 2).unwrap();
+    let two = SourcedExtent::Static(Extent::new(2));
+    let modulo = builder.modulo(expression, two.clone()).unwrap();
+    let quotient = builder.floor_div(expression, two).unwrap();
     let conservative = builder
         .linear_combination(
             0_i128.into(),
@@ -1721,7 +1725,9 @@ fn read_integer_storage_budget_retains_the_exact_resource() {
     let huge_even = IndexInteger::from_sign_magnitude(IndexIntegerSign::Positive, &magnitude)
         .expect("the fixture sits exactly at the admitted integer size");
     let constant = builder.constant(huge_even).unwrap();
-    let coordinate = builder.modulo(constant, 2).unwrap();
+    let coordinate = builder
+        .modulo(constant, SourcedExtent::Static(Extent::new(2)))
+        .unwrap();
     let value = builder.read(input, &[dimension], &[coordinate]).unwrap();
     let write = builder
         .write(output, &[dimension], &[write_coordinate])
@@ -1887,15 +1893,21 @@ fn deep_index_expression_is_rejected_at_its_specific_budget() {
         .dimension(DomainRole::Parallel, Extent::new(8))
         .unwrap();
     let mut expression = builder.dimension_expr(dimension).unwrap();
+    let two = SourcedExtent::Static(Extent::new(2));
     for _ in 0..MAX_INDEX_EXPRESSION_DEPTH {
-        expression = builder.floor_div(expression, 2).unwrap();
+        expression = builder.floor_div(expression, two.clone()).unwrap();
     }
+    // The index layer's own depth budget, reported as a structural refusal and
+    // not as a source one: the divisor was admissible and the expression was
+    // too deep.
     assert!(matches!(
-        builder.floor_div(expression, 2),
-        Err(IndexBuildError::StructuralLimit {
-            resource: IndexLimitKind::IndexExpressionDepth,
-            ..
-        })
+        builder.floor_div(expression, two),
+        Err(SymbolicExtentError::Structural(
+            IndexBuildError::StructuralLimit {
+                resource: IndexLimitKind::IndexExpressionDepth,
+                ..
+            }
+        ))
     ));
 }
 

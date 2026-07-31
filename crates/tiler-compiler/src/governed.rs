@@ -21,8 +21,8 @@ use std::sync::Arc;
 
 use tiler_ir::index::{
     DomainRole, FrozenScalarRegistry, IndexExprId, IndexInteger, ScalarAttributes, ScalarOpKey,
-    ScalarRegistryError, ScalarValueId, add_f32_scalar_op, canonicalize_nan_f32_scalar_op,
-    constant_f32_scalar_op, multiply_f32_scalar_op,
+    ScalarRegistryError, ScalarValueId, SourcedExtent, add_f32_scalar_op,
+    canonicalize_nan_f32_scalar_op, constant_f32_scalar_op, multiply_f32_scalar_op,
 };
 use tiler_ir::semantic::{
     CanonicalField, CanonicalIntegerWidth, CanonicalValue, CanonicalValueView, F32,
@@ -527,12 +527,12 @@ impl SumPlan {
             let modulus = stride
                 .checked_mul(extent)
                 .ok_or_else(|| occurrence_error("sum-reduced-extent-overflow"))?;
-            context.modulo(offset, modulus)?
+            context.modulo(offset, SourcedExtent::Static(Extent::new(modulus)))?
         };
         if stride == 1 {
             Ok(wrapped)
         } else {
-            Ok(context.floor_div(wrapped, stride)?)
+            Ok(context.floor_div(wrapped, SourcedExtent::Static(Extent::new(stride)))?)
         }
     }
 

@@ -4,13 +4,24 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
-mod evidence;
-// Draft under ADR 0074 convention 7: `implement-shapeenv-core` keeps any
-// consequential boundary a draft until it is reviewed, so the shape-symbol
-// authority is crate-internal and its promotion is a separate reviewed step.
 pub(crate) mod env;
+mod evidence;
 
 pub use evidence::{Rank, ShapeEvidence, ShapeExpectation, StaticShape};
+
+// The `ShapeEnv` authority is re-exported flat here rather than published as a
+// `tiler_ir::shape::env` module, matching the re-export precedent this module
+// already sets for `evidence`. A frontend needs the whole construction closure —
+// scopes, symbols, typed binding sources and their keys, provenance, the
+// bounded constraint and guard vocabulary, the builder, the verified
+// environment, its identity, and every error either step can return — and
+// nothing else in `env` is part of that closure.
+pub use env::{
+    BindingSource, ConstraintConflict, ExtentInterval, ExtentRelation, ExtentTerm, FactProvenance,
+    FragmentViolation, GuardApplicability, InterfaceParameterKey, RootBinding,
+    SemanticInputConstraint, ShapeEnv, ShapeEnvBuilder, ShapeEnvError, ShapeEnvIdentity,
+    ShapeSymbol, SymbolScope, VariantGuard,
+};
 
 // Governed implementation limit. Keep numeric limits private; typed dynamic
 // failures expose both the rejected rank and the active limit.

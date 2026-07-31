@@ -98,7 +98,7 @@ const MAX_EXTENT: u128 = IMPOSSIBLE - 1;
 /// the relations below applied to these terms, and admitting nested arithmetic
 /// would widen the fragment past what the procedure decides.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) enum ExtentTerm {
+pub enum ExtentTerm {
     /// A declared extent symbol.
     Symbol(ShapeSymbol),
     /// A literal extent.
@@ -115,7 +115,8 @@ impl ExtentTerm {
     }
 
     /// Returns the symbol this term names, if it names one.
-    pub(crate) const fn symbol(&self) -> Option<&ShapeSymbol> {
+    #[must_use]
+    pub const fn symbol(&self) -> Option<&ShapeSymbol> {
         match self {
             Self::Symbol(symbol) => Some(symbol),
             Self::Constant(_) => None,
@@ -146,7 +147,7 @@ impl fmt::Display for ExtentTerm {
 /// environment: extent equalities, divisibility, nonnegativity, intervals, and
 /// factorization relationships.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) enum ExtentRelation {
+pub enum ExtentRelation {
     /// `left == right`.
     Equal {
         /// Left side.
@@ -191,20 +192,20 @@ pub(crate) enum ExtentRelation {
 
 impl ExtentRelation {
     /// Asserts that two terms are equal.
-    pub(crate) const fn equal(left: ExtentTerm, right: ExtentTerm) -> Self {
+    #[must_use]
+    pub const fn equal(left: ExtentTerm, right: ExtentTerm) -> Self {
         Self::Equal { left, right }
     }
 
     /// Asserts that `divisor` divides `dividend`.
-    pub(crate) const fn divisible(dividend: ExtentTerm, divisor: NonZeroU64) -> Self {
+    #[must_use]
+    pub const fn divisible(dividend: ExtentTerm, divisor: NonZeroU64) -> Self {
         Self::Divisible { dividend, divisor }
     }
 
     /// Asserts that `minuend - subtrahend` is nonnegative.
-    pub(crate) const fn non_negative_difference(
-        minuend: ExtentTerm,
-        subtrahend: ExtentTerm,
-    ) -> Self {
+    #[must_use]
+    pub const fn non_negative_difference(minuend: ExtentTerm, subtrahend: ExtentTerm) -> Self {
         Self::NonNegativeDifference {
             minuend,
             subtrahend,
@@ -219,11 +220,7 @@ impl ExtentRelation {
     /// An inverted interval is a malformed relation rather than a contradictory
     /// one — no environment is needed to see it is unwritable — so it is refused
     /// where it is written instead of being carried to the decision procedure.
-    pub(crate) fn interval(
-        term: ExtentTerm,
-        lower: u64,
-        upper: u64,
-    ) -> Result<Self, ShapeEnvError> {
+    pub fn interval(term: ExtentTerm, lower: u64, upper: u64) -> Result<Self, ShapeEnvError> {
         if lower > upper {
             return Err(ShapeEnvError::EmptyInterval { lower, upper });
         }
@@ -239,7 +236,7 @@ impl ExtentRelation {
     /// asserts the product is `1`; spelling either as a factorization would let
     /// two different assertions share the kind that carries composition
     /// structure into identity.
-    pub(crate) fn factorization(
+    pub fn factorization(
         product: ExtentTerm,
         factors: Vec<ExtentTerm>,
     ) -> Result<Self, ShapeEnvError> {
@@ -288,7 +285,7 @@ impl ExtentRelation {
     }
 
     /// Visits every declared symbol this relation mentions.
-    pub(crate) fn for_each_symbol(&self, mut visit: impl FnMut(&ShapeSymbol)) {
+    pub fn for_each_symbol(&self, mut visit: impl FnMut(&ShapeSymbol)) {
         self.for_each_term(|term| {
             if let Some(symbol) = term.symbol() {
                 visit(symbol);
@@ -372,14 +369,15 @@ impl fmt::Display for ExtentRelation {
 /// one, and two assertions of the same relation under different provenance stay
 /// two constraints rather than being merged into whichever was recorded first.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct SemanticInputConstraint {
+pub struct SemanticInputConstraint {
     relation: ExtentRelation,
     provenance: FactProvenance,
 }
 
 impl SemanticInputConstraint {
     /// Records one semantic input constraint with its provenance.
-    pub(crate) const fn new(relation: ExtentRelation, provenance: FactProvenance) -> Self {
+    #[must_use]
+    pub const fn new(relation: ExtentRelation, provenance: FactProvenance) -> Self {
         Self {
             relation,
             provenance,
@@ -387,12 +385,14 @@ impl SemanticInputConstraint {
     }
 
     /// Returns the relation asserted.
-    pub(crate) const fn relation(&self) -> &ExtentRelation {
+    #[must_use]
+    pub const fn relation(&self) -> &ExtentRelation {
         &self.relation
     }
 
     /// Returns how this constraint was established.
-    pub(crate) const fn provenance(&self) -> FactProvenance {
+    #[must_use]
+    pub const fn provenance(&self) -> FactProvenance {
         self.provenance
     }
 
@@ -410,7 +410,7 @@ impl SemanticInputConstraint {
 /// constraint carries [`FactProvenance`], which is what makes the two kinds
 /// structurally non-interchangeable rather than two flags on one record.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) enum GuardApplicability {
+pub enum GuardApplicability {
     /// The guard qualifies a storage choice.
     Storage,
     /// The guard qualifies a schedule choice.
@@ -429,14 +429,15 @@ pub(crate) enum GuardApplicability {
 /// and treating unknown as satisfiable would be the silently weaker answer the
 /// contract forbids.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct VariantGuard {
+pub struct VariantGuard {
     relation: ExtentRelation,
     applicability: GuardApplicability,
 }
 
 impl VariantGuard {
     /// Records one variant guard against the planning decision it qualifies.
-    pub(crate) const fn new(relation: ExtentRelation, applicability: GuardApplicability) -> Self {
+    #[must_use]
+    pub const fn new(relation: ExtentRelation, applicability: GuardApplicability) -> Self {
         Self {
             relation,
             applicability,
@@ -444,19 +445,21 @@ impl VariantGuard {
     }
 
     /// Returns the relation the guard requires.
-    pub(crate) const fn relation(&self) -> &ExtentRelation {
+    #[must_use]
+    pub const fn relation(&self) -> &ExtentRelation {
         &self.relation
     }
 
     /// Returns which planning decision this guard qualifies.
-    pub(crate) const fn applicability(&self) -> GuardApplicability {
+    #[must_use]
+    pub const fn applicability(&self) -> GuardApplicability {
         self.applicability
     }
 }
 
 /// Why a relation lies outside the supported arithmetic fragment.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) enum FragmentViolation {
+pub enum FragmentViolation {
     /// A factorization left more than one of its terms undetermined.
     ///
     /// `p == a * b` with both `a` and `b` unknown is nonlinear integer
@@ -480,7 +483,7 @@ impl fmt::Display for FragmentViolation {
 
 /// The explained reason one constraint set is contradictory.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum ConstraintConflict {
+pub enum ConstraintConflict {
     /// One equality class was pinned to two different constants.
     ConflictingConstants {
         /// Canonically least symbol of the class.
@@ -674,19 +677,20 @@ pub(super) fn decide(
 /// deliberately not a claim that every value inside it is admissible — a
 /// congruence can exclude interior values.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct ExtentInterval {
+pub struct ExtentInterval {
     /// Smallest value any model may assign.
-    pub(crate) lower: u64,
+    pub lower: u64,
     /// Largest value any model may assign.
-    pub(crate) upper: u64,
+    pub upper: u64,
 }
 
 impl ExtentInterval {
     /// Returns whether the environment admits every representable extent.
     ///
     /// **A symbol nothing constrains is not absent from a solution; it is
-    /// present with the whole extent domain.** [`solve`] seeds every symbol at
-    /// `0..=MAX_EXTENT` and narrows from there, so "the environment says
+    /// present with the whole extent domain.** The decision procedure seeds
+    /// every symbol at the full extent domain and narrows from there, so "the
+    /// environment says
     /// nothing about this extent" reads as an upper bound still sitting at the
     /// domain's ceiling rather than as a missing interval. A caller that tested
     /// for a missing interval instead would never fire, because one is only
@@ -695,7 +699,8 @@ impl ExtentInterval {
     /// This is the condition a frontend can act on: an extent bounded nowhere
     /// above cannot be proved against any axis, and the remedy is to state a
     /// constraint rather than to retry.
-    pub(crate) const fn states_no_upper_bound(&self) -> bool {
+    #[must_use]
+    pub const fn states_no_upper_bound(&self) -> bool {
         // `MAX_EXTENT` is `IMPOSSIBLE - 1` and `IMPOSSIBLE` is `1 << 64`, so the
         // domain ceiling is exactly `u64::MAX`; asserted rather than assumed so
         // widening the domain fails here instead of silently disabling this.

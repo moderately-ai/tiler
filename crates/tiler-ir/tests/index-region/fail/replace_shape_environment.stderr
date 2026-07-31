@@ -1,0 +1,14 @@
+error[E0599]: no associated function or constant named `with_shape_environment` found for struct `IndexRegionBuilder` in the current scope
+ --> tests/index-region/fail/replace_shape_environment.rs:9:33
+  |
+9 |     let _ = IndexRegionBuilder::with_shape_environment;
+  |                                 ^^^^^^^^^^^^^^^^^^^^^^ associated function or constant not found in `IndexRegionBuilder`
+  |
+help: there is an associated function `new_with_shape_environment` with a similar name
+ --> src/index/builder.rs
+  |
+  | /     pub fn new_with_shape_environment(
+  | |         registry: FrozenScalarRegistry,
+  | |         environment: Arc<ShapeEnv>,
+  | |     ) -> Result<Self, IndexBuildError> {
+  | |______________________________________^

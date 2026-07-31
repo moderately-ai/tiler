@@ -76,11 +76,18 @@ use super::{
     UnknownIndexDomainPredicate, VerifiedIndexExprId, VerifiedIndexRegion, VerifiedTensorAccessId,
     VerifiedTensorId,
 };
-use crate::shape::env::constraint::ExtentInterval;
-use crate::shape::env::{ShapeEnv, ShapeSymbol};
+use crate::shape::{ExtentInterval, ShapeEnv, ShapeSymbol};
 
 /// The domain separator of one verified index region's canonical identity.
-const INDEX_REGION_DOMAIN: &[u8] = b"tiler.index-region.v8\0";
+///
+/// `v9` rather than `v8`: a floor-division or modulo divisor now encodes as a
+/// tagged [`SourcedExtent`] where `v8` wrote eight raw bytes, so the bytes of a
+/// *constant* divisor changed even though its meaning did not. Bumping states
+/// that rather than letting two encodings share one domain. Promoting the
+/// symbolic profile's visibility is not what moved it — a domain that advanced
+/// for a visibility change alone would make two identical subjects carry
+/// different domains.
+const INDEX_REGION_DOMAIN: &[u8] = b"tiler.index-region.v9\0";
 
 /// What interval propagation concluded about one access's coordinates.
 #[derive(Clone, Copy, Debug)]
@@ -617,15 +624,48 @@ pub struct IndexRegionBuilder {
 impl IndexRegionBuilder {
     /// Creates a builder over an exact frozen scalar/type authority snapshot.
     ///
+    /// Every extent this builder admits is a literal. Use
+    /// [`Self::new_with_shape_environment`] to author a region whose extents or
+    /// divisors may name declared symbols; a static caller needs no environment
+    /// and is not asked for an absent one.
+    ///
     /// # Errors
     ///
     /// Returns an error when no fresh builder ownership identity remains.
     pub fn new(registry: FrozenScalarRegistry) -> Result<Self, IndexBuildError> {
+        Self::open(registry, None)
+    }
+
+    /// Creates a builder whose symbolic extents resolve in one verified
+    /// environment.
+    ///
+    /// **A constructor rather than a setter, and there is no setter.** A region
+    /// has exactly one environment for the whole of its life: a second one
+    /// would silently reinterpret every extent already authored against the
+    /// first, and the region's identity — which folds the environment's
+    /// identity — would name whichever happened to be installed last. Fixing
+    /// the environment before any dimension, boundary, or divisor exists makes
+    /// that replacement unrepresentable rather than merely discouraged.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no fresh builder ownership identity remains.
+    pub fn new_with_shape_environment(
+        registry: FrozenScalarRegistry,
+        environment: Arc<ShapeEnv>,
+    ) -> Result<Self, IndexBuildError> {
+        Self::open(registry, Some(ExtentSources::new(environment)))
+    }
+
+    fn open(
+        registry: FrozenScalarRegistry,
+        sources: Option<ExtentSources>,
+    ) -> Result<Self, IndexBuildError> {
         let owner = next_builder_id().ok_or(IndexBuildError::BuilderIdentityExhausted)?;
         Ok(Self {
             owner,
             registry,
-            sources: None,
+            sources,
             dimensions: Vec::new(),
             tensors: Vec::new(),
             boundary_bytes: 0,
@@ -669,22 +709,18 @@ impl IndexRegionBuilder {
     ///
     /// Every symbolic extent is admitted against this region's one environment
     /// under the same ceiling a domain extent obeys — see
-    /// [`EXTENT_PHASE_CEILING`], where the boundary case is the quoted one.
+    /// [`EXTENT_PHASE_CEILING`](super::EXTENT_PHASE_CEILING), where the boundary case is the quoted one.
     ///
     /// # Errors
     ///
     /// Returns [`SymbolicExtentError::Source`] when no environment is bound,
     /// when the environment does not declare a named symbol, or when a symbol's
     /// root binding arrives later than a boundary extent may be sourced from;
-    /// [`SymbolicExtentError::Shape`] when the shape vocabulary cannot
+    /// [`SymbolicExtentError::ShapeVocabulary`] when the shape vocabulary cannot
     /// represent the normalized boundary; and
     /// [`SymbolicExtentError::Structural`] for an unknown type or exceeded
     /// structural limit.
-    #[allow(
-        dead_code,
-        reason = "ADR 0074 convention 7 draft: the symbolic index profile is crate-internal until it is reviewed, so its only callers are the tests in `crate::index::sourced`. See that module for why satisfying the lint with a public caller would promote the boundary without the review"
-    )]
-    pub(crate) fn sourced_tensor(
+    pub fn sourced_tensor(
         &mut self,
         role: TensorRole,
         value_type: ResolvedValueType,
@@ -695,23 +731,21 @@ impl IndexRegionBuilder {
         // every extent before any of them is retained, so a boundary is never
         // partly sourced from a refused symbol.
         for extent in &extents {
-            if extent.symbol().is_none() {
+            let Some(symbol) = extent.symbol() else {
                 continue;
-            }
+            };
             let Some(sources) = self.sources.as_ref() else {
                 // No environment can declare the symbol, so it is undeclared
                 // here for exactly the reason the variant names.
-                return Err(SymbolicExtentError::Source(
-                    ExtentSourceError::UndeclaredSymbol {
-                        symbol: extent.symbol().cloned().expect("checked above"),
-                    },
-                ));
+                return Err(ExtentSourceError::UndeclaredSymbol {
+                    symbol: symbol.clone(),
+                }
+                .into());
             };
-            sources.admit(extent).map_err(SymbolicExtentError::Source)?;
+            sources.admit(extent)?;
         }
-        let shape = SourcedShape::sourced(extents).map_err(SymbolicExtentError::Shape)?;
-        self.push_tensor(role, value_type, shape)
-            .map_err(SymbolicExtentError::Structural)
+        let shape = SourcedShape::sourced(extents)?;
+        Ok(self.push_tensor(role, value_type, shape)?)
     }
 
     fn push_tensor(
@@ -764,22 +798,6 @@ impl IndexRegionBuilder {
         self.push_dimension(role, SourcedExtent::Static(extent))
     }
 
-    /// Binds this region's symbolic extents to one verified shape environment.
-    ///
-    /// Draft, `pub(crate)`: promoting it is the reviewed step this ticket does
-    /// not take. A region has exactly one environment for the whole of its
-    /// life, so this is a constructor-shaped step rather than a setter — a
-    /// second environment would silently reinterpret extents already authored
-    /// against the first.
-    #[allow(
-        dead_code,
-        reason = "ADR 0074 convention 7 draft: the symbolic index profile is crate-internal until it is reviewed, so its only callers are the tests in `crate::index::sourced`. See that module for why satisfying the lint with a public caller would promote the boundary without the review"
-    )]
-    pub(crate) fn with_shape_environment(mut self, environment: Arc<ShapeEnv>) -> Self {
-        self.sources = Some(ExtentSources::new(environment));
-        self
-    }
-
     /// Adds a half-open dimension whose extent is a declared `ShapeEnv` symbol.
     ///
     /// The symbol is resolved through this region's environment and nowhere
@@ -793,11 +811,7 @@ impl IndexRegionBuilder {
     /// root binding arrives later than an index extent may be sourced from, and
     /// [`SymbolicExtentError::Structural`] when the dimension-count limit is
     /// exceeded.
-    #[allow(
-        dead_code,
-        reason = "ADR 0074 convention 7 draft: the symbolic index profile is crate-internal until it is reviewed, so its only callers are the tests in `crate::index::sourced`. See that module for why satisfying the lint with a public caller would promote the boundary without the review"
-    )]
-    pub(crate) fn symbolic_dimension(
+    pub fn symbolic_dimension(
         &mut self,
         role: DomainRole,
         symbol: ShapeSymbol,
@@ -1060,9 +1074,7 @@ impl IndexRegionBuilder {
             check_integer(&term.coefficient.0)?;
             let expression = &self.expressions[term.value as usize];
             dimensions.extend(&expression.dimensions);
-            if expression.class == IndexExprClass::QuasiAffine {
-                class = IndexExprClass::QuasiAffine;
-            }
+            class = class.join(expression.class);
             depth = depth.max(expression.depth.saturating_add(1));
         }
         check_integer(&normalized_constant)?;
@@ -1078,46 +1090,65 @@ impl IndexRegionBuilder {
             depth,
         )
     }
-    /// Creates Euclidean floor division by a positive constant.
+    /// Creates Euclidean floor division by a proven-positive extent.
+    ///
+    /// The divisor uses the crate's one constant-or-symbol extent vocabulary, so
+    /// a literal divisor is [`SourcedExtent::Static`] and a caller-supplied tile
+    /// size is [`SourcedExtent::Symbol`]. A symbolic divisor makes the
+    /// expression [`IndexExprClass::SemiAffine`].
     ///
     /// # Errors
     ///
-    /// Returns an error for a zero divisor, foreign dividend, or exceeded limit.
+    /// Returns [`SymbolicExtentError::Source`] when a symbolic divisor is not
+    /// declared by this region's environment, arrives after
+    /// [`EXTENT_PHASE_CEILING`](super::EXTENT_PHASE_CEILING), or is not proved to be at least one, and
+    /// [`SymbolicExtentError::Structural`] for a zero literal divisor, a
+    /// foreign dividend, or an exceeded limit.
     pub fn floor_div(
         &mut self,
         dividend: IndexExprId,
-        divisor: u64,
-    ) -> Result<IndexExprId, IndexBuildError> {
+        divisor: SourcedExtent,
+    ) -> Result<IndexExprId, SymbolicExtentError> {
         self.div_mod(dividend, divisor, true)
     }
-    /// Creates Euclidean modulo by a positive constant.
+    /// Creates Euclidean modulo by a proven-positive extent.
     ///
     /// # Errors
     ///
-    /// Returns an error for a zero divisor, foreign dividend, or exceeded limit.
+    /// The same refusals as [`Self::floor_div`].
     pub fn modulo(
         &mut self,
         dividend: IndexExprId,
-        divisor: u64,
-    ) -> Result<IndexExprId, IndexBuildError> {
+        divisor: SourcedExtent,
+    ) -> Result<IndexExprId, SymbolicExtentError> {
         self.div_mod(dividend, divisor, false)
     }
     fn div_mod(
         &mut self,
         dividend: IndexExprId,
-        divisor: u64,
+        divisor: SourcedExtent,
         div: bool,
-    ) -> Result<IndexExprId, IndexBuildError> {
-        if divisor == 0 {
-            return Err(IndexBuildError::NonPositiveDivisor);
-        }
+    ) -> Result<IndexExprId, SymbolicExtentError> {
+        // Admitted before anything is retained, so a refused divisor leaves the
+        // draft exactly as it was rather than half-applied.
+        let class = self.admit_divisor(&divisor)?;
         let data = self.resolve_expr(dividend)?.clone();
-        let d = BigInt::from(divisor);
-        let interval = if div {
-            data.interval
-                .map(|(a, b)| (a.div_floor(&d), b.div_floor(&d)))
-        } else {
-            Some((BigInt::zero(), BigInt::from(divisor - 1)))
+        // Exact arithmetic needs the divisor's *value*, which a symbol has only
+        // when the environment pins it. Anything less leaves the range unknown
+        // rather than approximated: an interval derived from a divisor nobody
+        // fixed would be a bound nothing proved, and a `None` instead makes the
+        // access fall through to a proof that either closes another way or is
+        // retained as an explicit obligation.
+        let interval = match (div, self.determined(&divisor)) {
+            (true, Some(value)) => {
+                let value = BigInt::from(value);
+                data.interval
+                    .map(|(low, high)| (low.div_floor(&value), high.div_floor(&value)))
+            }
+            // `admit_divisor` proved the divisor at least one, so the
+            // subtraction cannot wrap.
+            (false, Some(value)) => Some((BigInt::zero(), BigInt::from(value - 1))),
+            (_, None) => None,
         };
         let node = if div {
             IndexNode::FloorDiv {
@@ -1130,13 +1161,44 @@ impl IndexRegionBuilder {
                 divisor,
             }
         };
-        self.intern_index(
-            node,
-            data.dimensions,
-            IndexExprClass::QuasiAffine,
-            interval,
-            data.depth + 1,
-        )
+        Ok(self.intern_index(node, data.dimensions, class, interval, data.depth + 1)?)
+    }
+
+    /// Admits one divisor and returns the class its form implies.
+    ///
+    /// Positivity is a condition of the expression being *defined* — `x
+    /// floordiv 0` has no meaning under any plan — so it is decided here rather
+    /// than deferred to a consumer, and for a symbol it comes only from the
+    /// environment's semantic input constraints. A variant guard cannot supply
+    /// it: a guard's failure selects another plan, and an expression whose
+    /// definedness rested on one would be admitted into a region a later plan
+    /// choice could render meaningless.
+    fn admit_divisor(
+        &self,
+        divisor: &SourcedExtent,
+    ) -> Result<IndexExprClass, SymbolicExtentError> {
+        let Some(symbol) = divisor.symbol() else {
+            if divisor.as_static() == Some(Extent::new(0)) {
+                return Err(IndexBuildError::NonPositiveDivisor.into());
+            }
+            return Ok(IndexExprClass::QuasiAffine);
+        };
+        let Some(sources) = self.sources.as_ref() else {
+            // No environment can declare the symbol, so it is undeclared here
+            // for exactly the reason the variant names.
+            return Err(ExtentSourceError::UndeclaredSymbol {
+                symbol: symbol.clone(),
+            }
+            .into());
+        };
+        sources.admit(divisor)?;
+        if !sources.proves_positive(divisor) {
+            return Err(ExtentSourceError::DivisorNotProvedPositive {
+                symbol: symbol.clone(),
+            }
+            .into());
+        }
+        Ok(IndexExprClass::SemiAffine)
     }
 
     /// Creates or reuses a logical write access.

@@ -419,7 +419,14 @@ fn check_predicate_handles(
 )]
 const fn expression_class_is_stateable(class: IndexExprClass) -> bool {
     match class {
-        IndexExprClass::Affine | IndexExprClass::QuasiAffine => true,
+        // A semi-affine coordinate is referenced by handle exactly as an affine
+        // one is. What its class changes is whether a given *analysis* can
+        // discharge the predicate — a disposition each pass records for itself,
+        // as `IndexDomainEvidence::Unknown` — and not whether the obligation can
+        // be stated at all. Answering `false` here would drop the obligation
+        // rather than leave it open, which is the one outcome the retained
+        // evidence exists to prevent.
+        IndexExprClass::Affine | IndexExprClass::QuasiAffine | IndexExprClass::SemiAffine => true,
     }
 }
 
@@ -462,6 +469,7 @@ mod tests {
     fn every_admitted_expression_class_is_stateable() {
         assert!(expression_class_is_stateable(IndexExprClass::Affine));
         assert!(expression_class_is_stateable(IndexExprClass::QuasiAffine));
+        assert!(expression_class_is_stateable(IndexExprClass::SemiAffine));
     }
 
     #[test]

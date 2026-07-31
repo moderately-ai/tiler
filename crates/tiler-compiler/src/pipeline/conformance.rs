@@ -25,7 +25,7 @@ use crate::region::form_region_candidates;
 use crate::request::{
     CompilationRequest, CompilerCapabilitySnapshot, RequestError, verify_request,
 };
-use tiler_ir::index::{DomainRole, FrozenScalarRegistry, ScalarAttributes};
+use tiler_ir::index::{DomainRole, FrozenScalarRegistry, ScalarAttributes, SourcedExtent};
 use tiler_ir::semantic::{
     CanonicalIntegerWidth, CanonicalValue, CanonicalValueKind, CanonicalValueView, F32,
     F32_CONSTANT_BITS_ATTRIBUTE, InputKey, NormativeDefinitionRef, OpKey, OperationArity,
@@ -36,7 +36,7 @@ use tiler_ir::semantic::{
     SemanticRegistryRegistrar, TypeDefinitionFacts, TypeKey, ValueFact, ValueTypeDefinition,
     ValueTypeDefinitionKey, add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
 };
-use tiler_ir::shape::{Axis, Shape};
+use tiler_ir::shape::{Axis, Extent, Shape};
 
 /// The shape-inference behaviour one externally registered operation declares.
 #[derive(Clone, Copy)]
@@ -755,8 +755,9 @@ impl IndexAccessLoweringProvider for ConservativeReadMultiplyLowering {
         }
         let mut read_coordinates = coordinates.clone();
         for _ in 0..self.rounds {
-            let modulo = context.modulo(read_coordinates[0], 2)?;
-            let quotient = context.floor_div(read_coordinates[0], 2)?;
+            let two = SourcedExtent::Static(Extent::new(2));
+            let modulo = context.modulo(read_coordinates[0], two.clone())?;
+            let quotient = context.floor_div(read_coordinates[0], two)?;
             read_coordinates[0] = context.linear_combination(
                 0_i128.into(),
                 &[(2_i128.into(), quotient), (1_i128.into(), modulo)],

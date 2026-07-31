@@ -7,10 +7,7 @@ mod integer;
 mod model;
 mod predicate;
 mod scalar;
-// Draft under ADR 0074 convention 7: `implement-shapeenv-index-bindings` keeps any
-// consequential boundary a draft until it is reviewed, so the index layer's
-// consumption of the shape-symbol authority is crate-internal.
-pub(crate) mod sourced;
+mod sourced;
 
 pub use builder::{
     IndexRegionBuilder, ReducerScalarResults, ReducerScalarValueId, ScalarReducerBodyBuilder,
@@ -41,6 +38,11 @@ pub use predicate::{
     IndexDomainPredicate, IndexDomainSoundProof, IndexDomainUnknownReason, IndexExtentRef,
     UnknownIndexDomainPredicate,
 };
+// The symbolic index profile is re-exported flat here rather than published as
+// a `tiler_ir::index::sourced` module, matching the re-export precedent this
+// module already sets for every other child. The canonical encoders stay inside
+// it: a caller that could encode an extent could derive an identity under rules
+// the encoder does not establish.
 pub use scalar::{
     CanonicalScalarDefinitionProjection, CanonicalScalarRegistrySnapshotIdentity,
     FrozenScalarRegistry, ScalarAdmissionProvenanceIdentity, ScalarApplicationRejection,
@@ -49,6 +51,10 @@ pub use scalar::{
     ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract, ScalarOperationDefinition,
     ScalarOperationInferencer, ScalarRegistryBuilder, ScalarRegistryError, add_f32_scalar_op,
     canonicalize_nan_f32_scalar_op, constant_f32_scalar_op, multiply_f32_scalar_op,
+};
+pub use sourced::{
+    EXTENT_PHASE_CEILING, ExtentSourceError, ExtentSources, SourcedExtent, SourcedShape,
+    SymbolicExtentError,
 };
 
 /// Maximum dimensions admitted by one region.

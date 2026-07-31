@@ -2,7 +2,6 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::semantic::ResolvedValueType;
-use crate::shape::{Extent, Shape};
 
 use super::handles::VerifiedRegionOwner;
 use super::sourced::{ExtentSources, SourcedExtent, SourcedShape};
@@ -46,12 +45,44 @@ pub enum ReductionTraversal {
     ExactLexicographicLeftFold,
 }
 /// Index expression classification.
+///
+/// The class describes the expression's *form*, never what a particular
+/// environment happens to resolve it to. A division by a symbol the environment
+/// pins to a single value is still [`Self::SemiAffine`]: the region's canonical
+/// bytes name the symbol, two environments can bind it differently, and a class
+/// that moved with the binding would describe the environment rather than the
+/// expression. A pass that can use the pinned value reads it explicitly through
+/// [`ExtentSources::determined`](super::ExtentSources::determined).
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum IndexExprClass {
     /// Integer-affine expression.
     Affine,
     /// Affine expression extended with constant floor division or modulo.
     QuasiAffine,
+    /// Affine expression extended with floor division or modulo by a symbol.
+    ///
+    /// The divisor is an extent this region names symbolically, so the
+    /// expression is nonlinear in the environment's variables. ADR 0046 permits
+    /// a pass to "conservatively decline semi-affine maps they cannot analyze",
+    /// and declining is what every pass here does: a refusal carries a typed
+    /// reason, where approximating would return a coordinate nobody proved.
+    SemiAffine,
+}
+
+impl IndexExprClass {
+    /// Returns the weakest class that admits both operands.
+    ///
+    /// Exhaustive by construction rather than a comparison on the derived
+    /// order, so a new class is a build error here instead of silently sorting
+    /// itself into a lattice position nobody chose.
+    #[must_use]
+    pub const fn join(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::SemiAffine, _) | (_, Self::SemiAffine) => Self::SemiAffine,
+            (Self::QuasiAffine, _) | (_, Self::QuasiAffine) => Self::QuasiAffine,
+            (Self::Affine, Self::Affine) => Self::Affine,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -69,11 +100,11 @@ pub(super) enum IndexNode {
     },
     FloorDiv {
         dividend: u32,
-        divisor: u64,
+        divisor: SourcedExtent,
     },
     Modulo {
         dividend: u32,
-        divisor: u64,
+        divisor: SourcedExtent,
     },
 }
 #[derive(Clone, Debug)]
@@ -215,15 +246,10 @@ pub(super) struct VerifiedIndexRegionData {
     pub owner: VerifiedRegionOwner,
     /// The environment every symbolic extent in this region resolves against.
     ///
-    /// `None` for a wholly static region, which is every region a public
-    /// caller can currently author. Retained rather than consulted once and
-    /// dropped, because a consumer that reads a symbolic extent needs the same
-    /// environment the verifier used, and because the region's identity names
-    /// that environment's identity.
-    #[allow(
-        dead_code,
-        reason = "ADR 0074 convention 7 draft: the symbolic index profile is crate-internal until it is reviewed, so its only callers are the tests in `crate::index::sourced`. See that module for why satisfying the lint with a public caller would promote the boundary without the review"
-    )]
+    /// `None` for a region built without one. Retained rather than consulted
+    /// once and dropped, because a consumer that reads a symbolic extent needs
+    /// the same environment the verifier used, and because the region's
+    /// identity names that environment's identity.
     pub sources: Option<ExtentSources>,
     pub dimensions: Vec<DimensionData>,
     pub tensors: Vec<TensorData>,
@@ -245,13 +271,12 @@ impl VerifiedIndexRegion {
     }
     /// Returns the environment this region's symbolic extents resolve against.
     ///
-    /// `None` for a wholly static region. Draft, `pub(crate)`, like the
-    /// symbolic profile it belongs to.
-    #[allow(
-        dead_code,
-        reason = "ADR 0074 convention 7 draft: the symbolic index profile is crate-internal until it is reviewed, so its only callers are the tests in `crate::index::sourced`. See that module for why satisfying the lint with a public caller would promote the boundary without the review"
-    )]
-    pub(crate) fn extent_sources(&self) -> Option<&ExtentSources> {
+    /// `None` for a region built without one, which is every region whose
+    /// extents and divisors are all literals: an environment nothing resolves
+    /// against would still enter this region's identity, so it is absent rather
+    /// than empty.
+    #[must_use]
+    pub fn extent_sources(&self) -> Option<&ExtentSources> {
         self.data.sources.as_ref()
     }
     /// Returns dimensions in canonical order.
@@ -670,33 +695,25 @@ impl<'a> DomainDimensionRef<'a> {
     pub const fn role(self) -> DomainRole {
         self.data.role
     }
-    /// Returns the static half-open extent, when this dimension has one.
+    /// Returns the half-open extent together with where its value comes from.
     ///
-    /// `None` for a dimension sourced from a `ShapeEnv` symbol, which is the
-    /// case `docs/ir.md` reserved for it: static extents "return `Some`
-    /// throughout this bounded profile. A future symbolic profile can return
-    /// `None` and expose its `ShapeEnv` expression through an additive borrowed
-    /// view instead of changing the meaning of an existing accessor."
+    /// **One total view rather than a pair of optional accessors.** An earlier
+    /// draft answered this question twice — a `static_extent()` returning
+    /// `Option<Extent>` beside a symbol accessor returning
+    /// `Option<&ShapeSymbol>` — with the rule that exactly one of them is
+    /// `Some` held only by a test. That rule is unenforceable: a third source
+    /// kind would make both `None` for a real dimension, and every consumer
+    /// that had encoded "not static, therefore symbolic" would be silently
+    /// wrong. [`SourcedExtent`] is total by construction, so a consumer matches
+    /// it exhaustively and a new kind is a build error at every site.
     ///
-    /// No public constructor produces a symbolic dimension yet, so every region
-    /// a public caller can build still answers `Some` for every dimension. The
-    /// borrowed view that exposes the symbol is the reserved additive step.
-    #[must_use]
-    pub const fn static_extent(self) -> Option<Extent> {
-        self.data.extent.as_static()
-    }
-    /// Returns the extent together with where its value comes from.
-    ///
-    /// The additive borrowed view `docs/ir.md` reserved beside
-    /// [`Self::static_extent`], kept `pub(crate)` while the symbolic profile is
-    /// a draft. Resolve a symbolic extent through
+    /// A consumer that only handles literals calls
+    /// [`SourcedExtent::as_static`] and refuses the rest with its own typed
+    /// reason. Resolve a symbol through
     /// [`VerifiedIndexRegion::extent_sources`], which is the one environment
     /// this region's symbols are declared in.
-    #[allow(
-        dead_code,
-        reason = "ADR 0074 convention 7 draft: the symbolic index profile is crate-internal until it is reviewed, so its only callers are the tests in `crate::index::sourced`. See that module for why satisfying the lint with a public caller would promote the boundary without the review"
-    )]
-    pub(crate) const fn sourced_extent(self) -> &'a SourcedExtent {
+    #[must_use]
+    pub const fn extent(self) -> &'a SourcedExtent {
         &self.data.extent
     }
 }
@@ -722,35 +739,17 @@ impl<'a> TensorRef<'a> {
     pub const fn value_type(self) -> &'a ResolvedValueType {
         &self.data.value_type
     }
-    /// Returns the exact static tensor shape, when this boundary has one.
-    ///
-    /// `None` for a boundary any of whose extents is sourced from a `ShapeEnv`
-    /// symbol, which is the case `docs/ir.md` reserved for it beside
-    /// [`DomainDimensionRef::static_extent`]: static dimensions and tensor
-    /// boundaries "return `Some` throughout this bounded profile. A future
-    /// symbolic profile can return `None` and expose its `ShapeEnv` expression
-    /// through an additive borrowed view instead of changing the meaning of an
-    /// existing accessor."
-    ///
-    /// No public constructor produces a symbolic boundary yet, so every region
-    /// a public caller can build still answers `Some` for every boundary. The
-    /// borrowed view that exposes the symbols is the reserved additive step.
-    #[must_use]
-    pub const fn static_shape(self) -> Option<&'a Shape> {
-        self.data.shape.as_static()
-    }
     /// Returns the boundary's extents together with where each one comes from.
     ///
-    /// The additive borrowed view `docs/ir.md` reserved beside
-    /// [`Self::static_shape`], kept `pub(crate)` while the symbolic profile is a
-    /// draft. Resolve a symbolic extent through
-    /// [`VerifiedIndexRegion::extent_sources`], which is the one environment
-    /// this region's symbols are declared in.
-    #[allow(
-        dead_code,
-        reason = "ADR 0074 convention 7 draft: the symbolic index profile is crate-internal until it is reviewed, so its only callers are the tests in `crate::index::sourced`. See that module for why satisfying the lint with a public caller would promote the boundary without the review"
-    )]
-    pub(crate) const fn sourced_shape(self) -> &'a SourcedShape {
+    /// The boundary counterpart of [`DomainDimensionRef::extent`], and one total
+    /// view for the same reason: [`SourcedShape::as_static`] answers the literal
+    /// case from the boundary itself, so no caller has to hold the rule that a
+    /// non-static boundary is therefore symbolic. A wholly literal boundary
+    /// normalizes to [`SourcedShape::Static`] whichever constructor authored it,
+    /// so `shape().as_static()` is a fact about the boundary rather than about
+    /// the call that made it.
+    #[must_use]
+    pub const fn shape(self) -> &'a SourcedShape {
         &self.data.shape
     }
 }
@@ -776,19 +775,27 @@ pub enum IndexExprView<'a> {
         /// Ordered, combined nonzero terms.
         terms: LinearTerms<'a>,
     },
-    /// Euclidean floor division by a positive constant.
+    /// Euclidean floor division by a proven-positive extent.
     FloorDiv {
         /// Dividend expression.
         dividend: VerifiedIndexExprId,
-        /// Positive divisor.
-        divisor: u64,
+        /// The divisor, and where its value comes from.
+        ///
+        /// One vocabulary for both cases rather than a static and a symbolic
+        /// variant: an affine-only consumer calls
+        /// [`SourcedExtent::as_static`] once and refuses a `None` with its own
+        /// typed reason, which is cheaper than matching two variants and cannot
+        /// forget one of them. Positivity was proved when the expression was
+        /// authored, so no consumer re-decides it.
+        divisor: &'a SourcedExtent,
     },
-    /// Euclidean modulo by a positive constant.
+    /// Euclidean modulo by a proven-positive extent.
     Modulo {
         /// Dividend expression.
         dividend: VerifiedIndexExprId,
-        /// Positive divisor.
-        divisor: u64,
+        /// The divisor, and where its value comes from. See
+        /// [`Self::FloorDiv`].
+        divisor: &'a SourcedExtent,
     },
 }
 /// Iterator over ordered normalized linear terms.
@@ -856,11 +863,11 @@ impl<'a> IndexExprRef<'a> {
             },
             IndexNode::FloorDiv { dividend, divisor } => IndexExprView::FloorDiv {
                 dividend: VerifiedIndexExprId::from_verified(self.id.owner, *dividend),
-                divisor: *divisor,
+                divisor,
             },
             IndexNode::Modulo { dividend, divisor } => IndexExprView::Modulo {
                 dividend: VerifiedIndexExprId::from_verified(self.id.owner, *dividend),
-                divisor: *divisor,
+                divisor,
             },
         }
     }
