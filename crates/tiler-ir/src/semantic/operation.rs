@@ -49,10 +49,97 @@ pub const REDUCTION_AXES_ATTRIBUTE: AttributeFieldId = AttributeFieldId::new(1);
 /// documented as conditional is absent when its condition does not hold rather
 /// than present with a value the operation never produces; absence of an
 /// unconditional field is a malformed record rather than a default.
-/// Field naming the `f32` type's representation class.
-pub const F32_TYPE_FACT_CLASS: AttributeFieldId = AttributeFieldId::new(1);
-/// Field naming the `f32` type's storage width in bits.
-pub const F32_TYPE_FACT_WIDTH_BITS: AttributeFieldId = AttributeFieldId::new(2);
+/// Field naming a governed value type's representation class.
+///
+/// Unconditional on every governed built-in dtype definition. The value is one
+/// of `logical-predicate`, `signed-integer`, `unsigned-integer`, `ieee-binary`,
+/// `bfloat`, `ocp-binary-element`, `ocp-exponent-scale`, `ieee-decimal`,
+/// `complex`, or `ocp-microscaling-block-scheme`. The class selects which of the
+/// conditional fields below the record carries; it never replaces the nominal
+/// key, and two formats sharing a class are not thereby related.
+pub const SCALAR_TYPE_FACT_CLASS: AttributeFieldId = AttributeFieldId::new(1);
+/// Field naming a governed value type's logical width in bits.
+///
+/// Conditional: absent on `logical-predicate`, whose two members have no logical
+/// width and whose bit-, byte-, or other ABI-sized representation is a physical
+/// storage choice; absent on `complex` and `ocp-microscaling-block-scheme`,
+/// whose widths follow from their constituents and physical layout rather than
+/// from the logical identity.
+pub const SCALAR_TYPE_FACT_WIDTH_BITS: AttributeFieldId = AttributeFieldId::new(2);
+/// Field naming the alias and equivalence policy a governed identity carries.
+///
+/// Unconditional on every governed built-in dtype definition, and deliberately
+/// one shared value: ADRs 0027 and 0034 state one rule for the whole catalog.
+pub const SCALAR_TYPE_FACT_ALIAS_POLICY: AttributeFieldId = AttributeFieldId::new(3);
+/// Field counting the members of a fixed-cardinality logical value set.
+///
+/// Conditional: present on `logical-predicate`, where it is the two-valued
+/// contract itself, and on `complex`, where it counts the ordered components.
+pub const SCALAR_TYPE_FACT_VALUE_CARDINALITY: AttributeFieldId = AttributeFieldId::new(4);
+/// Field naming a binary floating-point format's sign-field width in bits.
+///
+/// Conditional on a binary floating-point class. Zero for unsigned
+/// exponent-only scale data.
+pub const SCALAR_TYPE_FACT_SIGN_BITS: AttributeFieldId = AttributeFieldId::new(5);
+/// Field naming a binary floating-point format's exponent-field width in bits.
+///
+/// Conditional on a binary floating-point class.
+pub const SCALAR_TYPE_FACT_EXPONENT_BITS: AttributeFieldId = AttributeFieldId::new(6);
+/// Field naming a binary floating-point format's stored fraction width in bits.
+///
+/// Conditional on a binary floating-point class. This is the trailing
+/// significand only; any implicit leading bit is not counted.
+pub const SCALAR_TYPE_FACT_TRAILING_SIGNIFICAND_BITS: AttributeFieldId = AttributeFieldId::new(7);
+/// Field carrying a binary floating-point format's exponent bias.
+///
+/// Conditional on Tiler holding evidence that fixes the value, which is a
+/// narrower condition than the format having a bias. Absence means the pinned
+/// normative reference owns the bias and this repository does not re-derive it;
+/// it never means the format is unbiased.
+pub const SCALAR_TYPE_FACT_EXPONENT_BIAS: AttributeFieldId = AttributeFieldId::new(8);
+/// Field stating whether a binary floating-point value set contains infinities.
+///
+/// Conditional on a binary floating-point class.
+pub const SCALAR_TYPE_FACT_HAS_INFINITIES: AttributeFieldId = AttributeFieldId::new(9);
+/// Field stating whether a binary floating-point value set contains NaNs.
+///
+/// Conditional on a binary floating-point class.
+pub const SCALAR_TYPE_FACT_HAS_NAN: AttributeFieldId = AttributeFieldId::new(10);
+/// Field stating whether a binary floating-point value set contains zero.
+///
+/// Conditional on a binary floating-point class.
+pub const SCALAR_TYPE_FACT_HAS_ZERO: AttributeFieldId = AttributeFieldId::new(11);
+/// Field stating whether a binary floating-point format's zero is signed.
+///
+/// Conditional on a binary floating-point class.
+pub const SCALAR_TYPE_FACT_HAS_SIGNED_ZERO: AttributeFieldId = AttributeFieldId::new(12);
+/// Field stating whether a binary floating-point value set contains subnormals.
+///
+/// Conditional on a binary floating-point class. This is a fact about the
+/// logical value set, never a claim that a target honours it.
+pub const SCALAR_TYPE_FACT_HAS_SUBNORMALS: AttributeFieldId = AttributeFieldId::new(13);
+/// Field naming a decimal format's coefficient precision in decimal digits.
+///
+/// Conditional on the `ieee-decimal` class.
+pub const SCALAR_TYPE_FACT_COEFFICIENT_DIGITS: AttributeFieldId = AttributeFieldId::new(14);
+/// Field carrying the constituent value types a compound identity composes.
+///
+/// Conditional on a compound class. On `complex` it is the admitted component
+/// set; on `ocp-microscaling-block-scheme` it is the ordered element-code and
+/// block-scale pair.
+pub const SCALAR_TYPE_FACT_COMPONENT_TYPES: AttributeFieldId = AttributeFieldId::new(15);
+/// Field naming the semantic order of a compound identity's components.
+///
+/// Conditional on a compound class.
+pub const SCALAR_TYPE_FACT_COMPONENT_ORDER: AttributeFieldId = AttributeFieldId::new(16);
+/// Field counting the element codes that share one block scale.
+///
+/// Conditional on the `ocp-microscaling-block-scheme` class.
+pub const SCALAR_TYPE_FACT_BLOCK_SIZE: AttributeFieldId = AttributeFieldId::new(17);
+/// Field naming how a block-scaled scheme selects the scale for its codes.
+///
+/// Conditional on the `ocp-microscaling-block-scheme` class.
+pub const SCALAR_TYPE_FACT_SCALE_SELECTION: AttributeFieldId = AttributeFieldId::new(18);
 
 /// Field naming how the standard constant operation treats its declared payload.
 pub const CONSTANT_F32_FACT_PAYLOAD_RULE: AttributeFieldId = AttributeFieldId::new(1);

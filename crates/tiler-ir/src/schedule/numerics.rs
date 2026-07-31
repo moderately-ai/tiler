@@ -429,7 +429,7 @@ pub enum MaterializationRounding {
 #[cfg(test)]
 mod tests {
     use super::ArithmeticType;
-    use crate::semantic::{F32, TypeKey};
+    use crate::semantic::{F32, FrozenSemanticRegistry, TypeKey, builtin_scalar_value_types};
 
     /// The canonical spelling is one identity with `TypeKey`, not a second.
     ///
@@ -453,20 +453,42 @@ mod tests {
         }
     }
 
-    /// The one arithmetic type this build registers agrees with the registry.
+    /// Every arithmetic type names an identity the standard registry admits.
     ///
     /// The loop above pins the spelling against a key this test constructs, which
     /// would still agree if the registry had moved. This pins it against the
-    /// resolved type the standard registry actually admits, so the two cannot
-    /// drift apart silently.
+    /// resolved types the standard registry actually admits, so the two cannot
+    /// drift apart silently. Admission is recognition and nothing more: a
+    /// contract or a target profile may speak about any of these four, and only
+    /// F32 has an operation, an evaluator, or a lowering.
     #[test]
-    fn the_registered_f32_value_type_is_the_f32_arithmetic_type() {
+    fn every_arithmetic_type_names_a_registered_value_identity() {
+        let registry = FrozenSemanticRegistry::standard().expect("the standard registry freezes");
+        let admitted: Vec<_> = builtin_scalar_value_types()
+            .into_iter()
+            .map(|value| {
+                value
+                    .nominal_key()
+                    .expect("the catalog's scalars are nominal")
+                    .to_string()
+            })
+            .collect();
+        for arithmetic in ArithmeticType::ALL {
+            assert!(
+                admitted
+                    .iter()
+                    .any(|key| key == arithmetic.canonical_type_key()),
+                "{} is not a registered value identity",
+                arithmetic.canonical_type_key()
+            );
+        }
         let resolved = F32::resolved_type();
         let nominal = resolved.nominal_key().expect("f32 is a nominal type");
         assert_eq!(
             ArithmeticType::F32.canonical_type_key(),
             nominal.to_string()
         );
+        assert!(registry.contains(&resolved));
     }
 
     /// Distinct types must not collide in an identity encoding.

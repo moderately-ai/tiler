@@ -3695,7 +3695,18 @@ mod tests {
                 // requests admitting different program shapes are different
                 // requests, and a value that survived would mean the subject
                 // reached the budgets it names without reaching their values.
-                "tiler-explain-v7 request=09d719dd4c2c2f37\n",
+                // Rebaselined from `09d719dd4c2c2f37` when the standard semantic
+                // registry began registering the complete accepted built-in
+                // dtype catalog. The request subject covers the frozen semantic
+                // registry snapshot, and that snapshot encodes every registered
+                // definition, so admitting thirty-one further identities must
+                // move this digest: two requests whose semantic authority admits
+                // different value types are different requests. The same change
+                // gave the strict-affine scheme's normative reference its own
+                // key, which is a definition contract inside the same snapshot.
+                // Nothing about the trace's own content changed, which is why
+                // the two record lines below are unchanged.
+                "tiler-explain-v7 request=928bbdb50eb505ed\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )
