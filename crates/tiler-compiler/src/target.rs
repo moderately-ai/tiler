@@ -1123,6 +1123,19 @@ impl TargetProfileBuilder {
     }
 
     fn governed() -> Self {
+        // The grid row is the deliberately conservative four-thread guarantee
+        // of this bounded macOS Metal profile, not a hardware maximum. In the
+        // macOS 26.5 SDK, `MTLComputeCommandEncoder.h` documents
+        // `dispatchThreads:threadsPerThreadgroup:` as accepting an
+        // arbitrarily-sized grid whose dimensions need not be threadgroup
+        // multiples, and `MTLTypes.h` defines each `MTLSize` dimension as
+        // `NSUInteger`; the API is available from macOS 10.13. Those primary
+        // declarations prove that extent four is representable on the governed
+        // profile. They do not prove 65,535, an Apple-family maximum, or any
+        // prepared pipeline's workgroup capacity. The shared source below
+        // identifies the compiler-governed prototype guarantee; the production
+        // Metal profile ticket replaces it with its full per-row authority
+        // ledger rather than mislabelling this as a device measurement.
         let source = TargetFactSource(governed_profile_source());
         let mut builder = Self::new(TargetProfileKey::governed(GOVERNED_TARGET_PROFILE_KEY));
         builder

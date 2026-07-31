@@ -618,8 +618,9 @@ impl ArtifactProgramBuilder {
 
     /// Declares one complete plan variant at the next routing rank.
     ///
-    /// Every provider a deferred predicate names must already be selected, so
-    /// [`ArtifactProgramBuilder::select_provider`] precedes this call.
+    /// Every deferred predicate is minted from the complete compiler-produced
+    /// prepared-entry requirement. Its acquisition provider is part of that
+    /// requirement rather than an artifact-selected lowering provider.
     ///
     /// # Errors
     ///
@@ -627,8 +628,8 @@ impl ArtifactProgramBuilder {
     /// target-profile disagreement; an entry or binding cardinality error; an
     /// expression type, root-phase, or interface-root rejection; an accessible
     /// range, launch, or zero-work disagreement with the bound program; a
-    /// duplicate variant, deferred predicate, or launch precondition; an
-    /// unselected deferred authority; a non-deferred predicate phase; or a
+    /// duplicate variant, deferred predicate, or launch precondition; a
+    /// deferred requirement bound outside the program's entry range; or a
     /// structural-limit error.
     pub fn push_variant(
         &mut self,

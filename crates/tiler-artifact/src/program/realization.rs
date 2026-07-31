@@ -133,10 +133,9 @@ pub(crate) const MAX_HONOURING_MEANS_KEY_BYTES: usize = 256;
 ///
 /// A produced artifact rests on facts readable by the time it was produced, and
 /// [`AvailabilityPhase::ArtifactEvidence`] is the last such phase. This is the
-/// exact complement of the boundary
-/// [`super::ArtifactBuildError::NonDeferredPredicatePhase`] already draws from
-/// the other side: that rule rejects a *deferred* predicate below
-/// [`AvailabilityPhase::LiveDevicePreflight`], because a predicate decided at
+/// exact complement of the prepared-entry query boundary: an executable
+/// deferred requirement is constructed only for
+/// [`AvailabilityPhase::PreparedKernelPreflight`], while a fact decided at
 /// packaging is not deferred. A means declared readable only from live preflight
 /// onward was not relied on to produce these bytes, so recording it as delivered
 /// would claim evidence that does not exist.
