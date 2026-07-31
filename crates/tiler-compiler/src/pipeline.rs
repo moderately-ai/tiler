@@ -71,8 +71,8 @@ use crate::physical::{
 };
 use crate::program::{
     ArtifactConstructionPlan, KernelProgram, ProgramError, assert_kernels_match_program,
-    build_artifact_plan, build_fused_kernel_program, build_kernel_program, verify_artifact_plan,
-    verify_semantic_output_type,
+    build_artifact_plan, build_fused_kernel_program, build_kernel_program,
+    build_split_kernel_program, verify_artifact_plan, verify_semantic_output_type,
 };
 use crate::region::{
     REGION_FORMATION_SUBJECT, RegionCandidate, RegionError, RegionFormationOutcome,

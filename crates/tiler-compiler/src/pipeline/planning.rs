@@ -275,7 +275,13 @@ pub(super) fn enumerate_complete_plans(
                         // its own typed cause. Even target-derived causes belong
                         // to that call rather than to a scheduled region, so the
                         // frontier record owns their attribution.
+                        // A declined strategy is likewise not a target verdict:
+                        // nothing was proposed, so there is no candidate this
+                        // region could be reported as having refused. Its typed
+                        // reason is recorded by `record_frontier`, which is the
+                        // authority for what the enumeration withheld.
                         crate::frontier::FrontierRejection::OpaqueCall { .. }
+                        | crate::frontier::FrontierRejection::StrategyDeclined { .. }
                         | crate::frontier::FrontierRejection::UnsupportedVariant { .. }
                         | crate::frontier::FrontierRejection::NotApplicable { .. } => None,
                     };
@@ -817,10 +823,15 @@ pub(super) fn build_alternative_for_origin(
 /// Lowering an opaque call is genuinely not implemented; declining to order a
 /// plan containing one is how that is said, and the caller turns it into a typed
 /// refusal.
+///
+/// A **subprogram contributes every one of its stages**, not one region standing
+/// for it. Taking the first would be the same silent omission the paragraph
+/// above describes, one dispatch instead of one region: the assembled program
+/// would compute a partial reduction and publish it as the result.
 pub(super) fn plan_region_order(plan: &SelectedPlan) -> Option<Vec<&VerifiedScheduledRegion>> {
     let mut regions: Vec<&VerifiedScheduledRegion> = Vec::with_capacity(plan.selections().len());
     for selection in plan.selections() {
-        regions.push(selection.implementation().scheduled()?);
+        regions.extend(selection.implementation().scheduled_stages()?);
     }
     regions.sort_by_key(|region| region.region().index.id.get());
     Some(regions)
@@ -833,10 +844,16 @@ pub(super) fn plan_regions(plan: &SelectedPlan) -> Option<Vec<VerifiedScheduledR
 
 /// Assembles the verified kernel program for one plan shape.
 ///
-/// The bounded profile implements exactly two program shapes: a one-region fused
-/// program and a two-region materialized program. Any other retained plan shape
-/// is invalid compiler output and rejects explicitly rather than being
-/// approximated by the closest implemented assembly.
+/// The bounded profile implements exactly three program shapes: a one-region
+/// fused program, a two-region materialized program, and the three-region split
+/// whose reduction is realized by a partial and a final pass. Any other retained
+/// plan shape is invalid compiler output and rejects explicitly rather than
+/// being approximated by the closest implemented assembly.
+///
+/// The split shares the materialized *kind* because a kind is a property of the
+/// cover — the split refines one of that cover's regions into two dispatches and
+/// changes no grouping — so the region count is what selects the assembly. A
+/// separate kind would have to be derivable from the cover, and it is not.
 pub(super) fn build_plan_program(
     semantic: &tiler_ir::semantic::SemanticProgram,
     verified: &crate::request::VerifiedTargetRequest,
@@ -849,6 +866,9 @@ pub(super) fn build_plan_program(
         }
         (ProgramAlternativeKind::Materialized, [_, _]) => {
             build_kernel_program(semantic, verified, scheduled).map_err(CompileError::from)
+        }
+        (ProgramAlternativeKind::Materialized, [_, _, _]) => {
+            build_split_kernel_program(semantic, verified, scheduled).map_err(CompileError::from)
         }
         _ => Err(CompileError::from(ProgramError::Structure {
             rule: "unsupported-plan-shape",

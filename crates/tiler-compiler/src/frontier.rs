@@ -41,11 +41,23 @@
 //! covers with compatible per-region frontiers is the later complete
 //! physical-plan-selection authority.
 //!
-//! The bounded P0 profile admits only checked [`ProposalBody::ScheduledKernel`]
-//! proposals and explicitly rejects the reserved [`ProposalBody::KernelSubprogram`],
-//! [`ProposalBody::OpaqueCall`], and [`ProposalBody::View`] variants while keeping
-//! the additive sum-type/provider seam. Opaque physical-call contracts are owned
-//! by the reviewed `implement-opaque-physical-call-providers` ticket.
+//! The bounded profile admits checked [`ProposalBody::ScheduledKernel`] and
+//! [`ProposalBody::KernelSubprogram`] proposals and explicitly rejects the
+//! reserved [`ProposalBody::View`] variant while keeping the additive
+//! sum-type/provider seam. Opaque physical-call contracts are owned by the
+//! reviewed `implement-opaque-physical-call-providers` ticket.
+//!
+//! A subprogram is what makes one semantic occurrence realizable by *several*
+//! dispatches: a scheduled kernel is one region and therefore one dispatch, so a
+//! split reduction has no spelling in it. Its stages re-enter the same checked
+//! verification each scheduled kernel does, and the chain they form is derived
+//! and checked rather than declared.
+//!
+//! A provider also reports the strategies it *considered and withheld*
+//! ([`DeclinedStrategy`]). Without that channel an enumeration cannot distinguish
+//! "this provider does not implement splitting" from "this request's extents
+//! admit no split", and the split's absence is unexplainable — which is the one
+//! thing an explainable frontier may not be.
 //!
 //! Every item here is a reviewed *draft* boundary, not a stable compiler API,
 //! until Tom accepts the exact interface.
@@ -126,6 +138,65 @@ impl fmt::Display for PhysicalProposalKind {
     }
 }
 
+/// One stage of a proposed kernel subprogram.
+///
+/// The provider states the region *and* the semantic occurrences that stage
+/// claims, because a subprogram's stages do not claim the subject uniformly: a
+/// split reduction's partial pass claims the reduction occurrence and its final
+/// pass claims none, since that occurrence is already covered and claiming it
+/// twice would double-cover the graph.
+///
+/// Neither field is believed. Each region is resubmitted through
+/// [`verify_schedule_with_feasibility`] with the members declared here, and that
+/// path's request-subject binding is what decides whether this exact region may
+/// claim exactly these occurrences — so a provider that mislabels a pass is
+/// rejected by the same authority that checks a single-kernel proposal.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SubprogramStage {
+    region: ScheduledRegion,
+    semantic_members: Vec<SemanticMemberId>,
+}
+
+impl SubprogramStage {
+    /// Builds one proposed stage from its region and the members it claims.
+    pub(crate) const fn new(
+        region: ScheduledRegion,
+        semantic_members: Vec<SemanticMemberId>,
+    ) -> Self {
+        Self {
+            region,
+            semantic_members,
+        }
+    }
+}
+
+/// A proposed multi-dispatch implementation of one region subject.
+///
+/// This is what makes "one semantic occurrence realized by two dispatches"
+/// expressible at all: a [`ProposalBody::ScheduledKernel`] is one region and
+/// therefore one dispatch, so a split reduction has no spelling in it. The
+/// stages are an *ordered chain* — each stage's owning write is the next
+/// stage's input, and only the last stage's write leaves the subprogram — which
+/// is the structure [`derive_subprogram_boundary_contract`] checks rather than
+/// assumes.
+///
+/// A subprogram is not a nested region cover: it covers exactly the region
+/// subject the frontier is enumerating for, and the union of its stages'
+/// claimed members must be that subject exactly. Two dispatches that between
+/// them covered a different occurrence set would be a different region, not an
+/// implementation of this one.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct KernelSubprogram {
+    stages: Vec<SubprogramStage>,
+}
+
+impl KernelSubprogram {
+    /// Builds a subprogram from its ordered stages.
+    pub(crate) const fn new(stages: Vec<SubprogramStage>) -> Self {
+        Self { stages }
+    }
+}
+
 /// A minimal typed placeholder for a reserved (non-P0) proposal body.
 ///
 /// It preserves the additive seam without asserting any of the contract the
@@ -172,8 +243,11 @@ pub(crate) enum ProposalBody {
     /// The region is boxed so the scheduled-kernel payload does not inflate every
     /// reserved seam variant to its size.
     ScheduledKernel(Box<ScheduledRegion>),
-    /// A nested kernel subprogram. Reserved; the P0 frontier rejects it.
-    KernelSubprogram(ReservedProposalSeam),
+    /// An ordered chain of dispatches realizing one region subject.
+    ///
+    /// Boxed for the same reason as [`Self::ScheduledKernel`]: the payload is
+    /// several regions and must not inflate every other variant.
+    KernelSubprogram(Box<KernelSubprogram>),
     /// An opaque physical call, named by its registered identity.
     ///
     /// The provider proposes an *identity* rather than the call itself, so
@@ -580,6 +654,142 @@ fn derive_boundary_contract(
     })
 }
 
+/// Rule code for a subprogram whose stages do not form one dispatch chain.
+const SUBPROGRAM_NOT_CHAINED_RULE: &str = "subprogram-stages-not-chained";
+
+/// Derives the external boundary contract of a verified subprogram chain.
+///
+/// A subprogram's boundary is what crosses *its* edge, not the union of its
+/// stages' edges: the values it stages internally are produced and consumed
+/// entirely within it and are invisible to any cover that places it. Deriving
+/// the union instead would report a split reduction as guaranteeing two values
+/// and requiring two — which `selection::reconcile_boundaries` correctly refuses
+/// as an ambiguous boundary, and which would be the wrong answer rather than a
+/// conservative one.
+///
+/// The chain is *checked*, not assumed. Every non-final stage's owning write
+/// must be an [`TensorRole::Intermediate`], and the next stage must read exactly
+/// that write's iteration domain; both sides of that match are then internal.
+/// Every other access stays external, and the final stage's owning write is the
+/// subprogram's single guarantee by construction.
+///
+/// # Errors
+///
+/// Returns [`SUBPROGRAM_NOT_CHAINED_RULE`] when a non-final stage publishes
+/// something it cannot hand on, or hands on a value the next stage never reads.
+/// Both are incoherent compiler output rather than unsatisfiable plans — the
+/// frontier already verified each stage individually, so a failure here is a
+/// claim about how they compose.
+fn derive_subprogram_boundary_contract(
+    stages: &[VerifiedScheduledRegion],
+) -> Result<BoundaryContract, &'static str> {
+    let mut requirements = Vec::new();
+    let mut guarantees = Vec::new();
+    // The value the previous stage handed on. `None` at the head of the chain,
+    // and never carried past the stage that consumes it.
+    let mut handoff: Option<&tiler_ir::shape::Shape> = None;
+    for (position, stage) in stages.iter().enumerate() {
+        let region = stage.region();
+        if !region.index.accesses.is_empty() && !stage.requirements().requires_device_memory {
+            return Err(NO_BOUNDARY_DOMAIN_RULE);
+        }
+        let last = position + 1 == stages.len();
+        let mut owed = handoff;
+        for access in &region.index.accesses {
+            if access.ownership.is_some() {
+                // Only the last stage's write leaves the subprogram; every
+                // earlier one is the handoff the next stage must consume. A
+                // non-final stage that publishes something other than an
+                // intermediate has nothing to hand on, and a chain claiming
+                // otherwise is not a chain.
+                if last {
+                    guarantees.push(BoundaryGuarantee {
+                        tensor: access.tensor,
+                        ownership: BoundaryOwnership::TotalRaceFreeWrite,
+                        properties: bounded_guarantees(),
+                    });
+                } else if access.tensor == TensorRole::Intermediate {
+                    handoff = Some(&region.index.iteration_shape);
+                } else {
+                    return Err(SUBPROGRAM_NOT_CHAINED_RULE);
+                }
+                continue;
+            }
+            if owed.is_some_and(|shape| {
+                access.tensor == TensorRole::Intermediate
+                    && access_domain_shape(region, access) == Some(shape)
+            }) {
+                owed = None;
+                continue;
+            }
+            requirements.push(BoundaryRequirement {
+                tensor: access.tensor,
+                access: access.mode,
+                properties: bounded_requirements(),
+            });
+        }
+        // A stage handed a value it never reads leaves that value staged with
+        // no consumer, which is a leak the cover cannot see and the program
+        // assembler would have to invent an owner for.
+        if owed.is_some() {
+            return Err(SUBPROGRAM_NOT_CHAINED_RULE);
+        }
+    }
+    Ok(BoundaryContract {
+        requirements,
+        guarantees,
+    })
+}
+
+/// Returns the logical domain shape one access addresses, when it names one.
+///
+/// A linear access addresses the region's own iteration domain; a reduction
+/// contributor access addresses its declared input shape. The remaining maps
+/// carry no shape a chain could be matched on, so they answer `None` and a
+/// subprogram built over them fails the chain check rather than matching by
+/// accident.
+///
+/// The wildcard is the fail-closed direction: `LogicalAccess` is
+/// `#[non_exhaustive]`, and a map added upstream reaches it and declines to
+/// name a domain, which refuses the chain. Naming a domain by guess is what
+/// would be unsafe here — it would splice two stages that address different
+/// values.
+fn access_domain_shape<'a>(
+    region: &'a ScheduledRegion,
+    access: &'a tiler_ir::schedule::Access,
+) -> Option<&'a tiler_ir::shape::Shape> {
+    match &access.map {
+        tiler_ir::schedule::LogicalAccess::LinearIdentity => Some(&region.index.iteration_shape),
+        tiler_ir::schedule::LogicalAccess::ReductionContributor { input_shape, .. } => {
+            Some(input_shape)
+        }
+        tiler_ir::schedule::LogicalAccess::ScalarBroadcast
+        | tiler_ir::schedule::LogicalAccess::PackedU4LsbZeroTail { .. }
+        | _ => None,
+    }
+}
+
+/// Returns the peak resource requirement across a subprogram's stages.
+///
+/// The **peak**, not the sum. Every axis here is checked against a per-dispatch
+/// device bound — grid threads, workgroup threads, buffer bindings, threadgroup
+/// bytes — and a subprogram's stages are dispatched in sequence, so summing them
+/// would report a requirement no point in its execution ever has. The numerical
+/// dimensions are taken from the first stage because every stage of an admitted
+/// subprogram implements the same request contract, which
+/// [`verify_schedule_with_feasibility`] proved for each of them separately.
+fn subprogram_resources(stages: &[VerifiedScheduledRegion]) -> Option<ResourceRequirements> {
+    let mut peak = stages.first()?.requirements();
+    for stage in &stages[1..] {
+        let stage = stage.requirements();
+        peak.buffer_bindings = peak.buffer_bindings.max(stage.buffer_bindings);
+        peak.threads_per_workgroup = peak.threads_per_workgroup.max(stage.threads_per_workgroup);
+        peak.local_memory_bytes = peak.local_memory_bytes.max(stage.local_memory_bytes);
+        peak.requires_device_memory |= stage.requires_device_memory;
+    }
+    Some(peak)
+}
+
 /// The typed properties the bounded profile's regions require of an input.
 ///
 /// # Panics
@@ -777,23 +987,130 @@ impl ImplementationContext<'_> {
     }
 }
 
+/// Why a provider considered a strategy for this subject and did not offer it.
+///
+/// Each cause is a fact about the *request*, decided before any region is
+/// constructed. They are distinct from every [`FrontierRejection`] a proposal
+/// earns, because nothing was proposed: the enumeration is complete only if it
+/// can also say what it deliberately withheld.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StrategyDeclineCause {
+    /// The request's resolved numerical contract forbids a freedom the strategy
+    /// consumes.
+    ///
+    /// Never a cost and never a capability: the caller ruled the transform out,
+    /// so no target and no re-planning makes the strategy legal.
+    NumericalPermissionRefused {
+        /// The canonical key of the refused dimension.
+        dimension: &'static str,
+    },
+    /// The strategy has no admissible shape for this request's extents.
+    NoAdmissibleShape {
+        /// Stable code naming which shape obligation could not be met.
+        rule: &'static str,
+        /// The extent that admitted none.
+        extent: u64,
+    },
+    /// The strategy's derived extents or shapes are not representable.
+    Unrepresentable {
+        /// Stable code naming the unrepresentable quantity.
+        rule: &'static str,
+    },
+}
+
+impl StrategyDeclineCause {
+    /// Returns the stable reason code of the decline.
+    pub(crate) const fn reason(self) -> &'static str {
+        match self {
+            Self::NumericalPermissionRefused { .. } => "numerical-permission-refused",
+            Self::NoAdmissibleShape { rule, .. } | Self::Unrepresentable { rule } => rule,
+        }
+    }
+
+    fn encode(self, output: &mut Vec<u8>) {
+        match self {
+            Self::NumericalPermissionRefused { dimension } => {
+                output.push(0x01);
+                push_slice(output, dimension.as_bytes());
+            }
+            Self::NoAdmissibleShape { rule, extent } => {
+                output.push(0x02);
+                push_slice(output, rule.as_bytes());
+                output.extend_from_slice(&extent.to_be_bytes());
+            }
+            Self::Unrepresentable { rule } => {
+                output.push(0x03);
+                push_slice(output, rule.as_bytes());
+            }
+        }
+    }
+}
+
+/// One strategy a provider considered for a subject and withheld, with its
+/// reason.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DeclinedStrategy {
+    strategy: &'static str,
+    cause: StrategyDeclineCause,
+}
+
+impl DeclinedStrategy {
+    /// Records that `strategy` was considered for this subject and withheld.
+    pub(crate) const fn new(strategy: &'static str, cause: StrategyDeclineCause) -> Self {
+        Self { strategy, cause }
+    }
+}
+
+/// Everything one provider has to say about one region subject.
+///
+/// Proposals and declines are returned together rather than through two calls,
+/// because they are two halves of one answer: a provider that offered a serial
+/// reduction and withheld a split considered both in the same derivation, and
+/// splitting the call would let the two disagree about which request they were
+/// answering.
+#[derive(Debug, Default)]
+pub(crate) struct ProviderOffer {
+    proposals: Vec<ImplementationProposal>,
+    declined: Vec<DeclinedStrategy>,
+}
+
+impl ProviderOffer {
+    /// An offer of proposals with nothing withheld.
+    pub(crate) const fn proposing(proposals: Vec<ImplementationProposal>) -> Self {
+        Self {
+            proposals,
+            declined: Vec::new(),
+        }
+    }
+
+    /// Records that a strategy was considered for this subject and withheld.
+    pub(crate) fn decline(mut self, declined: DeclinedStrategy) -> Self {
+        self.declined.push(declined);
+        self
+    }
+}
+
 /// A statically linked provider that proposes physical implementations of a
 /// region on a target profile.
 ///
 /// The provider is trusted, deterministic, and side-effect-free: it depends only
-/// on its explicit context and returns zero or more proposals. Trust does not
-/// mean belief — the host resubmits every scheduled-kernel body through the
-/// ordinary checked verification path before admitting it.
+/// on its explicit context and returns zero or more proposals, together with the
+/// strategies it considered and withheld. Trust does not mean belief — the host
+/// resubmits every scheduled-kernel and subprogram body through the ordinary
+/// checked verification path before admitting it.
 pub(crate) trait PhysicalImplementationProvider {
     /// Returns this provider's provenance.
     fn provenance(&self) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError>;
 
     /// Proposes physical implementations for the region in `context`.
     ///
-    /// Returning an empty vector is legitimate: it means the provider offers no
-    /// implementation for this region and target, which is neither an error nor a
-    /// global-coverage claim.
-    fn propose(&self, context: &ImplementationContext<'_>) -> Vec<ImplementationProposal>;
+    /// An empty offer is legitimate: it means the provider recognizes nothing
+    /// about this region and target, which is neither an error nor a
+    /// global-coverage claim. An offer that proposes nothing but declines a
+    /// named strategy says something stronger — the strategy applied and this
+    /// request did not admit it — and that difference is what the frontier
+    /// records.
+    fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer;
 }
 
 /// The region one frontier is a local authority for.
@@ -887,6 +1204,16 @@ impl ImplementationProposalIdentity {
 pub(crate) enum ImplementationBody {
     /// A region this compiler scheduled and will lower itself.
     Scheduled(Box<VerifiedScheduledRegion>),
+    /// An ordered chain of regions this compiler scheduled and will lower as
+    /// several dispatches of one region subject.
+    ///
+    /// Distinct from [`Self::Scheduled`] rather than a one-or-many collapse of
+    /// it, because "how many dispatches realize this subject" is the fact a
+    /// consumer must handle: a program assembler binds a different number of
+    /// stages, and a cost model counts a different number of launches. Nothing
+    /// that needs exactly one region should silently receive the first of
+    /// several.
+    Subprogram(Vec<VerifiedScheduledRegion>),
     /// A call into code this compiler did not produce.
     Opaque(Box<RegisteredCall>),
 }
@@ -896,14 +1223,31 @@ pub(crate) enum ImplementationBody {
     reason = "see the type's own allow: accessors land with the sum, ahead of the consumers that will match on it"
 )]
 impl ImplementationBody {
-    /// The scheduled region, when this is one.
+    /// The scheduled region, when this is exactly one.
     ///
     /// `Option` rather than a panicking accessor: a consumer that needs a
     /// schedule and receives an opaque call has to say what it does about that,
-    /// and the type is where it is made to.
+    /// and the type is where it is made to. A subprogram answers `None` here
+    /// deliberately — it *has* regions, but not one, and returning its first
+    /// would hand a single-dispatch consumer a plan whose remaining dispatches
+    /// it would never emit.
     pub(crate) fn scheduled(&self) -> Option<&VerifiedScheduledRegion> {
         match self {
             Self::Scheduled(region) => Some(region),
+            Self::Subprogram(_) | Self::Opaque(_) => None,
+        }
+    }
+
+    /// Every region this body dispatches, in execution order.
+    ///
+    /// The accessor a consumer that can handle any dispatch count uses: cost
+    /// components fold over it and program assembly binds one stage per entry.
+    /// An opaque call still answers `None`, because it has no scheduled region
+    /// at all rather than several.
+    pub(crate) fn scheduled_stages(&self) -> Option<&[VerifiedScheduledRegion]> {
+        match self {
+            Self::Scheduled(region) => Some(std::slice::from_ref(region)),
+            Self::Subprogram(stages) => Some(stages),
             Self::Opaque(_) => None,
         }
     }
@@ -912,7 +1256,7 @@ impl ImplementationBody {
     pub(crate) fn opaque(&self) -> Option<&RegisteredCall> {
         match self {
             Self::Opaque(call) => Some(call),
-            Self::Scheduled(_) => None,
+            Self::Scheduled(_) | Self::Subprogram(_) => None,
         }
     }
 
@@ -920,6 +1264,7 @@ impl ImplementationBody {
     pub(crate) const fn kind(&self) -> &'static str {
         match self {
             Self::Scheduled(_) => "scheduled-region",
+            Self::Subprogram(_) => "kernel-subprogram",
             Self::Opaque(_) => "opaque-call",
         }
     }
@@ -983,6 +1328,11 @@ impl AdmittedImplementation {
         self.body.scheduled()
     }
 
+    /// Every region this admission dispatches, in execution order.
+    pub(crate) fn scheduled_stages(&self) -> Option<&[VerifiedScheduledRegion]> {
+        self.body.scheduled_stages()
+    }
+
     /// What this admission is.
     pub(crate) const fn body(&self) -> &ImplementationBody {
         &self.body
@@ -990,13 +1340,16 @@ impl AdmittedImplementation {
 
     /// Returns the exact resource requirements used for the feasibility decision.
     pub(crate) fn resources(&self) -> ResourceRequirements {
-        // Both bodies answer, from different authorities: a scheduled region
-        // derives its requirements, and an opaque call declares them as proven
-        // — which is why the declaration carries `ResourceRequirements` and not
-        // the uncertain estimate class. Neither is defaulted; feasibility must
-        // never be told a call needs nothing because nobody said.
+        // Every body answers, from different authorities: a scheduled region
+        // derives its requirements, a subprogram takes the peak across its
+        // stages, and an opaque call declares them as proven — which is why the
+        // declaration carries `ResourceRequirements` and not the uncertain
+        // estimate class. None is defaulted; feasibility must never be told a
+        // call needs nothing because nobody said.
         match &self.body {
             ImplementationBody::Scheduled(region) => region.requirements(),
+            ImplementationBody::Subprogram(stages) => subprogram_resources(stages)
+                .expect("an admitted subprogram has at least one verified stage"),
             ImplementationBody::Opaque(call) => *call.declaration().resources(),
         }
     }
@@ -1079,6 +1432,22 @@ pub(crate) enum FrontierRejection {
         /// The typed stage-local refusal.
         cause: OpaqueCallRejectionCause,
     },
+    /// A provider considered a named strategy for this subject and withheld it.
+    ///
+    /// Distinct from every variant above because no proposal was made: those
+    /// answer "why was this candidate not admitted", and this answers "why was
+    /// there no candidate". Without it, a request whose extents admit no
+    /// balanced split and one whose provider does not implement splitting at all
+    /// produce byte-identical enumerations, and the split's absence is
+    /// unexplainable.
+    StrategyDeclined {
+        /// The provider that withheld the strategy.
+        provider: PhysicalProviderProvenance,
+        /// The stable strategy name.
+        strategy: &'static str,
+        /// The typed reason it was withheld.
+        cause: StrategyDeclineCause,
+    },
     /// The proposal body is a reserved variant the P0 frontier does not implement.
     UnsupportedVariant {
         /// The provider whose proposal was rejected.
@@ -1150,6 +1519,16 @@ impl FrontierRejection {
                 encode_provider(output, provider.provider());
                 encode_opaque_call_proposal(output, proposal);
                 encode_opaque_call_cause(output, cause);
+            }
+            Self::StrategyDeclined {
+                provider,
+                strategy,
+                cause,
+            } => {
+                output.push(6);
+                encode_provider(output, provider.provider());
+                push_slice(output, strategy.as_bytes());
+                cause.encode(output);
             }
             Self::UnsupportedVariant { provider, kind } => {
                 output.push(2);
@@ -1426,7 +1805,18 @@ pub(crate) fn enumerate_frontier(
             .provenance()
             .map_err(|source| FrontierError::UnrepresentableProviderProvenance { source })?;
         let context = ImplementationContext { request, subject };
-        for proposal in provider.propose(&context) {
+        let offer = provider.propose(&context);
+        // A withheld strategy is recorded before the offered ones are assessed,
+        // so a reader sees what the provider ruled out for this request beside
+        // what it proposed for it rather than only in the proposals' absence.
+        for declined in offer.declined {
+            rejections.push(FrontierRejection::StrategyDeclined {
+                provider: provenance.clone(),
+                strategy: declined.strategy,
+                cause: declined.cause,
+            });
+        }
+        for proposal in offer.proposals {
             let kind = proposal.body.kind();
             if !proposal.applicability.applies_to(&applicable_key) {
                 match &proposal.body {
@@ -1583,7 +1973,21 @@ pub(crate) fn enumerate_frontier(
                     });
                     continue;
                 }
-                ProposalBody::KernelSubprogram(_) | ProposalBody::View(_) => {
+                ProposalBody::KernelSubprogram(subprogram) => {
+                    match admit_subprogram(
+                        *subprogram,
+                        subject,
+                        request,
+                        &provenance,
+                        &proposal.applicability,
+                        proposal.declared_cost,
+                    )? {
+                        Ok(admission) => admitted.push(admission),
+                        Err(rejection) => rejections.push(rejection),
+                    }
+                    continue;
+                }
+                ProposalBody::View(_) => {
                     rejections.push(FrontierRejection::UnsupportedVariant {
                         provider: provenance.clone(),
                         kind,
@@ -1991,6 +2395,157 @@ fn admit_verified(
     })
 }
 
+/// Verifies one proposed subprogram and turns it into an admission or a typed
+/// rejection.
+///
+/// Every stage re-enters [`verify_schedule_with_feasibility`] with the members
+/// that stage claims, so a provider can neither smuggle an unverified region nor
+/// let one pass claim occurrences the request-subject binding does not grant it.
+/// On top of that per-stage check the subprogram carries one obligation no stage
+/// can see: the occurrences its stages claim between them must be exactly the
+/// subject's, each once. A chain covering less would silently drop work the
+/// cover assigned to this region, and a chain covering more would compute an
+/// occurrence another region also computes.
+///
+/// The feasibility verdict is the **subprogram's**, taken once over the peak
+/// requirement across its stages, rather than a merge of per-stage evidences: a
+/// merge would be a second derivation of one decision, and ADR 0043 keeps the
+/// decision single.
+///
+/// # Errors
+///
+/// Returns [`FrontierError`] for malformed compiler output — a stage that fails
+/// intrinsic verification or its subject binding, a chain that does not compose,
+/// or a feasibility assessment the shared authority cannot resolve. A legitimate
+/// target refusal is the `Err` arm of the returned `Ok`, not an error.
+fn admit_subprogram(
+    subprogram: KernelSubprogram,
+    subject: &FrontierRegionSubject,
+    request: &VerifiedTargetRequest,
+    provider: &PhysicalProviderProvenance,
+    applicability: &TargetApplicability,
+    cost: PhysicalCostEstimate,
+) -> Result<Result<AdmittedImplementation, FrontierRejection>, FrontierError> {
+    let malformed = |rule: &'static str| FrontierError::UndeterminedBoundaryProperty {
+        provider: provider.provider().clone(),
+        rule,
+    };
+    if subprogram.stages.len() < 2 {
+        return Err(malformed(SUBPROGRAM_NOT_CHAINED_RULE));
+    }
+    let mut claimed: Vec<SemanticMemberId> = Vec::new();
+    for stage in &subprogram.stages {
+        claimed.extend_from_slice(&stage.semantic_members);
+    }
+    claimed.sort_unstable();
+    if claimed != subject.semantic_members {
+        return Err(malformed("subprogram-coverage"));
+    }
+    let mut verified = Vec::with_capacity(subprogram.stages.len());
+    for stage in subprogram.stages {
+        match verify_schedule_with_feasibility(stage.region, stage.semantic_members, request) {
+            Ok(region) => verified.push(region),
+            Err(PhysicalError::Target {
+                rule,
+                required,
+                available,
+                ..
+            }) => {
+                return Ok(Err(FrontierRejection::Infeasible {
+                    provider: provider.clone(),
+                    axis: rule,
+                    required,
+                    available,
+                }));
+            }
+            Err(PhysicalError::Numerical { cause, .. }) => {
+                return Ok(Err(FrontierRejection::Unhonourable {
+                    provider: provider.clone(),
+                    cause,
+                }));
+            }
+            Err(
+                source @ (PhysicalError::Intrinsic { .. }
+                | PhysicalError::Refinement { .. }
+                | PhysicalError::ShapeProductOverflow { .. }),
+            ) => {
+                return Err(FrontierError::MalformedProposal {
+                    provider: provider.provider().clone(),
+                    source,
+                });
+            }
+        }
+    }
+    let boundary = derive_subprogram_boundary_contract(&verified).map_err(malformed)?;
+    let resources = subprogram_resources(&verified).ok_or_else(|| malformed("subprogram-empty"))?;
+    let work_items = verified
+        .iter()
+        .map(|stage| stage.region().schedule.work_items)
+        .max()
+        .ok_or_else(|| malformed("subprogram-empty"))?;
+    let feasibility = match crate::physical::assess_resources(
+        resources,
+        request.numerical_contract().arithmetic,
+        work_items,
+        request.target_profile(),
+    ) {
+        Ok(feasibility) => feasibility,
+        Err(ResourceVerdict::Rejected(RejectionCause::Capability(predicate))) => {
+            return Ok(Err(FrontierRejection::Infeasible {
+                provider: provider.clone(),
+                axis: predicate.axis().key(),
+                required: predicate.required().value(),
+                available: predicate.available().value(),
+            }));
+        }
+        Err(ResourceVerdict::Rejected(RejectionCause::Numerical(cause))) => {
+            return Ok(Err(FrontierRejection::Unhonourable {
+                provider: provider.clone(),
+                cause,
+            }));
+        }
+        Err(ResourceVerdict::Intrinsic(_) | ResourceVerdict::Unknown) => {
+            return Err(malformed("subprogram-assessment-unresolved"));
+        }
+    };
+    let identity = encode_proposal_identity(
+        &encode_subprogram_subject(&verified),
+        provider.provider(),
+        PhysicalProposalKind::KernelSubprogram,
+        applicability,
+        &boundary,
+        &feasibility,
+    );
+    Ok(Ok(AdmittedImplementation {
+        provenance: ImplementationProvenance {
+            provider: provider.clone(),
+            kind: PhysicalProposalKind::KernelSubprogram,
+        },
+        semantic_members: subject.semantic_members.clone(),
+        target_profile: request.target_profile().clone(),
+        body: ImplementationBody::Subprogram(verified),
+        admission: feasibility,
+        boundary,
+        cost,
+        identity,
+    }))
+}
+
+/// The canonical bytes a subprogram admission is identified over.
+///
+/// The **ordered** chain, length-framed: two subprograms over the same regions
+/// in different orders compute different things, and a set-like encoding would
+/// give them one identity. The stage count is framed too, so a chain is never a
+/// prefix of a longer one.
+fn encode_subprogram_subject(stages: &[VerifiedScheduledRegion]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    push_len(&mut bytes, stages.len());
+    for stage in stages {
+        push_slice(&mut bytes, stage.canonical_identity().as_bytes());
+    }
+    bytes
+}
+
 /// Namespace of Tiler's own governed physical implementation provider.
 const GOVERNED_PHYSICAL_NAMESPACE: &str = "tiler";
 /// Name of Tiler's own governed physical implementation provider.
@@ -2035,7 +2590,7 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
         PhysicalProviderProvenance::new(Self::identity())
     }
 
-    fn propose(&self, context: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
+    fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
         let request = context.request();
         let members = context.subject().semantic_members();
         let input_elements = request.normalized().input_elements();
@@ -2045,9 +2600,10 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
         let intermediate_bytes = input_elements.saturating_mul(4);
         let applicability =
             TargetApplicability::for_targets([request.target_profile().profile_key().clone()]);
+        let mut split = None;
         let (region, cost) = if let Some(pointwise) = request.pointwise() {
             if members != pointwise.members {
-                return Vec::new();
+                return ProviderOffer::default();
             }
             (
                 crate::physical::pointwise_region(request).0,
@@ -2059,6 +2615,12 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
                 PhysicalCostEstimate::structural(1, input_elements, intermediate_bytes),
             )
         } else if members == request.serial_sum().members.reduction() {
+            // The reduction subject is the one place a split is even a
+            // candidate, so it is the one place the strategy is considered and
+            // — when this request does not admit it — the one place the decline
+            // is stated. The serial alternative is offered either way; a split
+            // is additive and never replaces it.
+            split = Some(propose_split(request, &applicability));
             (
                 crate::physical::reduction_region(request).0,
                 PhysicalCostEstimate::structural(1, output_elements, 0),
@@ -2074,14 +2636,74 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
                 PhysicalCostEstimate::structural(1, output_elements, 0),
             )
         } else {
-            return Vec::new();
+            return ProviderOffer::default();
         };
-        vec![ImplementationProposal::new(
+        let serial = ImplementationProposal::new(
             ProposalBody::ScheduledKernel(Box::new(region)),
             applicability,
             cost,
-        )]
+        );
+        match split {
+            None => ProviderOffer::proposing(vec![serial]),
+            Some(Ok(split)) => ProviderOffer::proposing(vec![serial, split]),
+            Some(Err(declined)) => ProviderOffer::proposing(vec![serial]).decline(declined),
+        }
     }
+}
+
+/// Offers the multi-pass split of one request's reduction, or states why not.
+///
+/// The cost is structural and never a feasibility input: two dispatches, the
+/// partial pass's launched threads plus the final pass's, and the four bytes per
+/// partial value the split stages. It is deliberately worse than the serial
+/// alternative's on every dimension under this model — a split trades those for
+/// parallelism the structural model does not measure, which is exactly why
+/// `calibrate-and-activate-parallel-reduction-selection` owns preference and
+/// this slice only enumerates.
+fn propose_split(
+    request: &VerifiedTargetRequest,
+    applicability: &TargetApplicability,
+) -> Result<ImplementationProposal, DeclinedStrategy> {
+    let split = crate::physical::split_reduction_regions(request).map_err(|unavailable| {
+        DeclinedStrategy::new(
+            crate::physical::MULTI_PASS_SPLIT_STRATEGY,
+            match unavailable {
+                crate::physical::SplitUnavailable::ReassociationForbidden => {
+                    StrategyDeclineCause::NumericalPermissionRefused {
+                        dimension: crate::target::honourability::NumericalDimension::Reassociation
+                            .key(),
+                    }
+                }
+                crate::physical::SplitUnavailable::NoAdmissiblePartition { contributors } => {
+                    StrategyDeclineCause::NoAdmissibleShape {
+                        rule: unavailable.reason(),
+                        extent: contributors,
+                    }
+                }
+                crate::physical::SplitUnavailable::Unrepresentable => {
+                    StrategyDeclineCause::Unrepresentable {
+                        rule: unavailable.reason(),
+                    }
+                }
+            },
+        )
+    })?;
+    let output_elements = request.normalized().output_elements();
+    let partial_elements = output_elements.saturating_mul(split.partition.partitions);
+    let stages = split
+        .stages
+        .into_iter()
+        .map(|(region, members)| SubprogramStage::new(region, members))
+        .collect();
+    Ok(ImplementationProposal::new(
+        ProposalBody::KernelSubprogram(Box::new(KernelSubprogram::new(stages))),
+        applicability.clone(),
+        PhysicalCostEstimate::structural(
+            2,
+            partial_elements.saturating_add(output_elements),
+            partial_elements.saturating_mul(4),
+        ),
+    ))
 }
 
 fn encode_proposal_identity(
@@ -2151,10 +2773,11 @@ mod tests {
     use super::{
         AdmittedImplementation, BoundaryOwnership, FrontierError, FrontierRegionSubject,
         FrontierRejection, GovernedPhysicalProvider, ImplementationBody, ImplementationContext,
-        ImplementationProposal, OpaqueCallRejectionCause, PhysicalCostEstimate,
-        PhysicalImplementationProvider, PhysicalProposalKind, PhysicalProviderProvenance,
-        PhysicalProviderProvenanceError, ProposalBody, ReservedProposalSeam, TargetApplicability,
-        bounded_guarantees, bounded_requirements, enumerate_frontier,
+        ImplementationFrontier, ImplementationProposal, KernelSubprogram, OpaqueCallRejectionCause,
+        PhysicalCostEstimate, PhysicalImplementationProvider, PhysicalProposalKind,
+        PhysicalProviderProvenance, PhysicalProviderProvenanceError, ProposalBody, ProviderOffer,
+        ReservedProposalSeam, SubprogramStage, TargetApplicability, bounded_guarantees,
+        bounded_requirements, enumerate_frontier,
     };
     use crate::boundary::{
         BoundaryProperty, GuaranteedProperty, LayoutRequirement, MaterializationForm,
@@ -2235,12 +2858,12 @@ mod tests {
             PhysicalProviderProvenance::new(self.provider.clone())
         }
 
-        fn propose(&self, context: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
-            vec![ImplementationProposal::new(
+        fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
+            ProviderOffer::proposing(vec![ImplementationProposal::new(
                 ProposalBody::ScheduledKernel(Box::new(fused_region(context.request()))),
                 governed_applicability(),
                 self.cost,
-            )]
+            )])
         }
     }
 
@@ -2257,7 +2880,7 @@ mod tests {
                 PhysicalProviderProvenance::new(self.identity.clone())
             }
 
-            fn propose(&self, _: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
+            fn propose(&self, _: &ImplementationContext<'_>) -> ProviderOffer {
                 panic!("unrepresentable provenance must fail before proposals are requested")
             }
         }
@@ -2508,8 +3131,8 @@ mod tests {
             ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
                 PhysicalProviderProvenance::new(provider_identity("opaque", 1))
             }
-            fn propose(&self, _: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
-                vec![
+            fn propose(&self, _: &ImplementationContext<'_>) -> ProviderOffer {
+                ProviderOffer::proposing(vec![
                     ImplementationProposal::new(
                         ProposalBody::OpaqueCall(Box::new(
                             OpaqueCallProposal::new(
@@ -2522,16 +3145,11 @@ mod tests {
                         PhysicalCostEstimate::structural(1, 2, 0),
                     ),
                     ImplementationProposal::new(
-                        ProposalBody::KernelSubprogram(ReservedProposalSeam::new("subprogram")),
-                        governed_applicability(),
-                        PhysicalCostEstimate::structural(1, 2, 0),
-                    ),
-                    ImplementationProposal::new(
                         ProposalBody::View(ReservedProposalSeam::new("view")),
                         governed_applicability(),
                         PhysicalCostEstimate::structural(1, 2, 0),
                     ),
-                ]
+                ])
             }
         }
 
@@ -2559,8 +3177,11 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert!(rejected_kinds.contains(&PhysicalProposalKind::KernelSubprogram));
         assert!(rejected_kinds.contains(&PhysicalProposalKind::View));
+        // `KernelSubprogram` left this list when the frontier implemented it.
+        // The seam it demonstrated is the same one `View` now demonstrates: an
+        // unimplemented body rejects explicitly and the enumeration survives.
+        assert!(!rejected_kinds.contains(&PhysicalProposalKind::KernelSubprogram));
 
         // The opaque proposal names an identity no entry claims, so it is
         // rejected *earlier* and differently: an opaque `Unregistered`, not
@@ -2598,14 +3219,14 @@ mod tests {
             ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
                 PhysicalProviderProvenance::new(provider_identity("infeasible", 1))
             }
-            fn propose(&self, context: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
+            fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
                 let (region, _) = pointwise_region(context.request());
-                vec![ImplementationProposal::new(
+                ProviderOffer::proposing(vec![ImplementationProposal::new(
                     ProposalBody::ScheduledKernel(Box::new(region)),
                     governed_applicability(),
                     // A deliberately cheap estimate cannot rescue an infeasible plan.
                     PhysicalCostEstimate::structural(1, 1, 0),
-                )]
+                )])
             }
         }
 
@@ -2673,14 +3294,14 @@ mod tests {
             ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
                 PhysicalProviderProvenance::new(provider_identity("malformed", 1))
             }
-            fn propose(&self, context: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
+            fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
                 let mut region = fused_region(context.request());
                 region.index.numerical.canonical_arithmetic_nan_bits ^= 1;
-                vec![ImplementationProposal::new(
+                ProviderOffer::proposing(vec![ImplementationProposal::new(
                     ProposalBody::ScheduledKernel(Box::new(region)),
                     governed_applicability(),
                     PhysicalCostEstimate::structural(1, 2, 0),
-                )]
+                )])
             }
         }
 
@@ -2702,12 +3323,12 @@ mod tests {
             ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
                 PhysicalProviderProvenance::new(provider_identity("wrong-cost", 1))
             }
-            fn propose(&self, context: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
-                vec![ImplementationProposal::new(
+            fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
+                ProviderOffer::proposing(vec![ImplementationProposal::new(
                     ProposalBody::ScheduledKernel(Box::new(fused_region(context.request()))),
                     governed_applicability(),
                     PhysicalCostEstimate::new("tiler.cost.ungoverned.v9", 1, 2, 0),
-                )]
+                )])
             }
         }
 
@@ -2746,12 +3367,12 @@ mod tests {
             ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
                 PhysicalProviderProvenance::new(provider_identity("analytical", 1))
             }
-            fn propose(&self, context: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
-                vec![ImplementationProposal::new(
+            fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
+                ProviderOffer::proposing(vec![ImplementationProposal::new(
                     ProposalBody::ScheduledKernel(Box::new(fused_region(context.request()))),
                     governed_applicability(),
                     PhysicalCostEstimate::new(crate::component_cost::ANALYTICAL_MODEL_KEY, 1, 2, 0),
-                )]
+                )])
             }
         }
 
@@ -3001,15 +3622,15 @@ mod tests {
         ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
             PhysicalProviderProvenance::new(provider_identity("opaque", 1))
         }
-        fn propose(&self, _context: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
-            vec![ImplementationProposal::new(
+        fn propose(&self, _context: &ImplementationContext<'_>) -> ProviderOffer {
+            ProviderOffer::proposing(vec![ImplementationProposal::new(
                 ProposalBody::OpaqueCall(Box::new(
                     OpaqueCallProposal::new(self.0, self.1.clone())
                         .expect("fixture proposal is exactly reportable"),
                 )),
                 governed_applicability(),
                 PhysicalCostEstimate::structural(1, 2, 0),
-            )]
+            )])
         }
     }
 
@@ -3596,14 +4217,14 @@ mod tests {
             ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
                 PhysicalProviderProvenance::new(provider_identity("foreign", 1))
             }
-            fn propose(&self, context: &ImplementationContext<'_>) -> Vec<ImplementationProposal> {
-                vec![ImplementationProposal::new(
+            fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
+                ProviderOffer::proposing(vec![ImplementationProposal::new(
                     ProposalBody::ScheduledKernel(Box::new(fused_region(context.request()))),
                     TargetApplicability::for_targets([TargetProfileKey::governed(
                         "tiler.some-other-target.v1",
                     )]),
                     PhysicalCostEstimate::structural(1, 2, 0),
-                )]
+                )])
             }
         }
 
@@ -3895,6 +4516,217 @@ mod tests {
                 .expect("a scheduled admission")
                 .region();
             let _ = admitted.cost();
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // The subprogram seam: every new check driven against a case that fails
+    // -----------------------------------------------------------------------
+
+    /// A relaxed-contract request whose reduction admits a balanced split.
+    fn splittable_request(shape: Shape) -> VerifiedTargetRequest {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), shape)
+            .unwrap();
+        let scale = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+        let bias = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
+        let product = F32Multiply::apply(&mut builder, input, scale).unwrap();
+        let pointwise = F32Add::apply(&mut builder, product, bias).unwrap();
+        let sum = StrictSerialF32Sum::apply(&mut builder, pointwise, [Axis::new(1)]).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), sum)
+            .unwrap();
+        let program = builder.build().unwrap();
+        let request = verify_request(CompilationRequest::governed_under(
+            &program,
+            crate::request::StrictF32NumericalContract::governed_relaxed(),
+        ))
+        .unwrap();
+        request.for_target(0).unwrap()
+    }
+
+    fn reduction_subject(request: &VerifiedTargetRequest) -> FrontierRegionSubject {
+        FrontierRegionSubject::new(
+            "reduction",
+            request.serial_sum().members.reduction().to_vec(),
+        )
+    }
+
+    /// A provider that proposes a caller-supplied subprogram verbatim.
+    ///
+    /// It exists to drive the host's own composition checks: every stage it
+    /// hands over is a *verifying* region, so anything the frontier refuses is
+    /// refused for how the stages compose rather than for what any one of them
+    /// is.
+    struct SubprogramProvider {
+        stages: Vec<SubprogramStage>,
+    }
+
+    impl PhysicalImplementationProvider for SubprogramProvider {
+        fn provenance(
+            &self,
+        ) -> Result<PhysicalProviderProvenance, PhysicalProviderProvenanceError> {
+            PhysicalProviderProvenance::new(provider_identity("subprogram", 1))
+        }
+        fn propose(&self, _: &ImplementationContext<'_>) -> ProviderOffer {
+            ProviderOffer::proposing(vec![ImplementationProposal::new(
+                ProposalBody::KernelSubprogram(Box::new(KernelSubprogram::new(
+                    self.stages.clone(),
+                ))),
+                governed_applicability(),
+                PhysicalCostEstimate::structural(2, 6, 16),
+            )])
+        }
+    }
+
+    /// Returns the governed split's two raw passes for one request.
+    fn split_stages(request: &VerifiedTargetRequest) -> Vec<SubprogramStage> {
+        crate::physical::split_reduction_regions(request)
+            .expect("a four-contributor relaxed request admits the split")
+            .stages
+            .into_iter()
+            .map(|(region, members)| SubprogramStage::new(region, members))
+            .collect()
+    }
+
+    /// Enumerates one subprogram against a subject and returns the outcome.
+    fn enumerate_subprogram(
+        request: &VerifiedTargetRequest,
+        subject: &FrontierRegionSubject,
+        stages: Vec<SubprogramStage>,
+    ) -> Result<ImplementationFrontier, FrontierError> {
+        let provider = SubprogramProvider { stages };
+        let providers: [&dyn PhysicalImplementationProvider; 1] = [&provider];
+        enumerate_frontier(request, subject, &providers, &OpaqueCallRegistry::new())
+    }
+
+    /// The governed split composes; three perturbations of it do not.
+    ///
+    /// Each perturbation leaves every stage individually valid — the same
+    /// regions, the same claimed members — and changes only how they compose,
+    /// which is exactly the class of fault no single region can see. Without
+    /// these the chain derivation could return a contract for any sequence of
+    /// verified regions and nothing would notice.
+    #[test]
+    fn a_subprogram_chain_that_does_not_compose_is_malformed_output() {
+        let request = splittable_request(Shape::from_dims([1, 4]));
+        let subject = reduction_subject(&request);
+
+        // The governed chain composes, and its boundary is the one the serial
+        // reduction offers: one intermediate read in, one output write out. The
+        // partial tensor never appears, because it never leaves.
+        let admitted = enumerate_subprogram(&request, &subject, split_stages(&request)).unwrap();
+        assert_eq!(admitted.admitted().len(), 1);
+        let boundary = admitted.admitted()[0].boundary();
+        assert_eq!(boundary.requirements().len(), 1);
+        assert_eq!(
+            boundary.requirements()[0].tensor(),
+            TensorRole::Intermediate
+        );
+        assert_eq!(boundary.guarantees().len(), 1);
+        assert_eq!(boundary.guarantees()[0].tensor(), TensorRole::Output);
+
+        // Reversed: the first stage now publishes the program output, which is
+        // not something a non-final stage can hand on.
+        let mut reversed = split_stages(&request);
+        reversed.reverse();
+        assert!(matches!(
+            enumerate_subprogram(&request, &subject, reversed).unwrap_err(),
+            FrontierError::UndeterminedBoundaryProperty {
+                rule: "subprogram-stages-not-chained",
+                ..
+            }
+        ));
+
+        // The partial pass followed by the prologue: both stages verify, and
+        // between them they cover the fused subject exactly, so coverage does
+        // not catch it. The prologue reads the program input rather than the
+        // staged partials, which leaves those partials with no consumer — the
+        // leak the cover cannot see and the assembler would have to invent an
+        // owner for.
+        let leaking = vec![split_stages(&request)[0].clone(), {
+            let (region, members) = pointwise_region(&request);
+            SubprogramStage::new(region, members)
+        }];
+        assert!(matches!(
+            enumerate_subprogram(&request, &fused_subject(&request), leaking).unwrap_err(),
+            FrontierError::UndeterminedBoundaryProperty {
+                rule: "subprogram-stages-not-chained",
+                ..
+            }
+        ));
+
+        // One stage is not a chain: a single dispatch is a scheduled kernel,
+        // and admitting it here would give one region two identities.
+        let stages = split_stages(&request);
+        assert!(matches!(
+            enumerate_subprogram(&request, &subject, vec![stages[0].clone()]).unwrap_err(),
+            FrontierError::UndeterminedBoundaryProperty {
+                rule: "subprogram-stages-not-chained",
+                ..
+            }
+        ));
+    }
+
+    /// A subprogram must cover its subject exactly, and neither less nor more.
+    ///
+    /// The coverage check runs before any stage is verified, because it is a
+    /// claim about the *set* of occurrences two dispatches realize between them
+    /// — something no per-stage request-subject binding can see. Offered against
+    /// the pointwise subject, the governed split covers the reduction instead:
+    /// admitting it would compute the reduction twice and the prologue never.
+    #[test]
+    fn a_subprogram_covering_another_subject_is_refused_before_verification() {
+        let request = splittable_request(Shape::from_dims([1, 4]));
+        let foreign = pointwise_subject(&request);
+        assert!(matches!(
+            enumerate_subprogram(&request, &foreign, split_stages(&request)).unwrap_err(),
+            FrontierError::UndeterminedBoundaryProperty {
+                rule: "subprogram-coverage",
+                ..
+            }
+        ));
+    }
+
+    /// A split's identity separates it from the serial reduction and from a
+    /// split of a different shape.
+    ///
+    /// Both directions matter. The first is what keeps the two alternatives
+    /// distinct in the admitted set; the second is what keeps two different
+    /// splits from colliding, which folding only the stage count would allow.
+    #[test]
+    fn a_subprogram_identity_folds_its_ordered_chain() {
+        let request = splittable_request(Shape::from_dims([1, 4]));
+        let subject = reduction_subject(&request);
+        let providers: [&dyn PhysicalImplementationProvider; 1] = [&GovernedPhysicalProvider];
+        let frontier =
+            enumerate_frontier(&request, &subject, &providers, &OpaqueCallRegistry::new()).unwrap();
+        let identities: Vec<&[u8]> = frontier
+            .admitted()
+            .iter()
+            .map(|admitted| admitted.identity().as_bytes())
+            .collect();
+        assert_eq!(identities.len(), 2);
+        assert_ne!(identities[0], identities[1]);
+
+        // A different splittable extent is a different chain, so a different
+        // identity. Reusing one would let a cached artifact answer for the
+        // wrong program.
+        let wider = splittable_request(Shape::from_dims([1, 6]));
+        let wider_subject = reduction_subject(&wider);
+        let other = enumerate_frontier(
+            &wider,
+            &wider_subject,
+            &providers,
+            &OpaqueCallRegistry::new(),
+        )
+        .unwrap();
+        for admitted in other.admitted() {
+            assert!(
+                !identities.contains(&admitted.identity().as_bytes()),
+                "two splits over different extents share one identity"
+            );
         }
     }
 }

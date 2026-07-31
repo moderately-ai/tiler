@@ -306,6 +306,154 @@ pub(crate) fn build_kernel_program(
     Ok(program)
 }
 
+/// Builds the three-stage split-reduction program for one request.
+///
+/// The stages are the materialized program's pointwise prologue, then the two
+/// passes that replace its single reduction dispatch: a partial pass staging one
+/// value per partition and a final pass combining them. The split is therefore
+/// additive over the materialized shape rather than a different strategy —
+/// which is why the prologue is unchanged and only the reduction is split.
+///
+/// # Errors
+///
+/// Returns [`ProgramError::Structure`] when the regions are not the three a
+/// split names, when the partial pass declares no split contract, or when the
+/// shared builder or whole-program verifier rejects the assembly.
+pub(crate) fn build_split_kernel_program(
+    semantic: &SemanticProgram,
+    request: &VerifiedTargetRequest,
+    scheduled: &[VerifiedScheduledRegion],
+) -> Result<KernelProgram, ProgramError> {
+    let [pointwise, partial, combine] = scheduled else {
+        return Err(ProgramError::Structure {
+            rule: "strategy-cardinality",
+        });
+    };
+    let core = build_split_core(semantic, request, pointwise, partial, combine)?;
+    let program = KernelProgram {
+        target_profile: request.target_profile().clone(),
+        core,
+    };
+    verify_kernel_program_layers(&program, request, scheduled)?;
+    Ok(program)
+}
+
+/// Assembles the shared verified program of the split strategy.
+///
+/// Two obligations distinguish this from [`build_materialized_core`], and both
+/// are proven by [`KernelProgramBuilder::build`] rather than restated here. The
+/// final pass covers **no** semantic occurrence — the partial pass already
+/// claims the reduction the two of them realize — which whole-program
+/// verification admits only because the split is declared; without the
+/// declaration it is a stage computing nothing, and `UncoveringStage` rejects
+/// it. And the partial tensor's extents must agree with the split's partition
+/// count, which `PartialExtentMismatch` checks against the two materialized
+/// shapes.
+///
+/// The partition is read back from the partial pass's own topology rather than
+/// re-derived from the request, so the program-scope declaration agrees with the
+/// schedule that produced it by construction instead of by a second derivation
+/// two authorities could disagree about.
+fn build_split_core(
+    semantic: &SemanticProgram,
+    request: &VerifiedTargetRequest,
+    pointwise: &VerifiedScheduledRegion,
+    partial: &VerifiedScheduledRegion,
+    combine: &VerifiedScheduledRegion,
+) -> Result<VerifiedKernelProgram, ProgramError> {
+    let subject = request.serial_sum();
+    let partition = crate::physical::declared_partial_partition(partial.region()).ok_or(
+        ProgramError::Structure {
+            rule: "split-partition-undeclared",
+        },
+    )?;
+    let partial_shape = partial.region().index.iteration_shape.clone();
+    let partial_elements = partial.region().schedule.work_items;
+    let input_bytes = byte_count(subject.input_elements)?;
+    let partial_bytes = byte_count(partial_elements)?;
+    let output_bytes = byte_count(subject.output_elements)?;
+    let mut builder = open_core_builder(semantic, request)?;
+    let abi = declare_host_abi(
+        &mut builder,
+        subject.input_elements,
+        subject.output_elements,
+    )?;
+    let partial_abi = declare_partial_abi(&mut builder, partial_elements)?;
+    let external = builder.push_allocation(storage(input_bytes, AllocationOwnership::External))?;
+    let temporary_storage =
+        builder.push_allocation(storage(input_bytes, AllocationOwnership::Program))?;
+    let partial_storage =
+        builder.push_allocation(storage(partial_bytes, AllocationOwnership::Program))?;
+    let output_storage =
+        builder.push_allocation(storage(output_bytes, AllocationOwnership::Program))?;
+    let input = builder.push_value(
+        program_input(subject.input_key.clone(), subject.input_shape.clone()),
+        external,
+    )?;
+    let temporary = builder.push_value(
+        internal(ValueRole::Temporary, subject.input_shape.clone()),
+        temporary_storage,
+    )?;
+    let partial_value = builder.push_value(
+        internal(ValueRole::Temporary, partial_shape),
+        partial_storage,
+    )?;
+    let output = builder.push_value(
+        internal(ValueRole::Output, subject.output_shape.clone()),
+        output_storage,
+    )?;
+    let input_view = builder.push_whole_view(input)?;
+    let temporary_view = builder.push_whole_view(temporary)?;
+    let partial_view = builder.push_whole_view(partial_value)?;
+    let output_view = builder.push_whole_view(output)?;
+    let map_stage = builder.push_stage(
+        &lower(pointwise)?,
+        &covered(subject.members.pointwise()),
+        &[
+            read(input_view, abi.input_bytes),
+            write(temporary_view, abi.input_bytes),
+        ],
+        abi.launch(abi.input_elements),
+    )?;
+    let partial_stage = builder.push_stage(
+        &lower(partial)?,
+        &covered(subject.members.reduction()),
+        &[
+            read(temporary_view, abi.input_bytes),
+            write(partial_view, partial_abi.bytes),
+        ],
+        abi.launch(partial_abi.elements),
+    )?;
+    // The final pass covers nothing: the reduction occurrence it realizes is
+    // already claimed by the partial pass, and claiming it twice would
+    // double-cover the semantic graph.
+    let final_stage = builder.push_stage(
+        &lower(combine)?,
+        &[],
+        &[
+            read(partial_view, partial_abi.bytes),
+            write(output_view, abi.output_bytes),
+        ],
+        abi.launch(abi.output_elements),
+    )?;
+    builder.push_data_dependency(map_stage, partial_stage, temporary)?;
+    // The dispatch boundary *is* the pass boundary: this ordinary data edge is
+    // what makes the staged partials visible to the combiner, so a split needs
+    // no barrier and declares none.
+    builder.push_data_dependency(partial_stage, final_stage, partial_value)?;
+    builder.push_partial_reduction(tiler_ir::program::PartialReduction {
+        producer: partial_stage,
+        combiner: final_stage,
+        partial: partial_value,
+        result: output,
+        partitions: partition.partitions,
+        contributors_per_partition: partition.contributors_per_partition,
+    })?;
+    builder.push_output(subject.output_key.clone(), output)?;
+    declare_routing_commit(&mut builder)?;
+    finish_core(builder)
+}
+
 /// Builds a single-stage whole-program kernel for one request.
 ///
 /// The scheduled region may be either a fused serial sum or a standalone
@@ -516,6 +664,31 @@ fn declare_host_abi(
     let guard = builder.push_abi_root(AbiRoot::BooleanLiteral(true))?;
     builder.applicability_guard(guard)?;
     Ok(abi)
+}
+
+/// The ABI quantities naming one split's staged partial tensor.
+#[derive(Clone, Copy, Debug)]
+struct PartialAbi {
+    elements: AbiExprId,
+    bytes: AbiExprId,
+}
+
+/// Declares the element and byte counts of a split's partial tensor.
+///
+/// The element-width node is re-pushed rather than threaded through from
+/// [`declare_host_abi`]: the arena deduplicates by content, so the same literal
+/// resolves to the same node, and asking for it by value keeps this independent
+/// of the order the two declarations run in.
+fn declare_partial_abi(
+    builder: &mut KernelProgramBuilder,
+    partial_elements: u64,
+) -> Result<PartialAbi, ProgramError> {
+    let element_bytes = builder.push_abi_root(AbiRoot::UnsignedLiteral(ELEMENT_BYTES))?;
+    let elements = builder.push_abi_root(AbiRoot::UnsignedLiteral(partial_elements))?;
+    Ok(PartialAbi {
+        elements,
+        bytes: builder.push_abi_binary(AbiBinaryOp::CheckedMultiply, element_bytes, elements)?,
+    })
 }
 
 /// Declares the routing-commit lifecycle every compiled program shares.
@@ -902,6 +1075,7 @@ fn verify_artifact_refinements(
     let expected_program = match scheduled {
         [single] => build_fused_kernel_program(semantic, request, single)?,
         [_, _] => build_kernel_program(semantic, request, scheduled)?,
+        [_, _, _] => build_split_kernel_program(semantic, request, scheduled)?,
         _ => {
             return Err(ProgramError::Structure {
                 rule: "artifact-strategy-cardinality",

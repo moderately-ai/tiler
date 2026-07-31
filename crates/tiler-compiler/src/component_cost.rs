@@ -426,10 +426,16 @@ pub(crate) fn analytical_plan_cost(plan: &SelectedPlan) -> AnalyticalPlanCost {
                     .selections()
                     .iter()
                     .try_fold(0_u64, |total, selection| {
-                        let region = &selection.implementation().scheduled()?.region().index;
-                        let points = element_count(&region.iteration_shape).ok()?;
-                        let accesses = u64::try_from(region.accesses.len()).ok()?;
-                        total.checked_add(points.checked_mul(accesses)?)
+                        selection
+                            .implementation()
+                            .scheduled_stages()?
+                            .iter()
+                            .try_fold(total, |total, stage| {
+                                let region = &stage.region().index;
+                                let points = element_count(&region.iteration_shape).ok()?;
+                                let accesses = u64::try_from(region.accesses.len()).ok()?;
+                                total.checked_add(points.checked_mul(accesses)?)
+                            })
                     })
                     .map_or(CostValue::Unknown, CostValue::Exact),
                 // Not modelled. See this module's header: the inputs do not
@@ -470,15 +476,23 @@ pub(crate) fn analytical_plan_cost(plan: &SelectedPlan) -> AnalyticalPlanCost {
                     plan.selections()
                         .iter()
                         .try_fold(0_u64, |total, selection| {
-                            let verified = selection.implementation().scheduled()?;
-                            let points =
-                                element_count(&verified.region().index.iteration_shape).ok()?;
-                            let repeated = verified
-                                .semantic_members()
+                            selection
+                                .implementation()
+                                .scheduled_stages()?
                                 .iter()
-                                .filter(|member| !seen.insert(**member))
-                                .count();
-                            total.checked_add(points.checked_mul(u64::try_from(repeated).ok()?)?)
+                                .try_fold(total, |total, verified| {
+                                    let points =
+                                        element_count(&verified.region().index.iteration_shape)
+                                            .ok()?;
+                                    let repeated = verified
+                                        .semantic_members()
+                                        .iter()
+                                        .filter(|member| !seen.insert(**member))
+                                        .count();
+                                    total.checked_add(
+                                        points.checked_mul(u64::try_from(repeated).ok()?)?,
+                                    )
+                                })
                         })
                         .map_or(CostValue::Unknown, CostValue::Exact)
                 }
@@ -505,33 +519,39 @@ pub(crate) fn analytical_plan_cost(plan: &SelectedPlan) -> AnalyticalPlanCost {
                 // so the pair is always a well-formed bound. Recorded so the
                 // derivation is not re-litigated.
                 CostComponent::MemoryTraffic => {
-                    let bounds = plan.selections().iter().try_fold(
-                        (0_u64, 0_u64),
-                        |(low, high), selection| {
-                            let region = &selection.implementation().scheduled()?.region().index;
-                            let width = match region.numerical.profile_key {
-                                crate::request::NUMERICAL_CONTRACT_KEY
-                                | crate::request::FLUSH_CONTRACT_KEY
-                                | crate::request::RELAXED_CONTRACT_KEY => 4_u64,
-                                _ => return None,
-                            };
-                            let points = element_count(&region.iteration_shape).ok()?;
-                            let bytes = points.checked_mul(width)?;
-                            let writes = u64::try_from(
-                                region
-                                    .accesses
+                    let bounds =
+                        plan.selections()
+                            .iter()
+                            .try_fold((0_u64, 0_u64), |bounds, selection| {
+                                selection
+                                    .implementation()
+                                    .scheduled_stages()?
                                     .iter()
-                                    .filter(|access| access.ownership.is_some())
-                                    .count(),
-                            )
-                            .ok()?;
-                            let all = u64::try_from(region.accesses.len()).ok()?;
-                            Some((
-                                low.checked_add(bytes.checked_mul(writes)?)?,
-                                high.checked_add(bytes.checked_mul(all)?)?,
-                            ))
-                        },
-                    );
+                                    .try_fold(bounds, |(low, high), stage| {
+                                        let region = &stage.region().index;
+                                        let width = match region.numerical.profile_key {
+                                            crate::request::NUMERICAL_CONTRACT_KEY
+                                            | crate::request::FLUSH_CONTRACT_KEY
+                                            | crate::request::RELAXED_CONTRACT_KEY => 4_u64,
+                                            _ => return None,
+                                        };
+                                        let points = element_count(&region.iteration_shape).ok()?;
+                                        let bytes = points.checked_mul(width)?;
+                                        let writes = u64::try_from(
+                                            region
+                                                .accesses
+                                                .iter()
+                                                .filter(|access| access.ownership.is_some())
+                                                .count(),
+                                        )
+                                        .ok()?;
+                                        let all = u64::try_from(region.accesses.len()).ok()?;
+                                        Some((
+                                            low.checked_add(bytes.checked_mul(writes)?)?,
+                                            high.checked_add(bytes.checked_mul(all)?)?,
+                                        ))
+                                    })
+                            });
                     bounds.map_or(CostValue::Unknown, |(low, high)| CostValue::Bounded {
                         low,
                         high,
