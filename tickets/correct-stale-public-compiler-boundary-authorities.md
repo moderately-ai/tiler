@@ -1,7 +1,7 @@
 ---
 id: correct-stale-public-compiler-boundary-authorities
 title: Correct stale public compiler boundary authorities
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [prototype-public-compiler-api, wire-capability-and-refinement-into-compile-path, correct-the-stale-post-vertical-implementation-status, record-the-arithmetic-type-in-the-numerical-honourability-contract, define-backend-device-and-execution-context-vocabulary]
@@ -9,9 +9,6 @@ scopes: [contracts/optimizer, contracts/foundation, contracts/numerics, contract
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, compiler, correctness]
-claimed_from: todo
-assignee: loop-correct-stal
-lease_expires_at: 1785532186
 ---
 ## User-visible outcome
 
@@ -44,3 +41,7 @@ Every named normative and source authority agrees with the live public session, 
 - Close this ticket when the contracts and source documentation agree; implementation breadth remains owned by its existing tickets.
 - `record-the-arithmetic-type-in-the-numerical-honourability-contract` is superseded after its exact scalar-policy requirements are preserved here.
 - Treat deleted Python documentation tooling as history. Documentation coherence is verified by reading exact local targets and current construction sites, not by naming a renderer or gate that no longer exists.
+
+## Closed (2026-07-31)
+
+Integrated at `1b95608`. Every named authority now agrees with the live public session; the two `lib.rs` documentation changes (the crate-doc boundary paragraph and the removal of the reachability assertion the session facade obsoleted, with clippy dead-code as the standing evidence) are documentation-level rather than a consequential public boundary. The roadmap's copy of the same staleness is `correct-the-roadmap-frontier-and-opaque-call-status`.
