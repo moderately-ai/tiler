@@ -1,7 +1,7 @@
 ---
 id: preserve-primary-dtype-standards-evidence
 title: Preserve primary dtype standards evidence
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [own-the-dtype-support-maturity-matrix, enumerate-the-mature-tensor-dtype-taxonomy, define-dtype-namespace-admission-policy, register-the-accepted-built-in-dtype-catalog, preserve-ecosystem-dtype-precedent-sources]
@@ -9,9 +9,6 @@ scopes: [research/numerics, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, dtype, provenance, documentation]
-claimed_from: todo
-assignee: loop-preserve-pri
-lease_expires_at: 1785518570
 ---
 
 ## User-visible outcome
