@@ -1,7 +1,7 @@
 ---
 id: admit-the-tiler-facade-and-proc-macro-crate-boundary
 title: Admit the tiler facade and proc-macro crate boundary
-status: in-progress
+status: review
 priority: p1
 dependencies: []
 related: [prototype-inline-proc-macro-frontend]
