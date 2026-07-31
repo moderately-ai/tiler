@@ -1107,6 +1107,45 @@ fn probe_other_profile_descriptor(subject: &ProbeSubject<'_>) -> Result<String, 
     }
 }
 
+/// A host offering another profile *key* is an **incompatible target**, and the
+/// classification names the family rather than the descriptor.
+///
+/// The sibling of [`probe_other_profile_descriptor`], and separate from it
+/// because the two are different repairs: a key mismatch means this artifact was
+/// built for another target family and the consumer should look for a different
+/// artifact, while a descriptor mismatch under the same key means this family
+/// under a profile revision the host does not offer and the consumer should
+/// rebuild. A probe covering only the descriptor would pass while a loader that
+/// compared descriptors and ignored keys admitted every foreign family.
+///
+/// The perturbed key is a *valid* profile key that no artifact here declares, so
+/// the refusal is the classification and not a key-validation failure.
+fn probe_other_profile_key(subject: &ProbeSubject<'_>) -> Result<String, ProofError> {
+    let mut decoded = DecodedProgram::decode(subject.bytes).map_err(ProofError::ProbeBaseline)?;
+    let other_host = ExecutionEnvironment {
+        target_profile: TargetProfileRef {
+            key: TargetProfileKey::new("tiler.metal.some-other-target-family.v1")
+                .map_err(|_| ProofError::HostProfile)?,
+            descriptor: subject.environment.target_profile.descriptor.clone(),
+        },
+        backend: subject.environment.backend.clone(),
+        representation: subject.environment.representation.clone(),
+    };
+    match decoded.preflight(&other_host, subject.expected, subject.abi) {
+        Err(
+            rejection @ LoadRejection::IncompatibleTarget {
+                declaration: TargetDeclaration::Variant,
+                classification: TargetCompatibility::ProfileKeyMismatch { .. },
+            },
+        ) => Ok(format!("a host offering another profile key: {rejection}")),
+        Err(other) => Err(refused("another profile key", other.to_string())),
+        Ok(_) => Err(refused(
+            "another profile key",
+            "the route was accepted".to_owned(),
+        )),
+    }
+}
+
 /// A host stating another backend family is an **unexecutable payload**.
 ///
 /// Refused on that ground rather than on the target profile it happens to
@@ -1156,6 +1195,7 @@ fn probe_fail_closed(subject: &ProbeSubject<'_>) -> Result<(), ProofError> {
         probe_damaged_interior_byte,
         probe_truncated_envelope,
         probe_foreign_expected_identity,
+        probe_other_profile_key,
         probe_other_profile_descriptor,
         probe_other_backend_family,
     ] {
@@ -2878,7 +2918,8 @@ mod tests {
         normalized_architecture, observe_host_environment, probe_accepted_baseline,
         probe_damaged_interior_byte, probe_damaged_section_content,
         probe_foreign_expected_identity, probe_other_backend_family,
-        probe_other_profile_descriptor, probe_truncated_envelope, proof_member, serial_sum_program,
+        probe_other_profile_descriptor, probe_other_profile_key, probe_truncated_envelope,
+        proof_member, serial_sum_program,
     };
     use tiler_artifact::program::{
         AbiExprId, AbiFacts, ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey,
@@ -4186,6 +4227,26 @@ mod tests {
         assert!(
             outcome.contains("runtime.program-mismatch"),
             "the refusal names the program-mismatch class: {outcome}",
+        );
+    }
+
+    /// Another profile key is an incompatible target naming the *family*.
+    ///
+    /// The half a descriptor-only probe cannot reach: a loader comparing
+    /// descriptors and ignoring keys would pass the case below and admit an
+    /// artifact built for a different target family entirely.
+    #[test]
+    fn another_profile_key_is_an_incompatible_target() {
+        let fixture = fixture();
+        let outcome = probe_other_profile_key(&fixture.subject())
+            .expect("another profile key is refused as an incompatible target");
+        assert!(
+            outcome.contains("runtime.incompatible-target"),
+            "the refusal names the incompatible-target class: {outcome}",
+        );
+        assert!(
+            outcome.contains("ProfileKeyMismatch"),
+            "the refusal names a wrong artifact rather than a rebuild: {outcome}",
         );
     }
 
