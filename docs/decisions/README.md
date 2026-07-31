@@ -102,6 +102,7 @@ accepted. Unresolved questions are collected in
 
 ### Artifacts, build, and toolchains
 
+- [0088: Admit tiler and tiler-macros as the consumer frontend pair](0088-admit-tiler-and-tiler-macros-as-the-frontend-pair.md) — accepted; contracts: [System architecture](../architecture.md), [Frontend and proc-macro integration](../integration/frontends.md); evidence: [Prototype crate layout and Rust MSRV](../research/workspace/prototype-crate-layout-and-msrv.md), [Proc-macro build environment and freshness](../research/macro-environment/proc-macro-build-environment.md), [Direct embedded-artifact costs across Rust crates](../research/embedding/embedded-artifact-costs.md), [The expansion cache under Cargo and rust-analyzer](../research/cache/build-tool-exercise.md)
 - [0085: Admit tiler-build as the build-time orchestrator](0085-admit-tiler-build-as-the-build-time-orchestrator.md) — accepted; contracts: [System architecture](../architecture.md), [Artifact envelope and Metal kernel ABI profile](../artifact-abi.md), [Metal AOT backend](../backends/metal.md); evidence: [Expansion cache crash and race protocol](../research/cache/crash-and-race-protocol.md), [Target-neutral artifact and backend payload envelope](../research/artifacts/target-neutral-artifact-envelope.md), [Prototype crate layout and Rust MSRV](../research/workspace/prototype-crate-layout-and-msrv.md)
 - [0082: Admit tiler-cache as the expansion cache owner](0082-admit-tiler-cache-as-the-expansion-cache-owner.md) — accepted; contracts: [System architecture](../architecture.md), [Artifact envelope and Metal kernel ABI profile](../artifact-abi.md), [Metal AOT backend](../backends/metal.md); evidence: [Expansion cache crash and race protocol](../research/cache/crash-and-race-protocol.md), [Prototype crate layout and Rust MSRV](../research/workspace/prototype-crate-layout-and-msrv.md)
 - [0083: Keep process-crash as the default cache durability](0083-keep-process-crash-as-the-default-cache-durability.md) — accepted; contracts: [Artifact envelope and Metal kernel ABI profile](../artifact-abi.md); evidence: [Expansion cache crash and race protocol](../research/cache/crash-and-race-protocol.md)
@@ -215,6 +216,7 @@ accepted. Unresolved questions are collected in
 - [0085: Admit tiler-build as the build-time orchestrator](0085-admit-tiler-build-as-the-build-time-orchestrator.md) — accepted
 - [0086: Require attributable or attested native translation](0086-require-attributable-or-attested-native-translation.md) — accepted
 - [0087: Model contraction as one keyed family with an index structure](0087-model-contraction-as-one-keyed-family-with-an-index-structure.md) — accepted
+- [0088: Admit tiler and tiler-macros as the consumer frontend pair](0088-admit-tiler-and-tiler-macros-as-the-frontend-pair.md) — accepted
 <!-- END GENERATED ADR CHRONOLOGY -->
 
 ## Template

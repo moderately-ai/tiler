@@ -30,20 +30,23 @@ The delivered path recognizes two one-input/one-output bounded F32 shapes: a fou
 
 ## Not yet delivered
 
-- **Fact — inline developer experience:** the inline proc-macro frontend remains awaiting decision, and the complete cold/warm inline AOT and embedding workflow remains open. Implemented cache and AOT components do not by themselves satisfy the Milestone 0B exit; no default cache-root chooser or accepted cache-maintenance boundary has landed.
+- **Fact — inline developer experience:** the frontend crate boundary is settled and the workflow behind it is not. Tom ratified the two-crate topology and the public `tiler::tensor!` path on 2026-07-30 and accepted the exact facade surface and the artifact-family-selection placement on 2026-07-31, so `tiler` and `tiler-macros` are admitted workspace members recorded by [ADR 0088](decisions/0088-admit-tiler-and-tiler-macros-as-the-frontend-pair.md). What they carry is the `tensor!` re-export, the generated-path anchor the expansion names, and the expansion's stated canonical artifact-family delivery policy. What they do not carry is a grammar: empty input expands to an inert anchor and any non-empty input is a spanned `compile_error!`, so region syntax, expansion, symbol binding, runtime value adaptation, and the complete cold/warm inline AOT and embedding workflow all remain open. Implemented cache and AOT components do not by themselves satisfy the Milestone 0B exit; the cache-root chooser now has a crate that could own it and no chosen policy — [`choose-the-expansion-cache-root-policy`](../tickets/choose-the-expansion-cache-root-policy.md) owns that choice — and no accepted cache-maintenance boundary has landed.
 - **Fact — consumer integration:** no Candle adapter, einops-derived workload, or other production consumer path exists.
 - **Fact — runtime product:** the device-execution code is retained in `prototypes/serial-sum-run`; there is no reusable live-device runtime, general pipeline cache, product fallback integration, broad buffer/shape handling, or production compatibility matrix.
 - **Fact — breadth:** the compiler request recognizer, semantic operation set, dtype support, schedules, Metal lowering, and execution corpus are narrow. General backend support, wider dtypes and operations, dynamic workloads, parallel reductions, contractions, and optimized model inference remain separately tracked work.
 - **Fact — stability:** reviewed public draft boundaries may still change during the alpha phase. Implemented canonical identities and lockstep schemas prevent accidental subject confusion; they do not promise long-term backward compatibility.
 
-The workspace-member absence claims above are reproducible from the repository root:
+The workspace-member claims above are reproducible from the repository root. Two are presence claims and two are absence claims, and the proc-macro check is written as an equality against the whole `crates` tree rather than a bare match, so it says no in both directions — a second proc-macro crate fails it just as a missing one does:
 
 ```sh
-test ! -d crates/tiler-macros
+test -d crates/tiler && test -d crates/tiler-macros
+test "$(rg -l 'proc-macro\s*=\s*true' crates --glob Cargo.toml)" = crates/tiler-macros/Cargo.toml
+test -f crates/tiler/tests/facade/fail/undefined_grammar.stderr
 test ! -d crates/tiler-candle
-! rg -n 'proc-macro\s*=\s*true' crates --glob Cargo.toml
 ! rg -n -i 'metal|objc|MTL' crates/tiler-runtime/Cargo.toml
 ```
+
+The third line is the checked-in compile-fail golden behind "`tensor!` has no grammar": it is the evidence that rejecting undefined input is a tested behaviour rather than a description of one.
 
 ## Evidence boundary
 
