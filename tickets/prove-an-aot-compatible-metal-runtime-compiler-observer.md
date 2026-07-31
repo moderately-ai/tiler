@@ -1,7 +1,7 @@
 ---
 id: prove-an-aot-compatible-metal-runtime-compiler-observer
 title: Prove an AOT-compatible Metal runtime-compiler observer
-status: in-progress
+status: done
 priority: p0
 dependencies: []
 related: [validate-macos-metal-profile-host-applicability, record-metal-runtime-compiler-provenance-gap]
@@ -9,9 +9,6 @@ scopes: [research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: codex-root
-lease_expires_at: 1785509625
 ---
 ## User-visible outcome
 
