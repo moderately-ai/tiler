@@ -1,0 +1,203 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.scheduling.first-metal-contraction-realizations"
+kind: "research"
+title: "First Metal contraction realizations"
+topics: ["scheduling", "contraction", "matmul", "metal", "numerics", "reductions", "language-model", "opaque-calls"]
+catalog_group: "physical-planning-lowering"
+research_status: "complete"
+disposition: "pending"
+implementation_status: "spike-only"
+evidence_classes: ["bounded-measurement", "executable-model", "primary-source-synthesis"]
+informs: ["tiler.contract.fusion-and-scheduling", "tiler.contract.numerical-semantics"]
+depends_on: ["tiler.research.shapes.transformer-operation-and-shape-surface", "tiler.research.program-planning.first-metal-lm-workload", "tiler.research.apple-targets.numerical-behaviour"]
+ticket: "spike-first-metal-contraction-vertical"
+---
+
+# First Metal contraction realizations
+
+**Status:** durable derivation and measurement record for rung L3 of the language-model inference ladder. It is a research outcome, not a capability: nothing here registers a contraction key, admits a schedule, installs a lowering capability, or moves the [support matrix](../../roadmap.md#operation-family-support-matrix) contraction row off R1. What it delivers is a bounded semantic profile, an elimination over realization candidates with the ground stated per candidate, and two measured host rows.
+
+## Why this record lives in `research/scheduling`
+
+**Inference.** Its subject is which *physical realization* of one semantic operation survives, which is a schedule question. The numerics area owns what an operation family means — rung L3′ delivered [the non-linear and normalization contracts](../numerics/transformer-nonlinear-normalization-and-reductions.md) there — and `research/apple-targets` owns per-toolchain target facts. This record consumes both and adds neither: it states no new target fact, and the numerical rules it applies are the ones [Numerical semantics](../../numerical-semantics.md) and [Reduction semantics and legality](../numerics/reduction-semantics-and-legality.md) already fix. The two measurements it does add are properties of *candidate schedules* — which reduction topology each one delivers, and what each costs — and those belong beside [the scheduled-region model](scheduled-region-model.md).
+
+## Traceability
+
+- **Work record:** [`spike-first-metal-contraction-vertical`](../../../tickets/spike-first-metal-contraction-vertical.md).
+- **Ladder position:** rung L3 of [the roadmap's language-model ladder](../../roadmap.md#the-ladder). Its inputs are L2's [operation and shape surface](../shapes/transformer-operation-and-shape-surface.md) — specifically the three contraction index structures and their extents — and [ADR 0087](../../decisions/0087-model-contraction-as-one-keyed-family-with-an-index-structure.md), which settled the keyed-family question and thereby fired this rung's trigger. Its consumers are L4 and the delivery tickets below.
+- **Retained experiment:** [Metal contraction realization probe](../../../spikes/scheduling/metal_contraction_vertical/README.md), with two records — correctness on an Apple M4 Max and timing on the Apple M3 Pro bench host.
+- **Governing contracts read as evidence, not edited:** [Numerical semantics](../../numerical-semantics.md) for the reduction definition, the reassociation/permutation/distributivity split, ADR 0015's contraction permission, the signed-zero padding rule, the canonical arithmetic NaN, and the honesty rule; [Reduction semantics and legality](../numerics/reduction-semantics-and-legality.md) for the canonical contributor sequence, the allowed-tree table, and the contiguous-interval rule; [Apple GPU numerical behaviour](../apple-targets/numerical-behaviour.md) for the qualified Apple9/F32 row and findings 6 and 16; [ADR 0076](../../decisions/0076-declare-target-honourable-numerical-realizations.md) for what no authority may substitute; [the Milestone 6 framing](../../roadmap.md#framing-what-a-tensor-contraction-family-would-impose) for the structural rules, the access-relation shape, and the K-padding neutrality obligation.
+
+Claims are labelled **Fact** when traced to inspected source, primary documentation, or a merged record, **Inference** when derived from stated facts, **Measurement** when tied to an exact environment and procedure, and **Proposal** when not yet accepted or tested.
+
+## What this rung is allowed to be, and what it is not
+
+**Fact — the planning half of Q-SEM-015 is still gated, and this record does not open it.** [Q-SEM-015](../../open-questions.md#q-sem-015--tensor-contraction-matmul-batched-matmul-and-einsum) states that no contraction *planning* work — contraction-order exploration, GEMM recognition, layout-conversion costing, or direct and tiled schedules — may be scheduled until [`prototype-optimizer-conformance-gate`](../../../tickets/prototype-optimizer-conformance-gate.md) closes and a backend has executed a compiled program. ADR 0087 repeats it: "L3 remains gated by the planning half exactly as Q-SEM-015 states."
+
+**Inference — a bounded executable spike is not that gated work, and the distinction is exactly where the two differ.** What is gated is scheduling contraction planning *inside the compiler*: rules, cost models, capabilities, frontiers. What this rung does is run hand-written kernels against a host oracle and record what each returns, which `AGENTS.md` explicitly encourages ("bounded executable spikes are encouraged when they answer a named feasibility or correctness question"). No file under `crates/` was touched, no capability was registered, and nothing here can be reached from `compile()`. The delivery tickets this record files therefore carry the gate as a dependency rather than treating it as satisfied.
+
+## The first profile
+
+**Inference — the profile is index structure 1 at the workload's own extents, and the derivation for excluding the other two is a dependency rather than a preference.** L2 resolved all 253 contraction occurrences into three index structures. Structure 1, `td,od->to`, is 197 of them — every weighted projection in every layer plus the vocabulary projection — and is the only one all of whose extents except `T` are static. Structures 2 and 3 are the attention score and value contractions; both take a cached `K` and `V` as operands, and structure 3 contracts over the *growing* axis `S`. Their operand shapes are determined by `(T, S)` and could be measured today, but the schedule that produces those operands is the KV-state model L5 owns and L2 recorded as absent in both of its candidate mechanisms. Measuring a schedule for an operand whose production is undefined would fix a layout before the thing that produces it exists.
+
+**Proposal — the first profile, as six correctness cells and eight timing cells.** `M` is the new-position count `T`, `N` is `D_out`, `K` is `D_in`. Every one of L1's six weight shape classes appears, and the dtype is `tiler::f32@1` throughout — operands, accumulator, and result — because the workload is F32-widened and L1 records that widening moves the executed program *toward* the pinned reference rather than away from it.
+
+| Cell | `M` | `N` | `K` | Weight class | Workload role | Legs |
+| --- | --- | --- | --- | --- | --- | --- |
+| `w_decode_kv` | 1 | 1024 | 1024 | `[1024, 1024]` | decode `k_proj` / `v_proj` | correctness, timing |
+| `w_prefill_q` | 10 | 2048 | 1024 | `[2048, 1024]` | C1 prefill `q_proj` | correctness, timing |
+| `w_prefill_mlp_in` | 128 | 3072 | 1024 | `[3072, 1024]` | B1-a prefill `gate_proj` / `up_proj` | correctness, timing |
+| `w_prefill_mlp_out` | 128 | 1024 | 3072 | `[1024, 3072]` | B1-a prefill `down_proj` | correctness, timing |
+| `w_prefill_o` | 128 | 1024 | 2048 | `[1024, 2048]` | B1-a prefill `o_proj` | correctness, timing |
+| `w_vocab_slice` | 1 | 8192 | 1024 | `[151936, 1024]`, first 8192 rows | decode vocabulary projection | correctness, timing |
+| `t_vocab_full` | 1 | 151936 | 1024 | `[151936, 1024]` | decode vocabulary projection | timing |
+| `t_prefill_mlp_512` | 512 | 3072 | 1024 | `[3072, 1024]` | B1-b prefill `gate_proj` / `up_proj` | timing |
+
+**Inference — why the vocabulary projection is split across two cells.** Its correctness cell is bounded to the first 8,192 output rows because the host oracle materializes both operands and folds them step by step, and the complete `[151936, 1024]` F32 weight is 622 MB. The complete cell is measured for time, where no oracle is materialized. Stating the split is the point: a correctness claim about `t_vocab_full` would be a claim the harness did not make.
+
+**Fact — every contracted extent in this profile is a multiple of 1024, so the K-padding obligation is not triggered.** The Milestone 6 framing records that padding a ragged contracted extent to a tile multiple with zeros "owes a neutrality proof under the selected conformance contract, or must track nonempty partials", because `+0.0` is the strict sum's empty result and is *not* its bitwise-neutral padding. `K ∈ {1024, 2048, 3072}` divides every tile width this record considers, so no realization here pads `K`. **Inference — that is a property of the profile and not of the family**, and a workload with a non-multiple head dimension or a quantized group size would trigger the obligation immediately.
+
+**Fact — `M` is the extent that is not a tile multiple, and it is the decode case.** `T = 1` at decode and `T = 10` at the C1 conformance row. `N` is a multiple of 128 everywhere, including 151,936 = 128 × 1187, but not of 256.
+
+## What the profile owes semantically, composed with ADR 0087
+
+ADR 0087 fixes the identity; this section states the rest of the obligations for the one structure the profile contains, and does not reopen anything the ADR settled.
+
+**Proposal — the canonical index structure.** ADR 0087 item 1 requires a renaming-invariant canonical encoding by first appearance. Numbering the indices of `td,od->to` in order of first appearance across operand 0, operand 1, then the output gives operand 0 = `(0, 1)`, operand 1 = `(2, 1)`, output = `(0, 2)`, contracted = `{1}`. `ab,cb->ac` and `ij,kj->ik` produce the same tuple and therefore the same canonical bytes; `td,do->to` — the ordinary `[M, K] × [K, N]` matmul — produces operand 1 = `(1, 2)` and is a *different* structure, which is the point L2 made about the checkpoint's `[out_features, in_features]` layout and which this profile takes as given.
+
+**Fact — the profile passes all five structural admission rules.** No output index is absent from every operand (`t` is in operand 0, `o` in operand 1); no summed index is in only one operand (`d` is in both); no index repeats within one operand; the output `(t, o)` is a duplicate-free permutation of the free indices; no index appears in more than two operands. Extent agreement then reduces to one requirement, `D_in` shared between operands, which the [shape environment contract](../shapes/shape-environment-contract.md)'s accepted three-outcome path already handles.
+
+**Fact — the access relation needs no new access class.** The iteration domain is `(t, o)`, the reduction domain is `(d)`, operand 0's map is `(t, o, d) -> (t, d)` and never mentions `o`, operand 1's is `(t, o, d) -> (o, d)` and never mentions `t`. Both are pure projections of the coordinate vector, using no index arithmetic at all — which is what the Milestone 6 framing already derived, and which the measured kernels confirm at the source level: every realization here addresses its operands by `m * K + k` and `n * K + k` with no computed index expression.
+
+**Proposal — the reduction contract for this profile**, stated in the terms [Numerical semantics](../../numerical-semantics.md) requires of a reduction definition.
+
+| Obligation | Value for this profile | Derivation |
+| --- | --- | --- |
+| Input dtype | `tiler::f32@1` for both operands | L1's F32-widened workload |
+| Accumulator dtype | `tiler::f32@1` | reproduces the pinned reference, which accumulates its contractions in the model dtype; a wider accumulator is a live option and is **D-6** below |
+| Result dtype | `tiler::f32@1` | same |
+| Contributor sequence | ascending `d`, `0 .. K-1` | the canonical ascending-lexicographic order over the single reduced axis |
+| Seed | none | and therefore the accumulator starts at the *first product*, not at `+0.0`; see the measured consequence below |
+| Empty domain | statically unreachable — `K ≥ 1024` in every cell — and the family still owes a declared behaviour | "the family still owes a declared behaviour, because the extent is an attribute and not a proof" is the same rule L3′ applied to a zero normalized axis |
+| Order permissions | reassociation Forbidden, permutation Forbidden, distributivity absent | the governed strict and flush-to-zero contracts forbid the first two; no contract Tiler can express grants the third |
+| ADR 0015 contraction | Forbidden | the governed strict and flush-to-zero contracts forbid it and require `-ffp-contract=off`; only the registered relaxed contract permits it |
+| Subnormals | `FlushSubnormalsToZeroF32`, sign-preserving, inputs and results | the declared realization of the qualified Apple9/F32 row, which ADR 0076 forbids substituting away |
+| NaN results | `tiler::canonical-arithmetic-nan-f32@1`, after every combine and at the result boundary | the rule the registered strict serial sum already carries |
+| Determinism | plan deterministic | the initial scoped guarantee; nothing here uses an atomic |
+
+**Inference — the accumulator seed is a correctness obligation with a measured counterexample, and the idiomatic loop gets it wrong.** `fl(+0.0 + x)` equals `x` for every binary32 `x` except `x = -0.0`, where it is `+0.0`. So the ordinary `float acc = 0; for k: acc += a[k]*b[k];` computes a reduction carrying an injected `+0.0` contributor, not the unseeded fold. [Numerical semantics](../../numerical-semantics.md) states the same rule for the registered strict sum and gives the same counterexample under reduction padding. This is a real distinction rather than a pedantic one: **Measurement** — on the `negative_zero_seed` case, where every product is `-0.0`, the first-product-seeded kernels return `0x80000000` and the `+0.0`-seeded twin returns `0x00000000`.
+
+**Inference — a `+0.0` seed is expressible and is a different operation.** [Numerical semantics](../../numerical-semantics.md) admits an explicit `initial` as "one logical contributor for every output reduction domain". A realization that seeds at `+0.0` therefore computes a contraction with `initial = +0.0`, which is admissible if the node declares it and wrong if the node does not. That is the difference between a defect and a declaration, and it is what decides two of the candidates below.
+
+**Fact — exceptional-value rules this profile inherits rather than chooses.** Products may overflow to infinity and `inf * 0` forms a NaN inside the reduction; the canonical NaN contract then applies at every combine. A subnormal product is flushed by the declared realization, so a contraction whose every product is subnormal returns exactly zero on this target and a nonzero value on a preserving one — a named divergence, not a defect.
+
+## Realization candidates, and what eliminates each
+
+Six candidates were implemented and measured. Two of the six exist only because the reduction contract distinguishes them: `ksplit_contiguous` partitions the contracted axis into contiguous intervals merged in order, which consumes reassociation alone; `ksplit_strided` partitions it into strided subsets, which additionally permutes leaves and consumes permutation. [Reduction semantics and legality](../numerics/reduction-semantics-and-legality.md) fixes that distinction and this record measures it rather than restating it.
+
+**Measurement — attribution over the eight-case corpus.** Each realization's returned bits were compared against twenty-two named topologies, each evaluated in exact rational arithmetic and rounded once to binary32, in both a subnormal-preserving and a subnormal-flushing variant. Every realization but one is consistent with exactly one topology, with the refuting case named for each of the other twenty-one.
+
+| Candidate | Structural preconditions | Attributed topology | Refuted topologies |
+| --- | --- | --- | --- |
+| `direct` — one thread per output | none beyond `K ≥ 1` | `strict_fold+ftz`, uniquely | 21 of 22 |
+| `tiled` — 16×16 threadgroup-memory tiles | `K ≡ 0 (mod 16)` | `strict_fold+ftz`, uniquely | 21 of 22 |
+| `ksplit_contiguous` — contiguous `K` split, ordered merge | `K ≡ 0 (mod split)` | `contiguous_split+ftz`, uniquely | 21 of 22 |
+| `ksplit_strided` — strided `K` split, ordered merge | `K ≡ 0 (mod split)` | `strided_split+ftz`, uniquely | 21 of 22 |
+| `simdgroup` — `simdgroup_float8x8` MMA | `M, N, K ≡ 0 (mod 8)` | `fma_zero_seed_fold+ftz`, uniquely | 21 of 22 |
+| `opaque_mps` — `MPSMatrixMultiplication` | none observed | **none** | **all 22** |
+
+**Measurement — the workload cells.** `direct` and `tiled` are bit-identical to the host binary32 strict left fold at all six correctness cells: 1,024 of 1,024, 20,480 of 20,480, 393,216 of 393,216, 131,072 of 131,072, 131,072 of 131,072, and 8,192 of 8,192 elements, with identical `result_sha256` between the two realizations at every cell. Every other candidate differs. The split candidates' median gap from the strict fold is 6 to 10 representable binary32 values with a p99.9 of 886 to 4,038; the simdgroup and MPS gap is a median of 3 with a p99.9 of 1,341 to 1,560. Maximum gaps reach 1.2 million representable values at outputs where the sum nearly cancels, which is a property of a cancelling dot product rather than of a realization.
+
+**Measurement — `-ffp-contract=off` is no defence against a matrix-multiply-accumulate instruction.** On the `contraction_pair` case — the `scale = 1.5`, `bias = 1.0`, operand `0x3eb97ef9` triple the [Apple numerical-behaviour record](../apple-targets/numerical-behaviour.md) already measured — the four scalar kernels return the separately rounded `0x3fc58f9e` and `contract_simdgroup`, compiled in the same module under the same flags, returns the fused `0x3fc58f9d`. MPS returns `0x3fc58f9d` too.
+
+**Inference — this is finding 16 at a new construct, and it generalizes the same way.** That finding established that `-ffp-contract=off` closes the case for a multiply and an add the emitter writes as separate statements and has nothing to say about a fused operation the source asked for. A `simdgroup_multiply_accumulate` is such an operation: the fusion is the instruction, not a compiler liberty. So an emitter that lowered a contraction to an MMA would deliver a contracted result under every contraction flag, and no flag in the qualified matrix would report it. **Measurement — the check that says so.** Recompiling the identical kernels with `-ffp-contract=fast` and nothing else changed flipped `direct`, `tiled`, and `ksplit_contiguous` to the fused value and re-attributed `direct` to `fma_fold+ftz`; under the governed `off` it is `strict_fold+ftz`. The attribution is therefore a property of the governed flags, demonstrated by making them fail.
+
+**Measurement — the opaque call's reduction topology is shape-dependent on one device.** At the three cells with `M = 128`, `opaque_mps` and `simdgroup` return byte-identical results, sharing a `result_sha256` at each. At `M = 1` and `M = 10` the simdgroup kernel refuses its own precondition while MPS runs and returns a third value. On the semantic corpus at `16 × 16 × 16` MPS returns `0xbb1d0600` where the simdgroup kernel returns `0xbb1d047f`. One device, one dtype, one driver, three different evaluations selected by shape.
+
+### The elimination
+
+**Inference — the ground per candidate, under the governed contract this workload's target row declares.**
+
+| Candidate | Survives? | Ground |
+| --- | --- | --- |
+| `direct` | **Yes**, consuming no permission | Attributed uniquely to the strict fold and bit-identical to the host oracle at every cell. It is the correctness baseline; its cost eliminates it from the prefill path and not from the decode path. |
+| `tiled` | **Yes**, consuming no permission | Same attribution and byte-identical results, at 2.6× to 4.3× the speed of `direct` at prefill. It refuses `K` not a multiple of 16 rather than padding. **This is the surviving strict realization.** |
+| `ksplit_contiguous` | **Only under reassociation** | Attributed uniquely to the contiguous-interval split, which is exactly the tree the allowed-tree table admits under reassociation without permutation. No contract registered for this workload grants it yet. It is also the *fastest* candidate at the complete decode vocabulary projection, and roughly 5× to 7× slower than `tiled` at every prefill cell. |
+| `ksplit_strided` | **Only under reassociation and permutation** | Attributed uniquely to the strided split, whose leaves are reordered. Granting reassociation does not grant permutation, and this candidate is the measured demonstration that the two are different plans and not one. |
+| `simdgroup` | **No** under the governed contract | Two independent measured incompatibilities, not one: it delivers a fused multiply-add where ADR 0015's contraction permission is Forbidden, and it seeds its accumulator at `+0.0` where the profile declares no seed. A third, weaker, ground: it refuses `M = 1` and `M = 10` on its own precondition, so the decode path would need `M`-padding, which is an output-write obligation this profile does not admit. It becomes a candidate only under a contract that permits contraction *and* a node that declares `initial = +0.0`. |
+| `opaque_mps` | **No**, and for a different reason | It is refuted against every named topology, and its evaluation changes with shape on one device. [Optimizer](../../compiler/optimizer.md) requires each implementation candidate to advertise "a machine-checkable numerical guarantee, realization/provider identity, and scoped evidence", admitted "only when that guarantee refines every effective operation contract". A provider that cannot state its accumulation order at all cannot refine any contract, and one whose order is shape-dependent cannot be qualified by measuring one shape. It is inadmissible rather than expensive — which is the optimizer's own rule, not a new one. |
+
+**Inference — the elimination of `opaque_mps` is not an elimination of the opaque route.** What is eliminated is *this* provider under *this* contract with *no* published guarantee. The admission machinery for an opaque physical call already exists as a declaration, a registration, and a frontier admission; the gap [`implement-opaque-physical-call-providers`](../../../tickets/implement-opaque-physical-call-providers.md) names is caller-supplied providers plus lowering. The measured facts this record hands that work are that a provider declaration must carry a per-shape numerical guarantee rather than a per-provider one, and that a provider offering none is refused before cost. That is recorded on [`exercise-opaque-admissions-downstream-of-the-frontier`](../../../tickets/exercise-opaque-admissions-downstream-of-the-frontier.md) rather than turned into a separate integration path, per this rung's graph-maintenance instruction.
+
+## The measured cost, and the reason it does not settle the plan
+
+**Measurement — settled minimum GPU time on the bench host.** Apple M3 Pro, macOS 27.0 build `26A5378n`, Xcode 26.6 build `17F113`, offline compiler `metalfe-32023.883`, one process, five interleaved A/B rounds of seven timed dispatches each after one warm-up per round. "Settled" is the minimum over rounds 1–4; round 0 is reported separately because one warm-up dispatch does not remove a pair's first-encounter cost. Settled spread across rounds is under 2% on every row and under 0.2% on most.
+
+| Cell | `direct` | `tiled` | `ksplit_contiguous` | `ksplit_strided` | `simdgroup` | `opaque_mps` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `w_decode_kv` (1×1024×1024) | 75.3 µs | 60.5 µs | 28.6 µs | 22.7 µs | refused | 15.5 µs |
+| `w_prefill_q` (10×2048×1024) | 327.4 µs | 149.0 µs | 409.6 µs | 196.4 µs | refused | 58.9 µs |
+| `w_prefill_mlp_in` (128×3072×1024) | 4,219 µs | 1,602 µs | 7,735 µs | 3,559 µs | 943 µs | 228 µs |
+| `w_prefill_mlp_out` (128×1024×3072) | 6,883 µs | 1,599 µs | 10,707 µs | 2,392 µs | 958 µs | 266 µs |
+| `w_prefill_o` (128×1024×2048) | 2,952 µs | 1,051 µs | 5,091 µs | 1,806 µs | 640 µs | 178 µs |
+| `w_vocab_slice` (1×8192×1024) | 251.4 µs | 523.5 µs | 234.0 µs | 247.4 µs | refused | 237.9 µs |
+| `t_vocab_full` (1×151936×1024) | 4,757 µs | 9,669 µs | **4,247 µs** | 4,351 µs | refused | 4,418 µs |
+| `t_prefill_mlp_512` (512×3072×1024) | 16,663 µs | 6,395 µs | 30,894 µs | 14,242 µs | 3,734 µs | **839 µs** |
+
+**Inference — the ordering inverts between the two halves of the workload, and that is the planning result.** At prefill the opaque call is 7.6× the surviving strict realization and 4.4× the simdgroup kernel, and the gap widens with `M`. At the complete decode vocabulary projection every candidate but `tiled` lands within 12% of every other, and the fastest is `ksplit_contiguous` rather than MPS. **Measurement — the reason.** `t_vocab_full` reads a 622,207,744-byte weight per dispatch; at 4,247 µs that is 146 GB/s, and the slowest of those candidates, `direct` at 4,757 µs, is at 131 GB/s. The cell is bandwidth-bound, they are all near the same bound, and no arithmetic schedule can move it. `tiled` is the exception at 9,669 µs, because its 16×16 output tile computes one useful row and fifteen masked ones when `M = 1` — a schedule mismatch, not a bandwidth result.
+
+**Inference — so the price of the strict contract is shape-dependent, and it is not uniformly small at decode either.** Three different prices, and stating them as one would be the error:
+
+- At the complete vocabulary projection, `direct` is 12% off the best candidate and `ksplit_contiguous` — which needs only reassociation — is the best. The strict contract costs almost nothing here.
+- At the small per-layer decode projection (`w_decode_kv`), `tiled` is 60.5 µs against MPS's 15.5 µs, a factor of 3.9. **Measurement — and that cell does not extrapolate.** Its `[1024, 1024]` weight is 4.19 MB, so MPS's 15.5 µs implies 270 GB/s, above this host's DRAM bandwidth; the operand is cache-resident because the harness reuses one buffer across dispatches. A real decode step walks 28 layers of distinct weights totalling about 1.76 GiB and cannot be. This cell therefore bounds a cache-warm kernel and says nothing about the decode step's aggregate.
+- At prefill the opaque call is 7.6× the surviving strict realization, and the strict realization is the only one of the six that consumes no permission.
+
+That is what the cost model and any future contract-selection discussion should start from, rather than a general claim that strictness is or is not expensive.
+
+**Inference — `tiled` beating `ksplit_contiguous` at prefill is not a general fact about split reductions.** The split kernel here dedicates 32 lanes to one output and idles most of them at large `M`, which is a schedule this record wrote to isolate a *reduction topology* rather than to be fast. Its prefill numbers bound this implementation, not the strategy: a split that also tiles the free indices is unmeasured, and treating these rows as evidence against split reductions in general would exceed the measurement.
+
+## Typed refusals this profile requires
+
+Each is a place where a silent approximation would return a plausible tensor, and each is implemented in the probe's host as a named refusal rather than a fallback.
+
+- A contracted extent that is not a positive multiple of a realization's tile or split width refuses, naming the realization's own precondition, rather than padding. Padding `K` would owe the neutrality proof the Milestone 6 framing requires and this profile never needs.
+- A free extent that is not a multiple of a matrix-instruction tile refuses rather than padding the output. `M = 1` and `M = 10` are the workload's own decode and C1 shapes, so this refusal fires on the profile's most common case and is not hypothetical.
+- A realization whose reduction topology is not stated, or whose stated topology no admitted permission covers, refuses rather than being costed. The rejection names the missing dimension — reassociation, permutation, or the absent distributivity — because those are three different explanations.
+- A realization that delivers a fused multiply-add refuses under a contract whose ADR 0015 contraction dimension is Forbidden. It is not offered as a cheaper alternative, because [Numerical semantics](../../numerical-semantics.md) forbids treating a contract as a search dimension.
+- An output element that was never written is never read as a result. The probe seeds its output allocation with a finite pattern no admitted case can produce and reports the surviving count; an observation with a nonzero count is inadmissible rather than merely suspicious.
+
+## Unresolved decisions
+
+- **D-6 — the accumulation dtype for the contraction's embedded sum.** F32 reproduces the pinned reference; a wider accumulator would not. L1's measured reference-sensitivity envelope attributes the dominant divergence on the C1 row to *contraction* reduction order specifically, which is the strongest argument yet recorded for widening — and the profile's own contributor counts, 1024 to 3072 per output, are the longest accumulations in the workload. **Closes** inside [`implement-parallel-reduction-strategies`](../../../tickets/implement-parallel-reduction-strategies.md), which already owns making the accumulation dtype explicit and rejecting a narrower one with a typed reason; this record supplies the extents and the contributor counts rather than filing a competing ticket. It is the same shape of question as L3′'s D-5 and is numbered onward from it deliberately.
+- **D-7 — whether a per-shape opaque numerical guarantee is admissible at all.** The measured shape-dependence means a provider declaration keyed on the provider alone is unsound, and one keyed on `(provider, shape class)` would multiply the declaration surface by every shape the provider dispatches differently — a set the provider does not publish. **Closes** when either a vendor publishes a per-shape accumulation contract or the opaque-provider work decides that an unpublished one is refused outright. Recorded on [`exercise-opaque-admissions-downstream-of-the-frontier`](../../../tickets/exercise-opaque-admissions-downstream-of-the-frontier.md).
+- **D-8 — whether the per-combine canonical-NaN obligation is realizable in a matrix instruction.** The registered strict serial sum canonicalizes an arithmetic NaN after every combine and again at the result boundary. A scalar kernel can interpose that; a `simdgroup_multiply_accumulate` cannot, and neither can a library call. On the measured corpus every realization returned `0x7fc00000` anyway, so the corpus cannot detect the difference — which is precisely why the obligation must be settled by derivation rather than by the corpus passing. **Closes** when the contraction key's numerical signature is admitted and states whether per-combine canonicalization is required of a contraction or only at its result boundary.
+
+## What this record does not decide
+
+- **Whether a contraction may be planned.** Q-SEM-015's structural gate is unchanged, and the delivery tickets below depend on it.
+- **The semantic identity of a contraction.** ADR 0087 settled it and this record composes with it.
+- **Structures 2 and 3.** The attention score and value contractions wait on L5's state model, as derived above.
+- **Any numeric tolerance for the model-level comparison.** L1 fixes that composing one from per-operation tolerances is the defect rather than the method, and [`design-model-level-qualification-and-optimization`](../../../tickets/design-model-level-qualification-and-optimization.md) owns the bound.
+- **Whether a fused-multiply-add contraction should be admitted.** That is a contract-selection question for a caller, and [ADR 0076](../../decisions/0076-declare-target-honourable-numerical-realizations.md) forbids any authority from choosing it to make a target feasible. What this record supplies is the measured price of not admitting it.
+- **Whether the batched forms need a different realization.** Unmeasured, deliberately.
+
+## Delivery tickets filed from this record
+
+Dependency-ordered. Each is scoped to surviving work only; nothing is filed for `opaque_mps` as a realization, and the `simdgroup` route is filed as a *qualification* rather than a delivery because it does not survive the governed contract.
+
+| Order | Ticket | Outcome |
+| --- | --- | --- |
+| 1 | [`admit-the-contraction-semantic-profile`](../../../tickets/admit-the-contraction-semantic-profile.md) | The index structure `td,od->to` becomes statable: one keyed family per ADR 0087, the renaming-invariant canonical encoding with its mutation proof, the five structural refusals under named rules, and the reduction signature this record derives. |
+| 2 | [`admit-the-contraction-normative-reference`](../../../tickets/admit-the-contraction-normative-reference.md) | The reference evaluator computes the strict fold, seeded from the first contributor, with the canonical NaN and the declared subnormal realization — and the signed-zero seed case is a test that fails before the fix. |
+| 3 | [`realize-the-strict-contraction-on-metal`](../../../tickets/realize-the-strict-contraction-on-metal.md) | The surviving `tiled` realization becomes a `ScheduledKernel` that is bit-identical to the reference at the profile's cells, with its `K` precondition a typed refusal. |
+| 4 | [`admit-reassociated-contraction-schedule-alternatives`](../../../tickets/admit-reassociated-contraction-schedule-alternatives.md) | The contiguous and strided splits become schedule alternatives each gated on the exact permission it consumes, so a plan that has reassociation and not permutation gets one and not the other. |
+| 5 | [`qualify-the-simdgroup-matrix-contraction-realization`](../../../tickets/qualify-the-simdgroup-matrix-contraction-realization.md) | The measured fusion and `+0.0` seed of `simdgroup_float8x8` become a declared realization with a stated contract, or the route is refused with a reason a reader can act on. |
+| 6 | [`integrate-the-contraction-vertical-into-the-runtime`](../../../tickets/integrate-the-contraction-vertical-into-the-runtime.md) | One contraction of the profile runs end to end through the accepted AOT and runtime route rather than through a spike's own dispatch host. |
+| 7 | [`retain-contraction-conformance-evidence`](../../../tickets/retain-contraction-conformance-evidence.md) | The conformance corpus carries the eight adversarial cases and the six workload cells, so a later realization change is a failure rather than a drift. |
+
+## Consequences for the ladder
+
+**Inference.** L3's stated capability is "one contraction runs end to end on Metal", and that is not what this rung delivered. What it delivered is the profile, the elimination, and two measured host rows — enough to say which realization an end-to-end run should carry and what it will cost, and not itself an end-to-end run. The remainder is ticket 6 above, which depends on the optimizer conformance gate rather than on more research. L4's trigger is "L3 and L3′ both deliver"; L3′ delivered a derivation record, and this is L3's.
+
+**Inference — the honest maturity claim.** Nothing moved. The contraction row of the support matrix stays at R1: ADR 0087 decided the identity, and no key, inference routine, access-relation emission, or lowering capability exists. The kernels measured here are spike sources under `spikes/`, not an implementation, and the four-claim maturity vocabulary does not apply to a research record.

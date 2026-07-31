@@ -1,0 +1,177 @@
+case	candidate	bits	case_description
+witness	contiguous_split	40c00000	every topology agrees; 2 * 3 = 6 exactly
+witness	contiguous_split+ftz	40c00000	every topology agrees; 2 * 3 = 6 exactly
+witness	exact_dot_then_round	40c00000	every topology agrees; 2 * 3 = 6 exactly
+witness	exact_dot_then_round+ftz	40c00000	every topology agrees; 2 * 3 = 6 exactly
+witness	exact_products_then_round	40c00000	every topology agrees; 2 * 3 = 6 exactly
+witness	exact_products_then_round+ftz	40c00000	every topology agrees; 2 * 3 = 6 exactly
+witness	fma_fold	40c00000	every topology agrees; 2 * 3 = 6 exactly
+witness	fma_fold+ftz	40c00000	every topology agrees; 2 * 3 = 6 exactly
+witness	fma_zero_seed_fold	40c00000	every topology agrees; 2 * 3 = 6 exactly
+witness	fma_zero_seed_fold+ftz	40c00000	every topology agrees; 2 * 3 = 6 exactly
+witness	payload_propagating_fold	40c00000	every topology agrees; 2 * 3 = 6 exactly
+witness	payload_propagating_fold+ftz	40c00000	every topology agrees; 2 * 3 = 6 exactly
+witness	reversed_fma_fold	40c00000	every topology agrees; 2 * 3 = 6 exactly
+witness	reversed_fma_fold+ftz	40c00000	every topology agrees; 2 * 3 = 6 exactly
+witness	reversed_fold	40c00000	every topology agrees; 2 * 3 = 6 exactly
+witness	reversed_fold+ftz	40c00000	every topology agrees; 2 * 3 = 6 exactly
+witness	strict_fold	40c00000	every topology agrees; 2 * 3 = 6 exactly
+witness	strict_fold+ftz	40c00000	every topology agrees; 2 * 3 = 6 exactly
+witness	strided_split	40c00000	every topology agrees; 2 * 3 = 6 exactly
+witness	strided_split+ftz	40c00000	every topology agrees; 2 * 3 = 6 exactly
+witness	zero_seed_fold	40c00000	every topology agrees; 2 * 3 = 6 exactly
+witness	zero_seed_fold+ftz	40c00000	every topology agrees; 2 * 3 = 6 exactly
+order_absorption	contiguous_split	4b800006	a 2^24 leading contributor absorbs 1.5 increments under a left fold
+order_absorption	contiguous_split+ftz	4b800006	a 2^24 leading contributor absorbs 1.5 increments under a left fold
+order_absorption	exact_dot_then_round	4b800005	a 2^24 leading contributor absorbs 1.5 increments under a left fold
+order_absorption	exact_dot_then_round+ftz	4b800005	a 2^24 leading contributor absorbs 1.5 increments under a left fold
+order_absorption	exact_products_then_round	4b800005	a 2^24 leading contributor absorbs 1.5 increments under a left fold
+order_absorption	exact_products_then_round+ftz	4b800005	a 2^24 leading contributor absorbs 1.5 increments under a left fold
+order_absorption	fma_fold	4b800007	a 2^24 leading contributor absorbs 1.5 increments under a left fold
+order_absorption	fma_fold+ftz	4b800007	a 2^24 leading contributor absorbs 1.5 increments under a left fold
+order_absorption	fma_zero_seed_fold	4b800007	a 2^24 leading contributor absorbs 1.5 increments under a left fold
+order_absorption	fma_zero_seed_fold+ftz	4b800007	a 2^24 leading contributor absorbs 1.5 increments under a left fold
+order_absorption	payload_propagating_fold	4b800007	a 2^24 leading contributor absorbs 1.5 increments under a left fold
+order_absorption	payload_propagating_fold+ftz	4b800007	a 2^24 leading contributor absorbs 1.5 increments under a left fold
+order_absorption	reversed_fma_fold	4b800005	a 2^24 leading contributor absorbs 1.5 increments under a left fold
+order_absorption	reversed_fma_fold+ftz	4b800005	a 2^24 leading contributor absorbs 1.5 increments under a left fold
+order_absorption	reversed_fold	4b800005	a 2^24 leading contributor absorbs 1.5 increments under a left fold
+order_absorption	reversed_fold+ftz	4b800005	a 2^24 leading contributor absorbs 1.5 increments under a left fold
+order_absorption	strict_fold	4b800007	a 2^24 leading contributor absorbs 1.5 increments under a left fold
+order_absorption	strict_fold+ftz	4b800007	a 2^24 leading contributor absorbs 1.5 increments under a left fold
+order_absorption	strided_split	4b800006	a 2^24 leading contributor absorbs 1.5 increments under a left fold
+order_absorption	strided_split+ftz	4b800006	a 2^24 leading contributor absorbs 1.5 increments under a left fold
+order_absorption	zero_seed_fold	4b800007	a 2^24 leading contributor absorbs 1.5 increments under a left fold
+order_absorption	zero_seed_fold+ftz	4b800007	a 2^24 leading contributor absorbs 1.5 increments under a left fold
+contraction_pair	contiguous_split	3fc58f9e	accumulator 1.0 then an inexact product: fl(1 + fl(x*1.5)) against fl(1 + x*1.5)
+contraction_pair	contiguous_split+ftz	3fc58f9e	accumulator 1.0 then an inexact product: fl(1 + fl(x*1.5)) against fl(1 + x*1.5)
+contraction_pair	exact_dot_then_round	3fc58f9d	accumulator 1.0 then an inexact product: fl(1 + fl(x*1.5)) against fl(1 + x*1.5)
+contraction_pair	exact_dot_then_round+ftz	3fc58f9d	accumulator 1.0 then an inexact product: fl(1 + fl(x*1.5)) against fl(1 + x*1.5)
+contraction_pair	exact_products_then_round	3fc58f9e	accumulator 1.0 then an inexact product: fl(1 + fl(x*1.5)) against fl(1 + x*1.5)
+contraction_pair	exact_products_then_round+ftz	3fc58f9e	accumulator 1.0 then an inexact product: fl(1 + fl(x*1.5)) against fl(1 + x*1.5)
+contraction_pair	fma_fold	3fc58f9d	accumulator 1.0 then an inexact product: fl(1 + fl(x*1.5)) against fl(1 + x*1.5)
+contraction_pair	fma_fold+ftz	3fc58f9d	accumulator 1.0 then an inexact product: fl(1 + fl(x*1.5)) against fl(1 + x*1.5)
+contraction_pair	fma_zero_seed_fold	3fc58f9d	accumulator 1.0 then an inexact product: fl(1 + fl(x*1.5)) against fl(1 + x*1.5)
+contraction_pair	fma_zero_seed_fold+ftz	3fc58f9d	accumulator 1.0 then an inexact product: fl(1 + fl(x*1.5)) against fl(1 + x*1.5)
+contraction_pair	payload_propagating_fold	3fc58f9e	accumulator 1.0 then an inexact product: fl(1 + fl(x*1.5)) against fl(1 + x*1.5)
+contraction_pair	payload_propagating_fold+ftz	3fc58f9e	accumulator 1.0 then an inexact product: fl(1 + fl(x*1.5)) against fl(1 + x*1.5)
+contraction_pair	reversed_fma_fold	3fc58f9e	accumulator 1.0 then an inexact product: fl(1 + fl(x*1.5)) against fl(1 + x*1.5)
+contraction_pair	reversed_fma_fold+ftz	3fc58f9e	accumulator 1.0 then an inexact product: fl(1 + fl(x*1.5)) against fl(1 + x*1.5)
+contraction_pair	reversed_fold	3fc58f9e	accumulator 1.0 then an inexact product: fl(1 + fl(x*1.5)) against fl(1 + x*1.5)
+contraction_pair	reversed_fold+ftz	3fc58f9e	accumulator 1.0 then an inexact product: fl(1 + fl(x*1.5)) against fl(1 + x*1.5)
+contraction_pair	strict_fold	3fc58f9e	accumulator 1.0 then an inexact product: fl(1 + fl(x*1.5)) against fl(1 + x*1.5)
+contraction_pair	strict_fold+ftz	3fc58f9e	accumulator 1.0 then an inexact product: fl(1 + fl(x*1.5)) against fl(1 + x*1.5)
+contraction_pair	strided_split	3fc58f9e	accumulator 1.0 then an inexact product: fl(1 + fl(x*1.5)) against fl(1 + x*1.5)
+contraction_pair	strided_split+ftz	3fc58f9e	accumulator 1.0 then an inexact product: fl(1 + fl(x*1.5)) against fl(1 + x*1.5)
+contraction_pair	zero_seed_fold	3fc58f9e	accumulator 1.0 then an inexact product: fl(1 + fl(x*1.5)) against fl(1 + x*1.5)
+contraction_pair	zero_seed_fold+ftz	3fc58f9e	accumulator 1.0 then an inexact product: fl(1 + fl(x*1.5)) against fl(1 + x*1.5)
+split_topology	contiguous_split	bb1d0683	a searched vector separating strict, contiguous-split, strided-split, fused, and wide accumulation
+split_topology	contiguous_split+ftz	bb1d0683	a searched vector separating strict, contiguous-split, strided-split, fused, and wide accumulation
+split_topology	exact_dot_then_round	bb1d068b	a searched vector separating strict, contiguous-split, strided-split, fused, and wide accumulation
+split_topology	exact_dot_then_round+ftz	bb1d068b	a searched vector separating strict, contiguous-split, strided-split, fused, and wide accumulation
+split_topology	exact_products_then_round	bb1d06ac	a searched vector separating strict, contiguous-split, strided-split, fused, and wide accumulation
+split_topology	exact_products_then_round+ftz	bb1d06ac	a searched vector separating strict, contiguous-split, strided-split, fused, and wide accumulation
+split_topology	fma_fold	bb1d047f	a searched vector separating strict, contiguous-split, strided-split, fused, and wide accumulation
+split_topology	fma_fold+ftz	bb1d047f	a searched vector separating strict, contiguous-split, strided-split, fused, and wide accumulation
+split_topology	fma_zero_seed_fold	bb1d047f	a searched vector separating strict, contiguous-split, strided-split, fused, and wide accumulation
+split_topology	fma_zero_seed_fold+ftz	bb1d047f	a searched vector separating strict, contiguous-split, strided-split, fused, and wide accumulation
+split_topology	payload_propagating_fold	bb1d0482	a searched vector separating strict, contiguous-split, strided-split, fused, and wide accumulation
+split_topology	payload_propagating_fold+ftz	bb1d0482	a searched vector separating strict, contiguous-split, strided-split, fused, and wide accumulation
+split_topology	reversed_fma_fold	bb1d0476	a searched vector separating strict, contiguous-split, strided-split, fused, and wide accumulation
+split_topology	reversed_fma_fold+ftz	bb1d0476	a searched vector separating strict, contiguous-split, strided-split, fused, and wide accumulation
+split_topology	reversed_fold	bb1d0494	a searched vector separating strict, contiguous-split, strided-split, fused, and wide accumulation
+split_topology	reversed_fold+ftz	bb1d0494	a searched vector separating strict, contiguous-split, strided-split, fused, and wide accumulation
+split_topology	strict_fold	bb1d0482	a searched vector separating strict, contiguous-split, strided-split, fused, and wide accumulation
+split_topology	strict_fold+ftz	bb1d0482	a searched vector separating strict, contiguous-split, strided-split, fused, and wide accumulation
+split_topology	strided_split	bb1d0672	a searched vector separating strict, contiguous-split, strided-split, fused, and wide accumulation
+split_topology	strided_split+ftz	bb1d0672	a searched vector separating strict, contiguous-split, strided-split, fused, and wide accumulation
+split_topology	zero_seed_fold	bb1d0482	a searched vector separating strict, contiguous-split, strided-split, fused, and wide accumulation
+split_topology	zero_seed_fold+ftz	bb1d0482	a searched vector separating strict, contiguous-split, strided-split, fused, and wide accumulation
+negative_zero_seed	contiguous_split	80000000	all contributors are -0.0; the accumulator seed is the only difference
+negative_zero_seed	contiguous_split+ftz	80000000	all contributors are -0.0; the accumulator seed is the only difference
+negative_zero_seed	exact_dot_then_round	80000000	all contributors are -0.0; the accumulator seed is the only difference
+negative_zero_seed	exact_dot_then_round+ftz	80000000	all contributors are -0.0; the accumulator seed is the only difference
+negative_zero_seed	exact_products_then_round	80000000	all contributors are -0.0; the accumulator seed is the only difference
+negative_zero_seed	exact_products_then_round+ftz	80000000	all contributors are -0.0; the accumulator seed is the only difference
+negative_zero_seed	fma_fold	80000000	all contributors are -0.0; the accumulator seed is the only difference
+negative_zero_seed	fma_fold+ftz	80000000	all contributors are -0.0; the accumulator seed is the only difference
+negative_zero_seed	fma_zero_seed_fold	00000000	all contributors are -0.0; the accumulator seed is the only difference
+negative_zero_seed	fma_zero_seed_fold+ftz	00000000	all contributors are -0.0; the accumulator seed is the only difference
+negative_zero_seed	payload_propagating_fold	80000000	all contributors are -0.0; the accumulator seed is the only difference
+negative_zero_seed	payload_propagating_fold+ftz	80000000	all contributors are -0.0; the accumulator seed is the only difference
+negative_zero_seed	reversed_fma_fold	80000000	all contributors are -0.0; the accumulator seed is the only difference
+negative_zero_seed	reversed_fma_fold+ftz	80000000	all contributors are -0.0; the accumulator seed is the only difference
+negative_zero_seed	reversed_fold	80000000	all contributors are -0.0; the accumulator seed is the only difference
+negative_zero_seed	reversed_fold+ftz	80000000	all contributors are -0.0; the accumulator seed is the only difference
+negative_zero_seed	strict_fold	80000000	all contributors are -0.0; the accumulator seed is the only difference
+negative_zero_seed	strict_fold+ftz	80000000	all contributors are -0.0; the accumulator seed is the only difference
+negative_zero_seed	strided_split	80000000	all contributors are -0.0; the accumulator seed is the only difference
+negative_zero_seed	strided_split+ftz	80000000	all contributors are -0.0; the accumulator seed is the only difference
+negative_zero_seed	zero_seed_fold	00000000	all contributors are -0.0; the accumulator seed is the only difference
+negative_zero_seed	zero_seed_fold+ftz	00000000	all contributors are -0.0; the accumulator seed is the only difference
+nan_payload	contiguous_split	7fc00000	a non-canonical quiet NaN payload enters as a contributor
+nan_payload	contiguous_split+ftz	7fc00000	a non-canonical quiet NaN payload enters as a contributor
+nan_payload	exact_dot_then_round	7fc00000	a non-canonical quiet NaN payload enters as a contributor
+nan_payload	exact_dot_then_round+ftz	7fc00000	a non-canonical quiet NaN payload enters as a contributor
+nan_payload	exact_products_then_round	7fc00000	a non-canonical quiet NaN payload enters as a contributor
+nan_payload	exact_products_then_round+ftz	7fc00000	a non-canonical quiet NaN payload enters as a contributor
+nan_payload	fma_fold	7fc00000	a non-canonical quiet NaN payload enters as a contributor
+nan_payload	fma_fold+ftz	7fc00000	a non-canonical quiet NaN payload enters as a contributor
+nan_payload	fma_zero_seed_fold	7fc00000	a non-canonical quiet NaN payload enters as a contributor
+nan_payload	fma_zero_seed_fold+ftz	7fc00000	a non-canonical quiet NaN payload enters as a contributor
+nan_payload	payload_propagating_fold	7fc0dead	a non-canonical quiet NaN payload enters as a contributor
+nan_payload	payload_propagating_fold+ftz	7fc0dead	a non-canonical quiet NaN payload enters as a contributor
+nan_payload	reversed_fma_fold	7fc00000	a non-canonical quiet NaN payload enters as a contributor
+nan_payload	reversed_fma_fold+ftz	7fc00000	a non-canonical quiet NaN payload enters as a contributor
+nan_payload	reversed_fold	7fc00000	a non-canonical quiet NaN payload enters as a contributor
+nan_payload	reversed_fold+ftz	7fc00000	a non-canonical quiet NaN payload enters as a contributor
+nan_payload	strict_fold	7fc00000	a non-canonical quiet NaN payload enters as a contributor
+nan_payload	strict_fold+ftz	7fc00000	a non-canonical quiet NaN payload enters as a contributor
+nan_payload	strided_split	7fc00000	a non-canonical quiet NaN payload enters as a contributor
+nan_payload	strided_split+ftz	7fc00000	a non-canonical quiet NaN payload enters as a contributor
+nan_payload	zero_seed_fold	7fc00000	a non-canonical quiet NaN payload enters as a contributor
+nan_payload	zero_seed_fold+ftz	7fc00000	a non-canonical quiet NaN payload enters as a contributor
+infinity_times_zero	contiguous_split	7fc00000	the reduction forms inf * 0 rather than being handed a NaN
+infinity_times_zero	contiguous_split+ftz	7fc00000	the reduction forms inf * 0 rather than being handed a NaN
+infinity_times_zero	exact_dot_then_round	7fc00000	the reduction forms inf * 0 rather than being handed a NaN
+infinity_times_zero	exact_dot_then_round+ftz	7fc00000	the reduction forms inf * 0 rather than being handed a NaN
+infinity_times_zero	exact_products_then_round	7fc00000	the reduction forms inf * 0 rather than being handed a NaN
+infinity_times_zero	exact_products_then_round+ftz	7fc00000	the reduction forms inf * 0 rather than being handed a NaN
+infinity_times_zero	fma_fold	7fc00000	the reduction forms inf * 0 rather than being handed a NaN
+infinity_times_zero	fma_fold+ftz	7fc00000	the reduction forms inf * 0 rather than being handed a NaN
+infinity_times_zero	fma_zero_seed_fold	7fc00000	the reduction forms inf * 0 rather than being handed a NaN
+infinity_times_zero	fma_zero_seed_fold+ftz	7fc00000	the reduction forms inf * 0 rather than being handed a NaN
+infinity_times_zero	payload_propagating_fold	7fc00000	the reduction forms inf * 0 rather than being handed a NaN
+infinity_times_zero	payload_propagating_fold+ftz	7fc00000	the reduction forms inf * 0 rather than being handed a NaN
+infinity_times_zero	reversed_fma_fold	7fc00000	the reduction forms inf * 0 rather than being handed a NaN
+infinity_times_zero	reversed_fma_fold+ftz	7fc00000	the reduction forms inf * 0 rather than being handed a NaN
+infinity_times_zero	reversed_fold	7fc00000	the reduction forms inf * 0 rather than being handed a NaN
+infinity_times_zero	reversed_fold+ftz	7fc00000	the reduction forms inf * 0 rather than being handed a NaN
+infinity_times_zero	strict_fold	7fc00000	the reduction forms inf * 0 rather than being handed a NaN
+infinity_times_zero	strict_fold+ftz	7fc00000	the reduction forms inf * 0 rather than being handed a NaN
+infinity_times_zero	strided_split	7fc00000	the reduction forms inf * 0 rather than being handed a NaN
+infinity_times_zero	strided_split+ftz	7fc00000	the reduction forms inf * 0 rather than being handed a NaN
+infinity_times_zero	zero_seed_fold	7fc00000	the reduction forms inf * 0 rather than being handed a NaN
+infinity_times_zero	zero_seed_fold+ftz	7fc00000	the reduction forms inf * 0 rather than being handed a NaN
+subnormal_product	contiguous_split	00400000	the exact product 2^-127 is subnormal
+subnormal_product	contiguous_split+ftz	00000000	the exact product 2^-127 is subnormal
+subnormal_product	exact_dot_then_round	00400000	the exact product 2^-127 is subnormal
+subnormal_product	exact_dot_then_round+ftz	00000000	the exact product 2^-127 is subnormal
+subnormal_product	exact_products_then_round	00400000	the exact product 2^-127 is subnormal
+subnormal_product	exact_products_then_round+ftz	00000000	the exact product 2^-127 is subnormal
+subnormal_product	fma_fold	00400000	the exact product 2^-127 is subnormal
+subnormal_product	fma_fold+ftz	00000000	the exact product 2^-127 is subnormal
+subnormal_product	fma_zero_seed_fold	00400000	the exact product 2^-127 is subnormal
+subnormal_product	fma_zero_seed_fold+ftz	00000000	the exact product 2^-127 is subnormal
+subnormal_product	payload_propagating_fold	00400000	the exact product 2^-127 is subnormal
+subnormal_product	payload_propagating_fold+ftz	00000000	the exact product 2^-127 is subnormal
+subnormal_product	reversed_fma_fold	00400000	the exact product 2^-127 is subnormal
+subnormal_product	reversed_fma_fold+ftz	00000000	the exact product 2^-127 is subnormal
+subnormal_product	reversed_fold	00400000	the exact product 2^-127 is subnormal
+subnormal_product	reversed_fold+ftz	00000000	the exact product 2^-127 is subnormal
+subnormal_product	strict_fold	00400000	the exact product 2^-127 is subnormal
+subnormal_product	strict_fold+ftz	00000000	the exact product 2^-127 is subnormal
+subnormal_product	strided_split	00400000	the exact product 2^-127 is subnormal
+subnormal_product	strided_split+ftz	00000000	the exact product 2^-127 is subnormal
+subnormal_product	zero_seed_fold	00400000	the exact product 2^-127 is subnormal
+subnormal_product	zero_seed_fold+ftz	00000000	the exact product 2^-127 is subnormal

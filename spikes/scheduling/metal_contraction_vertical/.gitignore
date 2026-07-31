@@ -1,0 +1,11 @@
+# Regenerable products of a local run: the generated AIR, the linked metallib,
+# the compiled dispatch host, the per-case operand and result binaries, and the
+# manifest the driver hands the host. `contraction_probe.py --work-dir` writes
+# all of it and reconstructs all of it; the evidence is the TSVs under
+# `results/`, which stay tracked.
+#
+# The rule covers this one directory and nothing broader. Passing no
+# `--work-dir` puts the same products in a temporary OS directory the driver
+# removes, which nothing here needs to ignore.
+/local-work/
+__pycache__/
