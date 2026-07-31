@@ -1,7 +1,7 @@
 ---
 id: enumerate-the-split-reduction-on-the-planning-frontier
 title: Enumerate the split reduction as a retained frontier alternative
-status: todo
+status: in-progress
 priority: p1
 dependencies: [implement-the-target-neutral-multi-pass-reduction-strategy]
 related: [calibrate-and-activate-parallel-reduction-selection, realize-parallel-reduction-strategies-on-metal, implement-parallel-reduction-strategies]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, implementation/ir, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [compiler, scheduling, reductions, frontier]
+claimed_from: todo
+assignee: loop-frontier
+lease_expires_at: 1785524875
 ---
 ## User-visible outcome
 

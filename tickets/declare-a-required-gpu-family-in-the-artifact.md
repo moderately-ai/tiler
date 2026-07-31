@@ -1,7 +1,7 @@
 ---
 id: declare-a-required-gpu-family-in-the-artifact
 title: Declare backend-neutral live-device route requirements
-status: todo
+status: in-progress
 priority: p2
 dependencies: [source-or-rephase-first-metal-launch-limits]
 related: [prototype-metal-runtime-preflight, carry-the-stage-execution-order-in-the-envelope]
@@ -9,6 +9,9 @@ scopes: [contracts/artifacts, implementation/artifact, implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifact, runtime, metal, correctness]
+claimed_from: todo
+assignee: loop-gpu-family
+lease_expires_at: 1785524875
 ---
 ## User-visible outcome
 
