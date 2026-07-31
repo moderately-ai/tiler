@@ -1,0 +1,24 @@
+[package]
+name = "composition-probe"
+description = "Drives the separately authored provider as far as Tiler's public surface reaches, and records where it stops"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# The three `tiler-*` edges are spelled with an explicit `path` rather than
+# inherited from `[workspace.dependencies]`, because `trybuild` reads this
+# manifest directly and normalizes a diagnostic's absolute paths only for the
+# dependencies whose `path` key it can see here. Inheriting them left the
+# retained `.stderr` goldens carrying this checkout's absolute path, which would
+# fail on any other clone or worktree.
+[dependencies]
+acme-provider.workspace = true
+tiler-compiler = { path = "../../../../crates/tiler-compiler" }
+tiler-ir = { path = "../../../../crates/tiler-ir" }
+tiler-metal = { path = "../../../../crates/tiler-metal" }
+
+[dev-dependencies]
+trybuild.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,163 @@
+{
+  "schema": "tiler-forkless-physical-provider/v1",
+  "recorded": "2026-07-31",
+  "ticket": "prototype-a-forkless-custom-metal-physical-provider",
+  "question": "Can a separately authored, statically linked provider contribute one specialized Metal physical implementation alongside the governed provider without forking or replacing tiler-metal?",
+  "answer": "No, at the commit recorded below. Two independent blockers, both in tiler-compiler; neither is in tiler-metal, which needs no change at all.",
+  "procedure": "cargo nextest run --workspace, from spikes/extensions/forkless-physical-provider/",
+  "subject_commit": "7b1e3a7e15b09dd3ea65c88759699655c462be4a",
+  "toolchain": {
+    "channel": "nightly-2026-07-19",
+    "rustc_version": "rustc 1.99.0-nightly (eff8269f7 2026-07-18)",
+    "rustc_commit_hash": "eff8269f797067c30555e77f160ec84c0ed15cd9",
+    "cargo_version": "cargo 1.99.0-nightly (3efb1f477 2026-07-17)",
+    "edition": "2024",
+    "host": "aarch64-apple-darwin",
+    "operating_system": "macOS 27.0 (26A5388g)"
+  },
+  "blocking_private_surfaces": [
+    {
+      "id": "frontier-module-private",
+      "item": "tiler_compiler::frontier",
+      "declared": "crates/tiler-compiler/src/lib.rs:19",
+      "kind": "private module",
+      "gates": [
+        "PhysicalImplementationProvider (frontier.rs:787) — the trait itself",
+        "ImplementationContext (frontier.rs:754) — the propose argument",
+        "ImplementationProposal + ::new (frontier.rs:726, 735) — the propose return",
+        "ProposalBody (frontier.rs:168) — the additive body sum",
+        "TargetApplicability + ::for_targets (frontier.rs:210, 224)",
+        "PhysicalCostEstimate + ::structural (frontier.rs:260, 288)",
+        "PhysicalProviderProvenance + ::new, PhysicalProviderProvenanceError (frontier.rs:634, 641, 650)",
+        "FrontierRegionSubject (frontier.rs:807) — the region subject",
+        "enumerate_frontier (frontier.rs:1429) — the enumeration entry point",
+        "COST_MODEL_KEY = \"tiler.cost.structural.v1\" (frontier.rs:80) — a private const with no public spelling; any other key is a hard FrontierError::MalformedCostProvenance"
+      ],
+      "evidence": "probe/tests/ui/fail/frontier_provider_vocabulary_is_private.rs"
+    },
+    {
+      "id": "provider-inputs-private",
+      "item": "tiler_compiler::{request, region, physical, pipeline}",
+      "declared": "crates/tiler-compiler/src/lib.rs:35, 34, 30, 31",
+      "kind": "private modules",
+      "gates": [
+        "request::VerifiedTargetRequest (request.rs:809) — what ImplementationContext::request returns",
+        "region::SemanticMemberId (region.rs:123) — what FrontierRegionSubject is made of",
+        "physical::{pointwise_region, reduction_region, fused_region} (physical.rs:227, 309, 397) — how the governed provider builds a body",
+        "physical::verify_schedule_with_feasibility (physical.rs:642) — the propose-then-reverify path",
+        "pipeline::compile (pipeline.rs:580) — the internal path that supplies the provider array"
+      ],
+      "not_blocking": "request::{TargetProfile, TargetProfileKey} are pub(crate) re-exports (request.rs:34) of public tiler_compiler::target types, so they are reachable.",
+      "evidence": "probe/tests/ui/fail/provider_inputs_are_private.rs"
+    },
+    {
+      "id": "no-installation-seam",
+      "item": "tiler_compiler::session::CompileRequest",
+      "declared": "crates/tiler-compiler/src/session.rs:1329",
+      "kind": "missing public method",
+      "statement": "Independent of visibility. The provider array is a hardcoded one-element literal at crates/tiler-compiler/src/pipeline/planning.rs:171, and the internal CompilationRequest (request.rs:542) carries no provider field, so making the frontier public would still leave a provider uninstallable. This is exactly the asymmetry ADR 0078 item 4 named and closed for lowering providers, still open for physical ones.",
+      "evidence": "probe/tests/ui/fail/no_physical_provider_installation_seam.rs"
+    },
+    {
+      "id": "no-public-observability",
+      "item": "tiler_compiler::session::Compilation::offered_providers",
+      "declared": "crates/tiler-compiler/src/session.rs:710",
+      "kind": "surface reports lowering providers only",
+      "statement": "Populated from the lowering capability registry (session.rs:1443). The governed physical provider's identity, tiler/prototype-serial-sum-physical, does not appear in it, and neither PlanAlternative nor Compilation exposes physical-provider provenance. A third party can neither register a physical provider nor observe that it failed to.",
+      "evidence": "probe/tests/composition.rs::public_surface_names_no_physical_provider"
+    }
+  ],
+  "claims": [
+    {
+      "id": "public-compile-path-reachable-out-of-tree",
+      "statement": "An out-of-workspace crate reaches the real compile path through tiler_compiler::session::compile_governed and receives a selected plan.",
+      "outcome": "reachable",
+      "observed": {
+        "target_profile_key": "tiler.prototype-target-neutral-baseline.v1",
+        "retained_alternatives": 1,
+        "retained_alternatives_fused": [true]
+      },
+      "case": "probe/tests/composition.rs::governed_compile_path_is_reachable_from_an_out_of_tree_crate"
+    },
+    {
+      "id": "proposal-body-is-publicly-constructible",
+      "statement": "The body a proposal wraps is a tiler_ir::schedule::ScheduledRegion, fully constructible from outside the workspace. The blocked seam is registration and re-verification, not the expression of an implementation.",
+      "outcome": "constructible",
+      "cases": [
+        "acme-provider/src/lib.rs",
+        "probe/tests/ui/pass/proposal_body_is_publicly_constructible.rs"
+      ]
+    },
+    {
+      "id": "specialization-axis-exists-and-is-identity-bearing",
+      "statement": "threads_per_workgroup is free under the intrinsic verifier (tiler-ir/src/schedule/builder.rs:288) and is folded into CanonicalScheduledRegionIdentity (tiler-ir/src/schedule/model.rs:892). A 32-thread workgroup and the governed 1-thread workgroup over the same index region are therefore additive alternatives with distinct identities, not one implementation twice.",
+      "outcome": "distinct identities",
+      "case": "probe/tests/composition.rs::specialized_body_is_constructible_and_intrinsically_verifies"
+    },
+    {
+      "id": "request-subject-binding-permits-the-specialization",
+      "statement": "verify_region_subject_binding (physical.rs:700) compares region id, iteration shape, scalar program, semantic members, and access map against the compiler's own normalized expectation, and says nothing about KernelSchedule. So the binding constrains what a region means and not how it is scheduled — a specialized provider is semantically expressible under the existing gate.",
+      "outcome": "inspected source, not measured",
+      "evidence_class": "inspected-source",
+      "boundary": "The binding itself is private and unreachable from the spike; this claim is read from the source, not exercised."
+    },
+    {
+      "id": "stock-metal-emission-is-reusable-unchanged",
+      "statement": "The provider crate does not depend on tiler-metal. The probe lowers its region with tiler_ir::kernel::lower_scheduled_region and emits with tiler_metal::emit::emit_translation_unit, both public, and the flushing realization it declares passes require_declared_realization on the Apple facts. No interface prevents a custom physical provider from reusing standard Metal emission.",
+      "outcome": "reusable",
+      "case": "probe/tests/composition.rs::specialized_body_reuses_stock_metal_emission"
+    },
+    {
+      "id": "alternatives-do-not-collide-at-the-artifact-boundary",
+      "statement": "The two alternatives emit byte-identical kernel bodies under distinct entry-point symbols, because the symbol is derived from an identity the workgroup width participates in. Launch geometry is carried by the dispatch, not by the emitted statements.",
+      "outcome": "distinct symbols, identical bodies modulo identity digests",
+      "case": "probe/tests/composition.rs::specialized_body_reuses_stock_metal_emission"
+    },
+    {
+      "id": "malformed-body-fails-closed",
+      "statement": "A body whose launch.grid_threads is one short of the iteration domain is rejected by ScheduledRegionBuilder::build with exactly [LaunchCoverage] (rule \"launch-coverage\"). That is the same call the frontier makes on a provider's body (physical.rs:652) and the diagnostic it maps onto PhysicalError::Intrinsic (physical.rs:684).",
+      "outcome": "rejected",
+      "cases": [
+        "probe/tests/composition.rs::malformed_body_is_rejected_by_the_same_intrinsic_verifier",
+        "probe/tests/composition.rs::only_the_perturbed_field_differs"
+      ]
+    }
+  ],
+  "unreachable_from_this_spike": [
+    {
+      "id": "registration-order-does-not-select-the-winner",
+      "asked_by": "the ticket's implementation keys",
+      "reason": "Requires two providers in one enumerate_frontier call. The trait, the function, and the provider array are all private, and the public boundary discloses no physical provider.",
+      "existing_in_crate_evidence": "crates/tiler-compiler/src/frontier.rs:2511-2512 enumerates the same two providers forward and reversed and compares the result; that is an in-crate unit test, not evidence a cross-crate provider can participate."
+    },
+    {
+      "id": "lowering-authority-contention-is-an-error",
+      "asked_by": "the ticket's implementation keys",
+      "reason": "Contention is a property of the lowering capability registry, which is a different seam from the physical frontier. Frontier alternatives are additive by construction and have no contention to demonstrate. Conflating the two is what the ticket's own graph-maintenance section forbids."
+    },
+    {
+      "id": "provider-cannot-stamp-provenance-resources-or-guarantees",
+      "asked_by": "the ticket's implementation keys",
+      "reason": "Enforced by construction: ImplementationProposal carries only a body, an applicability predicate, and a cost (frontier.rs:726), and the frontier stamps provenance and derives resources and the boundary contract itself. Read from source; not exercisable without the private trait."
+    },
+    {
+      "id": "feasibility-assessment-and-numerical-contract-comparison",
+      "reason": "assess_region and the request/realization equality check either side of the subject binding are private (physical.rs:655, 659). The spike exercises the intrinsic verifier between them and nothing else."
+    }
+  ],
+  "falsification_runs": [
+    {
+      "id": "installation-seam-check-can-say-no",
+      "procedure": "Copy the spike outside the repository, rewrite the three tiler-* path dependencies to absolute paths, replace .with_physical_providers(..) in the fail fixture with .with_capabilities(InstalledCapabilities::governed()), and rerun.",
+      "observed": "test tests/ui/fail/no_physical_provider_installation_seam.rs [should fail to compile] ... error / Expected test case to fail to compile, but it succeeded.",
+      "date": "2026-07-31"
+    },
+    {
+      "id": "privacy-check-can-say-no",
+      "procedure": "In the same copy, replace `use tiler_compiler::region::SemanticMemberId;` with an import of the public `tiler_compiler::capability::LoweringFamily`, and rerun.",
+      "observed": "test tests/ui/fail/provider_inputs_are_private.rs [should fail to compile] ... mismatch — the region E0603 disappeared from the actual output and the byte comparison went red.",
+      "date": "2026-07-31"
+    }
+  ],
+  "measurement_boundary": "Facts about one compiler, one host, and one commit. The .stderr goldens are the rendering of a diagnostic, not a stability guarantee: a later rustc may reword E0603 or E0599 without any change to Tiler. A red trybuild run means the question has been reopened and must be re-answered, never that a golden should be blessed to make it green. Nothing here measures runtime behaviour, cost-model comparability across providers, or what a second provider would do to selection."
+}

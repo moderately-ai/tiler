@@ -1,0 +1,13 @@
+[package]
+name = "acme-provider"
+description = "A separately authored physical-implementation provider for Tiler's Metal vertical, written against the public surface only"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+tiler-compiler.workspace = true
+tiler-ir.workspace = true
+
+[lints]
+workspace = true

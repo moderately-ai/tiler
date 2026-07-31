@@ -1,0 +1,47 @@
+error[E0603]: module `physical` is private
+  --> tests/ui/fail/provider_inputs_are_private.rs:15:21
+   |
+15 | use tiler_compiler::physical::pointwise_region;
+   |                     ^^^^^^^^ private module
+   |
+note: the module `physical` is defined here
+  --> $TILER_COMPILER/src/lib.rs
+   |
+   | mod physical;
+   | ^^^^^^^^^^^^
+
+error[E0603]: module `pipeline` is private
+  --> tests/ui/fail/provider_inputs_are_private.rs:16:21
+   |
+16 | use tiler_compiler::pipeline::compile;
+   |                     ^^^^^^^^ private module
+   |
+note: the module `pipeline` is defined here
+  --> $TILER_COMPILER/src/lib.rs
+   |
+   | mod pipeline;
+   | ^^^^^^^^^^^^
+
+error[E0603]: module `region` is private
+  --> tests/ui/fail/provider_inputs_are_private.rs:17:21
+   |
+17 | use tiler_compiler::region::SemanticMemberId;
+   |                     ^^^^^^ private module
+   |
+note: the module `region` is defined here
+  --> $TILER_COMPILER/src/lib.rs
+   |
+   | mod region;
+   | ^^^^^^^^^^
+
+error[E0603]: module `request` is private
+  --> tests/ui/fail/provider_inputs_are_private.rs:18:21
+   |
+18 | use tiler_compiler::request::VerifiedTargetRequest;
+   |                     ^^^^^^^ private module
+   |
+note: the module `request` is defined here
+  --> $TILER_COMPILER/src/lib.rs
+   |
+   | mod request;
+   | ^^^^^^^^^^^
