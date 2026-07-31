@@ -5,6 +5,16 @@
 //! artifact caching, or publication. Host-side AOT orchestration belongs in
 //! `tiler-metal-aot`.
 //!
+//! # A second, smaller thing it owns
+//!
+//! [`applicability`] decides whether a *live host* is the exact macOS row the
+//! first Metal profile was measured on. It is here rather than in a
+//! backend-neutral crate because its vocabulary is Apple's, and it does not
+//! break the rule above: it is a pure function over a normalized observation
+//! some adapter made, so it reaches no device API itself. Everything else in
+//! this crate is about the source a compilation consumes; that module is the
+//! only part about the machine that runs the result.
+//!
 //! # What it consumes
 //!
 //! One or more [`tiler_ir::kernel::VerifiedKernel`]s, explicit
@@ -240,6 +250,8 @@
 //! # }
 //! ```
 
+/// The pure macOS Metal host-applicability policy and its typed refusals.
+pub mod applicability;
 /// Typed fail-closed emission diagnostics.
 pub mod diagnostic;
 /// Deterministic structured-kernel-to-MSL translation.
@@ -249,6 +261,8 @@ pub mod record;
 /// Explicit Metal target facts consumed by emission.
 pub mod target;
 
+#[cfg(test)]
+mod applicability_tests;
 #[cfg(test)]
 mod golden_compilation;
 #[cfg(test)]
