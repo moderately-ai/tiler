@@ -1,7 +1,7 @@
 ---
 id: admit-the-contraction-semantic-profile
 title: Admit the contraction semantic profile for the workload's projection structure
-status: todo
+status: in-progress
 priority: p1
 dependencies: [spike-first-metal-contraction-vertical]
 related: [decide-whether-a-contraction-is-one-keyed-family-or-fixed-arity-keys, scope-einsum-contraction-support, admit-the-reindex-and-broadcast-operation-families, own-operation-family-support-matrix]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, semantics, contraction, matmul, language-model, identity]
+claimed_from: todo
+assignee: worker-contraction
+lease_expires_at: 1785544167
 ---
 ## User-visible outcome
 

@@ -1,7 +1,7 @@
 ---
 id: prototype-macro-embedding-and-cargo-behavior
 title: Measure macro embedding and Cargo behavior
-status: todo
+status: in-progress
 priority: p1
 dependencies: [prototype-inline-proc-macro-frontend, implement-the-expansion-cache-protocol, compose-the-complete-expansion-cache-subject, prototype-artifact-family-delivery, prototype-metal-aot-slice]
 related: [repair-macro-and-embedding-harness-integrity]
@@ -9,6 +9,9 @@ scopes: [implementation/frontend, research/embedding, research/macro-environment
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, measurement, proc-macro, inline-dx]
+claimed_from: todo
+assignee: worker-embedding
+lease_expires_at: 1785544168
 ---
 ## User-visible outcome
 
