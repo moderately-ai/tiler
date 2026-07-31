@@ -474,11 +474,43 @@ pub(crate) enum NumericalPolicyPreset {
     /// their strict resolution. The realization can represent those freedoms,
     /// but this preset does not silently broaden its established meaning.
     Relaxed,
+    /// Strict, except that ordered regrouping of one same-operation operand
+    /// sequence is authorized.
+    ///
+    /// The claim: this program's results may differ from the strict reading by
+    /// regrouping a same-operation operand sequence while retaining its leaves
+    /// and their order — a reduction's contributor sequence being the instance
+    /// that reaches a physical alternative — and by nothing else.
+    ///
+    /// **Why this is a different meaning rather than a relaxation of
+    /// [`Self::Relaxed`], and not a knob added to make a plan reachable.** The
+    /// presets are not ordered by strength and nothing selects between them, so
+    /// "narrower" is not a relation this table has. What separates the two is
+    /// which observable results a caller has agreed to: under [`Self::Relaxed`]
+    /// a multiply feeding an add may round once instead of twice, a division may
+    /// become a reciprocal multiply, and an elementary function may be
+    /// approximate; under this preset none of them may, and a program's result
+    /// may differ from the strict one only by grouping. A caller that wants a
+    /// split reduction and exact separate rounding could not state that at all
+    /// before — its only reassociating option also authorized contraction — and
+    /// the two are independent by ADR 0015, so collapsing them would price one
+    /// freedom at the cost of another.
+    ///
+    /// **What it deliberately does not authorize.** Contraction, operand
+    /// permutation, signed-zero elimination, reciprocal replacement, approximate
+    /// intrinsics, subnormal flushing, and both exceptional-value assumptions
+    /// stay at their strict resolution.
+    PermitReassociation,
 }
 
 impl NumericalPolicyPreset {
     /// Every preset this build registers, in canonical order.
-    pub(crate) const ALL: [Self; 3] = [Self::Strict, Self::FlushSubnormalsToZero, Self::Relaxed];
+    pub(crate) const ALL: [Self; 4] = [
+        Self::Strict,
+        Self::FlushSubnormalsToZero,
+        Self::Relaxed,
+        Self::PermitReassociation,
+    ];
 
     /// The versioned key of the contract this preset resolves to.
     ///
@@ -495,6 +527,7 @@ impl NumericalPolicyPreset {
             Self::Strict => StrictF32NumericalContract::governed(),
             Self::FlushSubnormalsToZero => StrictF32NumericalContract::governed_flush_to_zero(),
             Self::Relaxed => StrictF32NumericalContract::governed_relaxed(),
+            Self::PermitReassociation => StrictF32NumericalContract::governed_reassociating(),
         }
     }
 }

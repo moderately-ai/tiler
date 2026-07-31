@@ -47,14 +47,32 @@ pub(crate) const FLUSH_CONTRACT_KEY: &str = "tiler.flush-f32.v1";
 /// A third key for the same reason: a program compiled under it may return
 /// different bits than the strict one, so the two must not share an identity.
 ///
-/// `pub(crate)` like its two siblings: `component_cost`'s memory-traffic arm
+/// `pub(crate)` like its siblings: `component_cost`'s memory-traffic arm
 /// matches recognized contract keys to derive an element width fail-closed, and
 /// a key it cannot see falls to `Unknown` — which is safe but would silently
 /// stop sizing every relaxed-contract plan. Keep the arm's key list in sync
-/// when adding a fourth.
+/// when adding a fifth.
 pub(crate) const RELAXED_CONTRACT_KEY: &str = "tiler.relaxed-f32.v1";
+/// Versioned key of the governed contract that authorizes ordered regrouping
+/// and nothing else.
+///
+/// A fourth key for the reason the other three have their own: a program
+/// compiled under it may return different bits than the strict one — a
+/// reassociated reduction is a different sum — so the two must not share an
+/// identity. It is equally not the relaxed key: contraction, reciprocal
+/// replacement, and approximate intrinsics stay refused here, and a contract
+/// that resolved them differently while sharing a key would put two meanings
+/// behind one artifact.
+pub(crate) const REASSOCIATE_CONTRACT_KEY: &str = "tiler.reassociate-f32.v1";
 /// Maximum distinct numerical contracts admitted in one preference.
-pub(crate) const MAX_NUMERICAL_CONTRACT_PREFERENCES: usize = 3;
+///
+/// Derived from the preset table rather than spelled as a literal. A stated
+/// preference admits no duplicate (`NumericalContractPreference::ordered`
+/// refuses one), and a caller can only name a registered preset, so the longest
+/// well-formed list is exactly one entry per registered preset. A literal that
+/// happened to agree with the table would silently start refusing a legitimate
+/// complete preference the first time the table grew.
+pub(crate) const MAX_NUMERICAL_CONTRACT_PREFERENCES: usize = NumericalPolicyPreset::ALL.len();
 /// Recognized operation count when both pointwise constants are one shared value.
 const RECOGNIZED_OPERATIONS_MIN: usize = 4;
 /// Recognized operation count when each pointwise constant is a distinct value.
@@ -175,6 +193,70 @@ impl StrictF32NumericalContract {
         }
     }
 
+    /// The governed contract that authorizes ordered regrouping and nothing
+    /// else.
+    ///
+    /// **The claim it states.** This program's results may differ from the
+    /// strict reading by ordered regrouping of one same-operation operand
+    /// sequence — a reduction's contributor sequence being the instance that
+    /// matters here — and by nothing else. It is what a caller states to make a
+    /// split reduction a legal implementation of its program without also
+    /// stating that a multiply feeding an add may round once.
+    ///
+    /// **Every dimension, derived rather than defaulted.** The constructor
+    /// overrides exactly one field of [`crate::policy::strict_contract`], so
+    /// "this preset widens exactly one dimension" is a readable property of the
+    /// code; the derivation of the other ten is here because a reader must be
+    /// able to refute it:
+    ///
+    /// - `reassociation` — **`Permitted`**, the whole point. `physical.rs`'s
+    ///   multi-pass split is refused before any region is built unless this
+    ///   resolves permitted, and `ReductionTopology::MultiPass` carries
+    ///   `permits_reassociation` that the schedule verifier cross-checks against
+    ///   this field.
+    /// - `contraction` — `Forbidden`. ADR 0015 makes it independent of
+    ///   reassociation: permission to regroup an operand sequence is not
+    ///   permission to fuse a multiply into an add. Forbidding it is also what
+    ///   keeps the delivered realization *pinned* rather than merely authorized:
+    ///   `tiler_metal::emit::realization_requirements` names
+    ///   `NoFloatingPointContraction` only in the forbidden arm, so a permitting
+    ///   realization places no `-ffp-contract=off` obligation on the artifact at
+    ///   all, and the measured Apple row fuses a written multiply/add pair under
+    ///   `-ffp-contract=fast`.
+    /// - `permutation` — `Forbidden`. ADR 0014 separates it from reassociation
+    ///   precisely so that one does not carry the other; a split preserves the
+    ///   contributor sequence and consumes no permutation.
+    /// - `input_subnormals`, `result_subnormals` — `Preserve`. Regrouping a sum
+    ///   makes no claim about gradual underflow; widening either here would
+    ///   state a second, unrelated meaning under one key.
+    /// - `signed_zero` — `Forbidden`. A regrouped sum still distinguishes the
+    ///   two zeros; nothing about the split needs them collapsed.
+    /// - `reciprocal_transform`, `approximate_intrinsics` — `Forbidden` and
+    ///   `ApproximationEnvelope::Forbidden`. The relaxed preset authorizes both
+    ///   because it is the "every reshaping freedom this build can express"
+    ///   claim; this preset is the narrow one, and an authorization no operation
+    ///   here consumes would still be a different stated meaning.
+    /// - `nan_assumptions`, `infinity_assumptions` — `MakeNoAssumption`. A split
+    ///   still canonicalizes every arithmetic NaN and still evaluates every
+    ///   contributor.
+    /// - `materialization_rounding` — `NearestTiesToEven`, and load-bearing
+    ///   rather than incidental: the split *adds* an observable materialization
+    ///   boundary — the staged partial tensor — so this is the dimension that
+    ///   says the partials are stored and reloaded without a rounding change.
+    ///
+    /// Its own versioned key follows, because the resolution above is a
+    /// different meaning and not a setting of one of the other three.
+    pub(crate) const fn governed_reassociating() -> Self {
+        Self {
+            reassociation: NumericalPermission::Permitted,
+            ..crate::policy::strict_contract(
+                REASSOCIATE_CONTRACT_KEY,
+                ArithmeticType::F32,
+                tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS,
+            )
+        }
+    }
+
     /// Returns every contract this build registers.
     ///
     /// Admission is membership in this set rather than equality with one
@@ -184,11 +266,16 @@ impl StrictF32NumericalContract {
     /// finding all three. This is the single authority they now share, and it is
     /// derived from the preset table so that a registered preset and an admitted
     /// contract cannot diverge.
-    pub(crate) const fn governed_profile() -> [Self; 3] {
+    ///
+    /// The length is the preset table's own, so a preset registered there and
+    /// omitted here is a build error rather than a contract that resolves for a
+    /// caller and is then refused as ungoverned.
+    pub(crate) const fn governed_profile() -> [Self; NumericalPolicyPreset::ALL.len()] {
         [
             NumericalPolicyPreset::Strict.contract(),
             NumericalPolicyPreset::FlushSubnormalsToZero.contract(),
             NumericalPolicyPreset::Relaxed.contract(),
+            NumericalPolicyPreset::PermitReassociation.contract(),
         ]
     }
 
