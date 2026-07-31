@@ -28,7 +28,7 @@ A program can state `softmax(scores, axis)` and have it execute — the operatio
 
 **Measurement — the causal mask's fill value is finite, not `-inf`.** It is `torch.finfo(f32).min` (`0xff7fffff`), and an attended entry is that value times a boolean false, which is **negative zero** (`0x80000000`). This decides the fully-masked-row behaviour: uniform under the finite fill, NaN under `-inf`.
 
-**Fact — volume and extent.** 28 occurrences, each over 448·`T` rows of `S` contributors, where `S` is bounded symbolic and grows during decode. At the B1-d benchmark row's prefill that is 3.0 × 10¹⁰ exponentials in one pass.
+**Fact — volume and extent.** 28 occurrences covering 448·`T` rows in total, each row reducing `S` contributors, where `S` is bounded symbolic and grows during decode. At the B1-d benchmark row's prefill that is 3.0 × 10¹⁰ exponentials in one pass.
 
 **Measurement — Metal supplies the primitives.** `air.exp.f32`, `air.fmax.f32`, `air.simd_sum.f32`, and `air.simd_max.f32` under the governed flag set, with `air.fast_*` variants selected by the compiler default; the [emission probe](../spikes/numerics/metal_transcendental_emission/README.md) retains the table. `air.fmax.f32` is number-preferring with an order-dependent signed-zero result, so it does not implement both extrema families.
 

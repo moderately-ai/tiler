@@ -49,7 +49,7 @@ Claims are labelled **Fact** when traced to inspected source at a verified diges
 | Causal-mask application | 28 | 448·`T`·`S` additions | none |
 | Attention scale | 28 | 448·`T`·`S` multiplications | none |
 
-**Inference — the exponential is not a rare operation and its cost is not why it matters.** At the B1-d benchmark row's prefill (`T` = `S` = 8192) one forward pass evaluates 3.0 × 10¹⁰ exponentials. That is a performance fact. The correctness fact is the reduction count sitting under it: 28 softmaxes over 448·`T` rows of `S` contributors each, plus 113 normalizations over 144,384·`T` contributors, are 141 reduction occurrences whose accumulation order and dtype are unstated today — and [Reduction semantics and legality](reduction-semantics-and-legality.md) establishes that an unstated order is not a free choice but an unadmitted one.
+**Inference — the exponential is not a rare operation and its cost is not why it matters.** At the B1-d benchmark row's prefill (`T` = `S` = 8192) one forward pass evaluates 3.0 × 10¹⁰ exponentials. That is a performance fact. The correctness fact is the reduction count sitting under it: the 28 softmax occurrences cover 448·`T` rows in total and carry **two** reductions each, and the 113 normalization occurrences carry one each, so one forward pass contains 169 reductions that the single registered strict serial sum does not cover. Their accumulation order and dtype are unstated today, and [Reduction semantics and legality](reduction-semantics-and-legality.md) establishes that an unstated order is not a free choice but an unadmitted one.
 
 **Fact — the 113 normalizations are two extent classes of one operation, not two operations.** `Qwen3Attention.__init__` at line 195 constructs `q_norm` and `k_norm` as `Qwen3RMSNorm(self.head_dim, eps=config.rms_norm_eps)` — the same class the decoder layer uses for `input_layernorm`, differing only in the normalized extent (128 rather than 1024) and therefore in the row count. The reference's own comment on that line reads "unlike olmo, only on the head dim!", which records that the *axis* is the distinguishing choice rather than the operation.
 
@@ -184,9 +184,9 @@ y_i = w_i * (x_i * r)                 # normalize, then weight; the weight is a 
 
 | Reduction | Where | Contributors | Combiner | Order sensitivity |
 | --- | --- | --- | --- | --- |
-| Row maximum | softmax, 28 occurrences over 448·`T` rows | `S`, bounded symbolic and growing | an extrema family, **D-2** | none: associative and commutative wherever its family is total |
-| Row sum of exponentials | softmax, same rows | `S` | `Add` under [ADR 0024](../../decisions/0024-initial-arithmetic-rounding.md) | full: neither associative nor commutative in F32 |
-| Row sum of squares | RMS normalization, 113 occurrences | 1024 or 128, static | `Add`, with an elementwise squaring prologue | full |
+| Row maximum | softmax, 28 occurrences covering 448·`T` rows in total | `S`, bounded symbolic and growing | an extrema family, **D-2** | none: associative and commutative wherever its family is total |
+| Row sum of exponentials | softmax, the same 448·`T` rows | `S` | `Add` under [ADR 0024](../../decisions/0024-initial-arithmetic-rounding.md) | full: neither associative nor commutative in F32 |
+| Row sum of squares | RMS normalization, 113 occurrences covering 729·`T` rows in total | 1024 or 128, static | `Add`, with an elementwise squaring prologue | full |
 
 **Fact — none of these is the registered reduction.** The only registered reduction key is `tiler::strict-serial-sum-f32@1`, holding the sole `OrderedReduction` fusion role, so a maximum reduction and a prologue-carrying sum resolve to no fusion legality at all. The support matrix's own row for reductions beyond strict sum records this and places it at R2.
 
@@ -279,7 +279,7 @@ Candidate physical plans: one fused kernel over the row; or a sum-of-squares dis
 
 **Inference — three of this record's requirements are already owned elsewhere and this record deliberately files nothing for them.**
 
-- **Reduction order, accumulation dtype, and parallel topology.** [`implement-parallel-reduction-strategies`](../../../tickets/implement-parallel-reduction-strategies.md) owns making the accumulation dtype explicit, keeping reassociation and permutation independent, and rejecting a narrower accumulator with a typed reason. This record supplies the workload evidence — 141 reduction occurrences, two combiners, one order-insensitive and one not — and cross-links rather than restating the contract.
+- **Reduction order, accumulation dtype, and parallel topology.** [`implement-parallel-reduction-strategies`](../../../tickets/implement-parallel-reduction-strategies.md) owns making the accumulation dtype explicit, keeping reassociation and permutation independent, and rejecting a narrower accumulator with a typed reason. This record supplies the workload evidence — 169 reductions per forward pass across 141 operation occurrences, over two combiners, one order-insensitive and one not — and cross-links rather than restating the contract.
 - **The typed accuracy-contract vocabulary.** [ADR 0042](../../decisions/0042-use-typed-transcendental-accuracy-contracts.md) already admits correctly-rounded, faithful, piecewise-bounded, and named-behaviour forms with exact rational tolerances and the `tiler::ulp-reference-gap@1` metric. Nothing here needs a new *kind* of contract; what is missing is a chosen tuple, which is [Q-SEM-004](../../open-questions.md#q-sem-004--first-profile-transcendental-tuples)'s and D-4's.
 - **The permission algebra.** Reassociation, permutation, reciprocal math, approximate intrinsics, and subnormal handling are already independent dimensions with resolved per-operation semantics. This record consumes them; it proposes no new dimension.
 
