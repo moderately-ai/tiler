@@ -1,7 +1,7 @@
 ---
 id: correct-stale-post-vertical-integration-inventories
 title: Correct stale post-vertical integration inventories
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [prototype-metal-aot-slice, prototype-inline-aot-integration-proof, prototype-candle-metal-adapter, correct-the-stale-post-vertical-implementation-status]
@@ -9,9 +9,6 @@ scopes: [contracts/integrations, implementation/metal-aot]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, integration, inventory, correctness]
-claimed_from: todo
-assignee: loop-correct-stale
-lease_expires_at: 1785519401
 ---
 ## User-visible outcome
 
