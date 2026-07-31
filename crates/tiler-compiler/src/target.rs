@@ -115,15 +115,17 @@
 use std::sync::{Arc, OnceLock};
 
 use tiler_ir::identity::{push_len, push_slice};
-use tiler_ir::program::abi::AvailabilityPhase;
+use tiler_ir::program::abi::{
+    AvailabilityPhase, TargetPropertyKey, TargetPropertyProviderIdentity, TargetPropertyQuery,
+};
 use tiler_ir::schedule::{
     ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, SubnormalMode,
 };
 use tiler_ir::semantic::{F32, ResolvedValueType};
 
 use crate::feasibility::{
-    CapabilityAxis, CapabilityFact, CheckedTargetProfile, FactAuthority, FactProvenance,
-    FactValidityScope, FeasibilityError, MAX_TARGET_PROFILE_DESCRIPTOR_BYTES,
+    CapabilityAxis, CapabilityFact, CapabilityQuery, CheckedTargetProfile, FactAuthority,
+    FactProvenance, FactValidityScope, FeasibilityError, MAX_TARGET_PROFILE_DESCRIPTOR_BYTES,
 };
 use crate::honourability::{
     CompilerBuildIdentity, CompilerBuildRole, DeclaredBehaviour, DimensionBehaviour,
@@ -137,12 +139,12 @@ pub(crate) const GOVERNED_TARGET_PROFILE_KEY: &str = "tiler.prototype-target-neu
 /// Domain of the complete producer declaration carried into artifact identity.
 ///
 /// This is a new grammar, not a continuation of feasibility's
-/// `tiler.target-profile.descriptor.v8`: the checked descriptor remains an
-/// internal feasibility component, while this v9 declaration encodes the same
+/// `tiler.target-profile.descriptor.v9`: the checked descriptor remains an
+/// internal feasibility component, while this v10 declaration encodes the same
 /// capability and numerical semantics plus exact dtype dispatch through one
 /// shared provenance table. A reader of an older domain therefore cannot
 /// mistake these bytes for the new grammar.
-const COMPLETE_PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.declaration.v9\0";
+const COMPLETE_PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.declaration.v10\0";
 const PROFILE_SOURCE_DOMAIN: &[u8] = b"tiler.target-profile.fact-sources.v4\0";
 const DISPATCHABILITY_DOMAIN: &[u8] = b"tiler.target-profile.dtype-dispatchability.v2\0";
 
@@ -1017,6 +1019,12 @@ struct QuantitativeCapabilityDeclaration {
     source: Arc<FactSourceProvenance>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct QuantitativeCapabilityQueryDeclaration {
+    axis: CapabilityAxis,
+    query: TargetPropertyQuery,
+}
+
 impl QuantitativeCapabilityDeclaration {
     fn validate(&self) -> Result<(), TargetProfileBuildError> {
         if !self.source.is_valid() {
@@ -1094,6 +1102,7 @@ struct TargetProfileData {
 pub struct TargetProfileBuilder {
     key: TargetProfileKey,
     quantitative: Vec<QuantitativeCapabilityDeclaration>,
+    queries: Vec<QuantitativeCapabilityQueryDeclaration>,
     scalar: Vec<ScalarHonourabilityDeclaration>,
     dispatchability: Vec<DTypeDispatchabilityFact>,
 }
@@ -1107,6 +1116,7 @@ impl TargetProfileBuilder {
         Self {
             key,
             quantitative: Vec::new(),
+            queries: Vec::new(),
             scalar: Vec::new(),
             dispatchability: Vec::new(),
         }
@@ -1116,11 +1126,22 @@ impl TargetProfileBuilder {
         let source = TargetFactSource(governed_profile_source());
         let mut builder = Self::new(TargetProfileKey::governed(GOVERNED_TARGET_PROFILE_KEY));
         builder
-            .declare_max_threads_per_grid_axis(65_535, source.clone())
+            .declare_max_threads_per_grid_axis(4, source.clone())
             .expect("the governed grid-axis declaration is valid");
         builder
-            .declare_max_threads_per_workgroup(1, source.clone())
-            .expect("the governed workgroup declaration is valid");
+            .declare_max_threads_per_workgroup_query(
+                TargetPropertyQuery::new(
+                    TargetPropertyKey::new(
+                        "tiler.target.prepared-entry.max-threads-per-workgroup.v1",
+                    )
+                    .expect("the governed workgroup property key is valid"),
+                    AvailabilityPhase::PreparedKernelPreflight,
+                    TargetPropertyProviderIdentity::new("tiler", "prepared-entry-properties", 1)
+                        .expect("the governed target-query provider identity is valid"),
+                )
+                .expect("the governed workgroup query is deferred"),
+            )
+            .expect("the governed workgroup query declaration is valid");
         builder
             .declare_max_buffer_bindings_per_entry(2, source.clone())
             .expect("the governed binding declaration is valid");
@@ -1158,6 +1179,11 @@ impl TargetProfileBuilder {
             source,
         };
         declaration.validate()?;
+        if self.queries.iter().any(|query| query.axis == axis) {
+            return Err(
+                TargetProfileBuildError::ConflictingQuantitativeFactAndQuery { axis: axis.key() },
+            );
+        }
         if self.quantitative.iter().any(|existing| {
             existing.axis == declaration.axis
                 && existing.source.phase() == declaration.source.phase()
@@ -1221,6 +1247,57 @@ impl TargetProfileBuilder {
         source: TargetCompileProfileMeasurementSource,
     ) -> Result<(), TargetProfileBuildError> {
         self.declare_quantitative(CapabilityAxis::WorkgroupThreads, u64::from(bound), source.0)
+    }
+
+    /// Declares the prepared-entry query that supplies the exact maximum
+    /// threads-per-workgroup value for a future compiled kernel.
+    ///
+    /// This is deliberately separate from
+    /// [`Self::declare_max_threads_per_workgroup`]: that method records an
+    /// available value, while this one records how an exact prepared entry will
+    /// produce a value later.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error without inserting a duplicate or wrong-phase
+    /// query. A live-device maximum cannot substitute for the prepared
+    /// pipeline's function-specific maximum.
+    pub fn declare_max_threads_per_workgroup_query(
+        &mut self,
+        query: TargetPropertyQuery,
+    ) -> Result<(), TargetProfileBuildError> {
+        if query.available_at() != AvailabilityPhase::PreparedKernelPreflight {
+            return Err(TargetProfileBuildError::InvalidQuantitativeQueryPhase {
+                axis: CapabilityAxis::WorkgroupThreads.key(),
+                required: AvailabilityPhase::PreparedKernelPreflight,
+                actual: query.available_at(),
+            });
+        }
+        if self
+            .quantitative
+            .iter()
+            .any(|existing| existing.axis == CapabilityAxis::WorkgroupThreads)
+        {
+            return Err(
+                TargetProfileBuildError::ConflictingQuantitativeFactAndQuery {
+                    axis: CapabilityAxis::WorkgroupThreads.key(),
+                },
+            );
+        }
+        if self
+            .queries
+            .iter()
+            .any(|existing| existing.axis == CapabilityAxis::WorkgroupThreads)
+        {
+            return Err(TargetProfileBuildError::DuplicateQuantitativeQuery {
+                axis: CapabilityAxis::WorkgroupThreads.key(),
+            });
+        }
+        self.queries.push(QuantitativeCapabilityQueryDeclaration {
+            axis: CapabilityAxis::WorkgroupThreads,
+            query,
+        });
+        Ok(())
     }
 
     /// Declares the maximum distinct buffer bindings per kernel entry.
@@ -2022,6 +2099,17 @@ impl TargetProfileBuilder {
         for declaration in &self.quantitative {
             declaration.validate()?;
             if self
+                .queries
+                .iter()
+                .any(|query| query.axis == declaration.axis)
+            {
+                return Err(
+                    TargetProfileBuildError::ConflictingQuantitativeFactAndQuery {
+                        axis: declaration.axis.key(),
+                    },
+                );
+            }
+            if self
                 .quantitative
                 .iter()
                 .filter(|candidate| {
@@ -2034,6 +2122,28 @@ impl TargetProfileBuilder {
                 return Err(TargetProfileBuildError::DuplicateQuantitativeCapability {
                     axis: declaration.axis.key(),
                     phase: declaration.source.phase(),
+                });
+            }
+        }
+        for declaration in &self.queries {
+            if declaration.axis == CapabilityAxis::WorkgroupThreads
+                && declaration.query.available_at() != AvailabilityPhase::PreparedKernelPreflight
+            {
+                return Err(TargetProfileBuildError::InvalidQuantitativeQueryPhase {
+                    axis: declaration.axis.key(),
+                    required: AvailabilityPhase::PreparedKernelPreflight,
+                    actual: declaration.query.available_at(),
+                });
+            }
+            if self
+                .queries
+                .iter()
+                .filter(|candidate| candidate.axis == declaration.axis)
+                .count()
+                > 1
+            {
+                return Err(TargetProfileBuildError::DuplicateQuantitativeQuery {
+                    axis: declaration.axis.key(),
                 });
             }
         }
@@ -2075,6 +2185,7 @@ impl TargetProfileBuilder {
     fn canonicalize(&mut self) {
         self.quantitative
             .sort_by_key(|declaration| (declaration.axis, declaration.source.phase()));
+        self.queries.sort_by_key(|declaration| declaration.axis);
         self.scalar.sort_by_cached_key(|declaration| {
             let mut bytes = Vec::new();
             declaration.encode(&mut bytes);
@@ -2110,9 +2221,15 @@ impl TargetProfileBuilder {
             .iter()
             .map(|declared| declared.attributed_to(identity.clone()))
             .collect();
-        let checked = CheckedTargetProfile::new(
+        let checked = CheckedTargetProfile::new_with_queries(
             identity.clone(),
             self.quantitative.iter().map(fact).collect(),
+            self.queries
+                .iter()
+                .map(|declaration| {
+                    CapabilityQuery::new(declaration.axis, declaration.query.clone())
+                })
+                .collect(),
             honourability,
         )
         .map_err(TargetProfileBuildError::from)?;
@@ -2120,6 +2237,7 @@ impl TargetProfileBuilder {
         let descriptor = complete_descriptor(
             &self.key,
             &self.quantitative,
+            &self.queries,
             &self.scalar,
             &self.dispatchability,
         );
@@ -2132,6 +2250,7 @@ impl TargetProfileBuilder {
         let Self {
             key,
             quantitative,
+            queries: _,
             scalar,
             dispatchability,
         } = self;
@@ -2271,6 +2390,7 @@ impl ScalarSupport {
 fn complete_descriptor(
     key: &TargetProfileKey,
     quantitative: &[QuantitativeCapabilityDeclaration],
+    queries: &[QuantitativeCapabilityQueryDeclaration],
     scalar: &[ScalarHonourabilityDeclaration],
     dispatchability: &[DTypeDispatchabilityFact],
 ) -> Vec<u8> {
@@ -2300,6 +2420,11 @@ fn complete_descriptor(
             .binary_search_by(|candidate| candidate.0.cmp(&source_bytes))
             .expect("every quantitative source was inserted into the source table");
         QuantitativeCapabilityDeclaration::encode_source_index(&mut bytes, source_index);
+    }
+    push_len(&mut bytes, queries.len());
+    for query in queries {
+        push_slice(&mut bytes, query.axis.key().as_bytes());
+        push_slice(&mut bytes, &query.query.canonical_bytes());
     }
     let mut subjects = scalar
         .iter()
@@ -2594,6 +2719,26 @@ pub enum TargetProfileBuildError {
         axis: &'static str,
         /// Availability phase at which both rows claimed authority.
         phase: AvailabilityPhase,
+    },
+    /// A quantitative query was declared for an availability phase that cannot
+    /// answer that axis's exact requirement.
+    InvalidQuantitativeQueryPhase {
+        /// Stable governed axis key.
+        axis: &'static str,
+        /// Earliest phase that can answer this axis correctly.
+        required: AvailabilityPhase,
+        /// Phase the rejected query declared.
+        actual: AvailabilityPhase,
+    },
+    /// The same quantitative capability axis received two query schemas.
+    DuplicateQuantitativeQuery {
+        /// Stable governed axis key.
+        axis: &'static str,
+    },
+    /// One axis cannot carry both an available fact and a deferred query.
+    ConflictingQuantitativeFactAndQuery {
+        /// Stable governed axis key.
+        axis: &'static str,
     },
     /// The same numerical behaviour was declared twice at the same phase.
     DuplicateScalarDeclaration,
@@ -3253,6 +3398,50 @@ mod tests {
             Err(TargetProfileBuildError::DuplicateDispatchability)
         );
         assert_eq!(builder.dispatchability, dispatchability);
+    }
+
+    #[test]
+    fn quantitative_facts_and_queries_reject_overlap_atomically_in_both_orders() {
+        let query = || {
+            TargetPropertyQuery::new(
+                TargetPropertyKey::new("test.prepared-entry.workgroup-limit.v1").unwrap(),
+                AvailabilityPhase::PreparedKernelPreflight,
+                TargetPropertyProviderIdentity::new("test", "prepared-entry", 1).unwrap(),
+            )
+            .unwrap()
+        };
+
+        let mut fact_first = TargetProfileBuilder::new(
+            TargetProfileKey::new("test.fact-first.v1".to_owned()).unwrap(),
+        );
+        fact_first
+            .declare_max_threads_per_workgroup(256, public_external_source(1))
+            .unwrap();
+        assert_eq!(
+            fact_first.declare_max_threads_per_workgroup_query(query()),
+            Err(
+                TargetProfileBuildError::ConflictingQuantitativeFactAndQuery {
+                    axis: "threads-per-workgroup",
+                }
+            )
+        );
+        assert!(fact_first.queries.is_empty());
+
+        let mut query_first = TargetProfileBuilder::new(
+            TargetProfileKey::new("test.query-first.v1".to_owned()).unwrap(),
+        );
+        query_first
+            .declare_max_threads_per_workgroup_query(query())
+            .unwrap();
+        assert_eq!(
+            query_first.declare_max_threads_per_workgroup(256, public_external_source(1)),
+            Err(
+                TargetProfileBuildError::ConflictingQuantitativeFactAndQuery {
+                    axis: "threads-per-workgroup",
+                }
+            )
+        );
+        assert!(query_first.quantitative.is_empty());
     }
 
     #[test]
@@ -4213,7 +4402,7 @@ mod tests {
     #[test]
     fn complete_descriptor_obeys_the_artifact_identity_bound() {
         let mut builder = TargetProfileBuilder::governed();
-        builder.dispatchability = (0..32)
+        builder.dispatchability = (0..1_024)
             .map(|index| {
                 dispatch_fact(
                     nominal(format!("dtype-{index:02}")),

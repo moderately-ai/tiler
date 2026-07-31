@@ -10,6 +10,10 @@ use std::sync::Arc;
 use tiler_ir::kernel::{
     KernelType, MAX_KERNEL_IDENTITY_BYTES, VerifiedKernel, lower_scheduled_region,
 };
+use tiler_ir::program::abi::{
+    ExprNode, PreparedEntryTargetRequirement, TargetPropertyProviderIdentity, TargetPropertyQuery,
+    TargetPropertyRequirementRelation,
+};
 use tiler_ir::program::{
     AllocationOwnership, AllocationSpec, ByteWindow, KernelProgramBuilder,
     MaterializedComponentSpec, MaterializedOrigin, MaterializedValueSpec, MemorySpace,
@@ -1195,6 +1199,19 @@ pub(super) fn rules() -> FeasibilityRuleSetRef {
     }
 }
 
+pub(super) fn prepared_requirement(
+    required: u64,
+    relation: TargetPropertyRequirementRelation,
+) -> PreparedEntryTargetRequirement {
+    let query = TargetPropertyQuery::new(
+        TargetPropertyKey::new("tiler.target.prepared-entry.max-threads-per-workgroup").unwrap(),
+        AvailabilityPhase::PreparedKernelPreflight,
+        TargetPropertyProviderIdentity::new("tiler", "prepared-entry-properties", 1).unwrap(),
+    )
+    .unwrap();
+    PreparedEntryTargetRequirement::new(query, required, relation).unwrap()
+}
+
 pub(crate) fn strict_affine_u4_dequantize_artifact() -> VerifiedArtifactProgram {
     let semantic = strict_affine_u4_dequantize_semantic();
     let program = strict_affine_u4_dequantize_program(&semantic);
@@ -2018,45 +2035,45 @@ fn rejects_a_provider_the_environment_never_offered() {
 }
 
 #[test]
-fn rejects_a_deferred_predicate_that_is_already_decided() {
+fn rejects_a_deferred_requirement_naming_no_entry() {
     let outcome = with_default_draft(|draft, formulas, descriptor, program| {
         let mut spec = variant(formulas, descriptor, b"fused");
         spec.deferred_predicates = vec![DeferredPredicateSpec {
-            predicate: formulas.always,
-            phase: AvailabilityPhase::CompileProfile,
-            authority: lowering_provider(1),
+            requirement: prepared_requirement(
+                1,
+                TargetPropertyRequirementRelation::ObservedAtLeastRequired,
+            ),
+            entry: 1,
         }];
         draft.push_variant(program, spec)
     });
     assert_eq!(
         outcome,
-        Err(ArtifactBuildError::NonDeferredPredicatePhase {
-            phase: AvailabilityPhase::CompileProfile,
+        Err(ArtifactBuildError::DeferredQueryEntryOutOfRange {
+            entry: 1,
+            entries: 1,
         }),
     );
 }
 
 #[test]
-fn rejects_a_deferred_authority_that_was_never_selected() {
+fn a_target_query_provider_is_distinct_from_a_selected_lowering_provider() {
     let outcome = with_default_draft(|draft, formulas, descriptor, program| {
         let mut spec = variant(formulas, descriptor, b"fused");
         spec.deferred_predicates = vec![DeferredPredicateSpec {
-            predicate: formulas.always,
-            phase: AvailabilityPhase::LaunchPreflight,
-            authority: spare_provider(1),
+            requirement: prepared_requirement(
+                1,
+                TargetPropertyRequirementRelation::ObservedAtLeastRequired,
+            ),
+            entry: 0,
         }];
         draft.push_variant(program, spec)
     });
-    assert_eq!(
-        outcome,
-        Err(ArtifactBuildError::UnselectedDeferredAuthority {
-            provider: Box::new(spare_provider(1)),
-        }),
-    );
+    assert!(outcome.is_ok());
 }
 
 #[test]
-fn accepts_a_deferred_predicate_bound_to_a_selected_authority() {
+fn accepts_a_complete_prepared_entry_requirement() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
@@ -2065,20 +2082,13 @@ fn accepts_a_deferred_predicate_bound_to_a_selected_authority() {
     draft.select_provider(selection(provider.clone())).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
     let formulas = formulas(&mut draft);
-    let property = draft
-        .push_root(AbiRoot::TargetProperty {
-            key: TargetPropertyKey::new("tiler.target.max-threads-per-workgroup").unwrap(),
-            phase: AvailabilityPhase::LaunchPreflight,
-        })
-        .unwrap();
-    let predicate = draft
-        .push_binary(AbiBinaryOp::LessOrEqual, formulas.one, property)
-        .unwrap();
     let mut spec = variant(&formulas, descriptor, b"fused");
     spec.deferred_predicates = vec![DeferredPredicateSpec {
-        predicate,
-        phase: AvailabilityPhase::LaunchPreflight,
-        authority: provider.clone(),
+        requirement: prepared_requirement(
+            1,
+            TargetPropertyRequirementRelation::ObservedAtLeastRequired,
+        ),
+        entry: 0,
     }];
     draft.push_variant(&program, spec).unwrap();
     let artifact = draft.build().unwrap();
@@ -2089,17 +2099,69 @@ fn accepts_a_deferred_predicate_bound_to_a_selected_authority() {
         .deferred_predicates()
         .next()
         .expect("one deferred predicate");
-    assert_eq!(deferred.phase(), AvailabilityPhase::LaunchPreflight);
-    assert_eq!(deferred.authority(), &provider);
+    assert_eq!(deferred.entry().backend_entry_key().as_bytes(), b"fused");
+    assert_eq!(deferred.requirement().required(), 1);
+    assert_eq!(
+        deferred.requirement().relation(),
+        TargetPropertyRequirementRelation::ObservedAtLeastRequired,
+    );
+    assert_eq!(
+        deferred.requirement().query().provider().name(),
+        "prepared-entry-properties",
+    );
+}
+
+#[test]
+fn a_reversed_directional_predicate_does_not_match_its_requirement() {
+    let requirement = prepared_requirement(
+        8,
+        TargetPropertyRequirementRelation::ObservedAtLeastRequired,
+    );
+    let roots = [
+        ExprNode::Root(AbiRoot::TargetProperty {
+            key: requirement.query().key().clone(),
+            phase: requirement.query().available_at(),
+        }),
+        ExprNode::Root(AbiRoot::UnsignedLiteral(requirement.required())),
+    ];
+    let correct = [
+        roots[0].clone(),
+        roots[1].clone(),
+        ExprNode::Binary {
+            op: AbiBinaryOp::LessOrEqual,
+            left: 1,
+            right: 0,
+        },
+    ];
+    assert!(
+        super::model::deferred_predicate_matches_requirement(&correct, 2, &requirement),
+        "required <= observed is the admitted direction",
+    );
+
+    let reversed = [
+        roots[0].clone(),
+        roots[1].clone(),
+        ExprNode::Binary {
+            op: AbiBinaryOp::LessOrEqual,
+            left: 0,
+            right: 1,
+        },
+    ];
+    assert!(
+        !super::model::deferred_predicate_matches_requirement(&reversed, 2, &requirement),
+        "observed <= required must not masquerade as an at-least requirement",
+    );
 }
 
 #[test]
 fn rejects_a_repeated_deferred_predicate() {
     let outcome = with_default_draft(|draft, formulas, descriptor, program| {
         let predicate = DeferredPredicateSpec {
-            predicate: formulas.always,
-            phase: AvailabilityPhase::LaunchPreflight,
-            authority: lowering_provider(1),
+            requirement: prepared_requirement(
+                1,
+                TargetPropertyRequirementRelation::ObservedAtLeastRequired,
+            ),
+            entry: 0,
         };
         let mut spec = variant(formulas, descriptor, b"fused");
         spec.deferred_predicates = vec![predicate.clone(), predicate];
@@ -2456,9 +2518,9 @@ fn checked_narrowing_rejects_a_value_that_does_not_fit() {
 /// The 1,121-byte case is the measured one, not a chosen one: it is the
 /// canonical kernel identity of a serial `f32` sum reducing two or more
 /// contributors, which the shared bound refused while admitting only the
-/// degenerate one-contributor reduction. The two digest-shaped identities keep
-/// the smaller bound, which is the whole point of separating them — raising one
-/// bound for all three would have discarded a real one.
+/// degenerate one-contributor reduction. The fixed-width payload digest keeps
+/// the smaller bound, while the structured target-profile descriptor takes the
+/// compiler's larger minting bound.
 #[test]
 fn an_opaque_identity_takes_the_bound_of_the_authority_that_mints_it() {
     let measured_kernel_identity = vec![0x5a; 1_121];
@@ -2479,29 +2541,26 @@ fn an_opaque_identity_takes_the_bound_of_the_authority_that_mints_it() {
         "beyond what the shared IR can mint, the refusal is still loud",
     );
 
-    for (bytes, expected) in [
-        (
-            PayloadDigest::from_bytes(vec![0x5a; super::MAX_OPAQUE_IDENTITY_BYTES + 1]).err(),
-            ArtifactKeyKind::PayloadDigest,
-        ),
-        (
-            TargetProfileDescriptorDigest::from_bytes(vec![
-                0x5a;
-                super::MAX_OPAQUE_IDENTITY_BYTES + 1
-            ])
-            .err(),
-            ArtifactKeyKind::TargetProfileDescriptor,
-        ),
-    ] {
-        assert_eq!(
-            bytes,
-            Some(ArtifactBuildError::KeyTooLong {
-                kind: expected,
-                bytes: super::MAX_OPAQUE_IDENTITY_BYTES + 1,
-                limit: super::MAX_OPAQUE_IDENTITY_BYTES,
-            }),
-        );
-    }
+    assert_eq!(
+        PayloadDigest::from_bytes(vec![0x5a; super::MAX_OPAQUE_IDENTITY_BYTES + 1]),
+        Err(ArtifactBuildError::KeyTooLong {
+            kind: ArtifactKeyKind::PayloadDigest,
+            bytes: super::MAX_OPAQUE_IDENTITY_BYTES + 1,
+            limit: super::MAX_OPAQUE_IDENTITY_BYTES,
+        }),
+    );
+    assert_eq!(
+        TargetProfileDescriptorDigest::from_bytes(vec![
+            0x5a;
+            super::MAX_TARGET_PROFILE_DESCRIPTOR_BYTES
+                + 1
+        ]),
+        Err(ArtifactBuildError::KeyTooLong {
+            kind: ArtifactKeyKind::TargetProfileDescriptor,
+            bytes: super::MAX_TARGET_PROFILE_DESCRIPTOR_BYTES + 1,
+            limit: super::MAX_TARGET_PROFILE_DESCRIPTOR_BYTES,
+        }),
+    );
 }
 
 /// The bound admits every entry key the packaged program itself carries.

@@ -63,7 +63,7 @@
 //! says complete program identity covers buffers, ABI, guards, and routing.
 //! `complete-program-identity-with-abi-guards-and-routing` moved the entry ABI, the applicability guard, and the routing-commit lifecycle down: a [`tiler_ir::program::VerifiedKernelProgram`] carries its own expression arena, guard, per-stage launch, and per-access accessible byte range. Historical v2 first folded those facts; later encoding and ABI-completeness changes moved the current domain to `tiler.kernel-program.v5`.
 //!
-//! Artifact construction now replays that exact program ABI onto the artifact arena and derives the guard, launch geometry, accessible byte offset and extent, binding target, component role, storage scalar and encoding, kernel access type, access mode, address space, and alignment from the verified program. [`VariantSpec`](crate::program::VariantSpec) supplies only artifact-owned facts: target and feasibility references, deferred predicates, binding transport kinds, launch preconditions and zero-work policy, and backend entry selection. This is one authority, not two ABIs kept in agreement; the artifact layer still owns portfolio priority and the predicates no single target-neutral program can carry.
+//! Artifact construction now replays that exact program ABI onto the artifact arena and derives the guard, launch geometry, accessible byte offset and extent, binding target, component role, storage scalar and encoding, kernel access type, access mode, address space, and alignment from the verified program. [`VariantSpec`](crate::program::VariantSpec) supplies only artifact-owned facts: target and feasibility references, compiler-minted [`PreparedEntryTargetRequirement`](crate::program::PreparedEntryTargetRequirement) values bound to exact program-entry ordinals, binding transport kinds, launch preconditions and zero-work policy, and backend entry selection. The builder mints each executable deferred predicate from the whole checked requirement, so an assembler cannot reverse its comparison or substitute a global property observation for the prepared entry the compiler named. This is one authority, not two ABIs kept in agreement; the artifact layer still owns portfolio priority and the predicates no single target-neutral program can carry.
 //!
 //! ```
 //! use tiler_artifact::program::{
@@ -352,6 +352,11 @@ pub use builder::{
 // property under ADR 0081. A public method whose return type its callers cannot
 // spell is unusable, so the type travels with the accessor that produces it.
 pub use tiler_ir::kernel::BufferAccess;
+pub use tiler_ir::program::abi::{
+    PreparedEntryTargetRequirement, PreparedEntryTargetRequirementError,
+    TargetPropertyProviderIdentity, TargetPropertyQuery, TargetPropertyQueryError,
+    TargetPropertyRequirementRelation,
+};
 
 pub use codec::{
     ArtifactCodecFailure, DecodedArtifact, DecodedBinding, DecodedComponent,
@@ -398,8 +403,9 @@ pub use facts::{
 pub use handles::{AbiExprId, PayloadId, VariantId};
 pub use keys::{
     BackendEntryKey, BackendKey, CapabilityKey, FeasibilityRuleSetKey, FeasibilityRuleSetRef,
-    MAX_GOVERNED_KEY_BYTES, MAX_OPAQUE_IDENTITY_BYTES, PayloadDigest, RepresentationKey,
-    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
+    MAX_GOVERNED_KEY_BYTES, MAX_OPAQUE_IDENTITY_BYTES, MAX_TARGET_PROFILE_DESCRIPTOR_BYTES,
+    PayloadDigest, RepresentationKey, TargetProfileDescriptorDigest, TargetProfileKey,
+    TargetProfileRef,
 };
 pub use model::{
     AbiExprRef, AbiExprView, ArtifactExecutionPolicy, ArtifactInputRef, ArtifactOutputRef,

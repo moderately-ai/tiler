@@ -7,10 +7,10 @@
 //! [`Compilation`], so target, feasibility, and provider facts always come from
 //! the same checked product as the kernels and target-neutral program.
 //!
-//! The initial path intentionally assembles one plan, one Metal payload, no
-//! deferred predicates, and no launch-time preconditions. The artifact builder
-//! checks those claims against the verified program, so a widened compiler plan
-//! fails closed here until this support profile is deliberately extended.
+//! The initial path assembles one plan and one Metal payload, preserves every
+//! compiler-minted prepared-entry target requirement, and declares no
+//! launch-time preconditions. The artifact builder mints each requirement's ABI
+//! predicate, so this layer never reconstructs comparison direction.
 
 use std::error::Error;
 use std::fmt;
@@ -18,10 +18,10 @@ use std::fmt;
 use tiler_artifact::program::{
     ArtifactBuildError, ArtifactCodecFailure, ArtifactProgramBuilder, ArtifactVerificationError,
     BackendEntryKey, BackendEntryRef, BindingKind, BindingSpec, CapabilityKey,
-    CompilationEnvironment, DecodedArtifact, EntrySpec, FeasibilityRuleSetKey,
-    FeasibilityRuleSetRef, LaunchSpec, PayloadContent, PayloadId, SelectedProvider,
-    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, VariantSpec,
-    VerifiedArtifactProgram,
+    CompilationEnvironment, DecodedArtifact, DeferredPredicateSpec, EntrySpec,
+    FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec, PayloadContent, PayloadId,
+    SelectedProvider, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
+    VariantSpec, VerifiedArtifactProgram,
 };
 use tiler_cache::expansion::{ComposedSubject, ExpansionCache, Resolution, SubjectRefusal};
 use tiler_compiler::session::{Compilation, PlanAlternative};
@@ -346,6 +346,13 @@ fn assemble_artifact(
 
     let payload_id = declare_payload(&mut builder, profile.clone())?;
     let program = plan.abi().kernel_program();
+    let deferred_predicates = plan
+        .prepared_entry_target_requirements()
+        .map(|requirement| DeferredPredicateSpec {
+            requirement: requirement.requirement().clone(),
+            entry: requirement.entry(),
+        })
+        .collect();
     let mut entries = Vec::with_capacity(program.stages().len());
     for stage in program.stages() {
         entries.push(EntrySpec {
@@ -373,7 +380,7 @@ fn assemble_artifact(
         VariantSpec {
             target_profile: profile,
             feasibility_rules: rules,
-            deferred_predicates: Vec::new(),
+            deferred_predicates,
             entries,
         },
     )?;
@@ -463,7 +470,7 @@ mod tests {
         let input = builder
             .input::<F32>(
                 InputKey::new("input").expect("the input key is valid"),
-                Shape::from_dims([4, 3]),
+                Shape::from_dims([2, 2]),
             )
             .expect("the input binds");
         let scale = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).expect("the scale applies");
@@ -621,6 +628,24 @@ mod tests {
         }
 
         assert_eq!(outcomes, ["published", "hit"]);
+        let accepted = accept_or_publish_metal_plan(
+            &cache,
+            &toolchain,
+            &program,
+            plan,
+            &target_facts(),
+            build_policy(),
+        )
+        .expect("the second cache hit remains readable");
+        let variant = resolution_artifact(accepted.resolution())
+            .variants()
+            .next()
+            .expect("one packaged variant");
+        assert_eq!(
+            variant.deferred_predicates().len(),
+            variant.entries().len(),
+            "every prepared entry retains its compiler-minted workgroup predicate",
+        );
         assert_eq!(
             std::fs::read_to_string(counter)
                 .expect("the miss wrote its counter")

@@ -37,7 +37,7 @@ use std::error::Error;
 use std::fmt;
 
 use crate::identity::{push_len, push_slice};
-use crate::semantic::InputKey;
+use crate::semantic::{InputKey, ProviderIdentity, RegistryError};
 use crate::shape::Axis;
 
 const EXPR_DOMAIN: &[u8] = b"tiler.artifact-program.abi-expr.v1\0";
@@ -1250,6 +1250,9 @@ fn expect_boolean(value: AbiValue) -> bool {
 
 /// Maximum bytes of one governed target-property key.
 pub const MAX_TARGET_PROPERTY_KEY_BYTES: usize = 256;
+const TARGET_PROPERTY_QUERY_DOMAIN: &[u8] = b"tiler.target-property-query.v1\0";
+const PREPARED_ENTRY_TARGET_REQUIREMENT_DOMAIN: &[u8] =
+    b"tiler.prepared-entry-target-requirement.v1\0";
 
 /// A governed target-property key an ABI expression root may name.
 ///
@@ -1321,5 +1324,262 @@ impl TargetPropertyKey {
 impl fmt::Display for TargetPropertyKey {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
+    }
+}
+
+/// Versioned identity of one implementation that answers target-property queries.
+///
+/// This is deliberately distinct from [`ProviderIdentity`] even though it
+/// reuses that type's validated representation. A semantic lowering provider
+/// and a target-query provider answer different questions; accepting either
+/// where the other is required would let an artifact attribute a device or
+/// prepared-kernel observation to code that only lowered an operation.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct TargetPropertyProviderIdentity(ProviderIdentity);
+
+impl TargetPropertyProviderIdentity {
+    /// Creates a validated target-property provider identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns the shared provider-identity grammar's typed diagnostic for an
+    /// invalid namespace, name, or zero revision.
+    pub fn new(
+        namespace: impl AsRef<str>,
+        name: impl AsRef<str>,
+        revision: u32,
+    ) -> Result<Self, RegistryError> {
+        ProviderIdentity::new(namespace, name, revision).map(Self)
+    }
+
+    /// Returns the provider namespace.
+    #[must_use]
+    pub fn namespace(&self) -> &str {
+        self.0.namespace()
+    }
+
+    /// Returns the provider name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        self.0.name()
+    }
+
+    /// Returns the nonzero output-affecting provider revision.
+    #[must_use]
+    pub const fn revision(&self) -> u32 {
+        self.0.revision()
+    }
+}
+
+/// A governed query path for one target property.
+///
+/// This is a schema, not an observation: it states which property can be
+/// queried, when it first becomes readable, and which versioned provider must
+/// answer it. The observed value is deliberately absent and remains scoped to
+/// the exact device, prepared entry, or launch that produced it.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct TargetPropertyQuery {
+    key: TargetPropertyKey,
+    available_at: AvailabilityPhase,
+    provider: TargetPropertyProviderIdentity,
+}
+
+/// A rejected target-property query declaration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TargetPropertyQueryError {
+    /// A compile-profile fact was incorrectly declared as a deferred query.
+    CompileProfileIsNotDeferred,
+}
+
+impl fmt::Display for TargetPropertyQueryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CompileProfileIsNotDeferred => {
+                formatter.write_str("a compile-profile fact is not a deferred target query")
+            }
+        }
+    }
+}
+
+impl Error for TargetPropertyQueryError {}
+
+impl TargetPropertyQuery {
+    /// Creates a typed deferred target-property query.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TargetPropertyQueryError::CompileProfileIsNotDeferred`] when
+    /// `available_at` names the phase that must already be known before search.
+    pub fn new(
+        key: TargetPropertyKey,
+        available_at: AvailabilityPhase,
+        provider: TargetPropertyProviderIdentity,
+    ) -> Result<Self, TargetPropertyQueryError> {
+        if available_at == AvailabilityPhase::CompileProfile {
+            return Err(TargetPropertyQueryError::CompileProfileIsNotDeferred);
+        }
+        Ok(Self {
+            key,
+            available_at,
+            provider,
+        })
+    }
+
+    /// Returns the governed property key the provider answers.
+    #[must_use]
+    pub const fn key(&self) -> &TargetPropertyKey {
+        &self.key
+    }
+
+    /// Returns the earliest phase at which the query can be answered.
+    #[must_use]
+    pub const fn available_at(&self) -> AvailabilityPhase {
+        self.available_at
+    }
+
+    /// Returns the exact provider contract that must answer the query.
+    #[must_use]
+    pub const fn provider(&self) -> &TargetPropertyProviderIdentity {
+        &self.provider
+    }
+
+    /// Returns the canonical identity bytes of this complete query contract.
+    #[must_use]
+    pub fn canonical_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(TARGET_PROPERTY_QUERY_DOMAIN);
+        push_slice(&mut bytes, self.key.as_str().as_bytes());
+        bytes.push(self.available_at.tag());
+        push_slice(&mut bytes, self.provider.namespace().as_bytes());
+        push_slice(&mut bytes, self.provider.name().as_bytes());
+        bytes.extend_from_slice(&self.provider.revision().to_be_bytes());
+        bytes
+    }
+}
+
+/// How an observed target property must relate to a required quantity.
+///
+/// Names the direction explicitly so a consumer cannot accidentally reverse a
+/// capacity comparison while translating it into an executable predicate.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum TargetPropertyRequirementRelation {
+    /// The observed quantity must be at least the required quantity.
+    ObservedAtLeastRequired,
+    /// The observed quantity must equal the required quantity.
+    ObservedEqualsRequired,
+    /// A nonzero requirement requires a nonzero observation.
+    RequiredImpliesObserved,
+}
+
+/// One complete requirement over a property of a prepared executable entry.
+///
+/// The query is the acquisition schema; `required` and `relation` state the
+/// predicate that must hold. Keeping them together lets artifact construction
+/// mint the predicate instead of asking an assembler to reconstruct it.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct PreparedEntryTargetRequirement {
+    query: TargetPropertyQuery,
+    required: u64,
+    relation: TargetPropertyRequirementRelation,
+}
+
+/// A rejected prepared-entry target requirement.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PreparedEntryTargetRequirementError {
+    /// The query is not observable from a prepared executable entry.
+    QueryIsNotPreparedEntryScoped {
+        /// Phase the rejected query declared.
+        available_at: AvailabilityPhase,
+    },
+    /// An implication requirement is not a Boolean quantity.
+    ImplicationRequirementIsNotBoolean {
+        /// Rejected required quantity.
+        required: u64,
+    },
+}
+
+impl fmt::Display for PreparedEntryTargetRequirementError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+impl Error for PreparedEntryTargetRequirementError {}
+
+impl PreparedEntryTargetRequirement {
+    /// Creates one complete prepared-entry target requirement.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed rejection when the query is not prepared-entry scoped or
+    /// an implication requirement is outside the Boolean `0..=1` domain.
+    pub fn new(
+        query: TargetPropertyQuery,
+        required: u64,
+        relation: TargetPropertyRequirementRelation,
+    ) -> Result<Self, PreparedEntryTargetRequirementError> {
+        if query.available_at() != AvailabilityPhase::PreparedKernelPreflight {
+            return Err(
+                PreparedEntryTargetRequirementError::QueryIsNotPreparedEntryScoped {
+                    available_at: query.available_at(),
+                },
+            );
+        }
+        if relation == TargetPropertyRequirementRelation::RequiredImpliesObserved && required > 1 {
+            return Err(
+                PreparedEntryTargetRequirementError::ImplicationRequirementIsNotBoolean {
+                    required,
+                },
+            );
+        }
+        Ok(Self {
+            query,
+            required,
+            relation,
+        })
+    }
+
+    /// Returns the acquisition schema for the observed property.
+    #[must_use]
+    pub const fn query(&self) -> &TargetPropertyQuery {
+        &self.query
+    }
+
+    /// Returns the required quantity.
+    #[must_use]
+    pub const fn required(&self) -> u64 {
+        self.required
+    }
+
+    /// Returns the directional relation the observation must satisfy.
+    #[must_use]
+    pub const fn relation(&self) -> TargetPropertyRequirementRelation {
+        self.relation
+    }
+
+    /// Returns whether one observed quantity satisfies this requirement.
+    #[must_use]
+    pub const fn is_satisfied_by(&self, observed: u64) -> bool {
+        match self.relation {
+            TargetPropertyRequirementRelation::ObservedAtLeastRequired => self.required <= observed,
+            TargetPropertyRequirementRelation::ObservedEqualsRequired => self.required == observed,
+            TargetPropertyRequirementRelation::RequiredImpliesObserved => {
+                self.required == 0 || observed != 0
+            }
+        }
+    }
+
+    /// Returns the canonical identity bytes of the complete requirement.
+    #[must_use]
+    pub fn canonical_bytes(&self) -> Vec<u8> {
+        let mut bytes = PREPARED_ENTRY_TARGET_REQUIREMENT_DOMAIN.to_vec();
+        push_slice(&mut bytes, &self.query.canonical_bytes());
+        bytes.extend_from_slice(&self.required.to_be_bytes());
+        bytes.push(match self.relation {
+            TargetPropertyRequirementRelation::ObservedAtLeastRequired => 0x01,
+            TargetPropertyRequirementRelation::ObservedEqualsRequired => 0x02,
+            TargetPropertyRequirementRelation::RequiredImpliesObserved => 0x03,
+        });
+        bytes
     }
 }

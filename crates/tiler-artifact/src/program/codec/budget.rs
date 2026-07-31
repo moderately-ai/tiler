@@ -152,8 +152,9 @@ fn check_text_budgets(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecEr
         texts.push(variant.profile.key.as_str());
         texts.push(variant.feasibility_rules.key.as_str());
         for predicate in &variant.deferred {
-            texts.push(predicate.authority.namespace());
-            texts.push(predicate.authority.name());
+            texts.push(predicate.requirement.query().key().as_str());
+            texts.push(predicate.requirement.query().provider().namespace());
+            texts.push(predicate.requirement.query().provider().name());
         }
         for entry in &variant.entries {
             texts.push(entry.numerical.profile_key.as_str());

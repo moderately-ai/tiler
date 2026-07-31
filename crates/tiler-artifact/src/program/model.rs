@@ -15,6 +15,7 @@
 //! opaque [`VerifiedArtifactProgram`].
 
 use tiler_ir::kernel::{AddressSpace, BufferAccess, CanonicalKernelIdentity, KernelType};
+use tiler_ir::program::abi::{PreparedEntryTargetRequirement, TargetPropertyRequirementRelation};
 use tiler_ir::program::{
     ByteWindow, MaterializedValueRef, StageRef, StorageEncoding, StorageScalar, ValueRole,
     VerifiedKernelProgram,
@@ -39,8 +40,8 @@ use super::codec::{
 };
 use super::error::{ArtifactDiagnostic, ArtifactEntityKind};
 use super::expr::{
-    AbiBinaryOp, AbiEvaluationError, AbiFacts, AbiRoot, AbiType, AbiUnaryOp, AbiValue,
-    AvailabilityPhase, ExprNode, evaluate,
+    AbiBinaryOp, AbiEvaluationError, AbiFacts, AbiRoot, AbiType, AbiUnaryOp, AbiValue, ExprNode,
+    evaluate,
 };
 use super::handles::PayloadId;
 use super::keys::{
@@ -141,7 +142,16 @@ use super::keys::{
 /// or convergence proof. Removing its four bytes changes the framing of every
 /// following entry field, so the old and corrected subjects need incomparable
 /// domains rather than two interpretations of one byte string.
-const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v10\0";
+///
+/// # Why this is a `v11` step
+///
+/// A deferred obligation now names the exact prepared entry whose target
+/// property must be observed and carries the complete query contract. The old
+/// record named only a phase and a compile-time capability provider, so two
+/// prepared entries sharing a property key could be answered by one global
+/// value. The new subject is deliberately incomparable with that incomplete
+/// route.
+const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v11\0";
 const STAGE_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.stage.v1\0";
 const PAYLOAD_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.payload.v1\0";
 /// Versioned domain separator of one selected provider's canonical key.
@@ -152,7 +162,7 @@ const PAYLOAD_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.payload.v1\0";
 /// `encode_identity` sorts and deduplicates these keys — so the record needs to
 /// be self-describing rather than relying on the enclosing domain.
 const PROVIDER_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.provider.v2\0";
-const DEFERRED_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.deferred.v1\0";
+const DEFERRED_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.deferred.v2\0";
 
 /// Width of the canonical length prefix [`push_len`] writes.
 ///
@@ -250,7 +260,7 @@ impl ArtifactSchema {
         program: SchemaVersion::new(1, 0),
         abi_expression: SchemaVersion::new(1, 0),
         guard_and_routing: SchemaVersion::new(1, 0),
-        target_requirement: SchemaVersion::new(1, 0),
+        target_requirement: SchemaVersion::new(2, 0),
     };
 
     /// Returns the artifact program schema version.
@@ -642,8 +652,8 @@ pub(super) struct EntryData {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct DeferredPredicateData {
     pub(super) predicate: u32,
-    pub(super) phase: AvailabilityPhase,
-    pub(super) authority: ProviderIdentity,
+    pub(super) requirement: PreparedEntryTargetRequirement,
+    pub(super) entry: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1086,16 +1096,20 @@ impl<'a> DeferredPredicateRef<'a> {
         }
     }
 
-    /// Returns the phase at which the predicate becomes decidable.
+    /// Returns the complete target-property query contract.
     #[must_use]
-    pub fn phase(self) -> AvailabilityPhase {
-        self.data().phase
+    pub fn requirement(self) -> &'a PreparedEntryTargetRequirement {
+        &self.data().requirement
     }
 
-    /// Returns the selected provider that must answer the query.
+    /// Returns the exact prepared entry whose property must be observed.
     #[must_use]
-    pub fn authority(self) -> &'a ProviderIdentity {
-        &self.data().authority
+    pub fn entry(self) -> EntryRef<'a> {
+        EntryRef {
+            artifact: self.artifact,
+            variant: self.variant,
+            entry: position(self.data().entry),
+        }
     }
 
     fn data(self) -> &'a DeferredPredicateData {
@@ -1893,12 +1907,66 @@ pub(super) fn canonical_deferred_order(
     order.sort_by(|left, right| {
         let (left, right) = (&deferred[*left], &deferred[*right]);
         compare_expr_nodes(nodes, left.predicate, right.predicate)
-            .then_with(|| left.phase.tag().cmp(&right.phase.tag()))
-            .then_with(|| left.authority.namespace().cmp(right.authority.namespace()))
-            .then_with(|| left.authority.name().cmp(right.authority.name()))
-            .then_with(|| left.authority.revision().cmp(&right.authority.revision()))
+            .then_with(|| left.entry.cmp(&right.entry))
+            .then_with(|| left.requirement.cmp(&right.requirement))
     });
     order
+}
+
+/// Proves one predicate reads the exact target-property query it declares.
+pub(super) fn deferred_predicate_matches_requirement(
+    nodes: &[ExprNode],
+    predicate: u32,
+    requirement: &PreparedEntryTargetRequirement,
+) -> bool {
+    let unsigned = |node: u32, expected: u64| {
+        matches!(
+            nodes.get(position(node)),
+            Some(ExprNode::Root(AbiRoot::UnsignedLiteral(value))) if *value == expected
+        )
+    };
+    let property = |node: u32| {
+        matches!(
+            nodes.get(position(node)),
+            Some(ExprNode::Root(AbiRoot::TargetProperty { key, phase }))
+                if key == requirement.query().key()
+                    && *phase == requirement.query().available_at()
+        )
+    };
+    let binary = |node: u32, expected: AbiBinaryOp| match nodes.get(position(node)) {
+        Some(ExprNode::Binary { op, left, right }) if *op == expected => Some((*left, *right)),
+        _ => None,
+    };
+    match requirement.relation() {
+        TargetPropertyRequirementRelation::ObservedAtLeastRequired => {
+            let Some((left, right)) = binary(predicate, AbiBinaryOp::LessOrEqual) else {
+                return false;
+            };
+            unsigned(left, requirement.required()) && property(right)
+        }
+        TargetPropertyRequirementRelation::ObservedEqualsRequired => {
+            let Some((left, right)) = binary(predicate, AbiBinaryOp::Equal) else {
+                return false;
+            };
+            unsigned(left, requirement.required()) && property(right)
+        }
+        TargetPropertyRequirementRelation::RequiredImpliesObserved => {
+            let Some((required_is_zero, observed_nonzero)) = binary(predicate, AbiBinaryOp::Or)
+            else {
+                return false;
+            };
+            let Some((required, zero)) = binary(required_is_zero, AbiBinaryOp::Equal) else {
+                return false;
+            };
+            let Some((one, observed)) = binary(observed_nonzero, AbiBinaryOp::LessOrEqual) else {
+                return false;
+            };
+            unsigned(required, requirement.required())
+                && unsigned(zero, 0)
+                && unsigned(one, 1)
+                && property(observed)
+        }
+    }
 }
 
 /// The canonical order of one entry's launch preconditions.
@@ -2118,17 +2186,13 @@ pub(super) fn deferred_key(
 ) -> Vec<u8> {
     let exact = DEFERRED_KEY_DOMAIN.len()
         + size_of::<u64>()
-        + 1
-        + framed(predicate.authority.namespace().len())
-        + framed(predicate.authority.name().len())
-        + size_of::<u32>();
+        + size_of::<u32>()
+        + framed(predicate.requirement.canonical_bytes().len());
     let mut bytes = Vec::with_capacity(exact);
     bytes.extend_from_slice(DEFERRED_KEY_DOMAIN);
     push_abi_reference(&mut bytes, arena, predicate.predicate);
-    bytes.push(predicate.phase.tag());
-    push_slice(&mut bytes, predicate.authority.namespace().as_bytes());
-    push_slice(&mut bytes, predicate.authority.name().as_bytes());
-    bytes.extend_from_slice(&predicate.authority.revision().to_be_bytes());
+    bytes.extend_from_slice(&predicate.entry.to_be_bytes());
+    push_slice(&mut bytes, &predicate.requirement.canonical_bytes());
     debug_assert_eq!(bytes.len(), exact, "deferred key capacity is exact");
     bytes
 }

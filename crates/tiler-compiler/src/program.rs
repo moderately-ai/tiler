@@ -39,6 +39,7 @@ use tiler_ir::program::abi::{
     evaluate as abi_evaluate,
 };
 
+use crate::feasibility::DeferredPredicate;
 use crate::feasibility::{FeasibilityRuleSetIdentity, GOVERNED_FEASIBILITY_RULE_SET};
 use crate::physical::{
     NumericalRealization, RegionId, VerifiedKernel, VerifiedScheduledRegion,
@@ -113,6 +114,7 @@ pub(crate) struct ArtifactConstructionPlan {
     /// layer records them as two references for exactly that reason.
     feasibility_rule_set: FeasibilityRuleSetIdentity,
     entry_regions: Vec<RegionId>,
+    entry_deferred_predicates: Vec<EntryDeferredPredicate>,
     /// Arena position of the guard deciding whether this plan may be routed to.
     ///
     /// Named for what it decides rather than for "routing": the portfolio-level
@@ -124,6 +126,25 @@ pub(crate) struct ArtifactConstructionPlan {
     verified_program: KernelProgram,
     verified_schedules: Vec<VerifiedScheduledRegion>,
     verified_kernels: Vec<VerifiedKernel>,
+}
+
+/// One compiler-minted deferred predicate bound to its exact program entry.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct EntryDeferredPredicate {
+    entry: u32,
+    predicate: DeferredPredicate,
+}
+
+impl EntryDeferredPredicate {
+    /// The zero-based program-entry ordinal whose prepared subject is queried.
+    pub(crate) const fn entry(&self) -> u32 {
+        self.entry
+    }
+
+    /// The typed predicate and executable query contract.
+    pub(crate) const fn predicate(&self) -> &DeferredPredicate {
+        &self.predicate
+    }
 }
 
 impl KernelProgram {
@@ -153,6 +174,11 @@ impl KernelProgram {
 impl ArtifactConstructionPlan {
     pub(crate) fn lowering_providers(&self) -> &[LoweringProviderIdentity] {
         &self.lowering_providers
+    }
+
+    /// Returns compiler-minted deferred predicates in entry then predicate order.
+    pub(crate) fn entry_deferred_predicates(&self) -> &[EntryDeferredPredicate] {
+        &self.entry_deferred_predicates
     }
 
     /// Returns the target-bound program whose ABI contract this plan packages.
@@ -811,6 +837,25 @@ pub(crate) fn build_artifact_plan(
             .core
             .stages()
             .map(|stage| stage.kernel().scheduled_region())
+            .collect(),
+        entry_deferred_predicates: scheduled
+            .iter()
+            .enumerate()
+            .flat_map(|(entry, region)| {
+                region
+                    .admission()
+                    .deferred()
+                    .into_iter()
+                    .flat_map(move |deferred| {
+                        deferred.predicates().iter().cloned().map(move |predicate| {
+                            EntryDeferredPredicate {
+                                entry: u32::try_from(entry)
+                                    .expect("program stage counts are bounded below u32"),
+                                predicate,
+                            }
+                        })
+                    })
+            })
             .collect(),
         applicability_guard: program.core.applicability_guard(),
         lowering_providers: providers,

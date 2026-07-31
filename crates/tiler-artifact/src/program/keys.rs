@@ -51,28 +51,24 @@ use super::error::{ArtifactBuildError, ArtifactKeyKind};
 
 /// Maximum UTF-8 byte length of one governed artifact key.
 pub const MAX_GOVERNED_KEY_BYTES: usize = 256;
-/// Maximum byte length of one digest-shaped opaque identity.
+/// Maximum byte length of a fixed-width digest-shaped opaque identity.
 ///
 /// This bounds [`PayloadDigest`], which is fixed-width under the governed digest
-/// algorithm and cannot approach it, and [`TargetProfileDescriptorDigest`], whose
-/// bytes
-/// are a canonical descriptor encoding and can. For that subject this is a
-/// **resource ceiling, not the governing bound**: `tiler_compiler` publishes
-/// `MAX_TARGET_PROFILE_DESCRIPTOR_BYTES` and refuses at the mint site, because
-/// the authority that can name the profile is the one that can explain the
-/// refusal. The two numbers are equal today and **nothing checks that they stay
-/// equal** — neither crate depends on the other, and no library crate depends on
-/// both — so raising either requires reading the other.
-///
-/// **Measurement** on this checkout: the standard profile's descriptor is 249
-/// bytes and does not grow with the program, only with the profile's capability
-/// and honourability facts.
+/// algorithm and cannot approach it.
 ///
 /// It does **not** bound a [`BackendEntryKey`]. That is a canonical kernel
 /// identity and takes `tiler_ir::kernel::MAX_KERNEL_IDENTITY_BYTES`, the exact
 /// constant that mints one; the 1,024 shared here admitted only a degenerate
 /// single-contributor reduction and refused every real one.
 pub const MAX_OPAQUE_IDENTITY_BYTES: usize = 1_024;
+/// Maximum byte length of a target-profile descriptor identity.
+///
+/// Unlike a digest, this is the canonical descriptor itself. It grows with the
+/// profile's typed capability, query, dtype, and numerical declarations, so it
+/// has its own resource ceiling rather than borrowing the unrelated payload
+/// digest bound. `tiler_compiler::feasibility` owns the equal governing mint
+/// bound; neither crate depends on the other, so a change requires checking both.
+pub const MAX_TARGET_PROFILE_DESCRIPTOR_BYTES: usize = 64 * 1_024;
 
 fn validate_key(value: &str, kind: ArtifactKeyKind) -> Result<(), ArtifactBuildError> {
     if value.is_empty() {
@@ -239,8 +235,8 @@ opaque_identity!(
 opaque_identity!(
     TargetProfileDescriptorDigest,
     ArtifactKeyKind::TargetProfileDescriptor,
-    MAX_OPAQUE_IDENTITY_BYTES,
-    "[`ArtifactBuildError::KeyTooLong`] beyond [`MAX_OPAQUE_IDENTITY_BYTES`].",
+    MAX_TARGET_PROFILE_DESCRIPTOR_BYTES,
+    "[`ArtifactBuildError::KeyTooLong`] beyond [`MAX_TARGET_PROFILE_DESCRIPTOR_BYTES`].",
     "The opaque descriptor identity of one declared target profile.",
     "",
     "Named a digest, and not one: `tiler-compiler` emits the canonical descriptor",
@@ -249,7 +245,7 @@ opaque_identity!(
     "",
     "The governing bound is `tiler_compiler`'s `MAX_TARGET_PROFILE_DESCRIPTOR_BYTES`,",
     "enforced where a descriptor is minted, because the authority that can name the",
-    "profile is the one that can explain the refusal. [`MAX_OPAQUE_IDENTITY_BYTES`]",
+    "profile is the one that can explain the refusal. [`MAX_TARGET_PROFILE_DESCRIPTOR_BYTES`]",
     "is what this crate will hold, and it still refuses past it, because it",
     "validates what it is handed rather than trusting where it came from.",
 );

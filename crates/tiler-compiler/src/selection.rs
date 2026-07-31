@@ -1541,7 +1541,8 @@ fn aggregate_guards(selections: &[RegionSelection]) -> Vec<ResolvedPredicate> {
         .flat_map(|selection| {
             selection
                 .implementation
-                .feasibility()
+                .admission()
+                .proven()
                 .predicates()
                 .iter()
                 .copied()
@@ -1573,7 +1574,8 @@ fn aggregate_honoured(selections: &[RegionSelection]) -> Vec<HonouredDimension> 
         .flat_map(|selection| {
             selection
                 .implementation
-                .feasibility()
+                .admission()
+                .proven()
                 .honoured()
                 .iter()
                 .cloned()
@@ -1737,7 +1739,7 @@ mod tests {
     fn serial_sum_program() -> SemanticProgram {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder
-            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 2]))
             .unwrap();
         let scale = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
         let bias = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
@@ -2895,7 +2897,7 @@ mod tests {
     fn diamond_program() -> SemanticProgram {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder
-            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 2]))
             .unwrap();
         let constant = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
         let shared = F32Multiply::apply(&mut builder, input, constant).unwrap();

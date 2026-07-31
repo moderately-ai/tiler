@@ -36,6 +36,7 @@ use crate::request::{
 };
 use std::collections::BTreeMap;
 use tiler_ir::kernel::{BinaryOp, CompareOp, ConvertOp, KernelConstant, OperationView};
+use tiler_ir::program::abi::{AvailabilityPhase, TargetPropertyRequirementRelation};
 use tiler_ir::program::{DependencyReasonView, ValueRole};
 use tiler_ir::semantic::{
     CANONICAL_F32_ARITHMETIC_NAN_BITS, F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey,
@@ -48,7 +49,7 @@ use tiler_reference::{
 
 fn semantic(reverse_constants: bool) -> SemanticProgram {
     semantic_case(
-        Shape::from_dims([2, 3]),
+        Shape::from_dims([2, 2]),
         2.0_f32.to_bits(),
         1.0_f32.to_bits(),
         reverse_constants,
@@ -135,7 +136,7 @@ fn algebraic_add_chain() -> SemanticProgram {
 fn tensor_add_chain() -> SemanticProgram {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let input = builder
-        .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
+        .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 2]))
         .unwrap();
     let first = F32Constant::apply(&mut builder, 1.0e20_f32.to_bits()).unwrap();
     let second = F32Constant::apply(&mut builder, (-1.0e20_f32).to_bits()).unwrap();
@@ -478,8 +479,8 @@ fn product_is_deterministic_and_preserves_the_materialized_boundary() {
     assert_eq!(first, second);
     let target = &first.targets[0];
     let rendered = target.explain.render();
-    assert!(rendered.starts_with("tiler-explain-v5 request="));
-    assert!(rendered.contains("feasibility:threads-per-workgroup:admitted"));
+    assert!(rendered.starts_with("tiler-explain-v6 request="));
+    assert!(rendered.contains("feasibility:threads-per-workgroup:deferred"));
     assert!(rendered.contains("feasibility:buffer-bindings:admitted"));
     assert!(rendered.contains("event=selection:tiler.selection.structural-pareto.v1:selected"));
     assert_eq!(target.portfolio.alternatives.len(), 2);
@@ -512,14 +513,14 @@ fn product_is_deterministic_and_preserves_the_materialized_boundary() {
         materialized.kernels[1].buffers().next().unwrap().tensor,
         TensorRole::Intermediate
     );
-    assert_eq!(reduction_loop(&materialized.kernels[1]), Some((1, 3)));
+    assert_eq!(reduction_loop(&materialized.kernels[1]), Some((1, 2)));
     assert_eq!(fused.program.stage_count(), 1);
     assert_eq!(fused.program.core().values().len(), 2);
     // The exact aggregate structural cost is the sum of the per-region
     // estimates plus the cover's deliberate cross-region materializations.
     assert_eq!(materialized.structural_cost.dispatch_count(), 2);
-    assert_eq!(materialized.structural_cost.launched_threads(), 8);
-    assert_eq!(materialized.structural_cost.temporary_bytes(), 24);
+    assert_eq!(materialized.structural_cost.launched_threads(), 6);
+    assert_eq!(materialized.structural_cost.temporary_bytes(), 16);
     assert_eq!(materialized.structural_cost.materialization_count(), 1);
     assert_eq!(fused.structural_cost.dispatch_count(), 1);
     assert_eq!(fused.structural_cost.launched_threads(), 2);
@@ -564,7 +565,7 @@ fn product_is_deterministic_and_preserves_the_materialized_boundary() {
         expected_providers
     );
     assert_eq!(fused.artifact_plan.lowering_providers(), expected_providers);
-    assert_eq!(reduction_loop(&fused.kernels[0]), Some((1, 3)));
+    assert_eq!(reduction_loop(&fused.kernels[0]), Some((1, 2)));
     assert!(target.explain.records().iter().any(|record| {
         record.rule().key().as_str() == "compile.plan.boundary"
             && record.event().disposition() == ExplainDisposition::Admitted
@@ -785,7 +786,7 @@ fn every_wired_authority_emits_its_typed_explain_records() {
         .find(|record| record.rule().key().as_str() == "fusion.legality.v1")
         .expect("a fusion-legality record");
     assert_eq!(legality.event().disposition(), ExplainDisposition::Admitted);
-    assert!(trace.render().starts_with("tiler-explain-v5 request="));
+    assert!(trace.render().starts_with("tiler-explain-v6 request="));
 }
 
 /// Asserts the honourability half of the end-to-end explain conformance.
@@ -858,7 +859,7 @@ fn end_to_end_explain_emitter_has_exhaustive_typed_conformance() {
             continue;
         };
         let unit_is_exact = match predicate.as_str() {
-            "grid-axis" | "threads-per-workgroup" => {
+            "grid-axis" => {
                 matches!(
                     (required, available),
                     (Quantity::Threads(_), Quantity::Threads(_))
@@ -901,9 +902,75 @@ fn end_to_end_explain_emitter_has_exhaustive_typed_conformance() {
             ("grid-axis", 3),
             ("index-arithmetic-u64", 3),
             ("local-memory-bytes", 3),
-            ("threads-per-workgroup", 3),
         ])
     );
+
+    let materialized = alternative(&product, ProgramAlternativeKind::Materialized);
+    let fused = alternative(&product, ProgramAlternativeKind::Fused);
+    let mut deferred_subjects = BTreeMap::new();
+    for record in trace.records() {
+        let ExplainEvent::DeferredTargetRequirement {
+            entry,
+            predicate,
+            required,
+            requirement,
+        } = record.event()
+        else {
+            continue;
+        };
+        assert_eq!(predicate.as_str(), "threads-per-workgroup");
+        assert_eq!(*required, Quantity::Threads(1));
+        assert_eq!(requirement.required(), 1);
+        assert_eq!(
+            requirement.relation(),
+            TargetPropertyRequirementRelation::ObservedAtLeastRequired
+        );
+        let query = requirement.query();
+        assert_eq!(
+            query.key().as_str(),
+            "tiler.target.prepared-entry.max-threads-per-workgroup.v1"
+        );
+        assert_eq!(
+            query.available_at(),
+            AvailabilityPhase::PreparedKernelPreflight
+        );
+        assert_eq!(query.provider().namespace(), "tiler");
+        assert_eq!(query.provider().name(), "prepared-entry-properties");
+        assert_eq!(query.provider().revision(), 1);
+        assert_eq!(record.subjects().len(), 1);
+        assert_eq!(
+            deferred_subjects.insert(
+                (record.subjects()[0].key().as_str().to_owned(), *entry,),
+                1_usize,
+            ),
+            None,
+            "each exact alternative/region/entry subject is reported once"
+        );
+    }
+    let expected_deferred_subjects = [materialized, fused]
+        .into_iter()
+        .flat_map(|alternative| {
+            alternative
+                .scheduled_regions
+                .iter()
+                .enumerate()
+                .map(move |(entry, scheduled)| {
+                    (
+                        (
+                            format!(
+                                "{}/region:{}",
+                                alternative.stable_id,
+                                scheduled.region().index.id.get()
+                            ),
+                            u32::try_from(entry).unwrap(),
+                        ),
+                        1_usize,
+                    )
+                })
+        })
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(deferred_subjects, expected_deferred_subjects);
+    assert_eq!(deferred_subjects.len(), 3);
 
     assert_honoured_dimensions_are_exhaustive(trace);
 
@@ -917,8 +984,6 @@ fn end_to_end_explain_emitter_has_exhaustive_typed_conformance() {
             _ => None,
         })
         .collect::<BTreeMap<_, _>>();
-    let materialized = alternative(&product, ProgramAlternativeKind::Materialized);
-    let fused = alternative(&product, ProgramAlternativeKind::Fused);
     assert_eq!(
         selections.get(&materialized.stable_id),
         Some(&SelectionOutcome::Dominated)
@@ -931,7 +996,7 @@ fn end_to_end_explain_emitter_has_exhaustive_typed_conformance() {
 
 #[test]
 fn normalization_converges_duplicated_and_shared_constants_on_one_portfolio() {
-    let shape = Shape::from_dims([2, 3]);
+    let shape = Shape::from_dims([2, 2]);
     let bits = 2.0_f32.to_bits();
     let duplicated = semantic_case(shape.clone(), bits, bits, false);
     let shared = shared_constant_semantic(shape, bits);
@@ -947,7 +1012,7 @@ fn normalization_converges_duplicated_and_shared_constants_on_one_portfolio() {
     let rendered = from_duplicated.targets[0].compilation_explain.render();
     let request_headers = rendered
         .lines()
-        .filter(|line| line.starts_with("tiler-explain-v5 request="))
+        .filter(|line| line.starts_with("tiler-explain-v6 request="))
         .collect::<Vec<_>>();
     assert_eq!(request_headers.len(), 2);
     assert_ne!(
@@ -1007,7 +1072,7 @@ fn normalization_converges_duplicated_and_shared_constants_on_one_portfolio() {
 /// cover must materialize it once rather than duplicate its producer.
 #[test]
 fn shared_constant_fan_out_is_materialized_once_and_never_duplicated() {
-    let shared = shared_constant_semantic(Shape::from_dims([2, 3]), 2.0_f32.to_bits());
+    let shared = shared_constant_semantic(Shape::from_dims([2, 2]), 2.0_f32.to_bits());
     let product = compile(CompilationRequest::governed(&shared)).unwrap();
     for alternative in &product.targets[0].portfolio.alternatives {
         assert!(
@@ -1418,7 +1483,7 @@ fn infeasible_baseline_does_not_suppress_a_feasible_fused_plan() {
                 record.event(),
                 ExplainEvent::Feasibility {
                     required: Quantity::Threads(140_000),
-                    available: Quantity::Threads(65_535),
+                    available: Quantity::Threads(4),
                     ..
                 }
             )
@@ -1432,6 +1497,49 @@ fn infeasible_baseline_does_not_suppress_a_feasible_fused_plan() {
                 outcome: SelectionOutcome::Infeasible,
                 ..
             }
+        )
+    }));
+}
+
+#[test]
+fn the_governed_grid_authority_admits_four_and_refuses_five() {
+    let bounded = semantic_case(
+        Shape::from_dims([4, 1]),
+        2.0_f32.to_bits(),
+        1.0_f32.to_bits(),
+        false,
+    );
+    let accepted = compile(CompilationRequest::governed(&bounded))
+        .expect("the governed four-thread serial sum compiles");
+    assert!(accepted.targets[0].compiled().is_some());
+
+    let oversized = semantic_case(
+        Shape::from_dims([5, 1]),
+        2.0_f32.to_bits(),
+        1.0_f32.to_bits(),
+        false,
+    );
+    let refused = compile(CompilationRequest::governed(&oversized))
+        .expect("a target-local refusal remains an ordered compilation outcome");
+    let CompileError::Explained { source, explain } = refused.targets[0]
+        .failure()
+        .expect("the five-thread target is refused")
+    else {
+        panic!("target compilation failures retain their explain trace");
+    };
+    assert!(matches!(
+        source.as_ref(),
+        CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(PhysicalError::Target { .. }))
+    ));
+    assert!(explain.records().iter().any(|record| {
+        matches!(
+            record.event(),
+            ExplainEvent::Feasibility {
+                predicate,
+                required: Quantity::Threads(5),
+                available: Quantity::Threads(4),
+                ..
+            } if predicate.as_str() == "grid-axis"
         )
     }));
 }
@@ -1662,8 +1770,8 @@ fn structural_policy_requires_pareto_dominance_instead_of_guessing_latency() {
 #[test]
 fn structured_fused_body_interpreter_matches_reference_evaluator() {
     assert_fused_matches_reference(
-        Shape::from_dims([2, 3]),
-        vec![1.0, -2.0, 3.5, f32::MIN_POSITIVE, -0.0, 0.0],
+        Shape::from_dims([2, 2]),
+        vec![1.0, -2.0, 3.5, f32::MIN_POSITIVE],
         2.0_f32.to_bits(),
         1.0_f32.to_bits(),
     );
@@ -2553,7 +2661,7 @@ fn mixed_frontier_records_exact_opaque_call_rejection_detail() {
         "a local rejection is never cost evidence"
     );
     let rendered = trace.render();
-    assert!(rendered.starts_with("tiler-explain-v5 "));
+    assert!(rendered.starts_with("tiler-explain-v6 "));
     assert!(rendered.contains("opaque-call:call-owner/mystery@3[input=input,output=output]"));
     assert!(rendered.contains("provider:tiler.test.physical::opaque@7"));
     assert!(rendered.contains("admitted-count:count=1"));

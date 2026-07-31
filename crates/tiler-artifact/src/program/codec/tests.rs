@@ -20,10 +20,11 @@
 use std::time::Instant;
 
 use tiler_ir::kernel::{AddressSpace, BufferAccess, KernelType};
+use tiler_ir::program::abi::TargetPropertyRequirementRelation;
 use tiler_ir::program::{StorageEncoding, StorageScalar};
 use tiler_ir::schedule::{ExceptionalValueAssumption, NumericalPermission, ValueDomainProvenance};
 use tiler_ir::semantic::{
-    InputKey, OutputKey, ProviderIdentity, STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE,
+    InputKey, OutputKey, STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE,
     STRICT_AFFINE_ZERO_POINT_ROLE,
 };
 use tiler_ir::shape::Axis;
@@ -49,8 +50,8 @@ use super::super::model::{
 use super::super::tests::{
     ELEMENT_BYTES, Formulas, OTHER_SCALE_BITS, SCALE_BITS, SCRATCH_OFFSET, build_artifact,
     default_artifact, formulas, fused_program, lowering_provider, partial_window_artifact, payload,
-    profile, selection, semantic_program, spare_provider, strict_affine_u4_dequantize_artifact,
-    variant,
+    prepared_requirement, profile, selection, semantic_program, spare_provider,
+    strict_affine_u4_dequantize_artifact, variant,
 };
 use super::super::{
     ArtifactProgramBuilder, CompilationEnvironment, MAX_VARIANT_ENTRIES, VerifiedArtifactProgram,
@@ -180,21 +181,14 @@ fn guarded_artifact() -> VerifiedArtifactProgram {
     draft.select_provider(selection(provider.clone())).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
     let formulas = formulas(&mut draft);
-    let property = draft
-        .push_root(AbiRoot::TargetProperty {
-            key: super::super::expr::TargetPropertyKey::new("tiler.target.max-threads").unwrap(),
-            phase: AvailabilityPhase::LaunchPreflight,
-        })
-        .unwrap();
-    let predicate = draft
-        .push_binary(AbiBinaryOp::LessOrEqual, formulas.one, property)
-        .unwrap();
     let mut spec = variant(&formulas, descriptor, b"fused");
     spec.entries[0].launch.preconditions = vec![formulas.always];
     spec.deferred_predicates = vec![super::super::DeferredPredicateSpec {
-        predicate,
-        phase: AvailabilityPhase::LaunchPreflight,
-        authority: provider,
+        requirement: prepared_requirement(
+            1,
+            TargetPropertyRequirementRelation::ObservedAtLeastRequired,
+        ),
+        entry: 0,
     }];
     draft.push_variant(&program, spec).unwrap();
     draft.build().unwrap()
@@ -260,7 +254,7 @@ fn an_encoded_envelope_round_trips_to_an_equal_model() {
         artifact
             .canonical_identity()
             .as_bytes()
-            .starts_with(b"tiler.artifact-program.v10\0")
+            .starts_with(b"tiler.artifact-program.v11\0")
     );
 }
 
@@ -294,7 +288,7 @@ fn the_framing_header_is_the_fixed_width_it_declares() {
         &bytes[HEADER_BYTES..HEADER_BYTES + MANIFEST_DOMAIN.len()],
         MANIFEST_DOMAIN,
     );
-    assert_eq!(MANIFEST_SCHEMA, (8, 0));
+    assert_eq!(MANIFEST_SCHEMA, (9, 0));
 }
 
 #[test]
@@ -1337,7 +1331,7 @@ fn a_launch_that_contradicts_the_declared_requirements_is_rejected() {
 }
 
 #[test]
-fn a_deferred_authority_that_was_never_selected_is_rejected() {
+fn a_deferred_requirement_that_disagrees_with_its_predicate_is_rejected() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
@@ -1348,23 +1342,23 @@ fn a_deferred_authority_that_was_never_selected_is_rejected() {
     let formulas = formulas(&mut draft);
     let mut spec = variant(&formulas, descriptor, b"fused");
     spec.deferred_predicates = vec![super::super::DeferredPredicateSpec {
-        predicate: formulas.always,
-        phase: AvailabilityPhase::LaunchPreflight,
-        authority: provider,
+        requirement: prepared_requirement(
+            1,
+            TargetPropertyRequirementRelation::ObservedAtLeastRequired,
+        ),
+        entry: 0,
     }];
     draft.push_variant(&program, spec).unwrap();
     let artifact = draft.build().unwrap();
 
     let mut envelope = envelope_of(&artifact);
-    let impostor = ProviderIdentity::new("tiler-test", "impostor", 1).unwrap();
-    envelope.variants[0].deferred[0].authority = impostor.clone();
+    envelope.variants[0].deferred[0].requirement =
+        prepared_requirement(1, TargetPropertyRequirementRelation::ObservedEqualsRequired);
     let bytes = encode(&envelope).expect("a forged envelope still encodes");
     assert_eq!(
         decode(&bytes),
         Err(ArtifactCodecError::ModelRule {
-            cause: Box::new(ArtifactBuildError::UnselectedDeferredAuthority {
-                provider: Box::new(impostor),
-            }),
+            cause: Box::new(ArtifactBuildError::DeferredQueryPredicateMismatch),
         }),
     );
 }

@@ -9,20 +9,25 @@ use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tiler_ir::identity::{push_len, push_slice};
+use tiler_ir::program::abi::{
+    AvailabilityPhase, PreparedEntryTargetRequirement, TargetPropertyRequirementRelation,
+};
 use tiler_ir::schedule::ArithmeticType;
 use tiler_ir::semantic::ResolvedValueType;
 
 use crate::fusion::FusionNumericalProof;
 use crate::request::{LoweringProviderIdentity, VerifiedTargetRequest};
 
-// Schema v7 appends the bits quantity used for exact widths; v6 adds the
-// complete resolved dtype to numerical honourability; v5
+// Schema v8 appends exact prepared-entry deferred target requirements; v7
+// appends the bits quantity used for exact widths; v6 adds the complete
+// resolved dtype to numerical honourability; v5
 // appended opaque-call and provider subject kinds, the NotApplicable
 // check class and disposition, and the arithmetic dtype to numerical
-// honourability. Every earlier tag retains its v4 value. Renderer v5 appends
-// the `bits` unit without changing any existing spelling.
-pub(crate) const EXPLAIN_SCHEMA_VERSION: u32 = 7;
-pub(crate) const EXPLAIN_RENDERER_VERSION: u32 = 5;
+// honourability. Every earlier tag retains its v4 value. Renderer v6 appends
+// the deferred-requirement spelling; renderer v5 appended the `bits` unit
+// without changing any existing spelling.
+pub(crate) const EXPLAIN_SCHEMA_VERSION: u32 = 8;
+pub(crate) const EXPLAIN_RENDERER_VERSION: u32 = 6;
 const COMPILATION_EXPLAIN_SCHEMA_VERSION: u32 = 1;
 const COMPILATION_EXPLAIN_RENDERER_VERSION: u32 = 1;
 const MAX_COMPILATION_EXPLAIN_CANDIDATES: usize = 256;
@@ -110,6 +115,8 @@ pub(crate) enum ExplainStage {
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) enum ExplainDisposition {
     Admitted,
+    /// Admitted to executable planning with an exact pre-routing query.
+    DeferredAdmitted,
     RejectedIntrinsic,
     RejectedNumerical,
     RejectedTarget,
@@ -633,6 +640,19 @@ pub(crate) enum ExplainEvent {
         required: Quantity,
         available: Quantity,
     },
+    /// One unresolved hard predicate admitted through an exact prepared-entry
+    /// query before routing commit.
+    ///
+    /// `required` carries the explain vocabulary's typed unit; `requirement`
+    /// carries the executable relation and complete versioned query identity.
+    /// Their values are checked equal before the record is admitted.
+    DeferredTargetRequirement {
+        /// Zero-based program-entry ordinal whose prepared subject is queried.
+        entry: u32,
+        predicate: PredicateKey,
+        required: Quantity,
+        requirement: PreparedEntryTargetRequirement,
+    },
     /// One numerical dimension assessed against a target's declaration.
     ///
     /// This is the rejection shape ADR 0076 item 5 requires and the record that
@@ -686,9 +706,9 @@ impl ExplainEvent {
             Self::Check { stage, .. }
             | Self::BudgetStop { stage, .. }
             | Self::CompilerFailure { stage, .. } => *stage,
-            Self::Feasibility { .. } | Self::NumericalHonourability { .. } => {
-                ExplainStage::TargetFeasibility
-            }
+            Self::Feasibility { .. }
+            | Self::DeferredTargetRequirement { .. }
+            | Self::NumericalHonourability { .. } => ExplainStage::TargetFeasibility,
             Self::DeferredCapability { .. } => ExplainStage::CapabilityResolution,
             Self::CostAssessment { .. } => ExplainStage::Costing,
             Self::Selection { .. }
@@ -715,6 +735,7 @@ impl ExplainEvent {
                 outcome: HonourabilityOutcome::Honoured { .. },
                 ..
             } => ExplainDisposition::Admitted,
+            Self::DeferredTargetRequirement { .. } => ExplainDisposition::DeferredAdmitted,
             Self::Check {
                 assessment:
                     PredicateAssessment {
@@ -888,6 +909,15 @@ impl ExplainEvent {
                 let exceeds = required.value() > available.value();
                 if matches!(outcome, FeasibilityOutcome::Admitted) == exceeds {
                     return Err(ExplainError::InvalidQuantityRelation);
+                }
+            }
+            Self::DeferredTargetRequirement {
+                required,
+                requirement,
+                ..
+            } => {
+                if required.value() != requirement.required() {
+                    return Err(ExplainError::RequirementQuantityMismatch);
                 }
             }
             Self::CostAssessment { basis, terms, .. } => {
@@ -2186,6 +2216,28 @@ fn render_event(output: &mut String, event: &ExplainEvent) {
                 available.value()
             );
         }
+        ExplainEvent::DeferredTargetRequirement {
+            entry,
+            predicate,
+            required,
+            requirement,
+        } => {
+            let query = requirement.query();
+            let provider = query.provider();
+            let _ = write!(
+                output,
+                "feasibility:{}:deferred:entry={entry}:{}:{}={}:query={}@{}:provider={}::{}@{}",
+                predicate.as_str(),
+                target_requirement_relation_name(requirement.relation()),
+                quantity_name(*required),
+                required.value(),
+                query.key().as_str(),
+                availability_phase_name(query.available_at()),
+                provider.namespace(),
+                provider.name(),
+                provider.revision(),
+            );
+        }
         ExplainEvent::NumericalHonourability {
             dimension,
             arithmetic,
@@ -2369,6 +2421,7 @@ const fn stage_name(stage: ExplainStage) -> &'static str {
 const fn disposition_name(disposition: ExplainDisposition) -> &'static str {
     match disposition {
         ExplainDisposition::Admitted => "admitted",
+        ExplainDisposition::DeferredAdmitted => "deferred-admitted",
         ExplainDisposition::RejectedIntrinsic => "rejected-intrinsic",
         ExplainDisposition::RejectedNumerical => "rejected-numerical",
         ExplainDisposition::RejectedTarget => "rejected-target",
@@ -2383,6 +2436,26 @@ const fn disposition_name(disposition: ExplainDisposition) -> &'static str {
         ExplainDisposition::Selected => "selected",
         ExplainDisposition::CompilerFailure => "compiler-failure",
         ExplainDisposition::NotApplicable => "not-applicable",
+    }
+}
+
+const fn target_requirement_relation_name(
+    relation: TargetPropertyRequirementRelation,
+) -> &'static str {
+    match relation {
+        TargetPropertyRequirementRelation::ObservedAtLeastRequired => "observed-at-least-required",
+        TargetPropertyRequirementRelation::ObservedEqualsRequired => "observed-equals-required",
+        TargetPropertyRequirementRelation::RequiredImpliesObserved => "required-implies-observed",
+    }
+}
+
+const fn availability_phase_name(phase: AvailabilityPhase) -> &'static str {
+    match phase {
+        AvailabilityPhase::CompileProfile => "compile-profile",
+        AvailabilityPhase::ArtifactEvidence => "artifact-evidence",
+        AvailabilityPhase::LiveDevicePreflight => "live-device-preflight",
+        AvailabilityPhase::PreparedKernelPreflight => "prepared-kernel-preflight",
+        AvailabilityPhase::LaunchPreflight => "launch-preflight",
     }
 }
 
@@ -2495,6 +2568,7 @@ pub(crate) enum ExplainError {
     ProviderAuthorityMismatch,
     QuantityKindMismatch,
     InvalidQuantityRelation,
+    RequirementQuantityMismatch,
     UnknownQuantityUnit,
     EmptyCostEvidence,
     /// A detail record would have exceeded the retained-trace ceiling.
@@ -2667,6 +2741,18 @@ fn encode_event(bytes: &mut Vec<u8>, event: &ExplainEvent) {
             }
             encode_quantity(bytes, *required);
             encode_quantity(bytes, *available);
+        }
+        ExplainEvent::DeferredTargetRequirement {
+            entry,
+            predicate,
+            required,
+            requirement,
+        } => {
+            bytes.push(8);
+            bytes.extend_from_slice(&entry.to_be_bytes());
+            push_slice(bytes, predicate.as_str().as_bytes());
+            encode_quantity(bytes, *required);
+            push_slice(bytes, &requirement.canonical_bytes());
         }
         ExplainEvent::NumericalHonourability {
             dimension,
@@ -2927,6 +3013,7 @@ const fn stage_tag(stage: ExplainStage) -> u8 {
 const fn disposition_tag(disposition: ExplainDisposition) -> u8 {
     match disposition {
         ExplainDisposition::Admitted => 1,
+        ExplainDisposition::DeferredAdmitted => 16,
         ExplainDisposition::RejectedIntrinsic => 2,
         ExplainDisposition::RejectedNumerical => 3,
         ExplainDisposition::RejectedTarget => 4,
@@ -2950,6 +3037,10 @@ mod tests {
     use crate::fusion::prove_fused_numerics;
     use crate::region::form_region_candidates;
     use crate::request::{CompilationRequest, verify_request};
+    use tiler_ir::program::abi::{
+        PreparedEntryTargetRequirement, TargetPropertyKey, TargetPropertyProviderIdentity,
+        TargetPropertyQuery, TargetPropertyRequirementRelation,
+    };
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
         SemanticProgramBuilder, StrictSerialF32Sum,
@@ -3007,20 +3098,156 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy)]
+    struct DeferredTargetRequirementFixture {
+        entry: u32,
+        predicate: &'static str,
+        required: Quantity,
+        property: &'static str,
+        relation: TargetPropertyRequirementRelation,
+        provider_namespace: &'static str,
+        provider_name: &'static str,
+        provider_revision: u32,
+    }
+
+    fn deferred_target_requirement_event(
+        fixture: DeferredTargetRequirementFixture,
+    ) -> ExplainEvent {
+        let query = TargetPropertyQuery::new(
+            TargetPropertyKey::new(fixture.property).unwrap(),
+            AvailabilityPhase::PreparedKernelPreflight,
+            TargetPropertyProviderIdentity::new(
+                fixture.provider_namespace,
+                fixture.provider_name,
+                fixture.provider_revision,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let requirement =
+            PreparedEntryTargetRequirement::new(query, fixture.required.value(), fixture.relation)
+                .unwrap();
+        ExplainEvent::DeferredTargetRequirement {
+            entry: fixture.entry,
+            predicate: PredicateKey::new(fixture.predicate).unwrap(),
+            required: fixture.required,
+            requirement,
+        }
+    }
+
     #[test]
     fn explain_vocabulary_is_append_only_and_versioned() {
-        assert_eq!(EXPLAIN_SCHEMA_VERSION, 7);
-        assert_eq!(EXPLAIN_RENDERER_VERSION, 5);
+        assert_eq!(EXPLAIN_SCHEMA_VERSION, 8);
+        assert_eq!(EXPLAIN_RENDERER_VERSION, 6);
         assert_eq!(subject_kind_tag(SubjectKind::Alternative), 12);
         assert_eq!(subject_kind_tag(SubjectKind::OpaqueCall), 13);
         assert_eq!(subject_kind_tag(SubjectKind::Provider), 14);
         assert_eq!(disposition_tag(ExplainDisposition::PreferencePruned), 14);
         assert_eq!(disposition_tag(ExplainDisposition::NotApplicable), 15);
+        assert_eq!(disposition_tag(ExplainDisposition::DeferredAdmitted), 16);
         assert_eq!(subject_kind_name(SubjectKind::OpaqueCall), "opaque-call");
         assert_eq!(subject_kind_name(SubjectKind::Provider), "provider");
         assert_eq!(
             disposition_name(ExplainDisposition::NotApplicable),
             "not-applicable"
+        );
+        assert_eq!(
+            disposition_name(ExplainDisposition::DeferredAdmitted),
+            "deferred-admitted"
+        );
+        let mut deferred = Vec::new();
+        encode_event(
+            &mut deferred,
+            &deferred_target_requirement_event(DeferredTargetRequirementFixture {
+                entry: 0,
+                predicate: "threads-per-workgroup",
+                required: Quantity::Threads(1),
+                property: "tiler.target.prepared-entry.max-threads-per-workgroup.v1",
+                relation: TargetPropertyRequirementRelation::ObservedAtLeastRequired,
+                provider_namespace: "tiler",
+                provider_name: "prepared-entry-properties",
+                provider_revision: 1,
+            }),
+        );
+        assert_eq!(deferred[0], 8);
+    }
+
+    #[test]
+    fn deferred_target_requirement_identity_and_rendering_are_complete() {
+        let fixture = DeferredTargetRequirementFixture {
+            entry: 0,
+            predicate: "threads-per-workgroup",
+            required: Quantity::Threads(1),
+            property: "tiler.target.prepared-entry.max-threads-per-workgroup.v1",
+            relation: TargetPropertyRequirementRelation::ObservedAtLeastRequired,
+            provider_namespace: "tiler",
+            provider_name: "prepared-entry-properties",
+            provider_revision: 1,
+        };
+        let baseline = deferred_target_requirement_event(fixture);
+        assert_eq!(baseline.validate(), Ok(()));
+        assert_eq!(baseline.stage(), ExplainStage::TargetFeasibility);
+        assert_eq!(baseline.disposition(), ExplainDisposition::DeferredAdmitted);
+        let mut baseline_identity = Vec::new();
+        encode_event(&mut baseline_identity, &baseline);
+        for changed in [
+            deferred_target_requirement_event(DeferredTargetRequirementFixture {
+                entry: 1,
+                ..fixture
+            }),
+            deferred_target_requirement_event(DeferredTargetRequirementFixture {
+                predicate: "grid-axis",
+                ..fixture
+            }),
+            deferred_target_requirement_event(DeferredTargetRequirementFixture {
+                required: Quantity::Count(1),
+                ..fixture
+            }),
+            deferred_target_requirement_event(DeferredTargetRequirementFixture {
+                required: Quantity::Threads(2),
+                ..fixture
+            }),
+            deferred_target_requirement_event(DeferredTargetRequirementFixture {
+                relation: TargetPropertyRequirementRelation::ObservedEqualsRequired,
+                ..fixture
+            }),
+            deferred_target_requirement_event(DeferredTargetRequirementFixture {
+                property: "tiler.target.prepared-entry.neighbouring-limit.v1",
+                ..fixture
+            }),
+            deferred_target_requirement_event(DeferredTargetRequirementFixture {
+                provider_namespace: "neighbour",
+                ..fixture
+            }),
+            deferred_target_requirement_event(DeferredTargetRequirementFixture {
+                provider_name: "neighbouring-provider",
+                ..fixture
+            }),
+            deferred_target_requirement_event(DeferredTargetRequirementFixture {
+                provider_revision: 2,
+                ..fixture
+            }),
+        ] {
+            let mut changed_identity = Vec::new();
+            encode_event(&mut changed_identity, &changed);
+            assert_ne!(baseline_identity, changed_identity);
+        }
+
+        let mut rendered = String::new();
+        render_event(&mut rendered, &baseline);
+        assert_eq!(
+            rendered,
+            "feasibility:threads-per-workgroup:deferred:entry=0:observed-at-least-required:threads=1:query=tiler.target.prepared-entry.max-threads-per-workgroup.v1@prepared-kernel-preflight:provider=tiler::prepared-entry-properties@1"
+        );
+
+        let mut mismatched = baseline;
+        let ExplainEvent::DeferredTargetRequirement { required, .. } = &mut mismatched else {
+            panic!("fixture is one deferred target requirement");
+        };
+        *required = Quantity::Threads(2);
+        assert_eq!(
+            mismatched.validate(),
+            Err(ExplainError::RequirementQuantityMismatch)
         );
     }
 
@@ -3265,7 +3492,10 @@ mod tests {
                 // Rebaselined when complete profile declaration v9 replaced
                 // conflated index width with operation-complete u64 arithmetic
                 // support and an explicitly absent address-width authority.
-                "tiler-explain-v5 request=a3c962f558f61a1a\n",
+                // Rebaselined when the workgroup limit moved from a compile-time
+                // global fact to a prepared-entry target requirement. The
+                // request subject now binds the complete query and its provider.
+                "tiler-explain-v6 request=83b9baadbea45e19\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )
@@ -4174,7 +4404,7 @@ mod tests {
         assert_eq!(
             forward
                 .render()
-                .matches("tiler-explain-v5 request=")
+                .matches("tiler-explain-v6 request=")
                 .count(),
             3,
             "the top-level selection and both complete candidate traces render",

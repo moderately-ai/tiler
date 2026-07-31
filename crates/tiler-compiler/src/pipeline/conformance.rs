@@ -277,7 +277,7 @@ fn assert_complete_partition(cover: &RegionCover, operation_count: u32) {
 /// end through the ordinary path, and every implemented layer is present.
 #[test]
 fn externally_registered_operations_compile_through_the_ordinary_path() {
-    let program = external_program(1, Shape::from_dims([2, 3]), &[Axis::new(1)], false);
+    let program = external_program(1, Shape::from_dims([2, 2]), &[Axis::new(1)], false);
     let product = compile(CompilationRequest::governed(&program)).unwrap();
     let target = &product.targets[0];
     assert_eq!(
@@ -327,10 +327,10 @@ fn externally_registered_operations_compile_through_the_ordinary_path() {
     );
     assert_eq!(
         reduction_loop(&alternative(&product, ProgramAlternativeKind::Fused).kernels[0]),
-        Some((1, 3))
+        Some((1, 2))
     );
     // The verified KIR alone drives the backend-shaped interpreter.
-    let values = vec![1.0, -2.0, 3.5, 0.5, -0.0, 0.0];
+    let values = vec![1.0, -2.0, 3.5, 0.5];
     let fused = interpret_fused(
         &alternative(&product, ProgramAlternativeKind::Fused).kernels[0],
         &values,
@@ -342,8 +342,8 @@ fn externally_registered_operations_compile_through_the_ordinary_path() {
 /// interior reduction — both compile, and neither borrows the other's plan.
 #[test]
 fn non_isomorphic_graph_shapes_produce_distinct_verified_plans() {
-    let rank_two = external_program(1, Shape::from_dims([2, 3]), &[Axis::new(1)], false);
-    let rank_three = external_program(1, Shape::from_dims([2, 3, 2]), &[Axis::new(1)], false);
+    let rank_two = external_program(1, Shape::from_dims([2, 2]), &[Axis::new(1)], false);
+    let rank_three = external_program(1, Shape::from_dims([1, 2, 2]), &[Axis::new(1)], false);
     assert_ne!(
         rank_two.semantic_identity().graph(),
         rank_three.semantic_identity().graph(),
@@ -371,7 +371,7 @@ fn non_isomorphic_graph_shapes_produce_distinct_verified_plans() {
 /// Graph fan-out: one constant read by two operations is materialized once.
 #[test]
 fn shared_producer_fan_out_compiles_without_duplicating_the_producer() {
-    let shared = external_program(1, Shape::from_dims([2, 3]), &[Axis::new(1)], true);
+    let shared = external_program(1, Shape::from_dims([2, 2]), &[Axis::new(1)], true);
     assert_eq!(shared.operation_count(), 4);
     let product = compile(CompilationRequest::governed(&shared)).unwrap();
     for alternative in &product.targets[0].portfolio.alternatives {
@@ -393,7 +393,7 @@ fn ordered_multi_output_programs_reject_explicitly() {
         .unwrap();
     let mut builder = SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap();
     let input = builder
-        .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
+        .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 2]))
         .unwrap();
     let scale = tiler_ir::semantic::F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
     let product = tiler_ir::semantic::F32Multiply::apply(&mut builder, input, scale).unwrap();
@@ -426,8 +426,8 @@ fn ordered_multi_output_programs_reject_explicitly() {
 /// structural content — reproduces every structural layer byte for byte.
 #[test]
 fn provider_only_revision_changes_provenance_and_not_structure() {
-    let first = external_program(1, Shape::from_dims([2, 3]), &[Axis::new(1)], false);
-    let second = external_program(2, Shape::from_dims([2, 3]), &[Axis::new(1)], false);
+    let first = external_program(1, Shape::from_dims([2, 2]), &[Axis::new(1)], false);
+    let second = external_program(2, Shape::from_dims([2, 2]), &[Axis::new(1)], false);
 
     assert_eq!(
         first.semantic_identity().graph(),
@@ -495,7 +495,7 @@ fn provider_only_revision_changes_provenance_and_not_structure() {
 fn identical_region_content_keeps_distinct_occurrence_identities() {
     let program = external_program_with_bias(
         1,
-        Shape::from_dims([2, 3]),
+        Shape::from_dims([2, 2]),
         &[Axis::new(1)],
         false,
         2.0_f32.to_bits(),
@@ -533,9 +533,9 @@ fn identical_region_content_keeps_distinct_occurrence_identities() {
 #[test]
 fn complete_plan_coverage_is_exact_at_every_retained_plan() {
     for (shape, axes) in [
-        (Shape::from_dims([2, 3]), vec![Axis::new(1)]),
-        (Shape::from_dims([3, 2]), vec![Axis::new(0)]),
-        (Shape::from_dims([2, 3, 2]), vec![Axis::new(1)]),
+        (Shape::from_dims([2, 2]), vec![Axis::new(1)]),
+        (Shape::from_dims([2, 2]), vec![Axis::new(0)]),
+        (Shape::from_dims([1, 2, 2]), vec![Axis::new(1)]),
     ] {
         let program = external_program(1, shape, &axes, false);
         let product = compile(CompilationRequest::governed(&program)).unwrap();
@@ -665,7 +665,7 @@ fn registry_with_external_multiply(
 /// recognized occurrence end to end, and the artifact plan names it.
 #[test]
 fn an_externally_registered_lowering_provider_drives_the_compile_path() {
-    let program = external_program(1, Shape::from_dims([2, 3]), &[Axis::new(1)], false);
+    let program = external_program(1, Shape::from_dims([2, 2]), &[Axis::new(1)], false);
     let mut request = CompilationRequest::governed(&program);
     request.capabilities =
         registry_with_external_multiply(true, Arc::new(ExternalMultiplyLowering));
@@ -699,7 +699,7 @@ fn an_externally_registered_lowering_provider_drives_the_compile_path() {
 /// Two providers claiming one occurrence is a contradiction, not a choice.
 #[test]
 fn contended_lowering_capabilities_fail_closed_with_a_distinct_error() {
-    let program = external_program(1, Shape::from_dims([2, 3]), &[Axis::new(1)], false);
+    let program = external_program(1, Shape::from_dims([2, 2]), &[Axis::new(1)], false);
     let mut request = CompilationRequest::governed(&program);
     request.capabilities =
         registry_with_external_multiply(false, Arc::new(ExternalMultiplyLowering));
@@ -815,7 +815,7 @@ fn governed_lowerings_never_charge_the_exhaustive_proof_budget() {
 /// cover enumeration.
 #[test]
 fn a_finite_residual_index_obligation_is_proved_before_plan_construction() {
-    let program = external_program(1, Shape::from_dims([65_535, 1]), &[Axis::new(1)], false);
+    let program = external_program(1, Shape::from_dims([65_535, 1]), &[Axis::new(0)], false);
     let mut request = CompilationRequest::governed(&program);
     request.capabilities = registry_with_external_multiply(
         true,

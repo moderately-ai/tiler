@@ -70,9 +70,7 @@
 //! a decoded artifact exists yet. Adding one is additive; guessing its shape now
 //! would commit the boundary to it.
 //!
-use super::super::expr::{
-    AbiEvaluationError, AbiFacts, AbiType, AbiValue, AvailabilityPhase, evaluate, node_type,
-};
+use super::super::expr::{AbiEvaluationError, AbiFacts, AbiType, AbiValue, evaluate, node_type};
 use super::super::keys::{BackendEntryKey, FeasibilityRuleSetRef, TargetProfileRef};
 use super::super::model::{
     BackendPayloadDescriptor, BindingData, BindingKind, BindingTarget, BindingTargetData,
@@ -87,10 +85,11 @@ use std::error::Error;
 use std::fmt;
 
 use tiler_ir::kernel::{AddressSpace, BufferAccess, KernelType};
+use tiler_ir::program::abi::PreparedEntryTargetRequirement;
 use tiler_ir::schedule::{
     ExceptionalValueAssumption, NumericalPermission, ResourceRequirements, SubnormalMode,
 };
-use tiler_ir::semantic::{InputKey, OutputKey, ProviderIdentity};
+use tiler_ir::semantic::{InputKey, OutputKey};
 use tiler_ir::shape::Shape;
 
 use super::decode::decode;
@@ -503,11 +502,13 @@ impl<'a> DecodedVariant<'a> {
         self,
     ) -> impl ExactSizeIterator<Item = DecodedDeferredPredicate<'a>> {
         let artifact = self.artifact;
+        let variant = self.variant;
         self.data()
             .deferred
             .iter()
             .map(move |predicate| DecodedDeferredPredicate {
                 artifact,
+                variant,
                 predicate,
             })
     }
@@ -589,6 +590,7 @@ impl<'a> DecodedVariant<'a> {
 #[derive(Clone, Copy, Debug)]
 pub struct DecodedDeferredPredicate<'a> {
     artifact: &'a DecodedArtifact,
+    variant: usize,
     predicate: &'a DeferredPredicateData,
 }
 
@@ -602,16 +604,20 @@ impl<'a> DecodedDeferredPredicate<'a> {
         }
     }
 
-    /// Returns the phase at which the predicate becomes decidable.
+    /// Returns the complete target-property requirement.
     #[must_use]
-    pub const fn phase(self) -> AvailabilityPhase {
-        self.predicate.phase
+    pub const fn requirement(self) -> &'a PreparedEntryTargetRequirement {
+        &self.predicate.requirement
     }
 
-    /// Returns the selected provider that must answer the query.
+    /// Returns the exact prepared entry whose property must be observed.
     #[must_use]
-    pub const fn authority(self) -> &'a ProviderIdentity {
-        &self.predicate.authority
+    pub fn entry(self) -> DecodedEntry<'a> {
+        DecodedEntry {
+            artifact: self.artifact,
+            variant: self.variant,
+            entry: position(self.predicate.entry),
+        }
     }
 }
 

@@ -101,7 +101,16 @@ use tiler_metal_aot::input::{NumericalRealization, OptimizationLevel};
 const BUFFER_BINDING_LIMIT: u32 = 31;
 
 /// Rows of the packaged program's input; each row reduces to one output element.
-const ROWS: u64 = 4;
+///
+/// One is deliberate. The governed target profile's only portable compile-time
+/// grid-axis guarantee is four threads, and the materialized nontrivial plan's
+/// pointwise stage launches `rows * columns` threads. With the three
+/// contributors required below, one row keeps both the fused and materialized
+/// programs feasible without inventing a larger target capability. The
+/// sidecar still supplies five independent operand classes for that row,
+/// including exceptional and contraction-sensitive values; row count is not
+/// being used as a proxy for numerical coverage.
+const ROWS: u64 = 1;
 /// Columns of the packaged program's input; the reduced axis.
 ///
 /// Three, matching `prototypes/serial-sum-run`, because three contributors per

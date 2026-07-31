@@ -65,10 +65,11 @@ use crate::boundary::{
 };
 use crate::call_declaration::{GuaranteeError, OpaqueCallDeclaration, WorkScaling};
 use crate::call_registry::{OpaqueCallProposal, OpaqueCallRegistry, RegisteredCall};
-use crate::feasibility::{FeasibilityError, ProvenEvidence, RejectionCause, ResolvedPredicate};
+use crate::feasibility::{FeasibilityError, RejectionCause, ResolvedPredicate};
 use crate::honourability::UnhonouredDimension;
 use crate::physical::{
-    PhysicalError, ResourceVerdict, VerifiedScheduledRegion, verify_schedule_with_feasibility,
+    AdmissionEvidence, PhysicalError, ResourceVerdict, VerifiedScheduledRegion,
+    verify_schedule_with_feasibility,
 };
 use crate::region::SemanticMemberId;
 use crate::request::{TargetProfile, TargetProfileKey, VerifiedTargetRequest};
@@ -78,7 +79,7 @@ use crate::request::{TargetProfile, TargetProfileKey, VerifiedTargetRequest};
 /// compare frontier estimates without a model reconciliation.
 const COST_MODEL_KEY: &str = "tiler.cost.structural.v1";
 /// Canonical domain-separation tag for a physical implementation proposal.
-const PROPOSAL_IDENTITY_TAG: &[u8] = b"tiler.compiler.physical-implementation-proposal.v1\0";
+const PROPOSAL_IDENTITY_TAG: &[u8] = b"tiler.compiler.physical-implementation-proposal.v2\0";
 
 /// Which additive proposal-body variant a physical provider offered.
 ///
@@ -942,7 +943,7 @@ pub(crate) struct AdmittedImplementation {
     /// have and neither owns.
     target_profile: TargetProfile,
     body: ImplementationBody,
-    feasibility: ProvenEvidence,
+    admission: AdmissionEvidence,
     boundary: BoundaryContract,
     cost: PhysicalCostEstimate,
     identity: ImplementationProposalIdentity,
@@ -1000,10 +1001,9 @@ impl AdmittedImplementation {
         }
     }
 
-    /// Returns the feasibility evidence admitting this implementation: the
-    /// resolved capability predicates and the honoured numerical dimensions.
-    pub(crate) const fn feasibility(&self) -> &ProvenEvidence {
-        &self.feasibility
+    /// Returns the complete admission evidence, including deferred obligations.
+    pub(crate) const fn admission(&self) -> &AdmissionEvidence {
+        &self.admission
     }
 
     /// Returns the derived typed boundary contract.
@@ -1581,6 +1581,7 @@ pub(crate) fn enumerate_frontier(
                         kind,
                         &proposal.applicability,
                         &boundary,
+                        &feasibility,
                     );
                     admitted.push(AdmittedImplementation {
                         provenance: ImplementationProvenance {
@@ -1590,7 +1591,7 @@ pub(crate) fn enumerate_frontier(
                         semantic_members: subject.semantic_members.clone(),
                         target_profile: target_profile.clone(),
                         body: ImplementationBody::Opaque(Box::new(registered.clone())),
-                        feasibility,
+                        admission: feasibility,
                         boundary,
                         cost: proposal.declared_cost,
                         identity,
@@ -1610,10 +1611,11 @@ pub(crate) fn enumerate_frontier(
                 subject.semantic_members.clone(),
                 request,
             ) {
-                Ok((verified, feasibility)) => {
+                Ok(verified) => {
+                    let admission = verified.admission().clone();
                     admitted.push(admit_verified(
                         verified,
-                        feasibility,
+                        admission,
                         &provenance,
                         kind,
                         &proposal.applicability,
@@ -1681,7 +1683,7 @@ fn classify_opaque_resource_verdict(
                 source,
             });
         }
-        ResourceVerdict::Unresolved => {
+        ResourceVerdict::Unknown => {
             return Err(FrontierError::UnresolvedOpaqueCallAssessment {
                 provider: provider.provider().clone(),
                 proposal: Box::new(proposal.clone()),
@@ -1984,7 +1986,7 @@ fn resolve_work_items(
 /// region's own facts do not determine a property its contract must state.
 fn admit_verified(
     verified: VerifiedScheduledRegion,
-    feasibility: ProvenEvidence,
+    feasibility: AdmissionEvidence,
     provider: &PhysicalProviderProvenance,
     kind: PhysicalProposalKind,
     applicability: &TargetApplicability,
@@ -2002,6 +2004,7 @@ fn admit_verified(
         kind,
         applicability,
         &boundary,
+        &feasibility,
     );
     Ok(AdmittedImplementation {
         provenance: ImplementationProvenance {
@@ -2011,7 +2014,7 @@ fn admit_verified(
         semantic_members: verified.semantic_members().to_vec(),
         target_profile: verified.target_profile().clone(),
         body: ImplementationBody::Scheduled(Box::new(verified)),
-        feasibility,
+        admission: feasibility,
         boundary,
         cost,
         identity,
@@ -2117,6 +2120,7 @@ fn encode_proposal_identity(
     kind: PhysicalProposalKind,
     applicability: &TargetApplicability,
     boundary: &BoundaryContract,
+    feasibility: &AdmissionEvidence,
 ) -> ImplementationProposalIdentity {
     let mut bytes = PROPOSAL_IDENTITY_TAG.to_vec();
     push_slice(&mut bytes, subject_bytes);
@@ -2124,6 +2128,18 @@ fn encode_proposal_identity(
     bytes.push(kind.tag());
     applicability.encode(&mut bytes);
     boundary.encode(&mut bytes);
+    match feasibility.deferred() {
+        None => bytes.push(0),
+        Some(deferred) => {
+            bytes.push(1);
+            push_len(&mut bytes, deferred.predicates().len());
+            for predicate in deferred.predicates() {
+                push_slice(&mut bytes, predicate.axis().key().as_bytes());
+                bytes.extend_from_slice(&predicate.required().value().to_be_bytes());
+                push_slice(&mut bytes, &predicate.requirement().canonical_bytes());
+            }
+        }
+    }
     ImplementationProposalIdentity(bytes)
 }
 
@@ -2276,7 +2292,7 @@ mod tests {
             }
         }
 
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let identity = ProviderIdentity::new("n".repeat(128), "p".repeat(128), 1)
             .expect("each provider component is individually governed");
         let provider = OversizedProvider {
@@ -2302,7 +2318,7 @@ mod tests {
         // Two independent providers each contribute a checked implementation of
         // the same fused region. Unlike a singular-capability registry, this is
         // additive: both are admitted rather than colliding into an ambiguity.
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let subject = fused_subject(&request);
         let first = FusedScheduledKernelProvider {
             provider: provider_identity("alpha", 1),
@@ -2334,7 +2350,7 @@ mod tests {
 
     #[test]
     fn every_admitted_proposal_carries_the_derived_boundary_contract_and_resources() {
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let subject = fused_subject(&request);
         let provider = FusedScheduledKernelProvider {
             provider: provider_identity("alpha", 1),
@@ -2360,7 +2376,7 @@ mod tests {
             NumericalPermission::Forbidden
         );
         // The feasibility admission carries resolved predicates as evidence.
-        assert!(!admitted.feasibility().is_empty());
+        assert!(!admitted.admission().proven().is_empty());
         // The fused region reads an Input boundary and produces the Output boundary.
         let requirements = admitted.boundary().requirements();
         assert_eq!(requirements.len(), 1);
@@ -2481,7 +2497,7 @@ mod tests {
 
     #[test]
     fn identity_and_ordering_are_independent_of_provider_order() {
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let subject = fused_subject(&request);
         let alpha = FusedScheduledKernelProvider {
             provider: provider_identity("alpha", 1),
@@ -2549,7 +2565,7 @@ mod tests {
             }
         }
 
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let subject = fused_subject(&request);
         let scheduled = FusedScheduledKernelProvider {
             provider: provider_identity("alpha", 1),
@@ -2650,10 +2666,10 @@ mod tests {
         };
         assert_eq!(*axis, "grid-axis");
         assert_eq!(*required, 70_000);
-        assert_eq!(*available, 65_535);
+        assert_eq!(*available, 4);
 
         // A feasible proposal with an expensive estimate is still admitted.
-        let small = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let small = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let feasible_subject = fused_subject(&small);
         let expensive = FusedScheduledKernelProvider {
             provider: provider_identity("expensive", 1),
@@ -2698,7 +2714,7 @@ mod tests {
             }
         }
 
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let subject = fused_subject(&request);
         let malformed = MalformedProvider;
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&malformed];
@@ -2725,7 +2741,7 @@ mod tests {
             }
         }
 
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let subject = fused_subject(&request);
         let provider = WrongCostModelProvider;
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&provider];
@@ -2769,7 +2785,7 @@ mod tests {
             }
         }
 
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let subject = fused_subject(&request);
         let provider = AnalyticalCostProvider;
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&provider];
@@ -2795,7 +2811,7 @@ mod tests {
     /// `Some` unconditionally fails on one of them.
     #[test]
     fn an_implementation_body_answers_only_for_its_own_kind() {
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let scheduled = ImplementationBody::Scheduled(Box::new(
             crate::physical::build_fused_scheduled_region(&request)
                 .expect("the fused region builds"),
@@ -2896,7 +2912,7 @@ mod tests {
     fn work_scaling_resolves_through_the_bound_role() {
         use super::{WorkScaling, resolve_work_items};
 
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let normalized = request.serial_sum();
         assert_ne!(
             normalized.input_elements, normalized.output_elements,
@@ -2927,7 +2943,7 @@ mod tests {
     fn an_unresolvable_scaling_declines_rather_than_guessing() {
         use super::{WorkResolutionError, WorkScaling, resolve_work_items};
 
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let bindings = [("x", TensorRole::Input), ("z", TensorRole::Intermediate)];
 
         assert_eq!(
@@ -3038,7 +3054,7 @@ mod tests {
     fn a_scheduled_kernel_and_an_opaque_call_coexist_as_alternatives() {
         use crate::call_registry::OpaqueCallIdentity;
 
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let subject = fused_subject(&request);
         let identity = OpaqueCallIdentity::new("test", "both", 1).expect("named");
         let bindings = vec![("x", TensorRole::Input), ("y", TensorRole::Output)];
@@ -3269,7 +3285,7 @@ mod tests {
         use crate::call_registry::OpaqueCallIdentity;
         use tiler_ir::schedule::NumericalPermission;
 
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let subject = fused_subject(&request);
         let identity = OpaqueCallIdentity::new("test", "loose", 1).expect("named");
         let bindings = vec![("x", TensorRole::Input), ("y", TensorRole::Output)];
@@ -3364,7 +3380,7 @@ mod tests {
             .register(identity, declaration.clone())
             .expect("one call");
 
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let subject = fused_subject(&request);
         let provider = CallProvider(identity, bindings.clone());
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&provider];
@@ -3416,7 +3432,7 @@ mod tests {
         use crate::physical::ResourceVerdict;
         use tiler_ir::schedule::{ArithmeticType, NumericalPermission};
 
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let provider = PhysicalProviderProvenance::new(provider_identity("opaque-causes", 7))
             .expect("fixture provider is exactly reportable");
         let call = OpaqueCallIdentity::new("owner", "call", 9).expect("canonical");
@@ -3585,7 +3601,7 @@ mod tests {
             Err(FrontierError::MalformedOpaqueCallAssessment { .. })
         ));
         assert!(matches!(
-            classify_opaque_resource_verdict(&provider, &proposal, ResourceVerdict::Unresolved),
+            classify_opaque_resource_verdict(&provider, &proposal, ResourceVerdict::Unknown),
             Err(FrontierError::UnresolvedOpaqueCallAssessment { .. })
         ));
     }
@@ -3610,7 +3626,7 @@ mod tests {
             }
         }
 
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let subject = fused_subject(&request);
         let provider = ForeignTargetProvider;
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&provider];
@@ -3638,7 +3654,7 @@ mod tests {
     /// is a measurement boundary on this test, not on the relation.
     #[test]
     fn boundary_subsumption_gates_dominance_before_cost_is_consulted() {
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let fused = enumerate_frontier(
             &request,
             &fused_subject(&request),
@@ -3677,7 +3693,7 @@ mod tests {
         // Three feasible proposals of the same region: a dominated one (worse on a
         // dimension, no better on any) is pruned; two incomparable ones are both
         // retained. Pruning runs strictly after feasibility admission.
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let subject = fused_subject(&request);
         let cheap = FusedScheduledKernelProvider {
             provider: provider_identity("cheap", 1),
@@ -3709,7 +3725,7 @@ mod tests {
 
     #[test]
     fn a_frontier_with_no_providers_is_a_valid_empty_result() {
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let subject = fused_subject(&request);
         let providers: [&dyn PhysicalImplementationProvider; 0] = [];
         let frontier =

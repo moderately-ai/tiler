@@ -60,7 +60,7 @@ fn fixture_with_scale(
 ) {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let input = builder
-        .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
+        .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 2]))
         .unwrap();
     let scale = F32Constant::apply(&mut builder, scale_bits).unwrap();
     let bias = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
@@ -134,7 +134,7 @@ fn two_stage_program_has_explicit_temporary_abi_and_routing_commit() {
     let core = program.core();
     let temporary = core.values().nth(1).expect("the cross-stage temporary");
     assert_eq!(temporary.role(), ValueRole::Temporary);
-    assert_eq!(temporary.required_bytes(), 24);
+    assert_eq!(temporary.required_bytes(), 16);
     assert_eq!(
         temporary.allocation().ownership(),
         AllocationOwnership::Program

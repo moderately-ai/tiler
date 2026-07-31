@@ -471,24 +471,6 @@ impl ArtifactEnvelope {
 
         let mut variants = Vec::with_capacity(data.variants.len());
         for variant in &data.variants {
-            let mut deferred: Vec<DeferredPredicateData> = variant
-                .deferred
-                .iter()
-                .map(|predicate| DeferredPredicateData {
-                    predicate: expression_of[position(predicate.predicate)],
-                    phase: predicate.phase,
-                    authority: predicate.authority.clone(),
-                })
-                .collect();
-            // The shared canonical order, not a key sort: the stored order is
-            // what the identity's numbering is derived from, so the two must be
-            // one definition rather than two that happen to agree.
-            let order = canonical_deferred_order(&expressions, &deferred);
-            deferred = order
-                .into_iter()
-                .map(|index| deferred[index].clone())
-                .collect();
-
             let stage_keys: Vec<Vec<u8>> = variant.program.stages().map(stage_key).collect();
             if stage_keys.len() != variant.entries.len() {
                 return Err(ArtifactDiagnostic::AmbiguousCanonicalKey {
@@ -500,6 +482,23 @@ impl ArtifactEnvelope {
             // canonical positions, because a declared ordinal is exactly the
             // transient fact this envelope replaces everywhere else.
             let entry_of = canonical_entry_positions(&stage_keys);
+            let mut deferred: Vec<DeferredPredicateData> = variant
+                .deferred
+                .iter()
+                .map(|predicate| DeferredPredicateData {
+                    predicate: expression_of[position(predicate.predicate)],
+                    requirement: predicate.requirement.clone(),
+                    entry: entry_of[position(predicate.entry)],
+                })
+                .collect();
+            // The shared canonical order, not a key sort: the stored order is
+            // what the identity's numbering is derived from, so the two must be
+            // one definition rather than two that happen to agree.
+            let order = canonical_deferred_order(&expressions, &deferred);
+            deferred = order
+                .into_iter()
+                .map(|index| deferred[index].clone())
+                .collect();
             let entries =
                 project_entries(variant, &stage_keys, &expression_of, &keys, &payload_of)?;
             let execution_order = project_execution_order(variant, &entry_of);

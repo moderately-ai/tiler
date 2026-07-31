@@ -64,6 +64,9 @@
 //! keys and every aggregate is emitted in a fixed canonical order.
 
 use tiler_ir::identity::{push_len, push_slice};
+use tiler_ir::program::abi::{
+    PreparedEntryTargetRequirement, TargetPropertyQuery, TargetPropertyRequirementRelation,
+};
 use tiler_ir::schedule::ArithmeticType;
 
 use crate::explain::Quantity;
@@ -78,6 +81,10 @@ pub(crate) use crate::target::TargetProfileIdentity;
 ///
 /// Trailing NUL so no descriptor can be a prefix of a differently-domained
 /// encoding, matching the framing the rest of the workspace's identities use.
+///
+/// `v9` distinguishes observed capability facts from executable later-phase
+/// query schemas. A future measured value no longer masquerades as proof that a
+/// runtime knows how to obtain that value.
 ///
 /// `v8` retires the conflated index/address-width axis and adds independent
 /// operation-complete unsigned-64 index arithmetic and device-address-width
@@ -96,7 +103,7 @@ pub(crate) use crate::target::TargetProfileIdentity;
 /// `v3` distinguished per-dimension behaviours after the strict-arithmetic
 /// boolean was retired, but two profiles resting on different measured builds
 /// still collided under it.
-const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v8\0";
+const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v9\0";
 
 /// Governed key of the feasibility rule set this authority applies.
 ///
@@ -109,6 +116,10 @@ const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v8\0"
 /// [`GOVERNED_FEASIBILITY_RULE_SET_REVISION`] instead. That is why the artifact
 /// layer's `FeasibilityRuleSetRef` carries both a key and a revision rather than
 /// one number.
+///
+/// `v4` adds typed target-property query paths to deferred capability
+/// predicates. Under v3, any fact assigned a later phase created `Deferred`
+/// despite carrying no executable query contract.
 ///
 /// `v3` retires the conflated index/address-width predicate and adds independent
 /// operation-complete unsigned-64 index arithmetic and device-address-width
@@ -124,7 +135,7 @@ const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v8\0"
 /// predicate nor decide one, and it named an axis (`strict-f32`) this rule set
 /// no longer has.
 const GOVERNED_FEASIBILITY_RULE_SET_KEY: &str =
-    "tiler.feasibility.phased-capability-and-numerical-honourability.v3";
+    "tiler.feasibility.phased-capability-and-numerical-honourability.v4";
 
 /// Nonzero output-affecting revision of the governed feasibility rule set.
 ///
@@ -228,7 +239,7 @@ impl CapabilityAxis {
 
 /// How a candidate requirement is compared against a profile capability bound.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Relation {
+enum CapabilityRelation {
     /// Feasible iff `required <= available` (ceilings such as threads or bytes).
     AtMost,
     /// Feasible iff `required == available` (two-sided, such as address width).
@@ -264,14 +275,14 @@ impl CapabilityAxis {
         }
     }
 
-    const fn relation(self) -> Relation {
+    const fn relation(self) -> CapabilityRelation {
         match self {
             Self::GridAxisThreads
             | Self::WorkgroupThreads
             | Self::BufferBindings
-            | Self::LocalMemoryBytes => Relation::AtMost,
-            Self::DeviceAddressSpace | Self::IndexArithmeticU64 => Relation::Implies,
-            Self::DeviceAddressWidthBits => Relation::Exact,
+            | Self::LocalMemoryBytes => CapabilityRelation::AtMost,
+            Self::DeviceAddressSpace | Self::IndexArithmeticU64 => CapabilityRelation::Implies,
+            Self::DeviceAddressWidthBits => CapabilityRelation::Exact,
         }
     }
 
@@ -292,18 +303,28 @@ impl CapabilityAxis {
     /// positive. Ceilings admit any non-negative amount.
     const fn admits(self, value: u64) -> bool {
         match self.relation() {
-            Relation::Implies => value <= 1,
-            Relation::Exact => value > 0,
-            Relation::AtMost => true,
+            CapabilityRelation::Implies => value <= 1,
+            CapabilityRelation::Exact => value > 0,
+            CapabilityRelation::AtMost => true,
         }
     }
 }
 
-const fn satisfies(relation: Relation, required: u64, available: u64) -> bool {
+const fn satisfies(relation: CapabilityRelation, required: u64, available: u64) -> bool {
     match relation {
-        Relation::AtMost => required <= available,
-        Relation::Exact => required == available,
-        Relation::Implies => required == 0 || available != 0,
+        CapabilityRelation::AtMost => required <= available,
+        CapabilityRelation::Exact => required == available,
+        CapabilityRelation::Implies => required == 0 || available != 0,
+    }
+}
+
+const fn target_property_relation(
+    relation: CapabilityRelation,
+) -> TargetPropertyRequirementRelation {
+    match relation {
+        CapabilityRelation::AtMost => TargetPropertyRequirementRelation::ObservedAtLeastRequired,
+        CapabilityRelation::Exact => TargetPropertyRequirementRelation::ObservedEqualsRequired,
+        CapabilityRelation::Implies => TargetPropertyRequirementRelation::RequiredImpliesObserved,
     }
 }
 
@@ -452,6 +473,33 @@ pub(crate) struct CapabilityFact {
     provenance: FactProvenance,
 }
 
+/// One executable later-phase query path for a quantitative capability.
+///
+/// Unlike [`CapabilityFact`], this carries no available value. It says how an
+/// exact runtime subject can produce that value before routing commits.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CapabilityQuery {
+    axis: CapabilityAxis,
+    query: TargetPropertyQuery,
+}
+
+impl CapabilityQuery {
+    /// Associates one typed capability axis with its query contract.
+    pub(crate) const fn new(axis: CapabilityAxis, query: TargetPropertyQuery) -> Self {
+        Self { axis, query }
+    }
+
+    /// The quantitative axis this query can answer.
+    pub(crate) const fn axis(&self) -> CapabilityAxis {
+        self.axis
+    }
+
+    /// The complete governed query contract.
+    pub(crate) const fn query(&self) -> &TargetPropertyQuery {
+        &self.query
+    }
+}
+
 impl CapabilityFact {
     /// Constructs a capability fact.
     pub(crate) const fn new(
@@ -508,6 +556,8 @@ pub(crate) struct CheckedTargetProfile {
     identity: TargetProfileIdentity,
     /// Canonical: sorted by `(axis, phase)`, unique per `(axis, phase)`.
     facts: Vec<CapabilityFact>,
+    /// Canonical: sorted by axis, unique per axis.
+    queries: Vec<CapabilityQuery>,
     /// Canonical: sorted by `(dimension, arithmetic, behaviour, phase)`, unique
     /// per tuple.
     honourability: Vec<NumericalHonourabilityFact>,
@@ -536,8 +586,19 @@ impl CheckedTargetProfile {
         facts: Vec<CapabilityFact>,
         honourability: Vec<NumericalHonourabilityFact>,
     ) -> Result<Self, FeasibilityError> {
+        Self::new_with_queries(identity, facts, Vec::new(), honourability)
+    }
+
+    /// Builds a checked profile including executable later-phase query schemas.
+    pub(crate) fn new_with_queries(
+        identity: impl Into<TargetProfileIdentity>,
+        facts: Vec<CapabilityFact>,
+        queries: Vec<CapabilityQuery>,
+        honourability: Vec<NumericalHonourabilityFact>,
+    ) -> Result<Self, FeasibilityError> {
         let identity = identity.into();
         let mut facts = facts;
+        let mut queries = queries;
         let mut honourability = honourability;
         if identity.key().is_empty() {
             return Err(FeasibilityError::MalformedProfile { rule: "identity" });
@@ -556,6 +617,14 @@ impl CheckedTargetProfile {
                     rule: "fact-authority",
                 });
             }
+        }
+        if queries
+            .iter()
+            .any(|query| query.query.available_at() != AvailabilityPhase::PreparedKernelPreflight)
+        {
+            return Err(FeasibilityError::MalformedProfile {
+                rule: "query-phase",
+            });
         }
         for fact in &honourability {
             if !fact.dimension().admits(fact.behaviour()) {
@@ -600,6 +669,20 @@ impl CheckedTargetProfile {
                 rule: "duplicate-fact",
             });
         }
+        queries.sort_by_key(|query| query.axis);
+        if queries.windows(2).any(|pair| pair[0].axis == pair[1].axis) {
+            return Err(FeasibilityError::MalformedProfile {
+                rule: "duplicate-query",
+            });
+        }
+        if queries
+            .iter()
+            .any(|query| facts.iter().any(|fact| fact.axis == query.axis))
+        {
+            return Err(FeasibilityError::MalformedProfile {
+                rule: "fact-query-conflict",
+            });
+        }
         honourability.sort_by_key(NumericalHonourabilityFact::sort_key);
         if honourability
             .windows(2)
@@ -609,7 +692,7 @@ impl CheckedTargetProfile {
                 rule: "duplicate-declaration",
             });
         }
-        let descriptor = canonical_profile_descriptor(&identity, &facts, &honourability);
+        let descriptor = canonical_profile_descriptor(&identity, &facts, &queries, &honourability);
         let descriptor_length = descriptor.len();
         if descriptor_length > MAX_TARGET_PROFILE_DESCRIPTOR_BYTES {
             return Err(FeasibilityError::DescriptorTooLong {
@@ -620,6 +703,7 @@ impl CheckedTargetProfile {
         Ok(Self {
             identity,
             facts,
+            queries,
             honourability,
             descriptor: descriptor.into_boxed_slice(),
         })
@@ -633,6 +717,11 @@ impl CheckedTargetProfile {
     /// The checked capability facts, in canonical order.
     pub(crate) fn facts(&self) -> &[CapabilityFact] {
         &self.facts
+    }
+
+    /// The executable quantitative query schemas, in canonical axis order.
+    pub(crate) fn queries(&self) -> &[CapabilityQuery] {
+        &self.queries
     }
 
     /// The checked numerical honourability declaration, in canonical order.
@@ -697,7 +786,6 @@ impl CheckedTargetProfile {
     /// Resolves one axis against the facts available through `available_phase`.
     fn resolve(&self, axis: CapabilityAxis, available_phase: AvailabilityPhase) -> AxisResolution {
         let mut now: Option<CapabilityFact> = None;
-        let mut later: Option<AvailabilityPhase> = None;
         for fact in self.facts.iter().filter(|fact| fact.axis == axis) {
             if fact.phase <= available_phase {
                 // Prefer the most refined fact already available.
@@ -705,17 +793,16 @@ impl CheckedTargetProfile {
                     Some(current) if current.phase >= fact.phase => current,
                     _ => fact.clone(),
                 });
-            } else {
-                // Track the earliest phase that can supply the fact.
-                later = Some(match later {
-                    Some(phase) if phase <= fact.phase => phase,
-                    _ => fact.phase,
-                });
             }
         }
+        let later = self
+            .queries
+            .iter()
+            .find(|query| query.axis == axis && query.query.available_at() > available_phase)
+            .cloned();
         match (now, later) {
             (Some(fact), _) => AxisResolution::Now(fact.bound),
-            (None, Some(phase)) => AxisResolution::Later(phase),
+            (None, Some(query)) => AxisResolution::Later(query),
             (None, None) => AxisResolution::NoPath,
         }
     }
@@ -877,11 +964,15 @@ impl CheckedTargetProfile {
                         disproved.push(resolved);
                     }
                 }
-                AxisResolution::Later(phase) => deferred.push(DeferredPredicate {
-                    axis,
-                    required,
-                    phase,
-                }),
+                AxisResolution::Later(query) => {
+                    let requirement = PreparedEntryTargetRequirement::new(
+                        query.query,
+                        requirement.required,
+                        target_property_relation(axis.relation()),
+                    )
+                    .expect("a checked profile declares a phase- and axis-valid query");
+                    deferred.push(DeferredPredicate { axis, requirement });
+                }
                 AxisResolution::NoPath => unknown.push(UnknownPredicate { axis, required }),
             }
         }
@@ -912,8 +1003,8 @@ impl CheckedTargetProfile {
         }
         if !deferred.is_empty() || !deferred_dimensions.is_empty() {
             deferred.sort_by(|left, right| {
-                left.phase
-                    .cmp(&right.phase)
+                left.phase()
+                    .cmp(&right.phase())
                     .then(left.axis.cmp(&right.axis))
             });
             deferred_dimensions.sort_by(|left, right| {
@@ -922,6 +1013,10 @@ impl CheckedTargetProfile {
                     .then(left.dimension().cmp(&right.dimension()))
             });
             return FeasibilityOutcome::Deferred(DeferredSet {
+                proven: ProvenEvidence {
+                    predicates: proven,
+                    honoured,
+                },
                 predicates: deferred,
                 dimensions: deferred_dimensions,
             });
@@ -966,6 +1061,7 @@ impl CheckedTargetProfile {
 fn canonical_profile_descriptor(
     identity: &TargetProfileIdentity,
     facts: &[CapabilityFact],
+    queries: &[CapabilityQuery],
     honourability: &[NumericalHonourabilityFact],
 ) -> Vec<u8> {
     let mut bytes = Vec::new();
@@ -978,6 +1074,11 @@ fn canonical_profile_descriptor(
         bytes.push(fact.phase.tag());
         bytes.push(fact.authority.tag());
         bytes.push(fact.validity.tag());
+    }
+    push_len(&mut bytes, queries.len());
+    for query in queries {
+        bytes.push(query.axis.tag());
+        push_slice(&mut bytes, &query.query.canonical_bytes());
     }
     encode_honourability_facts(&mut bytes, honourability);
     bytes
@@ -1012,7 +1113,7 @@ enum AxisResolution {
     /// A fact is available now with this bound.
     Now(u64),
     /// No fact is available now, but one is admissible from this later phase.
-    Later(AvailabilityPhase),
+    Later(CapabilityQuery),
     /// No admissible proof/query path exists for the axis.
     NoPath,
 }
@@ -1154,27 +1255,31 @@ impl ResolvedPredicate {
 }
 
 /// A predicate whose resolving fact is admissible only from a later phase.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct DeferredPredicate {
     axis: CapabilityAxis,
-    required: Quantity,
-    phase: AvailabilityPhase,
+    requirement: PreparedEntryTargetRequirement,
 }
 
 impl DeferredPredicate {
     /// The axis this predicate ranges over.
-    pub(crate) const fn axis(self) -> CapabilityAxis {
+    pub(crate) const fn axis(&self) -> CapabilityAxis {
         self.axis
     }
 
     /// The required quantity.
-    pub(crate) const fn required(self) -> Quantity {
-        self.required
+    pub(crate) fn required(&self) -> Quantity {
+        self.axis.quantity(self.requirement.required())
     }
 
     /// The earliest phase that can resolve the predicate.
-    pub(crate) const fn phase(self) -> AvailabilityPhase {
-        self.phase
+    pub(crate) const fn phase(&self) -> AvailabilityPhase {
+        self.requirement.query().available_at()
+    }
+
+    /// The complete executable target-property requirement.
+    pub(crate) const fn requirement(&self) -> &PreparedEntryTargetRequirement {
+        &self.requirement
     }
 }
 
@@ -1277,6 +1382,8 @@ impl Rejection {
 /// One nonempty canonical deferred set, grouped by phase.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct DeferredSet {
+    /// Checks already proven before the remaining queries can run.
+    proven: ProvenEvidence,
     /// Canonical: sorted by `(phase, axis)`.
     predicates: Vec<DeferredPredicate>,
     /// Canonical: sorted by `(phase, dimension)`.
@@ -1284,6 +1391,11 @@ pub(crate) struct DeferredSet {
 }
 
 impl DeferredSet {
+    /// The evidence already established before the deferred checks resolve.
+    pub(crate) const fn proven(&self) -> &ProvenEvidence {
+        &self.proven
+    }
+
     /// The deferred capability predicates, canonical `(phase, axis)` order.
     pub(crate) fn predicates(&self) -> &[DeferredPredicate] {
         &self.predicates
@@ -1299,7 +1411,7 @@ impl DeferredSet {
         let mut phases: Vec<AvailabilityPhase> = self
             .predicates
             .iter()
-            .map(|predicate| predicate.phase())
+            .map(DeferredPredicate::phase)
             .chain(self.dimensions.iter().map(DeferredDimension::phase))
             .collect();
         phases.sort_unstable();
@@ -1408,7 +1520,7 @@ impl FeasibleSet {
 /// depends on the other, and no library crate depends on both — so the
 /// relationship is held by this comment and by review. **Raising this bound
 /// requires checking the artifact ceiling in the same change.**
-pub(crate) const MAX_TARGET_PROFILE_DESCRIPTOR_BYTES: usize = 1_024;
+pub(crate) const MAX_TARGET_PROFILE_DESCRIPTOR_BYTES: usize = 64 * 1_024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FeasibilityError {
@@ -1434,6 +1546,7 @@ mod tests {
         CompilerBuildIdentity, CompilerBuildRole, DeclaredBehaviour, ExecutionEnvironmentIdentity,
         FactSourceProvenance, MeasurementContext, ProvenanceIdentity, RelaxationRequirement,
     };
+    use tiler_ir::program::abi::{TargetPropertyKey, TargetPropertyProviderIdentity};
     use tiler_ir::schedule::{FlushedZeroSign, NumericalPermission, SubnormalMode};
     use tiler_ir::semantic::F32;
 
@@ -1502,6 +1615,18 @@ mod tests {
             FactAuthority::GovernedProfile,
             FactValidityScope::PortableProfile,
             FactProvenance::declared_by(id),
+        )
+    }
+
+    fn capability_query(axis: CapabilityAxis, phase: AvailabilityPhase) -> CapabilityQuery {
+        CapabilityQuery::new(
+            axis,
+            TargetPropertyQuery::new(
+                TargetPropertyKey::new(format!("tiler.test.query.{}", axis.key())).unwrap(),
+                phase,
+                TargetPropertyProviderIdentity::new("tiler", "test-target-properties", 1).unwrap(),
+            )
+            .unwrap(),
         )
     }
 
@@ -1654,21 +1779,20 @@ mod tests {
             "a profile that admits fewer candidates must not share a descriptor",
         );
 
-        // A fact moved to a later phase: same key, same axes, same bounds, but
-        // the profile now defers where the baseline proved. This is the case the
-        // discarded profile *version* was supposed to catch and never could,
-        // because nothing forced a declarer to bump it; the facts carry it.
+        // An available fact replaced by an exact prepared-entry query: same key
+        // and axis, but the profile now defers where the baseline proved.
         let mut deferred_facts: Vec<_> = baseline.facts().to_vec();
-        deferred_facts[0] = CapabilityFact::new(
-            CapabilityAxis::GridAxisThreads,
-            65_535,
-            AvailabilityPhase::LiveDevicePreflight,
-            FactAuthority::DeviceRuntime,
-            FactValidityScope::DeviceInstance,
-            FactProvenance::declared_by(id),
-        );
-        let later =
-            CheckedTargetProfile::new(id, deferred_facts, baseline_honourability(id)).unwrap();
+        deferred_facts.retain(|fact| fact.axis() != CapabilityAxis::GridAxisThreads);
+        let later = CheckedTargetProfile::new_with_queries(
+            id,
+            deferred_facts,
+            vec![capability_query(
+                CapabilityAxis::GridAxisThreads,
+                AvailabilityPhase::PreparedKernelPreflight,
+            )],
+            baseline_honourability(id),
+        )
+        .unwrap();
         assert_eq!(later.identity().key(), baseline.identity().key());
         assert_ne!(
             later.canonical_descriptor(),
@@ -1766,7 +1890,8 @@ mod tests {
             evidence
                 .predicates()
                 .iter()
-                .map(|p| p.axis())
+                .copied()
+                .map(ResolvedPredicate::axis)
                 .collect::<Vec<_>>(),
             CANONICAL_AXES
                 .into_iter()
@@ -2164,19 +2289,13 @@ mod tests {
         // One axis is disproved, one is unknown (no fact declared), one is
         // deferred (declared only at a later phase). Rejection must win.
         let id = identity();
-        let profile = CheckedTargetProfile::new(
+        let profile = CheckedTargetProfile::new_with_queries(
             id,
-            vec![
-                compile_fact(id, CapabilityAxis::GridAxisThreads, 4),
-                CapabilityFact::new(
-                    CapabilityAxis::BufferBindings,
-                    8,
-                    AvailabilityPhase::LiveDevicePreflight,
-                    FactAuthority::DeviceRuntime,
-                    FactValidityScope::DeviceInstance,
-                    FactProvenance::declared_by(id),
-                ),
-            ],
+            vec![compile_fact(id, CapabilityAxis::GridAxisThreads, 4)],
+            vec![capability_query(
+                CapabilityAxis::BufferBindings,
+                AvailabilityPhase::PreparedKernelPreflight,
+            )],
             Vec::new(),
         )
         .unwrap();
@@ -2199,15 +2318,12 @@ mod tests {
     #[test]
     fn unknown_takes_precedence_over_deferred() {
         let id = identity();
-        let profile = CheckedTargetProfile::new(
+        let profile = CheckedTargetProfile::new_with_queries(
             id,
-            vec![CapabilityFact::new(
+            Vec::new(),
+            vec![capability_query(
                 CapabilityAxis::BufferBindings,
-                8,
-                AvailabilityPhase::LiveDevicePreflight,
-                FactAuthority::DeviceRuntime,
-                FactValidityScope::DeviceInstance,
-                FactProvenance::declared_by(id),
+                AvailabilityPhase::PreparedKernelPreflight,
             )],
             Vec::new(),
         )
@@ -2215,9 +2331,9 @@ mod tests {
         let proposal = FeasibilityProposal::new(
             "candidate:unknown-and-deferred",
             vec![
-                // No fact for WorkgroupThreads at all -> unknown.
+                // No fact or query for WorkgroupThreads at all -> unknown.
                 AxisRequirement::new(CapabilityAxis::WorkgroupThreads, 1),
-                // BufferBindings only at a later phase -> deferred.
+                // BufferBindings has an executable later query -> deferred.
                 AxisRequirement::new(CapabilityAxis::BufferBindings, 2),
             ],
             Vec::new(),
@@ -2238,28 +2354,19 @@ mod tests {
     }
 
     #[test]
-    fn unresolved_checks_form_one_canonical_deferred_set_grouped_by_phase() {
+    fn unresolved_checks_form_one_canonical_prepared_deferred_set() {
         let id = identity();
-        let profile = CheckedTargetProfile::new(
+        let profile = CheckedTargetProfile::new_with_queries(
             id,
+            Vec::new(),
             vec![
-                // WorkgroupThreads resolvable only at a prepared-kernel preflight.
-                CapabilityFact::new(
+                capability_query(
                     CapabilityAxis::WorkgroupThreads,
-                    256,
                     AvailabilityPhase::PreparedKernelPreflight,
-                    FactAuthority::PreparedKernel,
-                    FactValidityScope::PreparedArtifact,
-                    FactProvenance::declared_by(id),
                 ),
-                // BufferBindings resolvable at the earlier live-device preflight.
-                CapabilityFact::new(
+                capability_query(
                     CapabilityAxis::BufferBindings,
-                    8,
-                    AvailabilityPhase::LiveDevicePreflight,
-                    FactAuthority::DeviceRuntime,
-                    FactValidityScope::DeviceInstance,
-                    FactProvenance::declared_by(id),
+                    AvailabilityPhase::PreparedKernelPreflight,
                 ),
             ],
             Vec::new(),
@@ -2276,32 +2383,47 @@ mod tests {
         .unwrap();
         let outcome = profile.assess(&proposal, AvailabilityPhase::CompileProfile);
         let FeasibilityOutcome::Deferred(deferred) = outcome else {
-            panic!("later-phase facts must defer");
+            panic!("executable later-phase queries must defer");
         };
-        // Grouped by phase, ascending: LiveDevicePreflight before
-        // PreparedKernelPreflight, independent of requirement authoring order.
+        // Canonical axis order, independent of requirement authoring order.
         assert_eq!(
             deferred
                 .predicates()
                 .iter()
-                .map(|p| p.phase())
+                .map(DeferredPredicate::axis)
                 .collect::<Vec<_>>(),
             vec![
-                AvailabilityPhase::LiveDevicePreflight,
-                AvailabilityPhase::PreparedKernelPreflight,
+                CapabilityAxis::WorkgroupThreads,
+                CapabilityAxis::BufferBindings,
             ]
         );
         assert_eq!(
             deferred.phases(),
-            vec![
-                AvailabilityPhase::LiveDevicePreflight,
-                AvailabilityPhase::PreparedKernelPreflight,
-            ]
+            vec![AvailabilityPhase::PreparedKernelPreflight]
         );
     }
 
     #[test]
-    fn a_deferred_fact_resolves_once_its_phase_is_available() {
+    fn a_non_prepared_entry_query_is_rejected_by_the_checked_profile() {
+        let id = identity();
+        assert_eq!(
+            CheckedTargetProfile::new_with_queries(
+                id,
+                Vec::new(),
+                vec![capability_query(
+                    CapabilityAxis::WorkgroupThreads,
+                    AvailabilityPhase::LiveDevicePreflight,
+                )],
+                Vec::new(),
+            ),
+            Err(FeasibilityError::MalformedProfile {
+                rule: "query-phase",
+            })
+        );
+    }
+
+    #[test]
+    fn a_later_observation_is_unknown_until_its_value_is_available() {
         let id = identity();
         let profile = CheckedTargetProfile::new(
             id,
@@ -2324,7 +2446,7 @@ mod tests {
         .unwrap();
         assert!(matches!(
             profile.assess(&proposal, AvailabilityPhase::CompileProfile),
-            FeasibilityOutcome::Deferred(_)
+            FeasibilityOutcome::Unknown(_)
         ));
         assert!(matches!(
             profile.assess(&proposal, AvailabilityPhase::LiveDevicePreflight),
@@ -2778,7 +2900,7 @@ mod tests {
     }
 
     #[test]
-    fn oversized_structured_fact_source_is_refused_at_profile_admission() {
+    fn maximally_wide_valid_structured_fact_source_fits_the_profile_bound() {
         let id = identity();
         let contexts = (0..16)
             .map(|index| {
@@ -2794,7 +2916,7 @@ mod tests {
                         "1.0",
                         format!("platform-build-{index}"),
                         "test-architecture",
-                        format!("test-hardware-{}", "x".repeat(64)),
+                        format!("test-hardware-{}", "x".repeat(128)),
                     ),
                 )
             })
@@ -2807,11 +2929,9 @@ mod tests {
             contexts,
         ));
 
-        assert!(matches!(
-            CheckedTargetProfile::new(id, Vec::new(), declaration_from_source(id, source)),
-            Err(FeasibilityError::DescriptorTooLong { key, actual })
-                if key == BASELINE_KEY && actual > MAX_TARGET_PROFILE_DESCRIPTOR_BYTES
-        ));
+        let profile =
+            CheckedTargetProfile::new(id, Vec::new(), declaration_from_source(id, source)).unwrap();
+        assert!(profile.canonical_descriptor().len() <= MAX_TARGET_PROFILE_DESCRIPTOR_BYTES);
     }
 
     #[test]
@@ -2925,7 +3045,7 @@ mod tests {
         assert_ne!(rules.key(), profile.identity().key());
         assert_eq!(
             rules.key(),
-            "tiler.feasibility.phased-capability-and-numerical-honourability.v3"
+            "tiler.feasibility.phased-capability-and-numerical-honourability.v4"
         );
         assert_eq!(rules.revision(), 1);
 

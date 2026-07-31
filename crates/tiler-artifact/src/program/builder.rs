@@ -14,6 +14,7 @@
 //!
 //! The **program ABI** comes from the variant's own verified program and kernels: the builder replays the program's expression arena and derives the applicability guard, launch geometry, accessible byte offset and extent, binding target, element type, address space, access mode, alignment, and program role. A producer supplies only artifact-owned choices: deferred predicates, launch preconditions and zero-work policy, binding transport kinds, target and feasibility references, and backend entry selection.
 
+use tiler_ir::program::abi::{PreparedEntryTargetRequirement, TargetPropertyRequirementRelation};
 use tiler_ir::program::{
     MaterializedOrigin, MaterializedValueRef, StageRef, ValueRole, VerifiedKernelProgram,
 };
@@ -121,12 +122,10 @@ struct PortfolioSubject {
 /// One deferred feasibility predicate a plan variant declares.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeferredPredicateSpec {
-    /// Predicate that must hold before routing commits.
-    pub predicate: AbiExprId,
-    /// Phase at which the predicate becomes decidable.
-    pub phase: AvailabilityPhase,
-    /// Selected provider that must answer the query.
-    pub authority: ProviderIdentity,
+    /// Complete target-property requirement the builder turns into a predicate.
+    pub requirement: PreparedEntryTargetRequirement,
+    /// Declared program-stage ordinal whose prepared entry is queried.
+    pub entry: u32,
 }
 
 /// One ABI binding a producer declares for an executable entry.
@@ -666,7 +665,7 @@ impl ArtifactProgramBuilder {
             AvailabilityPhase::LiveDevicePreflight,
             false,
         )?;
-        let deferred = self.check_deferred(&spec.deferred_predicates)?;
+        let deferred = self.check_deferred(&spec.deferred_predicates, stages)?;
         let derived = DerivedAbi {
             offsets: self.adopt_offsets(program)?,
             adopted,
@@ -844,8 +843,9 @@ impl ArtifactProgramBuilder {
     }
 
     fn check_deferred(
-        &self,
+        &mut self,
         specs: &[DeferredPredicateSpec],
+        entries: usize,
     ) -> Result<Vec<DeferredPredicateData>, ArtifactBuildError> {
         limit(
             specs.len(),
@@ -854,39 +854,61 @@ impl ArtifactProgramBuilder {
         )?;
         let mut resolved = Vec::with_capacity(specs.len());
         for spec in specs {
-            if spec.phase < AvailabilityPhase::LiveDevicePreflight {
-                return Err(ArtifactBuildError::NonDeferredPredicatePhase { phase: spec.phase });
-            }
-            if !self
-                .providers
-                .iter()
-                .any(|selected| selected.provider == spec.authority)
-            {
-                return Err(ArtifactBuildError::UnselectedDeferredAuthority {
-                    provider: Box::new(spec.authority.clone()),
+            if usize_of(spec.entry) >= entries {
+                return Err(ArtifactBuildError::DeferredQueryEntryOutOfRange {
+                    entry: spec.entry,
+                    entries,
                 });
             }
-            let predicate = self.check_use(
-                spec.predicate,
-                AbiExprUse::DeferredPredicate,
-                AbiType::Boolean,
-                spec.phase,
-                false,
-            )?;
+            let predicate = self.mint_deferred_predicate(&spec.requirement)?;
             if resolved.iter().any(|held: &DeferredPredicateData| {
                 held.predicate == predicate
-                    && held.phase == spec.phase
-                    && held.authority == spec.authority
+                    && held.requirement == spec.requirement
+                    && held.entry == spec.entry
             }) {
                 return Err(ArtifactBuildError::DuplicateDeferredPredicate);
             }
             resolved.push(DeferredPredicateData {
                 predicate,
-                phase: spec.phase,
-                authority: spec.authority.clone(),
+                requirement: spec.requirement.clone(),
+                entry: spec.entry,
             });
         }
         Ok(resolved)
+    }
+
+    fn mint_deferred_predicate(
+        &mut self,
+        requirement: &PreparedEntryTargetRequirement,
+    ) -> Result<u32, ArtifactBuildError> {
+        let query = requirement.query();
+        let observed = self.push_root(AbiRoot::TargetProperty {
+            key: query.key().clone(),
+            phase: query.available_at(),
+        })?;
+        let required = self.push_root(AbiRoot::UnsignedLiteral(requirement.required()))?;
+        let predicate = match requirement.relation() {
+            TargetPropertyRequirementRelation::ObservedAtLeastRequired => {
+                self.push_binary(AbiBinaryOp::LessOrEqual, required, observed)?
+            }
+            TargetPropertyRequirementRelation::ObservedEqualsRequired => {
+                self.push_binary(AbiBinaryOp::Equal, required, observed)?
+            }
+            TargetPropertyRequirementRelation::RequiredImpliesObserved => {
+                let zero = self.push_root(AbiRoot::UnsignedLiteral(0))?;
+                let one = self.push_root(AbiRoot::UnsignedLiteral(1))?;
+                let required_is_zero = self.push_binary(AbiBinaryOp::Equal, required, zero)?;
+                let observed_nonzero = self.push_binary(AbiBinaryOp::LessOrEqual, one, observed)?;
+                self.push_binary(AbiBinaryOp::Or, required_is_zero, observed_nonzero)?
+            }
+        };
+        self.check_use(
+            predicate,
+            AbiExprUse::DeferredPredicate,
+            AbiType::Boolean,
+            query.available_at(),
+            false,
+        )
     }
 
     fn check_entries(

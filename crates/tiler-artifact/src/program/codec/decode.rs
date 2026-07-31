@@ -23,6 +23,10 @@
 //! needs a `VerifiedKernelProgram` must hold the one it compiled — permanently,
 //! not until some ticket lands.
 
+use tiler_ir::program::abi::{
+    PreparedEntryTargetRequirement, PreparedEntryTargetRequirementError,
+    TargetPropertyProviderIdentity, TargetPropertyQuery, TargetPropertyRequirementRelation,
+};
 use tiler_ir::program::{
     BitPackedEncoding, PackedBitOrder, PackedTailRule, StorageEncoding, StorageScalar,
 };
@@ -30,6 +34,7 @@ use tiler_ir::schedule::{ExceptionalValueAssumption, ResourceRequirements};
 use tiler_ir::semantic::{EncodedComponentRole, InputKey, OutputKey, ProviderIdentity};
 use tiler_ir::shape::Shape;
 
+use super::super::error::ArtifactBuildError;
 use super::super::expr::{
     AbiBinaryOp, AbiRoot, AbiType, AbiUnaryOp, AvailabilityPhase, ExprNode, TargetPropertyKey,
     binary_operand_type, node_type, unary_operand_type,
@@ -727,16 +732,76 @@ fn parse_variants(
             MAX_DEFERRED_PREDICATES,
             CodecLimitKind::DeferredPredicates,
             |cursor| {
+                let predicate = cursor.expression_ref(expressions)?;
+                let entry = cursor.u32()?;
+                let key = TargetPropertyKey::from_owned(cursor.text()?).map_err(|cause| {
+                    ArtifactCodecError::InvalidGovernedKey {
+                        cause: cause.into(),
+                    }
+                })?;
+                let phase = cursor.phase()?;
+                let namespace = cursor.text()?;
+                let name = cursor.text()?;
+                let revision = cursor.u32()?;
+                let provider =
+                    TargetPropertyProviderIdentity::new(namespace, name, revision).map_err(
+                        |cause| ArtifactCodecError::InvalidProviderIdentity { cause },
+                    )?;
+                let query = TargetPropertyQuery::new(key, phase, provider).map_err(|_| {
+                    ArtifactCodecError::ModelRule {
+                        cause: Box::new(ArtifactBuildError::UnsupportedDeferredQueryPhase {
+                            phase,
+                        }),
+                    }
+                })?;
+                let required = cursor.u64()?;
+                let relation_tag = cursor.u8()?;
+                let relation = match relation_tag {
+                    0x01 => TargetPropertyRequirementRelation::ObservedAtLeastRequired,
+                    0x02 => TargetPropertyRequirementRelation::ObservedEqualsRequired,
+                    0x03 => TargetPropertyRequirementRelation::RequiredImpliesObserved,
+                    tag => {
+                        return Err(ArtifactCodecError::UnknownTag {
+                            subject: TagSubject::TargetPropertyRequirementRelation,
+                            tag,
+                        });
+                    }
+                };
+                let requirement =
+                    PreparedEntryTargetRequirement::new(query, required, relation).map_err(
+                        |cause| ArtifactCodecError::ModelRule {
+                            cause: Box::new(match cause {
+                                PreparedEntryTargetRequirementError::QueryIsNotPreparedEntryScoped {
+                                    available_at,
+                                } => ArtifactBuildError::UnsupportedDeferredQueryPhase {
+                                    phase: available_at,
+                                },
+                                PreparedEntryTargetRequirementError::ImplicationRequirementIsNotBoolean {
+                                    required,
+                                } => ArtifactBuildError::DeferredImplicationRequirementNotBoolean {
+                                    required,
+                                },
+                            }),
+                        },
+                    )?;
                 Ok(DeferredPredicateData {
-                    predicate: cursor.expression_ref(expressions)?,
-                    phase: cursor.phase()?,
-                    authority: cursor.provider()?,
+                    predicate,
+                    requirement,
+                    entry,
                 })
             },
         )?;
         let entries = cursor.vec(MAX_VARIANT_ENTRIES, CodecLimitKind::Entries, |cursor| {
             parse_entry(cursor, expressions, payloads)
         })?;
+        for predicate in &deferred {
+            if position(predicate.entry) >= entries.len() {
+                return Err(ArtifactCodecError::MissingReference {
+                    subject: ReferenceSubject::Entry,
+                    index: u64::from(predicate.entry),
+                });
+            }
+        }
         let rank = u64::try_from(variants.len()).expect("supported usize fits u64");
         let execution_order = parse_execution_order(cursor, rank, entries.len())?;
         let dependencies = parse_dependencies(cursor, rank, entries.len(), &execution_order)?;

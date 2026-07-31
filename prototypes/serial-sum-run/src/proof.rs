@@ -134,8 +134,8 @@ use tiler_reference::{
     FloatBitOrder, InputBinding, ReferenceElement, ReferenceEvaluator, Tensor, TensorPayloadView,
 };
 use tiler_runtime::load::{
-    DecodedProgram, ExecutionEnvironment, LoadRejection, Preflight, RoutedDispatch,
-    TargetCompatibility, TargetDeclaration,
+    DecodedProgram, ExecutionEnvironment, LoadRejection, Preflight, RoutePreparation,
+    RoutedDispatch, RoutedEntry, TargetCompatibility, TargetDeclaration,
 };
 
 /// Rows of the direct path's input; each row reduces to one output element.
@@ -717,7 +717,8 @@ fn refused(probe: &'static str, outcome: String) -> ProofError {
 fn probe_accepted_baseline(subject: &ProbeSubject<'_>) -> Result<String, ProofError> {
     let mut decoded = DecodedProgram::decode(subject.bytes).map_err(ProofError::ProbeBaseline)?;
     let preflight = decoded
-        .preflight(subject.environment, subject.expected, subject.abi)
+        .prepare(subject.environment, subject.expected, subject.abi)
+        .and_then(|preparation| preparation.resolve_target_properties(|_| u64::MAX))
         .map_err(ProofError::ProbeBaseline)?;
     let entries = preflight.entries();
     let threads: u64 = entries
@@ -919,7 +920,7 @@ fn probe_other_backend_family(subject: &ProbeSubject<'_>) -> Result<String, Proo
             .map_err(|_| ProofError::HostProfile)?,
         representation: subject.environment.representation.clone(),
     };
-    match decoded.preflight(&other_backend, subject.expected, subject.abi) {
+    match decoded.prepare(&other_backend, subject.expected, subject.abi) {
         Err(rejection @ LoadRejection::UnexecutablePayload { .. }) => Ok(format!(
             "a host stating another backend family: {rejection}"
         )),
@@ -1348,6 +1349,57 @@ struct PreparedRoute {
     facts: DeviceFacts,
 }
 
+/// Builds every exact entry pipeline before any deferred property is answered.
+fn prepare_pipelines(
+    device: &Device,
+    entries: &[RoutedEntry<'_>],
+) -> Result<Vec<ComputePipelineState>, PreflightRefusal> {
+    entries
+        .iter()
+        .enumerate()
+        .map(|(position, entry)| {
+            let library = device
+                .new_library_with_data(entry.object())
+                .map_err(|detail| PreflightRefusal::LibraryRejected {
+                    entry: position,
+                    detail,
+                })?;
+            let symbol = entry.entry_symbol();
+            let function = library.get_function(symbol, None).map_err(|detail| {
+                PreflightRefusal::FunctionAbsent {
+                    entry: position,
+                    symbol: symbol.to_owned(),
+                    detail,
+                }
+            })?;
+            let descriptor = ComputePipelineDescriptor::new();
+            descriptor.set_compute_function(Some(&function));
+            device
+                .new_compute_pipeline_state(&descriptor)
+                .map_err(|detail| PreflightRefusal::PipelineRejected {
+                    entry: position,
+                    symbol: symbol.to_owned(),
+                    detail,
+                })
+        })
+        .collect()
+}
+
+/// Answers each requirement from its exact prepared pipeline and preserves the pipelines for execution.
+fn resolve_prepared_route<'a>(
+    device: &Device,
+    preparation: RoutePreparation<'a>,
+) -> Result<(Preflight<'a>, Vec<ComputePipelineState>), ProofError> {
+    let pipelines = prepare_pipelines(device, preparation.entries())
+        .map_err(|refusal| ProofError::DevicePreflight(Box::new(refusal)))?;
+    let preflight = preparation
+        .resolve_target_properties(|request| {
+            pipelines[request.entry()].max_total_threads_per_threadgroup()
+        })
+        .map_err(ProofError::Load)?;
+    Ok((preflight, pipelines))
+}
+
 /// Proves this device can carry out a route, while declining is still permitted.
 ///
 /// **Every entry, not the first one.** `prototype-metal-runtime-preflight` moved
@@ -1364,6 +1416,7 @@ struct PreparedRoute {
 fn device_preflight(
     device: &Device,
     preflight: &Preflight<'_>,
+    pipelines: &[ComputePipelineState],
     plan: &[Vec<PlacedSlot>],
     operands: &[u32],
     rows: u64,
@@ -1401,34 +1454,8 @@ fn device_preflight(
     let mut output = None;
     let mut entries = Vec::with_capacity(routed.len());
     for (position, entry) in routed.iter().enumerate() {
-        // The library and the entry symbol come from the artifact, never from
-        // this process. The identical call in `dispatch_direct` cannot fail this
-        // way for the same reason: there the object is one this build just
-        // emitted, so a rejection is a defect in Tiler, and here it is a
-        // statement about published bytes.
-        let library = device
-            .new_library_with_data(entry.object())
-            .map_err(|detail| PreflightRefusal::LibraryRejected {
-                entry: position,
-                detail,
-            })?;
         let symbol = entry.entry_symbol();
-        let function = library.get_function(symbol, None).map_err(|detail| {
-            PreflightRefusal::FunctionAbsent {
-                entry: position,
-                symbol: symbol.to_owned(),
-                detail,
-            }
-        })?;
-        let descriptor = ComputePipelineDescriptor::new();
-        descriptor.set_compute_function(Some(&function));
-        let pipeline = device
-            .new_compute_pipeline_state(&descriptor)
-            .map_err(|detail| PreflightRefusal::PipelineRejected {
-                entry: position,
-                symbol: symbol.to_owned(),
-                detail,
-            })?;
+        let pipeline = pipelines[position].clone();
 
         let launch = entry.launch();
         workgroup_fits(
@@ -1683,7 +1710,9 @@ fn probe_device_preflight(
 
     // The unperturbed route still prepares, which is what makes each refusal
     // above evidence about its own perturbation rather than about the route.
-    device_preflight(device, preflight, plan, operands, rows)
+    let pipelines = prepare_pipelines(device, preflight.entries())
+        .map_err(|refusal| ProofError::DevicePreflight(Box::new(refusal)))?;
+    device_preflight(device, preflight, &pipelines, plan, operands, rows)
         .map_err(|refusal| ProofError::DevicePreflight(Box::new(refusal)))?;
     println!("  the unperturbed route prepares: every stage cleared before the commit");
     Ok(())
@@ -1828,9 +1857,10 @@ fn prove_member(
             .ok_or(ProofError::SidecarWithoutCases)
             .and_then(|payload| decode_f32_bits("expected", rows, payload.bytes()))?;
 
-        let preflight = decoded
-            .preflight(&environment, sidecar.artifact_identity_bytes(), &abi)
+        let preparation = decoded
+            .prepare(&environment, sidecar.artifact_identity_bytes(), &abi)
             .map_err(ProofError::Load)?;
+        let (preflight, pipelines) = resolve_prepared_route(device, preparation)?;
 
         // Checked before the commit, because a route to a program this process
         // did not derive is a reason to abandon rather than to execute and
@@ -1858,7 +1888,7 @@ fn prove_member(
         }
 
         let plan = plan_route(&preflight)?;
-        let prepared = device_preflight(device, &preflight, &plan, &inputs, rows)
+        let prepared = device_preflight(device, &preflight, &pipelines, &plan, &inputs, rows)
             .map_err(|refusal| ProofError::DevicePreflight(Box::new(refusal)))?;
 
         let routed = preflight.commit();
@@ -1979,8 +2009,8 @@ fn run() -> Result<(), ProofError> {
         abi: &abi,
     })?;
 
-    let preflight = decoded
-        .preflight(&environment, sidecar.artifact_identity_bytes(), &abi)
+    let preparation = decoded
+        .prepare(&environment, sidecar.artifact_identity_bytes(), &abi)
         .map_err(ProofError::Load)?;
 
     // Compiled here only to *name* the program the artifact claims to package.
@@ -2006,9 +2036,9 @@ fn run() -> Result<(), ProofError> {
         .as_bytes();
     // Checked before the commit, because a route to a program this process did
     // not derive is a reason to abandon rather than to execute and compare.
-    if preflight.kernel_program_identity() != local {
+    if preparation.kernel_program_identity() != local {
         return Err(ProofError::ForeignProgram {
-            packaged: preflight.kernel_program_identity().len(),
+            packaged: preparation.kernel_program_identity().len(),
             compiled: local.len(),
         });
     }
@@ -2045,8 +2075,9 @@ fn run() -> Result<(), ProofError> {
     // still permitted, and between them they discharge every obligation this
     // host can decide — which is what makes the commit below infallible in fact
     // and not only in signature. See `plan_route` and `device_preflight`.
+    let (preflight, pipelines) = resolve_prepared_route(device, preparation)?;
     let plan = plan_route(&preflight)?;
-    let prepared = device_preflight(device, &preflight, &plan, &envelope_bits, rows)
+    let prepared = device_preflight(device, &preflight, &pipelines, &plan, &envelope_bits, rows)
         .map_err(|refusal| ProofError::DevicePreflight(Box::new(refusal)))?;
     let facts = &prepared.facts;
     println!(
@@ -2474,20 +2505,20 @@ mod tests {
     //! hardware run is what would notice.
 
     use super::{
-        BACKEND_KEY, PLAN_ROLES, Path, ProbeSubject, REDUCTION_CLASSES, REPRESENTATION_KEY, ROWS,
-        bind_interface, expected_shape, host_environment, probe_accepted_baseline,
-        probe_damaged_interior_byte, probe_damaged_section_content,
+        BACKEND_KEY, LoadRejection, PLAN_ROLES, Path, ProbeSubject, REDUCTION_CLASSES,
+        REPRESENTATION_KEY, ROWS, bind_interface, expected_shape, host_environment,
+        probe_accepted_baseline, probe_damaged_interior_byte, probe_damaged_section_content,
         probe_foreign_expected_identity, probe_other_backend_family,
         probe_other_profile_descriptor, probe_truncated_envelope, proof_member, serial_sum_program,
     };
     use tiler_artifact::program::{
         AbiExprId, AbiFacts, ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey,
         BackendEntryRef, BackendKey, BindingKind, BindingSpec, BindingTarget, BufferAccess,
-        CapabilityKey, CompilationEnvironment, EntrySpec, FeasibilityRuleSetKey,
-        FeasibilityRuleSetRef, LaunchSpec, PayloadContent, PayloadEntryMapping, PayloadMetadata,
-        PayloadProvenance, PayloadSdkIdentity, RepresentationKey, SchemaVersion, SelectedProvider,
-        TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, ToolComponent,
-        VariantSpec, VerifiedArtifactProgram,
+        CapabilityKey, CompilationEnvironment, DeferredPredicateSpec, EntrySpec,
+        FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec, PayloadContent,
+        PayloadEntryMapping, PayloadMetadata, PayloadProvenance, PayloadSdkIdentity,
+        RepresentationKey, SchemaVersion, SelectedProvider, TargetProfileDescriptorDigest,
+        TargetProfileKey, TargetProfileRef, ToolComponent, VariantSpec, VerifiedArtifactProgram,
     };
     use tiler_compiler::session::{
         Compilation, NumericalContract, PlanAlternative, compile_governed,
@@ -2758,7 +2789,13 @@ mod tests {
                 VariantSpec {
                     target_profile: profile,
                     feasibility_rules: rules,
-                    deferred_predicates: Vec::new(),
+                    deferred_predicates: plan
+                        .prepared_entry_target_requirements()
+                        .map(|requirement| DeferredPredicateSpec {
+                            requirement: requirement.requirement().clone(),
+                            entry: requirement.entry(),
+                        })
+                        .collect(),
                     entries,
                 },
             )
@@ -3411,9 +3448,64 @@ mod tests {
         let mut decoded = DecodedProgram::decode(&bytes).expect("the multi-stage envelope decodes");
         let (_, _, abi) = bind_interface(&decoded).expect("the declared interface binds");
 
+        assert!(
+            matches!(
+                decoded.preflight(&environment, &expected, &abi),
+                Err(LoadRejection::UnansweredDeferredPredicates {
+                    variant: 0,
+                    deferred: 2,
+                })
+            ),
+            "the device-free path remains fail-closed"
+        );
+        let mut decoded =
+            DecodedProgram::decode(&bytes).expect("the multi-stage envelope decodes again");
+        let preparation = decoded
+            .prepare(&environment, &expected, &abi)
+            .expect("every entry of the multi-stage route prepares");
+        let requests: Vec<_> = preparation.target_property_requests().collect();
+        assert_eq!(
+            requests.len(),
+            2,
+            "each prepared entry owns one exact query"
+        );
+        assert_eq!(
+            requests[0].requirement().query().key(),
+            requests[1].requirement().query().key(),
+            "the fixture must exercise equal property keys on distinct entries",
+        );
+        let mut queried_entries: Vec<_> = requests.iter().map(|request| request.entry()).collect();
+        queried_entries.sort_unstable();
+        assert_eq!(
+            queried_entries,
+            vec![0, 1],
+            "each query remains bound to its exact execution-order entry",
+        );
+        let refused_entry = requests[1].entry();
+        let mut answer = 0;
+        let rejection = preparation
+            .resolve_target_properties(|_| {
+                answer += 1;
+                if answer == 1 { u64::MAX } else { 0 }
+            })
+            .expect_err("the second entry's insufficient answer must refuse independently");
+        assert_eq!(answer, 2, "each exact-entry request is answered once");
+        assert!(matches!(
+            rejection,
+            LoadRejection::UnsatisfiedDeferredPredicate {
+                variant: 0,
+                predicate: 1,
+                entry,
+            } if entry == refused_entry
+        ));
+
+        let mut decoded =
+            DecodedProgram::decode(&bytes).expect("the multi-stage envelope decodes again");
         let preflight = decoded
-            .preflight(&environment, &expected, &abi)
-            .expect("every entry of the multi-stage route preflights");
+            .prepare(&environment, &expected, &abi)
+            .expect("every entry of the multi-stage route prepares")
+            .resolve_target_properties(|_| u64::MAX)
+            .expect("both exact-entry requirements hold");
 
         assert_eq!(
             preflight.entries().len(),
@@ -3496,8 +3588,10 @@ mod tests {
             DecodedProgram::decode(&bytes).expect("the partial-window envelope decodes");
         let (_, _, abi) = bind_interface(&decoded).expect("the declared interface binds");
         let preflight = decoded
-            .preflight(&environment, &expected, &abi)
-            .expect("the partial-window route preflights");
+            .prepare(&environment, &expected, &abi)
+            .expect("the partial-window route prepares")
+            .resolve_target_properties(|_| u64::MAX)
+            .expect("the partial-window target requirement holds");
 
         let [shared] = preflight.shared_allocations() else {
             panic!("the two stages share exactly one scratch allocation");

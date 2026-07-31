@@ -1,15 +1,10 @@
 //! The preflight stage and the one-way routing commit.
 //!
-//! # The two stages are two types, so the order is not a convention
+//! # Preparation and commit are distinct types, so the order is not a convention
 //!
 //! ADR 0051 requires routing to commit one way, before program work, and
 //! forbids falling back after it. That is enforced here by construction rather
-//! than by documentation. Every obligation that can refuse lives in
-//! [`super::DecodedProgram::preflight`], which returns a [`Preflight`] or a
-//! typed rejection; [`Preflight::commit`] consumes that value and is
-//! **infallible**. So there is nothing left that can fail after the commit, and
-//! no way to hold both a committed route and an uncommitted one — the value the
-//! fallback would have needed is gone.
+//! than by documentation. Every obligation that can refuse lives in [`super::DecodedProgram::preflight`] or in the consuming [`RoutePreparation::resolve_target_properties`] path; both yield a [`Preflight`] only after every requirement holds. [`Preflight::commit`] consumes that value and is **infallible**.
 //!
 //! A caller that wants a fallback takes it by not calling [`Preflight::commit`],
 //! which is exactly ADR 0051's "fallback only before program work".
@@ -49,8 +44,10 @@
 
 use tiler_artifact::program::{
     ArtifactExecutionPolicy, BackendPayloadDescriptor, CanonicalArtifactProgramIdentity,
-    DecodedBinding, DecodedEntry,
+    DecodedBinding, DecodedEntry, PreparedEntryTargetRequirement,
 };
+
+use super::LoadRejection;
 
 /// The evaluated launch geometry of one routed entry.
 ///
@@ -254,6 +251,115 @@ pub struct EntrySlot {
     pub(super) slot: usize,
 }
 
+#[derive(Debug)]
+pub(super) struct RouteCandidate<'a> {
+    pub(super) identity: CanonicalArtifactProgramIdentity,
+    pub(super) kernel_program: &'a [u8],
+    pub(super) entries: Vec<RoutedEntry<'a>>,
+    pub(super) shared: Vec<SharedAllocation>,
+}
+
+/// One exact prepared-entry property the host must acquire before routing can commit.
+#[derive(Clone, Copy, Debug)]
+pub struct TargetPropertyRequest<'a> {
+    pub(super) variant: usize,
+    pub(super) predicate: usize,
+    pub(super) entry: usize,
+    pub(super) requirement: &'a PreparedEntryTargetRequirement,
+}
+
+impl<'a> TargetPropertyRequest<'a> {
+    /// Returns the selected variant's routing rank.
+    #[must_use]
+    pub const fn variant(self) -> usize {
+        self.variant
+    }
+
+    /// Returns the predicate's position within the selected variant.
+    #[must_use]
+    pub const fn predicate(self) -> usize {
+        self.predicate
+    }
+
+    /// Returns the exact prepared entry's position in execution order.
+    #[must_use]
+    pub const fn entry(self) -> usize {
+        self.entry
+    }
+
+    /// Returns the complete query, threshold, and directional relation.
+    #[must_use]
+    pub const fn requirement(self) -> &'a PreparedEntryTargetRequirement {
+        self.requirement
+    }
+}
+
+/// A fully routed candidate awaiting exact properties from its prepared entries.
+///
+/// Routing cannot commit while any prepared-entry property remains unanswered:
+///
+/// ```compile_fail
+/// fn commit_early(preparation: tiler_runtime::load::RoutePreparation<'_>) {
+///     let _ = preparation.commit();
+/// }
+/// ```
+#[derive(Debug)]
+#[must_use = "a preparation that is neither resolved nor abandoned decides nothing"]
+pub struct RoutePreparation<'a> {
+    pub(super) candidate: RouteCandidate<'a>,
+    pub(super) requests: Vec<TargetPropertyRequest<'a>>,
+}
+
+impl<'a> RoutePreparation<'a> {
+    /// Returns the identity of the artifact this preparation would execute.
+    #[must_use]
+    pub const fn identity(&self) -> &CanonicalArtifactProgramIdentity {
+        &self.candidate.identity
+    }
+
+    /// Returns the canonical identity of the kernel program this preparation would run.
+    #[must_use]
+    pub const fn kernel_program_identity(&self) -> &'a [u8] {
+        self.candidate.kernel_program
+    }
+
+    /// Returns the entries whose exact executable pipelines must be prepared.
+    #[must_use]
+    pub fn entries(&self) -> &[RoutedEntry<'a>] {
+        &self.candidate.entries
+    }
+
+    /// Returns every exact-entry property request in predicate order.
+    #[must_use]
+    pub fn target_property_requests(
+        &self,
+    ) -> impl ExactSizeIterator<Item = TargetPropertyRequest<'a>> + '_ {
+        self.requests.iter().copied()
+    }
+
+    /// Resolves every request exactly once and yields a committable route only when all hold.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LoadRejection::UnsatisfiedDeferredPredicate`] for the first answered requirement that does not hold.
+    pub fn resolve_target_properties(
+        self,
+        mut resolve: impl FnMut(TargetPropertyRequest<'a>) -> u64,
+    ) -> Result<Preflight<'a>, LoadRejection> {
+        for request in self.requests {
+            let observed = resolve(request);
+            if !request.requirement.is_satisfied_by(observed) {
+                return Err(LoadRejection::UnsatisfiedDeferredPredicate {
+                    variant: request.variant,
+                    predicate: request.predicate,
+                    entry: request.entry,
+                });
+            }
+        }
+        Ok(Preflight::from_candidate(self.candidate))
+    }
+}
+
 impl EntrySlot {
     /// Returns the position of the entry in the route's execution order.
     #[must_use]
@@ -283,6 +389,20 @@ pub struct Preflight<'a> {
 }
 
 impl<'a> Preflight<'a> {
+    pub(super) fn from_candidate(candidate: RouteCandidate<'a>) -> Self {
+        let RouteCandidate {
+            identity,
+            kernel_program,
+            entries,
+            shared,
+        } = candidate;
+        Self {
+            identity,
+            kernel_program,
+            entries,
+            shared,
+        }
+    }
     /// Returns the identity of the artifact this route would execute.
     #[must_use]
     pub const fn identity(&self) -> &CanonicalArtifactProgramIdentity {

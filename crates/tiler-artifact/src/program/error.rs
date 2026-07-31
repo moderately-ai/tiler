@@ -210,11 +210,6 @@ pub enum ArtifactBuildError {
         /// Repeated provider identity.
         provider: Box<ProviderIdentity>,
     },
-    /// A deferred predicate named a query authority that was never selected.
-    UnselectedDeferredAuthority {
-        /// Rejected provider identity.
-        provider: Box<ProviderIdentity>,
-    },
     /// An identical backend payload descriptor is already declared.
     DuplicatePayload,
     /// An operand had the wrong value type for the operation applied to it.
@@ -384,15 +379,25 @@ pub enum ArtifactBuildError {
         /// Typed evaluation failure.
         cause: AbiEvaluationError,
     },
-    /// A predicate was declared deferred at a phase that is already decided.
-    ///
-    /// A predicate decidable from the compile profile or the artifact's own
-    /// evidence is proven or rejected before packaging; recording it as
-    /// deferred would claim a runtime query that never happens.
-    NonDeferredPredicatePhase {
-        /// Rejected phase.
+    /// A deferred target-property query names a phase this artifact profile cannot execute.
+    UnsupportedDeferredQueryPhase {
+        /// Unsupported query phase.
         phase: AvailabilityPhase,
     },
+    /// A deferred implication requirement is outside the Boolean quantity domain.
+    DeferredImplicationRequirementNotBoolean {
+        /// Rejected required quantity.
+        required: u64,
+    },
+    /// A deferred target-property query names no executable entry.
+    DeferredQueryEntryOutOfRange {
+        /// Rejected declared entry ordinal.
+        entry: u32,
+        /// Entry count of the variant.
+        entries: usize,
+    },
+    /// A deferred predicate does not read exactly the target-property query it names.
+    DeferredQueryPredicateMismatch,
     /// An entry declares a zero-thread launch without a zero-work policy.
     ZeroWorkPolicy {
         /// Ordered entry position.
@@ -451,12 +456,14 @@ impl Error for ArtifactBuildError {
             | Self::KeyTooLong { .. }
             | Self::ProviderNotAvailable { .. }
             | Self::DuplicateSelectedProvider { .. }
-            | Self::UnselectedDeferredAuthority { .. }
             | Self::DuplicatePayload
             | Self::OperandType { .. }
             | Self::SelectBranchType { .. }
             | Self::ExpressionType { .. }
-            | Self::NonDeferredPredicatePhase { .. }
+            | Self::UnsupportedDeferredQueryPhase { .. }
+            | Self::DeferredImplicationRequirementNotBoolean { .. }
+            | Self::DeferredQueryEntryOutOfRange { .. }
+            | Self::DeferredQueryPredicateMismatch
             | Self::ZeroWorkPolicy { .. }
             | Self::DuplicateDeferredPredicate
             | Self::DuplicateLaunchPrecondition { .. }

@@ -39,22 +39,22 @@
 
 use std::collections::BTreeSet;
 
-use tiler_ir::kernel::KernelType;
-use tiler_ir::program::{StorageEncoding, StorageScalar};
-use tiler_ir::semantic::ProviderIdentity;
-
 use super::super::error::{AbiExprUse, ArtifactBuildError, ArtifactDiagnostic};
 use super::super::expr::{
     AbiFacts, AbiType, AvailabilityPhase, ExprNode, evaluate, node_is_interface_only, node_phase,
     node_type,
 };
 use super::super::facts::AbiFactBinder;
-use super::super::model::{BindingTargetData, canonical_deferred_order, deferred_key};
+use super::super::model::{
+    BindingTargetData, canonical_deferred_order, deferred_predicate_matches_requirement,
+};
 use super::error::{ArtifactCodecError, OrderedSubject};
 use super::model::{
     ArtifactEnvelope, EntryRow, VariantRow, expression_keys, node_operands, position,
 };
 use super::payload::{decode_metadata, payload_identity};
+use tiler_ir::kernel::KernelType;
+use tiler_ir::program::{StorageEncoding, StorageScalar};
 
 /// Proves every artifact-model obligation a decoded envelope can discharge.
 ///
@@ -513,21 +513,31 @@ fn check_variant(
         });
     }
     for predicate in &variant.deferred {
-        if predicate.phase < AvailabilityPhase::LiveDevicePreflight {
-            return Err(rule(ArtifactBuildError::NonDeferredPredicatePhase {
-                phase: predicate.phase,
+        if predicate.requirement.query().available_at()
+            != AvailabilityPhase::PreparedKernelPreflight
+        {
+            return Err(rule(ArtifactBuildError::UnsupportedDeferredQueryPhase {
+                phase: predicate.requirement.query().available_at(),
             }));
         }
-        if !selects(envelope, &predicate.authority) {
-            return Err(rule(ArtifactBuildError::UnselectedDeferredAuthority {
-                provider: Box::new(predicate.authority.clone()),
+        if position(predicate.entry) >= variant.entries.len() {
+            return Err(rule(ArtifactBuildError::DeferredQueryEntryOutOfRange {
+                entry: predicate.entry,
+                entries: variant.entries.len(),
             }));
+        }
+        if !deferred_predicate_matches_requirement(
+            envelope.expressions(),
+            predicate.predicate,
+            &predicate.requirement,
+        ) {
+            return Err(rule(ArtifactBuildError::DeferredQueryPredicateMismatch));
         }
         facts.check_use(
             predicate.predicate,
             AbiExprUse::DeferredPredicate,
             AbiType::Boolean,
-            predicate.phase,
+            predicate.requirement.query().available_at(),
             false,
         )?;
     }
@@ -660,13 +670,6 @@ fn check_duplicate_variants(envelope: &ArtifactEnvelope) -> Result<(), ArtifactC
         }
     }
     Ok(())
-}
-
-fn selects(envelope: &ArtifactEnvelope, authority: &ProviderIdentity) -> bool {
-    envelope
-        .providers()
-        .iter()
-        .any(|selected| &selected.provider == authority)
 }
 
 /// Proves a canonically ordered collection is sorted and free of repeats.

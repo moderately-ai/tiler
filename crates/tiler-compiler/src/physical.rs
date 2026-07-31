@@ -25,8 +25,8 @@ use tiler_ir::schedule::{
 };
 
 use crate::feasibility::{
-    AvailabilityPhase, AxisRequirement, CapabilityAxis, FeasibilityError, FeasibilityOutcome,
-    FeasibilityProposal, ProvenEvidence, RejectionCause,
+    AvailabilityPhase, AxisRequirement, CapabilityAxis, DeferredSet, FeasibilityError,
+    FeasibilityOutcome, FeasibilityProposal, ProvenEvidence, RejectionCause,
 };
 use crate::honourability::{
     DimensionBehaviour, NumericalDimension, NumericalRequirement, UnhonouredDimension,
@@ -57,6 +57,7 @@ pub(crate) struct VerifiedScheduledRegion {
     semantic_members: Vec<SemanticMemberId>,
     target_profile: TargetProfile,
     request_subject: VerifiedRequestSubject,
+    admission: AdmissionEvidence,
 }
 
 impl VerifiedScheduledRegion {
@@ -98,6 +99,11 @@ impl VerifiedScheduledRegion {
     }
     pub(crate) fn matches_request(&self, request: &VerifiedTargetRequest) -> bool {
         self.request_subject == *request.subject()
+    }
+
+    /// Returns the complete hard-feasibility admission for this exact region.
+    pub(crate) const fn admission(&self) -> &AdmissionEvidence {
+        &self.admission
     }
 }
 
@@ -618,17 +624,16 @@ pub(crate) fn verify_schedule(
     request: &VerifiedTargetRequest,
 ) -> Result<VerifiedScheduledRegion, PhysicalError> {
     verify_schedule_with_feasibility(region, semantic_members, request)
-        .map(|(verified, _)| verified)
 }
 
 /// Verifies one scheduled region and additionally surfaces the resolved
-/// feasibility predicates that a proven target assessment carries.
+/// feasibility evidence that an admissible target assessment carries.
 ///
 /// This runs the exact checked path [`verify_schedule`] runs — the request-subject
 /// precondition, whole-region intrinsic verification, numerical-realization
 /// agreement, the request-subject binding, and the single hard-feasibility
-/// decision — and additionally returns the evidence of a
-/// [`FeasibilityOutcome::Proven`](crate::feasibility::FeasibilityOutcome) verdict.
+/// decision — and additionally returns either complete proof or compiler-minted
+/// deferred obligations.
 /// The physical implementation frontier retains it as admission evidence for an
 /// enumerated proposal. A provider cannot bypass any of these checks: a
 /// [`PhysicalError::Target`] or [`PhysicalError::Numerical`] means the proposal
@@ -638,7 +643,7 @@ pub(crate) fn verify_schedule_with_feasibility(
     region: ScheduledRegion,
     semantic_members: Vec<SemanticMemberId>,
     request: &VerifiedTargetRequest,
-) -> Result<(VerifiedScheduledRegion, ProvenEvidence), PhysicalError> {
+) -> Result<VerifiedScheduledRegion, PhysicalError> {
     let id = region.index.id;
     let subject = request.subject();
     if !request.reconstructs_its_authority() || !request.numerical_contract().is_governed() {
@@ -661,15 +666,13 @@ pub(crate) fn verify_schedule_with_feasibility(
         verified.region().schedule.work_items,
         request.target_profile(),
     )?;
-    Ok((
-        VerifiedScheduledRegion {
-            verified,
-            semantic_members,
-            target_profile: request.target_profile().clone(),
-            request_subject: subject.clone(),
-        },
-        evidence,
-    ))
+    Ok(VerifiedScheduledRegion {
+        verified,
+        semantic_members,
+        target_profile: request.target_profile().clone(),
+        request_subject: subject.clone(),
+        admission: evidence,
+    })
 }
 
 /// Maps an intrinsic schedule-verification failure onto the physical-error
@@ -792,18 +795,6 @@ fn reduction_access_matches(
 
 /// Assesses one scheduled region against the typed feasibility authority.
 ///
-/// This is the single hard-feasibility decision for the bounded serial-Sum path.
-/// It builds an immutable checked target profile and a typed candidate proposal,
-/// then maps the four-outcome result onto the existing physical-error contract:
-/// a proven candidate yields its evidence (consumed by the explain admitted
-/// trace); a rejected candidate yields the canonical representative cause, as a
-/// [`PhysicalError::Numerical`] when the target declares it cannot honour a
-/// dimension and as a [`PhysicalError::Target`] when a capability bound is
-/// exceeded. The governed baseline declares only compile-profile-resolvable
-/// predicates, so a deferred or unknown verdict — like a malformed profile or
-/// proposal — signals that the checked contract drifted from the prototype
-/// limits and fails closed as an intrinsic error rather than admitting an
-/// unproven plan. Cost never enters this decision.
 /// Why a resource assessment did not prove feasibility, **unattributed**.
 ///
 /// The verdict without the blame. `assess_region` attributes it to a
@@ -817,6 +808,42 @@ fn reduction_access_matches(
 /// does not exist is worse than no attribution at all: a reader chasing it finds
 /// nothing.
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum AdmissionEvidence {
+    /// Every hard predicate was resolved before planning.
+    Proven(ProvenEvidence),
+    /// Every unresolved predicate has a typed query path before routing commit.
+    Deferred(DeferredSet),
+}
+
+impl AdmissionEvidence {
+    /// The checks already proven at compile time.
+    pub(crate) const fn proven(&self) -> &ProvenEvidence {
+        match self {
+            Self::Proven(evidence) => evidence,
+            Self::Deferred(deferred) => deferred.proven(),
+        }
+    }
+
+    /// The remaining compiler-minted obligations, when there are any.
+    pub(crate) const fn deferred(&self) -> Option<&DeferredSet> {
+        match self {
+            Self::Proven(_) => None,
+            Self::Deferred(deferred) => Some(deferred),
+        }
+    }
+
+    /// The capability checks already resolved at compile time.
+    pub(crate) fn predicates(&self) -> &[crate::feasibility::ResolvedPredicate] {
+        self.proven().predicates()
+    }
+
+    /// The numerical dimensions already honoured at compile time.
+    pub(crate) fn honoured(&self) -> &[crate::honourability::HonouredDimension] {
+        self.proven().honoured()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(
     dead_code,
     reason = "the unattributed verdict; its second caller is the opaque-call admission being built"
@@ -826,8 +853,8 @@ pub(crate) enum ResourceVerdict {
     Intrinsic(FeasibilityError),
     /// The target refused the proposal, with the representative cause.
     Rejected(RejectionCause),
-    /// The assessment neither proved nor refused.
-    Unresolved,
+    /// At least one predicate has no admissible fact or query path.
+    Unknown,
 }
 
 /// Assesses exact resource requirements against a target, attributing nothing.
@@ -843,19 +870,22 @@ pub(crate) fn assess_resources(
     arithmetic: ArithmeticType,
     work_items: u64,
     target: &TargetProfile,
-) -> Result<ProvenEvidence, ResourceVerdict> {
+) -> Result<AdmissionEvidence, ResourceVerdict> {
     let proposal = region_proposal(requirements, arithmetic, work_items)
         .map_err(ResourceVerdict::Intrinsic)?;
     match target
         .checked()
         .assess(&proposal, AvailabilityPhase::CompileProfile)
     {
-        FeasibilityOutcome::Proven(evidence) => Ok(evidence),
-        FeasibilityOutcome::Rejected(rejection) => {
-            Err(ResourceVerdict::Rejected(rejection.representative()))
+        FeasibilityOutcome::Proven(evidence) => Ok(AdmissionEvidence::Proven(evidence)),
+        FeasibilityOutcome::Deferred(deferred) if deferred.dimensions().is_empty() => {
+            Ok(AdmissionEvidence::Deferred(deferred))
         }
         FeasibilityOutcome::Deferred(_) | FeasibilityOutcome::Unknown(_) => {
-            Err(ResourceVerdict::Unresolved)
+            Err(ResourceVerdict::Unknown)
+        }
+        FeasibilityOutcome::Rejected(rejection) => {
+            Err(ResourceVerdict::Rejected(rejection.representative()))
         }
     }
 }
@@ -867,7 +897,7 @@ pub(crate) fn assess_region(
     arithmetic: ArithmeticType,
     work_items: u64,
     target: &TargetProfile,
-) -> Result<ProvenEvidence, PhysicalError> {
+) -> Result<AdmissionEvidence, PhysicalError> {
     assess_resources(requirements, arithmetic, work_items, target).map_err(
         |verdict| match verdict {
             ResourceVerdict::Intrinsic(error) => feasibility_intrinsic(&error, region),
@@ -882,7 +912,7 @@ pub(crate) fn assess_region(
                     available: predicate.available().value(),
                 }
             }
-            ResourceVerdict::Unresolved => PhysicalError::Intrinsic {
+            ResourceVerdict::Unknown => PhysicalError::Intrinsic {
                 rule: "target-assessment-unresolved",
                 region,
             },
@@ -1073,12 +1103,13 @@ mod tests {
     /// and step whatever domain tag the change requires in the same commit.
     #[test]
     fn the_governed_descriptor_bytes_do_not_move() {
-        // Rebaselined to the complete v9 declaration after replacing the
-        // conflated index-width row with operation-complete u64 arithmetic.
+        // Rebaselined to the complete v10 declaration after separating a
+        // future prepared-entry workgroup query from compile-profile facts and
+        // replacing the grid placeholder with the API-backed bound four.
         // Device-address width remains absent because no current KIR operation
         // consumes it and the governed authority does not establish it.
         // Every artifact identity and cache entry derived from it moves with it. Regenerate with `cargo nextest run -p tiler-compiler -E 'test(the_governed_descriptor_bytes_do_not_move)'` and take `left`.
-        const GOVERNED: &str = "000000000000002474696c65722e7461726765742d70726f66696c652e6465636c61726174696f6e2e763900000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e7631000000000000002574696c65722e7461726765742d70726f66696c652e666163742d736f75726365732e7634000000000000000001000000000000007400000003010101000000000000002a74696c65722e676f7665726e65642d7461726765742d70726f66696c652d617574686f726974792e76310000000101000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e76310000000100000000000000060000000000000009677269642d61786973ffff000000000000000000000000000015746872656164732d7065722d776f726b67726f7570010000000000000000000000000000000f6275666665722d62696e64696e6773020000000000000000000000000000000d6465766963652d6d656d6f727901000000000000000000000000000000126c6f63616c2d6d656d6f72792d62797465730000000000000000000000000000000014696e6465782d61726974686d657469632d7536340100000000000000000000000000000001000000000000004303000000000000003a74696c65722e7265736f6c7665642d76616c75652d747970652e76330001000000000000000574696c6572000000000000000366333200000001000000000000000c000101010100000101020100000201010100000201020100000302010100000302020100000402010100000402020100000502010100000602010100000904010100000a04010100000000000000002e74696c65722e7461726765742d70726f66696c652e64747970652d64697370617463686162696c6974792e7632000000000000000001000000000000003a74696c65722e7265736f6c7665642d76616c75652d747970652e76330001000000000000000574696c65720000000000000003663332000000010100";
+        const GOVERNED: &str = "000000000000002574696c65722e7461726765742d70726f66696c652e6465636c61726174696f6e2e76313000000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e7631000000000000002574696c65722e7461726765742d70726f66696c652e666163742d736f75726365732e7634000000000000000001000000000000007400000003010101000000000000002a74696c65722e676f7665726e65642d7461726765742d70726f66696c652d617574686f726974792e76310000000101000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e76310000000100000000000000050000000000000009677269642d61786973040000000000000000000000000000000f6275666665722d62696e64696e6773020000000000000000000000000000000d6465766963652d6d656d6f727901000000000000000000000000000000126c6f63616c2d6d656d6f72792d62797465730000000000000000000000000000000014696e6465782d61726974686d657469632d75363401000000000000000000000000000000010000000000000015746872656164732d7065722d776f726b67726f7570000000000000009274696c65722e7461726765742d70726f70657274792d71756572792e763100000000000000003874696c65722e7461726765742e70726570617265642d656e7472792e6d61782d746872656164732d7065722d776f726b67726f75702e763104000000000000000574696c6572000000000000001970726570617265642d656e7472792d70726f70657274696573000000010000000000000001000000000000004303000000000000003a74696c65722e7265736f6c7665642d76616c75652d747970652e76330001000000000000000574696c6572000000000000000366333200000001000000000000000c000101010100000101020100000201010100000201020100000302010100000302020100000402010100000402020100000502010100000602010100000904010100000a04010100000000000000002e74696c65722e7461726765742d70726f66696c652e64747970652d64697370617463686162696c6974792e7632000000000000000001000000000000003a74696c65722e7265736f6c7665642d76616c75652d747970652e76330001000000000000000574696c65720000000000000003663332000000010100";
 
         let profile = crate::request::TargetProfile::governed();
         let descriptor = target_profile_descriptor(&profile);
@@ -1149,7 +1180,7 @@ mod tests {
     fn pointwise_request() -> VerifiedTargetRequest {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder
-            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 2]))
             .unwrap();
         let first = F32Constant::apply(&mut builder, 1.0e20_f32.to_bits()).unwrap();
         let second = F32Constant::apply(&mut builder, (-1.0e20_f32).to_bits()).unwrap();
@@ -1169,12 +1200,12 @@ mod tests {
 
     #[test]
     fn fixed_schedules_and_kernels_refine_the_two_regions() {
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let regions = build_scheduled_regions(&request).unwrap();
         let pointwise = lower_structured_kernel(&regions[0]).unwrap();
         let reduction = lower_structured_kernel(&regions[1]).unwrap();
 
-        assert_eq!(regions[0].region().schedule.work_items, 6);
+        assert_eq!(regions[0].region().schedule.work_items, 4);
         assert_eq!(regions[1].region().schedule.work_items, 2);
         // Each kernel retains the exact identity of the region it refines.
         assert_eq!(pointwise.scheduled_region(), RegionId::new(0));
@@ -1189,13 +1220,13 @@ mod tests {
         );
         // The reduction realizes the scheduled contributor order as an explicit
         // bounded loop; the pointwise region carries none.
-        assert_eq!(loop_bounds(&reduction), Some((1, 3)));
+        assert_eq!(loop_bounds(&reduction), Some((1, 2)));
         assert_eq!(loop_bounds(&pointwise), None);
     }
 
     #[test]
     fn scheduled_regions_carry_a_transient_independent_identity() {
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let regions = build_scheduled_regions(&request).unwrap();
         // Equivalent normalized regions built from a fresh request share bytes.
         let rebuilt = build_scheduled_regions(&request).unwrap();
@@ -1228,7 +1259,7 @@ mod tests {
 
     #[test]
     fn schedule_and_kernel_fail_closed_on_refinement_mismatches() {
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let regions = build_scheduled_regions(&request).unwrap();
 
         let mut invalid_schedule = regions[1].region().clone();
@@ -1362,7 +1393,7 @@ mod tests {
 
     #[test]
     fn reduction_access_and_proof_shapes_are_bound_to_the_verified_request() {
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let regions = build_scheduled_regions(&request).unwrap();
         let fused = build_fused_scheduled_region(&request).unwrap();
 
@@ -1399,7 +1430,7 @@ mod tests {
 
     #[test]
     fn fused_schedule_rejects_numerical_corruption() {
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let scheduled = build_fused_scheduled_region(&request).unwrap();
         let mut invalid_schedule = scheduled.region().clone();
         let ScalarProgram::FusedMultiplyAddSerialSum { contraction, .. } =
@@ -1423,7 +1454,7 @@ mod tests {
 
     #[test]
     fn malformed_axes_zero_launch_and_late_zero_products_fail_without_panicking() {
-        let request = request(Shape::from_dims([2, 3]), [Axis::new(1)]);
+        let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let scheduled = build_fused_scheduled_region(&request).unwrap();
 
         let mut zero_threads = scheduled.region().clone();

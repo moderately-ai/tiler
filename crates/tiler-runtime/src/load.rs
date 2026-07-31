@@ -1,18 +1,12 @@
 //! Decoding artifact bytes into a validated, device-free program record.
 //!
-//! # The three stages, and why they are three types
+//! # Decode, optional device preparation, and the one-way commit
 //!
 //! [`DecodedProgram::decode`] takes bytes and returns a fully validated read
 //! view, or a typed rejection naming the class of failure.
-//! [`DecodedProgram::preflight`] takes a host's stated
-//! [`ExecutionEnvironment`], the identity of the program the caller expects, and
-//! the ABI facts the caller has bound, discharges every remaining obligation
-//! this loader can decide, and returns a [`Preflight`]. [`Preflight::commit`]
-//! consumes it and is infallible.
+//! [`DecodedProgram::preflight`] is the device-free path and refuses a selected variant with unanswered deferred predicates. [`DecodedProgram::prepare`] instead returns a [`RoutePreparation`] that exposes exact entries for reversible pipeline preparation and binds every property request to the entry that must answer it. Resolving those answers yields the same [`Preflight`], whose [`Preflight::commit`] consumes it infallibly.
 //!
-//! Nothing allocates, touches a device, or is irreversible before the commit,
-//! and nothing can refuse after it. That is ADR 0051's one-way routing commit
-//! expressed as three types rather than as a rule to remember.
+//! This crate allocates nothing and touches no device. A host may create reversible pipeline state while holding [`RoutePreparation`], but no program buffer, encoding, submission, or other irreversible program work belongs before the commit.
 //!
 //! # One authority per attempt, not merely one use per authority
 //!
@@ -83,10 +77,7 @@
 //!   would otherwise fail *open*: a loader allocating per binding hands the
 //!   successor a fresh buffer and it reads uninitialised device memory, which is
 //!   plausible garbage rather than an error.
-//! - **A variant with deferred feasibility predicates.** Answering one means
-//!   querying the provider it names, and this crate holds no provider registry.
-//!   Ignoring them would route past a feasibility condition the producer
-//!   deliberately left open.
+//! - **A deferred variant on the device-free path.** [`DecodedProgram::preflight`] has no prepared entry to query and refuses rather than guessing. [`DecodedProgram::prepare`] publishes each exact-entry request for a capable host to answer.
 //! - **Every guard false.** An artifact whose own guards exclude the bound facts
 //!   has nothing applicable to route to, and taking a variant anyway is how a
 //!   plan gets executed on a host it was proven not to fit.
@@ -98,8 +89,8 @@ mod route;
 
 pub use host::{ExecutionEnvironment, TargetCompatibility};
 pub use route::{
-    EntrySlot, Preflight, RoutedBinding, RoutedDispatch, RoutedEntry, RoutedLaunch,
-    SharedAllocation,
+    EntrySlot, Preflight, RoutePreparation, RoutedBinding, RoutedDispatch, RoutedEntry,
+    RoutedLaunch, SharedAllocation, TargetPropertyRequest,
 };
 
 use tiler_artifact::program::{
@@ -298,6 +289,60 @@ impl DecodedProgram {
         expected: &[u8],
         facts: &AbiFacts,
     ) -> Result<Preflight<'_>, LoadRejection> {
+        let (identity, variant) = self.select_route(environment, expected, facts)?;
+
+        // Every entry, in the order the variant says they run — not the entry
+        // table's canonical stage-key order, which is identity's and carries no
+        // execution meaning.
+        refuse_deferred(variant)?;
+        let ordered: Vec<_> = variant.execution_order().collect();
+        let candidate = self.route_candidate(identity, variant, &ordered, environment, facts)?;
+        Ok(Preflight::from_candidate(candidate))
+    }
+
+    /// Routes all artifact-only obligations and publishes exact-entry property requests for a device host to answer before commit.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`LoadRejection`] naming the first obligation that failed. No target property has been acquired and routing has not committed when it does.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the decoded artifact contradicts the invariant that every deferred requirement names an entry in its own variant. [`decode_artifact`] proves that invariant before this route is constructed.
+    pub fn prepare(
+        &mut self,
+        environment: &ExecutionEnvironment,
+        expected: &[u8],
+        facts: &AbiFacts,
+    ) -> Result<RoutePreparation<'_>, LoadRejection> {
+        let (identity, variant) = self.select_route(environment, expected, facts)?;
+        let ordered: Vec<_> = variant.execution_order().collect();
+        let mut requests = Vec::with_capacity(variant.deferred_predicates().len());
+        for (predicate, deferred) in variant.deferred_predicates().enumerate() {
+            let entry = ordered
+                .iter()
+                .position(|entry| entry.stage_key() == deferred.entry().stage_key())
+                .expect("a decode proved every deferred requirement names an entry in its variant");
+            requests.push(TargetPropertyRequest {
+                variant: variant.routing_rank(),
+                predicate,
+                entry,
+                requirement: deferred.requirement(),
+            });
+        }
+        let candidate = self.route_candidate(identity, variant, &ordered, environment, facts)?;
+        Ok(RoutePreparation {
+            candidate,
+            requests,
+        })
+    }
+
+    fn select_route<'a>(
+        &'a self,
+        environment: &ExecutionEnvironment,
+        expected: &[u8],
+        facts: &AbiFacts,
+    ) -> Result<(CanonicalArtifactProgramIdentity, DecodedVariant<'a>), LoadRejection> {
         let identity = self.identity();
         if identity.as_bytes() != expected {
             return Err(LoadRejection::ProgramMismatch {
@@ -305,9 +350,7 @@ impl DecodedProgram {
                 loaded: identity,
             });
         }
-
         let variant = self.select_variant(facts)?;
-
         let classification = environment.classify(variant.target_profile());
         if !classification.is_compatible() {
             return Err(LoadRejection::IncompatibleTarget {
@@ -315,12 +358,17 @@ impl DecodedProgram {
                 classification,
             });
         }
+        Ok((identity, variant))
+    }
 
-        // Every entry, in the order the variant says they run — not the entry
-        // table's canonical stage-key order, which is identity's and carries no
-        // execution meaning.
-        let ordered = accept_entries(variant)?;
-
+    fn route_candidate<'a>(
+        &'a self,
+        identity: CanonicalArtifactProgramIdentity,
+        variant: DecodedVariant<'a>,
+        ordered: &[DecodedEntry<'a>],
+        environment: &ExecutionEnvironment,
+        facts: &AbiFacts,
+    ) -> Result<route::RouteCandidate<'a>, LoadRejection> {
         let mut entries = Vec::with_capacity(ordered.len());
         for (position, entry) in ordered.iter().copied().enumerate() {
             entries.push(self.route_entry(position, entry, environment, facts)?);
@@ -328,9 +376,9 @@ impl DecodedProgram {
 
         // Derived after every entry is routed, because it names slots of routed
         // entries and a refusal here must still arrive before the commit.
-        let shared = shared_allocations(variant, &ordered)?;
+        let shared = shared_allocations(variant, ordered)?;
 
-        Ok(Preflight {
+        Ok(route::RouteCandidate {
             identity,
             kernel_program: variant.kernel_program_identity(),
             entries,
@@ -462,7 +510,7 @@ impl DecodedProgram {
 /// and its refusal is a property of the selected variant rather than a reason to
 /// try the next one. Falling through to a lower-priority variant here would
 /// silently substitute a plan the producer ranked below the one whose guard held.
-fn accept_entries(variant: DecodedVariant<'_>) -> Result<Vec<DecodedEntry<'_>>, LoadRejection> {
+fn refuse_deferred(variant: DecodedVariant<'_>) -> Result<(), LoadRejection> {
     let rank = variant.routing_rank();
     let deferred = variant.deferred_predicates().len();
     if deferred > 0 {
@@ -472,13 +520,7 @@ fn accept_entries(variant: DecodedVariant<'_>) -> Result<Vec<DecodedEntry<'_>>, 
         });
     }
 
-    // The variant's own execution order, which the decoder proved is a
-    // permutation of its entries and consistent with every dependency edge. The
-    // entry *table* is in canonical stage-key order — identity's order — so
-    // dispatching in that order would be treating a sort key as a schedule,
-    // which is exactly the silent behaviour the envelope's refusal used to
-    // prevent before it carried the order.
-    Ok(variant.execution_order().collect())
+    Ok(())
 }
 
 /// Pairs the slots that must be backed by one allocation, or refuses the route.
@@ -864,6 +906,15 @@ pub enum LoadRejection {
         /// How many predicates it defers.
         deferred: usize,
     },
+    /// One exact prepared-entry target property did not satisfy its retained requirement.
+    UnsatisfiedDeferredPredicate {
+        /// Zero-based routing rank of the selected variant.
+        variant: usize,
+        /// Zero-based position among that variant's deferred predicates.
+        predicate: usize,
+        /// Position of the queried entry in the route's execution order.
+        entry: usize,
+    },
     /// The routed entry's payload is not one this host stated it can execute.
     UnexecutablePayload {
         /// Governed backend family key the packaged payload declares.
@@ -956,7 +1007,16 @@ impl fmt::Display for LoadRejection {
             Self::UnansweredDeferredPredicates { variant, deferred } => write!(
                 formatter,
                 "runtime.deferred-predicates: variant {variant} defers {deferred} feasibility \
-                 predicate(s), and a device-free loader queries no provider",
+                predicate(s), and a device-free loader queries no provider",
+            ),
+            Self::UnsatisfiedDeferredPredicate {
+                variant,
+                predicate,
+                entry,
+            } => write!(
+                formatter,
+                "runtime.unsatisfied-deferred-predicate: variant {variant}'s predicate \
+                 {predicate} does not hold for prepared entry {entry}",
             ),
             Self::UnexecutablePayload {
                 declared_backend,
@@ -1010,6 +1070,7 @@ impl Error for LoadRejection {
             Self::ProgramMismatch { .. }
             | Self::NoApplicableVariant { .. }
             | Self::UnansweredDeferredPredicates { .. }
+            | Self::UnsatisfiedDeferredPredicate { .. }
             | Self::UnexecutablePayload { .. }
             | Self::IncompatibleTarget { .. }
             | Self::UndeliverableExecutionPolicy { .. }

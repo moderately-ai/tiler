@@ -1624,8 +1624,7 @@ fn compile_target_with_explain(
             &plans,
             alternative_cause.as_ref(),
         )?;
-        let cause =
-            record_alternative_explain(explain, verified, &alternative, plans.selection_record)?;
+        let cause = record_alternative_explain(explain, &alternative, plans.selection_record)?;
         alternative_causes.push((alternative.stable_id.clone(), cause));
         alternatives.push(alternative);
     }
@@ -1923,6 +1922,7 @@ fn explain_error_reason(error: &ExplainError) -> &'static str {
         ExplainError::ProviderAuthorityMismatch => "provider-authority-mismatch",
         ExplainError::QuantityKindMismatch => "quantity-kind-mismatch",
         ExplainError::InvalidQuantityRelation => "invalid-quantity-relation",
+        ExplainError::RequirementQuantityMismatch => "requirement-quantity-mismatch",
         ExplainError::UnknownQuantityUnit => "unknown-quantity-unit",
         ExplainError::EmptyCostEvidence => "empty-cost-evidence",
         ExplainError::DetailCapacity => "detail-capacity",

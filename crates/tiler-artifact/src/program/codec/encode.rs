@@ -22,6 +22,7 @@ use super::digest::{DIGEST_BYTES, Digest, DigestAlgorithm};
 use super::error::{ArtifactCodecError, CodecLimitKind, codec_limit};
 use super::model::{ArtifactEnvelope, EntryRow, MAX_SECTION_BYTES, Section, ordinal};
 use tiler_ir::identity::{push_len, push_slice};
+use tiler_ir::program::abi::TargetPropertyRequirementRelation;
 
 /// Fixed framing magic of the target-neutral artifact envelope.
 pub(super) const MAGIC: [u8; 8] = *b"TILERART";
@@ -43,9 +44,10 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 /// NaN-assumption, and infinity-assumption fields, and to `7.0` when interface
 /// entries gained ordered logical components and binding rows gained component
 /// roles, physical storage scalars, complete storage encodings, and kernel
-/// access types, and to `8.0` when the entry resource record stopped carrying
-/// the invalid numeric barrier count.
-/// All seven are deliberately **major** steps rather than the minor ones they
+/// access types, to `8.0` when the entry resource record stopped carrying the
+/// invalid numeric barrier count, and to `9.0` when each deferred predicate
+/// gained its exact prepared-entry subject and complete target-property query.
+/// All eight are deliberately **major** steps rather than the minor ones they
 /// might look like: the reader admits `minor <= implemented`, so a minor bump
 /// would have left it accepting an older manifest whose rows it can no longer
 /// parse. A field changed *or added* inside a fixed-width record is not
@@ -54,7 +56,7 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 /// everything after it, the `6.0` step appends fields inside each entry before
 /// its bindings, and the `8.0` step removes four bytes ahead of existing fields
 /// — and the `4.0` step also moved a field's width.
-pub(super) const MANIFEST_SCHEMA: (u16, u16) = (8, 0);
+pub(super) const MANIFEST_SCHEMA: (u16, u16) = (9, 0);
 
 /// Versioned domain tag opening the canonical manifest bytes.
 pub(super) const MANIFEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.manifest.v1\0";
@@ -353,10 +355,19 @@ fn encode_variants(bytes: &mut Vec<u8>, envelope: &ArtifactEnvelope) {
         push_len(bytes, variant.deferred.len());
         for predicate in &variant.deferred {
             bytes.extend_from_slice(&predicate.predicate.to_be_bytes());
-            bytes.push(predicate.phase.tag());
-            push_slice(bytes, predicate.authority.namespace().as_bytes());
-            push_slice(bytes, predicate.authority.name().as_bytes());
-            bytes.extend_from_slice(&predicate.authority.revision().to_be_bytes());
+            bytes.extend_from_slice(&predicate.entry.to_be_bytes());
+            let requirement = &predicate.requirement;
+            push_slice(bytes, requirement.query().key().as_str().as_bytes());
+            bytes.push(requirement.query().available_at().tag());
+            push_slice(bytes, requirement.query().provider().namespace().as_bytes());
+            push_slice(bytes, requirement.query().provider().name().as_bytes());
+            bytes.extend_from_slice(&requirement.query().provider().revision().to_be_bytes());
+            bytes.extend_from_slice(&requirement.required().to_be_bytes());
+            bytes.push(match requirement.relation() {
+                TargetPropertyRequirementRelation::ObservedAtLeastRequired => 0x01,
+                TargetPropertyRequirementRelation::ObservedEqualsRequired => 0x02,
+                TargetPropertyRequirementRelation::RequiredImpliesObserved => 0x03,
+            });
         }
         push_len(bytes, variant.entries.len());
         for entry in &variant.entries {

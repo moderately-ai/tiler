@@ -53,7 +53,7 @@
 use std::{fmt, sync::Arc};
 
 use tiler_ir::kernel::VerifiedKernel;
-use tiler_ir::program::abi::{AvailabilityPhase, ExprNode};
+use tiler_ir::program::abi::{AvailabilityPhase, ExprNode, PreparedEntryTargetRequirement};
 use tiler_ir::program::{StageRef, VerifiedKernelProgram};
 use tiler_ir::schedule::{
     ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, MaterializationRounding,
@@ -876,6 +876,46 @@ impl<'a> PlanAlternative<'a> {
     #[must_use]
     pub fn abi(&self) -> AbiConstruction<'_> {
         AbiConstruction(self.alternative.artifact_plan.verified_program())
+    }
+
+    /// Returns every compiler-minted prepared-entry target requirement, in exact program
+    /// entry then predicate order.
+    ///
+    /// The entry ordinal is part of the requirement subject. Two prepared pipelines
+    /// may report different values for the same property key, so an assembler
+    /// must preserve each record rather than deduplicating by key.
+    pub fn prepared_entry_target_requirements(
+        &self,
+    ) -> impl ExactSizeIterator<Item = PreparedEntryTargetRequirementRef<'_>> {
+        self.alternative
+            .artifact_plan
+            .entry_deferred_predicates()
+            .iter()
+            .map(PreparedEntryTargetRequirementRef)
+    }
+}
+
+/// A borrowed compiler-minted target requirement bound to one prepared entry.
+#[derive(Clone, Copy, Debug)]
+pub struct PreparedEntryTargetRequirementRef<'a>(&'a crate::program::EntryDeferredPredicate);
+
+impl<'a> PreparedEntryTargetRequirementRef<'a> {
+    /// Returns the zero-based program-entry ordinal whose prepared subject is queried.
+    #[must_use]
+    pub fn entry(self) -> u32 {
+        self.0.entry()
+    }
+
+    /// Returns the governed capability-axis key used for diagnostics.
+    #[must_use]
+    pub fn capability_axis(self) -> &'static str {
+        self.0.predicate().axis().key()
+    }
+
+    /// Returns the complete requirement without reconstructing any predicate.
+    #[must_use]
+    pub fn requirement(self) -> &'a PreparedEntryTargetRequirement {
+        self.0.predicate().requirement()
     }
 }
 
@@ -1751,7 +1791,7 @@ mod tests {
         TargetNumericalRequirement, compile, compile_governed, compile_internal,
     };
     use crate::target::{TargetProfile, TargetRequest};
-    use tiler_ir::program::abi::ExprNode;
+    use tiler_ir::program::abi::{ExprNode, TargetPropertyRequirementRelation};
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
         SemanticProgramBuilder, StrictSerialF32Sum,
@@ -2195,7 +2235,7 @@ mod tests {
             .explain()
             .expect("a post-request failure retains its sealed trace")
             .render();
-        assert!(rendered.starts_with("tiler-explain-v5 "));
+        assert!(rendered.starts_with("tiler-explain-v6 "));
         assert!(
             rendered.contains("compiler-failure"),
             "the trace names the terminal failure: {rendered}",
@@ -2365,6 +2405,33 @@ mod tests {
             for accessible in entry.accessible_bytes() {
                 assert!(accessible < bound);
             }
+        }
+
+        let deferred: Vec<_> = selected.prepared_entry_target_requirements().collect();
+        assert_eq!(deferred.len(), selected.kernels().len());
+        for (entry, query) in deferred.iter().enumerate() {
+            assert_eq!(query.entry(), u32::try_from(entry).unwrap());
+            assert_eq!(query.capability_axis(), "threads-per-workgroup");
+            let requirement = query.requirement();
+            assert_eq!(requirement.required(), 1);
+            assert_eq!(
+                requirement.relation(),
+                TargetPropertyRequirementRelation::ObservedAtLeastRequired,
+            );
+            assert_eq!(
+                requirement.query().available_at(),
+                tiler_ir::program::abi::AvailabilityPhase::PreparedKernelPreflight
+            );
+            assert_eq!(
+                requirement.query().key().as_str(),
+                "tiler.target.prepared-entry.max-threads-per-workgroup.v1"
+            );
+            assert_eq!(requirement.query().provider().namespace(), "tiler");
+            assert_eq!(
+                requirement.query().provider().name(),
+                "prepared-entry-properties"
+            );
+            assert_eq!(requirement.query().provider().revision(), 1);
         }
     }
 }

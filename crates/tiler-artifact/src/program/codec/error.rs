@@ -81,6 +81,8 @@ pub(crate) enum TagSubject {
     ExceptionalValueAssumption,
     /// The availability phase of a root fact or deferred predicate.
     AvailabilityPhase,
+    /// The directional relation of a target-property requirement.
+    TargetPropertyRequirementRelation,
     /// The node kind of one ABI expression arena entry.
     ExpressionNode,
     /// The typed root fact of one ABI expression.

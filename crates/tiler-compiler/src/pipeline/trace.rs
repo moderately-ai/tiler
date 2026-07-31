@@ -977,29 +977,16 @@ pub(super) fn note_infeasible_cover(
 
 pub(super) fn record_target_admissions(
     explain: &mut ExplainWriter,
-    request: &crate::request::VerifiedTargetRequest,
     alternative: &ProgramAlternative,
     mut cause: ExplainRecordId,
 ) -> Result<ExplainRecordId, TargetFailure> {
-    let profile = request.target_profile();
-    for scheduled in &alternative.scheduled_regions {
+    for (entry, scheduled) in alternative.scheduled_regions.iter().enumerate() {
         let region = scheduled.region();
-        // Re-derive the admitted feasibility facts from the single feasibility
-        // authority rather than a parallel check list, so the admitted trace
-        // cannot drift from the decision that admitted the region. A verified
-        // region has already proven feasible, so a non-proven verdict here is an
-        // internal inconsistency and fails closed via the physical-error stage.
-        let admitted = crate::physical::assess_region(
-            region.index.id,
-            scheduled.requirements(),
-            request.numerical_contract().arithmetic,
-            region.schedule.work_items,
-            profile,
-        )
-        .map_err(|error| {
-            let stage = physical_error_stage(&error);
-            failure_at_source(error.into(), stage, record_cause(cause))
-        })?;
+        // Explain observes the exact admission evidence that entered the
+        // frontier. Re-assessing here would create a second authority and could
+        // either lose its deferred obligations or disagree with the decision
+        // whose consequences the rest of this alternative already retains.
+        let admitted = scheduled.admission();
         let key = format!("{}/region:{}", alternative.stable_id, region.index.id.get());
         for predicate in admitted.predicates() {
             cause = explain_step(
@@ -1022,6 +1009,31 @@ pub(super) fn record_target_admissions(
                 &key,
                 record_cause(cause),
             )?;
+        }
+        if let Some(deferred) = admitted.deferred() {
+            let entry = u32::try_from(entry).expect("program stage counts are bounded below u32");
+            for predicate in deferred.predicates() {
+                cause = explain_step(
+                    (|| -> Result<_, CompileError> {
+                        let subject = explain.subject(SubjectKind::Region, &key)?;
+                        Ok(explain.push_detail(
+                            RuleRef::builtin(format!("target.{}", predicate.axis().key()))?,
+                            vec![subject],
+                            ExplainEvent::DeferredTargetRequirement {
+                                entry,
+                                predicate: PredicateKey::new(predicate.axis().key())?,
+                                required: predicate.required(),
+                                requirement: predicate.requirement().clone(),
+                            },
+                            vec![cause],
+                        )?)
+                    })(),
+                    ExplainStage::TargetFeasibility,
+                    SubjectKind::Region,
+                    &key,
+                    record_cause(cause),
+                )?;
+            }
         }
         // The admitted trace records the *means* of each honoured dimension, not
         // only that it was honoured. An emulated dimension is admitted and emits
@@ -1071,7 +1083,6 @@ pub(super) fn target_quantity(rule: &str, value: u64) -> Result<Quantity, Explai
 /// Records one retained alternative's per-layer admitted evidence.
 pub(super) fn record_alternative_explain(
     explain: &mut ExplainWriter,
-    request: &crate::request::VerifiedTargetRequest,
     alternative: &ProgramAlternative,
     root: ExplainRecordId,
 ) -> Result<ExplainRecordId, TargetFailure> {
@@ -1137,7 +1148,7 @@ pub(super) fn record_alternative_explain(
         alternative.scheduled_regions.len(),
         boundary,
     )?;
-    let target = record_target_admissions(explain, request, alternative, schedule)?;
+    let target = record_target_admissions(explain, alternative, schedule)?;
     let key = format!("{}/kernels", alternative.stable_id);
     let kernel = record_count_step(
         explain,
