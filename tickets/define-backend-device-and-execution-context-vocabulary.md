@@ -1,7 +1,7 @@
 ---
 id: define-backend-device-and-execution-context-vocabulary
 title: Define backend, device, and execution-context vocabulary
-status: todo
+status: in-progress
 priority: p1
 dependencies: [correct-stale-public-compiler-boundary-authorities]
 related: [draft-public-extension-seam-ownership-adr, multi-device-and-sharding-scope-gate]
@@ -9,6 +9,9 @@ scopes: [contracts/foundation, contracts/artifacts, contracts/integrations]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [backend-providers, pluggability, documentation, architecture]
+claimed_from: todo
+assignee: worker-backend-vocab
+lease_expires_at: 1785536988
 ---
 ## User-visible outcome
 

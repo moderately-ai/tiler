@@ -1,7 +1,7 @@
 ---
 id: register-the-accepted-built-in-dtype-catalog
 title: Register the accepted built-in dtype catalog
-status: todo
+status: in-progress
 priority: p1
 dependencies: [define-dtype-namespace-admission-policy, prototype-resolved-value-type-registry, preserve-primary-dtype-standards-evidence]
 related: [enumerate-the-mature-tensor-dtype-taxonomy, prototype-quantized-value-vertical, admit-a-dtype-dispatchability-capability-axis, own-the-dtype-support-maturity-matrix]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, identity, validation]
+claimed_from: todo
+assignee: worker-dtype-catalog
+lease_expires_at: 1785536988
 ---
 ## User-visible outcome
 

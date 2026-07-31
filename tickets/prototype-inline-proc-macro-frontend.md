@@ -1,7 +1,7 @@
 ---
 id: prototype-inline-proc-macro-frontend
 title: Implement the inline proc-macro frontend proof
-status: todo
+status: in-progress
 priority: p1
 dependencies: [prototype-public-compiler-api, prototype-neutral-artifact-codec, admit-the-tiler-facade-and-proc-macro-crate-boundary, define-inline-symbol-binding-and-runtime-value-adaptation, promote-artifact-family-selection-for-the-frontend]
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/frontend, implementation/compiler, implementation/worksp
 shared_scopes: [project/tickets, implementation/cargo-lock]
 paths: []
 tags: [implementation, frontend, proc-macro, inline-dx]
+claimed_from: todo
+assignee: worker-inline-frontend
+lease_expires_at: 1785536988
 ---
 ## User-visible outcome
 
