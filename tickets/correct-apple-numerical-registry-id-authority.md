@@ -1,7 +1,7 @@
 ---
 id: correct-apple-numerical-registry-id-authority
 title: Correct Apple numerical registry-ID authority
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [construct-and-bind-the-first-authoritative-metal-compile-profile, validate-macos-metal-profile-host-applicability]
@@ -9,6 +9,9 @@ scopes: [research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: [apple, numerics, evidence, provenance]
+claimed_from: todo
+assignee: loop-correct-appl
+lease_expires_at: 1785518569
 ---
 ## User-visible outcome
 

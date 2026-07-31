@@ -1,7 +1,7 @@
 ---
 id: prototype-a-bounded-scalar-cpu-backend-vertical
 title: Prototype a bounded scalar CPU backend vertical
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [target-profile-feasibility-model, runtime-execution-contract, reference-evaluator-slice]
@@ -9,6 +9,9 @@ scopes: [research/target-profiles, research/artifacts, research/runtime, contrac
 shared_scopes: [research/program-planning, contracts/navigation, project/tickets]
 paths: []
 tags: [backend-providers, pluggability, cpu, spike]
+claimed_from: todo
+assignee: loop-prototype-a-
+lease_expires_at: 1785518570
 ---
 ## User-visible outcome
 
