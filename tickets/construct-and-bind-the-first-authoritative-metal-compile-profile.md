@@ -1,7 +1,7 @@
 ---
 id: construct-and-bind-the-first-authoritative-metal-compile-profile
 title: Construct and bind the first authoritative Metal compile-time target profile
-status: in-progress
+status: done
 priority: p0
 dependencies: [express-metal-honourability-in-the-shared-form, admit-measured-compile-profile-sources-across-fact-families, measure-macos-apple9-f32-under-unified-msl4-profile, source-or-rephase-first-metal-launch-limits, separate-metal-launch-index-from-index-and-address-width, replace-or-justify-the-barrier-count-axis, validate-macos-metal-profile-host-applicability]
 related: [admit-a-caller-declared-target-profile, carry-the-honourability-fact-provenance-into-the-artifact-record, decide-per-dtype-dispatchability-as-a-target-capability, record-metal-runtime-compiler-provenance-gap, prototype-metal-runtime-proof, measure-apple-numerics-on-physical-ios-device, spike-bf16-through-the-second-dtype-seams, redesign-the-delivered-realization-record-from-typed-evidence, close-or-retype-the-operand-permutation-inference, pin-the-serial-sum-producer-runner-shape-interface]
@@ -9,9 +9,6 @@ scopes: [implementation/build, implementation/compiler, implementation/metal, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, metal, target-profile, numerics, runtime, provenance]
-claimed_from: todo
-assignee: loop-p0-profile
-lease_expires_at: 1785527940
 ---
 ## User-visible outcome
 
@@ -171,3 +168,7 @@ This parent remains open. The barrier-count blocker is resolved by removing the 
 **Fact — what closes-when 6 actually reports.** The runtime validates host applicability independently and *refuses*; it does not offer the profile, and no implementation task can make it. That is ADR 0086 applied, recorded as the ledger's third outcome with the ADR's own reconsideration triggers, and it is why the outcome above says "refuses" rather than "offers".
 
 **Unsupported, and named.** Operand permutation is declared through a measured-source operation while the ledger labels it an `Inference`; `close-or-retype-the-operand-permutation-inference` owns closing or retyping it. Reciprocal transform, approximate intrinsics, and materialization rounding have no row, matching the ledger and the governed profile's own dimension set. Nothing here states an F16, BF16, F64, or iOS-family fact.
+
+## Accepted (2026-07-31)
+
+Tom accepted the reviewed boundary as merged at `f81c7f2`, on the standard that it is the most performant, correct, idiomatic, and long-term maintainable shape: `BoundMetalCompileDeclaration` with its closed `first_macos_apple9` constructor and ledger-transcribed rows, the changed `accept_or_publish_metal_plan` signature with the pre-emission profile check, the `MetalPlanBuildPolicy` removal, the prototype's `tiler-build` edge, and the refusal texts. The ticket closes on its recorded item-5 resolution; the operand-permutation asymmetry and the shape-interface gate-visibility remain with their filed tickets.
