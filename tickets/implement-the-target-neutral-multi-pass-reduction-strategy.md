@@ -1,7 +1,7 @@
 ---
 id: implement-the-target-neutral-multi-pass-reduction-strategy
 title: Implement the target-neutral multi-pass reduction strategy
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [implement-parallel-reduction-strategies]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, implementation/reference, c
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: loop-multipass
-lease_expires_at: 1785521547
 ---
 ## User-visible outcome
 
@@ -42,6 +39,10 @@ The target-neutral multi-pass alternative is verified and carries stable verifie
 **Remainder, not absorbed.** Frontier enumeration of the split as a retained alternative beside the serial one, with its explain records, is blocked on two facts found here and needs its own ticket: (1) a split realizes one semantic occurrence with two dispatches, which the bounded profile expresses only through the reserved `ProposalBody::KernelSubprogram`, and `selection::reconcile_boundaries` admits at most one intermediate per region; (2) `DeterministicBudgets::governed` fixes `regions: 2` and `buffers: 3`, and `verify_request` requires both — a three-stage split program needs three regions and four buffers, so the governed budgets must be widened deliberately rather than to make a test pass. The compiler side therefore lands as the region constructors, the split-choosing authority, and the request-subject binding, without a program assembler. A ragged final partition is likewise unimplemented and rejects with a typed reason: `ContributorPartition::covers` requires the product to be exact, because a ragged tail needs a second constant trip count the structured-kernel loop vocabulary does not carry.
 
 **Boundary-enforcer trigger.** `frontier.rs::the_bounded_profile_admits_no_undischarged_boundary` still passes. It compares two compile-time constants that this change does not touch, so `implement-boundary-property-enforcers` does not become startable from here.
+
+## Accepted (2026-07-31)
+
+Tom accepted the reviewed boundary as merged at `a1859d3`: the `tiler_ir::schedule` split vocabulary (`ReductionTopology::MultiPass`, `ReductionPass`, `ContributorPartition`, `partial_reduction_shape`/`partial_reduction_axis`), the `tiler_ir::program` `PartialReduction` contract with `push_partial_reduction`/`partial_reductions`/`MAX_PROGRAM_PARTIAL_REDUCTIONS`, the `tiler_reference` `strict_partial_sums`/`strict_partitioned_sum` oracles, the `EmptyCoverage` → whole-program `UncoveringStage` move, and the `tiler.kernel-program.v6` domain step. Frontier enumeration is `enumerate-the-split-reduction-on-the-planning-frontier`.
 
 ## Graph maintenance
 

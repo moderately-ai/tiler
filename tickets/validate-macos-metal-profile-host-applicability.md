@@ -1,7 +1,7 @@
 ---
 id: validate-macos-metal-profile-host-applicability
 title: Validate macOS Metal profile host applicability independently
-status: in-progress
+status: done
 priority: p0
 dependencies: [measure-macos-apple9-f32-under-unified-msl4-profile, prove-an-aot-compatible-metal-runtime-compiler-observer, authorize-macos-environment-identity-for-native-metal-translation]
 related: [record-metal-runtime-compiler-provenance-gap, prototype-metal-runtime-proof, restore-replayable-apple-compatibility-evidence]
@@ -9,9 +9,6 @@ scopes: [implementation/build, implementation/runtime, implementation/metal, con
 shared_scopes: [project/tickets]
 paths: []
 tags: [runtime, metal, target-profiles, provenance]
-claimed_from: todo
-assignee: loop-validate-p0
-lease_expires_at: 1785522771
 ---
 ## User-visible outcome
 
@@ -96,6 +93,10 @@ The registry ID is not an input and appears nowhere in the module. ADR 0086 excl
 Twelve perturbations, one per new check, each applied alone and reverted: the policy row constant, the authority being evaluated last, the receipt's structural unreachability, the GPU-family predicate, the unobserved-predicate refusal, the dependency set, the compile-fail diagnostic pin, the enumerated matrix population, the ADR citation in the rendered refusal, the architecture normalization, the `sw_vers` observation, and the device-free half's four predicates. All twelve were detected — but only after the eighth was fixed.
 
 **The eighth did not fail on the first pass, and that is the finding worth keeping.** `no_admissible_observation_reaches_a_positive_receipt` asserted its population as `families.len() * versions.len() * …`, so cutting a domain from three values to two cut the expectation with it: 648 cases reported the same full coverage 972 did. The count is now a literal `972`, and each domain carries an explicit array length so dropping a value is a compile error as well. A count computed from the thing it counts is not a count.
+
+## Accepted (2026-07-31)
+
+Tom accepted the reviewed boundary as merged at `6c1cd1e`: the `tiler_metal::applicability` surface exactly as the review packet above states it, including the uninhabited `NativeTranslationAuthority` receipt mechanism, the single `FIRST_MACOS_APPLE9` policy row, the typed refusal vocabulary, and the `tiler-metal` siting. The eligible-host offer and `host_environment(&Compilation)` removal remain with `construct-and-bind-the-first-authoritative-metal-compile-profile`.
 
 ## Graph maintenance
 
