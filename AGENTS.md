@@ -1,580 +1,133 @@
 # Tiler repository agent guidance
 
-This file is the global working contract for agents operating in this
-repository. More specific guidance in a descendant `AGENTS.md` may refine it
-for that subtree.
-
-## Project scope and posture
-
-Tiler is an experimental, consumer-agnostic Rust toolkit for optimizing
-declarative tensor computations and producing efficient parallel compute
-kernels. `candle-einops`, Candle, and Metal are initial frontend, runtime, and
-backend use cases; do not let their APIs become the compiler's semantic model.
-
-The useful analogy is “DataFusion for tensor compute”: a frontend constructs a
-public logical tensor program, target-independent optimization derives legal
-alternatives, and physical planning chooses a target-aware implementation. The
-analogy is not identity. GPU scheduling, synchronization, memory visibility,
-resource limits, and numerical behavior can be physical correctness constraints
-instead of mere costs.
-
-The project is currently research- and architecture-first. Do not scaffold
-crates, stabilize APIs, or begin production kernel implementation unless Tom
-explicitly moves the project into that phase. Bounded executable spikes are
-encouraged when they answer a named feasibility or correctness question.
-
-## Authority of existing material
-
-- Accepted ADRs are current decisions. Preserve them unless new evidence
-  justifies an explicit superseding decision.
-- Proposed ADRs and proposed design documents are coherent hypotheses, not
-  commitments and not evidence that Tom personally approved every detail.
-- Tickets, research notes, source probes, and accepted ADRs should make their
-  evidence and status legible; do not silently convert a proposal into fact.
-- When evidence resolves a durable choice, update the relevant contract and
-  add or accept an ADR. When it does not, record the measurement boundary and
-  keep the question explicit.
-
-Start broad design work with `docs/README.md`, then follow its reading order and
-the accepted ADR index in `docs/decisions/README.md`.
-
-## How to collaborate with Tom
-
-Work autonomously on questions with a correctness-derived or clearly dominant
-answer. Default to the long-term compatible, correct, and performant design
-even when it requires more research or work. Do not ask Tom to choose routine
-implementation details, settle facts that can be researched, or approve an
-obvious correctness requirement.
-
-Ask only when a genuine product or architectural choice remains after research
-and the alternatives encode different valid priorities. Questions must be:
-
-- atomic—one decision at a time;
-- concise, with only the background needed to decide;
-- concrete, preferably using a small tensor-program example;
-- explicit about what each option enables and prevents;
-- explicit about point and counterpoint, not only a recommendation; and
-- accompanied by a recommendation and the evidence behind it.
-
-**Before presenting options, eliminate the ones that do not survive.** Test each
-candidate against correctness, performance, and long-term maintainability and
-discard every one that fails; if one survives, there is no question and asking
-wastes Tom's time on a decision already made by the constraints. Run that
-elimination explicitly rather than assuming it — twice this session an option
-was offered that a single check would have removed, once because a decoded
-artifact binding buffers by slot position could not verify the position meant
-what it assumed, and once because an adapter could not learn which numerical
-realization its fallback had delivered. Both would have returned a silently
-wrong result, which is not a trade-off but a defect.
-
-Be especially suspicious of the cheaper option. A shortcut presented as a
-legitimate alternative is the common shape of this error: it looks like a
-trade-off because it costs less, and the cost it saves is the part that makes
-the answer correct. State the derivation that eliminated a candidate, so a
-reader can refute the elimination rather than only the conclusion.
-
-Pause for Tom's answer after asking such a question. Do not bury several
-decisions in a long design dump. If Tom asks for more detail, walk through the
-example step by step and distinguish node semantics, graph structure, logical
-properties, physical properties, and chosen implementation.
-
-Tom must review key public crate, module, trait, type, and call-site boundaries
-before they are accepted or merged. A tested implementation may serve as a
-concrete draft, but it is not implicit approval of its public interface.
-Present consequential alternatives one atomic decision at a time using the
-question format above.
-
-In all research and design writing, label these separately:
-
-- **Fact:** supported by primary documentation, inspected source, or a direct
-  measurement.
-- **Inference:** a conclusion derived from stated facts.
-- **Proposal:** a design that remains to be accepted or tested.
-- **Measurement:** an observation tied to an exact environment and procedure.
-
-## Architectural guardrails
-
-Preserve these established boundaries unless a ticket is explicitly evaluating
-their replacement:
-
-- The public semantic graph describes what tensor operations mean, not how a
-  device executes them.
-- Model programs as typed operations and values, with ordered named graph
-  outputs and support for multi-result operations. Do not assume one SQL-like
-  root or one output tensor.
-- Prefer explicit atomic semantic operation families and strongly typed
-  attributes, bindings, identifiers, constraints, and errors. Code organization
-  may share implementations without collapsing semantic distinctions.
-- Keep semantic/logical IR, symbolic access relations, fusion alternatives,
-  physical schedules, structured kernel IR, artifact programs, and runtime
-  state distinct. Do not build a universal IR or densify physical choices into
-  the logical graph.
-- Hardware axes and resource dimensions belong in typed target profiles,
-  physical properties, schedule alternatives, feasibility predicates, and cost
-  models. A graph does not become a hypergraph merely because planning is
-  multidimensional.
-- Keep hard feasibility separate from estimated cost. Reject an infeasible plan
-  with an explainable reason; never hide it behind an infinite or arbitrary
-  cost.
-- Treat placement, memory domains, transfers, synchronization, and resource
-  lifetimes as explicit physical contracts. They are not implicit node
-  annotations or generic byte copies.
-- Keep compiler core independent of Candle, Metal runtime objects, einops
-  syntax, and other consumer-specific types.
-- Extension mechanisms must preserve validation, reference semantics,
-  feasibility, explainability, and versioned identity. “Extensible” does not
-  mean unknown behavior is optimizable.
-- Preserve the accepted inline Rust developer experience for macro frontends:
-  no required consumer `build.rs`, duplicated registry, source scan, Cargo
-  subcommand, prepare step, or runtime source JIT. Each invocation is a
-  self-contained AOT and embedding unit; broader fusion requires a larger
-  explicit inline region rather than inspection of surrounding Rust.
-- “Optimal” means the lowest-cost valid plan under the numerical contract and
-  target profile. It does not mean the largest fused kernel; a multi-kernel
-  program or deliberate materialization may be correct and faster.
-
-Future compatibility should come from explicit seams and invariants, not from
-prematurely implementing an unbounded abstraction. When a mature system will
-need more than the first supported subset:
-
-- enumerate the broader semantic space far enough to expose identity,
-  validation, ABI, and lowering consequences;
-- reserve strongly typed extension points where the dependency direction is
-  understood;
-- make unsupported cases reject explicitly rather than silently approximating
-  them; and
-- implement the smallest specialized component that proves the architecture,
-  while recording what would be required to broaden it.
-
-Do not confuse a type-system reservation, an architectural seam, implemented
-support, and a tested guarantee. They are four different maturity claims.
-
-## Correctness priorities
-
-Bias toward failing closed with typed, explainable errors. Never return an
-incorrect tensor merely to preserve a fast path.
-
-Give special scrutiny to:
-
-- numerical contracts, dtype conversions, observable materialization rounding,
-  reduction order, exceptional values, and quantized compound values;
-- complete cache and artifact identity, validation on every cache hit,
-  immutable entries, atomic publication, and crash/race behavior;
-- platform family, SDK, deployment minimum, compiler flags, toolchain
-  provenance, and runtime compatibility stages;
-- preflight before routing commit, fallback only before program work, and no
-  fallback after allocation, partial encoding, submission, or semantic
-  validation failure;
-- exact command-buffer terminal success before host validation readback;
-- device/context-scoped runtime cache identity and retention of asynchronous
-  resources through their final device use; and
-- explain output for accepted and rejected rewrites, candidates, guards,
-  capabilities, and assumptions.
-
-Empirical testing can find counterexamples and qualify a bounded profile. It
-does not prove an unmeasured universal numerical, compatibility, durability, or
-performance claim. Preserve `SoundProof`, exhaustive finite evidence,
-empirical evidence, normative guarantees, and `Unknown` as different classes.
-
-## Research standards
-
-- Prefer primary specifications, papers, official documentation, and concrete
-  source code. Use secondary material only to locate or contextualize primary
-  evidence.
-- Inspect the exact local dependency revision when making a source claim and
-  record the commit or version.
-- A failed search is evidence that the search was wrong, not that the thing is
-  absent, until the file has been read. Multi-line attributes, wrapped
-  signatures, and re-exported names defeat substring matching; `git log -S`
-  inherits the same weakness; and a bounded window (`head -N`, a `sed` range, a
-  truncated diff) can split the construct being searched for. When a search
-  result contradicts a documented claim, open the file before concluding the
-  document is wrong.
-- Two types with the same shape are not the same concept. Do not conclude what a
-  value means from its field types, its name, or its resemblance to another
-  type; read where it is constructed. A `{key, u32}` matched against another
-  `{key, u32}` produced two confident wrong conclusions in one session, because
-  one carried a target profile key beside a rule version and the other a
-  rule-set key beside a revision. The construction site is the evidence; the
-  declaration is not.
-- When asserting absence, state the exact check so a reader can reproduce or
-  refute it in one line. Treat a correction that cannot be reproduced that way
-  as unverified, including one arriving from a reviewer.
-- Keep facts about a tested host/toolchain separate from portable guarantees.
-- Turn important unknowns into bounded experiments with explicit inputs,
-  outputs, metrics, unsupported cases, and stop conditions.
-- A failed or unavailable measurement is useful evidence when the limitation is
-  precise. Do not fill the gap with an assumption.
-- Challenge prior design text when evidence conflicts with it, but preserve the
-  original rationale and supersede durable decisions explicitly.
-
-Research recommendations should end in one of four concrete outcomes: a
-correctness-derived contract update, an accepted architectural decision, a
-bounded experiment, or an explicitly deferred question with a trigger for
-reconsideration. Avoid accumulating open-ended notes that do not say what
-evidence or decision would close them.
-
-Use subagents for independent, bounded research tracks when parallel evidence
-collection reduces uncertainty. Give each agent a non-overlapping ticket scope
-and exact base commit. Ask agents to report conclusions, measurement boundaries,
-tests, and commit hashes. For synthesis, read the artifacts they surface rather
-than duplicating their entire research process.
-
-### Coordinating parallel workers
-
-These are failure modes observed in practice, not hypotheticals.
-
-- **State the board from the board.** Counts of running workers, merged
-  branches, ticket statuses, and whether a commit reached a remote are all
-  cheap to check and were all reported wrongly from memory. Check before
-  asserting.
-- **Push before dispatching.** A worker's worktree derives from the remote, so
-  local-only commits make every base you hand out unreachable. Push, confirm
-  `git rev-list --left-right --count origin/main...main` is `0 0`, then dispatch.
-- **Chain the gate to what follows it, not merely before it.** Running the gate
-  and then pushing in one shell line joined by `;` pushes whichever way the gate
-  went; `&&` is what makes the rule enforceable rather than aspirational. A red
-  commit reached `origin/main` this way after the gate had correctly reported the
-  failure, so "never commit on a red gate" needs its mechanism stated beside it.
-- **Gate the exact commit you hand out.** A base is a starting point several
-  workers build on, so a red one multiplies. Running the gate on a later state
-  does not cover it: an edit made only to unblock a claim once left a pushed base
-  failing validation, and the worker that inherited it had to prove no
-  intermediate commit could be green. Gate, then push, then dispatch, in that
-  order.
-- **A brief's assertions are claims, held to the same standard as any other.** A
-  dispatch that states a fact saves a worker the lookup and costs it the
-  verification, so a wrong one propagates with your authority behind it. Cite
-  where each claim came from and say which are unverified. Three briefs this
-  session asserted something false about the code they described, and each was
-  caught by the worker rather than the author.
-- **Refill the scope a landing frees, in the same turn.** Reporting a merge and
-  waiting leaves dependency-satisfied work unclaimed for no reason.
-- **Two workers from one base can both be right and still not compose.** A
-  pinned identity digest rebaselined independently on two branches yields a
-  merged tree matching neither, and each branch's own tests pass. Recompute such
-  a value on the merged tree rather than taking either side, and never resolve a
-  conflict in a golden or pinned value by picking a branch.
-- **Integrate on the diff, not the report.** A worker's summary is a claim about
-  its work. The gate is real evidence and a correctness *argument* is not
-  checked by it.
-- **Do not delegate what is smaller than its brief.** Writing a dispatch for a
-  one-line status change costs more than the change and adds a merge.
-- **A question answerable by reading is research, not a decision to escalate.**
-  Escalating one stalls the work and moves your job to someone else. Routine
-  operations — pushing your own branch, closing a ticket whose remainder is
-  tracked — are not reserved boundaries.
-- **Merge the branch the worker committed to, and prove the merge moved `main`.**
-  An agent worktree carries two branch names — the harness's own
-  `worktree-agent-<id>` and the ticket's `tkt/<id>` — and which one holds the
-  work varies by worker. Merging the wrong one reports `Already up to date` and
-  exits zero, so the gate then passes on an unchanged tree and the push says
-  `Everything up-to-date`: three green signals for work that never landed.
-  Capture `git rev-parse HEAD` before and after, and treat an unmoved `HEAD` as
-  a failure rather than a no-op. Confirm the worker's reported commit is an
-  ancestor of `main` by its hash — the branch name is a claim and the hash is
-  the evidence.
-- **A verdict is only as good as the check's ability to say no.** Before acting
-  on a check you wrote yourself, confirm its failure path is reachable — run it
-  against a case that must fail and watch it fail. A survey of forty-three
-  worktrees reported every one of them clean immediately before thirty-seven
-  were to be deleted; `head` was unresolvable inside the loop, so the
-  dirty-check pipeline produced empty output and "no modifications" was
-  indistinguishable from "the check did not run". A uniform pass over a
-  heterogeneous population is the signature to distrust, and it is the same
-  hazard the `trybuild` case-naming rule already covers for a glob that stops
-  matching: silence is reported as success by anything that does not
-  independently know how many answers to expect. Prefer a check that names its
-  population and counts it.
-
-## Experiments, prototypes, and evidence
-
-Preserve reproducible experiments, prototypes, fixtures, and referenced
-measurements in the appropriate dedicated directory under `spikes/`. Research
-documents should link to the checked-in harness or fixture supporting a claim.
-
-**A spike is exercised only when someone is working on it.** No `make` target
-reaches `spikes/`, so a spike's harness runs from its own directory, by hand,
-with the invocation its README records. This is what a spike is for: a bounded
-measurement, kept because its result is worth citing, not because re-running it
-on every unrelated change proves anything. The trade is stated rather than
-hidden — a retained `trybuild` golden or result fixture can drift from the
-source beside it, and only running that spike will say so.
-
-Do not delete an experiment directory merely because a run completed. Keep the
-reusable source, inputs, harness, and any result fixture cited by documentation.
-Add a narrow `.gitignore` in the experiment area for regenerable local data such
-as interpreter caches, compiler outputs, and scratch work. Do not ignore
-referenced evidence or result fixtures needed to reproduce a conclusion.
-
-Temporary operating-system directories are acceptable for isolated runs only
-when the checked-in harness reconstructs them. Cleanup must target regenerable
-run products, never the preserved experiment. Prefer keeping compact raw data
-when it materially supports a measurement; otherwise record enough exact
-environment, commands, and summarized results to reproduce it.
-
-## Documentation as a coherent contract
-
-Treat the documentation corpus as one system. A decision may affect the IR,
-optimizer, artifact identity, runtime, testing, roadmap, and open-question
-index simultaneously. Before declaring it recorded:
-
-- search for conflicting terminology, stale status language, and duplicated
-  authorities;
-- update every normative contract whose behavior changes;
-- keep accepted decisions, proposals, measurements, and future work visibly
-  distinct;
-- ensure identifiers, schemas, examples, and dependency directions agree
-  across documents; and
-- remove an open question only after its answer is represented in the durable
-  contract or an accepted ADR.
-
-**A decision recorded is not a decision applied.** Writing an outcome on a
-ticket, or a decision section in a record, changes nothing a reader or a check
-consults. Accepting an ADR means moving its `decision_status`, regenerating the
-catalogs that view it, correcting every contract sentence whose truth depended
-on the old status, and releasing whatever the work graph gated on it. Note the
-asymmetry: a disclosure required while a decision is proposed becomes *wrong*
-once it is accepted. Nothing checks either half now, so both directions have to
-be found by reading.
-
-**A doc comment is a claim, and it is load-bearing.** Text describing what a
-type exposes is read by the next worker as fact, and an overstated one makes
-unreachable work look reachable. Describe what the code does now rather than
-what it is intended to do; when a comment and the source disagree, the source
-wins and the comment is the defect.
-
-Examples are part of the design work. Prefer a small end-to-end tensor program
-that shows inputs, typed operations, multiple values or outputs when relevant,
-logical properties, candidate physical plans, rejected alternatives, and the
-observable result. Do not let an example quietly introduce semantics that the
-normative text has not defined.
-
-**Nothing validates the documentation corpus.** There is no renderer and no
-documentation gate; both were deleted along with the rest of the Python tooling.
-Local link targets, the typed frontmatter graph and its supersession rules,
-declared entrypoints, and the generated catalog blocks are all maintained by
-hand and checked only by reading. Write as though a reader is the only check,
-because one is.
-
-Two consequences follow, and neither is hypothetical. The catalog blocks under
-`docs/` and `docs/decisions/README.md` were generated views over frontmatter;
-they are now ordinary prose that a new or superseded record will not update on
-its own, so edit them in the same change that changes the metadata behind them.
-And a broken link now costs a reader rather than a gate — a moved or deleted
-file will not announce itself.
-
-## Ticketsplease and parallel work
-
-This repository uses ticketsplease (`tkt`) as the work graph. Follow its skill
-instructions whenever selecting, creating, claiming, dispatching, completing,
-or rolling up research work.
-
-- Inspect `git status` before editing; uncommitted files may be Tom's work or
-  another agent's claim.
-- Use `tkt ready`, `tkt tracks`, or `tkt next` to select dependency-satisfied,
-  conflict-aware work.
-- Atomically claim the ticket first so another worker cannot win the same work,
-  then immediately create or enter its dedicated worktree and `tkt/<id>` branch
-  from the exact base commit the dispatch names. Do not edit scoped content
-  between those steps. **Verify that commit is checked out before anything
-  else**, with `git log --oneline -1`: a worktree may be created from a stale
-  `origin/main` and land hundreds of commits behind, in which case the ticket
-  files the work depends on are simply absent. Treat a base you cannot resolve,
-  or one that proves to be an ancestor of the named commit, as a dispatch error
-  to report and correct rather than a starting point to work from.
-- Keep one ticket per branch when practical and stay within declared scopes.
-- Add a scope before touching a mapped contract area; `paths` do not substitute
-  for scopes in scheduling.
-- Run the ticket's experiment/tests, `tkt lint`, `git diff --check`, and
-  `tkt guard` against the ticket's true branch base before integration.
-- Treat guard success as a scope check, not a semantic or test guarantee.
-- Mark a ticket `done` only when its stated outcome is actually supported.
-  Split a remaining feasibility gate into a follow-up ticket instead of hiding
-  it or overstating completion.
-- Once a remainder is split into its own live ticket, the parent's stated
-  outcome *is* supported and the parent closes. Leaving it in `review` while its
-  child waits on it creates a deadlock the graph cannot resolve: `review` does
-  not satisfy dependents, so the child is unclaimable and the parent has nothing
-  left to do. Splitting is what lets the parent close, not a reason to hold it
-  open.
-- Preserve other agents' and Tom's dirty changes. Stage and commit exact paths;
-  never sweep unrelated modifications into a commit.
-
-### Isolated worktree convention
-
-Coordinator-created worktrees live outside the repository under:
-
-```text
-/Users/tsanterre/workspace/github.com/moderately-ai/.worktrees/tiler
-```
-
-Use these layouts and ownership rules:
-
-- A ticket has one writable editor worktree at `<root>/<ticket>/edit`, for
-  example
-  `/Users/tsanterre/workspace/github.com/moderately-ai/.worktrees/tiler/prototype-canonical-index-region-slice/edit`.
-  It checks out `tkt/<ticket>` from the ticket's recorded exact base commit.
-- Claim the ticket before creating its branch or worktree. The coordinator must
-  record the exact base commit and give the worker a task message containing
-  the ticket ID, role, branch, absolute worktree path, exact base, allowed
-  scope, and whether edits are permitted. A worker must verify those facts and
-  a clean status before acting.
-- Reviews use a new read-only, detached worktree at the exact commit being
-  reviewed. Name it `<root>/<ticket>/review-<role>-<short-sha>`, for example
-  `.../prototype-canonical-index-region-slice/review-authority-2a06be1`.
-  Reviewers must not inspect or run commands from a live editor worktree, and a
-  review is not valid unless its detached worktree starts clean and resolves to
-  the requested commit.
-- The integration worktree is reserved to one explicitly named integrator at a
-  time. Ticket editors and reviewers must not mutate it, and no second actor
-  may perform integration, conflict resolution, ticket finalization, or local
-  merging there concurrently.
-- Keep Cargo outputs worktree-local. Use each worktree's ordinary `target/` or
-  another directory unique to that worktree; never share one
-  `CARGO_TARGET_DIR` across editor, reviewer, or integration worktrees.
-
-The coordinator owns cleanup. First verify the worktree is clean and that its
-commit or branch is preserved as intended. Then run `git worktree remove` with
-the exact registered worktree path, followed by `git worktree prune` from a
-surviving checkout when stale administrative records may remain. Stop on dirty
-or ambiguous state; do not force removal or delete a registered worktree with
-`rm`, Finder, or another raw filesystem operation.
-
-## Repository and toolchain operations
-
-### Rust contributor standards
-
-This repository owns its Rust build policy. `AGENTS.md` is the canonical
-cross-harness guidance; harness-specific entry points must reference it rather
-than duplicate or weaken it.
-
-- `rust-toolchain.toml` pins the exact dated nightly and required components.
-  The workspace deliberately declares no stable `rust-version` while accepted
-  dependent-array const parameters require nightly. A future stable MSRV needs
-  separate conformance evidence and an explicit policy change.
-- Keep workspace Rust and Clippy lints inherited by every crate. One member diverges deliberately: `prototypes/serial-sum-run` declares its own `[lints.rust]` and `[lints.clippy]` and says why in its manifest. No check enforces this any more — a member that drops `[lints] workspace = true` still compiles, and is simply not linted. A `[lints]` change in a manifest diff is therefore something to look at. New public APIs require documentation, and warnings fail `make check`.
-- **`make lint` skips `prototypes/`.** Both prototype packages are excluded from the Clippy pass. They are non-published, experimental, and rewritten or deleted as the slice they prove moves, so holding them to the crates' style bar bought edits rather than defects. They are still compiled by `make build` and still run by `make test`: a prototype that stops building or stops passing still fails the gate, and only the style pass skips it. Do not extend the exclusion to anything under `crates/`.
-- **`clippy::too_many_lines` is off workspace-wide**, and this one is a judgement rather than an omission. The functions it flagged were exhaustive `match`es over deliberately wide error enums, where the only way under the limit is a wildcard arm — and that wildcard is precisely what stops a newly added variant from being a build error. A length limit is a proxy for complexity, and here it argued for losing a real correctness property to buy a number. Prefer splitting a genuinely long function; do not split one by adding a catch-all.
-- Unsafe code is forbidden except at an individual function or module admitted case by case under [ADR 0079](docs/decisions/0079-permit-unsafe-code-case-by-case-at-named-sites.md), which states the four conditions a site must meet: a foreign API leaves no safe route, the `#[allow]` carries a `reason`, an assertion checked against the foreign object's own report bounds what the block touches, and a `SAFETY` comment names the invariant relied on. A crate-level `unsafe_code = "allow"`, a second member dropping lint inheritance, and any relaxation of the workspace `forbid` are all outside that decision and each remains Tom's. Citing ADR 0079 is not sufficient to admit a new site; its four conditions are what generalize. The compiler enforces the rule — `forbid` at the workspace, `deny` in the one crate permitted to diverge, so a site exists only if it carries `#[allow(unsafe_code, reason = …)]` — and no check keeps an inventory of admitted sites. A new one is caught by review of the diff that adds it, which is what "case by case" asks for.
-- Preserve the workspace dev-profile defaults: line-table debug information, unpacked split debug information, and optimization level 1 for **both** dependencies and workspace members. The two are set separately because Cargo's `[profile.dev.package."*"]` glob reaches dependencies only; members take the level from `[profile.dev]` itself, and until that line was added they compiled unoptimized. The measurements behind raising it, and the reason the per-crate middle option was eliminated, are recorded at the profile in `Cargo.toml` — build time is flat and dev-profile code runs about 2.2× faster, so this is not a trade to re-open without new numbers. If a debugger needs full information, add a temporary or justified per-package override rather than inflating the whole workspace.
-- Keep release tuning local to an actual shipping package. Do not enable
-  workspace-wide LTO for ordinary development; select it through Cargo profile
-  environment variables for a specific measurement when need justifies it.
-- Do not vendor third-party Rust repositories as submodules. Pin an actively
-  used fork by exact Git revision and keep editable checkouts in the workspace
-  hierarchy outside this repository.
-- Do not share one `CARGO_TARGET_DIR` across unrelated workspaces. Use a
-  compiler cache for cross-workspace reuse, and prefer targeted sweeping over
-  destructive cleanup when disk usage grows.
-- Nightly-only Cargo settings belong in `.cargo/config.toml` only when the
-  pinned toolchain is nightly and the setting is explicitly required. Do not
-  introduce ambient user configuration as a repository requirement.
-
-Verification is a short list of Cargo commands over `crates/` and `prototypes/`,
-collected in the root `Makefile`:
-
-```sh
-make check    # cargo fmt --check, cargo check, clippy -D warnings, nextest + doc-tests — the working loop
-make full     # check, plus rustdoc, the release-profile numerical tests, tkt lint, shellcheck
-```
-
-Run `make check` while working and `make full` before pushing to `main`. Every
-target is one command you can also type directly; there is no wrapper, and
-nothing is gained by adding one.
-
-The test step is **two** commands, and the second is not redundant:
-`cargo nextest run --workspace` runs the suite, and `cargo test --workspace
---doc` runs the doc-tests, which **nextest does not run at all**. Deleting the
-second would not fail — it would silently stop compiling the compile-fail
-doc-tests that are this repository's evidence for ADR 0051's one-way commit, and
-a test that is never compiled reports nothing. Keep both, and add a new
-doc-test's evidence to the same place.
-
-`.config/nextest.toml` reports failures only: a green run prints its summary line
-and nothing else, and `fail-fast` is off so one run yields the complete failure
-list rather than the first one. It is a reporting choice, not a filter — no test
-is skipped by it. `--no-fail-fast`, `--status-level`, and a `--profile` override
-still work per invocation when a run needs something else.
-
-`rust-toolchain.toml` is the sole toolchain authority, and plain `cargo` already
-honours it: rustup reads the file by directory ancestry and resolves the pinned
-dated nightly with its components, without a selector on the command line. That
-also holds inside a spike workspace nested under this root, which is why **no
-spike may carry its own `rust-toolchain.toml`** — a directory-local file would
-silently select another compiler for the evidence. Use explicit dated-toolchain
-selectors in compiler-migration probes; never replace the repository pin with
-rolling `nightly`.
-
-`rust-toolchain.toml` pins `rust-src` for reproducibility rather than for
-building: a const-eval panic renders the offending `core` line only when the
-standard library sources are present, so without it the byte-compared
-`trybuild` goldens differ between two hosts on the same toolchain.
-
-**No `make` target touches `spikes/`.** A spike is a recorded measurement whose
-value is its record, not its re-execution. Run one from its own directory when
-you are working on it — `spikes/shapes/nightly-dependent-static-shapes/check.sh`
-recompiles that spike's retained `trybuild` goldens, and the Python harnesses
-elsewhere under `spikes/` are run ad hoc as `spikes/README.md` describes. The
-consequence is explicit: a retained `.stderr` is a positive claim about what a
-compiler emits, it outlives whatever produced it, and nothing compares it to the
-source beside it until someone runs that spike. Treat a golden as evidence of
-what was measured, not as a live check.
-
-`rust-toolchain.toml` is the sole version authority in this repository, and it
-covers Rust alone. Do not duplicate its values elsewhere.
-
-**No other tool is version-pinned, deliberately.** `deps.sh` installs
-cargo-nextest and ticketsplease when they are absent and asserts nothing about
-which version it finds; `tool-versions.toml` and its revision receipt are gone
-rather than dormant. The pins cost more than they caught — a host binary that
-auto-updated repeatedly failed the gate for a drift that was never a defect —
-and the residual exposure is small and known: nextest treats an unrecognized
-configuration key as a *warning* and continues, so an old enough binary would
-run the suite with `.config/nextest.toml` partly ignored. That costs reporting
-quality, not correctness; no test is skipped by it. Do not reintroduce a tool
-version check without a specific failure that one would have prevented.
-
-Bootstrap a fresh development checkout with `./deps.sh`. It installs or verifies
-Homebrew prerequisites, the pinned Rust toolchain, ticketsplease, and the Apple
-Metal toolchain. `./deps.sh --check` is the non-mutating diagnostic form. Tiler
-develops on macOS only; other platforms are unsupported rather than maintained
-as untested branches, and the repository runs no CI.
-
-When cloning any repository for research, use only the workspace-aware helper:
-
-```sh
-gwc <repository-url>
-```
-
-If a noninteractive shell resolves `gwc` incorrectly, use:
-
-```sh
-zsh -ic 'gwc <repository-url>'
-```
-
-or invoke:
-
-```text
-/Users/tsanterre/workspace/github.com/tomsanbear/scripts/git-workspace-clone.sh
-```
-
-Never use raw `git clone`; the helper preserves the workspace hierarchy.
-
-Do not install, download, select, or mutate Rust, Xcode, SDK, simulator, GPU, or
-other host toolchain components merely to complete a measurement without Tom's
-authorization. Once authorized, record the exact resulting component/build and
-rerun any measurement previously blocked by its absence.
-
-Use `apply_patch` for file edits. Preserve user-owned changes and avoid
-destructive Git or filesystem operations. Generated caches should normally be
-ignored in their experiment area rather than repeatedly deleted.
+This file is the working contract for agents in this repository, and the canonical cross-harness guidance: harness-specific entry points reference it rather than duplicate or weaken it, and a descendant `AGENTS.md` may refine it for its subtree. It is written as processes carrying their reasoning, so that when a situation the text did not foresee arrives, you can adapt the step without losing what the step protects.
+
+## Orientation
+
+Tiler is an experimental, consumer-agnostic Rust toolkit for optimizing declarative tensor computations and producing efficient parallel compute kernels. `candle-einops`, Candle, and Metal are initial frontend, runtime, and backend use cases; do not let their APIs become the compiler's semantic model.
+
+The useful analogy is "DataFusion for tensor compute": a frontend constructs a public logical tensor program, target-independent optimization derives legal alternatives, and physical planning chooses a target-aware implementation. The analogy is not identity — GPU scheduling, synchronization, memory visibility, resource limits, and numerical behavior can be physical correctness constraints, not mere costs.
+
+The project is research- and architecture-first. Do not scaffold crates, stabilize APIs, or begin production kernel implementation unless Tom explicitly moves the project into that phase. Bounded executable spikes are encouraged when they answer a named feasibility or correctness question.
+
+Authorities, strongest first: accepted ADRs and merged contracts; inspected source and reproducible measurements; proposed ADRs and design documents (coherent hypotheses, not commitments, and not evidence Tom approved every detail); ticket claims and worker summaries (unverified until checked). Preserve accepted decisions unless new evidence justifies an explicit superseding decision; challenge prior design text when evidence conflicts with it, but preserve the original rationale and never silently convert a proposal into fact. When evidence resolves a durable choice, update the relevant contract and add or accept an ADR; when it does not, record the measurement boundary and keep the question explicit.
+
+Start broad design work at `docs/README.md` and follow its reading order; the accepted ADR index is `docs/decisions/README.md`.
+
+## Architectural contract
+
+These invariants are contract rather than workflow — every process below only lands correctly when they hold. Preserve them unless a ticket is explicitly evaluating their replacement.
+
+- The public semantic graph describes what tensor operations mean, never how a device executes them. Model programs as typed operations and values with ordered named outputs and multi-result support — not one SQL-like root or a single output tensor.
+- Prefer explicit atomic semantic operation families and strongly typed attributes, bindings, identifiers, constraints, and errors; code organization may share implementations without collapsing semantic distinctions.
+- Keep semantic/logical IR, symbolic access relations, fusion alternatives, physical schedules, structured kernel IR, artifact programs, and runtime state distinct. A universal IR, or physical choices densified into the logical graph, collapses the separations that optimization and explanation depend on.
+- Hardware axes and resource dimensions live in typed target profiles, physical properties, schedule alternatives, feasibility predicates, and cost models. Planning being multidimensional does not make the graph a hypergraph.
+- Hard feasibility is separate from estimated cost: reject an infeasible plan with an explainable reason, never hide it behind an infinite or arbitrary cost.
+- Placement, memory domains, transfers, synchronization, and resource lifetimes are explicit physical contracts, not implicit node annotations or generic byte copies.
+- The compiler core stays independent of Candle, Metal runtime objects, einops syntax, and other consumer-specific types.
+- Extension mechanisms preserve validation, reference semantics, feasibility, explainability, and versioned identity; "extensible" does not mean unknown behavior is optimizable.
+- Preserve the accepted inline Rust developer experience for macro frontends: no required consumer `build.rs`, duplicated registry, source scan, Cargo subcommand, prepare step, or runtime source JIT. Each invocation is a self-contained AOT and embedding unit; broader fusion requires a larger explicit inline region, not inspection of surrounding Rust.
+- "Optimal" means the lowest-cost valid plan under the numerical contract and target profile. It does not mean the largest fused kernel; a multi-kernel program or deliberate materialization may be correct and faster.
+- Fail closed with typed, explainable errors. Never return an incorrect tensor to preserve a fast path.
+
+Correctness scrutiny concentrates where silent wrongness hides: numerical contracts, dtype conversions, observable materialization rounding, reduction order, exceptional values, and quantized compound values; complete cache and artifact identity with validation on every hit, immutable entries, atomic publication, and defined crash/race behavior; platform family, SDK, deployment minimum, compiler flags, toolchain provenance, and runtime compatibility stages; preflight before routing commit, fallback only before program work, and no fallback after allocation, partial encoding, submission, or semantic validation failure; exact command-buffer terminal success before host validation readback; device/context-scoped runtime cache identity and retention of asynchronous resources through their final device use; explain output for accepted and rejected rewrites, candidates, guards, capabilities, and assumptions.
+
+Future compatibility comes from explicit seams and invariants, not premature universal abstractions. When a mature system will need more than the first supported subset: enumerate the broader semantic space far enough to expose identity, validation, ABI, and lowering consequences; reserve strongly typed extension points where the dependency direction is understood; make unsupported cases reject explicitly rather than silently approximating; and implement the smallest specialized component that proves the architecture while recording what broadening would require. A type-system reservation, an architectural seam, implemented support, and a tested guarantee are four different maturity claims — never conflate them.
+
+Preserve `SoundProof`, exhaustive finite evidence, empirical evidence, normative guarantees, and `Unknown` as distinct evidence classes. Empirical testing finds counterexamples and qualifies a bounded profile; it does not prove an unmeasured universal numerical, compatibility, durability, or performance claim.
+
+## How to decide and when to ask
+
+Work autonomously on questions with a correctness-derived or clearly dominant answer, defaulting to the long-term compatible, correct, and performant design even when it requires more research or work. This is pre-production software with no external consumers: when a replacement is complete, remove the superseded internal path rather than preserving it. Do not ask Tom to choose routine implementation details, settle researchable facts, or approve an obvious correctness requirement — a question answerable by reading is research, not a decision to escalate.
+
+Before treating anything as a decision for Tom, run the elimination explicitly: test each candidate against correctness, performance, and long-term maintainability and discard every one that fails, stating the derivation so a reader can refute the elimination rather than only the conclusion. If one candidate survives, there is no question — asking spends Tom's time on a decision the constraints already made. Be especially suspicious of the cheaper option: a shortcut usually looks like a trade-off precisely because the cost it saves is the part that made the answer correct, and an option that can return a silently wrong result is a defect, not an alternative.
+
+When a genuine choice survives — alternatives encoding different valid priorities — ask one atomic question at a time: concise, concrete (preferably a small tensor-program example), explicit about what each option enables and prevents, with point and counterpoint and a recommendation backed by evidence. Pause for the answer, continuing independent work meanwhile; never bury several decisions in a design dump. If Tom asks for more detail, walk the example step by step, distinguishing node semantics, graph structure, logical properties, physical properties, and chosen implementation.
+
+Three boundaries are always Tom's regardless of research quality: acceptance of a public crate, module, trait, type, or consequential call-site boundary (a tested implementation is a concrete draft, not implicit approval of its interface); genuine scope expansion or destructive/irreversible action; and movement of the project between research and implementation phases. Do not reopen a decision recorded in an accepted ADR or durable ticket outcome without new evidence, and supersede explicitly when you do.
+
+In all research and design writing, label separately — **Fact** (primary documentation, inspected source, or direct measurement), **Inference** (derived from stated facts), **Proposal** (a design not yet accepted or tested), and **Measurement** (an observation tied to an exact environment and procedure) — because a reader acts differently on each.
+
+## How to research
+
+Prefer primary specifications, papers, official documentation, and concrete source code, inspecting the exact local dependency revision and recording the commit or version; secondary material only locates primary evidence.
+
+Verify by reading, not by search. A failed search is evidence the search was wrong, not that the thing is absent, until the file has been read: multi-line attributes, wrapped signatures, and re-exports defeat substring matching, `git log -S` inherits the same weakness, and a bounded window (`head -N`, a `sed` range, a truncated diff) can split the construct being searched for. Read where a value is constructed before concluding what it means — two types with the same field shape are not the same concept, and the declaration is not the evidence. When asserting absence, state the exact check so a reader can reproduce or refute it in one line, and treat a correction that cannot be reproduced that way as unverified, even from a reviewer.
+
+Keep facts about a tested host or toolchain separate from portable guarantees. Turn important unknowns into bounded experiments with explicit inputs, outputs, metrics, unsupported cases, and stop conditions; a failed or unavailable measurement is useful evidence when its limitation is precise — never fill the gap with an assumption.
+
+Research ends in one of four outcomes: a correctness-derived contract update, an accepted architectural decision, a bounded experiment, or an explicitly deferred question with a reconsideration trigger. Open-ended notes that do not say what evidence or decision would close them are not an outcome.
+
+Preserve reproducible experiments, prototypes, fixtures, and cited measurements under `spikes/`, linked from the documents that cite them. No `make` target reaches `spikes/` — a spike runs by hand from its own directory using the invocation its README records, and the trade is stated rather than hidden: a retained `trybuild` golden or result fixture is a positive claim that outlives its producer, and only re-running that spike detects drift from the source beside it. Do not delete an experiment directory because a run completed; keep the reusable source, inputs, harness, and any cited fixture, gitignore regenerable local data narrowly, and never ignore referenced evidence. Temporary OS directories are acceptable for isolated runs only when the checked-in harness reconstructs them.
+
+## How to coordinate parallel work
+
+ticketsplease (`tkt`) is the work graph; follow its skill for mechanics (`tkt ready`/`tracks`/`next` for selection, claiming, guarding, rollups). This section is the process around it, in execution order; every failure mode cited was observed in practice, not hypothesized.
+
+**State the board from the board.** Worker counts, merged branches, ticket statuses, and whether a commit reached the remote are all cheap to check and have all been reported wrongly from memory. Check before asserting, and inspect `git status` before editing — uncommitted files may be Tom's work or another agent's claim, so stage and commit exact paths and never sweep unrelated modifications into a commit.
+
+**Prepare the base.** Gate the exact commit you will hand out, push it, and confirm zero divergence (`git rev-list --left-right --count origin/main...main` → `0 0`) before dispatching: a worker's worktree derives from the remote, so a local-only base is unreachable, and a red base multiplies across every branch built on it. Chain the gate to the push with `&&`, not `;` — a red commit once reached `origin/main` because the push ran regardless of how the gate went. Gating a later state does not cover an earlier handed-out commit: gate, push, dispatch, in that order.
+
+**Claim, then isolate.** Atomically claim the ticket first, then immediately create or enter its worktree and `tkt/<id>` branch from the exact named base, editing nothing in between. Worktrees live under `/Users/tsanterre/workspace/github.com/moderately-ai/.worktrees/tiler/<ticket>/edit`. Verify the checkout before working — `git log --oneline -1` must show the named base, because worktrees have been created from a stale `origin/main` hundreds of commits behind, missing the files the ticket depends on. A base you cannot resolve, or one that proves to be an ancestor of the named commit, is a dispatch error to report, not a starting point. Keep one ticket per branch when practical, and add a scope before touching a mapped contract area — `paths` do not substitute for scopes in scheduling.
+
+**Dispatch with a brief that earns its trust.** A brief states: ticket ID and role (implementation, research, or a review role below); the exact base commit; branch and absolute worktree path; whether edits are permitted; allowed scopes and files; relevant accepted authorities; the user-visible outcome, implementation keys, and explicit non-goals; required targeted checks and deliberate failure perturbations; public boundaries that must not be self-accepted; and the expected deliverables — preserved commit hash, a concise correctness argument, commands run, failure-path evidence, measurement boundary, unsupported cases, and confirmation the branch stayed in scope. A brief's assertions are claims held to the same standard as any other: cite where each came from and mark the unverified ones, because a wrong fact in a brief propagates with the coordinator's authority behind it. Do not delegate work smaller than its brief — a dispatch for a one-line change costs more than the change and adds a merge.
+
+**Workers stay in their lane.** Verify base, branch, claim, scope, and clean status before acting; read the complete ticket and every file to be edited in full; trace values to construction and consumption sites rather than inferring from type shape. Run targeted package checks, `tkt lint` after every ticket edit, `git diff --check`, and `tkt guard` against the true branch base — guard success is a scope check, not a semantic or test guarantee. Commit with a why-first message, no attribution, and return the exact hash with the evidence packet. Workers never merge, never mutate the integration checkout, never close tickets, and never expand scope silently.
+
+**Review at a fixed point.** Independent review happens in a new detached read-only worktree at the exact commit under review (`<root>/<ticket>/review-<role>-<short-sha>`), never a live editor worktree — a review of a moving target reviews nothing, and a review is invalid unless its worktree starts clean and resolves to the requested commit. Focus by role where useful: correctness (semantic preservation, numerics, fail-closed paths, identity completeness, routing-commit discipline, resource lifetimes, whether every new check can actually fail); architecture (dependency direction, consumer neutrality, separation of semantic/physical/artifact/runtime concerns, premature abstraction, superseded paths ready for removal); API (the exact public boundary, ownership and naming, validation and identity obligations, object safety or generics only where required, documentation describing current behavior rather than aspiration); performance (benchmark validity, allocation and dispatch overhead, complexity and scaling, whether a claim exceeds its measurement boundary or an optimization weakened validation). A review reports findings by severity with exact location and reproduction; "looks good" without reading the diff, its construction sites, and its failure paths is not a review. Consequential public boundaries go to Tom before acceptance.
+
+**Integrate on the diff, not the report.** A worker's summary is a claim about its work; the gate checks neither its correctness argument nor its scope. Read the complete diff against the exact base — and surrounding files in full where correctness depends on context — then merge the branch the worker actually committed to. An agent worktree carries two branch names (the harness's own and `tkt/<id>`), and merging the wrong one reports `Already up to date`, passes the gate on an unchanged tree, and pushes `Everything up-to-date`: three green signals for work that never landed. Capture `git rev-parse HEAD` before and after, treat an unmoved `HEAD` as a failure, and confirm the worker's reported commit is an ancestor of `main` by hash — the branch name is a claim, the hash is the evidence. Resolve conflicts toward the current integration structure while reapplying the branch's intent. Two branches that each rebaselined a pinned identity, golden, or generated value can both be green and still not compose: recompute the value on the merged tree, never by picking a side. When a worker's result is wrong, off-scope, or abandoned, require corrections on the worker branch or redispatch with a corrected brief — never merge partial work to salvage it. The integration worktree belongs to one named integrator at a time; no second actor merges, resolves conflicts, or finalizes tickets there concurrently.
+
+**Maintain the graph as evidence arrives.** Execute the ticket's graph-maintenance section, update it with facts, exact commands, measurements, and hashes, and correct stale assertions found along the way. Mark a ticket done only when its stated outcome is actually supported; split a bounded remainder into its own narrow ticket instead of hiding it or overstating completion. Once the remainder is a live ticket, the parent's revised outcome is supported and the parent closes — holding it in `review` deadlocks the graph, because `review` does not satisfy dependents. File a new ticket when work reveals an out-of-scope defect, a public-boundary redesign, a missing identity or validation authority, a bounded research question, a separately measurable performance opportunity, or a deferred capability with an activation trigger; do not absorb it silently. Refill the capacity a landing frees in the same turn — reporting a merge and waiting leaves dependency-satisfied work unclaimed for no reason.
+
+**Clean up deliberately.** The coordinator owns cleanup: verify the worktree is clean and its commit or branch is preserved, then `git worktree remove` with the exact registered path and `git worktree prune` from a surviving checkout. Stop on dirty or ambiguous state; never force removal or delete a registered worktree with raw filesystem operations. Keep Cargo outputs worktree-local — never share one `CARGO_TARGET_DIR` across editor, review, or integration worktrees.
+
+**Prove every check can say no.** Before acting on a check you wrote, run it against a case that must fail and watch it fail. A survey once reported forty-three worktrees uniformly clean immediately before mass deletion because an unresolvable command inside the loop produced empty output, making "no modifications" indistinguishable from "the check did not run". A uniform pass over a heterogeneous population is the signature to distrust; prefer a check that names its population and counts it, because silence reads as success to anything that does not independently know how many answers to expect.
+
+## How to verify and ship
+
+Work with targeted checks — formatting for affected files, `cargo check`, `cargo nextest run -p <package>`, per-package Clippy with warnings denied — and run the full gate once on the completed batch, not as a discovery loop.
+
+`make check` is the working loop (fmt --check, check, clippy -D warnings, nextest, doc-tests); `make full` adds rustdoc, the release-profile numerical tests, `tkt lint`, and shellcheck, and runs before any push to `main`. Every target is one command you could type directly; there is no wrapper and nothing is gained by adding one. New public APIs require documentation, and warnings fail the gate.
+
+The test step is two commands because nextest does not run doc-tests at all: `cargo nextest run --workspace`, then `cargo test --workspace --doc`. Dropping the second would not fail anything — it would silently stop compiling the compile-fail doc-tests that are this repository's evidence for ADR 0051's one-way commit, and a test never compiled reports nothing. Keep both, and add new compile-fail evidence to the same place.
+
+`.config/nextest.toml` reports failures only and disables fail-fast, so a green run prints one summary line and a red run yields the complete failure list. It filters reporting, not tests; `--no-fail-fast`, `--status-level`, and `--profile` overrides still work per invocation.
+
+Run the gate on the exact commit being published, chain publication to it with `&&`, and confirm the remote holds that exact commit with zero divergence before treating it as a dispatch base.
+
+## How to measure performance
+
+Performance work starts only after correctness and measurement validity are established, and follows one loop: define the workload, target profile, metric, baseline, warm-up, repetitions, and noise controls; preserve a correctness oracle and compare outputs before comparing speed; measure the current implementation and identify the dominant cost with evidence; implement the narrowest change that removes that cost; remeasure with the identical procedure; report regressions, variance, and environment. Keep hard feasibility separate from estimated cost, and never convert an empirical result into a universal claim — file broader cost-model or hardware-calibration work separately when the evidence does not generalize.
+
+## How to maintain the docs and ticket graph
+
+Treat the documentation corpus as one system, and write as though a reader is the only check, because one is: nothing validates the corpus — no renderer, no gate. Local link targets, the frontmatter graph and its supersession rules, declared entrypoints, and the catalog blocks under `docs/` and `docs/decisions/README.md` are ordinary hand-maintained prose now, so edit a catalog in the same change that changes the metadata behind it, and know that a broken link costs a reader rather than a gate.
+
+A decision recorded is not a decision applied. Accepting an ADR means moving its `decision_status`, updating the catalog views, correcting every contract sentence whose truth depended on the old status, and releasing what the work graph gated on it — and note the asymmetry: a disclosure required while a decision is proposed becomes wrong once it is accepted, and nothing checks either direction. Before declaring a decision recorded, sweep for conflicting terminology, stale status language, duplicated authorities, and identifiers, schemas, or examples that no longer agree; remove an open question only when its answer lives in a durable contract or an accepted ADR.
+
+A doc comment is a claim, and it is load-bearing: the next worker reads it as fact, and an overstated one makes unreachable work look reachable. Describe what the code does now; when a comment and the source disagree, the source wins and the comment is the defect.
+
+Examples are design work. Prefer a small end-to-end tensor program showing inputs, typed operations, multiple values or outputs when relevant, logical properties, candidate and rejected physical plans, and the observable result — and never let an example quietly introduce semantics the normative text has not defined.
+
+## Toolchain and environment
+
+Tiler develops on macOS only — other platforms are unsupported rather than maintained as untested branches — and runs no CI. `./deps.sh` bootstraps a checkout (Homebrew prerequisites, the pinned Rust toolchain, ticketsplease, the Apple Metal toolchain); `./deps.sh --check` is the non-mutating form.
+
+`rust-toolchain.toml` is the sole version authority, and it covers Rust alone: rustup resolves the pinned dated nightly by directory ancestry, with no selector on the command line. That resolution also reaches nested spike workspaces, which is why no spike may carry its own `rust-toolchain.toml` — a directory-local file would silently select another compiler for the evidence; compiler-migration probes use explicit dated selectors instead of replacing the pin. `rust-src` is pinned for reproducibility rather than building: const-eval panics render the offending `core` line only when stdlib sources are present, so byte-compared `trybuild` goldens otherwise differ across hosts on the same toolchain. The workspace deliberately declares no stable `rust-version` while accepted dependent-array const parameters require nightly; a future stable MSRV needs separate conformance evidence and an explicit policy change. Nightly-only Cargo settings belong in `.cargo/config.toml` only when explicitly required — never introduce ambient user configuration as a repository requirement.
+
+No other tool is version-pinned, deliberately: the pins cost more than they caught (a host binary that auto-updated repeatedly failed the gate for drift that was never a defect), and the known residual exposure — an old nextest ignoring part of `.config/nextest.toml` with a warning — costs reporting quality, not correctness. Do not reintroduce a tool version check without a specific failure it would have prevented.
+
+Lint policy: every crate inherits the workspace Rust and Clippy lints; `prototypes/serial-sum-run` diverges deliberately and says why in its manifest. Nothing enforces inheritance any more — a member that drops `[lints] workspace = true` still compiles, simply unlinted — so a `[lints]` change in a manifest diff is something to look at. `make lint` skips `prototypes/` because holding experimental, rewrite-prone packages to the crates' style bar bought edits rather than defects; they still build and test in the gate, and the exclusion never extends to `crates/`. `clippy::too_many_lines` is off workspace-wide because the functions it flagged were exhaustive matches over deliberately wide error enums, where the only path under the limit is a wildcard arm — exactly the arm that stops a new variant from being a build error; split genuinely long functions, never by adding a catch-all.
+
+Unsafe code is forbidden except at named sites admitted case by case under [ADR 0079](docs/decisions/0079-permit-unsafe-code-case-by-case-at-named-sites.md), whose four conditions are what generalize: no safe route through the foreign API, an `#[allow]` carrying a `reason`, an assertion bounding the block against the foreign object's own report, and a `SAFETY` comment naming the invariant. Citing the ADR is not sufficient to admit a site; the compiler enforces the mechanism (`forbid` at the workspace, `deny` in the one permitted crate), no inventory of sites exists, and a new one is caught only by review of the diff that adds it. A crate-level `unsafe_code = "allow"`, a second member dropping lint inheritance, and any relaxation of the workspace `forbid` each remain Tom's decision.
+
+Preserve the dev-profile defaults — line-table debug info, unpacked split debuginfo, and opt-level 1 for both dependencies and workspace members, set separately because the `[profile.dev.package."*"]` glob reaches dependencies only. The measurements are recorded at the profile in `Cargo.toml` (build time flat, dev code ~2.2× faster); not a trade to reopen without new numbers. A debugger needing full info gets a temporary per-package override, not a workspace-wide change. Keep release tuning (LTO and friends) local to an actual shipping package or a specific measurement.
+
+Do not vendor third-party repositories as submodules — pin an actively used fork by exact revision and keep editable checkouts outside this repository. Never share one `CARGO_TARGET_DIR` across unrelated workspaces; use a compiler cache for cross-workspace reuse and targeted sweeping over destructive cleanup. Clone research repositories only with `gwc <url>` (fallback: `zsh -ic 'gwc <url>'`, or `/Users/tsanterre/workspace/github.com/tomsanbear/scripts/git-workspace-clone.sh`); never raw `git clone`, which breaks the workspace hierarchy.
+
+Do not install, download, select, or mutate Rust, Xcode, SDK, simulator, GPU, or other host toolchain components merely to complete a measurement without Tom's authorization. Once authorized, record the exact resulting component and rerun any measurement its absence had blocked.
 
 ## Implementation boundary
 
-Research completion does not itself authorize production implementation. Before
-scaffolding, run the research-readiness gate: audit contradictions and missing
-invariants, distinguish measured feasibility from proposals, rank remaining
-unknowns by architecture impact and experimental cost, and propose the smallest
-vertical slice. Tom decides whether that gate moves the project into
-implementation, requires another research wave, or narrows scope.
+Research completion does not itself authorize production implementation. Before scaffolding, run the readiness gate: audit contradictions and missing invariants, distinguish measured feasibility from proposals, rank remaining unknowns by architectural impact and experimental cost, and propose the smallest vertical slice. Tom decides whether that gate opens implementation, requires another research wave, or narrows scope.

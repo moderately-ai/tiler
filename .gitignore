@@ -6,6 +6,8 @@
 # narrowing this rule, so a generated artifact cannot arrive as a side effect.
 /.agents/
 /.claude/
+# Local orchestration loop prompts; machine-local operator state, not repository contract.
+/.loops/
 __pycache__/
 *.py[cod]
 /target/
