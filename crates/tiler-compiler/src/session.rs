@@ -64,7 +64,6 @@ use tiler_ir::semantic::{ProviderIdentity, ResolvedValueType, SemanticProgram};
 use crate::capability::FrozenLoweringCapabilityRegistry;
 pub use crate::explain::VerifiedCompilationExplain;
 use crate::explain::VerifiedExplainTrace;
-use crate::feasibility::FeasibilityRuleSetIdentity;
 use crate::pipeline::{
     CompilationProduct, CompileError, NoFeasiblePlanError, ProgramAlternative,
     ProgramAlternativeKind, TargetCompilationOutcome, compile as compile_internal,
@@ -77,14 +76,15 @@ use crate::request::{
     MAX_NUMERICAL_CONTRACT_PREFERENCES as INTERNAL_MAX_NUMERICAL_CONTRACT_PREFERENCES,
     NumericalContractPreference, RequestError, StrictF32NumericalContract,
 };
+use crate::target::feasibility::FeasibilityRuleSetIdentity;
 use crate::target::{
     TargetNumericalRefusalEvidence, TargetProfile, TargetProfileKey, TargetRequest,
 };
 use crate::{
-    honourability::{
+    program::ProgramError,
+    target::honourability::{
         DimensionBehaviour, HonouringMeans, NumericalDimension, NumericalRefusalEvidence,
     },
-    program::ProgramError,
 };
 use tiler_ir::index::FrozenScalarRegistry;
 
@@ -2361,7 +2361,7 @@ mod tests {
         // regression guard on the governed profile's size rather than the only
         // thing standing between an oversized profile and a packaging failure.
         assert!(
-            descriptor.len() <= crate::feasibility::MAX_TARGET_PROFILE_DESCRIPTOR_BYTES,
+            descriptor.len() <= crate::target::feasibility::MAX_TARGET_PROFILE_DESCRIPTOR_BYTES,
             "the governed descriptor fits the bound this crate publishes: {} bytes",
             descriptor.len(),
         );

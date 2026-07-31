@@ -11,7 +11,7 @@
 //! type it can be asked about it in*, which behaviour it honours and *by what
 //! means*. This module owns that vocabulary; the composition of a declaration and
 //! a caller requirement into one ADR 0043 outcome lives beside the capability
-//! assessment in [`crate::feasibility`], because a candidate has exactly one
+//! assessment in [`crate::target::feasibility`], because a candidate has exactly one
 //! feasibility verdict and the two kinds of predicate contribute to it together.
 //!
 //! # Why the key carries an arithmetic type
@@ -32,7 +32,7 @@
 //!
 //! # Why this is not a `CapabilityAxis`
 //!
-//! [`crate::feasibility::CapabilityAxis`] is a quantitative space: a `u64`
+//! [`crate::target::feasibility::CapabilityAxis`] is a quantitative space: a `u64`
 //! bound, a [`crate::explain::Quantity`] unit, and an `AtMost`/`Exact`/`Implies`
 //! relation. Numerical honourability is not a quantity, and the decisive point
 //! is that [`HonouringMeans::SupportedWithExactEmulation`] has no representation
@@ -61,10 +61,10 @@ use tiler_ir::schedule::{
 };
 use tiler_ir::semantic::ResolvedValueType;
 
-use crate::feasibility::{
+use crate::request::{permission_tag, subnormal_tag};
+use crate::target::feasibility::{
     AvailabilityPhase, FactAuthority, FactProvenance, FactValidityScope, TargetProfileIdentity,
 };
-use crate::request::{permission_tag, subnormal_tag};
 
 /// Version of the structured numerical-fact provenance vocabulary.
 const FACT_SOURCE_PROVENANCE_SCHEMA_VERSION: u32 = 3;
@@ -1183,7 +1183,7 @@ impl RelaxationRequirement {
 /// Rows share one immutable structured source record; a checked profile then
 /// attributes each row to the declaring profile's identity.
 /// [`NumericalHonourabilityFact`] is that attributed form. The split mirrors how a
-/// [`crate::feasibility::CapabilityFact`]'s provenance is bound at checking time
+/// [`crate::target::feasibility::CapabilityFact`]'s provenance is bound at checking time
 /// rather than restated by every declarer.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct DeclaredBehaviour {
@@ -1350,7 +1350,7 @@ fn encode_compact_index(bytes: &mut Vec<u8>, mut value: usize) {
 /// in one arithmetic type.
 ///
 /// It carries the same provenance discipline a
-/// [`crate::feasibility::CapabilityFact`] does — an availability phase, a fact
+/// [`crate::target::feasibility::CapabilityFact`] does — an availability phase, a fact
 /// authority, a validity scope, and the declaring profile's identity — so a
 /// rejection can name where the claim came from (ADR 0076 item 3).
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -16,8 +16,8 @@ use tiler_ir::schedule::ArithmeticType;
 use tiler_ir::semantic::ResolvedValueType;
 
 use crate::fusion::FusionNumericalProof;
-use crate::honourability::NumericalRefusalEvidence;
 use crate::request::{LoweringProviderIdentity, VerifiedTargetRequest};
+use crate::target::honourability::NumericalRefusalEvidence;
 
 // Schema v9 appends the complete refusing honourability fact — its declared
 // behaviour, means, availability phase, authority, validity scope, versioned
@@ -3340,14 +3340,14 @@ mod tests {
     fn unhonoured(
         arithmetic: ArithmeticType,
         resolved_type: ResolvedValueType,
-        source: std::sync::Arc<crate::honourability::FactSourceProvenance>,
-    ) -> crate::honourability::UnhonouredDimension {
-        use crate::honourability::{
+        source: std::sync::Arc<crate::target::honourability::FactSourceProvenance>,
+    ) -> crate::target::honourability::UnhonouredDimension {
+        use crate::target::honourability::{
             DeclaredBehaviour, DimensionBehaviour, HonouringMeans, NumericalDimension,
         };
         let required =
             DimensionBehaviour::Transform(tiler_ir::schedule::NumericalPermission::Forbidden);
-        crate::honourability::UnhonouredDimension::new(
+        crate::target::honourability::UnhonouredDimension::new(
             DeclaredBehaviour::new(
                 NumericalDimension::Contraction,
                 arithmetic,
@@ -3356,7 +3356,7 @@ mod tests {
                 HonouringMeans::Unsupported,
                 source,
             )
-            .attributed_to(crate::feasibility::TargetProfileIdentity::new(
+            .attributed_to(crate::target::feasibility::TargetProfileIdentity::new(
                 "tiler.test.profile.v1",
             )),
             required,
@@ -3368,7 +3368,7 @@ mod tests {
 
     #[test]
     fn honourability_complete_dtype_is_canonical_identity() {
-        let event = |cause: &crate::honourability::UnhonouredDimension| {
+        let event = |cause: &crate::target::honourability::UnhonouredDimension| {
             ExplainEvent::NumericalHonourability {
                 dimension: PredicateKey::new("numerics.contraction").unwrap(),
                 arithmetic: cause.arithmetic(),
@@ -3382,7 +3382,7 @@ mod tests {
                 profile: SubjectKey::new("tiler.test.profile.v1").unwrap(),
             }
         };
-        let source = crate::honourability::governed_profile_source();
+        let source = crate::target::honourability::governed_profile_source();
         let f16 = event(&unhonoured(
             ArithmeticType::F16,
             ResolvedValueType::nominal(
@@ -3430,15 +3430,15 @@ mod tests {
     /// one trace, and a reader could not tell which one it was reading.
     #[test]
     fn an_unhonourable_record_carries_the_complete_refusal_provenance() {
-        use crate::feasibility::{FeasibilityOutcome, RejectionCause};
-        use crate::honourability::{
-            UnhonouredDimension, governed_profile_source, measured_profile_source,
-        };
         use crate::request::StrictF32NumericalContract;
         use crate::target::TargetProfile;
+        use crate::target::feasibility::{FeasibilityOutcome, RejectionCause};
+        use crate::target::honourability::{
+            UnhonouredDimension, governed_profile_source, measured_profile_source,
+        };
 
         fn refusal(
-            source: std::sync::Arc<crate::honourability::FactSourceProvenance>,
+            source: std::sync::Arc<crate::target::honourability::FactSourceProvenance>,
         ) -> UnhonouredDimension {
             let profile = TargetProfile::refusing_preserved_subnormals_for_test(
                 "test.explain-refusal.v1",

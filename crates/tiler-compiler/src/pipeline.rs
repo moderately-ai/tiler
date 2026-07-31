@@ -45,7 +45,6 @@ use crate::explain::{
     RejectionClass, RuleRef, SelectionOutcome, SubjectKind, TerminalCause, VerifiedEvidenceRef,
     VerifiedExplainTrace,
 };
-use crate::feasibility::FeasibilityRuleSetIdentity;
 use crate::frontier::{
     FrontierError, FrontierRegionSubject, GovernedPhysicalProvider, ImplementationFrontier,
     PhysicalImplementationProvider, enumerate_frontier,
@@ -87,6 +86,7 @@ use crate::selection::{
     CoverFrontiers, PlanStructuralCost, RegionFrontier, SelectedPlan, SelectedPortfolio,
     SelectionError, select_physical_plans, verify_selected_portfolio,
 };
+use crate::target::feasibility::FeasibilityRuleSetIdentity;
 
 const SELECTION_POLICY_KEY: &str = "tiler.selection.structural-pareto.v1";
 const STRUCTURAL_COST_MODEL_KEY: &str = "tiler.cost.structural.v1";

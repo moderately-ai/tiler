@@ -71,13 +71,13 @@ use crate::boundary::{
     GuaranteedProperties, RequiredProperties, UnsatisfiedProperty, unsatisfied_properties,
 };
 use crate::cover::{CoverError, MaterializationEdge, RegionCover, verify_cover};
-use crate::feasibility::ResolvedPredicate;
 use crate::frontier::{
     AdmittedImplementation, BoundaryOwnership, FrontierRegionSubject, ImplementationFrontier,
 };
-use crate::honourability::HonouredDimension;
 use crate::region::{RegionFormationOutcome, RegionOccurrenceIdentity};
 use crate::request::{DeterministicBudgets, TargetProfile};
+use crate::target::feasibility::ResolvedPredicate;
+use crate::target::honourability::HonouredDimension;
 
 /// Canonical domain-separation tag for one selected-plan identity.
 const SELECTED_PLAN_IDENTITY_TAG: &[u8] = b"tiler.compiler.selected-physical-plan.v2\0";
@@ -2159,10 +2159,10 @@ mod tests {
     fn honoured_fact_compiler_and_environment_provenance_enter_plan_identity() {
         use std::sync::Arc;
 
-        use crate::feasibility::{
+        use crate::target::feasibility::{
             AvailabilityPhase, FactAuthority, FactValidityScope, TargetProfileIdentity,
         };
-        use crate::honourability::{
+        use crate::target::honourability::{
             CompilerBuildIdentity, CompilerBuildRole, DeclaredBehaviour, DimensionBehaviour,
             ExecutionEnvironmentIdentity, FactSourceProvenance, HonouredDimension, HonouringMeans,
             MeasurementContext, NumericalDimension, ProvenanceIdentity,

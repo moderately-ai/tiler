@@ -15,12 +15,10 @@ mod effects;
 mod estimate;
 mod explain;
 mod failure_stage;
-mod feasibility;
 mod frontier;
 mod fusion;
 mod fusion_legality;
 mod governed;
-mod honourability;
 #[cfg(test)]
 mod hot_path;
 mod index_discharge;

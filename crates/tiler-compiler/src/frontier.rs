@@ -65,14 +65,14 @@ use crate::boundary::{
 };
 use crate::call_declaration::{GuaranteeError, OpaqueCallDeclaration, WorkScaling};
 use crate::call_registry::{OpaqueCallProposal, OpaqueCallRegistry, RegisteredCall};
-use crate::feasibility::{FeasibilityError, RejectionCause, ResolvedPredicate};
-use crate::honourability::UnhonouredDimension;
 use crate::physical::{
     AdmissionEvidence, PhysicalError, ResourceVerdict, VerifiedScheduledRegion,
     verify_schedule_with_feasibility,
 };
 use crate::region::SemanticMemberId;
 use crate::request::{TargetProfile, TargetProfileKey, VerifiedTargetRequest};
+use crate::target::feasibility::{FeasibilityError, RejectionCause, ResolvedPredicate};
+use crate::target::honourability::UnhonouredDimension;
 
 /// The single structural cost model the bounded P0 frontier attributes estimates
 /// to. It matches the pipeline's structural cost model so a later selector can
@@ -1401,7 +1401,7 @@ impl Error for FrontierError {
 /// provider-order-independent order. An `Ok` with an empty admitted set is a valid
 /// local no-plan result.
 ///
-/// [`FeasibilityOutcome::Proven`]: crate::feasibility::FeasibilityOutcome::Proven
+/// [`FeasibilityOutcome::Proven`]: crate::target::feasibility::FeasibilityOutcome::Proven
 ///
 /// # Errors
 ///
@@ -3395,12 +3395,12 @@ mod tests {
         use super::{WorkResolutionError, classify_opaque_resource_verdict, encode_rejection};
         use crate::call_abi::BindingError;
         use crate::call_declaration::GuaranteeError;
-        use crate::feasibility::{RejectionCause, TargetProfileIdentity};
-        use crate::honourability::{
+        use crate::physical::ResourceVerdict;
+        use crate::target::feasibility::{RejectionCause, TargetProfileIdentity};
+        use crate::target::honourability::{
             DeclaredBehaviour, DimensionBehaviour, HonouringMeans, NumericalDimension,
             UnhonouredDimension, governed_profile_source,
         };
-        use crate::physical::ResourceVerdict;
         use tiler_ir::schedule::{ArithmeticType, NumericalPermission};
 
         let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
@@ -3574,7 +3574,9 @@ mod tests {
                 &provider,
                 &proposal,
                 ResourceVerdict::Intrinsic(
-                    crate::feasibility::FeasibilityError::MalformedProposal { rule: "test" },
+                    crate::target::feasibility::FeasibilityError::MalformedProposal {
+                        rule: "test"
+                    },
                 ),
             ),
             Err(FrontierError::MalformedOpaqueCallAssessment { .. })
@@ -3637,13 +3639,13 @@ mod tests {
     #[test]
     fn one_refusing_fact_reaches_every_rejection_surface_with_its_provenance() {
         use super::encode_rejection;
-        use crate::feasibility::{FeasibilityOutcome, RejectionCause};
-        use crate::honourability::{
+        use crate::request::{ContractRejection, StrictF32NumericalContract};
+        use crate::target::TargetProfile;
+        use crate::target::feasibility::{FeasibilityOutcome, RejectionCause};
+        use crate::target::honourability::{
             FactSourceProvenance, UnhonouredDimension, governed_profile_source,
             measured_profile_source,
         };
-        use crate::request::{ContractRejection, StrictF32NumericalContract};
-        use crate::target::TargetProfile;
 
         fn refusal(key: &str, source: std::sync::Arc<FactSourceProvenance>) -> UnhonouredDimension {
             let profile = TargetProfile::refusing_preserved_subnormals_for_test(key, source);
@@ -3672,7 +3674,7 @@ mod tests {
         let origin = cause.evidence();
         assert_eq!(
             origin.authority(),
-            crate::feasibility::FactAuthority::MeasuredProfile
+            crate::target::feasibility::FactAuthority::MeasuredProfile
         );
 
         // Contract rejection, frontier rejection, and opaque-call rejection all
