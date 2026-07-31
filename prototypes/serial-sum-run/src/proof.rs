@@ -2620,7 +2620,7 @@ enum ProofError {
     /// Two variants rather than one, because the two mismatches carry different
     /// numbers: this one compares one identity against a *count* of candidate
     /// alternatives, and rendering that count beside a byte length once read as
-    /// "compiled one of 2 [bytes]" — a misdirection at exactly the moment
+    /// "compiled one of 2 \[bytes\]" — a misdirection at exactly the moment
     /// somebody is diagnosing a drift.
     ForeignProgram {
         /// Byte length of the packaged program's canonical identity.
