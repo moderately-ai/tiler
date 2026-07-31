@@ -10,8 +10,8 @@
 #	`verify-sources.sh` enforces the row count, the per-classification counts, id uniqueness, every
 #	vendored digest, and that no file on disk escapes this manifest.
 ieee-754-2019	metadata-only	-	-
-ocp-ofp8-v1.0	pending-acquisition	-	-
-ocp-mx-v1.0	pending-acquisition	-	-
+ocp-ofp8-v1.0	metadata-only	-	1e1ebad11388cdc1cdb4afa7e226b78f18d4049c6f39c36ecacd747e9ca3c08b
+ocp-mx-v1.0	metadata-only	-	d195d6a36dd4a0c89064af0c479bcaad5c0fe29d63f628502ea6d7c4b4279421
 posit-standard-2022	metadata-only	-	ac844cb993d74af29b0fd5eed3e4e2b60240d77b3df348dec3a9574e00c0026b
 nvidia-ptx-isa-cuda-13.3.0	metadata-only	-	40026f79b65fee3f8c8b3e717c6f80c6385e8d97215318d6e4b7f6106f58d5a4
 riscv-unprivileged-isa-20260120	vendored	riscv-isa/riscv-unprivileged-20260120.pdf	06bb3c23074f72060a0ec061a80933af948cae7ceafdcd9d1fe177b05fd150bc

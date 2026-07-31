@@ -19,8 +19,8 @@ manifest="$here/expected-sources.tsv"
 # manifest that lost rows fails instead of agreeing with itself.
 expect_total=46
 expect_vendored=40
-expect_metadata_only=4
-expect_pending=2
+expect_metadata_only=6
+expect_pending=0
 
 # Files that are the record itself rather than preserved upstream bytes.
 self_files=("README.md" "expected-sources.tsv" "verify-sources.sh" ".gitattributes")

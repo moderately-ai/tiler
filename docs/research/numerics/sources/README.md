@@ -270,27 +270,29 @@ Six source ids retain no bytes here: `ieee-754-2019`, `ocp-ofp8-v1.0`, `ocp-mx-v
 
 ### `ocp-ofp8-v1.0`
 
-- **Document:** OCP 8-bit Floating Point Specification (OFP8), Revision 1.0, dated 2023-12-01.
+- **Document:** OCP 8-bit Floating Point Specification (OFP8), Revision 1.0. Title page: Date Submitted May 26, 2023; Date Approved June 20, 2023; page footers dated June 20, 2023. Authors from NVIDIA, Intel, Arm, Google, AMD, and Meta.
 - **Owner:** Open Compute Project Foundation.
 - **Reference URL:** `https://www.opencompute.org/documents/ocp-8-bit-floating-point-specification-ofp8-revision-1-0-2023-12-01-pdf-1`.
-- **Retrieval attempt, 2026-07-31:** HTTP 403 for both a plain `curl` request and one carrying a browser `User-Agent`; the response body was a 5 979-byte Cloudflare interstitial (`<title>Just a moment...</title>`), not the specification. **No bytes of the document were obtained, so no digest exists and none is recorded.**
-- **Licence:** unreviewed. The document's own terms could not be read, and an OCP repository-level licence is not evidence about a specific document's terms.
-- **Official acquisition route:** download from the OCP document page above through an interactive browser session; OCP gates specification downloads behind an account and acceptance of its specification licence terms.
+- **Acquired 2026-07-31** by Tom through an interactive browser session on the OCP document page — the route this record required, after the 2026-07-31 automated attempts returned only a Cloudflare interstitial (HTTP 403, 5 979 bytes, no document content; that attempt record is retained here as the reason the acquisition was manual).
+- **Digest:** SHA-256 `1e1ebad11388cdc1cdb4afa7e226b78f18d4049c6f39c36ecacd747e9ca3c08b` over the exact 564 311-byte retrieved PDF.
+- **Licence, reviewed in the document itself:** Section 1 states that usage "is governed by the terms and conditions set forth in Open Web Foundation Modified Final Specification Agreement (\"OWFa 1.0.2\")", that the applicable executed licences are reviewable on the OCP legal-documents page, and that "for actual executed copies of either agreement, please contact OCP directly". The document therefore incorporates a *modified* agreement by reference and carries no self-contained redistribution grant of its own.
+- **Verdict: metadata-only.** Without the executed modified agreement's text, redistribution permission cannot be established from the document, and the fail-closed reading is not to vendor. The digest above pins the exact reviewed bytes; re-deriving ADR 0036's pinned value sets requires re-acquiring the document through the same route and checking it against this digest.
 - **Cited for:** `tiler::f8e4m3fn@1` and `tiler::f8e5m2@1` in [ADR 0036](../../../decisions/0036-recognize-standard-binary-and-microscaling-formats.md).
-- **Closes when:** the document is acquired through that route, its own terms are reviewed, and this record becomes either vendored or metadata-only with a digest.
+- **Would become vendored when:** the executed OWFa 1.0.2 (as modified) is obtained from OCP and its terms permit redistribution of the specification with the required licence material.
 
 ### `ocp-mx-v1.0`
 
-- **Document:** OCP Microscaling Formats (MX) Specification, Version 1.0.
+- **Document:** OCP Microscaling Formats (MX) Specification, Version 1.0. Page footers dated Sep 2023. Contributors from AMD, Arm, Intel, Meta, Microsoft, NVIDIA, and Qualcomm.
 - **Owner:** Open Compute Project Foundation.
 - **Reference URL:** `https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf`.
-- **Retrieval attempt, 2026-07-31:** HTTP 403, 5 858-byte Cloudflare interstitial, same as OFP8. **No bytes obtained; no digest recorded.**
-- **Licence:** unreviewed, for the same reason.
-- **Official acquisition route:** as for OFP8, through the OCP document page in an interactive browser session.
+- **Acquired 2026-07-31** by Tom through an interactive browser session, as for OFP8, after the same-day automated attempts returned only a Cloudflare interstitial (HTTP 403, 5 858 bytes; that attempt record is retained as the reason the acquisition was manual).
+- **Digest:** SHA-256 `d195d6a36dd4a0c89064af0c479bcaad5c0fe29d63f628502ea6d7c4b4279421` over the exact 812 323-byte retrieved PDF.
+- **Licence, reviewed in the document itself:** Section 1 states usage is governed by the "Open Web Foundation Modified Final Specification Agreement (\"OWFa 1.0\")" — note the different revision from OFP8's 1.0.2, which is why the two documents were reviewed separately — with the executed copies again held by OCP rather than carried in the document. No self-contained redistribution grant.
+- **Verdict: metadata-only,** on the same fail-closed ground as OFP8, reviewed against this document's own Section 1 rather than inherited.
 - **Cited for:** `tiler::f6e2m3fn@1`, `tiler::f6e3m2fn@1`, `tiler::f4e2m1fn@1`, and `tiler::f8e8m0fnu@1` in [ADR 0036](../../../decisions/0036-recognize-standard-binary-and-microscaling-formats.md), and the MX scheme identities in [ADR 0038](../../../decisions/0038-recognize-ocp-mx-schemes.md).
-- **Closes when:** as for OFP8.
+- **Would become vendored when:** as for OFP8.
 
-Two of the three format families ADR 0036 pins to an external normative definition therefore have no local copy. That is a real gap in this record, stated here rather than hidden: the ADRs remain accepted Tiler authority, but re-deriving their pinned value sets today requires acquiring the OCP documents by hand.
+Two of the three format families ADR 0036 pins to an external normative definition retain no local copy, and since 2026-07-31 both carry a reviewed identity: the documents were acquired by hand, their own licence sections were read, and their exact digests are recorded above, so a re-acquired copy is checkable against the bytes this review covered. Re-deriving the ADRs' pinned value sets still requires re-acquiring the documents through the OCP route, because their terms did not permit vendoring — a narrower gap than the unreviewed one this paragraph previously recorded, and still a real one.
 
 ## Verifying this record
 
