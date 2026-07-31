@@ -4,7 +4,7 @@ title: Correct stale public compiler boundary authorities
 status: todo
 priority: p1
 dependencies: []
-related: [prototype-public-compiler-api, wire-capability-and-refinement-into-compile-path, correct-the-stale-post-vertical-implementation-status, record-the-arithmetic-type-in-the-numerical-honourability-contract]
+related: [prototype-public-compiler-api, wire-capability-and-refinement-into-compile-path, correct-the-stale-post-vertical-implementation-status, record-the-arithmetic-type-in-the-numerical-honourability-contract, define-backend-device-and-execution-context-vocabulary]
 scopes: [contracts/optimizer, contracts/foundation, contracts/numerics, contracts/decisions, research/program-planning, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
