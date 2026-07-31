@@ -1,7 +1,7 @@
 ---
 id: restore-replayable-apple-compatibility-evidence
 title: Restore replayable Apple compatibility evidence
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: [evidence, apple, compatibility]
+claimed_from: todo
+assignee: loop-restore-repl
+lease_expires_at: 1785520143
 ---
 ## User-visible outcome
 

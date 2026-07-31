@@ -1,7 +1,7 @@
 ---
 id: promote-artifact-family-selection-for-the-frontend
 title: Promote artifact-family selection for the frontend
-status: todo
+status: in-progress
 priority: p1
 dependencies: [prototype-artifact-family-delivery, admit-the-tiler-facade-and-proc-macro-crate-boundary]
 related: [prototype-inline-proc-macro-frontend, generate-cfg-gated-artifact-family-delivery]
@@ -9,6 +9,9 @@ scopes: [implementation/frontend, implementation/metal-aot, contracts/integratio
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: loop-promote-arti
+lease_expires_at: 1785520143
 ---
 ## User-visible outcome
 
