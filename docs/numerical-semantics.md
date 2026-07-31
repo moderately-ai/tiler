@@ -706,6 +706,8 @@ scope, and the declaring profile's identity — so a rejection can name where th
 claim came from, and it participates in the profile's canonical descriptor, so
 two profiles that honour different behaviours cannot share an identity.
 
+**Fact — a refusal retains the exact refusing fact rather than a summary of it.** `UnhonouredDimension` in `crates/tiler-compiler/src/honourability.rs` holds the checked `NumericalHonourabilityFact` that refused, by shared immutable ownership, beside the behaviour the *caller* required and any behaviour the profile does honour unconditionally. The required value is kept separate from the fact because the two answer different questions: the fact states what the target declares, and the required value states what was asked for. Every rejection that carries the refusal onward — the request boundary's `ContractRejection`, the feasibility authority's `RejectionCause`, the frontier's `FrontierRejection` and `OpaqueCallRejectionCause` — carries the same instance rather than rebuilding one, and every canonical encoder and explain record spells the whole of it, so two profiles refusing the same behaviour on different measured compiler builds share neither a rejection identity nor a rendered explanation. There is no provenance-free way to construct a refusal: a fact exists only once a declaration has been attributed to a declaring profile, and a profile whose declaration source is malformed is refused at construction under the `declaration-source` rule.
+
 Honourability is a **distinct authority** from the quantitative capability axes
 of [ADR 0043](decisions/0043-use-typed-phased-target-feasibility.md),
 and it composes into that record's outcomes rather than joining its space.
@@ -747,8 +749,17 @@ permissions. The converse holds too: **no authority may narrow, weaken, or
 substitute the caller's stated numerical contract in order to make a target
 feasible.** When no contract the caller stated is honourable, compilation rejects
 with a typed, explainable error naming the dimension, the required behaviour, the
-behaviour the target declares, the means the profile offers if any, and the
-declaring profile's identity. It never emits a program under a different
+behaviour the target declares, the means the profile offers if any, the declaring
+profile's identity, and the complete provenance of the refusing fact — its
+availability phase, authority class, validity scope, versioned authority
+identity, and either the governed or external guarantee it cites or the exact
+compiler builds and execution environments it was measured on. That last part is
+what makes the refusal actionable rather than merely typed: every flushing target
+refuses preserved subnormals, and only the measurement boundary tells a caller
+whether the refusal was established anywhere near its own deployment. A pre-trace
+contract-resolution refusal exposes it through the same typed session facade a
+traced one does; a traced refusal additionally retains it in explain identity and
+rendering. It never emits a program under a different
 contract, never falls back to a target default, and never reports the difference
 as a cost. A rejection may report which behaviour the target *would* honour, so a
 caller can see what contract this target accepts; only the caller may act on it.

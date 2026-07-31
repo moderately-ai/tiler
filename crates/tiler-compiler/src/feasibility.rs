@@ -367,6 +367,22 @@ impl FactAuthority {
             Self::LaunchInstance => 0x05,
         }
     }
+
+    /// The governed canonical key naming this authority in an explanation.
+    ///
+    /// Exhaustive for the same reason as [`Self::tag`]: a rejection that cannot
+    /// name the authority vouching for the refusing fact is not explainable.
+    pub(crate) const fn key(self) -> &'static str {
+        match self {
+            Self::GovernedProfile => "governed-profile",
+            Self::ExternalProfile => "external-profile",
+            Self::MeasuredProfile => "measured-profile",
+            Self::ArtifactEvidence => "artifact-evidence",
+            Self::DeviceRuntime => "device-runtime",
+            Self::PreparedKernel => "prepared-kernel",
+            Self::LaunchInstance => "launch-instance",
+        }
+    }
 }
 
 /// The scope over which a capability fact is valid.
@@ -395,6 +411,21 @@ impl FactValidityScope {
             Self::DeviceInstance => 0x02,
             Self::PreparedArtifact => 0x03,
             Self::LaunchInstance => 0x04,
+        }
+    }
+
+    /// The governed canonical key naming this scope in an explanation.
+    ///
+    /// Exhaustive for the same reason as [`Self::tag`]: a refusal whose
+    /// validity scope is unnamed cannot be acted on, because a reader cannot
+    /// tell a portable claim from one true of one measured population.
+    pub(crate) const fn key(self) -> &'static str {
+        match self {
+            Self::PortableProfile => "portable-profile",
+            Self::MeasuredEnvironment => "measured-environment",
+            Self::DeviceInstance => "device-instance",
+            Self::PreparedArtifact => "prepared-artifact",
+            Self::LaunchInstance => "launch-instance",
         }
     }
 }
@@ -886,15 +917,16 @@ impl CheckedTargetProfile {
         if honoured {
             DimensionResolution::Honoured(HonouredDimension::new(fact))
         } else {
-            DimensionResolution::Unhonoured(UnhonouredDimension::new(
-                dimension,
-                arithmetic,
-                resolved_type.clone(),
-                required,
-                fact.means(),
-                self.honoured_alternative(dimension, arithmetic, resolved_type, available_phase),
-                self.identity.clone(),
-            ))
+            // The refusing fact is retained whole rather than summarized into
+            // dimension, means, and profile key. Everything a caller needs to
+            // decide whether the refusal applies to its own deployment — the
+            // authority, the validity scope, the compiler builds and execution
+            // environments a measurement rests on — lives in that fact and
+            // nowhere else, and the profile identity it already carries is the
+            // one this profile validated at construction.
+            let alternative =
+                self.honoured_alternative(dimension, arithmetic, resolved_type, available_phase);
+            DimensionResolution::Unhonoured(UnhonouredDimension::new(fact, required, alternative))
         }
     }
 

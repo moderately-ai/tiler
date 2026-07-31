@@ -6,7 +6,7 @@ priority: p1
 dependencies: [carry-the-honourability-fact-provenance-into-the-artifact-record]
 related: [redesign-the-delivered-realization-record-from-typed-evidence]
 scopes: [implementation/compiler, contracts/numerics]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, numerics, provenance]
 ---
@@ -37,3 +37,11 @@ Every numerical rejection path retains the exact checked fact and complete prove
 ## Graph maintenance
 
 This follows the selected-evidence foundation rather than expanding it. It must land before any artifact or public diagnostic boundary claims that all ADR 0076 rejection provenance is readable. Relate any public borrowed view to the same facade review as `redesign-the-delivered-realization-record-from-typed-evidence`; do not publish internal `Arc` storage or compiler-private verified structs.
+
+## Outcome
+
+**Fact — the internal correction landed.** `UnhonouredDimension` now holds the exact refusing `NumericalHonourabilityFact` behind a private `Arc`, beside the caller-required behaviour and any honoured alternative; the dimension, arithmetic type, resolved type, declared behaviour, means, and declaring profile are read from that fact rather than copied beside it. `ContractRejection`, feasibility `RejectionCause`, `FrontierRejection::Unhonourable`, and `OpaqueCallRejectionCause::TargetUnhonourable` carry the same instance onward, checkable by pointer through `NumericalRefusalEvidence::cites_same_fact`. One `UnhonouredDimension::encode` replaced the two divergent copies in `frontier.rs`, and every provenance encoder now destructures its struct so a new field is a build error.
+
+**Fact — explain advanced.** `EXPLAIN_SCHEMA_VERSION` 8 → 9 and `EXPLAIN_RENDERER_VERSION` 6 → 7, because `HonourabilityOutcome::Unhonourable` now encodes and renders the complete refusing fact. Under v8 two profiles refusing the same behaviour on different measured compiler builds produced identical trace identities and identical renderings. `PROFILE_DESCRIPTOR_DOMAIN` and `GOVERNED_FEASIBILITY_RULE_SET` are deliberately unchanged: the profile's declared facts and the rules comparing them are what those name, and neither changed.
+
+**Decision for Tom — the public diagnostic facade is a concrete draft, not self-accepted.** `session::TargetDeclaredNumericalRefusal` gains `declared()` and `evidence()`; `evidence()` returns the borrowed `target::TargetNumericalRefusalEvidence<'_>`, whose read-side vocabulary (`TargetFactAuthority`, `TargetFactValidityScope`, `TargetProvenanceReference`, `TargetNumericalEvidenceBasis`, `TargetMeasurementContexts`, `TargetMeasurementContextReference`, `TargetCompilerBuilds`, `TargetCompilerBuildReference`, `TargetCompilerRoleReference`, `TargetExecutionEnvironmentReference`) lives in `target` beside the write-side declaration vocabulary it mirrors. Two shapes need review with the same facade pass as `redesign-the-delivered-realization-record-from-typed-evidence`: whether the read-side authority and validity enums belong beside `MeasuredFactAuthority` in `target` or on the session facade, and whether the caller-required behaviour should be restated on the refusal view. It is not restated today — it lives one level up on `TargetNumericalContractRejection::requirement`, which every disposition shares — and duplicating it would put one fact in two public places.

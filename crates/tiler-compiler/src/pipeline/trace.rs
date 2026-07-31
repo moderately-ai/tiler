@@ -589,6 +589,11 @@ fn opaque_call_rejection_event(
                             .honoured()
                             .map(|honoured| ReasonCode::new(honoured.key()))
                             .transpose()?,
+                        // The exact fact the feasibility authority refused on,
+                        // carried rather than rebuilt: an explanation that
+                        // re-derived it from the means and profile key would
+                        // assert provenance no authority supplied.
+                        evidence: cause.evidence(),
                     },
                     profile: crate::explain::SubjectKey::new(cause.profile().key())?,
                 })
@@ -928,6 +933,7 @@ pub(super) fn record_target_rejection(
                             .honoured()
                             .map(|honoured| ReasonCode::new(honoured.key()))
                             .transpose()?,
+                        evidence: cause.evidence(),
                     },
                     profile: crate::explain::SubjectKey::new(cause.profile().key())?,
                 })
@@ -1461,7 +1467,8 @@ mod tests {
     fn target_opaque_call_causes_preserve_the_authority_payloads() {
         use crate::feasibility::RejectionCause;
         use crate::honourability::{
-            DimensionBehaviour, HonouringMeans, NumericalDimension, UnhonouredDimension,
+            DeclaredBehaviour, DimensionBehaviour, HonouringMeans, NumericalDimension,
+            UnhonouredDimension, governed_profile_source,
         };
         use crate::physical::ResourceVerdict;
         use crate::request::{StrictF32NumericalContract, TargetProfile};
@@ -1504,22 +1511,31 @@ mod tests {
             } if *required == u64::from(u32::MAX) && *available == 2
         ));
 
+        let required = DimensionBehaviour::Transform(NumericalPermission::Permitted);
         let unhonourable = UnhonouredDimension::new(
-            NumericalDimension::Contraction,
-            ArithmeticType::F16,
-            ResolvedValueType::nominal(TypeKey::new("test", "f16", 1).unwrap()),
-            DimensionBehaviour::Transform(NumericalPermission::Permitted),
-            HonouringMeans::Unsupported,
+            DeclaredBehaviour::new(
+                NumericalDimension::Contraction,
+                ArithmeticType::F16,
+                ResolvedValueType::nominal(TypeKey::new("test", "f16", 1).unwrap()),
+                required,
+                HonouringMeans::Unsupported,
+                governed_profile_source(),
+            )
+            .attributed_to(crate::feasibility::TargetProfileIdentity::new(
+                "tiler.test.profile.v1",
+            )),
+            required,
             Some(DimensionBehaviour::Transform(
                 NumericalPermission::Forbidden,
             )),
-            crate::feasibility::TargetProfileIdentity::new("tiler.test.profile.v1"),
         );
+        let carried = unhonourable.evidence();
         let (_, event) = opaque_call_rejection_event(
             &OpaqueCallRejectionCause::TargetUnhonourable(unhonourable),
         );
+        let event = event.expect("reportable");
         assert!(matches!(
-            event.expect("reportable"),
+            &event,
             ExplainEvent::NumericalHonourability {
                 dimension,
                 arithmetic: ArithmeticType::F16,
@@ -1527,6 +1543,7 @@ mod tests {
                 outcome: crate::explain::HonourabilityOutcome::Unhonourable {
                     means,
                     honoured: Some(honoured),
+                    ..
                 },
                 profile,
                 ..
@@ -1536,5 +1553,15 @@ mod tests {
                 && honoured.as_str() == "forbidden"
                 && profile.as_str() == "tiler.test.profile.v1"
         ));
+        // The refusing fact reached the explain event itself, not a copy the
+        // event rebuilt from the means and the profile key.
+        let ExplainEvent::NumericalHonourability {
+            outcome: crate::explain::HonourabilityOutcome::Unhonourable { evidence, .. },
+            ..
+        } = &event
+        else {
+            panic!("an unhonourable opaque-call cause records an unhonourable outcome");
+        };
+        assert!(evidence.cites_same_fact(&carried));
     }
 }
