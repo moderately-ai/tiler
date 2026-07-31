@@ -12,7 +12,7 @@ tags: [design, artifact, numerics, provenance, api]
 ---
 ## User-visible outcome
 
-Tom receives a compile-checked, review-ready design for a required delivered-realization record. The implemented record family represents the compiler-produced scalar-arithmetic policy subject completely over its eleven governed dimensions, preserves canonical full resolved-type identity and structured provenance, and reserves a versioned seam for future operation- or scheme-owned contract families without manufacturing scalar-arithmetic claims for integers, booleans, quantized values, complex values, decimal values, MX values, or owner-namespaced types.
+Tom receives a compile-checked private, review-ready design packet for a required delivered-realization record. The draft record family demonstrates representation of the compiler-produced scalar-arithmetic policy subject completely over its eleven governed dimensions, preserves canonical full resolved-type identity and structured provenance, and reserves a versioned seam for future operation- or scheme-owned contract families without manufacturing scalar-arithmetic claims for integers, booleans, quantized values, complex values, decimal values, MX values, or owner-namespaced types. Production `crates/tiler-artifact/src/program/realization.rs` remains untouched until acceptance and downstream wiring.
 
 ## Why the staged draft must be replaced
 
@@ -63,6 +63,8 @@ Unknown record-family, family-schema, subject-kind, dimension, disposition, mean
 
 This ticket owns a compile-checked design packet or bounded spike with exact proposed public signatures, canonical ordering, validation rules, failure vocabulary, and representative call sites. It does not promote production visibility, wire the production builder/decoder, advance schema or identity domains, or rebaseline production pins.
 
+Place the private draft under `spikes/numerics/delivered-realization-record/` with its own README and exact invocation. The spike must compile against the repository toolchain, contain the adversarial fixtures below, and document one deliberate validation mutation that was observed failing. It is a design artifact, not production support.
+
 `accept-the-delivered-realization-artifact-surface` reviews the exact proposed IR/compiler/artifact/build boundary after this ticket is done. `wire-the-delivered-realization-record-into-the-artifact` implements the ratified boundary, required terminal state, compiler-to-build-to-artifact path, codec, readers, identity/schema changes, and merged-tree rebaselines.
 
 ## Required evidence
@@ -89,3 +91,4 @@ The review packet eliminates the stale draft, defines the exact signatures and c
 - `wire-the-delivered-realization-record-into-the-artifact` follows acceptance and owns all production integration.
 - Qualify `record-delivered-numerical-realization` as historical evidence: its staged four-dimension outcome was valid for its tree and is not the current candidate.
 - Keep the caller-profile declaration and checked Metal adapter visible as explicit upstream gates rather than relying on prose or a reversed provenance edge.
+- Leave removing the stale four-dimension production module, applying accepted contract text, advancing schema/identity domains, and recomputing production goldens to `wire-the-delivered-realization-record-into-the-artifact` after public acceptance.

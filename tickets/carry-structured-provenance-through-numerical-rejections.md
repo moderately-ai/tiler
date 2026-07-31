@@ -22,6 +22,18 @@ Retain the exact refusing `NumericalHonourabilityFact` by shared immutable owner
 
 Prove the path end to end from feasibility through `Rejection`, `OpaqueCallRejectionCause`, pipeline trace, and the proposed borrowed diagnostic view. Mutate only compiler build or execution environment and show the rejection evidence and its identity/rendered explanation change. Prove each new check can fail.
 
+The internal correction is singular: `UnhonouredDimension` retains the exact checked `NumericalHonourabilityFact` plus the caller-required behaviour and any honoured alternative. Existing `ContractRejection`, feasibility `RejectionCause`, `FrontierRejection`, and `OpaqueCallRejectionCause` carry that value onward. Every canonical rejection encoder and `ExplainEvent`/renderer/schema must encode the complete fact and provenance exhaustively.
+
+The public session facade exposes a borrowed read-only refusal view with typed accessors for required behaviour, declared behaviour, structured means, authority, validity scope, compiler builds, execution environments, and profile. It does not expose internal `Arc` storage, compiler-private checked structs, or editable provenance. Contract-resolution failures that occur before an explain writer exists still return this typed facade; frontier failures additionally retain the same evidence in explain identity and rendering.
+
+## Required evidence
+
+One checked fact reaches contract rejection, frontier rejection, opaque-call rejection, the public borrowed refusal view, and explain rendering without reconstruction. Mutating only authority, validity, compiler build, or execution environment changes the exact refusal identity/rendering while leaving the required behavior unchanged. Provenance-free fixture construction fails, and every new check is perturbed once and observed failing.
+
+## Closes when
+
+Every numerical rejection path retains the exact checked fact and complete provenance; pre-trace and traced refusals expose the same evidence through their appropriate typed surfaces; all exhaustive encoders and explain schema/domain versions are advanced with merged-tree rebaselines; the exact public diagnostic facade is reviewed by Tom; and targeted compiler nextest/Clippy plus `make full` pass.
+
 ## Graph maintenance
 
 This follows the selected-evidence foundation rather than expanding it. It must land before any artifact or public diagnostic boundary claims that all ADR 0076 rejection provenance is readable. Relate any public borrowed view to the same facade review as `redesign-the-delivered-realization-record-from-typed-evidence`; do not publish internal `Arc` storage or compiler-private verified structs.

@@ -12,7 +12,7 @@ tags: [runtime, metal, target-profiles, provenance]
 ---
 ## User-visible outcome
 
-A pure policy and a platform observer independently establish whether the current macOS host may offer the exact authoritative Metal `TargetProfileRef`. The runtime cannot earn eligibility from a `Compilation`, an artifact under validation, or equality with producer-owned bytes.
+A pure policy and a platform observer independently establish whether the current macOS host satisfies the measured applicability predicates required by the first Metal profile. The result is a checked eligibility receipt; the dependent profile-construction ticket binds that receipt to the exact `TargetProfileRef` it owns. The runtime cannot earn eligibility from a `Compilation`, an artifact under validation, or equality with producer-owned bytes.
 
 ## Facts and measurement boundary
 
@@ -26,15 +26,19 @@ A pure policy and a platform observer independently establish whether the curren
 
 ## Implementation keys
 
-Define a deterministic pure applicability policy over normalized observations and a platform adapter that observes OS family/version/build, architecture, supported GPU family, stable hardware class, and the runtime compiler/environment identities the measurement requires. The policy returns an exact eligible profile reference or a typed reason for refusal. Keep observation separate from decision so all positive and negative cases run on non-Apple CI. Offer the reference only after policy success, before routing, and preserve live-device and prepared-pipeline checks as distinct later obligations.
+Define a deterministic pure applicability policy over normalized observations and a platform adapter that observes only predicates established by the retained measurement: OS family/version/build, architecture, exact reported device name, supported GPU family, and runtime compiler/environment identity. Registry ID is correlation evidence and no unmeasured “stable hardware class” may be invented.
+
+The policy returns a non-forgeable eligibility receipt scoped to its versioned policy and exact normalized observation, or a typed reason for refusal. It does not return or contain a target-profile key or descriptor, because `construct-and-bind-the-first-authoritative-metal-compile-profile` owns that declaration and currently depends on this ticket. The parent consumes a successful receipt and binds it to the exact profile it constructs; this removes the circular requirement for a dependency to return a value its dependent creates.
+
+Keep observation separate from decision so all positive and negative cases run on non-Apple CI. Keep Metal device observation out of device-free `tiler-runtime`; the current prototype may host the first adapter, while any reusable Metal runtime adapter requires its own reviewed ownership boundary. Preserve live-device and prepared-pipeline checks as distinct later obligations.
 
 ## Required evidence
 
-Tests must accept the exact qualified observation and reject wrong platform, architecture, Apple family, OS version, OS build, compiler build, missing observations, key mismatch, and same-key/different-descriptor mismatch. A test must prove neither `Compilation` nor decoded artifact bytes are inputs to eligibility. An eligible-host integration run must offer the exact measured reference; an unavailable host must report the precise predicate it cannot satisfy.
+Tests must accept the exact qualified observation and reject wrong platform, architecture, Apple family, device name, OS version, OS build, runtime compiler build, and missing observations. A test must prove neither `Compilation`, `TargetProfileRef`, nor decoded artifact bytes are inputs to eligibility. The parent ticket owns key mismatch, same-key/different-descriptor mismatch, and the final eligible-host offer of the exact measured reference. An unavailable host must report the precise predicate it cannot satisfy.
 
 ## Closes when
 
-The runner no longer calls `host_environment(&Compilation)`, the pure policy and observer independently earn the profile reference from exact measured predicates, runtime compiler provenance remains environment-owned, all refusals occur before routing commit, and focused tests plus `make check` pass.
+The pure policy and observer independently produce a checked policy-scoped eligibility receipt from exact measured predicates; no profile reference or producer-owned bytes enter that decision; runtime compiler provenance remains environment-owned; all refusals occur before routing commit; the parent has an explicit typed input it can bind to its profile; and focused tests plus `make check` pass. Removing `host_environment(&Compilation)` and offering the final exact profile remain parent integration work rather than a circular closing condition here.
 
 ## Graph maintenance
 

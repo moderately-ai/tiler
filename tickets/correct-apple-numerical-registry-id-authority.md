@@ -12,7 +12,7 @@ tags: [apple, numerics, evidence, provenance]
 ---
 ## User-visible outcome
 
-The retained Apple numerical prose agrees with its authoritative records and states that Metal registry ID is an observation useful for correlating devices within one run, not a stable hardware identity or a host-applicability predicate.
+The retained Apple numerical prose agrees with its authoritative records and states that Metal registry ID is an IORegistry identifier useful for correlating a GPU across tasks in an active environment, not a durable cross-record hardware identity or a host-applicability predicate.
 
 ## Facts and measurement boundary
 
@@ -20,15 +20,17 @@ The retained Apple numerical prose agrees with its authoritative records and sta
 
 **Fact:** the current research memo still embeds the earlier number while naming the later record as authoritative. The invariant supported by both records is same-run equality between host and simulator, not persistence of the numeric value across boots or runs.
 
-**Inference:** registry ID must not be used as stable profile identity, hardware identity, or runtime eligibility. Device name plus supported GPU family and the exact measured environment are separate predicates; this correction does not itself establish their sufficiency.
+**Fact:** the locally vendored SDK's `MTLDevice.h` documents `registryID` as globally unique across all tasks and usable to correlate a GPU across task boundaries. The retained measurements do not establish persistence across boots or historical records.
+
+**Inference:** registry ID must not be used as durable profile identity, cross-record hardware identity, or runtime eligibility. Device name plus supported GPU family and the exact measured environment are separate predicates; this correction does not itself establish their sufficiency.
 
 ## Implementation keys
 
-Reconcile the prose with both retained records, preserve the historical raw values, state the exact purpose and lifetime of registry ID, and update every research sentence that currently implies cross-run stability. Add a portable check that derives the intended same-run equality assertion from each retained record without pinning one global number.
+Reconcile the prose with both paired retained measurements, preserve the historical raw values, state the exact purpose and measured lifetime of registry ID, and update every research sentence that currently implies cross-record stability. Add a portable check over an explicitly enumerated population: the 2026-07-25 macOS/simulator pair equals `4294968621`, the 2026-07-27 covering/exhaustive macOS/simulator rows equal `4294968452`, and differing values between those measurements are positively accepted. Keep the 2026-07-30 unified macOS-only v7 record out of the pair check because it has no simulator row.
 
 ## Required evidence
 
-A reproducible search must find no prose claiming one registry ID across retained runs. Tests must pass for each historical record, fail when macOS and simulator IDs differ within one record, and continue to accept different IDs between records. No raw retained measurement may be rewritten merely to make the values agree.
+A reproducible search must find no prose claiming one registry ID across retained records. Tests must name and count the exact expected paired population, pass for each historical measurement, fail when macOS and simulator IDs differ within one measurement, and continue to accept different IDs between measurements. Perturb one within-measurement value and observe failure before restoration. No raw retained measurement may be rewritten merely to make the values agree.
 
 ## Closes when
 

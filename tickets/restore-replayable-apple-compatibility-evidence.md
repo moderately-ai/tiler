@@ -16,19 +16,15 @@ The retained Apple artifact-compatibility record can be validated by the exact p
 
 ## Why this is needed
 
-The 2026-07-21 record reports producer digests that are not present in any reachable revision of the current harness and validator. The current one-line replay fails:
+The 2026-07-21 record's exact producer bytes are reachable at repository commit `b0fdba7`; the earlier claim that no reachable revision contains them is false. The recorded digests match that revision's harness (`b37ba8…`), validator (`63f579…`), `pyproject.toml` (`e35ae6…`), `uv.lock` (`e8a38c…`), and `copy.metal`. Current-tree replay fails for a different reason: the post-Python-tooling validator expects a three-row manifest, while the retained historical record has five rows.
 
-```sh
-uv run --project . --locked python spikes/apple-targets/validate_compatibility_record.py spikes/apple-targets/results/2026-07-21-xcode26.6-metal32023.883/record.tsv
-```
-
-It reports `retained input manifest does not match producer fields`. The retained outputs, settings, logs, and record remain inspectable evidence, but the checkout cannot presently reproduce the validation claim using the exact historical producer blobs the record identifies.
+The formerly documented root `uv run --project . --locked …` command is no longer a valid current-tree replay because the root Python environment was deliberately deleted. The retained outputs, settings, logs, and record remain inspectable evidence; this ticket restores a self-contained historical replay rather than reviving deleted repository tooling.
 
 ## Implementation keys
 
-First try to recover the exact historical `compatibility_probe.sh` and `validate_compatibility_record.py` bytes by their recorded SHA-256 digests from durable repository or external history. If they are recovered, retain them beside the result and make the replay command select those files explicitly.
+Recover the exact producer set from commit `b0fdba7`, retain those immutable bytes beside the historical result, and make the replay select the retained historical validator and five-row manifest explicitly. The replay must first verify every retained producer digest, so a locally edited historical harness cannot validate its own changed identity.
 
-If the exact producers cannot be recovered, run a fresh bounded compatibility measurement with the current checked-in harness and validator, retain its complete input manifest and raw outputs, and update the research note without rewriting the historical row as though it had become replayable. Keep the old record for provenance.
+Do not route this historical replay through the deleted root Python environment or the current three-row validator. A new measurement is unnecessary unless the exact `b0fdba7` producer set itself proves incomplete after byte-for-byte recovery.
 
 Prove the validator can reject by perturbing one retained producer field and observing failure before recording the positive replay.
 

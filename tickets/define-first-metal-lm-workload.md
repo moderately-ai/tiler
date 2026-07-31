@@ -84,6 +84,16 @@ already owned by the graph. Each new ticket must name the model-visible outcome
 it enables, its evidence prerequisite, and its reconsideration trigger if
 deferred.
 
+## Completion profile (2026-07-30 audit)
+
+Close this ticket on two bounded rows rather than one arbitrary universal sequence cap. The conformance row uses a small fixed token-ID prompt and short fixed decode budget so every prefill and decode-step logit can be retained and reproduced. The representative benchmark row uses a separately stated prompt/context/decode matrix within the checkpoint's declared `max_position_embeddings = 32768`; broader performance qualification remains L8.
+
+Retain a manifest for the exact model config, tokenizer, weight shards/index, tensor inventory, license, and reference implementation at immutable revisions with SHA-256 digests. State the 596,049,920-parameter F32 weight budget of 2,384,199,680 bytes separately from KV-cache and peak workspace arithmetic. Do not download a roughly 1.19 GB checkpoint implicitly under this documentation ticket without first recording its repository storage policy and reproducible acquisition route.
+
+The correctness oracle compares logits after prefill and every decode step under a predeclared effective F32 numerical policy; greedy-token equality, tie handling, and EOS-or-fixed-budget termination are additional observables rather than substitutes. Tolerances must come from the selected numerical realization/reference comparison contract rather than an ad hoc model-level constant.
+
+Replace the stale MSL 3.1 target row in the older research section with the current qualified `apple9-f32-unified-msl4-macos26` authority: Apple9/macOS/F32, MSL 4.0, offline `metalfe-32023.883`, and runtime/pipeline compiler `metalfe-32023.921`. Live execution and delivered-numerics claims remain host-qualified.
+
 ## Closes when
 
 One bounded workload profile and its success envelope are durably recorded;
@@ -127,7 +137,7 @@ A **small decoder-only transformer, executed in `f32`, single sequence, on one A
 - **Prompt and sequence** bounded and stated per run, not unbounded. The sourced-extent profile bounds symbolic extents deliberately, and the ladder records unconstrained dynamic shapes as deferred.
 - **Decode** to a fixed token budget, so a run terminates and a measurement has a denominator.
 - **Dtype `f32` throughout**, not chosen for cost but because it is the only width with a governed numerical contract and a measured Apple realization today. Quantization is L7 and depends on milestone 2Q.
-- **Target profile:** the qualified row in the Apple GPU numerical behaviour record — Apple M4 Max, macOS 27.0, Xcode 26.6, offline `metalfe-32023.883`. **Which claims need a live device:** every execution and numerical-delivery claim. Compile-side claims — emitted operations, module options, artifact identity — do not.
+- **Target profile:** the qualified `apple9-f32-unified-msl4-macos26` authority—Apple9/macOS/F32, MSL 4.0, offline `metalfe-32023.883`, and runtime/pipeline compiler `metalfe-32023.921`. **Which claims need a live device:** every execution and numerical-delivery claim. Compile-side claims—emitted operations, module options, artifact identity—do not.
 - **Success measures at the model boundary:** predeclared comparison of reference logits at prefill and every decode step under the effective F32 numerical contract, greedy token-sequence equality with an explicit tie policy for a fixed prompt, and decode latency per token plus prefill latency, both as min-of-N on a quiet host. Not a throughput figure, which would need batching.
 - **Excluded, per the ladder's deferral table:** training, distributed execution, speculative decoding, unsupported architectures, unbounded dynamic shapes.
 

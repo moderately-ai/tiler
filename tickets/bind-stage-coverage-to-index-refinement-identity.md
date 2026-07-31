@@ -3,7 +3,7 @@ id: bind-stage-coverage-to-index-refinement-identity
 title: Bind kernel-program stage coverage to its refinement evidence
 status: todo
 priority: p1
-dependencies: [correct-adr-0071-retained-lower-layer-identity-cardinality]
+dependencies: [correct-adr-0071-retained-lower-layer-identity-cardinality, place-index-refinement-evidence-under-an-ir-owned-verifier]
 related: [bind-the-scheduled-region-to-the-verified-index-region-identity]
 scopes: [implementation/ir, implementation/compiler, implementation/artifact, contracts/artifacts]
 shared_scopes: [project/tickets]
@@ -29,9 +29,9 @@ Today `StageData::coverage` is `Vec<SemanticOccurrence>` (`crates/tiler-ir/src/p
 
 **Option 3 is still eliminated, on two grounds that do survive the read.** First, the ordered wire encoding is currently a property of the *type* — a `Vec` the builder sorted — and moving to a map makes it a property of an *iteration contract* that must be documented and held identically by two independent encoders, or the program and artifact identities diverge for the same stage. That is a weaker guarantee bought for no gain, since the sort already provides it. Second, and decisively for this ticket: a map insert makes `KernelProgramBuildError::DuplicateCoverage` (`builder.rs:903`, guard opening at `:899`) unreachable, replacing an explicit typed refusal with a silent last-writer-wins overwrite. A duplicate covered occurrence under this ticket's semantics means two different refinement identities claiming the same occurrence — exactly the ambiguity the binding is meant to make impossible — and option 3 resolves it by discarding one without saying so.
 
-**Outcome: a named record with private fields and proof-derived construction.** The former transposition argument for a tuple was overstated because the two field types differ, and a public named record with two required fields is not half-populatable either. The real invariant is stronger: callers must not be able to pair an arbitrary occurrence with an unrelated refinement identity. Construct `CoveredOccurrence` only through the verified builder/compiler path that derives both from the same `OccurrenceEvidence`; expose borrowed readers, not a free public constructor.
+**Outcome: a named record with private fields and proof-derived construction.** The former transposition argument for a tuple was overstated because the two field types differ, and a public named record with two required fields is not half-populatable either. The real invariant is stronger: callers must not be able to pair an arbitrary occurrence with an unrelated refinement receipt. `place-index-refinement-evidence-under-an-ir-owned-verifier` first moves the retained dependency-neutral receipt authority below both compiler planning and program storage. This ticket then constructs `CoveredOccurrence` only from that IR-owned checked receipt and exposes borrowed readers, not a free public constructor.
 
-**One constraint the shape must respect, whichever is chosen.** `OccurrenceEvidence::BudgetStopped` means no refinement proof exists. It must be unrepresentable as verified coverage — the candidate is absent or refused with that typed reason — rather than encodable as a placeholder that reads as proved. This binds all three options equally and is not a discriminator between them.
+**One constraint the shape must respect, whichever is chosen.** Current `OccurrenceEvidence` has only `Refined`; budget and proof gaps fail before `ResolvedLowering`. A failed refinement therefore produces no receipt and must remain unrepresentable as verified coverage rather than being encoded through any placeholder.
 
 The implementation can now proceed as a concrete draft. Tom reviews the exact record, construction boundary, readers, error, and program/artifact identity changes before acceptance.
 
@@ -52,9 +52,7 @@ Represent each covered occurrence together with its refinement identity as one
 inseparable coverage record. Do not use parallel vectors whose positions can
 disagree.
 
-`OccurrenceEvidence::BudgetStopped` means no refinement proof exists. It cannot
-be encoded as valid executable coverage: the candidate must be absent or
-refused with that typed reason rather than made to look proved.
+A compiler proof gap produces no checked refinement receipt. It cannot be encoded as valid executable coverage or made to look proved.
 
 ## Public boundary
 
@@ -75,3 +73,4 @@ passes.
 - Advance every affected program and artifact identity domain once on the merged tree and recompute pins there.
 - Preserve exhaustive independent encoders so a new coverage field is a compile error in both.
 - Present the exact public draft to Tom before acceptance; no additional shape choice is pending before implementation.
+- Follow `place-index-refinement-evidence-under-an-ir-owned-verifier`; directly storing compiler-owned `IndexRefinementIdentity` in `tiler-ir` is a forbidden dependency inversion.

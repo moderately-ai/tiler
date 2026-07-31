@@ -3,7 +3,7 @@ id: admit-the-first-typed-synchronization-point-and-atomic-target-authority
 title: Admit the first typed synchronization point and atomic target authority
 status: todo
 priority: p1
-dependencies: [replace-or-justify-the-barrier-count-axis]
+dependencies: [replace-or-justify-the-barrier-count-axis, represent-cooperative-workgroup-reduction-dataflow]
 related: [construct-and-bind-the-first-authoritative-metal-compile-profile]
 scopes: [implementation/ir, implementation/compiler, implementation/artifact, contracts/foundation, contracts/optimizer, contracts/artifacts]
 shared_scopes: [project/tickets]
@@ -22,7 +22,7 @@ Tiler can represent and verify its first synchronized schedule without treating 
 
 **Inference:** independently declared target facts for scope, fence, visibility, or ordering would permit false composition: each component could be supported in some realization while their conjunction is unsupported. The target fact must therefore be atomic over the complete synchronization subject.
 
-**Proposal:** prove the target-neutral contract with one bounded synchronized schedule and a synthetic governed target authority. Do not promote Metal support from source acceptance or from a backend spelling; a real Metal realization requires its own primary evidence and profile-construction work.
+**Proposal:** prove the target-neutral contract on the meaningful cooperative workgroup reduction dataflow delivered by `represent-cooperative-workgroup-reduction-dataflow`, with one bounded synchronized schedule and a synthetic governed target authority. A barrier inserted into the current pointwise/global-linear program is eliminated as closing evidence because it is semantically redundant or divergent under predication. Do not promote Metal support from source acceptance or from a backend spelling; `realize-parallel-reduction-strategies-on-metal` owns primary backend evidence.
 
 ## Implementation keys
 
@@ -52,4 +52,4 @@ The target-neutral vertical has one fully typed synchronized schedule whose KIR 
 
 ## Graph maintenance
 
-This ticket depends on `replace-or-justify-the-barrier-count-axis` because that ticket establishes the fail-closed zero-synchronization baseline it extends. Its relation to `construct-and-bind-the-first-authoritative-metal-compile-profile` is non-blocking: that profile remains truthful without a barrier row, and this ticket must not invent Metal synchronization evidence to broaden it. If primary Metal evidence is not in scope when this closes, file a separate backend-realization ticket rather than weakening this ticket's target-neutral proof or leaving an untracked remainder. Update `docs/ir.md`, `docs/compiler/fusion-and-scheduling.md`, `docs/artifact-abi.md`, the identity ledger, and any open-question entry whose status changes.
+This ticket depends on `replace-or-justify-the-barrier-count-axis` for the fail-closed zero-synchronization baseline and on `represent-cooperative-workgroup-reduction-dataflow` for the first schedule that actually consumes synchronization. Its relation to `construct-and-bind-the-first-authoritative-metal-compile-profile` is non-blocking: that profile remains truthful without a synchronization row, and this ticket must not invent Metal evidence to broaden it. `implement-the-single-workgroup-synchronized-reduction-strategy` consumes the accepted point, and `realize-parallel-reduction-strategies-on-metal` owns backend qualification. Update `docs/ir.md`, `docs/compiler/fusion-and-scheduling.md`, `docs/artifact-abi.md`, the identity ledger, and any open-question entry whose status changes.

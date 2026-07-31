@@ -21,3 +21,9 @@ Split from `accept-the-tiler-cache-public-boundary` so one signature can be resh
 ## Closes when
 
 The selected implementation represents one and many payloads without allocation or order loss, empty collections and empty members fail closed, the multi-payload identity fixture proves order is significant, and the exact signature is carried into `accept-the-tiler-cache-public-boundary` for Tom's review.
+
+## Outcome (2026-07-30)
+
+Retain the existing ordered `&[&[u8]]` input at `ComposedSubject::compose`; do not add a wrapper. Source inspection found one canonical validation boundary, not repeated cardinality checks: composition rejects an empty outer collection and empty members exactly once, preserves payload order, and then necessarily allocates the composed subject bytes. `tiler-build` has one real prepared-compilation input today, while existing multi-payload fixtures already prove count, order significance, and empty-member refusal. A checked wrapper would remove no check or allocation and would add a second public nominal constructor with no consumer benefit.
+
+The retained invariant is that backend compilations are an ordered non-empty sequence of non-empty opaque identity byte strings in artifact payload order. They are never sorted, deduplicated, parsed as backend data, or treated as a set. The consolidated `accept-the-tiler-cache-public-boundary` review should retain this signature and its existing typed refusals; no new public type is proposed.

@@ -3,7 +3,7 @@ id: prototype-inline-proc-macro-frontend
 title: Implement the inline proc-macro frontend proof
 status: todo
 priority: p1
-dependencies: [prototype-public-compiler-api, prototype-neutral-artifact-codec]
+dependencies: [prototype-public-compiler-api, prototype-neutral-artifact-codec, admit-the-tiler-facade-and-proc-macro-crate-boundary, define-inline-symbol-binding-and-runtime-value-adaptation, promote-artifact-family-selection-for-the-frontend]
 related: []
 scopes: [implementation/frontend, implementation/compiler, implementation/workspace]
 shared_scopes: [project/tickets, implementation/cargo-lock]
@@ -76,14 +76,12 @@ The accepted inline developer experience removes a whole class of answers before
 
 The original analysis left the choice between A, B, and C to product taste. The accepted outcome above resolves that choice in favor of B and strengthens the span consequence against C into an elimination under the retained operand-level diagnostic requirement.
 
-## What is settled and implementable without the answer
+## What is settled
 
-Parse one visible region, construct the public logical program, invoke the ordinary compiler boundary, report span-aware typed errors, emit generated Rust, and preserve the accepted inline developer experience — no consumer `build.rs`, no registry, no source scan, no prepare step, no runtime JIT, each invocation a self-contained AOT and embedding unit.
+Parse one visible region, construct the public logical program, invoke the ordinary compiler boundary, report span-aware typed errors, emit generated Rust, and preserve the accepted inline developer experience—no consumer `build.rs`, no registry, no source scan, no prepare step, no runtime JIT, each invocation a self-contained AOT and embedding unit.
 
-Implement a bounded inline Rust proc-macro frontend that parses one visible tensor region, constructs the public logical program, invokes the ordinary compiler boundary, reports span-aware typed errors, and emits generated Rust. Tom reviews public syntax and ergonomics.
-
-If the owning production crate is absent, this ticket owns its atomic workspace admission and lockfile update. After that crate exists, replace any temporary prototype entry in `[scope_crates]` with the real package owner; do not leave reverse-dependency expansion attached to the prototype.
+The 2026-07-30 readiness audit found that implementation was not yet reachable from syntax approval alone. `admit-the-tiler-facade-and-proc-macro-crate-boundary` owns the `tiler` + `tiler-macros` workspace/public path; `define-inline-symbol-binding-and-runtime-value-adaptation` gives `sym n` and the returned `let d` executable meanings over the promoted ShapeEnv surface; and `promote-artifact-family-selection-for-the-frontend` exposes the delivery request without copying its canonical authority. This ticket consumes those reviewed boundaries rather than inventing them during parsing.
 
 ## Activated 2026-07-30
 
-Tom's approval of candidate B released the only parked question. The ticket is now ready for implementation.
+Tom's approval of candidate B released the syntax question. The ticket becomes ready for implementation after the three exact dependencies above deliver; until then it must not scaffold a macro whose symbols, result value, or delivery policy have no public owner.
