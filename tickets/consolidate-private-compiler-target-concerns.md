@@ -1,7 +1,7 @@
 ---
 id: consolidate-private-compiler-target-concerns
 title: Consolidate private compiler target concerns
-status: todo
+status: in-progress
 priority: p2
 dependencies: [express-metal-honourability-in-the-shared-form, source-or-rephase-first-metal-launch-limits]
 related: [prototype-public-compiler-api, decide-per-dtype-dispatchability-as-a-target-capability]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: []
 paths: []
 tags: [refactor, compiler, target-profiles, progressive-disclosure]
+claimed_from: todo
+assignee: loop-consolidate
+lease_expires_at: 1785519701
 ---
 Make the compiler's target-description and assessment boundary visible without
 putting hardware facts into the logical graph.
