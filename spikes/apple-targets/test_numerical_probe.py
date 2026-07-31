@@ -589,6 +589,121 @@ def test_an_order_probe_separates_two_evaluation_orders() -> None:
     assert witness is not None and witness.operand != probe.operand
 
 
+def test_a_permutation_probe_separates_two_contributor_orders() -> None:
+    """The permutation probe's two candidates come from two kernels, and are derived.
+
+    `ordered` is what the canonical chain evaluates to and `permuted` is what its
+    source-reordered twin evaluates to, both derived under exact arithmetic and
+    under the sign-preserving flush rather than stated. The twin is held to being
+    a genuine permutation — the same contributors, the same operator, a different
+    order — because a "twin" that changed a constant would move the value for a
+    reason that is not contributor order.
+    """
+    probe = PROBE.PERMUTATION
+    ordered = PROBE.BY_NAME["permutation_chain"]
+    permuted = PROBE.BY_NAME["permutation_chain_reordered"]
+    assert probe.ordered != probe.permuted
+    assert probe.operand in ordered.dtype.operands
+    assert ordered.dtype is permuted.dtype
+    assert sorted(step.constant for step in ordered.steps) == sorted(
+        step.constant for step in permuted.steps
+    ), "the twin must carry the same contributors, or it measures more than their order"
+    assert [step.operator for step in ordered.steps] == ["+"] * 3
+    assert [step.operator for step in permuted.steps] == ["+"] * 3
+    assert [step.constant for step in ordered.steps] != [
+        step.constant for step in permuted.steps
+    ], "a twin in the same order would be the same kernel twice"
+    for flushes in (False, True):
+        assert PROBE.evaluate(ordered, probe.operand, flushes=flushes) == probe.ordered
+        assert PROBE.evaluate(permuted, probe.operand, flushes=flushes) == probe.permuted, (
+            "the permutation probe must not depend on flushing, or it would measure two "
+            "things at once"
+        )
+    assert probe.ordered not in ordered.dtype.operands
+    assert probe.permuted not in ordered.dtype.operands, (
+        "a candidate equal to some operand would collide with the value a deleted chain "
+        "returns on that lane"
+    )
+
+
+def test_the_permutation_probe_is_unreachable_by_reassociating_the_canonical_order() -> None:
+    """The isolation this probe rests on, enumerated rather than argued.
+
+    Reassociation moves the parentheses over a fixed leaf order; permutation
+    moves the leaves. This probe isolates the second only if its `permuted`
+    candidate cannot be produced by *any* parenthesization of the canonical leaf
+    order — otherwise a device returning it would be evidence of the neighbouring
+    licence and this would be a second reading of finding 17.
+
+    The canonical order has four leaves, so there are exactly five full binary
+    trees over it and the check is finite and complete. It runs for every operand
+    in the vector rather than only the probe's, because a lane that admitted the
+    permuted value would make the returned result vector ambiguous even where the
+    probe does not read it.
+    """
+    ordered = PROBE.BY_NAME["permutation_chain"]
+    dtype = ordered.dtype
+    constants = [step.constant for step in ordered.steps]
+
+    def trees(leaves: list[float]) -> list[float]:
+        if len(leaves) == 1:
+            return list(leaves)
+        results: list[float] = []
+        for split in range(1, len(leaves)):
+            for left in trees(leaves[:split]):
+                for right in trees(leaves[split:]):
+                    results.append(dtype.as_float(dtype.as_bits(left + right)))
+        return results
+
+    for operand in dtype.operands:
+        shapes = trees([dtype.as_float(value) for value in [operand, *constants]])
+        assert len(shapes) == 5, "four leaves have exactly five parenthesizations"
+        reachable = {dtype.as_bits(value) for value in shapes}
+        assert PROBE.PERMUTATION.ordered in reachable, (
+            "the canonical left fold is one of the five, so the ordered candidate must be "
+            "reachable or the enumeration is wrong"
+        )
+        assert PROBE.PERMUTATION.permuted not in reachable, (
+            f"operand {dtype.render(operand)}: reassociating the canonical order reaches "
+            f"{dtype.render(PROBE.PERMUTATION.permuted)}, so the probe does not isolate "
+            f"contributor permutation"
+        )
+
+
+def test_a_permutation_verdict_never_reports_a_permuted_result_as_reassociated() -> None:
+    """The permutation classifier names its own licence, and refuses a third order.
+
+    Perturbation in both directions: the canonical chain's own value is read as
+    `left-to-right`, its twin's as `permuted`, and a result equal to neither
+    candidate lands in `unexpected-result` instead of being forced into one. A
+    classifier that could only ever return the two candidates would report the
+    row it was given rather than the row that was measured.
+    """
+    probe = PROBE.PERMUTATION
+    ordered_kernel = PROBE.BY_NAME["permutation_chain"]
+    permuted_kernel = PROBE.BY_NAME["permutation_chain_reordered"]
+    assert ordered_kernel.witness is not None and permuted_kernel.witness is not None
+    ordered_results = dict.fromkeys(PROBE.F32.operands, probe.ordered)
+    ordered_results[ordered_kernel.witness.operand] = ordered_kernel.witness.executed
+    assert (
+        PROBE.permutation_verdict(synthetic("permutation_chain", 3, ordered_results), probe)
+        is PROBE.Verdict.LEFT_TO_RIGHT
+    )
+    permuted_results = dict.fromkeys(PROBE.F32.operands, probe.permuted)
+    permuted_results[permuted_kernel.witness.operand] = permuted_kernel.witness.executed
+    verdict = PROBE.permutation_verdict(
+        synthetic("permutation_chain_reordered", 3, permuted_results), probe
+    )
+    assert verdict is PROBE.Verdict.PERMUTED and verdict.is_evidence
+    third = dict.fromkeys(PROBE.F32.operands, 0x7F800000)
+    third[ordered_kernel.witness.operand] = ordered_kernel.witness.executed
+    assert (
+        PROBE.permutation_verdict(synthetic("permutation_chain", 3, third), probe)
+        is PROBE.Verdict.UNEXPECTED_RESULT
+    ), "a third order must land in unexpected-result rather than being forced into a candidate"
+    assert not PROBE.Verdict.UNEXPECTED_RESULT.is_evidence
+
+
 def test_an_observation_with_no_emitted_arithmetic_is_never_evidence() -> None:
     observation = synthetic("multiply_two", 0, {PROBE.INPUT_FLUSH.operand: 0x00400000})
     assert (
@@ -2013,6 +2128,70 @@ def test_the_relaxed_modes_reassociate_a_chain_when_a_toolchain_and_gpu_resolve(
                     )
                     is PROBE.Verdict.REASSOCIATED
                 ), f"{family}/{mode}/{optimization}"
+
+
+def test_the_safe_mode_preserves_contributor_order_when_a_toolchain_and_gpu_resolve() -> None:
+    """Finding 31. Under `safe` the chain is folded over the contributors as written.
+
+    Two kernels carrying the same three contributors in two orders. Under `safe`
+    both keep all three `fadd`s and the device returns each one's own left-deep
+    value — `00000000` for the canonical order and `40000000` for the source
+    permuted twin. The twin is the perturbation: it establishes that the result
+    lane moves when the contributor order moves, so the canonical kernel's value
+    is a preserved order rather than a shape nothing could disturb.
+
+    Under `relaxed` and `fast` the canonical chain keeps **no** arithmetic at all
+    — the licence folds the cancelling pair away and then removes the surviving
+    identity add — so those observations are inadmissible by the guard's first
+    layer rather than being read as an order. That is asserted here rather than
+    skipped, because "the relaxed modes did not permute" and "the relaxed modes
+    deleted the question" are different facts and only one of them is true.
+    """
+    run = probe_run()
+    probe = PROBE.PERMUTATION
+    for family in PROBE.FAMILIES:
+        for kernel in ("permutation_chain", "permutation_chain_reordered"):
+            emitted = run.of(family.name, kernel, "safe").operations
+            assert emitted is not None
+            assert [operation.opcode for operation in emitted] == ["fadd"] * 3, (
+                f"{family.name}/{kernel}: `safe` must keep every contributor's own add"
+            )
+            assert not any(operation.flags for operation in emitted), (
+                f"{family.name}/{kernel}: no `safe` add may carry a relaxation flag"
+            )
+        for mode in ("relaxed", "fast"):
+            relaxed = run.of(family.name, "permutation_chain", mode).operations
+            assert relaxed is not None and not relaxed, (
+                f"{family.name}/{mode}: the canonical chain's arithmetic must be gone entirely"
+            )
+    for family in dispatched_families(run):
+        assert (
+            PROBE.permutation_verdict(run.of(family, "permutation_chain", "safe"), probe)
+            is PROBE.Verdict.LEFT_TO_RIGHT
+        ), family
+        moved = PROBE.permutation_verdict(
+            run.of(family, "permutation_chain_reordered", "safe"), probe
+        )
+        assert moved is PROBE.Verdict.PERMUTED and moved.is_evidence, f"{family}: {moved}"
+        for mode in ("relaxed", "fast"):
+            assert (
+                PROBE.permutation_verdict(run.of(family, "permutation_chain", mode), probe)
+                is PROBE.Verdict.NO_EMITTED_ARITHMETIC
+            ), f"{family}/{mode}"
+        for optimization in PROBE.RUNTIME_OPTIMIZATIONS:
+            assert (
+                PROBE.permutation_verdict(
+                    run.runtime(family, "permutation_chain", "safe", optimization), probe
+                )
+                is PROBE.Verdict.LEFT_TO_RIGHT
+            ), f"{family}/{optimization}"
+            assert (
+                PROBE.permutation_verdict(
+                    run.runtime(family, "permutation_chain_reordered", "safe", optimization),
+                    probe,
+                )
+                is PROBE.Verdict.PERMUTED
+            ), f"{family}/{optimization}"
 
 
 def test_the_fp32_function_mode_moves_no_measured_value_when_a_toolchain_and_gpu_resolve() -> None:

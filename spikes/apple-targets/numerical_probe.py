@@ -470,18 +470,26 @@ class ProbeFailure(RuntimeError):
 class Verdict(enum.Enum):
     """What one observation is admissible evidence of.
 
-    Only the four claim members are claims about arithmetic. The rest record
+    Only the five claim members are claims about arithmetic. The rest record
     precisely why the observation cannot support any of them, which is the
     difference between this harness and one that reads bit patterns alone. The
     inadmissible members are shared by every classifier deliberately: an
     observation that cannot support a subnormal claim cannot support an
     evaluation-order claim either, and for the same reason.
+
+    `REASSOCIATED` and `PERMUTED` are separate members because the two
+    transformations are separate permissions in this repository's numerical
+    vocabulary (ADR 0014): reassociation moves the parentheses over a fixed leaf
+    order and permutation moves the leaves. A classifier that reported a
+    permuted result as `reassociated` would collapse the distinction the
+    reduction contract exists to keep.
     """
 
     FLUSHED_TO_ZERO = "flushed-to-zero"
     PRESERVED = "preserved"
     LEFT_TO_RIGHT = "left-to-right"
     REASSOCIATED = "reassociated"
+    PERMUTED = "permuted"
     NO_DEVICE_OBSERVATION = "no-device-observation"
     DEVICE_REFUSED_DTYPE = "device-refused-dtype"
     NO_EMITTED_ARITHMETIC = "no-emitted-arithmetic"
@@ -498,6 +506,7 @@ class Verdict(enum.Enum):
             Verdict.PRESERVED,
             Verdict.LEFT_TO_RIGHT,
             Verdict.REASSOCIATED,
+            Verdict.PERMUTED,
         }
 
 
@@ -1008,6 +1017,29 @@ class OrderProbe:
     reassociated: int
 
 
+@dataclass(frozen=True)
+class PermutationProbe:
+    """One operand whose two results separate a contributor order from a permutation of it.
+
+    Deliberately not an `OrderProbe` with a third field. Reassociation moves the
+    parentheses over a fixed leaf order and permutation moves the leaves, and
+    ADR 0014 keeps them as independent permissions, so the two probes name two
+    questions rather than one question with three answers.
+
+    `permuted` is only a discriminator if it is unreachable by reassociating the
+    canonical order — otherwise a permuted-looking result would be evidence of
+    the neighbouring licence instead. That is a finite property of the chosen
+    constants rather than something to assert here, so
+    `test_the_permutation_probe_is_unreachable_by_reassociating_the_canonical_order`
+    enumerates every parenthesization of the canonical leaf order for every
+    operand and holds `permuted` to being absent from all of them.
+    """
+
+    operand: int
+    ordered: int
+    permuted: int
+
+
 NEGATIVE_ZERO = 0x80000000
 POSITIVE_ZERO = 0x00000000
 
@@ -1183,6 +1215,46 @@ and the smallest one that exposes it, so it needs no second buffer, no second
 indexing scheme, and no change to the operand vector.
 """
 
+CANCELLING_MAGNITUDE = 0x4E800000
+"""`2**30`, whose ulp is `128` — large enough to absorb every other contributor here.
+
+Paired with its own negation it is the cancelling pair the permutation chain is
+built from. `2**30` and not something larger because the absorption has to be
+*exact*: half an ulp is `64`, which strictly exceeds both `2.0` and every operand
+in the `f32` vector, so `x + 2**30` rounds to `2**30` with no tie anywhere.
+"""
+
+CANCELLING_MAGNITUDE_NEGATED = 0xCE800000
+"""`-2**30`. Written as its own constant rather than derived by flipping a sign
+bit, because every immediate in this harness is a stated exact pattern."""
+
+ABSORBED_CONTRIBUTOR = 0x40000000
+"""`2.0`, the contributor the cancelling pair swallows or does not, depending on order.
+
+It must differ from every operand in the vector, or the permuted result would
+collide with the value a *deleted* chain returns on that lane and the witness
+would be the only thing left separating them.
+"""
+
+PERMUTATION = PermutationProbe(
+    operand=0x3F800000, ordered=POSITIVE_ZERO, permuted=ABSORBED_CONTRIBUTOR
+)
+"""`((x + 2**30) + 2.0) - 2**30`, whose value depends on where the `2.0` sits.
+
+Evaluated as written, `x + 2**30` and then `+ 2.0` both round back to `2**30`, so
+the final subtraction returns `+0.0` and the `2.0` is lost. Move that one
+contributor past the negated magnitude — `((x + 2**30) - 2**30) + 2.0` — and the
+pair cancels first, so the `2.0` survives and the result is `2.0`. Same three
+contributors, same left-deep shape, different leaf order.
+
+**This is the discriminator the reassociation chain cannot be.** Every
+parenthesization of the canonical leaf order returns either `+0.0` or the operand
+itself, never `2.0`, for every operand in the `f32` vector — enumerated
+exhaustively by a portable test rather than argued here. So a returned `2.0`
+cannot be explained by the `reassoc` licence, which is what makes this probe a
+measurement of contributor permutation rather than a second reading of finding 17.
+"""
+
 
 @dataclass(frozen=True)
 class Step:
@@ -1288,6 +1360,16 @@ def over(constant: int) -> tuple[Step, ...]:
 
 def scale_then_bias(scale: int, bias: int) -> tuple[Step, ...]:
     return (Step(scale, "*"), Step(bias, "+"))
+
+
+def summed(*constants: int) -> tuple[Step, ...]:
+    """A left-deep chain of adds, which is the canonical fold over these contributors.
+
+    The kernel's own operand is the first contributor and the arguments follow it
+    in order, so two kernels built from the same constants in two orders differ in
+    exactly the thing a permutation permission governs.
+    """
+    return tuple(Step(constant, "+") for constant in constants)
 
 
 KERNELS: tuple[Kernel, ...] = (
@@ -1407,6 +1489,42 @@ KERNELS: tuple[Kernel, ...] = (
         steps=(Step(0x33800000, "+"), Step(0x33800000, "+")),
         canonicalized=False,
         witness=Witness(operand=0x00800000, executed=0x34000000, deleted=0x00800000),
+    ),
+    # The permutation pair. These two kernels carry the *same three* contributors
+    # in two orders and differ in nothing else, so what separates their results is
+    # leaf order alone -- which is the one thing the reassociation chain above
+    # cannot isolate, because a `reassoc` licence moves parentheses over a fixed
+    # leaf order. `PERMUTATION` states the two candidates and a portable test
+    # enumerates every parenthesization of the canonical order to establish that
+    # the permuted value is not among them.
+    #
+    # Both kernels return a value no operand carries, on every lane, so unlike the
+    # reassociation chain neither one's ordered result coincides with a deleted
+    # chain's. The execution witness is kept anyway: the guard is not weakened for
+    # a kernel that happens not to need one of its layers.
+    #
+    # **Both witness on `80000000` rather than on the probe's `3f800000`, and the
+    # reason is the relaxed modes.** Negative zero is the one non-subnormal
+    # operand whose result is the same whether the chain is evaluated as written
+    # or the cancelling pair is folded away first, because `-0.0 + 2.0` and `2.0`
+    # are the same value. A witness on any other operand would report `executed`
+    # under `safe` and `disagrees` under `relaxed`, which is a witness measuring
+    # the licence under test instead of guarding against deletion.
+    Kernel(
+        name="permutation_chain",
+        purpose="a cancelling pair straddling a third contributor, in canonical order",
+        steps=summed(CANCELLING_MAGNITUDE, ABSORBED_CONTRIBUTOR, CANCELLING_MAGNITUDE_NEGATED),
+        canonicalized=False,
+        witness=Witness(operand=NEGATIVE_ZERO, executed=POSITIVE_ZERO, deleted=NEGATIVE_ZERO),
+    ),
+    Kernel(
+        name="permutation_chain_reordered",
+        purpose="the identical three contributors permuted in the source, which moves the value",
+        steps=summed(CANCELLING_MAGNITUDE, CANCELLING_MAGNITUDE_NEGATED, ABSORBED_CONTRIBUTOR),
+        canonicalized=False,
+        witness=Witness(
+            operand=NEGATIVE_ZERO, executed=ABSORBED_CONTRIBUTOR, deleted=NEGATIVE_ZERO
+        ),
     ),
     # The second dtype. Each kernel below is its `f32` twin with the constants
     # respelled at `f16`'s boundaries and nothing else changed, so a difference
@@ -1976,6 +2094,15 @@ def cases(
         add("reassociation_chain", mode, "2", "off")
         add("reassociation_chain_f16", mode, "2", "off")
         add("reassociation_chain_bf16", mode, "2", "off")
+    # Contributor permutation, in the smallest shape that separates it from
+    # reassociation. Both orders are compiled in every math mode: the `safe` row
+    # is the one a compile profile reads, and the relaxed modes are what show the
+    # canonical order's result is not simply insensitive to everything -- a pair
+    # that never moved under any licence would prove the kernel inert rather than
+    # the order preserved.
+    for mode in MATH_MODES:
+        add("permutation_chain", mode, "2", "off")
+        add("permutation_chain_reordered", mode, "2", "off")
     # `-fmetal-math-fp32-functions=fast`, against the two findings that would
     # move if it were not confined to the transcendental functions: the flush
     # and the signed-zero divergence.
@@ -2207,6 +2334,26 @@ def order_verdict(observation: Observation, probe: OrderProbe) -> Verdict:
         return Verdict.LEFT_TO_RIGHT
     if result == probe.reassociated:
         return Verdict.REASSOCIATED
+    return Verdict.UNEXPECTED_RESULT
+
+
+def permutation_verdict(observation: Observation, probe: PermutationProbe) -> Verdict:
+    """Classify one contributor-order observation, under the identical guard.
+
+    Separate from `order_verdict` rather than a mode of it, because the two name
+    different permissions and returning `reassociated` for a permuted result
+    would be the conflation ADR 0014 refuses. A result matching neither candidate
+    lands in `unexpected-result`, which here means the chain was evaluated in
+    some third way — the honest outcome, not a defect signal.
+    """
+    refused = inadmissible(observation)
+    if refused is not None:
+        return refused
+    result = observation.result_for(probe.operand)
+    if result == probe.ordered:
+        return Verdict.LEFT_TO_RIGHT
+    if result == probe.permuted:
+        return Verdict.PERMUTED
     return Verdict.UNEXPECTED_RESULT
 
 
