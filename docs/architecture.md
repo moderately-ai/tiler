@@ -192,10 +192,11 @@ OpaqueCall(call contract)
 View(alias/metadata result)
 ```
 
-The bounded P0 physical frontier admits only checked `ScheduledKernel` values
-and rejects the other variants explicitly while retaining this additive
-sum-type seam. Opaque physical calls are a later reviewed extension, not part of
-the first frontier proof.
+The bounded physical frontier admits checked `ScheduledKernel` and
+`KernelSubprogram` values and registered `OpaqueCall` proposals, and rejects
+`View` explicitly while retaining this additive sum-type seam. A subprogram is
+an ordered chain of dispatches realizing one region subject, verified stage by
+stage through the same checked path a single kernel takes.
 
 Every executable body also carries the selected numerical realization,
 machine-checkable guarantee, and scoped evidence identity. These must refine

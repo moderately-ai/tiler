@@ -55,13 +55,14 @@
 //! `observation_reads_exactly_the_two_policy_variables` in this module's tests
 //! fails the moment a third name is read.
 //!
-//! # Reviewed draft
+//! # Accepted surface
 //!
 //! Every consumer-visible name here — the variable spelling, the `off` value,
-//! the derived path, and the exact refusal text — is a reviewed *draft* under
-//! ADR 0075 and ADR 0074 convention 7, and must not be treated as an accepted
-//! surface until Tom accepts the exact spelling. The module is crate-private and
-//! nothing but its own tests calls it.
+//! the derived path, and the exact refusal text — was accepted by Tom on
+//! 2026-07-31 under ADR 0075, recorded in ADR 0089
+//! (`docs/decisions/0089-resolve-the-expansion-cache-root-from-an-override-or-the-user-cache.md`).
+//! Changing one is a superseding decision rather than an edit. The module is
+//! crate-private and nothing but its own tests calls it yet.
 //!
 //! [frontends]: https://github.com/moderately-ai/tiler/blob/main/docs/integration/frontends.md
 //! [metal]: https://github.com/moderately-ai/tiler/blob/main/docs/backends/metal.md

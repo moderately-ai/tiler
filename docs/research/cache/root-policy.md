@@ -6,7 +6,8 @@ title: "The expansion cache root policy"
 topics: ["cache", "frontend", "proc-macros", "artifacts"]
 catalog_group: "artifacts-build-toolchains"
 research_status: "complete"
-disposition: "pending"
+disposition: "adopted"
+adopted_by: ["ADR-0089"]
 implementation_status: "partial"
 evidence_classes: ["primary-source-synthesis", "bounded-measurement"]
 informs: ["tiler.contract.frontend-integration", "tiler.contract.metal-backend"]
@@ -16,7 +17,7 @@ ticket: "choose-the-expansion-cache-root-policy"
 
 # The expansion cache root policy
 
-**Status:** the choice is made and implemented as a crate-private draft in `tiler-macros`; the consumer-visible spellings are unaccepted and need Tom under [ADR 0075](../../decisions/0075-scope-public-boundary-approval-by-change-category.md).
+**Status:** the choice is made and implemented in `tiler-macros`, and Tom accepted the complete consumer-visible surface on 2026-07-31 under [ADR 0075](../../decisions/0075-scope-public-boundary-approval-by-change-category.md); [ADR 0089](../../decisions/0089-resolve-the-expansion-cache-root-from-an-override-or-the-user-cache.md) is the accepted record.
 
 This note closes the root half of [Q-ART-004](../../open-questions.md#q-art-004--expansion-cache-root-accounting-and-gc-policy). It does not touch the accounting and collection half, which [`decide-the-expansion-cache-collection-schedule`](../../../tickets/decide-the-expansion-cache-collection-schedule.md) holds.
 
@@ -132,6 +133,6 @@ The rendered text is stated in full in the module's `Display` implementation and
 
 ## Outcome
 
-- **An architectural decision, drafted but not recorded as an ADR here.** `docs/decisions/[0-9]*.md` is the `contracts/decisions` scope, which the ticket implementing this does not hold, so writing ADR 0089 from this branch would have been a scope escape. [`record-the-expansion-cache-root-policy-decision`](../../../tickets/record-the-expansion-cache-root-policy-decision.md) carries the ADR and the propagation into `docs/integration/frontends.md`. Recording where the boundary is beats taking a scope that another ticket may be holding.
-- **An implemented draft.** `crates/tiler-macros/src/cache_root.rs`, crate-private under ADR 0074 convention 7, with the reviewed-draft disclosure its module documentation carries.
-- **An unaccepted public boundary.** The variable spelling, the `off` value, the derived path, and the refusal text are consumer-visible and are Tom's under ADR 0075. They are drafted, not decided.
+- **An architectural decision, drafted here and recorded separately.** `docs/decisions/[0-9]*.md` is the `contracts/decisions` scope, which the ticket implementing this did not hold, so writing the ADR from that branch would have been a scope escape. [`record-the-expansion-cache-root-policy-decision`](../../../tickets/record-the-expansion-cache-root-policy-decision.md) carried [ADR 0089](../../decisions/0089-resolve-the-expansion-cache-root-from-an-override-or-the-user-cache.md) and the propagation into `docs/integration/frontends.md`. Recording where the boundary is beats taking a scope that another ticket may be holding.
+- **An implementation.** `crates/tiler-macros/src/cache_root.rs`, crate-private, awaiting its first caller in `prototype-inline-proc-macro-frontend`.
+- **An accepted public boundary.** Tom accepted the complete packet — the variable spelling, the `off` value, the derived path, the precedence, the refusal set, and the refusal text — on 2026-07-31, recorded in ADR 0089.

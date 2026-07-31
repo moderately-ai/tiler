@@ -6,7 +6,7 @@ priority: p2
 dependencies: [choose-the-expansion-cache-root-policy]
 related: [decide-the-expansion-cache-collection-schedule]
 scopes: [contracts/decisions, contracts/integrations, contracts/navigation]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [cache, frontend, adr]
 claimed_from: todo
