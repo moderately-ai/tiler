@@ -1,7 +1,7 @@
 ---
 id: record-the-frontend-crate-admission-in-the-design-corpus
 title: Record the frontend crate admission in the design corpus
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-the-tiler-facade-and-proc-macro-crate-boundary]
 related: [prototype-inline-proc-macro-frontend, define-inline-symbol-binding-and-runtime-value-adaptation]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions, contracts/navigation, contracts/foundation, contra
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: loop-record-front
+lease_expires_at: 1785522345
 ---
 ## User-visible outcome
 
