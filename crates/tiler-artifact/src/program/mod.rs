@@ -30,7 +30,8 @@
 //! top of each variant's complete program identity: the governed component
 //! schemas, the semantic graph and the *reached* definition and admission
 //! provenance, the routing policy and every guard, the neutral ABI and launch
-//! contracts, the declared target requirements and deferred predicates, the
+//! contracts, the declared target requirements, deferred predicates, and
+//! live-device route requirements, the
 //! payload descriptors and their entry mappings, and the capability providers
 //! the plan actually selected.
 //!
@@ -64,6 +65,8 @@
 //! `complete-program-identity-with-abi-guards-and-routing` moved the entry ABI, the applicability guard, and the routing-commit lifecycle down: a [`tiler_ir::program::VerifiedKernelProgram`] carries its own expression arena, guard, per-stage launch, and per-access accessible byte range. Historical v2 first folded those facts; later encoding, ABI-completeness, and split-reduction changes moved the current domain to `tiler.kernel-program.v6`.
 //!
 //! Artifact construction now replays that exact program ABI onto the artifact arena and derives the guard, launch geometry, accessible byte offset and extent, binding target, component role, storage scalar and encoding, kernel access type, access mode, address space, and alignment from the verified program. [`VariantSpec`](crate::program::VariantSpec) supplies only artifact-owned facts: target and feasibility references, typed [`PreparedEntryTargetRequirement`](crate::program::PreparedEntryTargetRequirement) values associated with program-entry ordinals, binding transport kinds, launch preconditions and zero-work policy, and backend entry selection. The builder mints each executable deferred predicate from the whole checked requirement, so an assembler cannot reverse its comparison or replace the requirement's exact-entry query with a global property observation. The low-level builder validates the producer assertion and entry range but cannot authenticate that an arbitrary caller preserved the compiler's requirement-to-entry association; the ordinary `tiler-build` translation provides that stronger guarantee by forwarding the compiler's borrowed view without reconstruction. This is one ABI authority with an explicit producer trust boundary, not two ABIs kept in agreement; the artifact layer still owns portfolio priority and the predicates no single target-neutral program can carry.
+//!
+//! A variant's live-device route requirements arrive through [`ArtifactProgramBuilder::require_route`](crate::program::ArtifactProgramBuilder::require_route) rather than through `VariantSpec`, because they state what the *emitted payload* consumes and are known only after backend emission — to a different producer stage from the one that assembles a variant. See [`RouteRequirement`](crate::program::RouteRequirement) for the derivability test that decides what may be declared there and what stays a derived requirement.
 //!
 //! ```
 //! use tiler_artifact::program::{
@@ -339,6 +342,7 @@ mod model;
 // both public artifact surface that ADR 0075 reserves to Tom, and the module
 // documentation records what is staged and what the wiring slice still owes.
 mod realization;
+mod requirement;
 mod verify;
 
 pub use builder::{
@@ -404,8 +408,8 @@ pub use handles::{AbiExprId, PayloadId, VariantId};
 pub use keys::{
     BackendEntryKey, BackendKey, CapabilityKey, FeasibilityRuleSetKey, FeasibilityRuleSetRef,
     MAX_GOVERNED_KEY_BYTES, MAX_OPAQUE_IDENTITY_BYTES, MAX_TARGET_PROFILE_DESCRIPTOR_BYTES,
-    PayloadDigest, RepresentationKey, TargetProfileDescriptorDigest, TargetProfileKey,
-    TargetProfileRef,
+    PayloadDigest, RepresentationKey, RouteFeatureKey, TargetProfileDescriptorDigest,
+    TargetProfileKey, TargetProfileRef,
 };
 pub use model::{
     AbiExprRef, AbiExprView, ArtifactExecutionPolicy, ArtifactInputRef, ArtifactOutputRef,
@@ -413,6 +417,10 @@ pub use model::{
     BindingTarget, CanonicalArtifactProgramIdentity, DeferredPredicateRef, EntryRef,
     InterfaceComponentRef, RecordedArtifactProgramIdentity, RoutingPolicy, SchemaVersion,
     SelectedProvider, StageDependencyReason, VariantRef, VerifiedArtifactProgram,
+};
+pub use requirement::{
+    BackendFeatureRequirement, MAX_ROUTE_FEATURE_PAYLOAD_BYTES, RouteRequirement,
+    RouteRequirementError, RouteRequirementSubject, RouteResourceDimension, RouteResourceFloor,
 };
 
 /// Maximum plan variants admitted by one artifact program.
@@ -439,6 +447,12 @@ pub const MAX_SELECTED_PROVIDERS: usize = 256;
 pub const MAX_ENVIRONMENT_PROVIDERS: usize = 4_096;
 /// Maximum deferred feasibility predicates admitted by one plan variant.
 pub const MAX_DEFERRED_PREDICATES: usize = 64;
+/// Maximum live-device route requirements admitted by one plan variant.
+///
+/// Subjects are distinct within a variant, so this bounds how many *different*
+/// device preconditions one route may state. It is a budget a parser can
+/// allocate against before reading rather than a claim about plan shape.
+pub const MAX_ROUTE_REQUIREMENTS: usize = 64;
 /// Maximum launch preconditions admitted by one executable entry.
 pub const MAX_LAUNCH_PRECONDITIONS: usize = 32;
 /// Maximum size of the final canonical artifact-program identity.

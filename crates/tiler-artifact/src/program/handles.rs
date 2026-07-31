@@ -40,10 +40,6 @@ macro_rules! draft_handle {
                 u32::try_from(len).ok().map(|index| Self { owner, index })
             }
 
-            #[allow(
-                dead_code,
-                reason = "VariantId is minted for a producer's own bookkeeping; the builder never resolves it back"
-            )]
             pub(super) fn as_usize(self) -> usize {
                 usize::try_from(self.index).expect("u32 fits every supported host usize")
             }

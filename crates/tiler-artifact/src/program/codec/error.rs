@@ -83,6 +83,10 @@ pub(crate) enum TagSubject {
     AvailabilityPhase,
     /// The directional relation of a target-property requirement.
     TargetPropertyRequirementRelation,
+    /// The kind of one live-device route requirement.
+    RouteRequirementKind,
+    /// The neutral live-device dimension one route floor bounds.
+    RouteResourceDimension,
     /// The node kind of one ABI expression arena entry.
     ExpressionNode,
     /// The typed root fact of one ABI expression.
@@ -124,6 +128,8 @@ pub(crate) enum OrderedSubject {
     Expression,
     /// The deferred feasibility predicates of one plan variant.
     DeferredPredicate,
+    /// The live-device route requirements of one plan variant.
+    RouteRequirement,
     /// The launch preconditions of one executable entry.
     LaunchPrecondition,
     /// The executable entries of one plan variant.
@@ -207,6 +213,10 @@ pub(crate) enum CodecLimitKind {
     SelectedProviders,
     /// Deferred feasibility predicate count of one plan variant.
     DeferredPredicates,
+    /// Live-device route-requirement count of one plan variant.
+    RouteRequirements,
+    /// Byte length of one backend feature requirement's canonical payload.
+    RouteFeaturePayloadBytes,
     /// Launch precondition count of one executable entry.
     LaunchPreconditions,
     /// Rank of one declared interface shape.

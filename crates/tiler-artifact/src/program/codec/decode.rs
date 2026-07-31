@@ -41,8 +41,8 @@ use super::super::expr::{
 };
 use super::super::keys::{
     BackendEntryKey, BackendKey, CapabilityKey, FeasibilityRuleSetKey, FeasibilityRuleSetRef,
-    PayloadDigest, RepresentationKey, TargetProfileDescriptorDigest, TargetProfileKey,
-    TargetProfileRef,
+    PayloadDigest, RepresentationKey, RouteFeatureKey, TargetProfileDescriptorDigest,
+    TargetProfileKey, TargetProfileRef,
 };
 use super::super::model::{
     ArtifactSchema, BINDING_TARGET_INTERNAL, BINDING_TARGET_PROGRAM_INPUT,
@@ -53,10 +53,14 @@ use super::super::model::{
     exceptional_assumption_from_tag, permission_from_tag, storage_scalar_from_tag,
     subnormal_from_tag,
 };
+use super::super::requirement::{
+    BackendFeatureRequirement, RouteRequirement, RouteRequirementError, RouteResourceDimension,
+    RouteResourceFloor,
+};
 use super::super::{
     MAX_ABI_EXPRESSIONS, MAX_ARTIFACT_PAYLOADS, MAX_ARTIFACT_VARIANTS, MAX_DEFERRED_PREDICATES,
-    MAX_ENTRY_BINDINGS, MAX_LAUNCH_PRECONDITIONS, MAX_SELECTED_PROVIDERS, MAX_STAGE_DEPENDENCIES,
-    MAX_VARIANT_ENTRIES,
+    MAX_ENTRY_BINDINGS, MAX_LAUNCH_PRECONDITIONS, MAX_ROUTE_FEATURE_PAYLOAD_BYTES,
+    MAX_ROUTE_REQUIREMENTS, MAX_SELECTED_PROVIDERS, MAX_STAGE_DEPENDENCIES, MAX_VARIANT_ENTRIES,
 };
 use super::digest::{Digest, DigestAlgorithm};
 use super::encode::{
@@ -791,6 +795,7 @@ fn parse_variants(
                 })
             },
         )?;
+        let route_requirements = parse_route_requirements(cursor)?;
         let entries = cursor.vec(MAX_VARIANT_ENTRIES, CodecLimitKind::Entries, |cursor| {
             parse_entry(cursor, expressions, payloads)
         })?;
@@ -811,12 +816,74 @@ fn parse_variants(
             profile,
             feasibility_rules,
             deferred,
+            route_requirements,
             entries,
             execution_order,
             dependencies,
         });
     }
     Ok(variants)
+}
+
+/// Reads one variant's live-device route requirements.
+///
+/// Every field is decided here rather than deferred to a consumer: an
+/// unrecognized kind or dimension tag rejects by name with the tag byte, a
+/// governed key that does not satisfy its grammar rejects as an invalid key, and
+/// a floor, version, or payload the vocabulary refuses rejects as the model rule
+/// it broke. A reader that admitted any of them would carry a requirement no
+/// adapter could decide, and the fail-closed reading of "cannot decide" is
+/// "cannot route".
+fn parse_route_requirements(
+    cursor: &mut Cursor<'_>,
+) -> Result<Vec<RouteRequirement>, ArtifactCodecError> {
+    cursor.vec(
+        MAX_ROUTE_REQUIREMENTS,
+        CodecLimitKind::RouteRequirements,
+        |cursor| match cursor.u8()? {
+            0x01 => {
+                let tag = cursor.u8()?;
+                let dimension = RouteResourceDimension::from_tag(tag).ok_or(
+                    ArtifactCodecError::UnknownTag {
+                        subject: TagSubject::RouteResourceDimension,
+                        tag,
+                    },
+                )?;
+                let minimum = cursor.u64()?;
+                let floor = RouteResourceFloor::new(dimension, minimum).map_err(invalid_route)?;
+                Ok(RouteRequirement::ResourceFloor(floor))
+            }
+            0x02 => {
+                let owner = BackendKey::from_owned(cursor.text()?)
+                    .map_err(|cause| ArtifactCodecError::InvalidGovernedKey { cause })?;
+                let key = RouteFeatureKey::from_owned(cursor.text()?)
+                    .map_err(|cause| ArtifactCodecError::InvalidGovernedKey { cause })?;
+                let version = cursor.u32()?;
+                // Bounded before the vocabulary sees it, so a hostile length is
+                // refused as the budget it exceeded rather than as a model rule.
+                let payload = cursor.slice()?;
+                codec_limit(
+                    payload.len(),
+                    MAX_ROUTE_FEATURE_PAYLOAD_BYTES,
+                    CodecLimitKind::RouteFeaturePayloadBytes,
+                )?;
+                let feature = BackendFeatureRequirement::new(owner, key, version, payload)
+                    .map_err(invalid_route)?;
+                Ok(RouteRequirement::BackendFeature(feature))
+            }
+            tag => Err(ArtifactCodecError::UnknownTag {
+                subject: TagSubject::RouteRequirementKind,
+                tag,
+            }),
+        },
+    )
+}
+
+/// Reports a route-requirement vocabulary rejection as this artifact's own rule.
+fn invalid_route(cause: RouteRequirementError) -> ArtifactCodecError {
+    ArtifactCodecError::ModelRule {
+        cause: Box::new(ArtifactBuildError::InvalidRouteRequirement { cause }),
+    }
 }
 
 /// Reads a variant's execution order and proves it sequences every entry once.

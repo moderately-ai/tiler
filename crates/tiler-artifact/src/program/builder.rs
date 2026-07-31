@@ -46,10 +46,11 @@ use super::model::{
     SchemaVersion, SelectedProvider, StoredBackendEntry, VariantData, VerifiedArtifactProgram,
     encode_identity,
 };
+use super::requirement::RouteRequirement;
 use super::{
     MAX_ABI_EXPRESSIONS, MAX_ARTIFACT_PAYLOADS, MAX_ARTIFACT_VARIANTS, MAX_DEFERRED_PREDICATES,
     MAX_ENTRY_BINDINGS, MAX_ENVIRONMENT_PROVIDERS, MAX_LAUNCH_PRECONDITIONS,
-    MAX_SELECTED_PROVIDERS, MAX_VARIANT_ENTRIES,
+    MAX_ROUTE_REQUIREMENTS, MAX_SELECTED_PROVIDERS, MAX_VARIANT_ENTRIES,
 };
 
 /// The complete frozen set of capability providers offered to one compilation.
@@ -698,9 +699,66 @@ impl ArtifactProgramBuilder {
             profile: spec.target_profile,
             feasibility_rules: spec.feasibility_rules,
             deferred,
+            route_requirements: Vec::new(),
             entries,
         });
         Ok(id)
+    }
+
+    /// Declares one additional requirement the variant's route places on a live device.
+    ///
+    /// # Why this is a second call rather than a [`VariantSpec`] field
+    ///
+    /// A deferred predicate is minted *with* the plan, by the compiler that
+    /// chose it, which is why it arrives in the spec. A route requirement is
+    /// not: it states what the **emitted payload** consumes, and that is known
+    /// only after backend emission, to a different producer stage from the one
+    /// that assembles a variant. Taking it here lets that stage declare what it
+    /// alone knows without restating a plan it did not make.
+    ///
+    /// # What this cannot decide
+    ///
+    /// Whether a requirement is *missing*. Zero rows is a legal, explicit state,
+    /// so an omitted row and a route that genuinely needs none are the same
+    /// artifact from here. Only a producer-owned exhaustive declaration of what
+    /// the selected payload uses can tell them apart, and no such declaration
+    /// reaches this layer. Everything that *is* locally decidable is decided:
+    /// the row's own validity by its constructor, and subject uniqueness here.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ArtifactBuildError::ForeignHandle`] or
+    /// [`ArtifactBuildError::InvalidHandle`] for a variant this builder did not
+    /// mint, [`ArtifactBuildError::DuplicateRouteRequirementSubject`] when the
+    /// variant already constrains that subject, or
+    /// [`ArtifactBuildError::StructuralLimit`] beyond
+    /// [`MAX_ROUTE_REQUIREMENTS`].
+    pub fn require_route(
+        &mut self,
+        variant: VariantId,
+        requirement: RouteRequirement,
+    ) -> Result<(), ArtifactBuildError> {
+        let index = self.resolve_variant(variant)?;
+        let subject = requirement.subject();
+        if self.variants[index]
+            .route_requirements
+            .iter()
+            .any(|existing| existing.subject() == subject)
+        {
+            return Err(ArtifactBuildError::DuplicateRouteRequirementSubject {
+                subject: Box::new(subject),
+            });
+        }
+        limit(
+            self.variants[index]
+                .route_requirements
+                .len()
+                .saturating_add(1),
+            MAX_ROUTE_REQUIREMENTS,
+            ArtifactLimitKind::RouteRequirements,
+        )?;
+        self.variants[index].route_requirements.push(requirement);
+        Ok(())
     }
 
     /// Verifies the whole artifact and freezes it, or returns the intact builder.
@@ -1194,6 +1252,16 @@ impl ArtifactProgramBuilder {
             return Err(invalid_handle(ArtifactEntityKind::Payload, false));
         }
         Ok(id.index)
+    }
+
+    fn resolve_variant(&self, id: VariantId) -> Result<usize, ArtifactBuildError> {
+        if id.owner != self.owner {
+            return Err(invalid_handle(ArtifactEntityKind::Variant, true));
+        }
+        if id.as_usize() >= self.variants.len() {
+            return Err(invalid_handle(ArtifactEntityKind::Variant, false));
+        }
+        Ok(id.as_usize())
     }
 }
 

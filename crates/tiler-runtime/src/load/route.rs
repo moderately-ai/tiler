@@ -4,7 +4,14 @@
 //!
 //! ADR 0051 requires routing to commit one way, before program work, and
 //! forbids falling back after it. That is enforced here by construction rather
-//! than by documentation. Every obligation that can refuse lives in [`super::DecodedProgram::preflight`] or in the consuming [`RoutePreparation::resolve_target_properties`] path; both yield a [`Preflight`] only after every requirement holds. [`Preflight::commit`] consumes that value and is **infallible**.
+//! than by documentation. Every obligation that can refuse lives in [`super::DecodedProgram::preflight`] or in the consuming [`LiveDeviceQualification::resolve_live_device_requirements`] and [`RoutePreparation::resolve_target_properties`] path; both routes yield a [`Preflight`] only after every requirement holds. [`Preflight::commit`] consumes that value and is **infallible**.
+//!
+//! The device path is two consuming stages rather than one because its
+//! obligations become answerable at two different moments: a live-device
+//! requirement as soon as a device is bound, and a prepared-entry property only
+//! once its pipeline exists. Chaining them by type is also what makes the first
+//! unskippable — a [`RoutePreparation`] can only have come from a resolved
+//! [`LiveDeviceQualification`], including for a route that requires nothing.
 //!
 //! A caller that wants a fallback takes it by not calling [`Preflight::commit`],
 //! which is exactly ADR 0051's "fallback only before program work".
@@ -44,7 +51,7 @@
 
 use tiler_artifact::program::{
     ArtifactExecutionPolicy, BackendPayloadDescriptor, CanonicalArtifactProgramIdentity,
-    DecodedBinding, DecodedEntry, PreparedEntryTargetRequirement,
+    DecodedBinding, DecodedEntry, PreparedEntryTargetRequirement, RouteRequirement,
 };
 
 use super::LoadRejection;
@@ -294,7 +301,195 @@ impl<'a> TargetPropertyRequest<'a> {
     }
 }
 
+/// One additional requirement the selected route places on the live device.
+#[derive(Clone, Copy, Debug)]
+pub struct LiveDeviceRequest<'a> {
+    pub(super) variant: usize,
+    pub(super) position: usize,
+    pub(super) requirement: &'a RouteRequirement,
+}
+
+impl<'a> LiveDeviceRequest<'a> {
+    /// Returns the selected variant's routing rank.
+    #[must_use]
+    pub const fn variant(self) -> usize {
+        self.variant
+    }
+
+    /// Returns the requirement's position among the variant's own rows.
+    #[must_use]
+    pub const fn position(self) -> usize {
+        self.position
+    }
+
+    /// Returns the complete requirement the device must satisfy.
+    #[must_use]
+    pub const fn requirement(self) -> &'a RouteRequirement {
+        self.requirement
+    }
+}
+
+/// What a host answers about one live-device route requirement.
+///
+/// Three answers rather than a boolean, because "I do not own this row" is not
+/// the same as "this device does not satisfy it" and neither is the same as a
+/// measurement. Collapsing the first into the second would report an adapter gap
+/// as a device limitation; collapsing it into satisfaction would route on a
+/// requirement nothing evaluated.
+///
+/// The comparison for a quantitative row stays in this crate: a host reports
+/// what it measured and the loader decides, so an adapter cannot reverse a
+/// capacity comparison on its way to an answer.
+///
+/// Deliberately **not** `#[non_exhaustive]` (ADR 0074 convention 5b): an answer
+/// added here changes what a host must be able to say, and that must stop each
+/// host's build rather than reach a wildcard.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum LiveDeviceObservation {
+    /// The host measured this dimension on the bound device.
+    ///
+    /// Valid only for a quantitative floor. Answering it for a backend feature
+    /// row is refused rather than coerced.
+    Quantity(u64),
+    /// The owning adapter decided this qualitative row for the bound device.
+    ///
+    /// Valid only for a backend feature row.
+    Feature(bool),
+    /// No adapter on this host owns or understands the row.
+    ///
+    /// The fail-closed answer, and the one a host must give for an owner, key,
+    /// version, or payload it does not recognize. A requirement nothing can
+    /// decide is a refusal, never a row to skip.
+    Unrecognized,
+}
+
+/// A routed candidate awaiting the live-device facts its route requires.
+///
+/// # Why this is a stage rather than a method
+///
+/// Live-device facts are available before a pipeline exists, so they are decided
+/// first — and, more importantly, they are decided *at all*. A host that reached
+/// [`RoutePreparation`] has already passed through here, so there is no path on
+/// which a route requirement goes unevaluated. A variant with no rows still
+/// passes through this stage, which is what stops a host writing a device check
+/// that only runs when it happens to be needed.
+///
+/// Routing cannot commit from here:
+///
+/// ```compile_fail
+/// fn commit_early(qualification: tiler_runtime::load::LiveDeviceQualification<'_>) {
+///     let _ = qualification.commit();
+/// }
+/// ```
+#[derive(Debug)]
+#[must_use = "a qualification that is neither resolved nor abandoned decides nothing"]
+pub struct LiveDeviceQualification<'a> {
+    pub(super) candidate: RouteCandidate<'a>,
+    pub(super) requirements: Vec<LiveDeviceRequest<'a>>,
+    pub(super) requests: Vec<TargetPropertyRequest<'a>>,
+}
+
+impl<'a> LiveDeviceQualification<'a> {
+    /// Returns the identity of the artifact this qualification would execute.
+    #[must_use]
+    pub const fn identity(&self) -> &CanonicalArtifactProgramIdentity {
+        &self.candidate.identity
+    }
+
+    /// Returns the canonical identity of the kernel program it would run.
+    #[must_use]
+    pub const fn kernel_program_identity(&self) -> &'a [u8] {
+        self.candidate.kernel_program
+    }
+
+    /// Returns the entries this route would dispatch, in execution order.
+    ///
+    /// Published before the device facts are answered so a host can size or
+    /// inspect the route while deciding, and *only* inspect it: nothing
+    /// irreversible is reachable from here.
+    #[must_use]
+    pub fn entries(&self) -> &[RoutedEntry<'a>] {
+        &self.candidate.entries
+    }
+
+    /// Returns every live-device requirement of the selected route.
+    ///
+    /// Empty for a route that requires nothing additional, which is a state
+    /// rather than an absence.
+    #[must_use]
+    pub fn live_device_requirements(
+        &self,
+    ) -> impl ExactSizeIterator<Item = LiveDeviceRequest<'a>> + '_ {
+        self.requirements.iter().copied()
+    }
+
+    /// Resolves every live-device requirement exactly once, or refuses the route.
+    ///
+    /// Each row is passed to `resolve` once, in the artifact's canonical order,
+    /// and the answer is checked against the row's own kind before it is
+    /// believed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LoadRejection::UnownedRouteRequirement`] for a row no adapter
+    /// claimed, [`LoadRejection::MisansweredRouteRequirement`] for an answer
+    /// whose shape disagrees with the row's kind, or
+    /// [`LoadRejection::UnsatisfiedRouteRequirement`] for a row the device does
+    /// not satisfy — each before anything is prepared or committed.
+    pub fn resolve_live_device_requirements(
+        self,
+        mut resolve: impl FnMut(LiveDeviceRequest<'a>) -> LiveDeviceObservation,
+    ) -> Result<RoutePreparation<'a>, LoadRejection> {
+        for request in &self.requirements {
+            let request = *request;
+            let refusal = |kind| LoadRejection::from_request(kind, request);
+            // Exhaustive on both axes rather than matching the satisfying cases
+            // and defaulting the rest: a kind or an answer added later must stop
+            // this build instead of falling into a branch that refuses — or,
+            // worse, accepts — for a reason nobody chose.
+            let satisfied = match (request.requirement, resolve(request)) {
+                (
+                    RouteRequirement::ResourceFloor(floor),
+                    LiveDeviceObservation::Quantity(observed),
+                ) => floor.is_satisfied_by(observed),
+                (
+                    RouteRequirement::BackendFeature(_),
+                    LiveDeviceObservation::Feature(supported),
+                ) => supported,
+                (_, LiveDeviceObservation::Unrecognized) => {
+                    return Err(refusal(RouteRequirementRefusal::Unowned));
+                }
+                (RouteRequirement::ResourceFloor(_), LiveDeviceObservation::Feature(_))
+                | (RouteRequirement::BackendFeature(_), LiveDeviceObservation::Quantity(_)) => {
+                    return Err(refusal(RouteRequirementRefusal::Misanswered));
+                }
+            };
+            if !satisfied {
+                return Err(refusal(RouteRequirementRefusal::Unsatisfied));
+            }
+        }
+        Ok(RoutePreparation {
+            candidate: self.candidate,
+            requests: self.requests,
+        })
+    }
+}
+
+/// Which way one live-device requirement failed to decide in the route's favour.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum RouteRequirementRefusal {
+    /// No adapter on the host owned the row.
+    Unowned,
+    /// The answer's shape disagreed with the row's kind.
+    Misanswered,
+    /// The device does not satisfy the row.
+    Unsatisfied,
+}
+
 /// A fully routed candidate awaiting exact properties from its prepared entries.
+///
+/// Reached only through [`LiveDeviceQualification`], so every live-device
+/// requirement of this route has already been decided.
 ///
 /// Routing cannot commit while any prepared-entry property remains unanswered:
 ///

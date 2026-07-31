@@ -78,6 +78,7 @@ use super::super::model::{
     InterfaceEntryData, RoutingPolicy, StageDependencyData, StageDependencyReason,
     VerifiedArtifactProgram,
 };
+use super::super::requirement::RouteRequirement;
 use super::error::ArtifactCodecError;
 use super::model::{ArtifactEnvelope, EntryRow, NumericalFacts, SectionKind, VariantRow, position};
 use super::payload::{PayloadEntryMapping, PayloadMetadata, decode_metadata};
@@ -494,6 +495,23 @@ impl<'a> DecodedVariant<'a> {
     #[must_use]
     pub fn feasibility_rules(self) -> &'a FeasibilityRuleSetRef {
         &self.data().feasibility_rules
+    }
+
+    /// Returns the additional requirements this route places on a live device.
+    ///
+    /// In canonical content order, distinct by subject, both re-proven at
+    /// decode. Empty is a state rather than an absence: a route consuming no
+    /// additional requirement declares none, and this layer cannot tell that
+    /// apart from a producer that omitted one — only a producer-owned exhaustive
+    /// declaration of what the payload uses can.
+    ///
+    /// A consumer must decide **every** row before committing a route. The
+    /// neutral quantitative rows it can compare itself; a backend-scoped row is
+    /// decided by the adapter its owner names, and one no adapter owns is a
+    /// refusal rather than a row to skip.
+    #[must_use]
+    pub fn route_requirements(self) -> &'a [RouteRequirement] {
+        &self.data().route_requirements
     }
 
     /// Returns the feasibility predicates deferred to a runtime query.

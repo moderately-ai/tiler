@@ -50,6 +50,7 @@ use super::keys::{
     BackendEntryKey, BackendKey, CapabilityKey, FeasibilityRuleSetRef, PayloadDigest,
     RepresentationKey, TargetProfileRef,
 };
+use super::requirement::{RouteRequirement, push_requirements};
 
 /// Versioned domain separator of one packaged artifact's canonical identity.
 ///
@@ -153,7 +154,18 @@ use super::keys::{
 /// prepared entries sharing a property key could be answered by one global
 /// value. The new subject is deliberately incomparable with that incomplete
 /// route.
-const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v11\0";
+///
+/// # Why this is a `v12` step
+///
+/// A variant now carries the additional requirements its selected route places
+/// on a live device: neutral quantitative floors and backend-scoped qualitative
+/// rows. The rows land inside the repeated variant record, so a `v11` encoding
+/// of one artifact could otherwise equal a `v12` encoding of another — and the
+/// subjects genuinely differ, because a `v11` identity described a route that
+/// could not state a device precondition at all. Two artifacts alike in every
+/// other respect but requiring different device capabilities are two artifacts,
+/// and the domain step is what stops them comparing equal.
+const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v12\0";
 
 /// [`ARTIFACT_DOMAIN`] without its terminator, for rendering in a diagnostic.
 ///
@@ -280,7 +292,12 @@ impl ArtifactSchema {
         program: SchemaVersion::new(1, 0),
         abi_expression: SchemaVersion::new(1, 0),
         guard_and_routing: SchemaVersion::new(1, 0),
-        target_requirement: SchemaVersion::new(2, 0),
+        // `3.0` for the live-device route-requirement family. The target
+        // requirement component moves independently of the manifest because its
+        // governed *vocabulary* changed: a requirement is no longer only a
+        // prepared-entry quantity, so a reader that understands `2.0` cannot
+        // decide a `3.0` route even when it can frame the manifest around it.
+        target_requirement: SchemaVersion::new(3, 0),
     };
 
     /// Returns the artifact program schema version.
@@ -683,6 +700,11 @@ pub(super) struct VariantData {
     pub(super) profile: TargetProfileRef,
     pub(super) feasibility_rules: FeasibilityRuleSetRef,
     pub(super) deferred: Vec<DeferredPredicateData>,
+    /// Additional requirements this variant's route places on a live device.
+    ///
+    /// Held in declaration order and canonicalized once, where the envelope is
+    /// projected, exactly as the deferred set is.
+    pub(super) route_requirements: Vec<RouteRequirement>,
     pub(super) entries: Vec<EntryData>,
 }
 
@@ -1144,6 +1166,17 @@ impl<'a> VariantRef<'a> {
     #[must_use]
     pub fn feasibility_rules(self) -> &'a FeasibilityRuleSetRef {
         &self.data().feasibility_rules
+    }
+
+    /// Returns the additional live-device requirements of this variant's route.
+    ///
+    /// Empty is a state rather than an absence: a route consuming no additional
+    /// requirement declares none. This layer cannot decide whether a row is
+    /// *missing*, because only the producer holds the exhaustive declaration of
+    /// what its selected payload uses.
+    #[must_use]
+    pub fn route_requirements(self) -> &'a [RouteRequirement] {
+        &self.data().route_requirements
     }
 
     /// Returns the deferred feasibility predicates of this variant.
@@ -2249,6 +2282,20 @@ fn push_variant(
     for key in &deferred {
         push_slice(bytes, key);
     }
+    // Already in canonical order, for the same reason and by the same shared
+    // definition. Distinctness is proven here as well as at construction: the
+    // envelope this encodes may have been decoded rather than built, and a
+    // decoder's own duplicate check is a different code path from the builder's.
+    if variant
+        .route_requirements
+        .windows(2)
+        .any(|pair| pair[0] == pair[1])
+    {
+        return Err(ArtifactDiagnostic::AmbiguousCanonicalKey {
+            entity: ArtifactEntityKind::RouteRequirement,
+        });
+    }
+    push_requirements(bytes, &variant.route_requirements);
     push_len(bytes, variant.entries.len());
     for (entry, preconditions) in variant.entries.iter().zip(&order.preconditions) {
         push_slice(bytes, entry.stage.as_bytes());

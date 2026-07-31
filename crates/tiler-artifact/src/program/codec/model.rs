@@ -40,6 +40,7 @@ use super::super::model::{
     RoutingPolicy, SchemaVersion, SelectedProvider, StageDependencyData, StageDependencyReason,
     VariantData, canonical_deferred_order, deferred_key, encode_identity, stage_key,
 };
+use super::super::requirement::{RouteRequirement, canonical_requirement_order};
 use super::error::{ArtifactCodecError, CodecLimitKind, codec_limit};
 use super::payload::{PayloadContent, encode_metadata};
 
@@ -95,6 +96,18 @@ pub(super) const FEATURE_MULTI_STAGE_PROGRAM: &str = "tiler.artifact.feature.mul
 /// than load an artifact whose executable half it silently dropped.
 pub(super) const FEATURE_EMBEDDED_PAYLOAD_CODE: &str =
     "tiler.artifact.feature.embedded-payload-code";
+/// Governed feature key required when any variant declares a route requirement.
+///
+/// Required rather than optional, and for the reason the mechanism exists: a
+/// reader that predates this family would parse a manifest that looks complete
+/// and would route without evaluating a device precondition the producer
+/// declared. Refusing is the fail-closed form of not understanding a row.
+///
+/// A variant with *no* rows emits no key, so an artifact whose route needs
+/// nothing additional stays readable by a reader that predates the family. That
+/// asymmetry is deliberate: zero rows is a state a `9.0` reader can honour, and
+/// one row is not.
+pub(super) const FEATURE_ROUTE_REQUIREMENTS: &str = "tiler.artifact.feature.route-requirements";
 
 /// Every feature key this build of the codec can *read*.
 ///
@@ -108,6 +121,7 @@ pub(super) const SUPPORTED_FEATURES: &[&str] = &[
     FEATURE_LAUNCH_PRECONDITIONS,
     FEATURE_MULTI_STAGE_PROGRAM,
     FEATURE_MULTI_VARIANT_ROUTING,
+    FEATURE_ROUTE_REQUIREMENTS,
 ];
 
 macro_rules! received_subject {
@@ -394,6 +408,12 @@ pub(crate) struct VariantRow {
     pub(crate) profile: TargetProfileRef,
     pub(crate) feasibility_rules: FeasibilityRuleSetRef,
     pub(crate) deferred: Vec<DeferredPredicateData>,
+    /// Additional requirements this variant's route places on a live device.
+    ///
+    /// Canonically ordered and distinct by subject. Ordered by canonical content
+    /// rather than by declaration, because which precondition a producer
+    /// happened to enumerate first is not meaning.
+    pub(crate) route_requirements: Vec<RouteRequirement>,
     pub(crate) entries: Vec<EntryRow>,
     /// Positions of [`Self::entries`] in the order a consumer must dispatch them.
     ///
@@ -499,6 +519,13 @@ impl ArtifactEnvelope {
                 .into_iter()
                 .map(|index| deferred[index].clone())
                 .collect();
+            // The shared canonical order again, for the same reason: the stored
+            // order is what the identity folds, so one definition rather than
+            // two that happen to agree.
+            let route_requirements = canonical_requirement_order(&variant.route_requirements)
+                .into_iter()
+                .map(|index| variant.route_requirements[index].clone())
+                .collect();
             let entries =
                 project_entries(variant, &stage_keys, &expression_of, &keys, &payload_of)?;
             let execution_order = project_execution_order(variant, &entry_of);
@@ -513,6 +540,7 @@ impl ArtifactEnvelope {
                 profile: variant.profile.clone(),
                 feasibility_rules: variant.feasibility_rules.clone(),
                 deferred,
+                route_requirements,
                 entries,
                 execution_order,
                 dependencies,
@@ -687,6 +715,13 @@ impl ArtifactEnvelope {
             .any(|variant| variant.entries.len() > 1)
         {
             features.push(FEATURE_MULTI_STAGE_PROGRAM.to_owned());
+        }
+        if self
+            .variants
+            .iter()
+            .any(|variant| !variant.route_requirements.is_empty())
+        {
+            features.push(FEATURE_ROUTE_REQUIREMENTS.to_owned());
         }
         if self.payload_content.iter().any(Option::is_some) {
             features.push(FEATURE_EMBEDDED_PAYLOAD_CODE.to_owned());
