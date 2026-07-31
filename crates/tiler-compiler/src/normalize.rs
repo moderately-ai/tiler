@@ -63,7 +63,7 @@ use crate::rewrite::{
     ProviderDefect, RewriteAssessment, RewriteAssessmentClass, RewriteProposal,
     RewriteRuleIdentity, RewriteRuleProvider, RuleExplain, RuleRegistry, collect_proposals,
 };
-use crate::{honourability::DimensionBehaviour, policy::operation_capability};
+use crate::{policy::operation_capability, target::honourability::DimensionBehaviour};
 use std::sync::Arc;
 
 /// Stable identity of the normalization stage rule.
@@ -747,7 +747,7 @@ impl OrderedReassociationRule {
             "semantic.ordered-chain-preserved",
         );
         if capability.effective(
-            crate::honourability::NumericalDimension::Reassociation,
+            crate::target::honourability::NumericalDimension::Reassociation,
             contract,
         ) != Some(DimensionBehaviour::Transform(
             NumericalPermission::Permitted,

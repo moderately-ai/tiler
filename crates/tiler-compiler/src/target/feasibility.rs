@@ -25,9 +25,9 @@
 //!
 //! A proposal carries typed [`AxisRequirement`]s over the quantitative
 //! [`CapabilityAxis`] space *and* typed
-//! [`crate::honourability::NumericalRequirement`]s over the per-dimension
+//! [`crate::target::honourability::NumericalRequirement`]s over the per-dimension
 //! numerical-honourability space (ADR 0076 item 3). They are different
-//! authorities — [`crate::honourability`] owns the second vocabulary, and
+//! authorities — [`crate::target::honourability`] owns the second vocabulary, and
 //! numerical honourability is deliberately not a `CapabilityAxis`, because
 //! `SupportedWithExactEmulation` has no representation as a bound comparison —
 //! but a candidate has exactly one feasibility verdict, so the two compose here
@@ -70,12 +70,12 @@ use tiler_ir::program::abi::{
 use tiler_ir::schedule::ArithmeticType;
 
 use crate::explain::Quantity;
-use crate::honourability::{
+pub(crate) use crate::target::TargetProfileIdentity;
+use crate::target::honourability::{
     DeferredDimension, DimensionBehaviour, HonouredDimension, HonouringMeans, NumericalDimension,
     NumericalHonourabilityFact, NumericalRequirement, UndeclaredDimension, UnhonouredDimension,
     encode_honourability_facts,
 };
-pub(crate) use crate::target::TargetProfileIdentity;
 
 /// Domain separator of a canonical target profile descriptor.
 ///
@@ -188,7 +188,7 @@ pub(crate) use tiler_ir::program::abi::AvailabilityPhase;
 ///
 /// This space is *quantitative*: every axis has a `u64` bound, a
 /// [`Quantity`] unit, and a comparison [`Relation`]. Numerical behaviour is
-/// deliberately not in it — see [`crate::honourability`] — because a bound
+/// deliberately not in it — see [`crate::target::honourability`] — because a bound
 /// comparison can report whether an obligation is met and never by what means,
 /// and the means is what an emulated dimension's emitted operations depend on.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -1574,7 +1574,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    use crate::honourability::{
+    use crate::target::honourability::{
         CompilerBuildIdentity, CompilerBuildRole, DeclaredBehaviour, ExecutionEnvironmentIdentity,
         FactSourceProvenance, MeasurementContext, ProvenanceIdentity, RelaxationRequirement,
     };
@@ -1729,7 +1729,7 @@ mod tests {
     /// The dimensions this module's synthetic fixture speaks about.
     ///
     /// Deliberately its own list rather than
-    /// [`crate::honourability::CANONICAL_DIMENSIONS`]. These tests exercise the
+    /// [`crate::target::honourability::CANONICAL_DIMENSIONS`]. These tests exercise the
     /// *authority* — how one declaration and one requirement compose into a
     /// verdict — over a fixture that declares four dimensions, and that is a
     /// complete test of the authority whatever the governed contract's dimension

@@ -112,6 +112,22 @@
 //! }
 //! ```
 
+// The two crate-private children of this cluster, declared here rather than at
+// the crate root so the direction runs one way from a single visible place: a
+// producer declares facts through this root, `feasibility` turns them into hard
+// admit/reject predicates, and `honourability` owns the per-dimension numerical
+// vocabulary those predicates quantify over. Cost lives in `component_cost` and
+// stays outside the cluster: feasibility is not a cost.
+//
+// `pub(crate)` rather than private because a private child of a module is
+// visible only within that module and its descendants, and these two are
+// consumed across the compiler — at the crate root the same declarations were
+// crate-visible for free. `pub(crate)` restores exactly that reach and no more:
+// neither module is nameable outside this crate, so nothing here widens the
+// reviewed public `target` facade.
+pub(crate) mod feasibility;
+pub(crate) mod honourability;
+
 use std::sync::{Arc, OnceLock};
 
 use tiler_ir::identity::{push_len, push_slice};
@@ -123,11 +139,11 @@ use tiler_ir::schedule::{
 };
 use tiler_ir::semantic::{F32, ResolvedValueType};
 
-use crate::feasibility::{
+use crate::target::feasibility::{
     CapabilityAxis, CapabilityFact, CapabilityQuery, CheckedTargetProfile, FactAuthority,
     FactProvenance, FactValidityScope, FeasibilityError, MAX_TARGET_PROFILE_DESCRIPTOR_BYTES,
 };
-use crate::honourability::{
+use crate::target::honourability::{
     CompilerBuildIdentity, CompilerBuildRole, DeclaredBehaviour, DimensionBehaviour,
     ExecutionEnvironmentIdentity, FactEvidenceBasis, FactSourceProvenance, HonouringMeans,
     MAX_COMPILER_BUILDS_PER_CONTEXT, MAX_MEASUREMENT_CONTEXTS_PER_SOURCE,
@@ -3228,11 +3244,11 @@ impl From<FeasibilityError> for TargetProfileBuildError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::feasibility::{
+    use crate::target::feasibility::{
         AvailabilityPhase, AxisRequirement, FactAuthority, FactValidityScope, FeasibilityOutcome,
         FeasibilityProposal,
     };
-    use crate::honourability::{
+    use crate::target::honourability::{
         CompilerBuildIdentity, CompilerBuildRole, ExecutionEnvironmentIdentity, MeasurementContext,
         NumericalRequirement, ProvenanceIdentity, RelaxationRequirement,
     };
@@ -3510,7 +3526,7 @@ mod tests {
         assert_eq!(external.0.authority(), FactAuthority::ExternalProfile);
         assert!(matches!(
             external.0.basis(),
-            crate::honourability::FactEvidenceBasis::ExternalGuarantee { .. }
+            crate::target::honourability::FactEvidenceBasis::ExternalGuarantee { .. }
         ));
         assert_ne!(
             external.0.canonical_bytes(),
@@ -3617,7 +3633,7 @@ mod tests {
         assert_eq!(source.0.validity(), FactValidityScope::MeasuredEnvironment);
         assert!(matches!(
             source.0.basis(),
-            crate::honourability::FactEvidenceBasis::Measurement { contexts }
+            crate::target::honourability::FactEvidenceBasis::Measurement { contexts }
                 if contexts.len() == 1
                     && contexts[0].compiler_builds()[0].version() == "1.0"
                     && contexts[0].environment().platform_build() == "build-1"

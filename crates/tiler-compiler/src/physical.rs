@@ -24,18 +24,18 @@ use tiler_ir::schedule::{
     ArithmeticType, ScheduledRegionBuildError, ScheduledRegionBuilder, ScheduledRegionDiagnostic,
 };
 
-use crate::feasibility::{
-    AvailabilityPhase, AxisRequirement, CapabilityAxis, DeferredSet, FeasibilityError,
-    FeasibilityOutcome, FeasibilityProposal, ProvenEvidence, RejectionCause,
-};
-use crate::honourability::{
-    DimensionBehaviour, NumericalDimension, NumericalRequirement, UnhonouredDimension,
-};
 use crate::region::SemanticMemberId;
 use crate::request::{
     NormalizedPointwise, NormalizedPointwiseAssociation, NormalizedPointwiseLeaf,
     NormalizedPointwiseOperation, NormalizedProgramSubject, NumericalPermission,
     StrictF32NumericalContract, TargetProfile, VerifiedRequestSubject, VerifiedTargetRequest,
+};
+use crate::target::feasibility::{
+    AvailabilityPhase, AxisRequirement, CapabilityAxis, DeferredSet, FeasibilityError,
+    FeasibilityOutcome, FeasibilityProposal, ProvenEvidence, RejectionCause,
+};
+use crate::target::honourability::{
+    DimensionBehaviour, NumericalDimension, NumericalRequirement, UnhonouredDimension,
 };
 
 /// Stable candidate identity used when assessing one scheduled region.
@@ -833,12 +833,12 @@ impl AdmissionEvidence {
     }
 
     /// The capability checks already resolved at compile time.
-    pub(crate) fn predicates(&self) -> &[crate::feasibility::ResolvedPredicate] {
+    pub(crate) fn predicates(&self) -> &[crate::target::feasibility::ResolvedPredicate] {
         self.proven().predicates()
     }
 
     /// The numerical dimensions already honoured at compile time.
-    pub(crate) fn honoured(&self) -> &[crate::honourability::HonouredDimension] {
+    pub(crate) fn honoured(&self) -> &[crate::target::honourability::HonouredDimension] {
         self.proven().honoured()
     }
 }
@@ -949,7 +949,7 @@ pub(crate) fn assess_contract(
 ///
 /// This is only half of what ADR 0043 requires an artifact to record. The other
 /// half — which feasibility rules compared the candidate against these facts —
-/// is [`crate::feasibility::GOVERNED_FEASIBILITY_RULE_SET`], and it is not
+/// is [`crate::target::feasibility::GOVERNED_FEASIBILITY_RULE_SET`], and it is not
 /// derived per target because the rules do not vary by target.
 #[cfg(test)]
 pub(crate) fn target_profile_descriptor(target: &TargetProfile) -> &[u8] {

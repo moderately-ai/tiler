@@ -39,14 +39,14 @@ use tiler_ir::program::abi::{
     evaluate as abi_evaluate,
 };
 
-use crate::feasibility::DeferredPredicate;
-use crate::feasibility::{FeasibilityRuleSetIdentity, GOVERNED_FEASIBILITY_RULE_SET};
 use crate::physical::{
     NumericalRealization, RegionId, VerifiedKernel, VerifiedScheduledRegion,
     lower_structured_kernel,
 };
 use crate::region::SemanticMemberId;
 use crate::request::{LoweringProviderIdentity, TargetProfile, VerifiedTargetRequest};
+use crate::target::feasibility::DeferredPredicate;
+use crate::target::feasibility::{FeasibilityRuleSetIdentity, GOVERNED_FEASIBILITY_RULE_SET};
 
 /// Element byte width of the bounded profile's single tensor element type.
 const ELEMENT_BYTES: u64 = 4;

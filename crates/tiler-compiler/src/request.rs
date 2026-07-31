@@ -24,13 +24,13 @@ use crate::capability::{
     CanonicalLoweringRegistryIdentity, FrozenLoweringCapabilityRegistry, LoweringCapabilityRevision,
 };
 use crate::governed::{governed_lowering_capabilities, governed_scalars};
-use crate::honourability::{
-    DeferredDimension, DimensionBehaviour, NumericalDimension, NumericalRequirement,
-    UndeclaredDimension, UnhonouredDimension,
-};
 use crate::policy::{NumericalPolicyPreset, UnrepresentableDimension};
 use crate::region::SemanticMemberId;
 use crate::target::DTypeDispatchabilityResolution;
+use crate::target::honourability::{
+    DeferredDimension, DimensionBehaviour, NumericalDimension, NumericalRequirement,
+    UndeclaredDimension, UnhonouredDimension,
+};
 pub(crate) use crate::target::{TargetProfile, TargetProfileKey};
 
 const REQUEST_SCHEMA_VERSION: u32 = 1;
@@ -1071,7 +1071,7 @@ impl VerifiedRequestSubject {
 /// written through [`StrictF32NumericalContract::behaviour`] and
 /// [`DimensionBehaviour::encode`], whose matches are exhaustive over every
 /// behaviour space, and the dimensions are walked in
-/// [`crate::honourability::CANONICAL_DIMENSIONS`] order. The contract key is
+/// [`crate::target::honourability::CANONICAL_DIMENSIONS`] order. The contract key is
 /// encoded beside the field values it names and never in place of them, and the
 /// arithmetic type keying every resolution is encoded too — two contracts that
 /// resolve the same dimensions for different dtypes are different contracts
@@ -1083,8 +1083,11 @@ fn encode_contract(bytes: &mut Vec<u8>, contract: StrictF32NumericalContract) {
     push_slice(bytes, contract.key.as_bytes());
     bytes.push(contract.arithmetic.tag());
     bytes.extend_from_slice(&contract.canonical_arithmetic_nan_bits.to_be_bytes());
-    push_len(bytes, crate::honourability::CANONICAL_DIMENSIONS.len());
-    for dimension in crate::honourability::CANONICAL_DIMENSIONS {
+    push_len(
+        bytes,
+        crate::target::honourability::CANONICAL_DIMENSIONS.len(),
+    );
+    for dimension in crate::target::honourability::CANONICAL_DIMENSIONS {
         bytes.push(dimension.tag());
         contract.behaviour(dimension).encode(bytes);
     }
@@ -1776,12 +1779,12 @@ fn resolve_numerical_contract(
             }
         })?;
         match outcome {
-            crate::feasibility::FeasibilityOutcome::Proven(_) => return Ok(*contract),
-            crate::feasibility::FeasibilityOutcome::Rejected(rejection) => {
+            crate::target::feasibility::FeasibilityOutcome::Proven(_) => return Ok(*contract),
+            crate::target::feasibility::FeasibilityOutcome::Rejected(rejection) => {
                 // The representative is the canonical-first unhonourable
                 // dimension; a contract-only proposal has no capability
                 // requirements, so it is always a numerical cause.
-                if let crate::feasibility::RejectionCause::Numerical(cause) =
+                if let crate::target::feasibility::RejectionCause::Numerical(cause) =
                     rejection.representative()
                 {
                     rejections.push(ContractRejection::Unhonourable {
@@ -1790,7 +1793,7 @@ fn resolve_numerical_contract(
                     });
                 }
             }
-            crate::feasibility::FeasibilityOutcome::Unknown(unknown) => {
+            crate::target::feasibility::FeasibilityOutcome::Unknown(unknown) => {
                 rejections.extend(unknown.dimensions().first().map(|cause| {
                     ContractRejection::Undeclared {
                         contract_key: contract.key,
@@ -1798,7 +1801,7 @@ fn resolve_numerical_contract(
                     }
                 }));
             }
-            crate::feasibility::FeasibilityOutcome::Deferred(deferred) => {
+            crate::target::feasibility::FeasibilityOutcome::Deferred(deferred) => {
                 rejections.extend(deferred.dimensions().first().map(|cause| {
                     ContractRejection::Deferred {
                         contract_key: contract.key,
@@ -3026,7 +3029,7 @@ mod tests {
             assert!(matches!(rejection, ContractRejection::Undeclared { .. }));
             assert_eq!(
                 rejection.dimension(),
-                crate::honourability::NumericalDimension::InputSubnormals
+                crate::target::honourability::NumericalDimension::InputSubnormals
             );
         }
     }
@@ -3036,13 +3039,13 @@ mod tests {
     #[test]
     fn the_governed_baseline_honours_every_registered_contract() {
         let target = TargetProfile::governed();
-        let expected = crate::honourability::CANONICAL_DIMENSIONS
+        let expected = crate::target::honourability::CANONICAL_DIMENSIONS
             .into_iter()
             .filter(|dimension| crate::policy::is_consumable(*dimension))
             .count();
         for contract in StrictF32NumericalContract::governed_profile() {
             let outcome = crate::physical::assess_contract(&target, contract).unwrap();
-            let crate::feasibility::FeasibilityOutcome::Proven(evidence) = outcome else {
+            let crate::target::feasibility::FeasibilityOutcome::Proven(evidence) = outcome else {
                 panic!("the baseline honours {}", contract.key);
             };
             assert_eq!(
@@ -3053,7 +3056,7 @@ mod tests {
             for honoured in evidence.honoured() {
                 assert_eq!(
                     honoured.means(),
-                    crate::honourability::HonouringMeans::SupportedExactly
+                    crate::target::honourability::HonouringMeans::SupportedExactly
                 );
                 assert_eq!(honoured.arithmetic(), contract.arithmetic);
                 assert_eq!(honoured.profile().key(), target.profile_key().as_str());
@@ -3075,7 +3078,7 @@ mod tests {
         let mut contract = StrictF32NumericalContract::governed();
         contract.arithmetic = ArithmeticType::F16;
         let outcome = crate::physical::assess_contract(&target, contract).unwrap();
-        let crate::feasibility::FeasibilityOutcome::Unknown(unknown) = outcome else {
+        let crate::target::feasibility::FeasibilityOutcome::Unknown(unknown) = outcome else {
             panic!("a profile silent about f16 cannot prove an f16 contract");
         };
         let first = unknown.dimensions().first().expect("a cause is reported");
@@ -3253,7 +3256,7 @@ mod tests {
 #[cfg(test)]
 mod subject_budget {
     use super::*;
-    use crate::honourability::encode_declared_behaviours;
+    use crate::target::honourability::encode_declared_behaviours;
 
     /// Reports what the canonical explain subject is made of, byte by byte.
     ///

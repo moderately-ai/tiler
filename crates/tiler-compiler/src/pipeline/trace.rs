@@ -1465,13 +1465,13 @@ mod tests {
 
     #[test]
     fn target_opaque_call_causes_preserve_the_authority_payloads() {
-        use crate::feasibility::RejectionCause;
-        use crate::honourability::{
+        use crate::physical::ResourceVerdict;
+        use crate::request::{StrictF32NumericalContract, TargetProfile};
+        use crate::target::feasibility::RejectionCause;
+        use crate::target::honourability::{
             DeclaredBehaviour, DimensionBehaviour, HonouringMeans, NumericalDimension,
             UnhonouredDimension, governed_profile_source,
         };
-        use crate::physical::ResourceVerdict;
-        use crate::request::{StrictF32NumericalContract, TargetProfile};
         use tiler_ir::schedule::{ArithmeticType, NumericalPermission, ResourceRequirements};
 
         let realization = StrictF32NumericalContract::governed().realization();
@@ -1521,7 +1521,7 @@ mod tests {
                 HonouringMeans::Unsupported,
                 governed_profile_source(),
             )
-            .attributed_to(crate::feasibility::TargetProfileIdentity::new(
+            .attributed_to(crate::target::feasibility::TargetProfileIdentity::new(
                 "tiler.test.profile.v1",
             )),
             required,

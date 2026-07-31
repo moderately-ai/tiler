@@ -49,7 +49,7 @@
 //! # Three claims kept apart
 //!
 //! - **Reserved in the type system.** Every dimension in
-//!   [`crate::honourability::NumericalDimension`] can be stated, declared, and
+//!   [`crate::target::honourability::NumericalDimension`] can be stated, declared, and
 //!   assessed.
 //! - **Implemented.** [`REALIZED_DIMENSIONS`] names the eight consumable
 //!   dimensions the scheduled-region IR carries.
@@ -84,8 +84,8 @@ use tiler_ir::schedule::{
     NumericalPermission, SubnormalMode,
 };
 
-use crate::honourability::{DimensionBehaviour, NumericalDimension, NumericalRequirement};
 use crate::request::StrictF32NumericalContract;
+use crate::target::honourability::{DimensionBehaviour, NumericalDimension, NumericalRequirement};
 use tiler_ir::semantic::{F32, OpKey};
 
 /// The accuracy envelope the relaxed preset authorizes.
@@ -380,7 +380,7 @@ const fn realized_behaviour(dimension: NumericalDimension) -> DimensionBehaviour
 pub(crate) fn unrepresentable_dimension(
     contract: &StrictF32NumericalContract,
 ) -> Option<UnrepresentableDimension> {
-    crate::honourability::CANONICAL_DIMENSIONS
+    crate::target::honourability::CANONICAL_DIMENSIONS
         .into_iter()
         .filter(|dimension| !REALIZED_DIMENSIONS.contains(dimension))
         .find_map(|dimension| {
@@ -417,7 +417,7 @@ pub(crate) fn unrepresentable_dimension(
 pub(crate) fn dimension_requirements(
     contract: &StrictF32NumericalContract,
 ) -> Vec<NumericalRequirement> {
-    crate::honourability::CANONICAL_DIMENSIONS
+    crate::target::honourability::CANONICAL_DIMENSIONS
         .into_iter()
         .filter(|dimension| is_consumable(*dimension))
         .map(|dimension| {
@@ -534,8 +534,10 @@ mod tests {
         NumericalPolicyPreset, REALIZED_DIMENSIONS, dimension_requirements, is_consumable,
         operation_capabilities, operation_capability, unrepresentable_dimension,
     };
-    use crate::honourability::{CANONICAL_DIMENSIONS, DimensionBehaviour, NumericalDimension};
     use crate::request::StrictF32NumericalContract;
+    use crate::target::honourability::{
+        CANONICAL_DIMENSIONS, DimensionBehaviour, NumericalDimension,
+    };
     use tiler_ir::schedule::{
         ExceptionalValueAssumption, NumericalPermission, ValueDomainProvenance,
     };
