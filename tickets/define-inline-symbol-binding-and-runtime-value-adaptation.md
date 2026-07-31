@@ -1,7 +1,7 @@
 ---
 id: define-inline-symbol-binding-and-runtime-value-adaptation
 title: Define inline symbol binding and runtime value adaptation
-status: todo
+status: in-progress
 priority: p1
 dependencies: [promote-the-symbolic-index-profile-to-a-public-boundary, admit-the-tiler-facade-and-proc-macro-crate-boundary]
 related: [prototype-inline-proc-macro-frontend, promote-the-symbolic-index-profile-to-a-public-boundary]
@@ -9,6 +9,9 @@ scopes: [implementation/frontend, implementation/ir, implementation/runtime, con
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: loop-define-inlin
+lease_expires_at: 1785532186
 ---
 ## User-visible outcome
 

@@ -1,7 +1,7 @@
 ---
 id: correct-stale-public-compiler-boundary-authorities
 title: Correct stale public compiler boundary authorities
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [prototype-public-compiler-api, wire-capability-and-refinement-into-compile-path, correct-the-stale-post-vertical-implementation-status, record-the-arithmetic-type-in-the-numerical-honourability-contract, define-backend-device-and-execution-context-vocabulary]
@@ -9,6 +9,9 @@ scopes: [contracts/optimizer, contracts/foundation, contracts/numerics, contract
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, compiler, correctness]
+claimed_from: todo
+assignee: loop-correct-stal
+lease_expires_at: 1785532186
 ---
 ## User-visible outcome
 

@@ -1,7 +1,7 @@
 ---
 id: close-or-retype-the-operand-permutation-inference
 title: Close or retype the operand-permutation inference in the first Metal profile
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [construct-and-bind-the-first-authoritative-metal-compile-profile, measure-macos-apple9-f32-under-unified-msl4-profile, admit-measured-compile-profile-sources-across-fact-families]
@@ -9,6 +9,9 @@ scopes: [research/target-profiles, research/apple-targets, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, metal, target-profile, provenance]
+claimed_from: todo
+assignee: loop-close-or-ret
+lease_expires_at: 1785532186
 ---
 ## User-visible outcome
 
