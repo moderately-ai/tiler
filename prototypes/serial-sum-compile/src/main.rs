@@ -3,9 +3,17 @@
 //! It drives the already-implemented component capabilities — semantic
 //! construction, compilation, MSL emission, and offline Metal compilation —
 //! through one path, and implements no component capability of its own.
-//! `tiler-build` owns checked-plan consumption, Metal emission and AOT
-//! preparation, artifact assembly, and cache acceptance; this prototype
-//! supplies proof policy, target facts, output names, and sidecars.
+//! `tiler-build` owns checked-plan consumption, the authoritative macOS Metal
+//! declaration, Metal emission and AOT preparation, artifact assembly, and cache
+//! acceptance; this prototype supplies proof policy, output names, and sidecars.
+//!
+//! **It states no target fact of its own, and that is a migration rather than a
+//! simplification.** It used to declare a buffer capacity, an MSL 3.1 / macOS
+//! 14.0 deployment record, and per-dtype subnormal behaviour inline, and to
+//! compile against the compiler's governed prototype profile. Every one of those
+//! is now read from [`BoundMetalCompileDeclaration`], whose rows each have a
+//! named authority in the compile-profile authority ledger; a prototype is not a
+//! source of target facts.
 //!
 //! # What this proves and what it does not
 //!
@@ -73,11 +81,17 @@ use std::process::ExitCode;
 use tiler_artifact::program::ArtifactCodecFailure;
 #[cfg(test)]
 use tiler_artifact::program::decode_artifact;
-use tiler_build::{MetalPlanBuildError, MetalPlanBuildPolicy, accept_or_publish_metal_plan};
+use tiler_build::{
+    BoundMetalCompileDeclaration, BoundMetalDeclarationError, MetalPlanBuildError,
+    accept_or_publish_metal_plan,
+};
 #[cfg(test)]
 use tiler_build::{metal_compile_request, prepare_metal_payload};
 use tiler_cache::expansion::{ExpansionCache, Resolution};
-use tiler_compiler::session::{CompileFailure, NumericalContract, compile_governed};
+use tiler_compiler::session::{
+    Compilation, CompileFailure, CompileRequest, NumericalContract, compile,
+};
+use tiler_compiler::target::{TargetRequest, TargetRequestError};
 use tiler_ir::semantic::{
     F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
     SemanticProgramBuilder, StrictSerialF32Sum,
@@ -85,25 +99,15 @@ use tiler_ir::semantic::{
 use tiler_ir::shape::{Axis, Shape};
 #[cfg(test)]
 use tiler_metal::emit::emit_translation_unit;
-use tiler_metal::target::{
-    LaunchIndexRealization, MetalDeploymentMinimum, MetalEmissionRealization,
-    MetalFloatArithmeticType, MetalFlushedZeroSign, MetalPlatform, MetalSubnormalArithmetic,
-    MetalSubnormalArithmeticFacts, MetalTargetFacts, MslLanguageVersion,
-};
 use tiler_metal_aot::driver::Toolchain;
-use tiler_metal_aot::input::{NumericalRealization, OptimizationLevel};
-
-/// The buffer argument-table capacity Apple's feature tables state per compute
-/// function for every current family.
-///
-/// Stated by the caller rather than derived, so a signature needing more
-/// bindings is rejected instead of emitted with an unaddressable attribute.
-const BUFFER_BINDING_LIMIT: u32 = 31;
+use tiler_metal_aot::input::OptimizationLevel;
 
 /// Rows of the packaged program's input; each row reduces to one output element.
 ///
-/// One is deliberate. The governed target profile's only portable compile-time
-/// grid-axis guarantee is four threads, and the materialized nontrivial plan's
+/// One is deliberate. The authoritative declaration's grid-axis row is a
+/// deliberately conservative four-thread compile guarantee — the macOS 26.5 SDK
+/// contract proves that extent representable and states no maximum at all — and
+/// the materialized nontrivial plan's
 /// pointwise stage launches `rows * columns` threads. With the three
 /// contributors required below, one row keeps both the fused and materialized
 /// programs feasible without inventing a larger target capability. The
@@ -159,48 +163,53 @@ const PLAN_ROLES: [&str; 2] = ["selected", "materialized"];
 /// sharing a constant neither may import.
 const SIDECAR_SUFFIX: &str = ".proof";
 
-/// The target facts this producer emits for.
+/// The authoritative macOS Metal declaration this producer compiles and emits under.
 ///
-/// macOS 14.0 under MSL 3.1, declaring the measured Apple subnormal behaviour
-/// once per floating-point arithmetic type: `f32` arithmetic flushes subnormal
-/// operands and results to zero on every governed family, and `f16` arithmetic
-/// preserves them on the same hardware in the same math modes. Declaring them is
-/// what lets emission reject a kernel whose numerical contract the target cannot
-/// honour, rather than emitting one that silently computes something else — and
-/// declaring them separately is what stops the `f32` fact answering for a width
-/// it was not measured at.
-fn target_facts() -> MetalTargetFacts {
-    MetalTargetFacts::new(
-        MslLanguageVersion::Metal3_1,
-        MetalPlatform::MacOs,
-        MetalDeploymentMinimum::new(14, 0),
-        MetalSubnormalArithmeticFacts::unmeasured()
-            .stating(
-                MetalFloatArithmeticType::F32,
-                MetalSubnormalArithmetic::FlushesToZero {
-                    zero_sign: MetalFlushedZeroSign::PreservesSign,
-                },
-            )
-            .stating(
-                MetalFloatArithmeticType::F16,
-                MetalSubnormalArithmetic::PreservesSubnormals,
-            ),
-        BUFFER_BINDING_LIMIT,
-    )
+/// Every quantitative, dispatchability, and `f32` numerical row it carries has a
+/// named authority in
+/// `docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md`.
+/// This producer states none of them: it used to state a convenient buffer
+/// capacity, a governed prototype profile, and an MSL 3.1 / macOS 14.0 record
+/// that the retained MSL 4 measurement did not produce, and the whole point of
+/// the migration is that a prototype is no longer a source of target facts.
+fn declaration() -> Result<BoundMetalCompileDeclaration, ProducerError> {
+    BoundMetalCompileDeclaration::first_macos_apple9().map_err(ProducerError::Declaration)
 }
 
-/// The source-level choices this producer selects independently of target facts.
-fn emission_realization() -> MetalEmissionRealization {
-    MetalEmissionRealization::new(LaunchIndexRealization::ThreadPositionInGridUInt)
-}
+/// The optimization level this producer selects.
+///
+/// Separate from the declaration because no ledger row is scoped to it: the
+/// measured numerical rows are isolated by the fast-math attributes the front
+/// end emitted, which `-O` does not change.
+const OPTIMIZATION: OptimizationLevel = OptimizationLevel::Default;
 
-/// The complete payload-production policy this producer selects.
-fn build_policy() -> MetalPlanBuildPolicy {
-    MetalPlanBuildPolicy::new(
-        emission_realization(),
-        OptimizationLevel::Default,
-        NumericalRealization::strict_baseline(),
-    )
+/// Compiles one program against the authoritative declaration's profile.
+///
+/// `compile_governed` is deliberately not used any more. It selects the
+/// compiler's own governed prototype profile, whose grid, binding, and local
+/// memory values are internally usable declarations rather than sourced target
+/// facts — and `accept_or_publish_metal_plan` now refuses a plan compiled under
+/// any profile but the declared one, so a slip back to it fails closed rather
+/// than silently publishing an artifact attributed to the wrong target.
+fn compile_under(
+    declaration: &BoundMetalCompileDeclaration,
+    program: &SemanticProgram,
+) -> Result<Compilation, ProducerError> {
+    let targets = TargetRequest::new([declaration.profile().clone()])
+        .map_err(ProducerError::TargetRequest)?;
+    let batch = compile(CompileRequest::new(
+        program,
+        NumericalContract::FlushSubnormalsToZeroF32,
+        targets,
+    ))
+    .map_err(ProducerError::Compile)?;
+    batch
+        .into_targets()
+        .pop()
+        .ok_or(ProducerError::NoSelection)?
+        .into_parts()
+        .1
+        .map_err(|failure| ProducerError::TargetCompile(Box::new(failure)))
 }
 
 /// Builds the bounded profile's scale-then-reduce program over one shape.
@@ -248,14 +257,11 @@ fn emit_and_compile(
     tiler_metal::record::MetalTranslationUnit,
     tiler_build::CompiledMetalPayload,
 ) {
-    let unit = emit_translation_unit(kernels, &target_facts(), emission_realization())
+    let declaration = declaration().expect("the authoritative declaration assembles");
+    let unit = emit_translation_unit(kernels, declaration.metal_facts(), declaration.emission())
         .expect("the kernels emit");
-    let request = metal_compile_request(
-        &unit,
-        OptimizationLevel::Default,
-        NumericalRealization::strict_baseline(),
-    )
-    .expect("the emitted target and numerical realization are compilable");
+    let request = metal_compile_request(&unit, OPTIMIZATION, declaration.numerical_realization())
+        .expect("the emitted target and numerical realization are compilable");
     let prepared = Toolchain::system()
         .prepare(&request)
         .expect("the offline toolchain prepares");
@@ -298,6 +304,7 @@ struct Publication<'a> {
     base: &'a std::path::Path,
     cache: &'a ExpansionCache,
     toolchain: &'a Toolchain,
+    declaration: &'a BoundMetalCompileDeclaration,
 }
 
 /// One offline pass: publish every member of the proof matrix.
@@ -316,19 +323,31 @@ fn run() -> Result<(), ProducerError> {
     ));
     let cache = ExpansionCache::open(&cache_root);
     let toolchain = Toolchain::system();
+    let declaration = declaration()?;
+    println!(
+        "authoritative target profile: {} ({} descriptor byte(s)), {} {} deployment minimum {}, \
+         AOT target {} under {}",
+        declaration.profile().profile_key(),
+        declaration.profile().canonical_descriptor().len(),
+        declaration.metal_facts().platform,
+        declaration.metal_facts().language,
+        declaration.metal_facts().deployment_minimum,
+        declaration.aot_target().triple(),
+        declaration.aot_target().std_token(),
+    );
     let publication = Publication {
         base: &base,
         cache: &cache,
         toolchain: &toolchain,
+        declaration: &declaration,
     };
     let mut published = 0_usize;
     for (class, columns) in REDUCTION_CLASSES {
         let program = serial_sum_program(ROWS, columns);
-        // Stated, not defaulted. The strict contract is unhonourable on every
-        // governed Apple family, so this producer says which contract its
-        // program means rather than discovering that by reading a rejection.
-        let compilation = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
-            .map_err(ProducerError::Compile)?;
+        // Stated, not defaulted. The strict contract is unhonourable on this
+        // measured target, so this producer says which contract its program
+        // means rather than discovering that by reading a rejection.
+        let compilation = compile_under(&declaration, &program)?;
         println!(
             "{class} (reduced extent {columns}): target profile {}",
             compilation.target_profile_key(),
@@ -372,15 +391,14 @@ fn publish_member(
     program: &SemanticProgram,
     plan: tiler_compiler::session::PlanAlternative<'_>,
 ) -> Result<(), ProducerError> {
-    let facts = target_facts();
     let entry_count = plan.kernels().len();
     let accepted = accept_or_publish_metal_plan(
         publication.cache,
         publication.toolchain,
         program,
         plan,
-        &facts,
-        build_policy(),
+        publication.declaration,
+        OPTIMIZATION,
     )
     .map_err(ProducerError::Plan)?;
     let artifact = accepted.artifact();
@@ -465,7 +483,10 @@ fn proof_sidecar(envelope: &std::path::Path) -> PathBuf {
 enum ProducerError {
     Usage,
     Write(String, std::io::Error),
+    Declaration(BoundMetalDeclarationError),
+    TargetRequest(TargetRequestError),
     Compile(CompileFailure),
+    TargetCompile(Box<tiler_compiler::session::TargetCompileFailure>),
     NoSelection,
     NoMaterializedAlternative,
     Plan(MetalPlanBuildError),
@@ -482,7 +503,19 @@ impl fmt::Display for ProducerError {
                  and its artifact identity to <path>.identity",
             ),
             Self::Write(path, cause) => write!(formatter, "{path} could not be written: {cause}"),
+            Self::Declaration(cause) => write!(
+                formatter,
+                "the authoritative Metal declaration did not assemble: {cause}",
+            ),
+            Self::TargetRequest(cause) => write!(
+                formatter,
+                "the declared profile is not a valid target request: {cause}",
+            ),
             Self::Compile(failure) => write!(formatter, "the program did not compile: {failure:?}"),
+            Self::TargetCompile(failure) => write!(
+                formatter,
+                "the authoritative target refused this program: {failure}",
+            ),
             Self::NoSelection => formatter.write_str("the portfolio retained no selected plan"),
             Self::NoMaterializedAlternative => formatter.write_str(
                 "the portfolio retained no materialized alternative, so the proof cannot compare \
@@ -501,28 +534,55 @@ impl fmt::Display for ProducerError {
 #[cfg(test)]
 mod tests {
     use super::{
-        COLUMNS, PLAN_ROLES, REDUCTION_CLASSES, ROWS, build_policy, emission_realization,
-        serial_sum_program, sidecar, target_facts,
+        COLUMNS, OPTIMIZATION, PLAN_ROLES, REDUCTION_CLASSES, ROWS, compile_under, declaration,
+        serial_sum_program, sidecar,
     };
     use crate::{ArtifactCodecFailure, decode_artifact};
     use tiler_artifact::proof::decode_proof_sidecar;
+    use tiler_build::BoundMetalCompileDeclaration;
     use tiler_cache::expansion::{ExpansionCache, Resolution};
     use tiler_compiler::capability::{
         LoweringCapabilityRegistryBuilder, install_governed_index_access,
     };
+    use tiler_compiler::session::NumericalContract;
     use tiler_compiler::session::{
         CompileFailureClass, CompileRequest, InstalledCapabilities, compile,
     };
-    use tiler_compiler::session::{NumericalContract, compile_governed};
-    use tiler_compiler::target::{TargetProfile, TargetRequest};
+    use tiler_compiler::target::TargetRequest;
     use tiler_ir::index::FrozenScalarRegistry;
     use tiler_ir::semantic::multiply_f32_op;
     use tiler_metal::emit::emit_translation_unit;
+    use tiler_metal::target::{MetalDeploymentMinimum, MslLanguageVersion};
     use tiler_metal_aot::driver::Toolchain;
 
-    fn governed_targets() -> TargetRequest {
-        TargetRequest::new([TargetProfile::governed()])
-            .expect("the governed singleton target request is valid")
+    fn declared() -> BoundMetalCompileDeclaration {
+        declaration().expect("the authoritative declaration assembles")
+    }
+
+    /// The authoritative singleton target request this producer compiles under.
+    fn declared_targets() -> TargetRequest {
+        TargetRequest::new([declared().profile().clone()])
+            .expect("the authoritative singleton target request is valid")
+    }
+
+    /// The producer emits for MSL 4.0 / macOS 26.0, not the superseded record.
+    ///
+    /// The two values it used to state are asserted *absent* rather than merely
+    /// unchecked: reusing the MSL 3.1 / macOS 14.0 record here would attribute
+    /// the retained MSL 4 measurements to a compilation that did not produce
+    /// them, and nothing else in this crate would notice.
+    #[test]
+    fn the_producer_emits_for_the_measured_deployment_record() {
+        let declaration = declared();
+        assert_eq!(
+            declaration.metal_facts().language,
+            MslLanguageVersion::Metal4_0
+        );
+        assert_eq!(
+            declaration.metal_facts().deployment_minimum,
+            MetalDeploymentMinimum::new(26, 0),
+        );
+        assert_eq!(declaration.aot_target().triple(), "air64-apple-macos26.0");
     }
 
     /// The offline path composes as far as deterministic MSL, without a
@@ -534,15 +594,18 @@ mod tests {
     #[test]
     fn the_selected_program_emits_deterministic_metal_source() {
         let program = serial_sum_program(ROWS, COLUMNS);
-        let compilation = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
-            .expect("the governed program compiles");
+        let declaration = declared();
+        let compilation =
+            compile_under(&declaration, &program).expect("the declared program compiles");
         let selected = compilation.selected().expect("a selected alternative");
         let kernels: Vec<_> = selected.kernels().iter().collect();
 
-        let first = emit_translation_unit(&kernels, &target_facts(), emission_realization())
-            .expect("the kernels emit");
-        let second = emit_translation_unit(&kernels, &target_facts(), emission_realization())
-            .expect("the kernels emit");
+        let first =
+            emit_translation_unit(&kernels, declaration.metal_facts(), declaration.emission())
+                .expect("the kernels emit");
+        let second =
+            emit_translation_unit(&kernels, declaration.metal_facts(), declaration.emission())
+                .expect("the kernels emit");
         assert_eq!(
             first.source(),
             second.source(),
@@ -864,16 +927,17 @@ mod tests {
         ));
         let cache = ExpansionCache::open(directory.join("cache"));
         let program = serial_sum_program(ROWS, COLUMNS);
-        let compilation = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
-            .expect("the governed program compiles");
+        let declaration = declared();
+        let compilation =
+            compile_under(&declaration, &program).expect("the declared program compiles");
         let selected = compilation.selected().expect("a selected alternative");
         let accepted = tiler_build::accept_or_publish_metal_plan(
             &cache,
             &Toolchain::system(),
             &program,
             selected,
-            &target_facts(),
-            build_policy(),
+            &declaration,
+            OPTIMIZATION,
         )
         .expect("the checked plan resolves");
         let artifact = accepted.artifact().clone();
@@ -919,17 +983,17 @@ mod tests {
             CompileRequest::new(
                 &program,
                 NumericalContract::FlushSubnormalsToZeroF32,
-                governed_targets(),
+                declared_targets(),
             )
             .with_capabilities(installed),
         )
-        .expect("a caller-installed registry compiles the governed program");
+        .expect("a caller-installed registry compiles against the declared profile");
         let outcomes: Vec<_> = batch.targets().collect();
         assert_eq!(outcomes.len(), 1);
         assert!(
             outcomes[0]
                 .outcome()
-                .expect("the governed target compiles")
+                .expect("the declared target compiles")
                 .selected()
                 .is_some(),
             "the caller's own registry resolved every occurrence",
@@ -963,7 +1027,7 @@ mod tests {
             CompileRequest::new(
                 &program,
                 NumericalContract::FlushSubnormalsToZeroF32,
-                governed_targets(),
+                declared_targets(),
             )
             .with_capabilities(installed),
         );
@@ -1049,8 +1113,8 @@ mod tests {
     #[test]
     fn metallib_byte_reproducibility_is_measured_and_recorded() {
         let program = serial_sum_program(ROWS, COLUMNS);
-        let compilation = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
-            .expect("the governed program compiles");
+        let compilation =
+            compile_under(&declared(), &program).expect("the declared program compiles");
         let selected = compilation.selected().expect("a selected alternative");
         let kernels: Vec<_> = selected.kernels().iter().collect();
 
@@ -1085,8 +1149,8 @@ mod tests {
         tiler_build::CompiledMetalPayload,
     ) {
         let program = serial_sum_program(ROWS, COLUMNS);
-        let compilation = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
-            .expect("the governed program compiles");
+        let compilation =
+            compile_under(&declared(), &program).expect("the declared program compiles");
         let plan = compilation.selected().expect("a selected alternative");
         let kernels: Vec<_> = plan.kernels().iter().collect();
         super::emit_and_compile(&kernels)
@@ -1103,40 +1167,49 @@ mod tests {
     ///
     /// Both directions are asserted, because the point is that the caller's
     /// statement is load-bearing: the strict contract is still refused on this
-    /// target — it is not deliverable and must not be emitted — and the
-    /// flush-accepting contract is honoured. Nothing was relaxed to reach the
-    /// second; a different contract was stated.
+    /// target and the flush-accepting contract is honoured. Nothing was relaxed
+    /// to reach the second; a different contract was stated.
+    ///
+    /// **Where the refusal now falls moved with the migration, and that is the
+    /// point.** Against the compiler's governed prototype profile — which
+    /// declared preserved *and* flushing subnormals both honourable — a strict
+    /// contract compiled and was refused later, at Metal emission. The
+    /// authoritative declaration carries the measured complete exclusive table
+    /// instead, in which preservation is `Unsupported`, so the refusal happens
+    /// at the compiler's own numerical-contract check and no plan is produced at
+    /// all. `tiler-build`'s `a_direct_emitter_call_still_fails_closed_on_the_
+    /// declared_realization` keeps the later backend recheck exercised.
     #[test]
     fn the_stated_contract_decides_whether_this_target_honours_it() {
         let program = serial_sum_program(ROWS, COLUMNS);
+        let declaration = declared();
 
-        let strict = compile_governed(&program, NumericalContract::StrictF32)
-            .expect("the strict program still compiles");
-        let strict_plan = strict.selected().expect("a selected alternative");
-        let strict_kernels: Vec<_> = strict_plan.kernels().iter().collect();
-        let strict_unit =
-            emit_translation_unit(&strict_kernels, &target_facts(), emission_realization())
-                .expect("the kernels emit");
-        assert!(
-            strict_unit.require_declared_realization().is_err(),
-            "a subnormal-preserving contract is still unrealizable on a flushing target",
-        );
-        assert_eq!(
-            strict_unit
-                .numerical_gaps()
-                .iter()
-                .map(|gap| gap.rule())
-                .collect::<Vec<_>>(),
-            ["subnormal-flush-in-arithmetic"],
-        );
+        let batch = compile(CompileRequest::new(
+            &program,
+            NumericalContract::StrictF32,
+            declared_targets(),
+        ))
+        .expect("the strict request is well formed");
+        batch
+            .targets()
+            .next()
+            .expect("one target outcome")
+            .outcome()
+            .expect_err(
+                "the measured exclusive table declares preserved subnormals unsupported, so a \
+                 strict contract is refused before a plan exists",
+            );
 
-        let flushing = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
-            .expect("the flush-accepting program compiles");
+        let flushing =
+            compile_under(&declaration, &program).expect("the flush-accepting program compiles");
         let flush_plan = flushing.selected().expect("a selected alternative");
         let flush_kernels: Vec<_> = flush_plan.kernels().iter().collect();
-        let flush_unit =
-            emit_translation_unit(&flush_kernels, &target_facts(), emission_realization())
-                .expect("the kernels emit");
+        let flush_unit = emit_translation_unit(
+            &flush_kernels,
+            declaration.metal_facts(),
+            declaration.emission(),
+        )
+        .expect("the kernels emit");
         flush_unit
             .require_declared_realization()
             .expect("the target honours the contract the caller stated");

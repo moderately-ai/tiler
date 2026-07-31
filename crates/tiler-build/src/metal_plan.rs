@@ -28,20 +28,26 @@ use tiler_compiler::session::{Compilation, PlanAlternative};
 use tiler_ir::semantic::SemanticProgram;
 use tiler_metal::diagnostic::MetalEmitError;
 use tiler_metal::emit::emit_translation_unit;
-use tiler_metal::target::{MetalEmissionRealization, MetalTargetFacts};
 use tiler_metal_aot::driver::Toolchain;
-use tiler_metal_aot::input::{NumericalRealization, OptimizationLevel};
+use tiler_metal_aot::input::OptimizationLevel;
 
 use crate::{
-    AcceptedMetalArtifact, CompiledMetalPayload, MetalArtifactProtocolError, MetalAssemblyError,
-    MetalCacheError, accept_or_publish_single_payload_metal_artifact, metal_compile_request,
-    prepare_metal_payload,
+    AcceptedMetalArtifact, BoundMetalCompileDeclaration, CompiledMetalPayload,
+    MetalArtifactProtocolError, MetalAssemblyError, MetalCacheError, MetalPlanProfileMismatch,
+    accept_or_publish_single_payload_metal_artifact, metal_compile_request, prepare_metal_payload,
 };
 
 /// Why a checked compiler plan did not produce an accepted Metal artifact.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum MetalPlanBuildError {
+    /// The plan was not compiled under the bound declaration's target profile.
+    ///
+    /// First in this enum because it is checked first: a plan assessed against
+    /// another profile must not reach Metal emission at all, since everything
+    /// emission then decides — binding capacity, numerical realizability, launch
+    /// geometry — was decided against a target the artifact will not declare.
+    DeclaredProfile(MetalPlanProfileMismatch),
     /// The checked structured kernels have no realization in the stated Metal target.
     Emission(MetalEmitError),
     /// Request derivation, AOT preparation, or emission/preparation correspondence failed.
@@ -104,6 +110,7 @@ impl AcceptedMetalPlanArtifact {
 impl fmt::Display for MetalPlanBuildError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::DeclaredProfile(error) => error.fmt(formatter),
             Self::Emission(error) => write!(formatter, "Metal emission failed: {error}"),
             Self::Preparation(error) | Self::CacheCompilation(error) => error.fmt(formatter),
             Self::ArtifactBuild(error) => write!(formatter, "artifact assembly failed: {error}"),
@@ -132,6 +139,7 @@ impl fmt::Display for MetalPlanBuildError {
 impl Error for MetalPlanBuildError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::DeclaredProfile(error) => Some(error),
             Self::Emission(error) => Some(error),
             Self::Preparation(error) | Self::CacheCompilation(error) => Some(error),
             Self::ArtifactBuild(error) => Some(error),
@@ -139,95 +147,6 @@ impl Error for MetalPlanBuildError {
             Self::CacheSubject(error) => Some(error),
             Self::CacheEncoding(error) | Self::CacheArtifact(error) => Some(error),
             Self::CacheProtocol(error) => Some(error),
-        }
-    }
-}
-
-/// Explicit source-emission and AOT policy for one checked Metal plan.
-///
-/// These choices are grouped because they govern production of the carried
-/// payload, not because they establish target capability. In particular,
-/// [`Self::emission`] remains independent of the [`MetalTargetFacts`] supplied
-/// to [`accept_or_publish_metal_plan`].
-///
-/// A selected launch declaration is not a launch-capacity fact:
-///
-/// ```compile_fail
-/// use tiler_compiler::target::{
-///     TargetFactSource, TargetProfileBuilder, TargetProfileKey,
-/// };
-/// use tiler_metal::target::{LaunchIndexRealization, MetalEmissionRealization};
-///
-/// let emission = MetalEmissionRealization::new(
-///     LaunchIndexRealization::ThreadPositionInGridUInt,
-/// );
-/// let source: TargetFactSource = unimplemented!();
-/// let mut profile =
-///     TargetProfileBuilder::new(TargetProfileKey::new("example.target.v1".to_owned()).unwrap());
-/// profile
-///     .declare_max_threads_per_grid_axis(emission, source)
-///     .unwrap();
-/// ```
-///
-/// A selected launch declaration is not index-arithmetic support:
-///
-/// ```compile_fail
-/// use tiler_compiler::target::{
-///     TargetFactSource, TargetProfileBuilder, TargetProfileKey,
-/// };
-/// use tiler_metal::target::{LaunchIndexRealization, MetalEmissionRealization};
-///
-/// let emission = MetalEmissionRealization::new(
-///     LaunchIndexRealization::ThreadPositionInGridUInt,
-/// );
-/// let source: TargetFactSource = unimplemented!();
-/// let mut profile =
-///     TargetProfileBuilder::new(TargetProfileKey::new("example.target.v1".to_owned()).unwrap());
-/// profile
-///     .declare_index_arithmetic(emission, source)
-///     .unwrap();
-/// ```
-///
-/// A selected launch declaration is not a device-address width:
-///
-/// ```compile_fail
-/// use tiler_compiler::target::{
-///     TargetFactSource, TargetProfileBuilder, TargetProfileKey,
-/// };
-/// use tiler_metal::target::{LaunchIndexRealization, MetalEmissionRealization};
-///
-/// let emission = MetalEmissionRealization::new(
-///     LaunchIndexRealization::ThreadPositionInGridUInt,
-/// );
-/// let source: TargetFactSource = unimplemented!();
-/// let mut profile =
-///     TargetProfileBuilder::new(TargetProfileKey::new("example.target.v1".to_owned()).unwrap());
-/// profile
-///     .declare_device_address_width(emission, source)
-///     .unwrap();
-/// ```
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MetalPlanBuildPolicy {
-    /// The exact source-level realization selected for Metal emission.
-    pub emission: MetalEmissionRealization,
-    /// The explicit optimization level selected for offline compilation.
-    pub optimization: OptimizationLevel,
-    /// The explicit numerical realization selected for offline compilation.
-    pub numerical: NumericalRealization,
-}
-
-impl MetalPlanBuildPolicy {
-    /// Assembles the complete payload-production policy.
-    #[must_use]
-    pub const fn new(
-        emission: MetalEmissionRealization,
-        optimization: OptimizationLevel,
-        numerical: NumericalRealization,
-    ) -> Self {
-        Self {
-            emission,
-            optimization,
-            numerical,
         }
     }
 }
@@ -241,32 +160,54 @@ impl MetalPlanBuildPolicy {
 /// not retain the graph; the artifact builder verifies it against the plan's
 /// target-neutral program before returning.
 ///
-/// `target` and `policy` are explicit inputs. Target facts and the selected
-/// source-level realization remain separate: choosing a launch-index
-/// declaration does not establish an arithmetic width, address width, or
-/// launch capacity. The emitted target facts and prepared compiler target
-/// remain separate from the compiler plan's target-profile reference; neither
-/// is inferred from the other. The translation unit retains
-/// [`MetalPlanBuildPolicy::emission`], and its exact emitted source becomes part
-/// of payload and compilation identity.
+/// # The declared profile is verified before any Metal work
+///
+/// `declaration` supplies the Metal target facts, the selected emission
+/// realization, and the numerical realization its measured rows are scoped to —
+/// and, first, the compiler profile the plan must have been compiled under.
+/// That check runs before [`emit_translation_unit`], because emission decides
+/// binding capacity and numerical realizability against those facts, and a plan
+/// assessed under a different profile would have those questions answered
+/// against a target its artifact will not declare.
+///
+/// Target facts and the selected source-level realization remain separate:
+/// choosing a launch-index declaration establishes no arithmetic width, address
+/// width, or launch capacity, and
+/// [`BoundMetalCompileDeclaration`]'s own documentation carries the three
+/// compile-fail proofs of that. The translation unit retains the selected
+/// emission realization, and its exact emitted source becomes part of payload
+/// and compilation identity.
+///
+/// `optimization` stays a separate argument rather than joining the
+/// declaration, because no ledger row is scoped to an optimization level: the
+/// numerical rows are isolated by the emitted fast-math attributes, which the
+/// `-O` level does not change.
 ///
 /// # Errors
 ///
-/// Returns the exact refusing authority. Unsupported Metal lowering, an
-/// unhonourable numerical realization, artifact mismatch, cache subject
-/// refusal, compiler failure, and cache protocol failure remain distinct.
+/// Returns the exact refusing authority. A declared-profile mismatch,
+/// unsupported Metal lowering, an unhonourable numerical realization, artifact
+/// mismatch, cache subject refusal, compiler failure, and cache protocol
+/// failure remain distinct.
 pub fn accept_or_publish_metal_plan(
     cache: &ExpansionCache,
     toolchain: &Toolchain,
     semantic: &SemanticProgram,
     plan: PlanAlternative<'_>,
-    target: &MetalTargetFacts,
-    policy: MetalPlanBuildPolicy,
+    declaration: &BoundMetalCompileDeclaration,
+    optimization: OptimizationLevel,
 ) -> Result<AcceptedMetalPlanArtifact, MetalPlanBuildError> {
+    let compilation = plan.compilation();
+    declaration
+        .require_compiled_under(
+            compilation.target_profile_key(),
+            compilation.target_profile_descriptor(),
+        )
+        .map_err(MetalPlanBuildError::DeclaredProfile)?;
     let kernels: Vec<_> = plan.kernels().iter().collect();
-    let unit = emit_translation_unit(&kernels, target, policy.emission)
+    let unit = emit_translation_unit(&kernels, declaration.metal_facts(), declaration.emission())
         .map_err(MetalPlanBuildError::Emission)?;
-    let request = metal_compile_request(&unit, policy.optimization, policy.numerical)
+    let request = metal_compile_request(&unit, optimization, declaration.numerical_realization())
         .map_err(MetalPlanBuildError::Preparation)?;
     let prepared = toolchain
         .prepare(&request)
@@ -445,24 +386,21 @@ mod tests {
 
     use tiler_artifact::program::StageDependencyReason;
     use tiler_cache::expansion::{ExpansionCache, Resolution};
-    use tiler_compiler::session::{NumericalContract, compile_governed};
+    use tiler_compiler::session::{
+        Compilation, CompileRequest, NumericalContract, compile, compile_governed,
+    };
+    use tiler_compiler::target::TargetRequest;
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
         SemanticProgramBuilder, StrictSerialF32Sum,
     };
     use tiler_ir::shape::{Axis, Shape};
-    use tiler_metal::target::{
-        LaunchIndexRealization, MetalDeploymentMinimum, MetalEmissionRealization,
-        MetalFloatArithmeticType, MetalFlushedZeroSign, MetalPlatform, MetalSubnormalArithmetic,
-        MetalSubnormalArithmeticFacts, MetalTargetFacts, MslLanguageVersion,
-    };
+    use tiler_metal::emit::emit_translation_unit;
     use tiler_metal_aot::driver::Toolchain;
-    use tiler_metal_aot::input::{NumericalRealization, OptimizationLevel};
+    use tiler_metal_aot::input::OptimizationLevel;
 
-    use super::{
-        MetalPlanBuildError, MetalPlanBuildPolicy, accept_or_publish_metal_plan,
-        resolution_artifact,
-    };
+    use super::{MetalPlanBuildError, accept_or_publish_metal_plan, resolution_artifact};
+    use crate::{BoundMetalCompileDeclaration, MetalPlanProfileMismatch};
 
     fn semantic_program() -> SemanticProgram {
         let mut builder =
@@ -488,36 +426,30 @@ mod tests {
         builder.build().expect("the program verifies")
     }
 
-    fn target_facts() -> MetalTargetFacts {
-        MetalTargetFacts::new(
-            MslLanguageVersion::Metal3_1,
-            MetalPlatform::MacOs,
-            MetalDeploymentMinimum::new(14, 0),
-            MetalSubnormalArithmeticFacts::unmeasured()
-                .stating(
-                    MetalFloatArithmeticType::F32,
-                    MetalSubnormalArithmetic::FlushesToZero {
-                        zero_sign: MetalFlushedZeroSign::PreservesSign,
-                    },
-                )
-                .stating(
-                    MetalFloatArithmeticType::F16,
-                    MetalSubnormalArithmetic::PreservesSubnormals,
-                ),
-            31,
-        )
+    fn declaration() -> BoundMetalCompileDeclaration {
+        BoundMetalCompileDeclaration::first_macos_apple9()
+            .expect("the authoritative macOS declaration assembles")
     }
 
-    fn emission_realization() -> MetalEmissionRealization {
-        MetalEmissionRealization::new(LaunchIndexRealization::ThreadPositionInGridUInt)
-    }
-
-    fn build_policy() -> MetalPlanBuildPolicy {
-        MetalPlanBuildPolicy::new(
-            emission_realization(),
-            OptimizationLevel::Default,
-            NumericalRealization::strict_baseline(),
-        )
+    /// Compiles the proof program against the authoritative declaration.
+    fn declared_compilation(
+        declaration: &BoundMetalCompileDeclaration,
+        program: &SemanticProgram,
+    ) -> Compilation {
+        let batch = compile(CompileRequest::new(
+            program,
+            NumericalContract::FlushSubnormalsToZeroF32,
+            TargetRequest::new([declaration.profile().clone()])
+                .expect("a singleton target request"),
+        ))
+        .expect("the program compiles against the authoritative profile");
+        batch
+            .into_targets()
+            .pop()
+            .expect("one target outcome")
+            .into_parts()
+            .1
+            .expect("the authoritative target compiles")
     }
 
     fn scratch(label: &str) -> PathBuf {
@@ -605,8 +537,8 @@ mod tests {
         let cache = ExpansionCache::open(directory.join("cache"));
         let (toolchain, counter) = counted_toolchain(&directory);
         let program = semantic_program();
-        let compilation = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
-            .expect("the governed program compiles");
+        let declaration = declaration();
+        let compilation = declared_compilation(&declaration, &program);
         let plan = compilation.selected().expect("one selected plan");
         let mut outcomes = Vec::new();
 
@@ -616,8 +548,8 @@ mod tests {
                 &toolchain,
                 &program,
                 plan,
-                &target_facts(),
-                build_policy(),
+                &declaration,
+                OptimizationLevel::Default,
             )
             .expect("the checked plan resolves");
             outcomes.push(match accepted.resolution() {
@@ -633,8 +565,8 @@ mod tests {
             &toolchain,
             &program,
             plan,
-            &target_facts(),
-            build_policy(),
+            &declaration,
+            OptimizationLevel::Default,
         )
         .expect("the second cache hit remains readable");
         let variant = resolution_artifact(accepted.resolution())
@@ -663,8 +595,8 @@ mod tests {
         let cache = ExpansionCache::open(directory.join("cache"));
         let (toolchain, _counter) = counted_toolchain(&directory);
         let program = semantic_program();
-        let compilation = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
-            .expect("the governed program compiles");
+        let declaration = declaration();
+        let compilation = declared_compilation(&declaration, &program);
         let selected = compilation.selected().expect("one selected plan");
         let materialized = compilation
             .alternatives()
@@ -676,8 +608,8 @@ mod tests {
             &toolchain,
             &program,
             selected,
-            &target_facts(),
-            build_policy(),
+            &declaration,
+            OptimizationLevel::Default,
         )
         .expect("the selected plan resolves");
         let materialized = accept_or_publish_metal_plan(
@@ -685,8 +617,8 @@ mod tests {
             &toolchain,
             &program,
             materialized,
-            &target_facts(),
-            build_policy(),
+            &declaration,
+            OptimizationLevel::Default,
         )
         .expect("the materialized plan resolves");
 
@@ -725,39 +657,98 @@ mod tests {
         let _ = std::fs::remove_dir_all(directory);
     }
 
+    /// A plan compiled under another profile is refused before Metal emission.
+    ///
+    /// The perturbation is the *compilation*, not the declaration: the same
+    /// program, the same declaration, and a plan assessed against the compiler's
+    /// governed prototype profile instead of the authoritative one. The counter
+    /// file is the evidence that the refusal preceded emission and every
+    /// toolchain invocation — without it, "before emission" would be an
+    /// assertion about ordering that the test never observes.
     #[test]
-    fn emission_refuses_an_insufficient_target_before_compiler_work() {
-        let directory = scratch("emission-refusal");
+    fn a_plan_compiled_under_another_profile_is_refused_before_emission() {
+        let directory = scratch("profile-mismatch");
         let cache = ExpansionCache::open(directory.join("cache"));
         let (toolchain, counter) = counted_toolchain(&directory);
         let program = semantic_program();
-        let compilation = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
-            .expect("the governed program compiles");
-        let plan = compilation.selected().expect("one selected plan");
-        let mut insufficient = target_facts();
-        insufficient.buffer_binding_limit = 1;
+        let declaration = declaration();
+        let foreign = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
+            .expect("the governed prototype profile still compiles this program");
+        let plan = foreign.selected().expect("one selected plan");
 
         let error = accept_or_publish_metal_plan(
             &cache,
             &toolchain,
             &program,
             plan,
-            &insufficient,
-            build_policy(),
+            &declaration,
+            OptimizationLevel::Default,
         )
-        .expect_err("a target with one binding cannot emit this plan");
+        .expect_err("a plan compiled under another profile cannot be emitted here");
+        let MetalPlanBuildError::DeclaredProfile(mismatch) = &error else {
+            panic!("unexpected refusal: {error:?}");
+        };
         assert!(
-            matches!(
-                error,
-                MetalPlanBuildError::Emission(ref cause)
-                    if cause.rule() == "buffer-binding-limit"
-            ),
-            "unexpected refusal: {error:?}",
+            matches!(mismatch, MetalPlanProfileMismatch::ProfileKey { .. }),
+            "the governed prototype is a different family: {mismatch}",
         );
         assert!(
             !counter.exists(),
-            "emission failure must precede toolchain preparation and compiler work",
+            "the profile check must precede emission, preparation, and compiler work",
         );
         let _ = std::fs::remove_dir_all(directory);
+    }
+
+    /// The same-key, different-descriptor half is refused too.
+    ///
+    /// Separate from the case above because the two mean different things and
+    /// carry different repairs, and because a check comparing only keys would
+    /// pass that one and fail this.
+    #[test]
+    fn a_stale_descriptor_under_the_declared_key_is_refused() {
+        let declaration = declaration();
+        let key = declaration.profile().profile_key().as_str().to_owned();
+        let mut stale = declaration.profile().canonical_descriptor().to_vec();
+        stale.pop();
+        let mismatch = declaration
+            .require_compiled_under(&key, &stale)
+            .expect_err("a truncated descriptor is a different profile revision");
+        assert!(
+            matches!(mismatch, MetalPlanProfileMismatch::ProfileDescriptor { .. }),
+            "unexpected mismatch: {mismatch}",
+        );
+    }
+
+    /// The backend's own realization recheck survives a direct emitter call.
+    ///
+    /// `accept_or_publish_metal_plan` is not the only path to
+    /// [`emit_translation_unit`], so the guarantee that a target which cannot
+    /// honour the declared contract fails closed has to hold without it. The
+    /// kernels here carry a subnormal-preserving contract — reachable only from
+    /// a profile that admits one, which the authoritative declaration
+    /// deliberately does not — and the declaration's measured flushing facts
+    /// refuse them at the backend recheck rather than at this crate's facade.
+    #[test]
+    fn a_direct_emitter_call_still_fails_closed_on_the_declared_realization() {
+        let program = semantic_program();
+        let declaration = declaration();
+        let strict = compile_governed(&program, NumericalContract::StrictF32)
+            .expect("the governed prototype profile admits preserved subnormals");
+        let plan = strict.selected().expect("one selected plan");
+        let kernels: Vec<_> = plan.kernels().iter().collect();
+        let unit =
+            emit_translation_unit(&kernels, declaration.metal_facts(), declaration.emission())
+                .expect("emission itself succeeds; conformance is a separate question");
+        let refusal = unit
+            .require_declared_realization()
+            .expect_err("a flushing target cannot honour a preserving contract");
+        assert_eq!(refusal.rule(), "unrealizable-numerical-obligation");
+        assert_eq!(
+            unit.numerical_gaps()
+                .iter()
+                .map(|gap| gap.rule())
+                .collect::<Vec<_>>(),
+            ["subnormal-flush-in-arithmetic"],
+        );
     }
 }
