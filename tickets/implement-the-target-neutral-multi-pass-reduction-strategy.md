@@ -1,7 +1,7 @@
 ---
 id: implement-the-target-neutral-multi-pass-reduction-strategy
 title: Implement the target-neutral multi-pass reduction strategy
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [implement-parallel-reduction-strategies]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler, implementation/reference, c
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: loop-multipass
+lease_expires_at: 1785521547
 ---
 ## User-visible outcome
 
