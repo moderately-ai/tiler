@@ -2702,21 +2702,24 @@ fn opaque_call_trace_identity_is_order_independent_and_identity_sensitive() {
 // The multi-pass split: enumerated on the frontier, assembled into a program
 // ---------------------------------------------------------------------------
 //
-// **Why these drive the authorities directly rather than `compile`.** The split
-// consumes reassociation, and the one registered contract that permits it —
-// `governed_relaxed` — also permits contraction. For the recognized serial-sum
-// program, whose members mix multiply and add, `derive_fusion_legality` then
-// reports `unrealized-contraction` for *every* multi-member candidate, so no
-// legal cover survives and the whole compile has no complete plan. That is a
-// pre-existing property of fusion legality, pinned by
-// `fusion_legality::tests::a_relaxed_mixed_arithmetic_region_still_needs_contraction_evidence`,
-// and it is not this slice's to change: it is a contraction-evidence question,
-// not a reduction-splitting one.
+// **Why these drive the authorities directly, and what now also reaches
+// `compile`.** The split consumes reassociation. Under `governed_relaxed` — for
+// a long time the only registered contract permitting it — contraction is
+// permitted too, and for the recognized serial-sum program, whose members mix
+// multiply and add, `derive_fusion_legality` reports `unrealized-contraction`
+// for every multi-member candidate, so no legal cover survives and the whole
+// compile has no complete plan. That property is unchanged and still pinned by
+// `fusion_legality::tests::a_relaxed_mixed_arithmetic_region_still_needs_contraction_evidence`.
 //
-// So the split is enumerable and assemblable today and not yet reachable
-// end to end. Asserting it through `compile` would mean asserting nothing; these
-// exercise the exact authorities the ticket names, and the gap is recorded
-// rather than hidden.
+// `admit-a-reassociating-contract-without-contraction` closed the gap from the
+// contract side rather than the proof side:
+// `StrictF32NumericalContract::governed_reassociating` permits reassociation and
+// forbids contraction, so the prologue's mixed region discharges its contraction
+// obligation under the contract's own normative guarantee and the materialized
+// cover survives. `the_reassociating_contract_reaches_the_split_through_compile`
+// below is the end-to-end half; these keep exercising the exact authorities at
+// the relaxed contract, where the split is still enumerable and assemblable
+// without being reachable.
 
 /// Builds the recognized serial-sum program and its reassociation-permitting
 /// verified request.
@@ -3089,4 +3092,79 @@ fn the_widened_budgets_admit_the_split_program_and_still_refuse_a_narrower_reque
     assert!(build_split_kernel_program(&semantic, &request, &scheduled).is_ok());
     assert_eq!(request.budgets().buffers, 4);
     assert_eq!(request.budgets().regions, 3);
+}
+
+/// **The closing evidence of
+/// `admit-a-reassociating-contract-without-contraction`.** The recognized
+/// serial-sum program compiles under a reassociation-permitting contract,
+/// `compile` retains the three-stage split beside the two-stage serial one, and
+/// the selected plan is still the serial one.
+///
+/// The last clause is the one that matters for the ticket boundary: the split is
+/// *enumerated and retained*, and preference stays with
+/// `calibrate-and-activate-parallel-reduction-selection`, because the structural
+/// cost model prices two dispatches and a staged partial tensor above one
+/// dispatch and no temporary. Nothing here calibrates anything.
+///
+/// The strict compilation at the end is the perturbation: the same program under
+/// a contract that forbids reassociation retains no three-stage alternative at
+/// all, so the assertion above cannot pass for a build that never split.
+#[test]
+fn the_reassociating_contract_reaches_the_split_through_compile() {
+    /// The stage counts of one compilation's retained alternatives, ascending.
+    fn retained_stage_counts(product: &CompilationProduct) -> Vec<usize> {
+        let mut counts: Vec<usize> = product.targets[0]
+            .portfolio
+            .alternatives
+            .iter()
+            .map(|alternative| alternative.program.stage_count())
+            .collect();
+        counts.sort_unstable();
+        counts
+    }
+
+    // Four contributors: the extent `governed_partition` splits two-by-two and
+    // the largest the governed target's declared grid-axis guarantee admits.
+    let semantic = semantic_case_with_axis(
+        Shape::from_dims([1, 4]),
+        2.0_f32.to_bits(),
+        1.0_f32.to_bits(),
+        false,
+        Axis::new(1),
+    );
+    let product = compile(CompilationRequest::governed_under(
+        &semantic,
+        StrictF32NumericalContract::governed_reassociating(),
+    ))
+    .expect("the reassociating contract compiles the recognized serial sum");
+    let target = &product.targets[0];
+
+    // Two stages is the materialized prologue-then-reduce plan; three is the
+    // same cover with its reduction realized as a partial and a final pass. The
+    // whole-program fused plan is absent, and on a *different* obligation: it
+    // contains the reduction, whose permitted reassociation `derive_fusion_legality`
+    // does not prove — see
+    // `fusion_legality::tests::a_reassociating_contract_discharges_the_mixed_region_by_forbidding_contraction`.
+    assert_eq!(retained_stage_counts(&product), vec![2, 3]);
+
+    let selected = target
+        .portfolio
+        .alternatives
+        .iter()
+        .find(|alternative| {
+            alternative.stable_id == target.portfolio.selection.selected_alternative_id
+        })
+        .expect("the selected alternative is one of the retained ones");
+    assert_eq!(
+        selected.program.stage_count(),
+        2,
+        "the split was selected; preference belongs to calibration, not to this ticket"
+    );
+
+    // Perturbation: forbidding reassociation withholds the split entirely, so
+    // the three-stage retention above is a property of the contract rather than
+    // of the program.
+    let strict = compile(CompilationRequest::governed(&semantic))
+        .expect("the strict contract compiles the same program");
+    assert_eq!(retained_stage_counts(&strict), vec![1, 2]);
 }

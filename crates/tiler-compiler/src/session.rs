@@ -1301,6 +1301,24 @@ pub enum NumericalContract {
     /// two programs differing only there would share one identity; stating one is
     /// refused by name rather than compiled ambiguously.
     RelaxedF32,
+    /// Strict, except that ordered regrouping of one same-operation operand
+    /// sequence is authorized — a reduction's contributor sequence included.
+    ///
+    /// This is what a caller states to make a split reduction a legal
+    /// implementation of its program while keeping every rounding boundary the
+    /// strict reading has. It is not a narrower [`Self::RelaxedF32`]: the
+    /// presets are not ordered by strength, and the difference is which
+    /// observable results the caller has agreed to. Contraction in particular
+    /// stays forbidden, which ADR 0015 makes an independent choice — permission
+    /// to regroup an operand sequence is not permission to fuse a multiply into
+    /// an add.
+    ///
+    /// Reachable on a target that declares it: the compiler's own bounded
+    /// prototype profile declares both resolutions of reassociation, and the
+    /// measured Apple compile profile declares only the forbidden one, so
+    /// stating this there is a typed refusal naming the dimension rather than a
+    /// silent downgrade.
+    ReassociateF32,
 }
 
 impl NumericalContract {
@@ -1320,6 +1338,7 @@ impl NumericalContract {
             Self::StrictF32 => NumericalPolicyPreset::Strict,
             Self::FlushSubnormalsToZeroF32 => NumericalPolicyPreset::FlushSubnormalsToZero,
             Self::RelaxedF32 => NumericalPolicyPreset::Relaxed,
+            Self::ReassociateF32 => NumericalPolicyPreset::PermitReassociation,
         }
     }
 }

@@ -1325,7 +1325,7 @@ mod tests {
         verify_fusion_legality,
     };
     use crate::region::{RegionCandidate, RegionFormationOutcome, form_region_candidates};
-    use crate::request::{DeterministicBudgets, StrictF32NumericalContract};
+    use crate::request::{DeterministicBudgets, NumericalPermission, StrictF32NumericalContract};
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OpKey, OutputKey, SemanticProgram,
         SemanticProgramBuilder, StrictSerialF32Sum, add_f32_op, constant_f32_op,
@@ -1581,6 +1581,134 @@ mod tests {
         )
         .unwrap() else {
             panic!("mixed multiply/add remains outside the relaxed capability");
+        };
+        assert_eq!(
+            unknown.obligation(),
+            FusionObligation::ArithmeticContraction
+        );
+        assert_eq!(unknown.reason(), "unrealized-contraction");
+    }
+
+    /// The reassociating contract discharges the same region the relaxed one
+    /// cannot, and it does so by *forbidding* contraction rather than by proving
+    /// anything new about the emission.
+    ///
+    /// This is the resolution recorded for
+    /// `admit-a-reassociating-contract-without-contraction`. The alternative —
+    /// widening `is_exact_governed_same_family_pointwise` to state that the
+    /// governed emission performs no contraction — was eliminated rather than
+    /// deferred: this authority is handed the program, the budgets, the
+    /// contract, the capabilities, and the candidate, and none of them names the
+    /// realization that will be emitted or the backend that will emit it; and
+    /// under a *permitting* realization the claim is false rather than merely
+    /// unprovable, because `tiler_metal::emit::realization_requirements` names
+    /// `NoFloatingPointContraction` only in the forbidden arm, so the artifact
+    /// carries no contraction obligation at all and the measured Apple row fuses
+    /// a written multiply/add pair under `-ffp-contract=fast`.
+    ///
+    /// The perturbation is the second half: the same contract with contraction
+    /// permitted returns to `unrealized-contraction`, so the discharge is
+    /// reading the contraction resolution and not the contract's key.
+    #[test]
+    fn a_reassociating_contract_discharges_the_mixed_region_by_forbidding_contraction() {
+        let program = serial_sum_program();
+        let budgets = DeterministicBudgets::governed();
+        let contract = StrictF32NumericalContract::governed_reassociating();
+        let formation = form_region_candidates(&program, budgets, contract).unwrap();
+        let candidate = formation
+            .whole_program_candidate()
+            .expect("a connected program has a whole-program region");
+        let capabilities = FusionNumericalCapabilities::governed();
+
+        // Stated over the whole formed population rather than one hand-picked
+        // candidate, and counted, so "no contraction unknown" cannot be
+        // satisfied by a filter that matched nothing: **no** multi-member
+        // candidate of this program is unknown for contraction under this
+        // contract, and at least one mixed multiply/add region is positively
+        // legal with the contract's own normative guarantee behind it.
+        let mut legal_mixed = 0_usize;
+        for formed in formation.candidates() {
+            let outcome = derive_fusion_legality(
+                &program,
+                budgets,
+                contract,
+                &capabilities,
+                &formation,
+                formed,
+            )
+            .unwrap();
+            match outcome {
+                FusionLegality::Legal(proof) => {
+                    let contraction = proof
+                        .content()
+                        .obligations()
+                        .iter()
+                        .find(|derived| {
+                            derived.obligation() == FusionObligation::ArithmeticContraction
+                        })
+                        .unwrap();
+                    assert_eq!(contraction.assessment(), ObligationAssessment::Discharged);
+                    // A same-family region keeps its structural `SoundProof`;
+                    // the mixed regions this preset exists for are the ones that
+                    // fall through to the contract's own normative guarantee.
+                    if contraction.evidence() == FusionEvidenceClass::NormativeGuarantee {
+                        legal_mixed += 1;
+                    } else {
+                        assert_eq!(contraction.evidence(), FusionEvidenceClass::SoundProof);
+                    }
+                }
+                FusionLegality::Unknown(unknown) => assert_ne!(
+                    unknown.obligation(),
+                    FusionObligation::ArithmeticContraction,
+                    "{unknown}"
+                ),
+                FusionLegality::Rejected(rejection) => {
+                    panic!("no governed candidate is rejected: {rejection}")
+                }
+            }
+        }
+        assert!(
+            legal_mixed > 0,
+            "the sweep proved nothing: no mixed-arithmetic candidate was legal at all"
+        );
+
+        // The whole-program candidate additionally contains the reduction, whose
+        // reassociation this contract permits and this authority does not prove.
+        // It stays unknown, on a *different* obligation — recorded rather than
+        // hidden, because it is what keeps the fused whole-program alternative
+        // out of the reassociating portfolio and it is not this ticket's to
+        // change.
+        let FusionLegality::Unknown(unknown) = derive_fusion_legality(
+            &program,
+            budgets,
+            contract,
+            &capabilities,
+            &formation,
+            candidate,
+        )
+        .unwrap() else {
+            panic!("a permitted reduction reassociation is not proved by this authority");
+        };
+        assert_eq!(
+            unknown.obligation(),
+            FusionObligation::ReductionReassociation
+        );
+        assert_eq!(unknown.reason(), "unproven-reassociation");
+
+        // Perturbation: permit contraction on the same contract and the
+        // contraction unknown returns, ahead of the reassociation one.
+        let mut permitting = contract;
+        permitting.contraction = NumericalPermission::Permitted;
+        let FusionLegality::Unknown(unknown) = derive_fusion_legality(
+            &program,
+            budgets,
+            permitting,
+            &capabilities,
+            &formation,
+            candidate,
+        )
+        .unwrap() else {
+            panic!("permitting contraction must lose the normative guarantee");
         };
         assert_eq!(
             unknown.obligation(),
