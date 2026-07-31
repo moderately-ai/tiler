@@ -1,7 +1,7 @@
 ---
 id: record-the-expansion-cache-root-policy-decision
 title: Record the expansion cache root policy decision
-status: todo
+status: in-progress
 priority: p2
 dependencies: [choose-the-expansion-cache-root-policy]
 related: [decide-the-expansion-cache-collection-schedule]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions, contracts/integrations, contracts/navigation]
 shared_scopes: []
 paths: []
 tags: [cache, frontend, adr]
+claimed_from: todo
+assignee: loop-adr89
+lease_expires_at: 1785526607
 ---
 ## User-visible outcome
 

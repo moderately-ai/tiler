@@ -1,7 +1,7 @@
 ---
 id: spike-first-metal-contraction-vertical
 title: Spike the first workload-derived Metal contraction vertical
-status: todo
+status: in-progress
 priority: p1
 dependencies: [derive-transformer-operation-and-shape-surface, prototype-metal-runtime-proof]
 related: [scope-einsum-contraction-support, implement-opaque-physical-call-providers, implement-parallel-reduction-strategies, implement-analytical-component-cost-model]
@@ -9,6 +9,9 @@ scopes: [research/scheduling, research/apple-targets, research/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [spike, research, contraction, matmul, metal, language-model]
+claimed_from: todo
+assignee: loop-l3-spike
+lease_expires_at: 1785526607
 ---
 ## User-visible outcome
 
