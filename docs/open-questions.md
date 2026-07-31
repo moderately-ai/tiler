@@ -181,9 +181,8 @@ The implementation graph now maps these contracts to bounded coding tickets:
 
 ### Q-ART-004 — Expansion-cache root, accounting, and GC policy
 
-- Owner/track: [Frontend integration](integration/frontends.md),
-  [`prototype-expansion-content-cache`](../tickets/prototype-expansion-content-cache.md).
-- Close: private defaults, quotas, GC, durability diagnostics, and race tests.
+- Owner/track: [Frontend integration](integration/frontends.md), [`choose-the-expansion-cache-root-policy`](../tickets/choose-the-expansion-cache-root-policy.md) for the root and [`decide-the-expansion-cache-collection-schedule`](../tickets/decide-the-expansion-cache-collection-schedule.md) for collection. Retargeted 2026-07-31: the previous owner [`prototype-expansion-content-cache`](../tickets/prototype-expansion-content-cache.md) closed `done` with this close condition unmet, which left the question owned by a terminal ticket — unowned in fact, the same way Q-ART-008 was. The retarget happened now because the trigger the [build-tool exercise](research/cache/build-tool-exercise.md) set for the root half — the first proc-macro frontend crate — fired when `tiler-macros` was admitted on 2026-07-31 under [ADR 0088](decisions/0088-admit-tiler-and-tiler-macros-as-the-frontend-pair.md).
+- Close: private defaults, quotas, GC, durability diagnostics, and race tests. The root and collection halves close separately; neither closes the question alone.
 
 ### Q-ART-008 — Ergonomic artifact-family profiles
 

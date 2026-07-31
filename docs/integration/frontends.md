@@ -5,7 +5,7 @@ kind: "contract"
 title: "Frontend and proc-macro integration"
 topics: ["integrations", "frontends", "proc-macros", "aot"]
 contract_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 evidence: ["tiler.research.macro-environment.build-environment", "tiler.research.embedding.artifact-costs", "tiler.research.cache.crash-race-protocol", "tiler.research.shapes.nightly-const-shape-parameters"]
 ticket: "synthesize-artifact-contracts"
 ---
@@ -13,6 +13,8 @@ ticket: "synthesize-artifact-contracts"
 # Frontend and proc-macro integration
 
 **Status:** accepted inline AOT contract; rust-analyzer performance remains unmeasured
+
+`implementation_status` moved from `not-started` to `partial` on 2026-07-31, and the boundary of that word is narrow. What exists is the crate pair this contract's inline delivery routes through — `tiler` and `tiler-macros`, admitted by [ADR 0088](../decisions/0088-admit-tiler-and-tiler-macros-as-the-frontend-pair.md) — and one clause of the target policy below: an expansion states a delivery policy, validates it through the single canonical `ArtifactFamilySelection` constructor, and refuses rather than silently falling back when it cannot deliver a selected family. Nothing else here is implemented. There is no region grammar, no semantic translation, no expansion-time AOT flow, no byte embedding, and no fallback expression; every example in this document describes the contract rather than reporting a landed path.
 
 Frontends translate user-facing tensor languages into Tiler's public semantic
 tensor graph. `candle-einops` is the first proposed frontend. For that Rust
@@ -129,19 +131,23 @@ also carries the same security responsibility as build scripts. See the
 
 ## Direct byte embedding
 
-The generated code conceptually contains:
+The generated code conceptually contains the shape below. **It is illustrative and not delivered:** no expansion emits any of it today, and the item names under `__private` are placeholders for a surface that does not exist.
 
 ```rust
 {
     static MANIFEST: &[u8] = b"...";
     static METALLIB: &[u8] = b"...";
 
-    ::tiler_candle::execute_or_fallback(
-        ::tiler_artifact::EmbeddedBundle::new(MANIFEST, METALLIB),
+    ::tiler::__private::execute_or_fallback(
+        ::tiler::__private::EmbeddedBundle::new(MANIFEST, METALLIB),
         /* tensors and fallback */,
     )
 }
 ```
+
+**Every path a generated token spells resolves through `tiler`.** That is the settled property, decided by Tom on 2026-07-31; the exact items are not. A procedural macro has no `$crate`, so its expansion must spell an absolute path, and an earlier revision of this example spelled `::tiler_candle::` and `::tiler_artifact::` — which would hand a consumer a dependency it never declared and would break its build on crates it cannot see. Routing through the facade's `#[doc(hidden)] pub mod __private` is what makes "generate only paths reachable through the consumer's declared `tiler` dependency" true rather than intended.
+
+The facade re-exports nothing beyond the macro today. `::tiler::__private::expansion_anchor()` is the one generated path that exists, and it is an inert anchor that exists so the re-export and the generated path are compiler-checked before there is a grammar to check them with. The exact re-exports arrive with the tickets that review them — `define-inline-symbol-binding-and-runtime-value-adaptation` for symbol binding and runtime value adaptation, and `promote-artifact-family-selection-for-the-frontend`, which reviewed its own question and answered *none*, because no generated token names a selection type.
 
 The actual proc-macro implementation should construct byte-string literal
 tokens directly rather than emit millions of integer tokens. No generated path
@@ -308,11 +314,13 @@ let b = a.gelu(); // not visible to the previous invocation
 Wider fusion therefore requires an inline region frontend, for example:
 
 ```rust
-let y = tiler! {
+let y = tiler::tensor! {
     let a = einops("b h w c -> b c h w", x);
     reduce_sum(gelu(a + bias), [h, w])
 };
 ```
+
+`tiler::tensor!` is the ratified public path, fixed by Tom on 2026-07-30 and recorded in [ADR 0088](../decisions/0088-admit-tiler-and-tiler-macros-as-the-frontend-pair.md); an earlier revision of this example spelled the macro `tiler!`, which was an illustrative spelling rather than a second decision. The region body above is still illustrative: `tensor!` has no grammar, and input like this is rejected today with a spanned `compile_error!` naming the tickets that own the syntax.
 
 This preserves inline DX while making the whole fusion region explicit. Cross-
 invocation whole-program fusion would require a compiler plugin or runtime

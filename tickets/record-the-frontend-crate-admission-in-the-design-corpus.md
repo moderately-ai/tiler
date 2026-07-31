@@ -5,7 +5,7 @@ status: todo
 priority: p1
 dependencies: [admit-the-tiler-facade-and-proc-macro-crate-boundary]
 related: [prototype-inline-proc-macro-frontend, define-inline-symbol-binding-and-runtime-value-adaptation]
-scopes: [contracts/decisions, contracts/navigation, contracts/foundation, contracts/integrations]
+scopes: [contracts/decisions, contracts/navigation, contracts/foundation, contracts/integrations, research/cache]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
@@ -47,6 +47,12 @@ tiler        -> [tiler-macros]      + development [trybuild]
 Record the reasoning with them, because the placement is the decision rather than the edge: a `proc-macro` crate and its dependencies are built for the host and never enter a consumer's target build graph, which is why the macro crate may hold an edge to a process-spawning Apple toolchain driver and the facade may not — the same cost ADR 0077 item 4 refused for `tiler-metal`. `crates/tiler/tests/dependency_direction.rs` checks both halves. `tiler-metal-aot`'s empty closure is untouched: the edge points at the driver, not out of it. ADR 0077 item 3's own restatement of the block has the same omission and the same fix.
 
 **Not yet settled.** That promotion is presented to Tom under ADR 0075 and was unaccepted when this note was written. Record the edge only once it is accepted; if it is rejected or moved to the facade, the rows change accordingly.
+
+**Settled (2026-07-31).** Tom accepted the boundary as merged — `tiler_metal_aot::family` promoted in place, the frontend edge held by host-built `tiler-macros`, and no facade re-export — recorded in that ticket's own Accepted section. The condition above is met, so the edge is recorded as accepted with its host-built placement reasoning rather than held back. The row spelling landed as `tiler-macros -> [tiler-metal-aot]` and `tiler -> [tiler-macros]`; `trybuild` is stated in the surrounding prose rather than inside the block, because the block lists intra-workspace edges and `tiler-ir` carries the same third-party development dependency without showing it.
+
+## Scope correction (2026-07-31)
+
+`research/cache` was added to `scopes`. The fifth site above, `docs/research/cache/build-tool-exercise.md`, maps to that scope at `ticketsplease.toml:68` and to none of the four this ticket originally declared, so the required edit was unschedulable as written. No live ticket holds `research/cache` — its only other holder, `decide-the-expansion-cache-collection-schedule`, is `deferred` — so the addition contends with nothing.
 
 ## Closes when
 
