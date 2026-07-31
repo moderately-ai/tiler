@@ -1,7 +1,7 @@
 ---
 id: refresh-the-stale-identity-ledger-in-status
 title: Refresh the stale identity ledger in the status portal
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -31,3 +31,11 @@ Found while defining backend/device vocabulary under `define-backend-device-and-
 ## Closes when
 
 Every version in the status portal's identity bullet agrees with the source constant or the artifact contract that owns it, and the exact check used is recorded.
+
+## Outcome (2026-07-31)
+
+**Fact.** The bullet's three stale values moved to what the source and the owning contract state: artifact program v12 (`crates/tiler-artifact/src/program/model.rs:168`, `ARTIFACT_DOMAIN = b"tiler.artifact-program.v12\0"`), neutral manifest schema 10.0 (`crates/tiler-artifact/src/program/codec/encode.rs:65`, `MANIFEST_SCHEMA: (u16, u16) = (10, 0)`), and target-requirement component schema 3.0 (`docs/artifact-abi.md:164`, the v12 step's own record, which states the component moved because its governed vocabulary changed).
+
+**Fact — the siblings were checked, not assumed, per the ticket's second key.** Every other value in the bullet was verified against a source constant or the ledger at `docs/artifact-abi.md:166`: `tiler.resolved-value-type.v3`, `tiler.schedule.v2`, `tiler.kernel.v4`, `tiler.kernel-program.v6` (all grepped as exact strings in `crates/tiler-ir/src`), descriptor encoding v9 and complete declaration `tiler.target-profile.declaration.v10` (`crates/tiler-compiler/src/target.rs:158,163`), feasibility vocabulary v4 revision 1, and the 1.0 rows. None of them disagreed; the three named above were the whole drift, and it is exactly the v11-to-v12 route-requirement step the portal predated.
+
+**Fact.** The separate-subjects sentence and the artifact-abi ownership pointer were preserved verbatim, as the ticket requires.
