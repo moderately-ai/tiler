@@ -103,8 +103,19 @@ impl ProvenanceIdentity {
     }
 
     fn encode(&self, bytes: &mut Vec<u8>) {
-        push_slice(bytes, self.key.as_bytes());
-        bytes.extend_from_slice(&self.revision.to_be_bytes());
+        // Destructured rather than field-accessed, here and in every encoder
+        // below: a field added to a provenance record is then a build error at
+        // the encoder that would otherwise have silently omitted it, which is
+        // the only thing keeping a rejection's canonical identity complete.
+        let Self { key, revision } = self;
+        push_slice(bytes, key.as_bytes());
+        bytes.extend_from_slice(&revision.to_be_bytes());
+    }
+
+    fn render(&self, output: &mut String) {
+        use std::fmt::Write as _;
+        let Self { key, revision } = self;
+        let _ = write!(output, "{key}@{revision}");
     }
 }
 
@@ -139,6 +150,23 @@ impl CompilerBuildRole {
             Self::ProviderDefined(identity) => {
                 bytes.push(0xff);
                 identity.encode(bytes);
+            }
+        }
+    }
+
+    /// The governed canonical key naming this role in a rendered explanation.
+    fn render(&self, output: &mut String) {
+        match self {
+            Self::Frontend => output.push_str("frontend"),
+            Self::Optimizer => output.push_str("optimizer"),
+            Self::CodeGenerator => output.push_str("code-generator"),
+            Self::Assembler => output.push_str("assembler"),
+            Self::Linker => output.push_str("linker"),
+            Self::RuntimeCompiler => output.push_str("runtime-compiler"),
+            Self::IntermediateTranslator => output.push_str("intermediate-translator"),
+            Self::ProviderDefined(identity) => {
+                output.push_str("provider-defined:");
+                identity.render(output);
             }
         }
     }
@@ -205,10 +233,31 @@ impl CompilerBuildIdentity {
     }
 
     fn encode(&self, bytes: &mut Vec<u8>) {
-        self.role.encode(bytes);
-        push_slice(bytes, self.implementation.as_bytes());
-        push_slice(bytes, self.version.as_bytes());
-        encode_optional_text(bytes, self.build.as_deref());
+        let Self {
+            role,
+            implementation,
+            version,
+            build,
+        } = self;
+        role.encode(bytes);
+        push_slice(bytes, implementation.as_bytes());
+        push_slice(bytes, version.as_bytes());
+        encode_optional_text(bytes, build.as_deref());
+    }
+
+    fn render(&self, output: &mut String) {
+        use std::fmt::Write as _;
+        let Self {
+            role,
+            implementation,
+            version,
+            build,
+        } = self;
+        role.render(output);
+        let _ = write!(output, "={implementation}@{version}");
+        if let Some(build) = build {
+            let _ = write!(output, "+{build}");
+        }
     }
 
     fn canonical_bytes(&self) -> Vec<u8> {
@@ -274,15 +323,37 @@ impl ExecutionEnvironmentIdentity {
     }
 
     fn encode(&self, bytes: &mut Vec<u8>) {
+        let Self {
+            platform,
+            platform_version,
+            platform_build,
+            architecture,
+            hardware,
+        } = self;
         for field in [
-            &self.platform,
-            &self.platform_version,
-            &self.platform_build,
-            &self.architecture,
-            &self.hardware,
+            platform,
+            platform_version,
+            platform_build,
+            architecture,
+            hardware,
         ] {
             push_slice(bytes, field.as_bytes());
         }
+    }
+
+    fn render(&self, output: &mut String) {
+        use std::fmt::Write as _;
+        let Self {
+            platform,
+            platform_version,
+            platform_build,
+            architecture,
+            hardware,
+        } = self;
+        let _ = write!(
+            output,
+            "{platform}/{platform_version}/{platform_build}/{architecture}/{hardware}"
+        );
     }
 }
 
@@ -328,11 +399,31 @@ impl MeasurementContext {
     }
 
     fn encode(&self, bytes: &mut Vec<u8>) {
-        push_len(bytes, self.compiler_builds.len());
-        for build in &self.compiler_builds {
+        let Self {
+            compiler_builds,
+            environment,
+        } = self;
+        push_len(bytes, compiler_builds.len());
+        for build in compiler_builds {
             build.encode(bytes);
         }
-        self.environment.encode(bytes);
+        environment.encode(bytes);
+    }
+
+    fn render(&self, output: &mut String) {
+        let Self {
+            compiler_builds,
+            environment,
+        } = self;
+        output.push_str("env=");
+        environment.render(output);
+        output.push_str(";builds=");
+        for (index, build) in compiler_builds.iter().enumerate() {
+            if index != 0 {
+                output.push(',');
+            }
+            build.render(output);
+        }
     }
 
     fn canonical_bytes(&self) -> Vec<u8> {
@@ -479,12 +570,20 @@ impl FactSourceProvenance {
     }
 
     fn encode(&self, bytes: &mut Vec<u8>) {
-        bytes.extend_from_slice(&self.schema_version.to_be_bytes());
-        bytes.push(self.phase.tag());
-        bytes.push(self.authority.tag());
-        bytes.push(self.validity.tag());
-        self.authority_identity.encode(bytes);
-        match &self.basis {
+        let Self {
+            schema_version,
+            phase,
+            authority,
+            validity,
+            authority_identity,
+            basis,
+        } = self;
+        bytes.extend_from_slice(&schema_version.to_be_bytes());
+        bytes.push(phase.tag());
+        bytes.push(authority.tag());
+        bytes.push(validity.tag());
+        authority_identity.encode(bytes);
+        match basis {
             FactEvidenceBasis::GovernedGuarantee { guarantee } => {
                 bytes.push(0x01);
                 guarantee.encode(bytes);
@@ -503,10 +602,69 @@ impl FactSourceProvenance {
         }
     }
 
+    /// Renders the complete source statement into an explanation.
+    ///
+    /// Every field the canonical encoding covers is spelled here too: a reader
+    /// of the rendered trace and a reader of the identity bytes must be able to
+    /// see the same claim, or the rendering is a summary of evidence rather
+    /// than the evidence.
+    fn render(&self, output: &mut String) {
+        use std::fmt::Write as _;
+        let Self {
+            schema_version,
+            phase,
+            authority,
+            validity,
+            authority_identity,
+            basis,
+        } = self;
+        let _ = write!(
+            output,
+            "source-schema={schema_version}:phase={}:authority={}:validity={}:authority-identity=",
+            phase_key(*phase),
+            authority.key(),
+            validity.key()
+        );
+        authority_identity.render(output);
+        match basis {
+            FactEvidenceBasis::GovernedGuarantee { guarantee } => {
+                output.push_str(":basis=governed-guarantee:");
+                guarantee.render(output);
+            }
+            FactEvidenceBasis::ExternalGuarantee { reference } => {
+                output.push_str(":basis=external-guarantee:");
+                reference.render(output);
+            }
+            FactEvidenceBasis::Measurement { contexts } => {
+                let _ = write!(output, ":basis=measurement:contexts={}", contexts.len());
+                for context in contexts {
+                    output.push_str(":[");
+                    context.render(output);
+                    output.push(']');
+                }
+            }
+        }
+    }
+
     pub(crate) fn canonical_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         self.encode(&mut bytes);
         bytes
+    }
+}
+
+/// The governed canonical key naming one availability phase in an explanation.
+///
+/// Written here rather than read from [`AvailabilityPhase::tag`] because a
+/// rendered explanation names phases in words; exhaustive so a widened phase
+/// vocabulary is a build error rather than an unnamed phase in a refusal.
+const fn phase_key(phase: AvailabilityPhase) -> &'static str {
+    match phase {
+        AvailabilityPhase::CompileProfile => "compile-profile",
+        AvailabilityPhase::ArtifactEvidence => "artifact-evidence",
+        AvailabilityPhase::LiveDevicePreflight => "live-device-preflight",
+        AvailabilityPhase::PreparedKernelPreflight => "prepared-kernel-preflight",
+        AvailabilityPhase::LaunchPreflight => "launch-preflight",
     }
 }
 
@@ -538,6 +696,42 @@ fn strictly_increasing<T>(values: &[T], canonical_bytes: impl Fn(&T) -> Vec<u8>)
     values
         .windows(2)
         .all(|pair| canonical_bytes(&pair[0]) < canonical_bytes(&pair[1]))
+}
+
+/// Compile-profile measurement provenance for one exact build and environment.
+///
+/// The three parameters are the three knobs a test varies to change *only* the
+/// evidence behind a refusal: which authority made the measurement, on which
+/// compiler build, in which execution environment. Nothing here touches the
+/// declared behaviour or the means, so a difference observed downstream is
+/// attributable to provenance alone.
+#[cfg(test)]
+pub(crate) fn measured_profile_source(
+    authority_key: &str,
+    compiler_version: &str,
+    platform_build: &str,
+) -> Arc<FactSourceProvenance> {
+    Arc::new(FactSourceProvenance::measured(
+        AvailabilityPhase::CompileProfile,
+        FactAuthority::MeasuredProfile,
+        FactValidityScope::MeasuredEnvironment,
+        ProvenanceIdentity::new(authority_key, 1),
+        vec![MeasurementContext::new(
+            vec![CompilerBuildIdentity::new(
+                CompilerBuildRole::CodeGenerator,
+                "test-offline-compiler",
+                compiler_version,
+                None,
+            )],
+            ExecutionEnvironmentIdentity::new(
+                "test-platform",
+                "1.0",
+                platform_build,
+                "test-architecture",
+                "test-hardware",
+            ),
+        )],
+    ))
 }
 
 pub(crate) fn governed_profile_source() -> Arc<FactSourceProvenance> {
@@ -1374,45 +1568,57 @@ impl HonouredDimension {
 /// A dimension the target declares it cannot honour as required.
 ///
 /// This is the rejection shape ADR 0076 item 5 requires, and it is what replaces
-/// `strict-f32: required 1, available 0`: the dimension, the arithmetic type, the
-/// required behaviour, the behaviour the target does declare, the means the
-/// profile offers for the required behaviour, and the declaring profile's
-/// identity.
+/// `strict-f32: required 1, available 0`. It retains the **exact checked fact
+/// that refused** rather than a summary copied out of it, so the dimension, the
+/// arithmetic type, the behaviour the profile declared, the means it offers, the
+/// declaring profile, and the whole of that fact's structured provenance —
+/// authority, validity scope, compiler builds, execution environments — survive
+/// every rejection hop to the diagnostic surfaces. A rejection rebuilt from
+/// scalar means and a profile key cannot answer *who measured this, on what
+/// build, in what environment*, and a caller deciding whether a refusal applies
+/// to its own deployment needs exactly that.
+///
+/// The caller-required behaviour is kept beside the fact rather than read out of
+/// it, because the two answer different questions: the fact states what the
+/// target declares about a behaviour, and `required` states what the caller's
+/// contract asked for. They coincide under today's resolution rule, which
+/// matches a fact by required behaviour; collapsing them would make a change to
+/// that rule silently misreport the caller's contract.
+///
+/// The fact is held by shared immutable ownership. A rejection is cloned at
+/// every hop — feasibility to physical to frontier to opaque call to explain —
+/// and the measured provenance it carries is unbounded-in-principle structure;
+/// sharing it keeps those clones from duplicating measurement contexts and makes
+/// "the same fact reached the diagnostic" checkable by pointer.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct UnhonouredDimension {
-    dimension: NumericalDimension,
-    arithmetic: ArithmeticType,
-    resolved_type: Arc<ResolvedValueType>,
+    fact: Arc<NumericalHonourabilityFact>,
     required: DimensionBehaviour,
-    means: HonouringMeans,
     honoured: Option<DimensionBehaviour>,
-    profile: TargetProfileIdentity,
 }
 
 impl UnhonouredDimension {
+    /// Records that `fact` refused `required`, offering `honoured` instead.
+    ///
+    /// There is no provenance-free constructor. A refusal names a fact a profile
+    /// declared, and a synthetic one assembled from a dimension, a means, and a
+    /// profile key would be a claim no authority made — indistinguishable, once
+    /// it reached a diagnostic, from evidence.
     pub(crate) fn new(
-        dimension: NumericalDimension,
-        arithmetic: ArithmeticType,
-        resolved_type: ResolvedValueType,
+        fact: NumericalHonourabilityFact,
         required: DimensionBehaviour,
-        means: HonouringMeans,
         honoured: Option<DimensionBehaviour>,
-        profile: TargetProfileIdentity,
     ) -> Self {
         Self {
-            dimension,
-            arithmetic,
-            resolved_type: Arc::new(resolved_type),
+            fact: Arc::new(fact),
             required,
-            means,
             honoured,
-            profile,
         }
     }
 
     /// The dimension the contract could not be honoured on.
-    pub(crate) const fn dimension(&self) -> NumericalDimension {
-        self.dimension
+    pub(crate) fn dimension(&self) -> NumericalDimension {
+        self.fact.dimension()
     }
 
     /// The arithmetic type it could not be honoured in.
@@ -1420,13 +1626,13 @@ impl UnhonouredDimension {
     /// Reported because the same dimension can be honoured in one type and
     /// unhonourable in another on one profile: a rejection that named only the
     /// dimension would be false about the other type.
-    pub(crate) const fn arithmetic(&self) -> ArithmeticType {
-        self.arithmetic
+    pub(crate) fn arithmetic(&self) -> ArithmeticType {
+        self.fact.arithmetic()
     }
 
     /// The complete resolved semantic type it could not be honoured in.
     pub(crate) fn resolved_type(&self) -> &ResolvedValueType {
-        self.resolved_type.as_ref()
+        self.fact.resolved_type()
     }
 
     /// The behaviour the caller's contract required.
@@ -1434,9 +1640,14 @@ impl UnhonouredDimension {
         self.required
     }
 
+    /// The behaviour the refusing declaration speaks about.
+    pub(crate) fn declared(&self) -> DimensionBehaviour {
+        self.fact.behaviour()
+    }
+
     /// The means the profile declares for the required behaviour.
     pub(crate) fn means(&self) -> HonouringMeans {
-        self.means.clone()
+        self.fact.means()
     }
 
     /// The behaviour on this dimension the profile does honour unconditionally,
@@ -1450,8 +1661,120 @@ impl UnhonouredDimension {
     }
 
     /// The profile that declared the means.
-    pub(crate) const fn profile(&self) -> &TargetProfileIdentity {
-        &self.profile
+    pub(crate) fn profile(&self) -> &TargetProfileIdentity {
+        self.fact.provenance().profile()
+    }
+
+    /// The exact checked fact that refused, with its complete provenance.
+    pub(crate) fn evidence(&self) -> NumericalRefusalEvidence {
+        NumericalRefusalEvidence(Arc::clone(&self.fact))
+    }
+
+    /// Appends the complete canonical evidence for this refusal.
+    ///
+    /// The one encoding of a refused dimension in this crate: the frontier's
+    /// rejection identity, its opaque-call cause, and the explain record all
+    /// reach it, so a widened fact cannot change one and leave the others
+    /// encoding the old shape.
+    pub(crate) fn encode(&self, bytes: &mut Vec<u8>) {
+        let Self {
+            fact,
+            required,
+            honoured,
+        } = self;
+        required.encode(bytes);
+        match honoured {
+            Some(honoured) => {
+                bytes.push(0x01);
+                honoured.encode(bytes);
+            }
+            None => bytes.push(0x00),
+        }
+        push_slice(
+            bytes,
+            &NumericalRefusalEvidence(Arc::clone(fact)).canonical_bytes(),
+        );
+    }
+}
+
+/// The exact checked fact behind one refusal, carried by shared ownership.
+///
+/// A read-only carrier rather than a second copy of the fact's fields: the
+/// rejection pipeline and the explain record hold the same instance, so no stage
+/// can reconstruct a plausible fact that the authority never declared. The
+/// [`Arc`] is private and never crosses the public boundary; the session facade
+/// reads through borrowed accessors.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct NumericalRefusalEvidence(Arc<NumericalHonourabilityFact>);
+
+impl NumericalRefusalEvidence {
+    /// The behaviour the declaration speaks about.
+    pub(crate) fn declared(&self) -> DimensionBehaviour {
+        self.0.behaviour()
+    }
+
+    /// The means the declaration offers for that behaviour.
+    pub(crate) fn means(&self) -> HonouringMeans {
+        self.0.means()
+    }
+
+    /// The phase from which the declaration is available.
+    pub(crate) fn phase(&self) -> AvailabilityPhase {
+        self.0.phase()
+    }
+
+    /// The authority vouching for the declaration.
+    pub(crate) fn authority(&self) -> FactAuthority {
+        self.0.authority()
+    }
+
+    /// The scope over which the declaration remains valid.
+    pub(crate) fn validity(&self) -> FactValidityScope {
+        self.0.validity()
+    }
+
+    /// The complete structured source statement the declarer supplied.
+    pub(crate) fn source(&self) -> &FactSourceProvenance {
+        self.0.source()
+    }
+
+    /// The profile that declared the fact.
+    pub(crate) fn profile(&self) -> &TargetProfileIdentity {
+        self.0.provenance().profile()
+    }
+
+    /// Whether two refusals cite the exact same retained fact instance.
+    ///
+    /// Pointer equality rather than structural equality, and that is the point:
+    /// it is the only check that distinguishes a fact carried through the
+    /// rejection pipeline from one rebuilt later with equal contents, which is
+    /// exactly the reconstruction this type exists to rule out.
+    pub(crate) fn cites_same_fact(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
+    /// The complete canonical bytes of the refusing fact, with its declarer.
+    ///
+    /// Delegated to [`encode_honourability_facts`] rather than written again:
+    /// a checked profile descriptor and a rejection identity must agree about
+    /// what a fact *is*, and two encoders of one vocabulary drift.
+    pub(crate) fn canonical_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        encode_honourability_facts(&mut bytes, std::slice::from_ref(self.0.as_ref()));
+        push_slice(&mut bytes, self.profile().key().as_bytes());
+        bytes
+    }
+
+    /// Renders the complete declaration and provenance into an explanation.
+    pub(crate) fn render(&self, output: &mut String) {
+        use std::fmt::Write as _;
+        let _ = write!(
+            output,
+            "declares={}:means={}:",
+            self.declared().key(),
+            self.means().key()
+        );
+        self.source().render(output);
     }
 }
 

@@ -1491,7 +1491,7 @@ impl TargetRejections {
     }
 }
 
-const fn target_axis(error: &PhysicalError) -> &'static str {
+fn target_axis(error: &PhysicalError) -> &'static str {
     match error {
         PhysicalError::Target { rule, .. }
         | PhysicalError::Intrinsic { rule, .. }

@@ -1139,22 +1139,7 @@ impl FrontierRejection {
             Self::Unhonourable { provider, cause } => {
                 output.push(4);
                 encode_provider(output, provider.provider());
-                output.push(cause.dimension().tag());
-                output.push(cause.arithmetic().tag());
-                push_slice(
-                    output,
-                    cause.resolved_type().canonical_encoding().as_bytes(),
-                );
-                cause.required().encode(output);
-                push_slice(output, cause.means().key().as_bytes());
-                match cause.honoured() {
-                    Some(honoured) => {
-                        output.push(1);
-                        honoured.encode(output);
-                    }
-                    None => output.push(0),
-                }
-                push_slice(output, cause.profile().key().as_bytes());
+                cause.encode(output);
             }
             Self::OpaqueCall {
                 provider,
@@ -1867,22 +1852,7 @@ fn encode_opaque_call_cause(output: &mut Vec<u8>, cause: &OpaqueCallRejectionCau
         }
         OpaqueCallRejectionCause::TargetUnhonourable(cause) => {
             output.push(0x08);
-            output.push(cause.dimension().tag());
-            output.push(cause.arithmetic().tag());
-            push_slice(
-                output,
-                cause.resolved_type().canonical_encoding().as_bytes(),
-            );
-            cause.required().encode(output);
-            push_slice(output, cause.means().key().as_bytes());
-            match cause.honoured() {
-                Some(honoured) => {
-                    output.push(1);
-                    honoured.encode(output);
-                }
-                None => output.push(0),
-            }
-            push_slice(output, cause.profile().key().as_bytes());
+            cause.encode(output);
         }
     }
 }
@@ -3427,7 +3397,8 @@ mod tests {
         use crate::call_declaration::GuaranteeError;
         use crate::feasibility::{RejectionCause, TargetProfileIdentity};
         use crate::honourability::{
-            DimensionBehaviour, HonouringMeans, NumericalDimension, UnhonouredDimension,
+            DeclaredBehaviour, DimensionBehaviour, HonouringMeans, NumericalDimension,
+            UnhonouredDimension, governed_profile_source,
         };
         use crate::physical::ResourceVerdict;
         use tiler_ir::schedule::{ArithmeticType, NumericalPermission};
@@ -3455,16 +3426,24 @@ mod tests {
             ResourceVerdict::Rejected(RejectionCause::Capability(predicate)) => predicate,
             other => panic!("expected a capability rejection, got {other:?}"),
         };
+        // Honest checked evidence, not a synthetic summary: a refusal names a
+        // fact a profile declared, so the fixture declares one and attributes
+        // it, exactly as a target profile does.
+        let required = DimensionBehaviour::Transform(NumericalPermission::Permitted);
         let unhonourable = UnhonouredDimension::new(
-            NumericalDimension::Contraction,
-            ArithmeticType::F32,
-            F32::resolved_type(),
-            DimensionBehaviour::Transform(NumericalPermission::Permitted),
-            HonouringMeans::Unsupported,
+            DeclaredBehaviour::new(
+                NumericalDimension::Contraction,
+                ArithmeticType::F32,
+                F32::resolved_type(),
+                required,
+                HonouringMeans::Unsupported,
+                governed_profile_source(),
+            )
+            .attributed_to(TargetProfileIdentity::new("tiler.test.profile.v1")),
+            required,
             Some(DimensionBehaviour::Transform(
                 NumericalPermission::Forbidden,
             )),
-            TargetProfileIdentity::new("tiler.test.profile.v1"),
         );
 
         let causes = [
@@ -3642,6 +3621,153 @@ mod tests {
                 ..
             } if target_profile_key.as_str() == GOVERNED_TARGET_KEY
         ));
+    }
+
+    /// One refusing fact reaches every rejection surface with its provenance
+    /// intact, and provenance alone moves the canonical identity.
+    ///
+    /// Both halves are the point. The first is that no surface reconstructs the
+    /// fact: each rejection cites the very instance the feasibility authority
+    /// refused on, checked by pointer, which structural equality could not
+    /// distinguish from a plausible rebuild. The second is that the identity
+    /// those surfaces are sorted and deduplicated by actually reads the
+    /// provenance — before this, two profiles refusing the same behaviour on
+    /// different measured builds encoded identically, so one refusal's
+    /// explanation could stand in for the other's.
+    #[test]
+    fn one_refusing_fact_reaches_every_rejection_surface_with_its_provenance() {
+        use super::encode_rejection;
+        use crate::feasibility::{FeasibilityOutcome, RejectionCause};
+        use crate::honourability::{
+            FactSourceProvenance, UnhonouredDimension, governed_profile_source,
+            measured_profile_source,
+        };
+        use crate::request::{ContractRejection, StrictF32NumericalContract};
+        use crate::target::TargetProfile;
+
+        fn refusal(key: &str, source: std::sync::Arc<FactSourceProvenance>) -> UnhonouredDimension {
+            let profile = TargetProfile::refusing_preserved_subnormals_for_test(key, source);
+            let FeasibilityOutcome::Rejected(rejection) =
+                crate::physical::assess_contract(&profile, StrictF32NumericalContract::governed())
+                    .expect("the refusing test profile is intrinsically valid")
+            else {
+                panic!("a declared refusal disproves a hard predicate");
+            };
+            let RejectionCause::Numerical(cause) = rejection.representative() else {
+                panic!("a contract-only proposal states no capability requirement");
+            };
+            cause
+        }
+
+        let provider = PhysicalProviderProvenance::new(provider_identity("refusal-carry", 3))
+            .expect("fixture provider is exactly reportable");
+        let call = OpaqueCallIdentity::new("owner", "call", 9).expect("canonical");
+        let proposal = OpaqueCallProposal::new(call, vec![("x", TensorRole::Input)])
+            .expect("fixture proposal is exactly reportable");
+
+        let cause = refusal(
+            "test.refusal-carry.v1",
+            measured_profile_source("test.probe.v1", "1.0", "build-1"),
+        );
+        let origin = cause.evidence();
+        assert_eq!(
+            origin.authority(),
+            crate::feasibility::FactAuthority::MeasuredProfile
+        );
+
+        // Contract rejection, frontier rejection, and opaque-call rejection all
+        // carry the one fact onward rather than summarizing it.
+        let contract = ContractRejection::Unhonourable {
+            contract_key: StrictF32NumericalContract::governed().key,
+            cause: cause.clone(),
+        };
+        let ContractRejection::Unhonourable { cause: carried, .. } = &contract else {
+            panic!("the contract rejection retains its declared refusal");
+        };
+        assert!(carried.evidence().cites_same_fact(&origin));
+
+        let frontier = FrontierRejection::Unhonourable {
+            provider: provider.clone(),
+            cause: cause.clone(),
+        };
+        let FrontierRejection::Unhonourable { cause: carried, .. } = &frontier else {
+            panic!("the frontier rejection retains its declared refusal");
+        };
+        assert!(carried.evidence().cites_same_fact(&origin));
+
+        let opaque = FrontierRejection::OpaqueCall {
+            provider: provider.clone(),
+            proposal: proposal.clone(),
+            cause: OpaqueCallRejectionCause::TargetUnhonourable(cause.clone()),
+        };
+        let FrontierRejection::OpaqueCall {
+            cause: OpaqueCallRejectionCause::TargetUnhonourable(carried),
+            ..
+        } = &opaque
+        else {
+            panic!("the opaque-call rejection retains its declared refusal");
+        };
+        assert!(carried.evidence().cites_same_fact(&origin));
+
+        // Perturbing one provenance field at a time. Each must move both
+        // canonical spellings; none may move what the caller required.
+        let baseline_frontier = encode_rejection(&frontier);
+        let baseline_opaque = encode_rejection(&opaque);
+        for (label, perturbed) in [
+            (
+                "authority and validity",
+                refusal("test.refusal-carry.v1", governed_profile_source()),
+            ),
+            (
+                "authority identity",
+                refusal(
+                    "test.refusal-carry.v1",
+                    measured_profile_source("test.other-probe.v1", "1.0", "build-1"),
+                ),
+            ),
+            (
+                "compiler build",
+                refusal(
+                    "test.refusal-carry.v1",
+                    measured_profile_source("test.probe.v1", "2.0", "build-1"),
+                ),
+            ),
+            (
+                "execution environment",
+                refusal(
+                    "test.refusal-carry.v1",
+                    measured_profile_source("test.probe.v1", "1.0", "build-2"),
+                ),
+            ),
+        ] {
+            assert_eq!(
+                perturbed.required(),
+                cause.required(),
+                "{label} changed what the caller required",
+            );
+            assert_eq!(
+                perturbed.dimension(),
+                cause.dimension(),
+                "{label} changed the refused dimension",
+            );
+            assert_ne!(
+                baseline_frontier,
+                encode_rejection(&FrontierRejection::Unhonourable {
+                    provider: provider.clone(),
+                    cause: perturbed.clone(),
+                }),
+                "{label} left the frontier rejection identity unchanged",
+            );
+            assert_ne!(
+                baseline_opaque,
+                encode_rejection(&FrontierRejection::OpaqueCall {
+                    provider: provider.clone(),
+                    proposal: proposal.clone(),
+                    cause: OpaqueCallRejectionCause::TargetUnhonourable(perturbed),
+                }),
+                "{label} left the opaque-call rejection identity unchanged",
+            );
+        }
     }
 
     /// Dominance is boundary-aware: two implementations of *different*

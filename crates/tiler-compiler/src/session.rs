@@ -77,9 +77,13 @@ use crate::request::{
     MAX_NUMERICAL_CONTRACT_PREFERENCES as INTERNAL_MAX_NUMERICAL_CONTRACT_PREFERENCES,
     NumericalContractPreference, RequestError, StrictF32NumericalContract,
 };
-use crate::target::{TargetProfile, TargetProfileKey, TargetRequest};
+use crate::target::{
+    TargetNumericalRefusalEvidence, TargetProfile, TargetProfileKey, TargetRequest,
+};
 use crate::{
-    honourability::{DimensionBehaviour, HonouringMeans, NumericalDimension},
+    honourability::{
+        DimensionBehaviour, HonouringMeans, NumericalDimension, NumericalRefusalEvidence,
+    },
     program::ProgramError,
 };
 use tiler_ir::index::FrozenScalarRegistry;
@@ -448,12 +452,41 @@ pub enum TargetNumericalRefusalDisposition {
 }
 
 /// Exact declaration behind one target's numerical refusal.
+///
+/// It retains the checked fact that refused, so [`Self::evidence`] reports that
+/// fact's own authority, validity scope, and measured compiler builds and
+/// execution environments rather than a summary reconstructed at this boundary.
+/// The retained fact is compiler-private and shared; nothing here exposes it or
+/// admits an edited provenance record in its place.
+///
+/// The behaviour the *caller* required is one level up, on
+/// [`TargetNumericalContractRejection::requirement`], and is deliberately not
+/// restated here: it belongs to the caller's contract entry rather than to the
+/// target's declaration, and every disposition — refused, absent, deferred —
+/// answers for the same required behaviour. [`Self::declared`] is the different
+/// question this type answers: which behaviour the refusing declaration speaks
+/// about.
+///
+/// # The retained fact is not reachable as data
+///
+/// A caller reads it only through [`Self::evidence`], which borrows. There is no
+/// field to take, replace, or hand back edited, so a refusal that reaches a
+/// diagnostic always cites provenance some authority actually supplied.
+///
+/// ```compile_fail,E0616
+/// # use tiler_compiler::session::TargetDeclaredNumericalRefusal;
+/// fn tamper(refusal: &TargetDeclaredNumericalRefusal) {
+///     let _ = &refusal.evidence;
+/// }
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TargetDeclaredNumericalRefusal {
     subject: TargetNumericalSubject,
+    declared: TargetNumericalRequirement,
     means: TargetNumericalDeclaredMeans,
     honoured: Option<TargetNumericalHonouredBehaviour>,
     target_profile: TargetProfileKey,
+    evidence: NumericalRefusalEvidence,
 }
 
 impl TargetDeclaredNumericalRefusal {
@@ -461,6 +494,12 @@ impl TargetDeclaredNumericalRefusal {
     #[must_use]
     pub const fn subject(&self) -> &TargetNumericalSubject {
         &self.subject
+    }
+
+    /// Returns the exact behaviour the refusing declaration speaks about.
+    #[must_use]
+    pub const fn declared(&self) -> &TargetNumericalRequirement {
+        &self.declared
     }
 
     /// Returns the means the profile declares for the required behaviour.
@@ -479,6 +518,18 @@ impl TargetDeclaredNumericalRefusal {
     #[must_use]
     pub const fn target_profile(&self) -> &TargetProfileKey {
         &self.target_profile
+    }
+
+    /// Returns a borrowed, read-only view of the exact fact that refused.
+    ///
+    /// This is where the refusal stops being a verdict and becomes evidence: it
+    /// names the authority, the scope over which that authority's claim holds,
+    /// and — for a measured claim — the exact compiler builds and execution
+    /// environments the measurement rests on, which is what a caller compares
+    /// against its own deployment before acting on the refusal.
+    #[must_use]
+    pub const fn evidence(&self) -> TargetNumericalRefusalEvidence<'_> {
+        TargetNumericalRefusalEvidence::borrow(&self.evidence)
     }
 }
 
@@ -1598,12 +1649,23 @@ fn public_numerical_rejection(
                 .honoured()
                 .map(|behaviour| public_honoured_behaviour(rejection.dimension(), behaviour))
                 .transpose()?;
+            let declared = public_numerical_requirement(
+                rejection.dimension(),
+                cause.declared(),
+                subject.clone(),
+            )?;
             TargetNumericalRefusalDisposition::DeclaredUnhonourable(Box::new(
                 TargetDeclaredNumericalRefusal {
                     subject,
+                    declared,
                     means,
                     honoured,
                     target_profile: cause.profile().public_key().clone(),
+                    // Borrowed from the retained fact rather than rebuilt: the
+                    // conversion above narrows the declaration to what the
+                    // dimension-safe requirement vocabulary can spell, and the
+                    // evidence is the part that must not be narrowed at all.
+                    evidence: cause.evidence(),
                 },
             ))
         }
@@ -2235,7 +2297,7 @@ mod tests {
             .explain()
             .expect("a post-request failure retains its sealed trace")
             .render();
-        assert!(rendered.starts_with("tiler-explain-v6 "));
+        assert!(rendered.starts_with("tiler-explain-v7 "));
         assert!(
             rendered.contains("compiler-failure"),
             "the trace names the terminal failure: {rendered}",

@@ -2,17 +2,20 @@
 
 use tiler_compiler::session::{
     CompileFailureClass, CompileRequest, MAX_NUMERICAL_CONTRACT_PREFERENCES, NumericalContract,
-    TargetCompileRefusal, TargetDTypeRefusalDisposition, TargetNumericalContractRejection,
-    TargetNumericalDeclaredMeans, TargetNumericalHonouredBehaviour,
-    TargetNumericalRefusalDisposition, TargetNumericalRequirement, compile,
+    TargetCompileRefusal, TargetDTypeRefusalDisposition, TargetDeclaredNumericalRefusal,
+    TargetNumericalContractRejection, TargetNumericalDeclaredMeans,
+    TargetNumericalHonouredBehaviour, TargetNumericalRefusalDisposition,
+    TargetNumericalRequirement, compile,
 };
 use tiler_compiler::target::{
     DTypeDispatchability, DTypeDispatchabilityResolution, DeviceAddressWidth,
     IndexArithmeticSupport, MAX_TARGET_PROFILES_PER_REQUEST, MeasuredFactAuthority,
     ScalarArithmetic, ScalarSupport, TargetCompileProfileMeasurementSource, TargetCompilerBuild,
-    TargetCompilerRole, TargetExecutionEnvironment, TargetFactProducerIdentity, TargetFactSource,
-    TargetMeasurementContext, TargetNormativeReferenceIdentity, TargetProfile,
-    TargetProfileBuilder, TargetProfileKey, TargetRequest, TargetRequestError,
+    TargetCompilerRole, TargetCompilerRoleReference, TargetExecutionEnvironment,
+    TargetFactAuthority, TargetFactProducerIdentity, TargetFactSource, TargetFactValidityScope,
+    TargetMeasurementContext, TargetNormativeReferenceIdentity, TargetNumericalEvidenceBasis,
+    TargetProfile, TargetProfileBuildError, TargetProfileBuilder, TargetProfileKey, TargetRequest,
+    TargetRequestError,
 };
 use tiler_ir::program::abi::AvailabilityPhase;
 use tiler_ir::schedule::{
@@ -72,17 +75,28 @@ fn deferred_measurement() -> TargetFactSource {
 }
 
 fn compile_profile_measurement() -> TargetCompileProfileMeasurementSource {
+    measurement_on("1.0", "build-1")
+}
+
+/// Compile-profile measurement provenance for one exact build and environment.
+///
+/// The two parameters are the knobs a caller can turn to state that the same
+/// refusal was measured somewhere else, without touching what was declared.
+fn measurement_on(
+    compiler_version: &str,
+    platform_build: &str,
+) -> TargetCompileProfileMeasurementSource {
     let compiler = TargetCompilerBuild::new(
         TargetCompilerRole::CodeGenerator,
         "test-offline-compiler".to_owned(),
-        "1.0".to_owned(),
+        compiler_version.to_owned(),
         Some("build-1".to_owned()),
     )
     .unwrap();
     let environment = TargetExecutionEnvironment::builder()
         .platform("test-platform".to_owned())
         .platform_version("1.0".to_owned())
-        .platform_build("build-1".to_owned())
+        .platform_build(platform_build.to_owned())
         .architecture("test-architecture".to_owned())
         .hardware("test-hardware".to_owned())
         .build()
@@ -95,13 +109,8 @@ fn compile_profile_measurement() -> TargetCompileProfileMeasurementSource {
     .unwrap()
 }
 
-fn external_profile(
-    key: &str,
-    dispatch: DispatchDeclaration,
-    numerics: NumericalDeclarations,
-) -> TargetProfile {
-    let source = external_guarantee();
-    let mut builder = TargetProfileBuilder::new(TargetProfileKey::new(key.to_owned()).unwrap());
+/// Declares the quantitative half every profile in this file shares.
+fn declare_quantitative(builder: &mut TargetProfileBuilder, source: &TargetFactSource) {
     builder
         .declare_max_threads_per_grid_axis(65_535, source.clone())
         .unwrap();
@@ -121,6 +130,16 @@ fn external_profile(
     builder
         .declare_local_memory_bytes(32_768, source.clone())
         .unwrap();
+}
+
+fn external_profile(
+    key: &str,
+    dispatch: DispatchDeclaration,
+    numerics: NumericalDeclarations,
+) -> TargetProfile {
+    let source = external_guarantee();
+    let mut builder = TargetProfileBuilder::new(TargetProfileKey::new(key.to_owned()).unwrap());
+    declare_quantitative(&mut builder, &source);
     if numerics != NumericalDeclarations::Absent {
         let subject = ScalarArithmetic::f32();
         builder
@@ -428,6 +447,201 @@ fn declared_numerical_refusal_exposes_exact_subject_means_honoured_and_profile()
         ))
     );
     assert_eq!(declared.target_profile(), profile.profile_key());
+}
+
+/// A profile that flushes input subnormals, measured on an exact build.
+///
+/// `declare_measured_input_subnormal_behaviour` writes the complete exclusive
+/// table for that dimension, so preservation is *declared unsupported* under the
+/// measured source rather than merely absent — the only shape whose refusal has
+/// a fact to cite.
+fn measured_flushing_profile(
+    key: &str,
+    measurement: TargetCompileProfileMeasurementSource,
+) -> TargetProfile {
+    let guarantee = external_guarantee();
+    let mut builder = TargetProfileBuilder::new(TargetProfileKey::new(key.to_owned()).unwrap());
+    declare_quantitative(&mut builder, &guarantee);
+    let subject = ScalarArithmetic::f32();
+    builder
+        .declare_measured_input_subnormal_behaviour(
+            subject.clone(),
+            SubnormalMode::FlushToZero {
+                zero_sign: FlushedZeroSign::PreservesSign,
+            },
+            measurement,
+        )
+        .unwrap();
+    builder
+        .declare_result_subnormals(
+            subject.clone(),
+            SubnormalMode::Preserve,
+            ScalarSupport::Exact,
+            guarantee.clone(),
+        )
+        .unwrap();
+    for permission in [
+        TargetProfileBuilder::declare_contraction as PermissionDeclaration,
+        TargetProfileBuilder::declare_reassociation,
+        TargetProfileBuilder::declare_permutation,
+        TargetProfileBuilder::declare_signed_zero,
+    ] {
+        permission(
+            &mut builder,
+            subject.clone(),
+            NumericalPermission::Forbidden,
+            ScalarSupport::Exact,
+            guarantee.clone(),
+        )
+        .unwrap();
+    }
+    builder
+        .declare_nan_assumptions(
+            subject.clone(),
+            ExceptionalValueAssumption::MakeNoAssumption,
+            ScalarSupport::Exact,
+            guarantee.clone(),
+        )
+        .unwrap();
+    builder
+        .declare_infinity_assumptions(
+            subject,
+            ExceptionalValueAssumption::MakeNoAssumption,
+            ScalarSupport::Exact,
+            guarantee.clone(),
+        )
+        .unwrap();
+    builder
+        .declare_dtype_dispatchability(
+            F32::resolved_type(),
+            DTypeDispatchability::Dispatchable,
+            guarantee,
+        )
+        .unwrap();
+    builder.build().unwrap()
+}
+
+type PermissionDeclaration = fn(
+    &mut TargetProfileBuilder,
+    ScalarArithmetic,
+    NumericalPermission,
+    ScalarSupport,
+    TargetFactSource,
+) -> Result<(), TargetProfileBuildError>;
+
+/// Reads one declared refusal's exact measured evidence back out.
+fn measured_declared_refusal(profile: &TargetProfile) -> TargetDeclaredNumericalRefusal {
+    let program = semantic_program();
+    let batch = compile(CompileRequest::new(
+        &program,
+        NumericalContract::StrictF32,
+        TargetRequest::new([profile.clone()]).unwrap(),
+    ))
+    .unwrap();
+    let failure = batch.targets().next().unwrap().outcome().unwrap_err();
+    let TargetCompileRefusal::NumericalContract(refusal) = failure
+        .refusal()
+        .expect("a pre-trace contract refusal retains typed detail")
+    else {
+        panic!("expected a numerical-contract refusal");
+    };
+    let TargetNumericalRefusalDisposition::DeclaredUnhonourable(declared) =
+        refusal.rejections()[0].disposition()
+    else {
+        panic!("a measured unsupported declaration is a declared refusal");
+    };
+    declared.as_ref().clone()
+}
+
+/// A declared refusal exposes the exact checked evidence, and provenance alone
+/// moves it.
+///
+/// This is what separates a verdict from evidence at the public boundary. A
+/// caller cannot act on "this target refuses preserved subnormals" — every
+/// target that flushes says that. It can act on "this was measured by *this*
+/// producer, on *this* compiler build, in *this* environment", because it can
+/// compare that against its own deployment. So the refusal must carry the whole
+/// of it, and two refusals measured on different builds must not be equal.
+#[test]
+fn a_declared_refusal_exposes_its_measured_evidence_and_provenance_alone_moves_it() {
+    let baseline = measured_declared_refusal(&measured_flushing_profile(
+        "test.measured-refusal.v1",
+        measurement_on("1.0", "build-1"),
+    ));
+
+    assert_eq!(
+        baseline.declared(),
+        &TargetNumericalRequirement::InputSubnormals {
+            subject: baseline.subject().clone(),
+            required: SubnormalMode::Preserve,
+        },
+        "the refusing declaration speaks about the behaviour the caller asked for",
+    );
+    assert_eq!(baseline.means(), &TargetNumericalDeclaredMeans::Unsupported);
+    assert_eq!(
+        baseline.honoured(),
+        Some(&TargetNumericalHonouredBehaviour::InputSubnormals(
+            SubnormalMode::FlushToZero {
+                zero_sign: FlushedZeroSign::PreservesSign
+            }
+        )),
+    );
+
+    let evidence = baseline.evidence();
+    assert_eq!(evidence.available_at(), AvailabilityPhase::CompileProfile);
+    assert_eq!(evidence.authority(), TargetFactAuthority::MeasuredProfile);
+    assert_eq!(
+        evidence.validity(),
+        TargetFactValidityScope::MeasuredEnvironment
+    );
+    assert_eq!(
+        evidence.authority_identity().key(),
+        "test.compile-profile-probe.v1"
+    );
+    assert_eq!(evidence.authority_identity().revision(), 1);
+    assert_eq!(evidence.target_profile(), baseline.target_profile());
+
+    let TargetNumericalEvidenceBasis::Measurement { contexts } = evidence.basis() else {
+        panic!("a measured declaration rests on measurement contexts");
+    };
+    assert_eq!(contexts.len(), 1);
+    let context = contexts.get(0).unwrap();
+    assert_eq!(context.compiler_builds().len(), 1);
+    let build = context.compiler_builds().get(0).unwrap();
+    assert_eq!(build.role(), TargetCompilerRoleReference::CodeGenerator);
+    assert_eq!(build.implementation(), "test-offline-compiler");
+    assert_eq!(build.version(), "1.0");
+    assert_eq!(build.build(), Some("build-1"));
+    let environment = context.environment();
+    assert_eq!(environment.platform(), "test-platform");
+    assert_eq!(environment.platform_version(), "1.0");
+    assert_eq!(environment.platform_build(), "build-1");
+    assert_eq!(environment.architecture(), "test-architecture");
+    assert_eq!(environment.hardware(), "test-hardware");
+
+    // Only the measurement moves. What the caller required, what the target
+    // declares, and what it honours instead are unchanged, and the refusal is
+    // still not equal to the one measured elsewhere.
+    for (label, measurement) in [
+        ("compiler build", measurement_on("2.0", "build-1")),
+        ("execution environment", measurement_on("1.0", "build-2")),
+    ] {
+        let perturbed = measured_declared_refusal(&measured_flushing_profile(
+            "test.measured-refusal.v1",
+            measurement,
+        ));
+        assert_eq!(
+            perturbed.declared(),
+            baseline.declared(),
+            "{label} changed the declared behaviour",
+        );
+        assert_eq!(
+            perturbed.means(),
+            baseline.means(),
+            "{label} changed the declared means",
+        );
+        assert_ne!(perturbed, baseline, "{label} left the refusal unchanged");
+    }
 }
 
 #[test]

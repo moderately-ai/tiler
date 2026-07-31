@@ -16,18 +16,24 @@ use tiler_ir::schedule::ArithmeticType;
 use tiler_ir::semantic::ResolvedValueType;
 
 use crate::fusion::FusionNumericalProof;
+use crate::honourability::NumericalRefusalEvidence;
 use crate::request::{LoweringProviderIdentity, VerifiedTargetRequest};
 
-// Schema v8 appends exact prepared-entry deferred target requirements; v7
-// appends the bits quantity used for exact widths; v6 adds the complete
-// resolved dtype to numerical honourability; v5
-// appended opaque-call and provider subject kinds, the NotApplicable
-// check class and disposition, and the arithmetic dtype to numerical
-// honourability. Every earlier tag retains its v4 value. Renderer v6 appends
-// the deferred-requirement spelling; renderer v5 appended the `bits` unit
-// without changing any existing spelling.
-pub(crate) const EXPLAIN_SCHEMA_VERSION: u32 = 8;
-pub(crate) const EXPLAIN_RENDERER_VERSION: u32 = 6;
+// Schema v9 appends the complete refusing honourability fact — its declared
+// behaviour, means, availability phase, authority, validity scope, versioned
+// authority identity, and governed-guarantee or measured
+// compiler-build/environment basis — to every unhonourable record. Under v8 two
+// profiles refusing the same behaviour on different measured builds produced
+// identical trace identities. v8 appended exact prepared-entry deferred target
+// requirements; v7 appends the bits quantity used for exact widths; v6 adds the
+// complete resolved dtype to numerical honourability; v5 appended opaque-call
+// and provider subject kinds, the NotApplicable check class and disposition, and
+// the arithmetic dtype to numerical honourability. Every earlier tag retains its
+// v4 value. Renderer v7 spells that same refusal provenance; renderer v6
+// appended the deferred-requirement spelling; renderer v5 appended the `bits`
+// unit without changing any existing spelling.
+pub(crate) const EXPLAIN_SCHEMA_VERSION: u32 = 9;
+pub(crate) const EXPLAIN_RENDERER_VERSION: u32 = 7;
 const COMPILATION_EXPLAIN_SCHEMA_VERSION: u32 = 1;
 const COMPILATION_EXPLAIN_RENDERER_VERSION: u32 = 1;
 const MAX_COMPILATION_EXPLAIN_CANDIDATES: usize = 256;
@@ -603,9 +609,17 @@ pub(crate) enum HonourabilityOutcome {
     Honoured { means: ReasonCode },
     /// The target declares it cannot honour the required behaviour by the named
     /// means, and honours the named behaviour instead when it honours one.
+    ///
+    /// `evidence` is the exact checked fact that refused, carried from the
+    /// feasibility authority rather than rebuilt here. `means` restates that
+    /// fact's means as an explain reason code, which is what the record's key
+    /// vocabulary indexes on; the evidence is what makes the record explainable,
+    /// because it names the authority, validity scope, and measured builds and
+    /// environments the refusal rests on.
     Unhonourable {
         means: ReasonCode,
         honoured: Option<ReasonCode>,
+        evidence: NumericalRefusalEvidence,
     },
     /// Nothing the profile declares speaks to the required behaviour. A third
     /// class, never a rejection: no downstream reader may treat the absence of a
@@ -2364,11 +2378,17 @@ fn render_honourability(
         HonourabilityOutcome::Honoured { means } => {
             let _ = write!(output, "honoured:{}", means.as_str());
         }
-        HonourabilityOutcome::Unhonourable { means, honoured } => {
+        HonourabilityOutcome::Unhonourable {
+            means,
+            honoured,
+            evidence,
+        } => {
             let _ = write!(output, "unhonourable:{}", means.as_str());
             if let Some(honoured) = honoured {
                 let _ = write!(output, ":honours={}", honoured.as_str());
             }
+            output.push(':');
+            evidence.render(output);
         }
         HonourabilityOutcome::Undeclared => output.push_str("undeclared"),
     }
@@ -2871,7 +2891,11 @@ fn encode_honourability(
             bytes.push(1);
             push_slice(bytes, means.as_str().as_bytes());
         }
-        HonourabilityOutcome::Unhonourable { means, honoured } => {
+        HonourabilityOutcome::Unhonourable {
+            means,
+            honoured,
+            evidence,
+        } => {
             bytes.push(2);
             push_slice(bytes, means.as_str().as_bytes());
             match honoured {
@@ -2881,6 +2905,12 @@ fn encode_honourability(
                 }
                 None => bytes.push(0),
             }
+            // The complete refusing fact, through the honourability authority's
+            // own encoder. Two profiles refusing the same behaviour on different
+            // measured builds are two different claims, and a trace identity
+            // that could not tell them apart would let one compilation's
+            // explanation stand in for the other's.
+            push_slice(bytes, &evidence.canonical_bytes());
         }
         HonourabilityOutcome::Undeclared => bytes.push(3),
     }
@@ -3137,8 +3167,8 @@ mod tests {
 
     #[test]
     fn explain_vocabulary_is_append_only_and_versioned() {
-        assert_eq!(EXPLAIN_SCHEMA_VERSION, 8);
-        assert_eq!(EXPLAIN_RENDERER_VERSION, 6);
+        assert_eq!(EXPLAIN_SCHEMA_VERSION, 9);
+        assert_eq!(EXPLAIN_RENDERER_VERSION, 7);
         assert_eq!(subject_kind_tag(SubjectKind::Alternative), 12);
         assert_eq!(subject_kind_tag(SubjectKind::OpaqueCall), 13);
         assert_eq!(subject_kind_tag(SubjectKind::Provider), 14);
@@ -3302,32 +3332,76 @@ mod tests {
         );
     }
 
+    /// Builds one refusal from honest declared evidence.
+    ///
+    /// There is no provenance-free path to an [`ExplainEvent`] refusal, here or
+    /// in production: the event carries the exact fact, and a fact exists only
+    /// once a declaration has been attributed to a declaring profile.
+    fn unhonoured(
+        arithmetic: ArithmeticType,
+        resolved_type: ResolvedValueType,
+        source: std::sync::Arc<crate::honourability::FactSourceProvenance>,
+    ) -> crate::honourability::UnhonouredDimension {
+        use crate::honourability::{
+            DeclaredBehaviour, DimensionBehaviour, HonouringMeans, NumericalDimension,
+        };
+        let required =
+            DimensionBehaviour::Transform(tiler_ir::schedule::NumericalPermission::Forbidden);
+        crate::honourability::UnhonouredDimension::new(
+            DeclaredBehaviour::new(
+                NumericalDimension::Contraction,
+                arithmetic,
+                resolved_type,
+                required,
+                HonouringMeans::Unsupported,
+                source,
+            )
+            .attributed_to(crate::feasibility::TargetProfileIdentity::new(
+                "tiler.test.profile.v1",
+            )),
+            required,
+            Some(DimensionBehaviour::Transform(
+                tiler_ir::schedule::NumericalPermission::Permitted,
+            )),
+        )
+    }
+
     #[test]
     fn honourability_complete_dtype_is_canonical_identity() {
-        let event = |arithmetic, resolved_type| ExplainEvent::NumericalHonourability {
-            dimension: PredicateKey::new("numerics.contraction").unwrap(),
-            arithmetic,
-            resolved_type,
-            required: ReasonCode::new("forbidden").unwrap(),
-            outcome: HonourabilityOutcome::Unhonourable {
-                means: ReasonCode::new("unsupported").unwrap(),
-                honoured: Some(ReasonCode::new("permitted").unwrap()),
-            },
-            profile: SubjectKey::new("tiler.test.profile.v1").unwrap(),
+        let event = |cause: &crate::honourability::UnhonouredDimension| {
+            ExplainEvent::NumericalHonourability {
+                dimension: PredicateKey::new("numerics.contraction").unwrap(),
+                arithmetic: cause.arithmetic(),
+                resolved_type: cause.resolved_type().clone(),
+                required: ReasonCode::new("forbidden").unwrap(),
+                outcome: HonourabilityOutcome::Unhonourable {
+                    means: ReasonCode::new("unsupported").unwrap(),
+                    honoured: Some(ReasonCode::new("permitted").unwrap()),
+                    evidence: cause.evidence(),
+                },
+                profile: SubjectKey::new("tiler.test.profile.v1").unwrap(),
+            }
         };
-        let f16 = event(
+        let source = crate::honourability::governed_profile_source();
+        let f16 = event(&unhonoured(
             ArithmeticType::F16,
             ResolvedValueType::nominal(
                 tiler_ir::semantic::TypeKey::new("tiler", "f16", 1).unwrap(),
             ),
-        );
-        let f32 = event(ArithmeticType::F32, F32::resolved_type());
-        let neighbouring_f32 = event(
+            std::sync::Arc::clone(&source),
+        ));
+        let f32 = event(&unhonoured(
+            ArithmeticType::F32,
+            F32::resolved_type(),
+            std::sync::Arc::clone(&source),
+        ));
+        let neighbouring_f32 = event(&unhonoured(
             ArithmeticType::F32,
             ResolvedValueType::nominal(
                 tiler_ir::semantic::TypeKey::new("test", "neighbouring-f32", 1).unwrap(),
             ),
-        );
+            source,
+        ));
         let mut f16_bytes = Vec::new();
         let mut f32_bytes = Vec::new();
         let mut neighbouring_f32_bytes = Vec::new();
@@ -3345,6 +3419,125 @@ mod tests {
         let mut rendered = String::new();
         render_event(&mut rendered, &f16);
         assert!(rendered.contains("tiler::f16@1"));
+    }
+
+    /// An unhonourable record spells and identifies its complete provenance.
+    ///
+    /// The record is what a reader acts on, so a refusal whose authority,
+    /// validity scope, and measured builds and environments are absent from
+    /// both the rendering and the identity is not explainable: two profiles
+    /// refusing the same behaviour on different measured builds would produce
+    /// one trace, and a reader could not tell which one it was reading.
+    #[test]
+    fn an_unhonourable_record_carries_the_complete_refusal_provenance() {
+        use crate::feasibility::{FeasibilityOutcome, RejectionCause};
+        use crate::honourability::{
+            UnhonouredDimension, governed_profile_source, measured_profile_source,
+        };
+        use crate::request::StrictF32NumericalContract;
+        use crate::target::TargetProfile;
+
+        fn refusal(
+            source: std::sync::Arc<crate::honourability::FactSourceProvenance>,
+        ) -> UnhonouredDimension {
+            let profile = TargetProfile::refusing_preserved_subnormals_for_test(
+                "test.explain-refusal.v1",
+                source,
+            );
+            let FeasibilityOutcome::Rejected(rejection) =
+                crate::physical::assess_contract(&profile, StrictF32NumericalContract::governed())
+                    .expect("the refusing test profile is intrinsically valid")
+            else {
+                panic!("a declared refusal disproves a hard predicate");
+            };
+            let RejectionCause::Numerical(cause) = rejection.representative() else {
+                panic!("a contract-only proposal states no capability requirement");
+            };
+            cause
+        }
+
+        fn record(cause: &UnhonouredDimension) -> ExplainEvent {
+            ExplainEvent::NumericalHonourability {
+                dimension: PredicateKey::new(cause.dimension().key()).unwrap(),
+                arithmetic: cause.arithmetic(),
+                resolved_type: cause.resolved_type().clone(),
+                required: ReasonCode::new(cause.required().key()).unwrap(),
+                outcome: HonourabilityOutcome::Unhonourable {
+                    means: ReasonCode::new(cause.means().key()).unwrap(),
+                    honoured: cause
+                        .honoured()
+                        .map(|honoured| ReasonCode::new(honoured.key()).unwrap()),
+                    evidence: cause.evidence(),
+                },
+                profile: SubjectKey::new(cause.profile().key()).unwrap(),
+            }
+        }
+
+        let render = |event: &ExplainEvent| {
+            let mut rendered = String::new();
+            render_event(&mut rendered, event);
+            rendered
+        };
+        let encode = |event: &ExplainEvent| {
+            let mut bytes = Vec::new();
+            encode_event(&mut bytes, event);
+            bytes
+        };
+
+        let baseline = refusal(measured_profile_source("test.probe.v1", "1.0", "build-1"));
+        let baseline_event = record(&baseline);
+        let baseline_render = render(&baseline_event);
+        for expected in [
+            "authority=measured-profile",
+            "validity=measured-environment",
+            "phase=compile-profile",
+            "authority-identity=test.probe.v1@1",
+            "basis=measurement:contexts=1",
+            "code-generator=test-offline-compiler@1.0",
+            "env=test-platform/1.0/build-1/test-architecture/test-hardware",
+        ] {
+            assert!(
+                baseline_render.contains(expected),
+                "the rendered refusal omitted {expected}: {baseline_render}",
+            );
+        }
+
+        for (label, perturbed) in [
+            ("authority and validity", refusal(governed_profile_source())),
+            (
+                "authority identity",
+                refusal(measured_profile_source(
+                    "test.other-probe.v1",
+                    "1.0",
+                    "build-1",
+                )),
+            ),
+            (
+                "compiler build",
+                refusal(measured_profile_source("test.probe.v1", "2.0", "build-1")),
+            ),
+            (
+                "execution environment",
+                refusal(measured_profile_source("test.probe.v1", "1.0", "build-2")),
+            ),
+        ] {
+            assert_eq!(
+                perturbed.required(),
+                baseline.required(),
+                "{label} changed what the caller required",
+            );
+            let event = record(&perturbed);
+            assert_ne!(
+                baseline_render,
+                render(&event),
+                "{label} left the rendered refusal unchanged",
+            );
+            assert_ne!(
+                encode(&baseline_event),
+                encode(&event),
+                "{label} left the refusal's canonical identity unchanged",
+            );
+        }
     }
 
     #[test]
@@ -3495,7 +3688,7 @@ mod tests {
                 // Rebaselined when the workgroup limit moved from a compile-time
                 // global fact to a prepared-entry target requirement. The
                 // request subject now binds the complete query and its provider.
-                "tiler-explain-v6 request=83b9baadbea45e19\n",
+                "tiler-explain-v7 request=83b9baadbea45e19\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )
@@ -4404,7 +4597,7 @@ mod tests {
         assert_eq!(
             forward
                 .render()
-                .matches("tiler-explain-v6 request=")
+                .matches("tiler-explain-v7 request=")
                 .count(),
             3,
             "the top-level selection and both complete candidate traces render",

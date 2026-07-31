@@ -1350,7 +1350,7 @@ impl ContractRejection {
     }
 
     /// The dimension the resolution failed on.
-    pub(crate) const fn dimension(&self) -> NumericalDimension {
+    pub(crate) fn dimension(&self) -> NumericalDimension {
         match self {
             Self::Unhonourable { cause, .. } => cause.dimension(),
             Self::Undeclared { cause, .. } => cause.dimension(),
@@ -1364,7 +1364,7 @@ impl ContractRejection {
     /// in one arithmetic type and refuse it in another — the measured Apple row
     /// preserves subnormals in `f16` and flushes them in `f32` — so a rejection
     /// naming only the dimension would be false about the other type.
-    pub(crate) const fn arithmetic(&self) -> ArithmeticType {
+    pub(crate) fn arithmetic(&self) -> ArithmeticType {
         match self {
             Self::Unhonourable { cause, .. } => cause.arithmetic(),
             Self::Undeclared { cause, .. } => cause.arithmetic(),
