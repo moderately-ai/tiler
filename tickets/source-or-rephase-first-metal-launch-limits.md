@@ -5,7 +5,7 @@ status: in-progress
 priority: p0
 dependencies: []
 related: [restore-replayable-apple-compatibility-evidence, prototype-metal-runtime-proof]
-scopes: [research/apple-targets, implementation/compiler, implementation/artifact, implementation/runtime, contracts/foundation, contracts/artifacts, implementation/build]
+scopes: [research/apple-targets, implementation/ir, implementation/compiler, implementation/artifact, implementation/runtime, implementation/metal-aot, contracts/foundation, contracts/artifacts, contracts/navigation, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: [metal, launch, feasibility, target-profiles]
