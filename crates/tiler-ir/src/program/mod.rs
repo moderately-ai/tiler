@@ -41,7 +41,7 @@
 //! - **The routing-commit contract.** The ordered lifecycle from preflight to
 //!   publication and, for each step, whether fallback is still permitted.
 //!
-//! The last three landed with `complete-program-identity-with-abi-guards-and-routing`, which moved the domain from `tiler.kernel-program.v1` to historical v2 because a v1 identity was blind to two programs that differed only in their guard, ABI, or fallback contract. Later encoding and ABI-completeness changes moved the same subject through v3 and v4 to the current `tiler.kernel-program.v5`; [`CanonicalKernelProgramIdentity`](crate::program::CanonicalKernelProgramIdentity) documents each step.
+//! The last three landed with `complete-program-identity-with-abi-guards-and-routing`, which moved the domain from `tiler.kernel-program.v1` to historical v2 because a v1 identity was blind to two programs that differed only in their guard, ABI, or fallback contract. Later encoding and ABI-completeness changes moved the same subject through v3 and v4 to v5, and folding the declared split-reduction contracts moved it to the current `tiler.kernel-program.v6`; [`CanonicalKernelProgramIdentity`](crate::program::CanonicalKernelProgramIdentity) documents each step.
 //!
 //! Every transient ordinal is excluded: builder insertion order, the program's
 //! own stage/value/view/allocation/arena positions, and the planning `RegionId`
