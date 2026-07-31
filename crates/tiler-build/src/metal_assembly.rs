@@ -356,7 +356,19 @@ fn payload_metadata(
     })
 }
 
-fn compile_target(facts: MetalTargetFacts) -> Result<MetalTarget, MetalTargetError> {
+/// Projects the emitter's target facts onto the driver's compilation target.
+///
+/// Total in the two vocabularies `crate::target_correspondence` keeps in step:
+/// every family and every language standard maps by an exhaustive match, so a
+/// variant added to either crate is a build error here rather than a target
+/// triple invented from a wildcard. `tiler-metal`'s correspondence module names
+/// this obligation and states that it belongs to whichever component
+/// orchestrates emission and compilation together; this crate is that component.
+///
+/// `pub(crate)` so [`crate::metal_declaration`] can resolve the AOT target once
+/// at declaration time, rather than discovering an ungoverned family/standard
+/// pair after emission has already run.
+pub(crate) fn compile_target(facts: MetalTargetFacts) -> Result<MetalTarget, MetalTargetError> {
     MetalTarget::new(
         apple_platform(facts.platform),
         deployment_minimum(facts.deployment_minimum),

@@ -24,6 +24,33 @@
 //! fault; if both fail together, the compiler is. Collapsing them would leave
 //! only "the bits are wrong".
 //!
+//! # Two different authority questions, and only one of them is claimed here
+//!
+//! **"Is this host eligible to offer the declared profile?"** is asked by
+//! [`offer_the_declared_profile`], from a host observation and nothing else, and
+//! the answer is always no: [ADR 0086](../../../docs/decisions/0086-require-attributable-or-attested-native-translation.md)
+//! decides that native device translation of a metallib during pipeline creation
+//! is a typed capability fact whose authority is `Unknown` on every macOS row
+//! currently observable. That refusal is printed before any routing commit and
+//! is one of this binary's deliverables.
+//!
+//! **"Does this artifact name the profile the producer declared?"** is what the
+//! envelope path answers, through [`ExecutionEnvironment::classify`] against
+//! [`declared_route_environment`]. It is **producer-declared equality, NOT
+//! host-earned eligibility**, and the run says so in those words. Keeping that
+//! route is Tom's recorded resolution for
+//! `construct-and-bind-the-first-authoritative-metal-compile-profile`: the
+//! runtime machinery — decode, route, ABI binding, two-stage qualification,
+//! dispatch — is worth exercising on real hardware, and the honest way to keep
+//! exercising it is to label what the route does and does not establish rather
+//! than to let a green run read as an eligibility claim.
+//!
+//! What was removed is the previous middle position. The routed environment used
+//! to be rebuilt from a local `Compilation`, which looked like an independent
+//! host statement while restating the producer's own authority. Nothing in this
+//! binary derives a profile offer from a compilation or from the artifact it is
+//! validating any more.
+//!
 //! # Usage
 //!
 //! ```text
@@ -115,27 +142,23 @@ use tiler_artifact::program::{
 use tiler_artifact::proof::{
     DecodedProofSidecar, ProofAssociationError, ProofCodecError, decode_proof_sidecar,
 };
-use tiler_compiler::session::{Compilation, CompileFailure, NumericalContract, compile_governed};
+use tiler_build::{BoundMetalCompileDeclaration, BoundMetalDeclarationError};
+use tiler_compiler::session::{
+    Compilation, CompileFailure, CompileRequest as CompilerRequest, NumericalContract, compile,
+};
+use tiler_compiler::target::{TargetRequest, TargetRequestError};
 use tiler_ir::semantic::{
     F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
     SemanticProgramBuilder, StrictSerialF32Sum,
 };
 use tiler_ir::shape::{Axis, Shape};
 use tiler_metal::applicability::{
-    MetalGpuFamily, MetalGpuFamilySupport, MetalHostApplicabilityPolicy, MetalHostObservation,
-    evaluate_metal_host_applicability,
+    MetalGpuFamily, MetalGpuFamilySupport, MetalHostApplicabilityPolicy,
+    MetalHostApplicabilityRefusal, MetalHostObservation, evaluate_metal_host_applicability,
 };
 use tiler_metal::emit::emit_translation_unit;
-use tiler_metal::target::{
-    LaunchIndexRealization, MetalDeploymentMinimum, MetalEmissionRealization,
-    MetalFloatArithmeticType, MetalFlushedZeroSign, MetalPlatform, MetalSubnormalArithmetic,
-    MetalSubnormalArithmeticFacts, MetalTargetFacts, MslLanguageVersion,
-};
 use tiler_metal_aot::driver::Toolchain;
-use tiler_metal_aot::input::{
-    ApplePlatform, CompileRequest, DeploymentMinimum, MetalTarget, MslVersion,
-    NumericalRealization, OptimizationLevel,
-};
+use tiler_metal_aot::input::{CompileRequest, OptimizationLevel};
 use tiler_reference::{
     FloatBitOrder, InputBinding, ReferenceElement, ReferenceEvaluator, Tensor, TensorPayloadView,
 };
@@ -155,8 +178,6 @@ const ROWS: u64 = 4;
 /// whatever shape the artifact declares — and the two now coincide, which is
 /// the property [`bind_interface`] proves rather than assumes.
 const COLUMNS: u64 = 3;
-/// Buffer argument-table capacity Apple states per compute function.
-const BUFFER_BINDING_LIMIT: u32 = 31;
 /// Interface key of the program's one input.
 const INPUT_KEY: &str = "input";
 /// Interface key of the program's one output.
@@ -246,31 +267,43 @@ fn decode_f32_bits(
         .collect())
 }
 
-/// The measured Apple row, one subnormal behaviour per arithmetic type: `f32`
-/// flushes and `f16` preserves on the same hardware in the same math modes.
-fn target_facts() -> MetalTargetFacts {
-    MetalTargetFacts::new(
-        MslLanguageVersion::Metal3_1,
-        MetalPlatform::MacOs,
-        MetalDeploymentMinimum::new(14, 0),
-        MetalSubnormalArithmeticFacts::unmeasured()
-            .stating(
-                MetalFloatArithmeticType::F32,
-                MetalSubnormalArithmetic::FlushesToZero {
-                    zero_sign: MetalFlushedZeroSign::PreservesSign,
-                },
-            )
-            .stating(
-                MetalFloatArithmeticType::F16,
-                MetalSubnormalArithmetic::PreservesSubnormals,
-            ),
-        BUFFER_BINDING_LIMIT,
-    )
+/// The authoritative macOS Metal declaration both paths compile and emit under.
+///
+/// Stated by `tiler-build` rather than here. This runner used to hold its own
+/// `MetalTargetFacts` — an MSL 3.1 / macOS 14.0 record with per-dtype subnormal
+/// behaviour and a buffer capacity — and its direct path separately spelled an
+/// `air64-apple-macos14.0` compilation target. Two hand-written copies of a
+/// target, in one process, with nothing comparing them; the migration replaces
+/// both with the one declaration whose rows have named authorities.
+fn declaration() -> Result<BoundMetalCompileDeclaration, ProofError> {
+    BoundMetalCompileDeclaration::first_macos_apple9().map_err(ProofError::Declaration)
 }
 
-/// The source-level choices this proof selects independently of target facts.
-fn emission_realization() -> MetalEmissionRealization {
-    MetalEmissionRealization::new(LaunchIndexRealization::ThreadPositionInGridUInt)
+/// Compiles one program against the authoritative declaration's profile.
+///
+/// `compile_governed` is deliberately not used any more: it selects the
+/// compiler's governed prototype profile, and the artifacts this runner routes
+/// are published against the authoritative one, so a compile through the old
+/// path would name a kernel program the packaged variant does not.
+fn compile_under(
+    declaration: &BoundMetalCompileDeclaration,
+    program: &SemanticProgram,
+) -> Result<Compilation, ProofError> {
+    let targets =
+        TargetRequest::new([declaration.profile().clone()]).map_err(ProofError::TargetRequest)?;
+    let batch = compile(CompilerRequest::new(
+        program,
+        NumericalContract::FlushSubnormalsToZeroF32,
+        targets,
+    ))
+    .map_err(ProofError::Compile)?;
+    batch
+        .into_targets()
+        .pop()
+        .ok_or(ProofError::NoSelection)?
+        .into_parts()
+        .1
+        .map_err(|_| ProofError::UnrealizableNumerics)
 }
 
 /// Builds `sum((input * 1.0) + 0.0)` over the reduced axis of a given shape.
@@ -507,25 +540,35 @@ fn bind_interface(decoded: &DecodedProgram) -> Result<(u64, u64, AbiFacts), Proo
     Ok((rows.get(), columns.get(), binder.build()))
 }
 
-/// States what this host offers, from the compiler's own target authority.
+/// The environment the **diagnostic** envelope path routes under.
 ///
-/// Deliberately **not** read from the artifact. The whole substance of
-/// `ExecutionEnvironment::classify` is comparing what an artifact declares
-/// against what a host independently states, so stating it from the artifact
-/// would make the check a tautology. `Compilation` is the only public authority
-/// in this workspace that mints a target profile descriptor, so this host's
-/// statement comes from the same registry the producer's compilation consulted —
-/// which is why the two agree, and why an artifact assessed against another
-/// profile revision would be refused here rather than loaded.
-fn host_environment(compilation: &Compilation) -> Result<ExecutionEnvironment, ProofError> {
+/// # This is producer-declared equality, NOT host-earned eligibility
+///
+/// Read that literally. The profile below is the one `tiler-build` *declares*
+/// for this Metal target; nothing about this host earned the right to offer it.
+/// [`ExecutionEnvironment::classify`] therefore answers a real question — does
+/// this artifact name the profile the producer declared, under the same exact
+/// descriptor — and does not answer the question ADR 0086 gates, which is
+/// whether this machine is a host the profile is applicable to.
+/// [`offer_the_declared_profile`] is where that second question is asked, and it
+/// refuses.
+///
+/// The previous spelling took a `&Compilation` and rebuilt the descriptor from a
+/// local compile. That was worse in a way worth recording: it looked like an
+/// independent host statement while being a restatement of the producer's own
+/// authority, so a reader could mistake a green route for evidence about the
+/// machine. The declaration is the same authority stated once, out loud.
+fn declared_route_environment(
+    declaration: &BoundMetalCompileDeclaration,
+) -> Result<ExecutionEnvironment, ProofError> {
+    let profile = declaration
+        .target_profile_ref()
+        .map_err(|_| ProofError::HostProfile)?;
     Ok(ExecutionEnvironment {
         target_profile: TargetProfileRef {
-            key: TargetProfileKey::new(compilation.target_profile_key())
+            key: TargetProfileKey::new(profile.key.as_str())
                 .map_err(|_| ProofError::HostProfile)?,
-            descriptor: TargetProfileDescriptorDigest::from_bytes(
-                compilation.target_profile_descriptor(),
-            )
-            .map_err(|_| ProofError::HostProfile)?,
+            descriptor: profile.descriptor,
         },
         backend: BackendKey::new(BACKEND_KEY).map_err(|_| ProofError::HostProfile)?,
         representation: RepresentationKey::new(REPRESENTATION_KEY)
@@ -612,22 +655,35 @@ fn observe_metal_host(device: &Device) -> MetalHostObservation {
         .observing_gpu_family(highest_apple_family(device))
 }
 
-/// Reports what this host is, and why it earns no eligibility receipt.
+/// The production offer path: earn the right to offer the declared profile, or
+/// refuse.
 ///
-/// Called before anything commits a route, because a refusal after a commit
-/// would be a fallback ADR 0051 does not permit. It **reports** rather than
-/// gates: `construct-and-bind-the-first-authoritative-metal-compile-profile`
-/// owns the eligible-host offer, and there is nothing to gate yet — the policy
-/// refuses on every host, so gating this proof on it would stop the value proof
-/// from running while proving nothing about eligibility.
+/// This is the only route in this binary that *claims authority*. It observes
+/// the host — and nothing else; no artifact, no compilation, no compiler
+/// identity can reach it — and asks
+/// [`evaluate_metal_host_applicability`] whether that observation satisfies the
+/// measured applicability row. On every host observable today the answer is
+/// [`MetalHostApplicabilityRefusal::UnknownNativeTranslationAuthority`], because
+/// ADR 0086 decides that native device translation of a metallib during pipeline
+/// creation is a typed capability fact whose authority is `Unknown`, and ADR
+/// 0043's disposal of `Unknown` keeps an unknown candidate out of an executable
+/// frontier.
 ///
-/// The route this binary does take is still decided by
-/// [`ExecutionEnvironment::classify`], which answers a different question: it
-/// compares an artifact's declared target profile against the one this host
-/// states. That check is a tautology as far as *applicability* goes — this
-/// process states the profile from its own compilation — and the whole reason
-/// this adapter exists beside it is that it observes the host instead.
-fn report_host_applicability(device: &Device) {
+/// So this returns the refusal rather than an environment, and the returned
+/// value is used for exactly one thing: printing what was refused and why. It is
+/// asked *before* any routing commit, because a refusal after a commit would be
+/// a fallback ADR 0051 does not permit.
+///
+/// **It does not gate the diagnostic route below**, and that separation is Tom's
+/// recorded resolution for this ticket rather than a convenience: the runtime
+/// machinery — decode, route, ABI binding, two-stage qualification, dispatch —
+/// is worth exercising on hardware, and the honest way to keep exercising it is
+/// to state that the route runs on producer-declared equality and makes no
+/// applicability claim. Gating on this refusal would stop the value proof from
+/// running while proving nothing new about eligibility, because the refusal is
+/// structural: [`tiler_metal::applicability::MetalHostEligibility`] holds an
+/// uninhabited authority, so no host can produce a receipt.
+fn offer_the_declared_profile(device: &Device) -> MetalHostApplicabilityRefusal {
     let observation = observe_metal_host(device);
     println!(
         "host applicability observation: os {}/{}/{}, arch {}, device {}, family {}",
@@ -648,11 +704,12 @@ fn report_host_applicability(device: &Device) {
         // is visibly uninhabited. From here it is an opaque struct, so the arm
         // is required — and writing it costs nothing, because reaching it needs
         // a superseding decision under ADR 0086 rather than a code change.
-        Ok(receipt) => println!(
-            "  eligible under {}, which requires a superseding ADR 0086 decision",
+        Ok(receipt) => panic!(
+            "a host earned an eligibility receipt under {}, which is impossible without a \
+             superseding ADR 0086 decision",
             receipt.policy().id(),
         ),
-        Err(refusal) => println!("  refused before any routing commit: {refusal}"),
+        Err(refusal) => refusal,
     }
 }
 
@@ -2044,20 +2101,33 @@ fn dispatch_prepared(
 /// agreeing.
 fn prove_member(
     device: &Device,
+    declaration: &BoundMetalCompileDeclaration,
     base: &Path,
     class: &str,
     role: &str,
-    columns: u64,
 ) -> Result<usize, ProofError> {
     let path = proof_member(base, class, role);
     let (bytes, sidecar) = read_artifact(&path)?;
 
-    // The program this build derives for the class, used to compose the host
-    // environment and to name what the artifact claims to package.
-    let program = serial_sum_program(ROWS, columns);
-    let compilation = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
-        .map_err(ProofError::Compile)?;
-    let environment = host_environment(&compilation)?;
+    // The shape is read from the artifact, exactly as the deep proof reads it,
+    // and never taken from this crate's own `ROWS`. The two prototypes fix their
+    // row counts independently: the producer publishes one row so the
+    // materialized plan's pointwise stage stays inside the declared four-thread
+    // grid guarantee, and the direct path here uses four. Compiling `ROWS` rows
+    // against a one-row artifact makes every packaged program foreign, which is
+    // what this pass did between 0b7e59d (2026-07-30, which moved the producer to
+    // one row) and this change; no gate reaches it, because the matrix runs only
+    // against real published members on hardware.
+    let declared_shape = DecodedProgram::decode(&bytes).map_err(ProofError::Load)?;
+    let (rows, columns, _) = bind_interface(&declared_shape)?;
+    drop(declared_shape);
+
+    // Compiled only to *name* what the artifact claims to package. The routed
+    // environment comes from the declaration, not from this compilation: see
+    // `declared_route_environment`.
+    let program = serial_sum_program(rows, columns);
+    let compilation = compile_under(declaration, &program)?;
+    let environment = declared_route_environment(declaration)?;
 
     // The cold-consumer assertion, stated once: these bytes were written beside
     // the artifact by the producing process, and this process is stating them as
@@ -2073,6 +2143,9 @@ fn prove_member(
         // A fresh decode per case: see this function's own note on why.
         let mut decoded = DecodedProgram::decode(&bytes).map_err(ProofError::Load)?;
         let (rows, declared_columns, abi) = bind_interface(&decoded)?;
+        // Re-read per case rather than trusted from above, because the shape is
+        // what every remaining check is scaled by; a member whose variants
+        // disagreed about it would otherwise be measured against the first one.
 
         let inputs = case
             .inputs()
@@ -2183,36 +2256,55 @@ fn run() -> Result<(), ProofError> {
     let device = &Device::system_default().ok_or(ProofError::NoDevice)?;
     println!("device: {}", device.name());
 
-    // Asked here, ahead of every routing commit this run makes. It is a separate
-    // question from the one the envelope path answers, and it is the one nothing
-    // in this process can make true: see `report_host_applicability`.
-    report_host_applicability(device);
+    let declaration = declaration()?;
+    println!(
+        "authoritative target profile: {} ({} descriptor byte(s)), AOT target {} under {}",
+        declaration.profile().profile_key(),
+        declaration.profile().canonical_descriptor().len(),
+        declaration.aot_target().triple(),
+        declaration.aot_target().std_token(),
+    );
+
+    // ---- the production offer path ---------------------------------------
+    // Asked here, ahead of every routing commit this run makes, and this is the
+    // only question in this binary whose answer would be an authority claim. It
+    // refuses; the refusal is the deliverable.
+    println!("production offer path — earn the right to offer this exact profile:");
+    let refusal = offer_the_declared_profile(device);
+    println!("  REFUSED before any routing commit: {refusal}");
+    println!(
+        "  predicate {}, rule {}",
+        refusal.predicate(),
+        refusal.rule(),
+    );
+    println!(
+        "  consequence: this host does not offer {}. Everything below routes on \
+         producer-declared equality, NOT host-earned eligibility.",
+        declaration.profile().profile_key(),
+    );
 
     // ---- the direct path -------------------------------------------------
-    let compilation = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
-        .map_err(ProofError::Compile)?;
+    let compilation = compile_under(&declaration, &program)?;
     let selected = compilation.selected().ok_or(ProofError::NoSelection)?;
     println!("selected alternative: {}", selected.stable_id());
 
-    let facts = target_facts();
     let kernels: Vec<_> = selected.kernels().iter().collect();
-    let unit = emit_translation_unit(&kernels, &facts, emission_realization())
+    let unit = emit_translation_unit(&kernels, declaration.metal_facts(), declaration.emission())
         .map_err(|_| ProofError::Emit)?;
     // Emission succeeds even when the target cannot honour the declared
     // contract, so conformance is asked explicitly rather than inferred.
     unit.require_declared_realization()
         .map_err(|_| ProofError::UnrealizableNumerics)?;
 
+    // The AOT target is the declaration's own total projection of the same
+    // Metal facts, not a second spelling of a target this file chose. The
+    // previous spelling named `air64-apple-macos14.0` under MSL 3.1 while the
+    // measurements this profile carries were taken at MSL 4.0 for macOS 26.0.
     let request = CompileRequest::new(
         unit.source(),
-        MetalTarget::new(
-            ApplePlatform::MacOs,
-            DeploymentMinimum::new(14, 0),
-            MslVersion::Metal3_1,
-        )
-        .expect("MSL 3.1 is admitted from macOS 14"),
+        declaration.aot_target(),
         OptimizationLevel::Default,
-        NumericalRealization::strict_baseline(),
+        declaration.numerical_realization(),
     );
     let compiled = Toolchain::system()
         .compile(&request)
@@ -2231,7 +2323,15 @@ fn run() -> Result<(), ProofError> {
     );
     let (rows, columns, abi) = bind_interface(&decoded)?;
     println!("the artifact declares a {rows} by {columns} input");
-    let environment = host_environment(&compilation)?;
+    // Producer-declared equality, NOT host-earned eligibility. The refusal above
+    // is the applicability answer; this environment states the profile the
+    // producer declared so the runtime machinery below can be exercised.
+    let environment = declared_route_environment(&declaration)?;
+    println!(
+        "envelope route environment: DIAGNOSTIC — producer-declared equality against {}, NOT \
+         host-earned eligibility",
+        environment.target_profile.key.as_str(),
+    );
 
     // The identity the producing process recorded beside these bytes, stated by
     // this process as the one it expects. See `prove_member` for why it is a
@@ -2260,11 +2360,7 @@ fn run() -> Result<(), ProofError> {
     // is the one this build derives for the shape the artifact declares, and
     // that is the one binding between the two processes a sidecar cannot forge.
     let envelope_program = serial_sum_program(rows, columns);
-    let envelope_compilation = compile_governed(
-        &envelope_program,
-        NumericalContract::FlushSubnormalsToZeroF32,
-    )
-    .map_err(ProofError::Compile)?;
+    let envelope_compilation = compile_under(&declaration, &envelope_program)?;
     let envelope_plan = envelope_compilation
         .selected()
         .ok_or(ProofError::NoSelection)?;
@@ -2415,9 +2511,13 @@ fn run() -> Result<(), ProofError> {
     // agreement with the sidecar's expected bytes is a statement about both.
     println!("the proof matrix, every published member against every operand case:");
     let mut proved = 0_usize;
-    for (class, columns) in REDUCTION_CLASSES {
+    // The reduced extent names the member on disk; it is not handed to
+    // `prove_member`, which reads the shape from the artifact it opened. Same
+    // discipline `bind_interface` documents: what this runner may take from an
+    // artifact is what the artifact says.
+    for (class, _reduced_extent) in REDUCTION_CLASSES {
         for role in PLAN_ROLES {
-            proved += prove_member(device, &base, class, role, columns)?;
+            proved += prove_member(device, &declaration, &base, class, role)?;
         }
     }
     println!(
@@ -2453,6 +2553,10 @@ enum ProofError {
     /// failed is this process's *assertion* about which artifact it wants, so
     /// the repair is in the recording rather than in the envelope.
     RecordedIdentity(RecordedArtifactIdentityError),
+    /// The authoritative macOS Metal declaration did not assemble.
+    Declaration(BoundMetalDeclarationError),
+    /// The declared profile is not a valid singleton target request.
+    TargetRequest(TargetRequestError),
     Compile(CompileFailure),
     NoSelection,
     Emit,
@@ -2548,6 +2652,14 @@ impl fmt::Display for ProofError {
                  `cargo run -p tiler-prototype-compile -- --out <path>`",
             ),
             Self::Read(path, cause) => write!(formatter, "{path} could not be read: {cause}"),
+            Self::Declaration(cause) => write!(
+                formatter,
+                "the authoritative Metal declaration did not assemble: {cause}",
+            ),
+            Self::TargetRequest(cause) => write!(
+                formatter,
+                "the declared profile is not a valid target request: {cause}",
+            ),
             Self::SidecarWithoutCases => formatter.write_str(
                 "the proof sidecar carries no case with an input and an expected output",
             ),
@@ -2761,8 +2873,8 @@ mod tests {
         METAL_MINIMUM_GPU_FAMILY, METAL_MINIMUM_GPU_FAMILY_VERSION, MetalGpuFamily,
         MetalGpuFamilySupport, MetalHostApplicabilityPolicy, PLAN_ROLES, Path, ProbeSubject,
         REDUCTION_CLASSES, REPRESENTATION_KEY, ROWS, RoutePreparation, RouteRequirement,
-        RouteResourceDimension, bind_interface, decide_live_device_requirement,
-        evaluate_metal_host_applicability, expected_shape, host_environment,
+        RouteResourceDimension, bind_interface, compile_under, decide_live_device_requirement,
+        declaration, declared_route_environment, evaluate_metal_host_applicability, expected_shape,
         normalized_architecture, observe_host_environment, probe_accepted_baseline,
         probe_damaged_interior_byte, probe_damaged_section_content,
         probe_foreign_expected_identity, probe_other_backend_family,
@@ -2779,9 +2891,8 @@ mod tests {
         TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, ToolComponent,
         VariantSpec, VerifiedArtifactProgram,
     };
-    use tiler_compiler::session::{
-        Compilation, NumericalContract, PlanAlternative, compile_governed,
-    };
+    use tiler_build::BoundMetalCompileDeclaration;
+    use tiler_compiler::session::{Compilation, PlanAlternative};
     use tiler_ir::program::abi::ExprNode;
     use tiler_ir::program::{
         AbiExprId as ProgramAbiExprId, AllocationSpec, ByteWindow, DependencyReasonView,
@@ -2840,6 +2951,11 @@ mod tests {
         }
     }
 
+    /// The authoritative declaration every fixture below compiles and routes under.
+    fn declared() -> BoundMetalCompileDeclaration {
+        declaration().expect("the authoritative declaration assembles")
+    }
+
     /// States a fixture artifact's derived identity as a recording.
     ///
     /// Every case below holds the very artifact it routes, so its recording is
@@ -2857,20 +2973,26 @@ mod tests {
     ///
     /// The three facts a probe perturbs are each taken from the authority that
     /// owns it, exactly as the binary takes them: the expected identity from the
-    /// artifact this function assembled, the host environment from the compiler's
-    /// own target registry rather than from the artifact, and the ABI facts from
-    /// the interface the *decoded* envelope declares. Reading any of them back
-    /// out of the envelope would make the corresponding probe a tautology.
+    /// artifact this function assembled, the routed environment from the
+    /// authoritative declaration rather than from the artifact, and the ABI
+    /// facts from the interface the *decoded* envelope declares. Reading any of
+    /// them back out of the envelope would make the corresponding probe a
+    /// tautology.
+    ///
+    /// The environment here is producer-declared equality, NOT host-earned
+    /// eligibility — the same labelled diagnostic the binary routes under.
     fn fixture() -> Fixture {
         let semantic = serial_sum_program(ROWS, FIXTURE_COLUMNS);
-        let compilation = compile_governed(&semantic, NumericalContract::FlushSubnormalsToZeroF32)
-            .expect("the governed program compiles");
+        let declaration = declared();
+        let compilation =
+            compile_under(&declaration, &semantic).expect("the declared program compiles");
         let plan = compilation.selected().expect("a selected plan alternative");
 
         let artifact = assemble(&semantic, &compilation, plan);
         let bytes = artifact.encode().expect("the envelope encodes");
         let expected = recorded_identity(&artifact);
-        let environment = host_environment(&compilation).expect("the host environment composes");
+        let environment =
+            declared_route_environment(&declaration).expect("the declared environment composes");
 
         let decoded = DecodedProgram::decode(&bytes).expect("the assembled envelope decodes");
         let (_, _, abi) = bind_interface(&decoded).expect("the declared interface binds");
@@ -3159,8 +3281,9 @@ mod tests {
     /// Packages the ordinary fused plan with route requirements attached.
     fn requiring_fixture(requirements: &[RouteRequirement]) -> RequiringFixture {
         let semantic = serial_sum_program(ROWS, FIXTURE_COLUMNS);
-        let compilation = compile_governed(&semantic, NumericalContract::FlushSubnormalsToZeroF32)
-            .expect("the governed program compiles");
+        let declaration = declared();
+        let compilation =
+            compile_under(&declaration, &semantic).expect("the declared program compiles");
         let plan = compilation.selected().expect("a selected plan alternative");
         let artifact = assemble_program(
             &semantic,
@@ -3171,7 +3294,8 @@ mod tests {
         );
         let bytes = artifact.encode().expect("the requiring envelope encodes");
         let expected = recorded_identity(&artifact);
-        let environment = host_environment(&compilation).expect("the host environment composes");
+        let environment =
+            declared_route_environment(&declaration).expect("the declared environment composes");
         let decoded = DecodedProgram::decode(&bytes).expect("the requiring envelope decodes");
         let (_, _, abi) = bind_interface(&decoded).expect("the declared interface binds");
         RequiringFixture {
@@ -3809,8 +3933,9 @@ mod tests {
     #[test]
     fn a_multi_stage_route_preflights_every_entry_and_pairs_its_shared_storage() {
         let semantic = serial_sum_program(ROWS, FIXTURE_COLUMNS);
-        let compilation = compile_governed(&semantic, NumericalContract::FlushSubnormalsToZeroF32)
-            .expect("the governed program compiles");
+        let declaration = declared();
+        let compilation =
+            compile_under(&declaration, &semantic).expect("the declared program compiles");
         let materialized = compilation
             .alternatives()
             .find(|plan| !plan.is_fused())
@@ -3823,7 +3948,8 @@ mod tests {
         let artifact = assemble(&semantic, &compilation, materialized);
         let bytes = artifact.encode().expect("the envelope encodes");
         let expected = recorded_identity(&artifact);
-        let environment = host_environment(&compilation).expect("the host environment composes");
+        let environment =
+            declared_route_environment(&declaration).expect("the declared environment composes");
         let mut decoded = DecodedProgram::decode(&bytes).expect("the multi-stage envelope decodes");
         let (_, _, abi) = bind_interface(&decoded).expect("the declared interface binds");
 
@@ -3954,8 +4080,9 @@ mod tests {
     #[test]
     fn a_partial_window_route_publishes_and_plans_the_artifact_offset() {
         let semantic = serial_sum_program(ROWS, FIXTURE_COLUMNS);
-        let compilation = compile_governed(&semantic, NumericalContract::FlushSubnormalsToZeroF32)
-            .expect("the governed program compiles");
+        let declaration = declared();
+        let compilation =
+            compile_under(&declaration, &semantic).expect("the declared program compiles");
         let materialized = compilation
             .alternatives()
             .find(|plan| !plan.is_fused())
@@ -3966,7 +4093,8 @@ mod tests {
             .encode()
             .expect("the partial-window envelope encodes");
         let expected = recorded_identity(&artifact);
-        let environment = host_environment(&compilation).expect("the host environment composes");
+        let environment =
+            declared_route_environment(&declaration).expect("the declared environment composes");
         let mut decoded =
             DecodedProgram::decode(&bytes).expect("the partial-window envelope decodes");
         let (_, _, abi) = bind_interface(&decoded).expect("the declared interface binds");

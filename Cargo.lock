@@ -454,6 +454,7 @@ version = "0.0.0"
 dependencies = [
  "metal",
  "tiler-artifact",
+ "tiler-build",
  "tiler-compiler",
  "tiler-ir",
  "tiler-metal",

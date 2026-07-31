@@ -15,6 +15,12 @@ doc = true
 
 [dependencies]
 tiler-artifact.workspace = true
+# The runner offers the *producer's* authoritative Metal declaration rather than
+# one it reconstructs. `construct-and-bind-the-first-authoritative-metal-compile-profile`
+# forbids deriving the offered profile from a `Compilation` or from the artifact
+# under validation, and `tiler-build` is the one owner of that declaration, so
+# this edge is what removes the last derived host statement.
+tiler-build.workspace = true
 tiler-compiler.workspace = true
 tiler-ir.workspace = true
 tiler-metal.workspace = true
