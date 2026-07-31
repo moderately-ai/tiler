@@ -4,7 +4,7 @@ title: Preserve primary dtype standards evidence
 status: todo
 priority: p1
 dependencies: []
-related: [own-the-dtype-support-maturity-matrix, enumerate-the-mature-tensor-dtype-taxonomy, define-dtype-namespace-admission-policy, register-the-accepted-built-in-dtype-catalog]
+related: [own-the-dtype-support-maturity-matrix, enumerate-the-mature-tensor-dtype-taxonomy, define-dtype-namespace-admission-policy, register-the-accepted-built-in-dtype-catalog, preserve-ecosystem-dtype-precedent-sources]
 scopes: [research/numerics, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
@@ -32,6 +32,14 @@ The primary specifications behind Tiler's recognized dtype catalog remain reprod
 - Make that inventory explicit before downloading anything. Each stable source ID records title, owner, edition or exact upstream commit/path, retrieval URL/date, SHA-256, license, redistribution verdict, and either a local file or official acquisition route. Pin living project specifications such as StableHLO, MLIR/LLVM, ONNX, and DLPack to commits/tags and preserve the exact normative files with the repository license/NOTICE rather than a mutable rendered “latest” page.
 - Treat ambiguous redistribution permission as metadata-only. IEEE 754 and every other restricted source retain bibliographic identity, digest, and official acquisition route without checked-in bytes. Review OCP, PTX, Posit, RISC-V, and project specifications document by document; one permissive repository license does not automatically classify every externally incorporated document.
 - Enumerate the exact accepted dtype ADR set and every primary source actually used by `mature-dtype-taxonomy.md`, including ecosystem precedents beyond the headline eight families. If peripheral framework/compiler precedents would make this ticket unbounded, split a linked preservation ticket and narrow this ticket's closing population explicitly; do not close against an unstated subset.
+
+## Closing population, fixed on 2026-07-31
+
+The accepted dtype ADR set is exactly the `dtypes-quantization` catalog group, ADRs 0026 through 0038. Their `evidence` frontmatter reaches five research documents: the mature dtype taxonomy, the dtype identity admission policy, quantization representation in tensor IRs, the quantized value and transformation contract, and affine quantization numerical semantics. None of the thirteen ADRs cites an external URL directly; every primary source arrives through those five documents.
+
+This ticket closes over the primary sources among them that *define* a format's value set, encoding, or quantization contract: IEEE 754-2019, the ratified RISC-V BF16 operand format, OCP OFP8 revision 1.0, OCP MX version 1.0, the Posit Standard (2022), StableHLO, MLIR built-in and Quant types, the LLVM language reference, ONNX IR/operators/sub-byte packing, DLPack, the NVIDIA PTX ISA, NVIDIA Transformer Engine NVFP4, and the TOSA specification — 25 preserved units in `docs/research/numerics/sources/expected-sources.tsv`.
+
+Ecosystem precedents cited for how an existing system *spells* or *exposes* a format — PyTorch, NumPy, JAX, Arrow, GCC decimal float, SPIR-V, WGSL, the NVIDIA TensorRT accuracy guide, and the StableHLO-compatibility and MLIR-language-reference governance pages — are excluded and owned by [preserve-ecosystem-dtype-precedent-sources](preserve-ecosystem-dtype-precedent-sources.md). Including them would make the population unbounded without strengthening any format definition.
 
 ## Closes when
 

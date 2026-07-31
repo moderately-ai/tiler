@@ -26,6 +26,11 @@ accepted the parameter-map and first-class assembled-value model.
 - **Normative destination:** [Numerical semantics](../../numerical-semantics.md).
 - **Adoption:** [ADR 0029](../../decisions/0029-affine-quantization-parameter-maps.md), [ADR 0030](../../decisions/0030-first-class-quantized-values.md).
 - **Work record:** [define-quantized-value-binding-contract](../../../tickets/define-quantized-value-binding-contract.md).
+- **Preserved primary sources:** [dtype primary-source record](sources/README.md).
+  The MLIR Quant, StableHLO, ONNX, and TOSA documents cited below are vendored
+  there at pinned editions as `mlir-quant-base-llvmorg-22.1.8`,
+  `stablehlo-spec-v1.18.0`, `onnx-operators-v1.22.0`, and `tosa-spec-1.0.1`;
+  the links in this document render mutable views of them.
 
 
 ## Question

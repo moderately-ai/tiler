@@ -21,6 +21,10 @@ ticket: "define-dtype-namespace-admission-policy"
 - **Normative owner:** [Numerical semantics](../numerical-semantics.md).
 - **Evidence:** [mature dtype taxonomy](../research/numerics/mature-dtype-taxonomy.md).
 - **Work record:** [define-dtype-namespace-admission-policy](../../tickets/define-dtype-namespace-admission-policy.md).
+- **Preserved primary sources:** [dtype primary-source record](../research/numerics/sources/README.md).
+  The OCP MX version 1.0 specification this decision pins is recorded there as
+  pending-acquisition after a failed retrieval, with no local copy and no
+  digest; the record names the official acquisition route.
 
 
 ## Context

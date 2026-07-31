@@ -25,6 +25,9 @@ ticket: "define-quantized-value-binding-contract"
 - **Normative destination:** [Numerical semantics](../../numerical-semantics.md).
 - **Adoption:** [ADR 0029](../../decisions/0029-affine-quantization-parameter-maps.md), [ADR 0030](../../decisions/0030-first-class-quantized-values.md), [ADR 0038](../../decisions/0038-recognize-ocp-mx-schemes.md).
 - **Work record:** [define-quantized-value-binding-contract](../../../tickets/define-quantized-value-binding-contract.md).
+- **Preserved primary sources:** [dtype primary-source record](sources/README.md).
+  The MLIR Quant, StableHLO, and ONNX documents cited below are vendored there;
+  the OCP MX specification is not, and its record names the acquisition route.
 
 
 ## Resolved carrier
@@ -191,3 +194,7 @@ types, 32-element block, scale-selection map, and normative numerical rules;
 recognition remains separate from execution capabilities.
 
 Primary source: [OCP Microscaling Formats specification](https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf).
+Recorded as `ocp-mx-v1.0`, pending-acquisition: retrieval failed, so no local
+copy and no digest exist. Re-deriving the block shape, scale format, or
+normative numerical rules above requires acquiring the specification through
+the route in the [preservation record](sources/README.md).
