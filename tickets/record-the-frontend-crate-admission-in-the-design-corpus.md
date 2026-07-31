@@ -26,12 +26,14 @@ A reader of `docs/` sees the workspace that exists. Today the corpus asserts the
 
 Then add the admission record itself. Every other member carries one — ADR 0077 (`tiler-metal-aot`), 0081 (`tiler-runtime`), 0082 (`tiler-cache`), 0085 (`tiler-build`) — and these two carry none. Model the new ADR on those: admit both members, decide the dependency direction as a property rather than an ordering accident, and amend the packaging profile. **Its `decision_status` is whatever Tom's acceptance of the admission diff makes it, not `accepted` by assumption.**
 
-## Public boundary for Tom
+## Public boundary for Tom — both questions answered (2026-07-31)
 
-Two conflicts in `docs/integration/frontends.md` (`contract_status: accepted`) are design questions, not prose drift, and neither is this ticket's to settle alone:
+Two conflicts in `docs/integration/frontends.md` (`contract_status: accepted`) were design questions, and Tom decided both:
 
-1. Its inline-region example spells the macro `tiler! { ... }`. The ratified path is `tiler::tensor!`. Probably just an older illustrative spelling — confirm, then align.
-2. Its generated-expansion example emits `::tiler_candle::execute_or_fallback(::tiler_artifact::EmbeddedBundle::new(...))` — generated tokens naming internal crates directly. That contradicts `prototype-inline-proc-macro-frontend`'s "generate only paths reachable through the consumer's declared `tiler` dependency", and it is the exact problem `tiler::__private` was added to solve. Either the example predates the facade decision and should route through the facade, or the facade must re-export those types. Ask; do not pick.
+1. Its inline-region example spells the macro `tiler! { ... }`. **Tom confirmed the ratified `tiler::tensor!` path stands; the contract example is an older illustrative spelling and is aligned, not preserved.**
+2. Its generated-expansion example emits `::tiler_candle::execute_or_fallback(::tiler_artifact::EmbeddedBundle::new(...))` — generated tokens naming internal crates directly. **Tom decided generated tokens route through facade-owned paths: rewrite the example to show facade-owned paths, add no re-exports now, and let the exact re-exports arrive with their owning tickets (`define-inline-symbol-binding-and-runtime-value-adaptation`, `promote-artifact-family-selection-for-the-frontend`) where they are reviewed.**
+
+Separately settled: Tom accepted the exact facade surface on 2026-07-31, so the admission ADR this ticket writes records an accepted decision — `decision_status: accepted` is correct, not an assumption.
 
 ## Closes when
 
