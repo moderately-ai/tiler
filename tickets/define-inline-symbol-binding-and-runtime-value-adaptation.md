@@ -1,7 +1,7 @@
 ---
 id: define-inline-symbol-binding-and-runtime-value-adaptation
 title: Define inline symbol binding and runtime value adaptation
-status: in-progress
+status: done
 priority: p1
 dependencies: [promote-the-symbolic-index-profile-to-a-public-boundary, admit-the-tiler-facade-and-proc-macro-crate-boundary]
 related: [prototype-inline-proc-macro-frontend, promote-the-symbolic-index-profile-to-a-public-boundary]
@@ -9,9 +9,6 @@ scopes: [implementation/frontend, implementation/ir, implementation/runtime, con
 shared_scopes: [project/tickets, implementation/cargo-lock]
 paths: []
 tags: []
-claimed_from: todo
-assignee: loop-define-inlin
-lease_expires_at: 1785532186
 ---
 ## User-visible outcome
 
@@ -61,3 +58,7 @@ The exact ShapeEnv-to-runtime binding and minimal opaque wrapper and adapter tra
 - Follow facade admission explicitly because the accepted wrapper and adapter traits are facade-owned; shared frontend scope is not a substitute for that dependency.
 - Keep Candle and every other concrete consumer adapter outside this ticket and relate a later integration only after the neutral test adapter proves the boundary.
 - Release `prototype-inline-proc-macro-frontend` only after the exact public value and symbol-binding draft is reviewed and accepted.
+
+## Accepted (2026-07-31)
+
+Tom accepted the reviewed boundary as merged at `514c3f3`: the `tiler::value` namespace (`TensorAdapter`, `Tensor<A>`, `AdapterCapability`, `ValueMetadata`, `ResultRequest`, `OperandAxis`, `BindError`, the `StorageScalar` re-export), the `__private` region-facts items generated tokens name, the crate-private binding vocabulary, and the two outward `tiler-ir` edges recorded in the live architecture block and ADR 0088's dated correction. `prototype-inline-proc-macro-frontend` is released to consume the boundary.
