@@ -43,7 +43,7 @@
 
 #![allow(
     dead_code,
-    reason = "the family selection is landed ahead of its production caller (ADR 0074 convention 7). It reserves the canonical `ArtifactFamilySelection` that ADR 0049 requires every inline AOT compilation request to carry, and its first non-test caller is the frontend proc-macro crate, which emits the `#[cfg]`-gated delivery half. That crate does not exist: `prototype-inline-proc-macro-frontend` depends on `prototype-public-compiler-api`, whose closing condition is Tom's acceptance of a public boundary rather than further engineering, and `record-that-the-frontend-axis-is-review-gated` records that the axis is gated on that review."
+    reason = "the family selection is landed ahead of its production caller (ADR 0074 convention 7). It reserves the canonical `ArtifactFamilySelection` that ADR 0049 requires every inline AOT compilation request to carry, and its first non-test caller is the frontend proc-macro crate, which emits the `#[cfg]`-gated delivery half. What is absent is that caller and no longer the crate or the boundary it was once waiting on: `tiler-macros` and its `tiler` facade were admitted and accepted on 2026-07-31, and `prototype-public-compiler-api` is done — this crate's compilation identity is public and `tiler-build` consumes it through `PreparedCompilation::identity`. `tiler-macros` has no grammar today and expands only to the facade's anchor, so nothing constructs a selection yet; `promote-artifact-family-selection-for-the-frontend` owns promoting this type to that frontend and `prototype-inline-proc-macro-frontend` owns the grammar and the delivery half that would call it."
 )]
 
 use core::fmt;
