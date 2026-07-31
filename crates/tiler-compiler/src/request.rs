@@ -369,13 +369,39 @@ pub(crate) struct DeterministicBudgets {
 }
 
 impl DeterministicBudgets {
+    /// The bounded profile's deterministic budgets.
+    ///
+    /// **`regions` and `buffers` are sized for the largest program shape this
+    /// profile assembles, which is the split reduction.** They were `2` and `3`
+    /// — the materialized pointwise-then-reduce program's two stages and its
+    /// input, temporary, and output. A split replaces the single reduction
+    /// dispatch with a partial pass and a final pass, so its program is three
+    /// stages over four values: the input, the pointwise temporary, the partial
+    /// tensor, and the output.
+    ///
+    /// The widening is a *deliberate* decision and not a test-enabling edit,
+    /// because both numbers are inside the canonical request subject
+    /// (`VerifiedRequestSubject::canonical_bytes` writes every budget), which is
+    /// carried into artifact identity. Every governed compilation's request
+    /// subject, and therefore every artifact identity and cache entry derived
+    /// from it, moves with this change — for programs that never assemble a
+    /// split as much as for ones that do, because the budget is a property of
+    /// the *request* rather than of the plan chosen for it. No pinned golden
+    /// encodes these bytes: every request-subject assertion in the corpus is
+    /// relational (a mutated budget must not reconstruct its authority), so the
+    /// move is invisible to the suite and is stated here instead.
+    ///
+    /// A budget is an upper bound, so widening admits program shapes and never
+    /// requires them: `verify_program` still refuses a request whose shape needs
+    /// more, and `verify_host_contract` still refuses a program whose value
+    /// count exceeds `buffers`.
     pub(crate) const fn governed() -> Self {
         Self {
             semantic_values: 16,
             semantic_operations: 8,
-            regions: 2,
+            regions: 3,
             host_expression_nodes: 32,
-            buffers: 3,
+            buffers: 4,
             normalization_rewrites: 8,
             region_members: 32,
             region_boundary_outputs: 8,
@@ -1744,9 +1770,16 @@ fn verify_program(
         budgets.semantic_operations,
         program.operation_count(),
     )?;
-    check_budget("regions", budgets.regions, 2)?;
+    // The largest shape this profile may assemble, not the smallest it might:
+    // the request is admitted before any plan is chosen, so a budget that only
+    // admitted the two-region materialized program would let a request through
+    // and then refuse the split at assembly, reporting a caller's request as a
+    // compiler-output defect. Three regions and four buffers are the split
+    // program's pointwise, partial, and final stages over its input, temporary,
+    // partial, and output values.
+    check_budget("regions", budgets.regions, 3)?;
     check_budget("host-expression-nodes", budgets.host_expression_nodes, 9)?;
-    check_budget("buffers", budgets.buffers, 3)?;
+    check_budget("buffers", budgets.buffers, 4)?;
     Ok((
         select_supported_strategy(program)?,
         program.semantic_identity().clone(),

@@ -509,10 +509,6 @@ pub(crate) fn fused_region(
 /// and every prime one. A partition holding a single contributor folds nothing,
 /// so offering it would add a dispatch that does no work, and an inexact split
 /// would leave a ragged final partition this profile does not lower.
-#[allow(
-    dead_code,
-    reason = "the split-choosing authority the multi-pass region constructors and their tests consume; frontier enumeration of the alternative is its own ticket"
-)]
 pub(crate) fn governed_partition(contributors: u64) -> Option<ContributorPartition> {
     if contributors < 4 {
         return None;
@@ -541,10 +537,6 @@ pub(crate) fn governed_partition(contributors: u64) -> Option<ContributorPartiti
 /// the prologue into this pass would additionally have to reconcile the
 /// contraction permission the fused scalar program carries, which is a
 /// different question from splitting a contributor sequence.
-#[allow(
-    dead_code,
-    reason = "the canonical multi-pass region constructor, exercised by its own tests; frontier enumeration of the alternative is its own ticket"
-)]
 pub(crate) fn partial_reduction_region(
     request: &VerifiedTargetRequest,
     partition: ContributorPartition,
@@ -634,10 +626,6 @@ pub(crate) fn partial_reduction_region(
 /// It reduces the single partition axis of the staged partial tensor, so its
 /// axes are deliberately not the request's reduction axes: those were already
 /// consumed by the partial pass.
-#[allow(
-    dead_code,
-    reason = "the canonical multi-pass region constructor, exercised by its own tests; frontier enumeration of the alternative is its own ticket"
-)]
 pub(crate) fn final_reduction_region(
     request: &VerifiedTargetRequest,
     partition: ContributorPartition,
@@ -722,6 +710,133 @@ pub(crate) fn final_reduction_region(
         },
     };
     Some((region, Vec::new()))
+}
+
+/// Why the governed profile offers no multi-pass split of one request's
+/// reduction.
+///
+/// A decline is a *fact about this request*, not a cost and not a compiler
+/// fault: the strategy applies to the subject, and the reason it was not offered
+/// is what a reader needs in order to know the serial alternative stands alone
+/// deliberately. Each variant is therefore carried to the frontier and recorded,
+/// rather than expressed as the absence of a proposal.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SplitUnavailable {
+    /// The resolved numerical contract forbids reassociation.
+    ///
+    /// A split *is* a reassociation of the declared contributor sequence, so
+    /// this is the one permission it consumes. Proposing anyway would emit a
+    /// region the schedule verifier rejects as malformed compiler output, which
+    /// would report a caller's numerical choice as a Tiler defect.
+    ReassociationForbidden,
+    /// No exact split of the contributor sequence exists.
+    ///
+    /// Carries the exact contributor count so a reader can see *which* extent
+    /// admitted no balanced split, rather than only that one did not.
+    NoAdmissiblePartition {
+        /// Contributors one output position folds under this request.
+        contributors: u64,
+    },
+    /// The split's derived extents or shapes are not representable.
+    Unrepresentable,
+}
+
+impl SplitUnavailable {
+    /// Returns the stable reason code naming this decline.
+    pub(crate) const fn reason(self) -> &'static str {
+        match self {
+            Self::ReassociationForbidden => "reassociation-forbidden",
+            Self::NoAdmissiblePartition { .. } => "no-admissible-partition",
+            Self::Unrepresentable => "split-extent-unrepresentable",
+        }
+    }
+}
+
+/// The stable name of the multi-pass split strategy in explain output.
+pub(crate) const MULTI_PASS_SPLIT_STRATEGY: &str = "tiler.reduction.multi-pass-split";
+
+/// The ordered raw stages of one governed multi-pass split.
+///
+/// The stages are raw and not yet verified, exactly like every other constructor
+/// in this module: the frontier resubmits each through the ordinary checked path
+/// before any of them is admitted.
+pub(crate) struct GovernedSplit {
+    /// How the contributor sequence is split, retained for cost and identity.
+    pub(crate) partition: ContributorPartition,
+    /// The partial pass, then the final pass, each with its claimed members.
+    pub(crate) stages: Vec<(ScheduledRegion, Vec<SemanticMemberId>)>,
+}
+
+/// Chooses and builds the governed multi-pass split of one request's reduction.
+///
+/// This is the single authority deciding whether a split is offered at all. It
+/// runs *before* any region is constructed for the two permissions that decide
+/// the question — the contract's reassociation resolution and the existence of
+/// an exact partition — because both are properties of the request rather than
+/// of a schedule, and a region built for a request that admits neither is a
+/// region the verifier would have to reject.
+///
+/// # Errors
+///
+/// Returns the typed [`SplitUnavailable`] the frontier records as a declined
+/// strategy. None of them is a compiler fault.
+pub(crate) fn split_reduction_regions(
+    request: &VerifiedTargetRequest,
+) -> Result<GovernedSplit, SplitUnavailable> {
+    if request.numerical_contract().reassociation == NumericalPermission::Forbidden {
+        return Err(SplitUnavailable::ReassociationForbidden);
+    }
+    let contributors = reduction_contributors(request).ok_or(SplitUnavailable::Unrepresentable)?;
+    let partition = governed_partition(contributors)
+        .ok_or(SplitUnavailable::NoAdmissiblePartition { contributors })?;
+    let partial =
+        partial_reduction_region(request, partition).ok_or(SplitUnavailable::Unrepresentable)?;
+    let combine =
+        final_reduction_region(request, partition).ok_or(SplitUnavailable::Unrepresentable)?;
+    Ok(GovernedSplit {
+        partition,
+        stages: vec![partial, combine],
+    })
+}
+
+/// Counts the contributors one output position of a request's reduction folds.
+///
+/// Derived from the reduced axes' extents rather than from
+/// `input_elements / output_elements`, because that division is undefined for
+/// an empty kept domain and silently wrong for an empty reduced one — both of
+/// which are shapes the request boundary admits.
+///
+/// Returns `None` only when an axis is out of range or the product overflows,
+/// neither of which a verified request can produce; the fail-closed answer is
+/// still stated rather than assumed.
+fn reduction_contributors(request: &VerifiedTargetRequest) -> Option<u64> {
+    let subject = request.serial_sum();
+    subject
+        .reduction_axes
+        .iter()
+        .try_fold(1_u64, |total, axis| {
+            let position = usize::try_from(axis.get()).ok()?;
+            let extent = subject.input_shape.extents().get(position)?;
+            total.checked_mul(extent.get())
+        })
+}
+
+/// Reads back the split contract one verified partial pass declares.
+///
+/// The program assembler needs the partition to declare its
+/// [`tiler_ir::program::PartialReduction`], and reading it from the region the
+/// pass actually carries — rather than re-deriving it from the request — is what
+/// makes the program-scope declaration agree with the schedule that produced it
+/// by construction instead of by a second derivation.
+pub(crate) fn declared_partial_partition(region: &ScheduledRegion) -> Option<ContributorPartition> {
+    match &region.schedule.reduction {
+        ReductionTopology::MultiPass {
+            pass: tiler_ir::schedule::ReductionPass::Partial,
+            partition,
+            ..
+        } => Some(*partition),
+        _ => None,
+    }
 }
 
 /// Builds the reduction topology one pass of a split declares.

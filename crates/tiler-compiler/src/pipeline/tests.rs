@@ -29,6 +29,7 @@ fn test_root(explain: &mut ExplainWriter) -> ExplainRecordId {
         .unwrap()
 }
 use crate::explain::ExplainDisposition;
+use crate::frontier::PhysicalProposalKind;
 use crate::physical::{RegionId, TensorRole};
 use crate::request::{
     CompilerCapabilitySnapshot, NumericalContractPreference, StrictF32NumericalContract,
@@ -608,6 +609,13 @@ fn every_wired_authority_emits_its_typed_explain_records() {
             // them when present; this governed compile fixture has no opaque
             // rejection, so its four region subjects still contribute eight.
             ("frontier.enumeration.v1", 8),
+            // Exactly one strategy is considered and withheld across the four
+            // region subjects: the multi-pass split, at the reduction subject,
+            // because this fixture compiles under the strict contract and a
+            // split *is* a reassociation. The other three subjects never reach
+            // the strategy, so a second record would mean it was being
+            // considered somewhere it does not apply.
+            ("frontier.strategy-decline.v1", 1),
             ("selection.complete-plan.v1", 1),
             ("compile.region.verified", 3),
             ("compile.plan.boundary", 2),
@@ -2542,19 +2550,21 @@ impl PhysicalImplementationProvider for UnregisteredOpaqueProvider {
     fn propose(
         &self,
         context: &crate::frontier::ImplementationContext<'_>,
-    ) -> Vec<crate::frontier::ImplementationProposal> {
-        vec![crate::frontier::ImplementationProposal::new(
-            crate::frontier::ProposalBody::OpaqueCall(Box::new(
-                crate::call_registry::OpaqueCallProposal::new(self.call, self.bindings.clone())
-                    .expect("fixture proposal is exactly reportable"),
-            )),
-            crate::frontier::TargetApplicability::for_targets([context
-                .request()
-                .target_profile()
-                .profile_key()
-                .clone()]),
-            crate::frontier::PhysicalCostEstimate::structural(1, 2, 0),
-        )]
+    ) -> crate::frontier::ProviderOffer {
+        crate::frontier::ProviderOffer::proposing(vec![
+            crate::frontier::ImplementationProposal::new(
+                crate::frontier::ProposalBody::OpaqueCall(Box::new(
+                    crate::call_registry::OpaqueCallProposal::new(self.call, self.bindings.clone())
+                        .expect("fixture proposal is exactly reportable"),
+                )),
+                crate::frontier::TargetApplicability::for_targets([context
+                    .request()
+                    .target_profile()
+                    .profile_key()
+                    .clone()]),
+                crate::frontier::PhysicalCostEstimate::structural(1, 2, 0),
+            ),
+        ])
     }
 }
 
@@ -2686,4 +2696,397 @@ fn opaque_call_trace_identity_is_order_independent_and_identity_sensitive() {
         mixed_frontier_trace(7, 3, false, true).identity(),
         "ordered named bindings were absent from explain identity"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The multi-pass split: enumerated on the frontier, assembled into a program
+// ---------------------------------------------------------------------------
+//
+// **Why these drive the authorities directly rather than `compile`.** The split
+// consumes reassociation, and the one registered contract that permits it —
+// `governed_relaxed` — also permits contraction. For the recognized serial-sum
+// program, whose members mix multiply and add, `derive_fusion_legality` then
+// reports `unrealized-contraction` for *every* multi-member candidate, so no
+// legal cover survives and the whole compile has no complete plan. That is a
+// pre-existing property of fusion legality, pinned by
+// `fusion_legality::tests::a_relaxed_mixed_arithmetic_region_still_needs_contraction_evidence`,
+// and it is not this slice's to change: it is a contraction-evidence question,
+// not a reduction-splitting one.
+//
+// So the split is enumerable and assemblable today and not yet reachable
+// end to end. Asserting it through `compile` would mean asserting nothing; these
+// exercise the exact authorities the ticket names, and the gap is recorded
+// rather than hidden.
+
+/// Builds the recognized serial-sum program and its reassociation-permitting
+/// verified request.
+fn split_request(shape: Shape) -> (SemanticProgram, crate::request::VerifiedTargetRequest) {
+    let semantic = semantic_case_with_axis(
+        shape,
+        2.0_f32.to_bits(),
+        1.0_f32.to_bits(),
+        false,
+        Axis::new(1),
+    );
+    let verified = verify_request(CompilationRequest::governed_under(
+        &semantic,
+        StrictF32NumericalContract::governed_relaxed(),
+    ))
+    .expect("the relaxed contract is admitted");
+    let verified = verified
+        .for_target(verified.target_profiles()[0])
+        .expect("the governed target resolves the relaxed contract");
+    (semantic, verified)
+}
+
+/// Enumerates the reduction subject's frontier for one verified request.
+fn reduction_frontier(
+    request: &crate::request::VerifiedTargetRequest,
+) -> crate::frontier::ImplementationFrontier {
+    let subject = FrontierRegionSubject::new(
+        "reduction",
+        request.serial_sum().members.reduction().to_vec(),
+    );
+    let providers: [&dyn PhysicalImplementationProvider; 1] = [&GovernedPhysicalProvider];
+    enumerate_frontier(
+        request,
+        &subject,
+        &providers,
+        &crate::call_registry::OpaqueCallRegistry::new(),
+    )
+    .expect("the governed provider emits well-formed proposals")
+}
+
+/// **The ticket's core claim:** the split is retained *beside* the serial
+/// reduction, not in place of it.
+///
+/// Both are admitted for the same subject, with distinct identities, and their
+/// boundary contracts are identical — which is what makes the split composable
+/// exactly where the serial reduction is, and is why
+/// `selection::reconcile_boundaries` needs no widening: the partial tensor is
+/// internal to the subprogram and never reaches a cover edge.
+#[test]
+fn the_frontier_retains_the_split_beside_the_serial_reduction() {
+    // Four contributors, which `governed_partition` splits as two partitions of
+    // two. Four is also the governed profile's declared grid-axis guarantee, so
+    // this is the largest splittable domain the bounded target admits.
+    let (_, request) = split_request(Shape::from_dims([1, 4]));
+    let frontier = reduction_frontier(&request);
+
+    let kinds: Vec<_> = frontier
+        .admitted()
+        .iter()
+        .map(|admitted| admitted.provenance().kind())
+        .collect();
+    assert_eq!(frontier.admitted().len(), 2, "{kinds:?}");
+    assert!(kinds.contains(&PhysicalProposalKind::ScheduledKernel));
+    assert!(kinds.contains(&PhysicalProposalKind::KernelSubprogram));
+    assert_ne!(
+        frontier.admitted()[0].identity(),
+        frontier.admitted()[1].identity(),
+        "the two alternatives share one identity, so one shadows the other"
+    );
+    assert!(
+        frontier.rejections().is_empty(),
+        "a request that admits the split still recorded a refusal: {:?}",
+        frontier.rejections()
+    );
+
+    let split = frontier
+        .admitted()
+        .iter()
+        .find(|admitted| admitted.provenance().kind() == PhysicalProposalKind::KernelSubprogram)
+        .expect("the split alternative");
+    let serial = frontier
+        .admitted()
+        .iter()
+        .find(|admitted| admitted.provenance().kind() == PhysicalProposalKind::ScheduledKernel)
+        .expect("the serial alternative");
+    assert_eq!(split.boundary(), serial.boundary());
+    assert_eq!(split.semantic_members(), serial.semantic_members());
+    // Two dispatches for one occurrence: the fact the scheduled-kernel body
+    // cannot express and the subprogram exists for.
+    assert_eq!(split.scheduled_stages().map(<[_]>::len), Some(2));
+    assert_eq!(serial.scheduled_stages().map(<[_]>::len), Some(1));
+    // The split's cost is worse on every structural dimension, so it can never
+    // win by pruning. Preference is `calibrate-and-activate-parallel-reduction-selection`'s.
+    assert!(split.cost().dispatch_count() > serial.cost().dispatch_count());
+    assert!(split.cost().temporary_bytes() > serial.cost().temporary_bytes());
+}
+
+/// A prime contributor extent retains only the serial alternative, explainably.
+///
+/// The ragged split stays out of scope, so this is the boundary where that
+/// exclusion becomes observable: three contributors admit no exact partition
+/// whose parts each fold more than one value. The frontier withholds the split
+/// and names the extent that admitted none, rather than proposing a ragged tail
+/// it cannot lower or leaving the absence unexplained.
+#[test]
+fn a_prime_contributor_extent_declines_the_split_with_its_extent() {
+    let (_, request) = split_request(Shape::from_dims([1, 3]));
+    let frontier = reduction_frontier(&request);
+    assert_eq!(frontier.admitted().len(), 1);
+    assert_eq!(
+        frontier.admitted()[0].provenance().kind(),
+        PhysicalProposalKind::ScheduledKernel
+    );
+    assert!(
+        frontier.rejections().iter().any(|rejection| matches!(
+            rejection,
+            crate::frontier::FrontierRejection::StrategyDeclined {
+                strategy: "tiler.reduction.multi-pass-split",
+                cause: crate::frontier::StrategyDeclineCause::NoAdmissibleShape { extent: 3, .. },
+                ..
+            }
+        )),
+        "the prime extent's missing split is unexplained: {:?}",
+        frontier.rejections()
+    );
+}
+
+/// A contract forbidding reassociation withholds the split by naming the
+/// dimension it consumes.
+///
+/// The decline is decided from the contract before any region is built. Building
+/// one and letting the schedule verifier refuse it would report a caller's
+/// numerical choice as malformed compiler output — a `FrontierError`, which
+/// fails the whole enumeration closed rather than retaining the serial plan.
+#[test]
+fn a_reassociation_forbidding_contract_declines_the_split_by_dimension() {
+    let semantic = semantic_case_with_axis(
+        Shape::from_dims([1, 4]),
+        2.0_f32.to_bits(),
+        1.0_f32.to_bits(),
+        false,
+        Axis::new(1),
+    );
+    let verified = verify_request(CompilationRequest::governed(&semantic)).unwrap();
+    let request = verified.for_target(verified.target_profiles()[0]).unwrap();
+    let frontier = reduction_frontier(&request);
+    assert_eq!(frontier.admitted().len(), 1);
+    assert!(
+        frontier.rejections().iter().any(|rejection| matches!(
+            rejection,
+            crate::frontier::FrontierRejection::StrategyDeclined {
+                cause: crate::frontier::StrategyDeclineCause::NumericalPermissionRefused {
+                    dimension: "numerics.reassociation",
+                },
+                ..
+            }
+        )),
+        "a strict contract withheld the split without naming the permission: {:?}",
+        frontier.rejections()
+    );
+}
+
+/// Assembles the three verified regions of one request's split program.
+fn split_regions(
+    request: &crate::request::VerifiedTargetRequest,
+) -> Vec<crate::physical::VerifiedScheduledRegion> {
+    let (raw, members) = crate::physical::pointwise_region(request);
+    let mut regions = vec![
+        crate::physical::verify_schedule(raw, members, request).expect("the prologue verifies"),
+    ];
+    let split = crate::physical::split_reduction_regions(request)
+        .expect("a four-contributor relaxed request admits the split");
+    assert_eq!(split.partition.partitions, 2);
+    assert_eq!(split.partition.contributors_per_partition, 2);
+    for (raw, members) in split.stages {
+        regions.push(
+            crate::physical::verify_schedule(raw, members, request).expect("each pass verifies"),
+        );
+    }
+    regions
+}
+
+fn f32_tensor(shape: Shape, values: &[f32]) -> Tensor {
+    Tensor::dense(
+        F32::resolved_type(),
+        shape,
+        values
+            .iter()
+            .map(|value| {
+                ReferenceElement::from_float_bits(
+                    value.to_bits().to_be_bytes(),
+                    FloatBitOrder::MostSignificantByteFirst,
+                )
+                .unwrap()
+            })
+            .collect(),
+    )
+    .unwrap()
+}
+
+fn tensor_bits(tensor: &Tensor) -> Vec<u32> {
+    match tensor.payload() {
+        TensorPayloadView::Dense(elements) => elements
+            .iter()
+            .map(|element| u32::from_be_bytes(<[u8; 4]>::try_from(element.as_bytes()).unwrap()))
+            .collect(),
+        _ => panic!("expected dense f32 reference output"),
+    }
+}
+
+fn bits_of(values: &[f32]) -> Vec<u32> {
+    values.iter().map(|value| value.to_bits()).collect()
+}
+
+/// The assembled split program reproduces the oracle for its own chosen order.
+///
+/// **The comparison is `strict_partitioned_sum` and never the serial fold.** A
+/// split computes a *different* value from the serial reduction — that is what
+/// reassociation means — so comparing against the serial answer could only ever
+/// pass under a tolerance, and a tolerance is exactly the check that cannot fail
+/// for the reason it exists. The oracle for the order the split actually
+/// performs is the partitioned sum, and the comparison is bit for bit.
+///
+/// The oracle's input is the program's own prologue output rather than a value
+/// re-derived here: the prologue is unchanged by the split, and re-implementing
+/// `scale * x + bias` in the test would assert the test's arithmetic.
+#[test]
+fn the_assembled_split_program_matches_the_partitioned_sum_oracle() {
+    let shape = Shape::from_dims([1, 4]);
+    // The prologue maps these to `2e20, 3, -2e20, 3`, whose serial fold
+    // `((2e20 + 3) - 2e20) + 3` is `3` while the split's
+    // `(2e20 + 3) + (-2e20 + 3)` is `0`. A fixture without that cancellation
+    // would let an implementation that never split pass every assertion below.
+    let values: Vec<f32> = vec![1.0e20_f32, 1.0, -1.0e20, 1.0];
+    let (semantic, request) = split_request(shape.clone());
+    let scheduled = split_regions(&request);
+    let program = build_split_kernel_program(&semantic, &request, &scheduled)
+        .expect("the split program verifies");
+    assert_eq!(program.stage_count(), 3);
+
+    let kernels: Vec<_> = scheduled
+        .iter()
+        .map(|region| crate::physical::lower_structured_kernel(region).expect("each pass lowers"))
+        .collect();
+    let pointwise = interpret_fused(&kernels[0], &values);
+    let partials = interpret_fused(&kernels[1], &pointwise);
+    let actual = interpret_fused(&kernels[2], &partials);
+
+    let pointwise_tensor = f32_tensor(shape, &pointwise);
+    let axes = [Axis::new(1)];
+    let expected_partials =
+        tiler_reference::strict_partial_sums(&pointwise_tensor, &axes, 2, 2).unwrap();
+    let expected = tiler_reference::strict_partitioned_sum(&pointwise_tensor, &axes, 2, 2).unwrap();
+    assert_eq!(
+        bits_of(&partials),
+        tensor_bits(&expected_partials),
+        "the partial pass staged values the oracle's partial fold does not produce"
+    );
+    assert_eq!(
+        bits_of(&actual),
+        tensor_bits(&expected),
+        "the assembled split program does not compute its own declared order"
+    );
+
+    // The serial fold of the same prologue output disagrees, which is what makes
+    // the exact comparison above discriminating.
+    let serial_regions = crate::physical::build_scheduled_regions(&request).unwrap();
+    let serial = interpret_fused(
+        &crate::physical::lower_structured_kernel(&serial_regions[1]).unwrap(),
+        &pointwise,
+    );
+    assert_ne!(
+        bits_of(&serial),
+        bits_of(&actual),
+        "the fixture no longer distinguishes the two orders, so this test would \
+         pass for an implementation that never split"
+    );
+}
+
+/// The split's three-stage program declares the contract its two passes share.
+#[test]
+fn the_split_program_declares_its_partial_reduction_and_dispatch_order() {
+    let (semantic, request) = split_request(Shape::from_dims([1, 4]));
+    let scheduled = split_regions(&request);
+    let program = build_split_kernel_program(&semantic, &request, &scheduled).unwrap();
+    let core = program.core();
+    assert_eq!(core.stages().len(), 3);
+    assert_eq!(core.values().len(), 4);
+
+    let declared: Vec<_> = core.partial_reductions().collect();
+    assert_eq!(declared.len(), 1);
+    assert_eq!(declared[0].partitions(), 2);
+    assert_eq!(declared[0].contributors_per_partition(), 2);
+    assert_eq!(declared[0].total_contributors(), Some(4));
+    assert_eq!(
+        declared[0].producer().kernel(),
+        core.stages().nth(1).unwrap().kernel()
+    );
+    assert_eq!(
+        declared[0].combiner().kernel(),
+        core.stages().nth(2).unwrap().kernel()
+    );
+    assert_eq!(declared[0].partial().role(), ValueRole::Temporary);
+    assert_eq!(declared[0].result().role(), ValueRole::Output);
+    assert_eq!(declared[0].partial().shape(), &Shape::from_dims([1, 2]));
+
+    // The final pass covers no occurrence: the partial pass already claims the
+    // reduction the two of them realize. The whole-program verifier admits that
+    // only because the split above is declared — without it the stage is one
+    // that computes nothing, and `UncoveringStage` rejects it.
+    let coverage: Vec<usize> = core.stages().map(|stage| stage.coverage().len()).collect();
+    assert_eq!(coverage, vec![4, 1, 0]);
+
+    // Two ordering edges, both justified by data flow rather than declared. The
+    // second is the visibility transition a split relies on instead of a
+    // barrier: the pass boundary *is* the dispatch boundary.
+    assert_eq!(core.dependencies().len(), 2);
+    let ordered: Vec<ValueRole> = core
+        .dependencies()
+        .map(|edge| match edge.reason() {
+            DependencyReasonView::Data(value) => value.role(),
+            DependencyReasonView::StorageHandoff(_) => panic!("expected a data edge"),
+        })
+        .collect();
+    assert_eq!(ordered, vec![ValueRole::Temporary, ValueRole::Temporary]);
+}
+
+/// The widened budgets admit the split program and still refuse a wider one.
+///
+/// The widening is an upper bound, not a licence: a request whose stated budget
+/// is narrower than the shape this profile may assemble is refused at the
+/// request boundary, and a program exceeding the budget its request states is
+/// refused at assembly. Both directions are driven, because a widening that
+/// only ever admitted would be indistinguishable from removing the check.
+#[test]
+fn the_widened_budgets_admit_the_split_program_and_still_refuse_a_narrower_request() {
+    let semantic = semantic_case_with_axis(
+        Shape::from_dims([1, 4]),
+        2.0_f32.to_bits(),
+        1.0_f32.to_bits(),
+        false,
+        Axis::new(1),
+    );
+    // The pre-widening values. The request boundary refuses them by name,
+    // rather than admitting a request whose split it would later fail to build.
+    for (resource, narrow) in [("regions", 2_u32), ("buffers", 3)] {
+        let mut request = CompilationRequest::governed_under(
+            &semantic,
+            StrictF32NumericalContract::governed_relaxed(),
+        );
+        match resource {
+            "regions" => request.budgets.regions = narrow,
+            _ => request.budgets.buffers = narrow,
+        }
+        assert!(
+            matches!(
+                verify_request(request),
+                Err(crate::request::RequestError::BudgetExceeded { resource: named, .. })
+                    if named == resource
+            ),
+            "a budget too narrow for the split program was admitted: {resource}"
+        );
+    }
+
+    // And the program-side check still bites: a request stating exactly the
+    // widened buffer budget admits the split, one stating less does not reach
+    // it at all, so the value that separates them is the one that moved.
+    let (semantic, request) = split_request(Shape::from_dims([1, 4]));
+    let scheduled = split_regions(&request);
+    assert!(build_split_kernel_program(&semantic, &request, &scheduled).is_ok());
+    assert_eq!(request.budgets().buffers, 4);
+    assert_eq!(request.budgets().regions, 3);
 }

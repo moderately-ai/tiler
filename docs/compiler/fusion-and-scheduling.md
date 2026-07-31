@@ -117,10 +117,18 @@ scheduling returns a bounded `ImplementationFrontier`. The mature model has an
 additive sum-typed body (`ScheduledKernel`, `KernelSubprogram`, `OpaqueCall`, or
 `View`), boundary requirements/guarantees, applicability predicates, target
 requirements, exact/proven resource requirements, resource estimates, and a
-cost estimate. The bounded P0 frontier admits only checked `ScheduledKernel`
-proposals and explicitly rejects other variants while preserving that additive
-seam. Program selection chooses a compatible covering set only after these
-frontiers are available.
+cost estimate. The bounded frontier admits checked `ScheduledKernel` and
+`KernelSubprogram` proposals and explicitly rejects `View` while preserving that
+additive seam; `OpaqueCall` is admitted through its own registration and
+binding path. A `KernelSubprogram` is what makes one region subject realizable
+by several dispatches — a `ScheduledKernel` is one region and therefore one
+dispatch — and its stages are an ordered chain whose internal handoffs never
+reach a cover edge, so a subprogram's boundary contract is indistinguishable
+from a single kernel's at the join. A frontier additionally records the
+strategies a provider *considered and withheld*, with a typed reason, because an
+enumeration that cannot say why an alternative is absent cannot be audited for
+completeness. Program selection chooses a compatible covering set only after
+these frontiers are available.
 
 Complete-cover enumeration is an independent legality authority over region
 candidates. It neither waits for nor proves a local schedule. Conversely,
@@ -285,6 +293,22 @@ temporary's final users before a new writer of the same allocation; it is not
 the producer-to-consumer visibility mechanism. Scratch preserves accumulator
 bits unless the semantic contract explicitly admits a conversion. Canonical
 stream/list order alone proves neither dependency.
+
+The implemented split is the bounded profile's balanced two-pass form: a partial
+pass staging one value per partition and a final pass combining them, with the
+partial pass claiming the reduction occurrence and the final pass claiming none,
+because that occurrence is already covered and claiming it twice would
+double-cover the graph. It consumes **reassociation and nothing else** — the
+contributor order within and across partitions is preserved, so permutation
+neither grants nor substitutes for the permission — and it is withheld with a
+typed reason when the resolved contract forbids reassociation or the contributor
+extent admits no exact partition into at least two parts of at least two
+contributors. A ragged final partition is not implemented: it needs a second
+constant trip count the structured-kernel loop vocabulary does not carry, so a
+prime or sub-four extent retains only the serial alternative rather than being
+approximated. Enumerating the split does not make it *win*; the structural cost
+model prices its extra dispatch and staged bytes, and preference belongs to
+measured calibration.
 
 ## Rearrangement schedules
 

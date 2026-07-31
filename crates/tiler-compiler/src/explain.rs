@@ -3688,7 +3688,14 @@ mod tests {
                 // Rebaselined when the workgroup limit moved from a compile-time
                 // global fact to a prepared-entry target requirement. The
                 // request subject now binds the complete query and its provider.
-                "tiler-explain-v7 request=83b9baadbea45e19\n",
+                // Rebaselined from `83b9baadbea45e19` when the governed
+                // deterministic budgets widened to three regions and four
+                // buffers for the split-reduction program shape. Every budget is
+                // inside the request subject, so this digest *must* move: two
+                // requests admitting different program shapes are different
+                // requests, and a value that survived would mean the subject
+                // reached the budgets it names without reaching their values.
+                "tiler-explain-v7 request=09d719dd4c2c2f37\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

@@ -427,18 +427,33 @@ pub(super) fn record_frontier(
         cause,
     )?;
     for rejection in frontier.rejections() {
-        if let crate::frontier::FrontierRejection::OpaqueCall {
-            provider,
-            proposal,
-            cause: rejection,
-        } = rejection
-        {
-            cause = record_opaque_call_rejection(explain, provider, proposal, rejection, cause)?;
+        match rejection {
+            crate::frontier::FrontierRejection::OpaqueCall {
+                provider,
+                proposal,
+                cause: rejection,
+            } => {
+                cause =
+                    record_opaque_call_rejection(explain, provider, proposal, rejection, cause)?;
+            }
+            crate::frontier::FrontierRejection::StrategyDeclined {
+                provider,
+                strategy,
+                cause: decline,
+            } => {
+                cause =
+                    record_declined_strategy(explain, role, provider, strategy, *decline, cause)?;
+            }
+            crate::frontier::FrontierRejection::Infeasible { .. }
+            | crate::frontier::FrontierRejection::Unhonourable { .. }
+            | crate::frontier::FrontierRejection::UnsupportedVariant { .. }
+            | crate::frontier::FrontierRejection::NotApplicable { .. } => {}
         }
     }
     // The summaries remain present beside the detail records: consumers can
     // answer "how many?" without reconstructing it from event classes, while
-    // each opaque-call refusal above retains the typed answer to "why?".
+    // each opaque-call refusal and each declined strategy above retains the
+    // typed answer to "why?".
     record_count_step(
         explain,
         "frontier.enumeration.v1",
@@ -449,6 +464,86 @@ pub(super) fn record_frontier(
         "rejected-count",
         frontier.rejections().len(),
         cause,
+    )
+}
+
+/// Records one strategy a provider considered for this region and withheld.
+///
+/// This is the record that makes an *absence* readable. Every other frontier
+/// record answers "why was this candidate not admitted"; a reader of those alone
+/// cannot tell a request whose extents admit no balanced split from one whose
+/// provider never implemented splitting, because both enumerate exactly the
+/// serial alternative. The typed cause and its exact fact — the refused
+/// numerical dimension, or the contributor extent that admitted no partition —
+/// are what separate them.
+///
+/// The disposition is `Disproved` and never `Unknown`: each cause is decided
+/// from the request alone, before any region exists, so nothing further could
+/// resolve it.
+fn record_declined_strategy(
+    explain: &mut ExplainWriter,
+    role: &'static str,
+    provider: &crate::frontier::PhysicalProviderProvenance,
+    strategy: &'static str,
+    cause: crate::frontier::StrategyDeclineCause,
+    parent: ExplainRecordId,
+) -> Result<ExplainRecordId, TargetFailure> {
+    let key = format!("region:{role}");
+    let stage = match cause {
+        crate::frontier::StrategyDeclineCause::NumericalPermissionRefused { .. } => {
+            ExplainStage::NumericalLegality
+        }
+        crate::frontier::StrategyDeclineCause::NoAdmissibleShape { .. }
+        | crate::frontier::StrategyDeclineCause::Unrepresentable { .. } => {
+            ExplainStage::IntrinsicScheduling
+        }
+    };
+    explain_step(
+        (|| -> Result<_, CompileError> {
+            let subjects = vec![
+                explain.subject(SubjectKind::Schedule, &key)?,
+                explain.subject(SubjectKind::Provider, provider.explain_subject())?,
+            ];
+            let mut assessment = PredicateAssessment::disproved(
+                "frontier.strategy-offered",
+                ReasonCode::new(cause.reason())?,
+                EvidenceBasis::CheckedInvariant,
+            )?
+            .with_fact(ExplainFact::new(
+                "strategy",
+                FactValue::Identity(crate::explain::SubjectKey::new(strategy)?),
+            )?)?;
+            assessment = match cause {
+                crate::frontier::StrategyDeclineCause::NumericalPermissionRefused { dimension } => {
+                    assessment.with_fact(ExplainFact::new(
+                        "refused-dimension",
+                        FactValue::Identity(crate::explain::SubjectKey::new(dimension)?),
+                    )?)?
+                }
+                crate::frontier::StrategyDeclineCause::NoAdmissibleShape { extent, .. } => {
+                    assessment.with_fact(ExplainFact::new("extent", FactValue::Count(extent))?)?
+                }
+                crate::frontier::StrategyDeclineCause::Unrepresentable { .. } => assessment,
+            };
+            Ok(explain.push_detail(
+                RuleRef::builtin("frontier.strategy-decline.v1")?,
+                subjects,
+                ExplainEvent::Check {
+                    stage,
+                    assessment,
+                    rejection: if stage == ExplainStage::NumericalLegality {
+                        RejectionClass::NumericalIllegal
+                    } else {
+                        RejectionClass::NotApplicable
+                    },
+                },
+                vec![parent],
+            )?)
+        })(),
+        stage,
+        SubjectKind::Schedule,
+        &key,
+        record_cause(parent),
     )
 }
 
