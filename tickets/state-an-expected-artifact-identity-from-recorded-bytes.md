@@ -1,7 +1,7 @@
 ---
 id: state-an-expected-artifact-identity-from-recorded-bytes
 title: State an expected artifact identity from recorded bytes
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [route-the-runtime-loader-through-the-dispatch-record, reconcile-the-empty-domain-proof-member-between-the-two-serial-sum-prototypes]
@@ -9,9 +9,6 @@ scopes: [implementation/artifact, implementation/runtime, contracts/artifacts, r
 shared_scopes: []
 paths: []
 tags: [implementation, artifact, public-boundary]
-claimed_from: todo
-assignee: loop-state-an-exp
-lease_expires_at: 1785520599
 ---
 `CanonicalArtifactProgramIdentity` can be read and cannot be stated. Only code that *built* an artifact can hold one, so the cold-consumer half of `DecodedProgram::preflight`'s own documented contract was unrepresentable in its own signature.
 
@@ -89,6 +86,10 @@ A fifth perturbation checks the *evidence* rather than the code: ending the borr
 **`From<&CanonicalArtifactProgramIdentity> for RecordedArtifactProgramIdentity` — rejected.** It would have removed an `expect` at the six sites that hold a derived identity and want to state it (the prototype's fixture helper and the spike's `run`). But those six are exactly the tautological case `preflight`'s own documentation warns about — restating an identity read from the artifact about to be loaded checks nothing — and a blanket conversion makes that the *frictionless* path while the honest cold-consumer path keeps its `from_bytes`. The ratified surface stays one constructor; the six sites carry an `expect` whose message says what is being assumed.
 
 **`DecodedProofSidecar::artifact_identity_bytes()` left returning `&[u8]` — deliberate.** The recorded assertion is constructed at the runtime call site instead. Changing the accessor's return type would pull the proof codec's own internal comparisons (`crates/tiler-artifact/src/proof/codec.rs`, the two `artifact.…identity().as_bytes() != self.artifact_identity_bytes()` checks) into scope, and those compare against a *derived* identity — they are integrity checks inside one container, not host assertions, and typing them as assertions would blur precisely the distinction this ticket exists to draw. The producer side needed no change at all: `proof/builder.rs` already derives the sidecar's identity from a `VerifiedArtifactProgram`.
+
+## Accepted (2026-07-31)
+
+Tom accepted the implemented surface: the single-constructor `RecordedArtifactProgramIdentity`, the dedicated `RecordedArtifactIdentityError`, both retyped `DecodedProgram` signatures, and `ProgramMismatch` carrying assertion and derivation as two types with no conversion in either direction. Both recorded eliminations (the rejected `From` conversion; the untyped sidecar accessor) stand as part of the accepted shape.
 
 ## Graph maintenance
 
