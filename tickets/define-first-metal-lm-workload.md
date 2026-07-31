@@ -1,7 +1,7 @@
 ---
 id: define-first-metal-lm-workload
 title: Define the first representative Metal language-model workload
-status: in-progress
+status: done
 priority: p1
 dependencies: [scope-optimized-metal-lm-inference]
 related: [derive-transformer-operation-and-shape-surface, design-model-level-qualification-and-optimization, exercise-qwen35-hybrid-text-tower-after-the-dense-vertical, retain-the-qwen-conformance-reference-logit-fixture]
@@ -9,9 +9,6 @@ scopes: [research/program-planning, contracts/integrations, contracts/navigation
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, planning, language-model, workload, metal, inference]
-claimed_from: todo
-assignee: loop-define-first
-lease_expires_at: 1785517250
 ---
 ## User-visible outcome
 
