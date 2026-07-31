@@ -60,8 +60,12 @@ and [Arrow canonical extensions](https://arrow.apache.org/docs/format/CanonicalE
 DLPack and ONNX are preserved as `dlpack-header-v1.3` and `onnx-ir-v1.22.0`.
 The StableHLO compatibility page, the MLIR language reference, and the Arrow
 extension registry are namespace-governance precedents rather than format
-definitions; they are deferred to
-[preserve-ecosystem-dtype-precedent-sources](../../../tickets/preserve-ecosystem-dtype-precedent-sources.md).
+definitions; they are preserved as `stablehlo-compatibility-v1.18.0`,
+`mlir-langref-llvmorg-22.1.8`, and `arrow-canonical-extensions-25.0.0`, at the
+same commits as the format-defining files from those projects where one exists.
+Preserving a governance precedent records how another project versions and
+namespaces its vocabulary; it does not import that project's policy into
+Tiler's.
 
 ## Proposed admission gates
 

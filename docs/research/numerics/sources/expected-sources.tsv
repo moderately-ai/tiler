@@ -1,8 +1,11 @@
-#	Expected primary-source population for Tiler's recognized dtype catalog. One row per preserved unit.
+#	Expected source population behind Tiler's recognized dtype catalog: the format-defining
+#	specifications first, then the ecosystem spelling, exposure, and namespace-governance
+#	precedents the same research cites. One row per preserved unit.
 #	Columns: id <TAB> classification <TAB> path <TAB> sha256
 #	classification: vendored | metadata-only | pending-acquisition
 #	path: path under this directory, or "-" when no bytes are retained here.
 #	sha256: digest over the exact retrieved byte stream, or "-" when no bytes were ever retrieved.
+#	One retrieval source is not byte-reproducible; README.md names it and says why.
 #	Provenance for each id — owner, edition, retrieval URL and date, licence, verdict — is in README.md.
 #	`verify-sources.sh` enforces the row count, the per-classification counts, id uniqueness, every
 #	vendored digest, and that no file on disk escapes this manifest.
@@ -31,3 +34,26 @@ dlpack-license-v1.3	vendored	dlpack-v1.3/LICENSE	3e8f6bc39276a586d60c8c5aaece2ff
 nvidia-te-nvfp4-v2.17	vendored	transformer-engine-v2.17/nvfp4.rst	af7d7592109ee855b91fdf8dea77421c71f5990ff6fdf6b2a4a86a8cca19a7e7
 nvidia-te-license-v2.17	vendored	transformer-engine-v2.17/LICENSE	bea1b4266f1499fa4bbb16d6e7577e6b5b53d1ef010835a9d460876022cc8722
 tosa-spec-1.0.1	vendored	tosa-1.0.1/tosa_spec_1_0_1.html	16c774695cf9e42cd7592b4d595bcbcc8f0268412c1eebd46f03dcca7f5b9726
+#	Ecosystem spelling/exposure precedents and namespace-governance precedents. These documents
+#	do not define a value set; they record how an existing system spells, exposes, or governs one.
+pytorch-tensor-attributes-v2.13.0	vendored	pytorch-v2.13.0/tensor_attributes.md	b7bc106e8f21db1bf9fbe8f755f6f3e4d89156ae377ff47b1aa46da963dc98a0
+pytorch-complex-numbers-v2.13.0	vendored	pytorch-v2.13.0/complex_numbers.md	f8c886769acb5b2b15c82ecb86e4f58856517f729178eec87bae901a0e6b8533
+pytorch-scalar-type-v2.13.0	vendored	pytorch-v2.13.0/ScalarType.h	6659ef27f049a84c8574943146763c1edfab20e8d60acde76f26cbcca1b6ea49
+pytorch-license-v2.13.0	vendored	pytorch-v2.13.0/LICENSE	bd018feef8825e88181c84eb7e3aa4eafb8f08a20d9fd6ef948569610c4a3e43
+pytorch-notice-v2.13.0	vendored	pytorch-v2.13.0/NOTICE	c2cc7bf0caec7652c2b460a8a470bea1677f241e4ab8e431df34cf17f5a9fec0
+numpy-dtype-classes-v2.5.1	vendored	numpy-v2.5.1/routines.dtypes.rst	7cfaa1da52da75cab4d33074f5bca59790010d1cb04216148914b7e54e373150
+numpy-license-v2.5.1	vendored	numpy-v2.5.1/LICENSE.txt	1be1df33863f97a7bc1c4d67980bd6c69c9a6fef0a5ee76e6ad6cb91e56e8491
+jax-typed-keys-v0.11.0	vendored	jax-v0.11.0/9263-typed-keys.md	9dea983843be3d2c46469f844d33a71b4549016db26d5a25aca9c48e11972683
+jax-license-v0.11.0	vendored	jax-v0.11.0/LICENSE	cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30
+arrow-columnar-25.0.0	vendored	arrow-25.0.0/Columnar.rst	719cc741e073515a540344e77eb11bf46ef6bc8f443197ac8140b251146d9abb
+arrow-canonical-extensions-25.0.0	vendored	arrow-25.0.0/CanonicalExtensions.rst	a52be57957112b395cfffc5f01ce0855f714e77b24a2c3bf2da47e320f5f8e8c
+arrow-schema-fbs-25.0.0	vendored	arrow-25.0.0/Schema.fbs	3ef08f2dd775fd90d03fa1f3cb769c36c04095d06dd2e4509cad04700043795b
+arrow-license-25.0.0	vendored	arrow-25.0.0/LICENSE.txt	d1c981370f1ffd4edcdd2fb3565c8939cc40c75e24e1f92d581d04e54f0dff81
+arrow-notice-25.0.0	vendored	arrow-25.0.0/NOTICE.txt	afd895d61a00101f6d5a41cf518c83865d815e8109e956f512a0ce4ea9738c06
+stablehlo-compatibility-v1.18.0	vendored	stablehlo-v1.18.0/compatibility.md	e1f3099983fa74838ecbe5b916a16309402e0dbf77d6a5e8631025062c608b36
+mlir-langref-llvmorg-22.1.8	vendored	llvm-project-llvmorg-22.1.8/mlir-LangRef.md	eb3fb6201192fa33d7714b7b961eb5a3047d42e95acc3d6bdd25f72e9de538cf
+gcc-manual-16.1.0	vendored	gcc-16.1.0/gcc.pdf	f05b01a3881035f0186baa2a8ed3fd44221f6d645ff574f56b1f92760be3b1ca
+spirv-unified-1.6-rev7	vendored	spirv-1.6-rev7/SPIRV.html	013b397e99b2dbe3b8eb7a281f27a30a730575507af684280a6d84a82059a7d3
+wgsl-crd-20260716	vendored	wgsl-20260716/CRD-WGSL-20260716.html	2ae2de9464930086cb7c611951262bfd4c989a312802e30162cfd246567d66aa
+w3c-document-license-2023	vendored	wgsl-20260716/w3c-software-and-document-license-2023.html	aab6d2da3de7e0c6158551b2fd8f43ffe2a3373f2ffecb0f1c6db9fa79b0690b
+nvidia-tensorrt-accuracy-11.2.1	metadata-only	-	10d6c4f44af0ddbfa018d6e6b35d70a4678a44befab51e09f468d91e6da5989b
