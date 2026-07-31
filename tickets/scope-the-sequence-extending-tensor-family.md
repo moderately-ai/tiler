@@ -5,7 +5,7 @@ status: todo
 priority: p2
 dependencies: [derive-transformer-operation-and-shape-surface]
 related: [design-autoregressive-state-and-kv-cache, own-operation-family-support-matrix]
-scopes: [contracts/foundation, contracts/navigation]
+scopes: [contracts/foundation, contracts/navigation, research/shapes]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, semantics, structural, language-model, breadth]
@@ -56,6 +56,8 @@ The durable record is [Sequence-extending tensor family](../docs/research/shapes
 **Two matrix rows added, both R1**, placed with the structural families and before contraction: sequence extension and sub-tensor selection, each with its evidence and its trigger. Nothing moved rung — a research record is not a normative contract, and the rows record an absence that already existed. One bullet was added to the ladder's prerequisite list so an L5 reader finds the family where they look for it.
 
 **One adjacent stale `Fact` corrected while reading for this analysis.** The effectful row asserted that `OperationEffect` is `#[non_exhaustive]`; the declaration says the opposite, deliberately, because three out-of-crate encoders map the vocabulary totally onto an identity tag. The rung is unaffected and the real property is stronger than the cell claimed.
+
+**One scope added, not silently.** `research/shapes` joins the declared scopes because the durable record lands in `docs/research/shapes/`, which `tkt guard` maps to that scope and which the ticket's original three did not cover; `derive-transformer-operation-and-shape-surface` declared the same scope for the sibling record in the same directory. No open ticket declares it, so the addition creates no contention. Nothing else in the change moved outside the original three.
 
 **Checks.** Every absence claim in the record carries its exact command and a positive control that proves the command can return something — including `grep -rn 'ShapeExpr' crates/`, which returns nothing against a control returning nine files.
 
