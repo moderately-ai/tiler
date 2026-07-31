@@ -1,4 +1,10 @@
 # Regenerable compiler outputs. Retain record.tsv, SDK settings, and logs.
 *.air
 *.metallib
-copy.metal
+# `compatibility_probe.sh` stages the kernel into `src-a/` and `src-b/` to
+# compile identical bytes from two absolute directories; those two copies are
+# run products. This names those directories rather than the bare filename,
+# because a retained `producers/` copy of the same kernel is byte evidence a
+# replay verifies against the record and must stay tracked.
+**/src-a/copy.metal
+**/src-b/copy.metal

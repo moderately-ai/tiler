@@ -8,7 +8,7 @@ experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement"]
 supports: ["tiler.research.apple-targets.compatibility", "tiler.research.apple-targets.numerical-behaviour"]
-entrypoints: ["spikes/apple-targets/compatibility_probe.sh", "spikes/apple-targets/runtime_failure_probe.swift", "spikes/apple-targets/validate_compatibility_record.py", "spikes/apple-targets/validate_numerical_record.py", "spikes/apple-targets/test_probes.py", "spikes/apple-targets/numerical_probe.py", "spikes/apple-targets/numerical_probe_host.m", "spikes/apple-targets/test_numerical_probe.py", "spikes/apple-targets/bfloat_dispatch_probe.py", "spikes/apple-targets/aot-runtime-compiler-observer/run.sh"]
+entrypoints: ["spikes/apple-targets/compatibility_probe.sh", "spikes/apple-targets/runtime_failure_probe.swift", "spikes/apple-targets/validate_compatibility_record.py", "spikes/apple-targets/replay_retained_compatibility_record.sh", "spikes/apple-targets/validate_numerical_record.py", "spikes/apple-targets/test_probes.py", "spikes/apple-targets/numerical_probe.py", "spikes/apple-targets/numerical_probe_host.m", "spikes/apple-targets/test_numerical_probe.py", "spikes/apple-targets/bfloat_dispatch_probe.py", "spikes/apple-targets/aot-runtime-compiler-observer/run.sh"]
 last_verified: "2026-07-31"
 ticket: "apple-artifact-compatibility"
 ---
@@ -45,14 +45,26 @@ Success means the complete line-oriented `record.tsv` passed
 `validate_compatibility_record.py`; compile-matrix success without valid host,
 SDK, compiler, and linker provenance fails closed. Preserve `record.tsv`, SDK
 settings, `input-manifest.tsv`, and command logs for any published measurement.
-Schema v2 binds the repository base and exact harness, validator, kernel,
-project, lockfile, and manifest digests. AIR and metallib
-files are regenerable and ignored in the checked-in result area; their digests
-remain in the record.
+Schema v2 binds the repository base and the exact harness, validator, kernel,
+and manifest digests. AIR and metallib files are regenerable and ignored in the
+checked-in result area; their digests remain in the record.
+
+**The v2 producer set is not one fixed list, and a replay must select the one its record names.** A record produced now binds three inputs — harness, kernel, validator — because `e197176` deleted the root `pyproject.toml` and `uv.lock` with the rest of the Python tooling, so the harness stopped hashing them and the current validator expects a three-row manifest. The retained 2026-07-21 record binds five, correctly: it was measured while those two files existed. Running the current validator against it fails with `retained input manifest does not match producer fields`, which is a shape difference between two producer generations and not a defect in either.
 
 The retained 2026-07-21 local run is
 [`results/2026-07-21-xcode26.6-metal32023.883/record.tsv`](results/2026-07-21-xcode26.6-metal32023.883/record.tsv).
-Its SDK extracts and command logs are checked in beside it.
+Its SDK extracts and command logs are checked in beside it, and so is the exact producer set it names, under `producers/` laid out by the repository-relative paths its own `input-manifest.tsv` uses. Those five files were recovered from commit `b0fdba7` and each was verified against the record's digest before being retained. `b0fdba7` is the only commit in either file's complete history carrying the recorded harness `b37ba8…` and validator `63f579…` bytes; the exhaustive check is `git log --format=%H -- <path> | while read -r c; do git show "${c}:<path>" | shasum -a 256; done` over all six commits that touched the harness and all four that touched the validator. The record's own `probe.repository_base_revision` is `f3004a1`, whose committed harness and validator digests are `1425b6…` and `05f699…` — different bytes. So the run was taken from a working tree based on `f3004a1` with the producer edits still uncommitted, and those edits landed one commit later; the recorded base revision names where the tree came from and is not by itself enough to recover what ran. Retaining the bytes is what closes that gap.
+
+Replay the retained record from its own producer set, with no repository Python environment and no current-tree validator:
+
+```sh
+spikes/apple-targets/replay_retained_compatibility_record.sh \
+  spikes/apple-targets/results/2026-07-21-xcode26.6-metal32023.883
+```
+
+The replay verifies the manifest digest, then every retained producer byte against both the manifest row and the record's own producer field, and only then executes the retained validator on the record — so an edited retained validator is rejected before it can certify its own changed identity. It also counts the files under `producers/` against the manifest population, because an unlisted retained file would be bytes no digest covers. Retained producers are kept as data rather than as executables: their SHA-256 is the identity, the retained harness is not a live entrypoint, and the replay runs the retained validator through an explicit interpreter (`python3`, overridable with `TILER_REPLAY_PYTHON`). Both retained validators are standard-library-only, which is what makes this self-contained.
+
+Every rejection named here was observed by perturbing the retained tree, watching the failure, and restoring, and each reports exactly one reason — the right one. Appending a comment to the retained validator, and separately to the retained harness, fails at the producer-digest step with the recorded and found digests named, before the validator runs. Zeroing the record's `probe.validator_sha256` fails the record-to-bytes cross-check. Replacing a record digest with `short` fails the SHA-256 shape check, duplicating a record key fails `record does not carry exactly one probe.source_sha256 row`, deleting `producers/uv.lock` fails as a missing producer, and an extra empty file under `producers/` fails the population count with `producers/ holds 6 files but the manifest names 5`.
 
 On a macOS Metal host, the Swift control distinguishes library, function, and
 pipeline failure stages:

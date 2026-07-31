@@ -1,0 +1,40 @@
+[project]
+name = "tiler-dev"
+version = "0.0.0"
+description = "Repository-local development tooling for Tiler"
+requires-python = ">=3.11,<3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "markdown-it-py==4.2.0",
+    "mpmath==1.3.0",
+    "ruamel-yaml==0.19.1",
+    "pytest==9.0.3",
+    "ruff==0.15.15",
+]
+
+[tool.uv]
+package = false
+required-version = "==0.11.28"
+
+[tool.pytest.ini_options]
+addopts = ["--noconftest", "--strict-config", "--strict-markers", "-ra"]
+testpaths = [
+    "scripts/tests",
+    "spikes/apple-targets",
+    "spikes/embedding",
+    "spikes/macro-environment",
+    "spikes/numerics/sound_accuracy",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+include = [
+    "scripts/**/*.py",
+    "spikes/**/*.py",
+]
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "SIM", "UP"]
