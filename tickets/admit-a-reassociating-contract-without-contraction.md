@@ -1,7 +1,7 @@
 ---
 id: admit-a-reassociating-contract-without-contraction
 title: Admit a reassociating contract without contraction
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [enumerate-the-split-reduction-on-the-planning-frontier, calibrate-and-activate-parallel-reduction-selection]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [compiler, numerics, reductions]
+claimed_from: todo
+assignee: loop-admit-a-reas
+lease_expires_at: 1785533981
 ---
 ## User-visible outcome
 

@@ -1,7 +1,7 @@
 ---
 id: design-attention-program-vertical
 title: Design the first complete attention-program vertical
-status: todo
+status: in-progress
 priority: p1
 dependencies: [spike-first-metal-contraction-vertical, scope-transformer-nonlinear-normalization-and-reductions]
 related: [implement-general-dag-partitioning, implement-boundary-property-enforcers, implement-analytical-component-cost-model]
@@ -9,6 +9,9 @@ scopes: [research/program-planning, contracts/optimizer, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [design, attention, transformer, vertical-slice, metal, language-model]
+claimed_from: todo
+assignee: loop-design-atten
+lease_expires_at: 1785533981
 ---
 Design one complete, fixed-profile causal self-attention tensor program for the
 selected workload and use it to expose the next planning and runtime gaps.
