@@ -830,12 +830,13 @@ struct ComplexComponentValidator;
 
 impl ValueTypeInstanceValidator for ComplexComponentValidator {
     fn validate(&self, value: &ResolvedValueType) -> Result<(), TypeInstanceError> {
-        let Some((_, arguments)) = value.parameterized_parts() else {
-            return Err(type_error(
-                "complex.not-parameterized",
-                "complex@1 governs parameterized instances only",
-            ));
-        };
+        // The host matches the family key before dispatching here, as
+        // `ValueTypeInstanceValidator` documents, so a non-parameterized value
+        // cannot reach this validator. A rejection arm for it would be a check
+        // that can never say no, which is worse than no arm at all.
+        let (_, arguments) = value
+            .parameterized_parts()
+            .expect("the host dispatches only parameterized values to this family");
         let [argument] = arguments.values() else {
             return Err(type_error(
                 "complex.arity",
