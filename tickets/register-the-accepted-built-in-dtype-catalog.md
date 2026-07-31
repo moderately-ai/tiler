@@ -1,7 +1,7 @@
 ---
 id: register-the-accepted-built-in-dtype-catalog
 title: Register the accepted built-in dtype catalog
-status: in-progress
+status: done
 priority: p1
 dependencies: [define-dtype-namespace-admission-policy, prototype-resolved-value-type-registry, preserve-primary-dtype-standards-evidence]
 related: [enumerate-the-mature-tensor-dtype-taxonomy, prototype-quantized-value-vertical, admit-a-dtype-dispatchability-capability-axis, own-the-dtype-support-maturity-matrix]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, contracts/numerics, contrac
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, identity, validation]
-claimed_from: todo
-assignee: worker-dtype-catalog
-lease_expires_at: 1785536988
 ---
 ## User-visible outcome
 
@@ -61,3 +58,5 @@ The accepted built-in identity catalog is constructed by the standard registry f
 **Fact — pre-existing fixtures that squatted on governed keys.** Three `tiler-ir` tests and one `tiler-compiler` fixture registered `tiler::complex@1`, `tiler::affine@1`, or `tiler::bool@1` under the governed namespace. The `tiler-ir` fixture moved to `test::pair@1`/`test::affine@1`; the compiler fixture now uses the real governed `bool` and `complex` identities and keeps only its encoded family test-owned. Separately, the strict-affine scheme's normative reference did not name its own key and now does.
 
 **Fact — scopes.** The brief placed the dtype maturity ledger under `contracts/numerics`; `ticketsplease.toml` maps `docs/dtype-support.md` and `docs/roadmap.md` to `contracts/navigation`. Registering the catalog also forced edits in `crates/tiler-compiler`. Both scopes were added to this ticket before those files were touched.
+
+**Boundary acceptance (2026-07-31).** Tom accepted the public catalog surface as reviewed: the five read-only accessors, `CanonicalValueTypeDescriptor` with `ValueTypeDefinition::canonical_descriptor`, the sixteen `SCALAR_TYPE_FACT_*` field IDs, and the `F32_TYPE_FACT_*` renames. The coordinator confirmed the two scope additions as ticket-metadata corrections.

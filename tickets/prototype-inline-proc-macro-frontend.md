@@ -1,7 +1,7 @@
 ---
 id: prototype-inline-proc-macro-frontend
 title: Implement the inline proc-macro frontend proof
-status: in-progress
+status: done
 priority: p1
 dependencies: [prototype-public-compiler-api, prototype-neutral-artifact-codec, admit-the-tiler-facade-and-proc-macro-crate-boundary, define-inline-symbol-binding-and-runtime-value-adaptation, promote-artifact-family-selection-for-the-frontend]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/frontend, implementation/compiler, implementation/worksp
 shared_scopes: [project/tickets, implementation/cargo-lock]
 paths: []
 tags: [implementation, frontend, proc-macro, inline-dx]
-claimed_from: todo
-assignee: worker-inline-frontend
-lease_expires_at: 1785536988
 ---
 ## User-visible outcome
 
@@ -228,3 +225,5 @@ No expansion cache is opened, no backend compiler is invoked, no artifact bytes 
 - Filed `carry-symbolic-extents-into-the-semantic-program` (p1, research) and `admit-multi-input-elementwise-programs-at-the-compiler-boundary` (p1, implementation), both with the reproducing check in the body.
 - Corrected `cache_root`'s and `binding`'s `allow(dead_code)` reasons, which named this ticket as their consumer.
 - `generate-cfg-gated-artifact-family-delivery`'s two stated implementation blockers are now cleared: `crates/tiler-macros/**` exists and this ticket, its remaining dependency, is complete.
+
+**Boundary acceptance (2026-07-31).** Tom accepted the two surface items as reviewed: an invocation evaluates to `Result<A::Value, BindError<A::Error>>`, and `tiler::__private::bind_and_build` is the generated code's entry point.
