@@ -1,0 +1,11 @@
+error[E0425]: cannot find value `a` in this scope
+  --> tests/facade/fail/generated_operand_reference_spans.rs:15:12
+   |
+15 |         in a: f32[n], b: f32[n];
+   |            ^ not found in this scope
+
+error[E0425]: cannot find value `b` in this scope
+  --> tests/facade/fail/generated_operand_reference_spans.rs:15:23
+   |
+15 |         in a: f32[n], b: f32[n];
+   |                       ^ not found in this scope

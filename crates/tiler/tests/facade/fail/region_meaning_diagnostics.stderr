@@ -1,0 +1,41 @@
+error: `k` is used as an extent but never declared; add `sym k;` to the region's declaration block
+  --> tests/facade/fail/region_meaning_diagnostics.rs:12:30
+   |
+12 |         in a: f32[n], b: f32[k];
+   |                              ^
+
+error: `sym m;` is declared but no operand axis names it, so nothing supplies its value; give an operand an axis of extent `m`, or remove the declaration
+  --> tests/facade/fail/region_meaning_diagnostics.rs:18:16
+   |
+18 |         sym n, m;
+   |                ^
+
+error: operand `a` is declared twice; an interface key names one operand
+  --> tests/facade/fail/region_meaning_diagnostics.rs:26:23
+   |
+26 |         in a: f32[n], a: f32[n];
+   |                       ^
+
+error: `sym n` is declared twice; one `sym` statement declares one extent variable, and every operand axis naming it is unified against that one declaration
+  --> tests/facade/fail/region_meaning_diagnostics.rs:33:13
+   |
+33 |         sym n;
+   |             ^
+
+error: `b` is used in the region's result but no `in` statement declares it; a region reads only the operands it declares, never a value from the surrounding Rust
+  --> tests/facade/fail/region_meaning_diagnostics.rs:43:17
+   |
+43 |         out a * b
+   |                 ^
+
+error: `*` cannot combine a `[4]` operand with a `[5]` one; operand shapes must match or one operand must be scalar
+  --> tests/facade/fail/region_meaning_diagnostics.rs:49:15
+   |
+49 |         out a * b
+   |               ^
+
+error: `*` cannot combine a `[n]` operand with a `[m]` one; operand shapes must match or one operand must be scalar
+  --> tests/facade/fail/region_meaning_diagnostics.rs:57:15
+   |
+57 |         out a * b
+   |               ^

@@ -1,0 +1,61 @@
+error: `f64` is not an element type a region may declare; this profile registers `f32`, because those are the element types the governed semantic operation profile has operations over
+  --> tests/facade/fail/region_syntax_diagnostics.rs:18:15
+   |
+18 |         in a: f64[n], b: f32[n];
+   |               ^^^
+
+error: `-` is not an operation this region vocabulary carries; the governed semantic profile registers `*` and `+` over `f32`, and an operation with no public logical spelling is refused rather than approximated
+  --> tests/facade/fail/region_syntax_diagnostics.rs:26:15
+   |
+26 |         out a - b
+   |               ^
+
+error: `+=` is not an operation this region vocabulary carries; the governed semantic profile registers `*` and `+` over `f32`, and an operation with no public logical spelling is refused rather than approximated
+  --> tests/facade/fail/region_syntax_diagnostics.rs:34:15
+   |
+34 |         out a += b
+   |               ^
+
+error: `relu(…)` is a named operation call, and this profile registers none; the approved syntax reserves the form for operations without an operator spelling, and no such operation is admitted yet
+  --> tests/facade/fail/region_syntax_diagnostics.rs:41:13
+   |
+41 |         out relu(a)
+   |             ^^^^
+
+error: `4usize` is not a literal extent; a fixed axis is written as a plain non-negative integer with no suffix, as in `f32[4]`
+  --> tests/facade/fail/region_syntax_diagnostics.rs:46:19
+   |
+46 |         in a: f32[4usize];
+   |                   ^^^^^^
+
+error: this region declares no result; add `out <expression>`, which is the value the invocation evaluates to
+  --> tests/facade/fail/region_syntax_diagnostics.rs:51:20
+   |
+51 |       let _no_body = tiler::tensor! {
+   |  ____________________^
+52 | |         sym n;
+53 | |         in a: f32[n];
+54 | |     };
+   | |_____^
+   |
+   = note: this error originates in the macro `tiler::tensor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: found `;` after an expression that was already complete; a region declares exactly one result, and `out` takes the rest of the invocation
+  --> tests/facade/fail/region_syntax_diagnostics.rs:60:14
+   |
+60 |         out a;
+   |              ^
+
+error: `tiler::tensor!` was given no region; a region declares its operands and its result, as in `sym n; in a: f32[n], b: f32[n]; out a * b`
+  --> tests/facade/fail/region_syntax_diagnostics.rs:64:18
+   |
+64 |     let _empty = tiler::tensor!();
+   |                  ^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `tiler::tensor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: expected `sym`, `in`, or `out` and found `let`; a region is a declaration block followed by one `out` expression
+  --> tests/facade/fail/region_syntax_diagnostics.rs:68:9
+   |
+68 |         let a = 1;
+   |         ^^^

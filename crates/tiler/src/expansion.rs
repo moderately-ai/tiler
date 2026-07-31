@@ -241,6 +241,47 @@ pub fn build_result<A: TensorAdapter>(
     .map_err(BindError::Adapter)
 }
 
+/// Checks one region's operands and constructs its declared result.
+///
+/// The composition of [`bind_region`] and [`build_result`], in that order, and
+/// the one item a `tiler::tensor!` expansion actually calls.
+///
+/// # Why generated code cannot call the two directly
+///
+/// [`build_result`]'s adapter parameter appears only in `A::Context` and in its
+/// return type, and neither position determines `A`: an associated type is not
+/// injective, so `&A::Context` infers nothing, and the result type is whatever
+/// the caller's `let` says. A generated call would therefore need to spell the
+/// adapter's name — which an expansion does not know, because the adapter is the
+/// consumer's own type and the region text never names it. Here `A` is inferred
+/// from `operands`, where it appears as `&Tensor<A>`.
+///
+/// The decomposed pair stays public and unchanged. It is what a caller with a
+/// concrete adapter in hand uses, and separating the two checks is what lets a
+/// test observe each independently.
+///
+/// The result is constructed through the context of the first declared operand,
+/// which is [`build_result`]'s documented contract: a region whose operands live
+/// on different contexts is outside this bounded profile.
+///
+/// # Errors
+///
+/// Returns whatever [`bind_region`] or [`build_result`] returns, and
+/// [`BindError::MalformedRegionFacts`] for a region that declares no operand at
+/// all — which has no context to construct a result from.
+pub fn bind_and_build<A: TensorAdapter>(
+    facts: &RegionFacts,
+    operands: &[&Tensor<A>],
+) -> Result<A::Value, BindError<A::Error>> {
+    let bound = bind_region(facts, operands)?;
+    let first = operands.first().ok_or(BindError::MalformedRegionFacts {
+        detail: "a region declares no operand, so no context exists to construct its result from",
+    })?;
+    // The turbofish is the same inference gap this function exists to close,
+    // observed from inside: `A` is known here only because `operands` named it.
+    build_result::<A>(facts, &bound, first.context())
+}
+
 /// Reads the extent one [`AxisRef`] points at.
 ///
 /// The rank check in [`bind_region`] already proved every reported rank equals

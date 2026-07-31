@@ -70,13 +70,15 @@
 
 #![allow(
     dead_code,
-    reason = "the cache-root policy is a reviewed draft under ADR 0074 convention 7: \
-              `tensor!` has no grammar and opens no cache, so this resolver's only \
-              caller today is its own test module. \
-              `prototype-inline-proc-macro-frontend` is the slice that consumes it, \
-              and the surface it reserves is the whole of the stated policy — the \
-              override variable, the `off` value, the derived user-cache root, and \
-              every refusal a consumer can read."
+    reason = "the cache-root policy is accepted (ADR 0089) and not yet reached: the expansion \
+              cache exists to share *external* compilation, and every region states \
+              `FallbackOnly`, which ADR 0053 defines as invoking no backend compiler. There is \
+              therefore nothing to cache, and resolving a root anyway would let an unset `HOME` \
+              refuse an expansion that opens no cache. \
+              `generate-cfg-gated-artifact-family-delivery` is the slice that first compiles a \
+              selected family, and it is what consumes this resolver. The surface reserved is the \
+              whole of the stated policy — the override variable, the `off` value, the derived \
+              user-cache root, and every refusal a consumer can read."
 )]
 
 use core::fmt;

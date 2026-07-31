@@ -13,8 +13,8 @@
 //! an accepting neighbour differing in exactly the input under test.
 
 use tiler::__private::{
-    AxisRef, OperandFacts, RegionFacts, ResultAxis, ResultFacts, SymbolFacts, bind_region,
-    build_result,
+    AxisRef, OperandFacts, RegionFacts, ResultAxis, ResultFacts, SymbolFacts, bind_and_build,
+    bind_region, build_result,
 };
 use tiler::value::{
     AdapterCapability, BindError, OperandAxis, ResultRequest, StorageScalar, Tensor, TensorAdapter,
@@ -387,6 +387,51 @@ fn the_wrapper_returns_the_integrations_own_value() {
     assert_eq!(value, held);
     assert_eq!(context, "device");
     assert_eq!(wrap(held.clone()).into_value(), held);
+}
+
+/// The composed entry point generated code calls agrees with the pair it
+/// composes, and refuses a region that declares no operand.
+///
+/// The refusal is not reachable through the region grammar — every body atom is
+/// an operand reference, so a region with no `in` statement is refused while it
+/// is being lowered — but `bind_and_build` is reachable on its own, and a check
+/// nothing can make fail is a check nothing has established.
+#[test]
+fn the_composed_entry_point_agrees_with_the_pair_and_refuses_an_operandless_region() {
+    /// A region with no operand at all, which has no context to build from.
+    const OPERANDLESS: RegionFacts = RegionFacts {
+        operands: &[],
+        symbols: &[],
+        capabilities: &[],
+        result: ResultFacts {
+            key: "d",
+            storage_scalar: StorageScalar::F32,
+            axes: &[ResultAxis::Literal(4)],
+        },
+    };
+
+    let a = wrap(Held::f32([7]));
+    let b = wrap(Held::f32([7, 4]));
+
+    let bound = bind_region::<Complete>(&REGION, &[&a, &b]).expect("both operands agree");
+    assert_eq!(
+        bind_and_build::<Complete>(&REGION, &[&a, &b]).expect("the composition binds and builds"),
+        build_result::<Complete>(&REGION, &bound, a.context()).expect("the pair does too"),
+    );
+
+    // A refusal from either half travels out unchanged.
+    assert_eq!(
+        bind_and_build::<Complete>(&REGION, &[&a]).expect_err("the region declares two operands"),
+        BindError::OperandCountMismatch {
+            declared: 2,
+            supplied: 1,
+        },
+    );
+
+    assert!(matches!(
+        bind_and_build::<Complete>(&OPERANDLESS, &[]).expect_err("no context exists"),
+        BindError::MalformedRegionFacts { .. }
+    ));
 }
 
 /// Metadata reports what the adapter was given, unchanged.
