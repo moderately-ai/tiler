@@ -1,7 +1,7 @@
 ---
 id: reconcile-the-near-horizon-ticket-graph
 title: Reconcile the near-horizon ticket graph
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: []
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: codex-root
-lease_expires_at: 1785518410
 ---
 ## User-visible outcome
 
