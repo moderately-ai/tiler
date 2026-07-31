@@ -341,7 +341,7 @@ Each rung presupposes the one below it. The maturity column uses the same four `
 
 | Step | Capability | Owning ticket | Activation trigger | Maturity today |
 | --- | --- | --- | --- | --- |
-| L1 | A representative workload is named, with its exact model, shapes, and dtypes | [`define-first-metal-lm-workload`](../tickets/define-first-metal-lm-workload.md) | this map is accepted | none |
+| L1 | A representative workload is named, with its exact model, shapes, and dtypes — the [workload profile](research/program-planning/first-metal-lm-workload.md) | [`define-first-metal-lm-workload`](../tickets/define-first-metal-lm-workload.md) | this map is accepted | workload named and bounded; nothing executes |
 | L2 | The tensor operation and shape surface that workload requires is derived | [`derive-transformer-operation-and-shape-surface`](../tickets/derive-transformer-operation-and-shape-surface.md) | L1 names a workload | none |
 | L3 | One contraction runs end to end on Metal | [`spike-first-metal-contraction-vertical`](../tickets/spike-first-metal-contraction-vertical.md) | L2 lists the contraction shapes, and milestone 6 settles the keyed-family question below | none |
 | L3′ | Transformer non-linearities, normalization, and reductions are scoped | [`scope-transformer-nonlinear-normalization-and-reductions`](../tickets/scope-transformer-nonlinear-normalization-and-reductions.md) | L2 lists them; runs beside L3 | none |
@@ -351,7 +351,7 @@ Each rung presupposes the one below it. The maturity column uses the same four `
 | L7 | A selected quantized model profile | [`scope-first-quantized-lm-profile`](../tickets/scope-first-quantized-lm-profile.md) | L1 and L3 deliver; milestone 2Q supplies the quantized-value proof | none |
 | L8 | Model-level correctness and performance qualification | [`design-model-level-qualification-and-optimization`](../tickets/design-model-level-qualification-and-optimization.md) | L1 and L6 deliver | none |
 
-**Every rung is at "none" today, and that is the honest state.** The support matrix records four governed F32 operations as the narrow implemented profile; a transformer needs contraction, softmax, layer normalization, and a residual add, none of which is above R2. Nothing in this ladder is partially built.
+**Every executable rung is at "none" today, and that is the honest state.** The support matrix records four governed F32 operations as the narrow implemented profile; a transformer needs contraction, softmax, layer normalization, and a residual add, none of which is above R2. Nothing in this ladder is partially built. L1 is the one rung whose deliverable is a record rather than a capability, and its cell says what was delivered: the pinned `Qwen/Qwen3-0.6B-Base` workload is named, bounded into a conformance row and a benchmark matrix, and manifested by digest. That is a research outcome and not an implementation maturity claim — no part of the workload compiles, dispatches, or executes, and the four-claim vocabulary the other rungs use does not apply to it.
 
 ### What the ladder rests on that is already scheduled elsewhere
 
@@ -424,7 +424,14 @@ An absent operation family is asserted above only where the exact check is repro
 ```sh
 # 1. No transcendental operation family is named anywhere in the workspace.
 #    This currently returns no output at all.
-grep -rniE '\b(exp|log|sin|cos|tanh|sqrt|rsqrt|gelu|erf|sigmoid)\b' crates/ --include='*.rs'
+#
+#    `log` was in this alternation and has been removed, because the pattern
+#    now matches twenty-one ordinary logging identifiers plus one `O(n log n)`
+#    comment and none of them is an operation family — the check was reporting
+#    hits while the claim above it read "no output at all". A word that names a
+#    transcendental and a commonplace English verb cannot discriminate here, so
+#    `Log`'s absence rests on check 3's enumeration of the registry instead.
+grep -rniE '\b(exp|sin|cos|tanh|sqrt|rsqrt|gelu|erf|sigmoid)\b' crates/ --include='*.rs'
 
 # 2. No Reindex, Broadcast, or Cast operation family is defined. The current matches
 #    are doc comments on the rank-zero scalar admission, one index-builder doc comment,

@@ -4,7 +4,7 @@ title: Define the first representative Metal language-model workload
 status: todo
 priority: p1
 dependencies: [scope-optimized-metal-lm-inference]
-related: [derive-transformer-operation-and-shape-surface, design-model-level-qualification-and-optimization, exercise-qwen35-hybrid-text-tower-after-the-dense-vertical]
+related: [derive-transformer-operation-and-shape-surface, design-model-level-qualification-and-optimization, exercise-qwen35-hybrid-text-tower-after-the-dense-vertical, retain-the-qwen-conformance-reference-logit-fixture]
 scopes: [research/program-planning, contracts/integrations, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
@@ -97,6 +97,18 @@ Retain a manifest for the exact model config, tokenizer, weight shards/index, te
 The correctness oracle compares logits after prefill and every decode step under a predeclared effective F32 numerical policy; greedy-token equality, tie handling, and EOS-or-fixed-budget termination are additional observables rather than substitutes. Tolerances must come from the selected numerical realization/reference comparison contract rather than an ad hoc model-level constant.
 
 Replace the stale MSL 3.1 target row in the older research section with the current qualified `apple9-f32-unified-msl4-macos26` authority: Apple9/macOS/F32, MSL 4.0, offline `metalfe-32023.883`, and runtime/pipeline compiler `metalfe-32023.921`. Live execution and delivered-numerics claims remain host-qualified.
+
+## Delivery (2026-07-31)
+
+**The durable profile is [`docs/research/program-planning/first-metal-lm-workload.md`](../docs/research/program-planning/first-metal-lm-workload.md).** It records both bounded rows, the pinned identity manifest with per-file SHA-256 digests and the acquisition policy, the configuration and tensor facts, the F32 memory arithmetic, the correctness oracle, the target qualification row, the traced operation and shape surface, and the exclusion table. The sections below stay as the selection evidence and elimination record they are; the profile does not restate them.
+
+**Fact — every architecture number in this ticket was recomputed from the pinned revision rather than carried forward.** `config.json` at `da87bfb608c14b7cf20ba1ce41287e8de496c0cd` (SHA-256 `504a6b58c4271583724e66584b6b7698aea18450209df6b2f7582df0e89cee59`) confirms 28 layers, hidden 1024, intermediate 3072, 16 query heads, 8 KV heads, head dimension 128, `rms_norm_eps` 1e-06, `rope_theta` 1000000 with `rope_scaling: null`, tied embeddings, no attention bias, no sliding window, vocabulary 151936, and `max_position_embeddings` 32768. The checkpoint's own safetensors header, read by two HTTP range requests totalling about 34 KiB, declares 310 BF16 tensors summing to 596,049,920 parameters — 2,384,199,680 bytes widened to F32 — and its offsets account for the file exactly, so the parameter and byte figures this ticket asserted are now reproduced from the artifact instead of restated.
+
+**Fact — the checkpoint was not downloaded.** Its SHA-256 `cd2a512003e2f9f3cd3c32a9c3573f820bb28c940f73c57b1ddaa983d9223eba` is the repository API's Git-LFS object id, recorded as an identity to verify on acquisition rather than a digest computed here; every other manifest row was hashed from bytes actually fetched, with each size cross-checked against the API-reported size. `retain-the-qwen-conformance-reference-logit-fixture` owns converting the one API-sourced digest into a locally reproduced fact, and no digest anywhere in the profile is invented.
+
+**Fact — the stale MSL 3.1 target row was already corrected before this delivery.** `git log -L 154,154:tickets/define-first-metal-lm-workload.md` shows commit `53c702d` replacing the old "qualified row in the Apple GPU numerical behaviour record" wording with the `apple9-f32-unified-msl4-macos26` authority, so the completion profile's instruction was satisfied by that commit rather than by this one. The identifiers were re-verified against the retained records before the profile repeated them: [`spikes/apple-targets/results/2026-07-30-numerics-covering-apple9-f32-unified-msl4-macos26-xcode26.6-metal32023.883/record.tsv`](../spikes/apple-targets/results/2026-07-30-numerics-covering-apple9-f32-unified-msl4-macos26-xcode26.6-metal32023.883/record.tsv) and its `exhaustive` sibling, described by the unified MSL 4 replay section of [`docs/research/apple-targets/numerical-behaviour.md`](../docs/research/apple-targets/numerical-behaviour.md), which names schema `tiler.apple-numerical-behaviour/v7`, profile identity `apple9-f32-unified-msl4-macos26`, MSL 4.0 on both paths, offline `metalfe-32023.883`, and source-JIT `metalfe-32023.921`.
+
+**One thing the profile deliberately does not supply: the comparison tolerance.** The conformance level is `bounded error`, and the bound cannot be composed from per-operation tolerances — the region-accuracy record establishes why a graph budget is not a sum. Writing a model-level constant now would be exactly the ad hoc threshold `design-model-level-qualification-and-optimization` forbids, so the profile states the oracle's five observables, marks the numeric bound `Unknown`, and hands the derivation to that rung with a measurable procedure attached rather than filing a competing ticket for a threshold it already owns.
 
 ## Implementation keys
 
