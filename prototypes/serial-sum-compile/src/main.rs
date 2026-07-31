@@ -71,6 +71,34 @@
 //! while the complete gate stayed green over a slice that could not run. Both
 //! crates now pin [`SIDECAR_SUFFIX`] in a test that names the other side, so a
 //! rename fails on the half that was not updated.
+//!
+//! # What holds the published *shape*, and why it is not the same mechanism
+//!
+//! The shape has the same structure — [`ROWS`] and [`REDUCTION_CLASSES`] are
+//! stated here and restated in the runner, with nothing between them — and one
+//! defect more. A name is only ever compared; a shape is *consumed*, and the
+//! runner consumed its own instead of the artifact's for a month, compiling four
+//! rows against the one row published here, so every packaged program was
+//! foreign and the whole proof matrix proved nothing. A pinned pair could not
+//! have caught that: both halves would have stated one row and agreed, while the
+//! code substituted a different number.
+//!
+//! So the shape is held by a **gate-reachable fixture in the runner**, which
+//! assembles an envelope at every shape published here and requires the runner's
+//! own shape handling to derive the packaged program from what the artifact
+//! declares — and requires the substitution to be refused. The pinned pair is
+//! kept alongside, in `the_published_shape_matrix_is_the_one_the_runner_expects`
+//! below, but as that fixture's validity condition rather than as a second
+//! mechanism: it is what stops this producer from moving to a shape the fixture
+//! no longer assembles, which would leave a green check over envelopes nobody
+//! publishes.
+//!
+//! Two options were eliminated. Stating the shape in the sidecar and validating
+//! it there would put the producer on both sides of its own comparison — the
+//! artifact declares the shape and the sidecar would restate it — and could only
+//! fail when a published artifact is read, which is on hardware and never in the
+//! gate. A pinned pair alone is cheap and, as above, blind to the one defect
+//! that happened.
 
 mod sidecar;
 
@@ -1095,6 +1123,40 @@ mod tests {
         assert_eq!(
             super::proof_sidecar(std::path::Path::new("/tmp/a.tiler")),
             std::path::PathBuf::from("/tmp/a.tiler.proof"),
+        );
+    }
+
+    /// The producer's half of the published *shape* interface, pinned.
+    ///
+    /// `prototypes/serial-sum-run` carries the identical assertion over a
+    /// `PUBLISHED_ROWS` and a `REDUCTION_CLASSES` of its own, and the pair is
+    /// the only thing comparing them: the two crates share no code, exactly as
+    /// with the filenames above.
+    ///
+    /// **What the pair protects is a check on the runner's side.** The runner's
+    /// gate assembles an envelope at every shape published here and requires its
+    /// own shape handling to derive the packaged program from the artifact's
+    /// declaration rather than from its own row count — the defect that made
+    /// every packaged program foreign for a month. That fixture is only about
+    /// this producer's interface while the shapes it assembles are this
+    /// producer's, so a change here that is not mirrored there must fail rather
+    /// than leave the runner testing envelopes nobody publishes.
+    ///
+    /// The values are asserted as literals, not derived from the constants, for
+    /// the same reason the suffix above is: a test that recomputed the number
+    /// from the source it is guarding would agree with any change.
+    #[test]
+    fn the_published_shape_matrix_is_the_one_the_runner_expects() {
+        assert_eq!(
+            ROWS, 1,
+            "`prototypes/serial-sum-run` assembles its published-shape fixture at one row; \
+             changing the published rows means changing its `PUBLISHED_ROWS` too",
+        );
+        assert_eq!(
+            REDUCTION_CLASSES,
+            [("empty-domain", 0), ("singleton", 1), ("nontrivial", 3)],
+            "`prototypes/serial-sum-run` assembles one fixture per class from its own copy of \
+             this matrix; a class or extent changed here must change there too",
         );
     }
 
