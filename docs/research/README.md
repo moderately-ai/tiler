@@ -32,6 +32,7 @@ single weakest-to-strongest ladder.
 - [Shape environment contract research memo](shapes/shape-environment-contract.md) — adopted; primary-source-synthesis; informs: [IR stack and invariants](../ir.md), [Separate extent symbols from typed root bindings](../decisions/0008-typed-root-bindings.md), [Use a recoverable consuming semantic-program build](../decisions/0058-use-a-recoverable-consuming-semantic-program-build.md)
 - [Stable-Rust shape-evidence feasibility](shapes/stable-rust-shape-evidence.md) — adopted; executable-model, bounded-measurement; informs: [IR stack and invariants](../ir.md), [Layer checked shape evidence over canonical typed values](../decisions/0061-layer-checked-shape-evidence-over-values.md); experiments: [Stable-Rust shape-evidence feasibility spike](../../spikes/shapes/shape-evidence/README.md)
 - [Symbolic index and access model](indexing/index-access-model.md) — adopted; primary-source-synthesis, executable-model; informs: [IR stack and invariants](../ir.md), [Fusion and scheduling](../compiler/fusion-and-scheduling.md), [Separate logical tensor access from storage addressing](../decisions/0046-separate-logical-access-from-storage-addressing.md); experiments: [Index and access-model experiment](../../spikes/indexing/README.md)
+- [Transformer operation and shape surface derivation](shapes/transformer-operation-and-shape-surface.md) — pending; primary-source-synthesis; informs: [IR stack and invariants](../ir.md)
 
 ### Numerical operations
 
