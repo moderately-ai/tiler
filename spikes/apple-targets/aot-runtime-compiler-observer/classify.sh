@@ -13,6 +13,8 @@ embedded_build_count=$(sed -n 's/^stage.after_pipeline.image.[0-9][0-9]*.build_c
     "$result" | awk '{ total += $1 } END { print total + 0 }')
 explicit_build_count=$(grep -c '^stage.after_pipeline.image.[0-9][0-9]*.build.[0-9][0-9]*=' \
     "$result" || true)
+unavailable_scan_count=$(grep '^stage.after_pipeline.image.[0-9][0-9]*.scan_status=' "$result" \
+    | grep -c '=unavailable:' || true)
 mtlcompiler_loaded=$(grep '^stage.process_start.image.[0-9][0-9]*.path=' "$result" \
     | grep -c 'MTLCompiler' || true)
 
@@ -29,7 +31,9 @@ printf 'observation.declared_embedded_compiler_builds_after_pipeline=%s\n' \
     "$embedded_build_count"
 printf 'observation.explicit_embedded_compiler_build_rows_after_pipeline=%s\n' \
     "$explicit_build_count"
+printf 'observation.unavailable_image_scans_after_pipeline=%s\n' \
+    "$unavailable_scan_count"
 printf 'observation.mtlcompiler_images_at_process_start=%s\n' "$mtlcompiler_loaded"
 printf 'conclusion.exact_runtime_compiler_attribution=unavailable\n'
 printf 'conclusion.evidence_class=loaded-image-membership-and-image-byte-scan\n'
-printf 'conclusion.reason=dyld membership, deltas, and image strings do not associate a compiler build with native library or pipeline preparation\n'
+printf 'conclusion.reason=dyld membership, deltas, readable image strings, and unavailable scans do not associate a translator or compiler build with native library or pipeline preparation\n'

@@ -19,11 +19,17 @@ static bool is_build_character(uint8_t byte) {
     return (byte >= '0' && byte <= '9') || byte == '.' || byte == '-';
 }
 
-static NSArray<NSString *> *compiler_builds(NSString *path) {
-    NSData *data = [NSData dataWithContentsOfFile:path];
+static NSArray<NSString *> *compiler_builds(NSString *path, NSString **error_domain,
+                                             NSInteger *error_code) {
+    NSError *error = nil;
+    NSData *data = [NSData dataWithContentsOfFile:path options:NSDataReadingMappedIfSafe error:&error];
     if (data == nil) {
+        *error_domain = error.domain;
+        *error_code = error.code;
         return @[];
     }
+    *error_domain = nil;
+    *error_code = 0;
     const uint8_t *bytes = data.bytes;
     const NSUInteger length = data.length;
     static const uint8_t prefix[] = "metalfe-";
@@ -52,6 +58,13 @@ static bool is_compiler_image(NSString *path) {
     return [path containsString:@"GPUCompiler"] || [path containsString:@"MTLCompiler"];
 }
 
+static NSString *reported_path(NSString *path) {
+    if ([path.lastPathComponent isEqualToString:@"UnrelatedGPUCompiler.dylib"]) {
+        return @"<synthetic>/UnrelatedGPUCompiler.dylib";
+    }
+    return path;
+}
+
 static void snapshot(NSString *stage) {
     uint32_t count = _dyld_image_count();
     NSUInteger compiler_count = 0;
@@ -74,8 +87,19 @@ static void snapshot(NSString *stage) {
             continue;
         }
         printf("stage.%s.image.%lu.path=%s\n", stage.UTF8String, (unsigned long)emitted,
-               path.UTF8String);
-        NSArray<NSString *> *builds = compiler_builds(path);
+               reported_path(path).UTF8String);
+        NSString *scan_error_domain = nil;
+        NSInteger scan_error_code = 0;
+        NSArray<NSString *> *builds =
+            compiler_builds(path, &scan_error_domain, &scan_error_code);
+        if (scan_error_domain == nil) {
+            printf("stage.%s.image.%lu.scan_status=readable\n", stage.UTF8String,
+                   (unsigned long)emitted);
+        } else {
+            printf("stage.%s.image.%lu.scan_status=unavailable:%s:%ld\n", stage.UTF8String,
+                   (unsigned long)emitted, scan_error_domain.UTF8String,
+                   (long)scan_error_code);
+        }
         printf("stage.%s.image.%lu.build_count=%lu\n", stage.UTF8String,
                (unsigned long)emitted, (unsigned long)builds.count);
         for (NSUInteger build_index = 0; build_index < builds.count; build_index += 1) {
@@ -109,6 +133,7 @@ int main(int argc, const char *argv[]) {
                 fprintf(stderr, "aot-runtime-compiler-observer: preload failed: %s\n", dlerror());
                 return 4;
             }
+            printf("probe.preloaded_image=%s\n", reported_path(@(argv[3])).UTF8String);
         }
 
         printf("probe.route=native-metallib-library-and-compute-pipeline\n");

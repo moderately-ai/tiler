@@ -23,6 +23,11 @@ xcrun --sdk macosx metal -std=metal4.0 -target air64-apple-macos26.0 \
 xcrun --sdk macosx metallib "$scratch/kernel.air" -o "$scratch/kernel.metallib"
 xcrun --sdk macosx clang -fobjc-arc -Wall -Wextra -Werror \
     -framework Foundation -framework Metal "$spike_dir/probe.m" -o "$scratch/probe"
+xcrun --sdk macosx clang -fobjc-arc -Wall -Wextra -Werror \
+    -framework Foundation -framework Metal "$spike_dir/source_jit_sentinel.m" \
+    -o "$scratch/source-jit-sentinel"
+xcrun --sdk macosx clang -dynamiclib -Wall -Wextra -Werror \
+    "$spike_dir/unrelated_gpu_compiler.c" -o "$scratch/UnrelatedGPUCompiler.dylib"
 
 {
     printf 'environment.os_version='
@@ -45,6 +50,16 @@ xcrun --sdk macosx clang -fobjc-arc -Wall -Wextra -Werror \
     shasum -a 256 "$spike_dir/kernel.metal" | awk '{ print $1 }'
     printf 'input.probe_sha256='
     shasum -a 256 "$spike_dir/probe.m" | awk '{ print $1 }'
+    printf 'input.run_sha256='
+    shasum -a 256 "$spike_dir/run.sh" | awk '{ print $1 }'
+    printf 'input.validate_sha256='
+    shasum -a 256 "$spike_dir/validate.sh" | awk '{ print $1 }'
+    printf 'input.classify_sha256='
+    shasum -a 256 "$spike_dir/classify.sh" | awk '{ print $1 }'
+    printf 'input.source_jit_sentinel_sha256='
+    shasum -a 256 "$spike_dir/source_jit_sentinel.m" | awk '{ print $1 }'
+    printf 'input.unrelated_gpu_compiler_sha256='
+    shasum -a 256 "$spike_dir/unrelated_gpu_compiler.c" | awk '{ print $1 }'
     printf 'input.metallib_sha256='
     shasum -a 256 "$scratch/kernel.metallib" | awk '{ print $1 }'
     if [ -d /System/Library/PrivateFrameworks/MTLCompiler.framework ]; then
@@ -59,44 +74,54 @@ xcrun --sdk macosx clang -fobjc-arc -Wall -Wextra -Werror \
 "$scratch/probe" "$scratch/kernel.metallib" > "$result_dir/clean-2.tsv"
 "$scratch/probe" "$scratch/kernel.metallib" > "$result_dir/clean-3.tsv"
 
-"$spike_dir/validate.sh" "$spike_dir/probe.m" "$result_dir/clean-1.tsv"
-"$spike_dir/validate.sh" "$spike_dir/probe.m" "$result_dir/clean-2.tsv"
-"$spike_dir/validate.sh" "$spike_dir/probe.m" "$result_dir/clean-3.tsv"
+"$spike_dir/validate.sh" "$scratch/probe" "$result_dir/clean-1.tsv"
+"$spike_dir/validate.sh" "$scratch/probe" "$result_dir/clean-2.tsv"
+"$spike_dir/validate.sh" "$scratch/probe" "$result_dir/clean-3.tsv"
 
 if ! cmp -s "$result_dir/clean-2.tsv" "$result_dir/clean-3.tsv"; then
     echo "clean observations are not stable across repeated processes" >&2
     exit 1
 fi
 
-compiler_image=$(sed -n 's/^stage.after_pipeline.image.[0-9][0-9]*.path=//p' \
-    "$result_dir/clean-1.tsv" | head -n 1)
-if [ -n "$compiler_image" ]; then
-    "$scratch/probe" "$scratch/kernel.metallib" --preload "$compiler_image" \
-        > "$result_dir/preloaded.tsv"
-    "$spike_dir/validate.sh" "$spike_dir/probe.m" "$result_dir/preloaded.tsv"
-else
-    printf 'probe.status=unavailable:no compiler-related image loaded by native preparation\n' \
-        > "$result_dir/preloaded.tsv"
+cp "$result_dir/clean-3.tsv" "$scratch/unstable.tsv"
+printf 'perturbation.byte_stability=changed\n' >> "$scratch/unstable.tsv"
+if cmp -s "$result_dir/clean-2.tsv" "$scratch/unstable.tsv"; then
+    echo "byte-stability perturbation unexpectedly compared equal" >&2
+    exit 1
 fi
+
+"$scratch/probe" "$scratch/kernel.metallib" --preload \
+    "$scratch/UnrelatedGPUCompiler.dylib" > "$result_dir/preloaded.tsv"
+"$spike_dir/validate.sh" "$scratch/probe" "$result_dir/preloaded.tsv"
 
 "$spike_dir/classify.sh" "$result_dir/clean-1.tsv" > "$result_dir/summary.tsv"
 printf 'observation.clean_repetitions=byte-identical\n' >> "$result_dir/summary.tsv"
 
-start_count=$(sed -n 's/^stage.process_start.compiler_image_count=//p' \
-    "$result_dir/clean-1.tsv")
-pipeline_count=$(sed -n 's/^stage.after_pipeline.compiler_image_count=//p' \
-    "$result_dir/clean-1.tsv")
-embedded_build_count=$(sed -n 's/^stage.after_pipeline.image.[0-9][0-9]*.build_count=//p' \
-    "$result_dir/clean-1.tsv" | awk '{ total += $1 } END { print total + 0 }')
+assert_expected_measurement() {
+    checked_result=$1
+    checked_start=$(sed -n 's/^stage.process_start.compiler_image_count=//p' "$checked_result")
+    checked_pipeline=$(sed -n 's/^stage.after_pipeline.compiler_image_count=//p' "$checked_result")
+    checked_builds=$(sed -n 's/^stage.after_pipeline.image.[0-9][0-9]*.build_count=//p' \
+        "$checked_result" | awk '{ total += $1 } END { print total + 0 }')
+    [ "$checked_pipeline" -eq "$checked_start" ] && [ "$checked_builds" -eq 0 ]
+}
 
-if [ "$pipeline_count" -ne "$start_count" ] || [ "$embedded_build_count" -ne 0 ]; then
+if ! assert_expected_measurement "$result_dir/clean-1.tsv"; then
     echo "observations changed; review and update the bounded conclusion" >&2
+    exit 1
+fi
+
+cp "$result_dir/clean-1.tsv" "$scratch/observation-drift.tsv"
+sed -i '' 's/^stage.after_pipeline.compiler_image_count=.*/stage.after_pipeline.compiler_image_count=99/' \
+    "$scratch/observation-drift.tsv"
+if assert_expected_measurement "$scratch/observation-drift.tsv"; then
+    echo "observation-drift perturbation unexpectedly passed" >&2
     exit 1
 fi
 
 cp "$result_dir/clean-1.tsv" "$scratch/mutated-result.tsv"
 sed -i '' 's/probe.status=ok/probe.status=mutated/' "$scratch/mutated-result.tsv"
-if "$spike_dir/validate.sh" "$spike_dir/probe.m" "$scratch/mutated-result.tsv" \
+if "$spike_dir/validate.sh" "$scratch/probe" "$scratch/mutated-result.tsv" \
     >/dev/null 2>&1
 then
     echo "result mutation unexpectedly passed validation" >&2
@@ -105,14 +130,37 @@ fi
 
 cp "$result_dir/clean-1.tsv" "$scratch/absent-metadata.tsv"
 sed -i '' '/^stage.after_pipeline.compiler_image_count=/d' "$scratch/absent-metadata.tsv"
-if "$spike_dir/validate.sh" "$spike_dir/probe.m" "$scratch/absent-metadata.tsv" \
+if "$spike_dir/validate.sh" "$scratch/probe" "$scratch/absent-metadata.tsv" \
     >/dev/null 2>&1
 then
     echo "absent-metadata fixture unexpectedly passed validation" >&2
     exit 1
 fi
+if "$spike_dir/classify.sh" "$scratch/absent-metadata.tsv" >/dev/null 2>&1
+then
+    echo "absent-metadata fixture unexpectedly passed classification" >&2
+    exit 1
+fi
+
+cp "$result_dir/clean-1.tsv" "$scratch/absent-scan-status.tsv"
+sed -i '' '/^stage.after_pipeline.image.[0-9][0-9]*.scan_status=/d' \
+    "$scratch/absent-scan-status.tsv"
+if "$spike_dir/validate.sh" "$scratch/probe" "$scratch/absent-scan-status.tsv" \
+    >/dev/null 2>&1
+then
+    echo "absent-scan-status fixture unexpectedly passed validation" >&2
+    exit 1
+fi
 
 cp "$result_dir/clean-1.tsv" "$scratch/multiple-plausible-builds.tsv"
+sed -i '' 's/^stage.after_pipeline.image.0.scan_status=.*/stage.after_pipeline.image.0.scan_status=readable/' \
+    "$scratch/multiple-plausible-builds.tsv"
+sed -i '' 's/^stage.after_pipeline.image.1.scan_status=.*/stage.after_pipeline.image.1.scan_status=readable/' \
+    "$scratch/multiple-plausible-builds.tsv"
+sed -i '' 's/^stage.after_pipeline.image.0.build_count=.*/stage.after_pipeline.image.0.build_count=1/' \
+    "$scratch/multiple-plausible-builds.tsv"
+sed -i '' 's/^stage.after_pipeline.image.1.build_count=.*/stage.after_pipeline.image.1.build_count=1/' \
+    "$scratch/multiple-plausible-builds.tsv"
 printf 'stage.after_pipeline.image.0.build.0=metalfe-11111.1\n' \
     >> "$scratch/multiple-plausible-builds.tsv"
 printf 'stage.after_pipeline.image.1.build.0=metalfe-22222.2\n' \
@@ -129,16 +177,14 @@ fi
 cp "$result_dir/clean-1.tsv" "$scratch/unavailable-host.tsv"
 sed -i '' 's/probe.status=ok/probe.status=unavailable:no-default-device/' \
     "$scratch/unavailable-host.tsv"
-if "$spike_dir/validate.sh" "$spike_dir/probe.m" "$scratch/unavailable-host.tsv" \
+if "$spike_dir/validate.sh" "$scratch/probe" "$scratch/unavailable-host.tsv" \
     >/dev/null 2>&1
 then
     echo "unavailable-host fixture unexpectedly passed validation" >&2
     exit 1
 fi
 
-cp "$spike_dir/probe.m" "$scratch/mutated-probe.m"
-printf '\n// newLibraryWithSource sentinel mutation\n' >> "$scratch/mutated-probe.m"
-if "$spike_dir/validate.sh" "$scratch/mutated-probe.m" "$result_dir/clean-1.tsv" \
+if "$spike_dir/validate.sh" "$scratch/source-jit-sentinel" "$result_dir/clean-1.tsv" \
     >/dev/null 2>&1
 then
     echo "source-JIT sentinel mutation unexpectedly passed validation" >&2
@@ -148,7 +194,11 @@ fi
 {
     printf 'validator.result_mutation=rejected\n'
     printf 'validator.source_jit_sentinel_mutation=rejected\n'
+    printf 'validator.byte_stability_perturbation=rejected\n'
+    printf 'validator.observation_drift_perturbation=rejected\n'
     printf 'validator.absent_metadata_fixture=rejected\n'
+    printf 'classifier.absent_metadata_fixture=rejected\n'
+    printf 'validator.absent_scan_status_fixture=rejected\n'
     printf 'classifier.multiple_plausible_builds=unavailable\n'
     printf 'validator.unavailable_host_fixture=rejected\n'
     printf 'probe.status=validated\n'
