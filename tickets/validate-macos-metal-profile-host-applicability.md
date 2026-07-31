@@ -1,7 +1,7 @@
 ---
 id: validate-macos-metal-profile-host-applicability
 title: Validate macOS Metal profile host applicability independently
-status: todo
+status: in-progress
 priority: p0
 dependencies: [measure-macos-apple9-f32-under-unified-msl4-profile, prove-an-aot-compatible-metal-runtime-compiler-observer, authorize-macos-environment-identity-for-native-metal-translation]
 related: [record-metal-runtime-compiler-provenance-gap, prototype-metal-runtime-proof, restore-replayable-apple-compatibility-evidence]
@@ -9,6 +9,9 @@ scopes: [implementation/build, implementation/runtime, implementation/metal, con
 shared_scopes: [project/tickets]
 paths: []
 tags: [runtime, metal, target-profiles, provenance]
+claimed_from: todo
+assignee: loop-validate-p0
+lease_expires_at: 1785522771
 ---
 ## User-visible outcome
 
