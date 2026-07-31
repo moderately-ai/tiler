@@ -1,7 +1,7 @@
 ---
 id: correct-the-optimizer-contract-registered-preset-count
 title: Correct the optimizer contract's registered preset count
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [admit-a-reassociating-contract-without-contraction]
@@ -34,3 +34,7 @@ Correct the enumeration and the "while the other two forbid it" clause. `docs/nu
 
 - Companion to the corpus sweep, not a blocker: nothing depends on this text.
 - If a fifth contract is ever registered, this file and `docs/numerical-semantics.md` both name the set and both must move in that change.
+
+## Outcome (2026-07-31)
+
+**Fact.** `docs/compiler/optimizer.md`'s one stale sentence now names the four registered contracts — strict, flush-to-zero, relaxed, and permit-reassociation — states that the last two permit ordered reassociation while the other two forbid it, and links `docs/numerical-semantics.md` for the derivation of why the fourth is a different meaning rather than restating it. The check that no other sentence in the file disagrees with `governed_profile`: `grep -n "flush-to-zero\|governed_profile\|registered contracts" docs/compiler/optimizer.md` returns exactly the corrected line 306. The trailing "no one of these three permissions implies another" refers to reassociation, distributivity, and contraction and stays correct.

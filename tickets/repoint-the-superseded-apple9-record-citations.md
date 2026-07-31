@@ -1,7 +1,7 @@
 ---
 id: repoint-the-superseded-apple9-record-citations
 title: Repoint the two out-of-scope citations of the superseded Apple9 record
-status: todo
+status: done
 priority: p3
 dependencies: []
 related: [close-or-retype-the-operand-permutation-inference, construct-and-bind-the-first-authoritative-metal-compile-profile, define-first-metal-lm-workload]
@@ -39,3 +39,13 @@ Deleting the 2026-07-30 records. They are retained evidence for their own produc
 ## Closes when
 
 No file outside `spikes/apple-targets/results/` and the historical ticket outcomes cites the 2026-07-30 named-profile records as current, and the two sites above name the 2026-07-31 pair with their quoted identifiers re-verified against it.
+
+## Outcome (2026-07-31)
+
+**Fact.** Both out-of-scope citations now name the 2026-07-31 named-profile pair, and each states that the 2026-07-30 pair is retained beside it as the previous row. `crates/tiler-metal/src/applicability.rs` keeps its deployment-minimum warning verbatim; `docs/research/program-planning/first-metal-lm-workload.md` keeps its target row's claims unchanged.
+
+**Fact — the quoted identifiers were re-verified against the 2026-07-31 covering record rather than transcribed**: `schema tiler.apple-numerical-behaviour/v7`, `probe.profile apple9-f32-unified-msl4-macos26`, offline `Apple metal version 32023.883 (metalfe-32023.883)` with `AIR-LLD 32023.883`, runtime `environment.family.macos.runtime_compiler_build metalfe-32023.921`, and every field applicability.rs transcribes (`probe.required_gpu_family apple9`, `environment.os_version 27.0`, `environment.os_build 26A5388g`, `environment.machine arm64`, `environment.family.macos.device Apple M4 Max`, `device_apple9_support supported`).
+
+**Fact — the closing sweep.** `grep -rn "2026-07-30-numerics" crates/ docs/ spikes/ prototypes/` outside `spikes/apple-targets/results/` and ticket history returns only `test_numerical_probe.py`'s registry-ID enumeration, which deliberately lists every retained record including previous rows and is citation-as-history, not citation-as-current.
+
+**Measurement.** `cargo nextest run -p tiler-metal` and `cargo test -p tiler-metal --doc` both green after the edit.

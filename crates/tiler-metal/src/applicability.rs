@@ -38,8 +38,10 @@
 //!   `environment.os_build=26A5388g`, `environment.architecture=arm64`,
 //!   `environment.device=Apple M4 Max`, and
 //!   `environment.device_apple9_support=supported`.
-//! - `spikes/apple-targets/results/2026-07-30-numerics-covering-apple9-f32-unified-msl4-macos26-xcode26.6-metal32023.883/record.tsv`,
-//!   the unified MSL 4 measurement this ticket consumes, records
+//! - `spikes/apple-targets/results/2026-07-31-numerics-covering-apple9-f32-unified-msl4-macos26-xcode26.6-metal32023.883/record.tsv`,
+//!   the unified MSL 4 measurement this ticket consumes (the 2026-07-30 record
+//!   it replaces is retained beside it as the previous row and agrees on every
+//!   field named here), records
 //!   `probe.required_gpu_family apple9`, `environment.os_version 27.0`,
 //!   `environment.os_build 26A5388g`, `environment.machine arm64`,
 //!   `environment.family.macos.device Apple M4 Max`, and
