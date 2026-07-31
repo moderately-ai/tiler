@@ -41,6 +41,15 @@ source, project, and lockfile digests. This new run repairs evidence integrity
 for that bounded compile/directory-variation claim; it does not add an old
 OS, second machine, simulator-runtime, or physical-device observation.
 
+**Replay status (restored 2026-07-31):** the retained record now revalidates from its own producer set. The five inputs its `input-manifest.tsv` names were recovered from commit `b0fdba7`, each verified against the record's digest before retention, and are checked in beside the record under `producers/`. The replay verifies every retained byte against both the manifest and the record's own producer fields before executing the retained validator, so an edited retained producer is rejected rather than allowed to certify itself. Two facts about the earlier "cannot be replayed" reading are corrected, and neither changes the historical row's provenance. First, the record's `probe.repository_base_revision` `f3004a1` carries *different* harness and validator bytes (`1425b6…`, `05f699…`); the producer edits were still uncommitted when the run was taken and landed one commit later in `b0fdba7`, which is the only commit in either file's whole history holding the recorded `b37ba8…` and `63f579…`. Second, the current-tree validator's refusal is a producer-generation difference, not corruption: `e197176` deleted the root `pyproject.toml` and `uv.lock`, so records produced since bind a three-row manifest while this one correctly binds five. The replay therefore selects the retained five-row validator explicitly and routes through no repository Python environment:
+
+```sh
+spikes/apple-targets/replay_retained_compatibility_record.sh \
+  spikes/apple-targets/results/2026-07-21-xcode26.6-metal32023.883
+```
+
+**Measured** — replay re-establishes that the retained record is complete, internally consistent, and consistent with the exact producer bytes that made it. It recompiles nothing and therefore adds no observation: every host, SDK, toolchain, artifact-digest, and reproducibility value below remains the single 2026-07-22 UTC measurement, and a new family, MSL-version, or deployment-minimum claim still requires its own run.
+
 ## Result
 
 The reported authorized Metal Toolchain 17F109 follow-up compiled all six tested
@@ -374,6 +383,19 @@ directories. It fails closed when any required host, SDK, compiler, or linker
 provenance is unavailable or malformed, and validates the completed record
 before returning success. The original follow-up reportedly completed all six
 tuples, but predates this validated record format.
+
+Revalidate a retained record against the producer set it names, rather than
+against the current tree:
+
+```sh
+spikes/apple-targets/replay_retained_compatibility_record.sh \
+  spikes/apple-targets/results/2026-07-21-xcode26.6-metal32023.883
+```
+
+This needs no Apple toolchain and no Python project environment. It verifies
+the retained manifest and every retained producer byte before running any of
+them, then validates the record with that record's own validator. It is an
+evidence-integrity check and not a measurement: nothing is recompiled.
 
 Run the API-stage control on a macOS Metal host:
 
