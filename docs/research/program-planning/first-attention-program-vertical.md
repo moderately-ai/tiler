@@ -1,0 +1,413 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.research.program-planning.first-attention-program-vertical"
+kind: "research"
+title: "First attention program vertical"
+topics: ["program-planning", "attention", "transformer", "scheduling", "fusion", "feasibility", "rope", "masking", "language-model", "metal"]
+catalog_group: "physical-planning-lowering"
+research_status: "complete"
+disposition: "pending"
+implementation_status: "not-started"
+evidence_classes: ["bounded-measurement", "primary-source-synthesis"]
+informs: ["tiler.contract.fusion-and-scheduling", "tiler.contract.optimizer"]
+depends_on: ["tiler.research.scheduling.first-metal-contraction-realizations", "tiler.research.numerics.transformer-nonlinear-normalization-and-reductions", "tiler.research.shapes.transformer-operation-and-shape-surface", "tiler.research.program-planning.first-metal-lm-workload"]
+ticket: "design-attention-program-vertical"
+---
+
+# First attention program vertical
+
+**Status:** durable design record for rung L4 of the language-model inference ladder. It is a research outcome, not a capability: nothing here registers an operation, admits a schedule, installs a lowering capability, or moves any row of the [operation-family support matrix](../../roadmap.md#operation-family-support-matrix). What it delivers is one complete fixed-profile causal self-attention program written down as typed operations over exact shapes, an elimination over its decompositions with the ground stated per candidate, the feasibility predicate that separates the two surviving ones, and ten dependency-ordered delivery tickets.
+
+## Traceability
+
+- **Work record:** [`design-attention-program-vertical`](../../../tickets/design-attention-program-vertical.md).
+- **Ladder position:** rung L4 of [the roadmap's language-model ladder](../../roadmap.md#the-ladder). Its trigger — "L3 and L3′ both deliver" — fired on 2026-07-31. Its inputs are the four rungs beneath it: L1's [workload profile](first-metal-lm-workload.md) for the pinned checkpoint, the two bounded rows, and the 4.00 GiB materialized-score bound; L2's [operation and shape surface](../shapes/transformer-operation-and-shape-surface.md) for the per-block operation sequence, the three contraction index structures, and the `rotate_half` derivation; L3's [contraction realization record](../scheduling/first-metal-contraction-realizations.md) for the surviving realization, the reduction contract, and the measured costs; L3′'s [non-linear and normalization contracts](../numerics/transformer-nonlinear-normalization-and-reductions.md) for softmax's pinned formula, the mask's exact values, and RMS normalization.
+- **Retained experiment:** [C1 attention-block reference probe](../../../spikes/program-planning/attention-block-reference/README.md), which measures the composition claims this record makes at the C1 prefill shape.
+- **Governing contracts read as evidence, not edited:** [Optimizer](../../compiler/optimizer.md) for the planning stages, the boundary-property list and its maturity table, the enforcer rules, the failure classes, and the search budgets; [Fusion and scheduling](../../compiler/fusion-and-scheduling.md) for region representation, the legality list, the implementation frontier's body variants, and the reduction schedule set; [IR](../../ir.md) for `Reindex` and `Broadcast` semantics, the rank-zero scalar admission, the index-expression vocabulary, and the kernel verifier's barrier rule; [ADR 0087](../../decisions/0087-model-contraction-as-one-keyed-family-with-an-index-structure.md) for the contraction identity; [Numerical semantics](../../numerical-semantics.md) and [Reduction semantics and legality](../numerics/reduction-semantics-and-legality.md) for the order permissions and the distributivity gap; [ADR 0076](../../decisions/0076-declare-target-honourable-numerical-realizations.md) for what no authority may substitute.
+
+Claims are labelled **Fact** when traced to inspected source, primary documentation, or a merged record, **Inference** when derived from stated facts, **Measurement** when tied to an exact environment and procedure, and **Proposal** when not yet accepted or tested.
+
+## What this rung is, and the boundary it does not cross
+
+**Inference — this is a design record and it authorizes no implementation.** `AGENTS.md` holds movement between research and implementation phases as Tom's, and nothing below scaffolds a crate, stabilizes an API, or begins kernel implementation. The ten tickets at the end are dependency-ordered scope, not a start signal.
+
+**Fact — the planning gate that bounded L3 has now closed, and this record states that as a fact with its exact evidence rather than inheriting L3's sentence.** [Q-SEM-015](../../open-questions.md#q-sem-015--tensor-contraction-matmul-batched-matmul-and-einsum)'s planning gate reads: no contraction planning work "may be scheduled until [`prototype-optimizer-conformance-gate`](../../../tickets/prototype-optimizer-conformance-gate.md) closes and a backend has executed a compiled program, which [`prototype-metal-aot-slice`](../../../tickets/prototype-metal-aot-slice.md) and [`prototype-metal-runtime-proof`](../../../tickets/prototype-metal-runtime-proof.md) own." All three tickets are `done`, verified by reading each one's `status` field. **Inference — so contraction planning is schedulable, and it is still not *reachable*.** The gate's own stated evidence is a second, independent limit: no capability exists for a contraction occurrence, so resolution fails closed rather than lowering one, and `normalize_serial_sum` still admits exactly one input. The gate lifting is permission to schedule the work in the tickets below; it is not a claim that any of it exists. **Inference — and L3's own sentence on this is now stale rather than wrong.** That record states "the planning half of Q-SEM-015 is still gated, and this record does not open it", and files its delivery tickets carrying the gate as a dependency. That was the state its author checked; the three tickets have since closed. The correction is recorded here rather than edited into a merged record this rung does not own, and it changes only whether the work below may be *scheduled* — not whether any of it is built.
+
+**Inference — the KV-state model is L5's and this program is designed so that it does not need it.** L3 deferred contraction index structures 2 and 3 because their operands are a cached `K` and `V`, and "measuring a schedule for an operand whose production is undefined would fix a layout before the thing that produces it exists." This record does not repair that by inventing a cache. It designs the **batch-1 prefill block**, where `S = T`: the block computes its own `K` and `V` from its own input, the total context equals the new positions, and no value survives the program. Two consequences are stated rather than left implicit:
+
+- The prefill block is a complete, self-contained attention program. It is the C1 conformance row's first pass and every B1 row's first pass, so it is not a toy; it is the half of the workload that has no state.
+- The program **names `K` and `V` as retained outputs** alongside the residual stream. That is the entire seam L5 needs: a stateful decode step is this program with `K` and `V` arriving as inputs of extent `S ≥ T` instead of being produced, plus the append that [`scope-the-sequence-extending-tensor-family`](../../../tickets/scope-the-sequence-extending-tensor-family.md) owns. Naming the outputs makes the seam explicit without implementing a cache, and the shape environment below keeps `S` a separate symbol from `T` so that widening it is a binding change rather than a graph change.
+
+**Inference — nothing here decides the decode step's schedule.** Every extent, every feasibility predicate, and every cost statement below is for `S = T` unless it says otherwise. Where a statement generalizes to `S > T`, it says so and marks what remains unmeasured.
+
+## The program
+
+### Ordered inputs and outputs
+
+**Proposal — the boundary.** One decoder layer's attention half, from the residual stream in to the residual stream out. `T` is the new-position count and `S` the context length, with `S = T` at prefill; both are bounded symbolic extents that the [sourced-extent profile](../shapes/transformer-operation-and-shape-surface.md) already carries and that [`promote-the-symbolic-index-profile-to-a-public-boundary`](../../../tickets/promote-the-symbolic-index-profile-to-a-public-boundary.md) has landed at a public boundary. Every dtype is `tiler::f32@1`.
+
+| # | Input | Shape | Bytes at C1 (`T = S = 10`) | Bytes at B1-d (`T = S = 8192`) | Where it comes from |
+| --- | --- | --- | --- | --- | --- |
+| i0 | `x` — residual stream | `[T, 1024]` | 40,960 | 33,554,432 | the previous layer, or the embedding gather |
+| i1 | `w_input_layernorm` | `[1024]` | 4,096 | 4,096 | checkpoint |
+| i2 | `W_q` | `[2048, 1024]` | 8,388,608 | 8,388,608 | checkpoint |
+| i3 | `W_k` | `[1024, 1024]` | 4,194,304 | 4,194,304 | checkpoint |
+| i4 | `W_v` | `[1024, 1024]` | 4,194,304 | 4,194,304 | checkpoint |
+| i5 | `w_q_norm` | `[128]` | 512 | 512 | checkpoint |
+| i6 | `w_k_norm` | `[128]` | 512 | 512 | checkpoint |
+| i7 | `cos` | `[T, 128]` | 5,120 | 4,194,304 | host-precomputed rotary table |
+| i8 | `sin` | `[T, 128]` | 5,120 | 4,194,304 | host-precomputed rotary table |
+| i9 | `rope_sign` | `[2, 1]` | 8 | 8 | a two-element constant the program supplies as an input |
+| i10 | `mask` | `[T, S]` | 400 | 268,435,456 | host-built additive causal mask |
+| i11 | `W_o` | `[1024, 2048]` | 8,388,608 | 8,388,608 | checkpoint |
+
+| # | Output | Shape | Bytes at C1 | Bytes at B1-d | Role |
+| --- | --- | --- | --- | --- | --- |
+| o0 | `h_out` — residual stream | `[T, 1024]` | 40,960 | 33,554,432 | the block's observable result |
+| o1 | `k_rope` | `[8, S, 128]` | 40,960 | 33,554,432 | the value a KV cache would retain; unused at prefill |
+| o2 | `v_heads` | `[8, S, 128]` | 40,960 | 33,554,432 | the value a KV cache would retain; unused at prefill |
+
+**Inference — three ordered named outputs is not a convenience.** `AGENTS.md` requires programs to be modelled with ordered named outputs and multi-result support rather than one SQL-like root, and this is the first designed program in the corpus that actually has more than one. A single-output framing would have forced L5 either to recompute `K` and `V` or to reach inside the block, and both are the collapse the multi-result rule exists to prevent.
+
+**Fact — `rope_sign` is an input rather than a constant because `tiler::constant-f32@1` produces rank zero only.** `ConstantF32::infer` pushes `Shape::new([])`, so a two-element dense constant is not expressible; L2 recorded the same consequence. This is the workload's only genuinely new program input, and it is eight bytes.
+
+**Fact — the checkpoint weights total 25,170,944 bytes per block and do not vary with `T`.** 8,388,608 + 4,194,304 + 4,194,304 + 8,388,608 + 4,096 + 512 + 512. At 28 layers that is 704,786,432 bytes of the 2,384,199,680-byte F32 weight budget L1 records; the remainder is the MLP and the embedding, neither of which this program contains.
+
+### The operation sequence
+
+**Proposal — the block, as twenty-two numbered steps.** A step is the design's unit of exposition, not a semantic occurrence: steps 10, 11, 12, 16, 17, and 20 are compositions, so the graph carries at least forty-four occurrences rather than twenty-two — which matters below, where a region budget is counted in occurrences. Every family is named by the ticket that would admit it. `g = 8` key/value groups, `r = 2` repetitions, `h = 2g + r` the query head index, head dimension 128.
+
+| # | Operation | Family | Operands | Result | Shape at C1 | Shape at B1-d |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | `RmsNorm` axis −1, `eps = 1e-6` | RMS normalization | `x`, `w_input_layernorm` | `xn` | `[10, 1024]` | `[8192, 1024]` |
+| 2 | `Contract` `td,od->to` | contraction, structure 1 | `xn`, `W_q` | `q_flat` | `[10, 2048]` | `[8192, 2048]` |
+| 3 | `Contract` `td,od->to` | contraction, structure 1 | `xn`, `W_k` | `k_flat` | `[10, 1024]` | `[8192, 1024]` |
+| 4 | `Contract` `td,od->to` | contraction, structure 1 | `xn`, `W_v` | `v_flat` | `[10, 1024]` | `[8192, 1024]` |
+| 5 | `Reindex` split | structural | `q_flat` | `q_heads` | `[10, 16, 128]` | `[8192, 16, 128]` |
+| 6 | `Reindex` split | structural | `k_flat` | `k_heads` | `[10, 8, 128]` | `[8192, 8, 128]` |
+| 7 | `Reindex` split | structural | `v_flat` | `v_split` | `[10, 8, 128]` | `[8192, 8, 128]` |
+| 8 | `RmsNorm` axis −1, `eps = 1e-6` | RMS normalization | `q_heads`, `w_q_norm` | `q_norm` | `[10, 16, 128]` | `[8192, 16, 128]` |
+| 9 | `RmsNorm` axis −1, `eps = 1e-6` | RMS normalization | `k_heads`, `w_k_norm` | `k_norm` | `[10, 8, 128]` | `[8192, 8, 128]` |
+| 10 | RoPE composition (ten nodes, below) | structural + elementwise | `q_norm`, `cos`, `sin`, `rope_sign` | `q_rope` | `[10, 16, 128]` | `[8192, 16, 128]` |
+| 11 | RoPE composition (ten nodes, below) | structural + elementwise | `k_norm`, `cos`, `sin`, `rope_sign` | `k_rope_t` | `[10, 8, 128]` | `[8192, 8, 128]` |
+| 12 | `Reindex` split + permute | structural | `q_rope` | `q_grouped` | `[8, 2, 10, 128]` | `[8, 2, 8192, 128]` |
+| 13 | `Reindex` permute | structural | `k_rope_t` | `k_rope` (**o1**) | `[8, 10, 128]` | `[8, 8192, 128]` |
+| 14 | `Reindex` permute | structural | `v_split` | `v_heads` (**o2**) | `[8, 10, 128]` | `[8, 8192, 128]` |
+| 15 | `Contract` `grtd,gsd->grts` | contraction, structure 2 | `q_grouped`, `k_rope` | `scores` | `[8, 2, 10, 10]` | `[8, 2, 8192, 8192]` |
+| 16 | `Multiply` by rank-zero constant | elementwise | `scores`, `0x3db504f3` | `scaled` | same | same |
+| 17 | `Broadcast` + `Add` | structural + elementwise | `scaled`, `mask` | `masked` | same | same |
+| 18 | `Softmax` axis −1 | softmax | `masked` | `probs` | same | same |
+| 19 | `Contract` `grts,gsd->grtd` | contraction, structure 3 | `probs`, `v_heads` | `ctx` | `[8, 2, 10, 128]` | `[8, 2, 8192, 128]` |
+| 20 | `Reindex` permute + merge | structural | `ctx` | `ctx_flat` | `[10, 2048]` | `[8192, 2048]` |
+| 21 | `Contract` `td,od->to` | contraction, structure 1 | `ctx_flat`, `W_o` | `attn_out` | `[10, 1024]` | `[8192, 1024]` |
+| 22 | `Add` | elementwise | `x`, `attn_out` | `h_out` (**o0**) | `[10, 1024]` | `[8192, 1024]` |
+
+**Inference — the block contains six contraction occurrences across all three of L2's index structures.** Four are structure 1 (`q`, `k`, `v`, `o`), one is structure 2, one is structure 3. So the attention block is the first program in this corpus that exercises every structure ADR 0087's keyed family must carry, and it is the reason structures 2 and 3 cannot stay deferred past this rung.
+
+**Fact — the GQA repetition is not an operation.** Under ADR 0087's structure-carrying key, `grtd,gsd->grts` mentions `r` in the query operand and the output and never in the key operand, so the eight key heads are read by sixteen query heads with no materialization. **Measurement — the head mapping is the repeat-interleave one, and the alternative reading is wrong at fourteen of sixteen heads.** `repeat_kv` maps query head `h` to key head `h // 2`; splitting the 16-head axis as `(g = 8, r = 2)` with `h = 2g + r` reproduces it at every element of a `[1, 16, 10, 128]` comparison, while the repeat-tile reading `h mod 8` differs at 17,920 elements. Both readings produce a correctly shaped tensor. **Inference — the materialized alternative is what a fixed-arity key would have forced**, and it is 67,108,864 bytes per tensor at B1-d for `K` and again for `V`, per layer, that the structure-carrying form never allocates.
+
+**Fact — the scale multiplies the score, not an operand, and the two are different computations.** L3′ established the position from the pinned reference at line 157. **Measurement — at the C1 shape the difference is not marginal:** pre-scaling the query changes 1,404 of the 1,600 score elements. So operation 16's graph position is semantics, not a normalization the optimizer may choose; a rewrite that pushed the scale onto `q_grouped` would be a value change with no permission behind it.
+
+### RoPE as a `Reindex` and `Broadcast` composition
+
+**Proposal — `rotate_half` in five nodes, with no slice family and no concatenate family.** For an operand of shape `[…, 128]`:
+
+```text
+split    = Reindex(x)            # bijective split of the 128 axis into (2, 64)
+swapped  = Reindex(split)        # coordinate swap i -> 1 - i on the size-2 axis
+signed   = Multiply(swapped, Broadcast(rope_sign))   # rope_sign = [-1.0; +1.0] over [2, 1]
+rotated  = Reindex(signed)       # bijective merge back to 128
+```
+
+and then `y = Add(Multiply(x, Broadcast(cos)), Multiply(rotated, Broadcast(sin)))`, where `cos` and `sin` are `[T, 128]` inputs broadcast over the head axis exactly as the reference's `unsqueeze(1)` does.
+
+**Measurement — the composition reproduces the reference bit-for-bit, and both of its parts are load-bearing.** Against `modeling_qwen3.rotate_half` on a `[1, 16, 10, 128]` operand, the composition differs at 0 of 20,480 elements; dropping the coordinate swap differs at all 20,480 and reversing the sign operand differs at all 20,480. The complete rotary application through the same composition differs from `apply_rotary_pos_emb` at 0 of 20,480 for the query and 0 of 10,240 for the key. **Inference — L2's derivation that this workload needs neither a slice nor a concatenate family now has bit evidence rather than only a reading**, which matters because the naive reading of `cat(-x₂, x₁)` files two capability tickets for families that have no normative contract anywhere in the corpus.
+
+**Inference — one form in that composition is not clearly admitted, and it is the second node.** [IR](../../ir.md) spells `Reindex`'s initial forms as "bijective permutations/split/merge mappings or legal removal/insertion of unit axes". The swap is the coordinate map `(…, i, j) -> (…, 1 − i, j)`: a bijective *coordinate* permutation within one axis, not a permutation *of* axes. The index-expression vocabulary admits `1 + (−i)` — addition and negation are both in the bounded initial set — so the access map is expressible; what is unsettled is whether the `Reindex` family admits the form at construction. This is **unresolved decision D-10** below. It is not a defect in the composition, which is measured correct; it is a question about which family may express it, and it is the only structural requirement in the whole block that the admitted vocabulary does not obviously cover.
+
+### The mask, and what a masked position contributes
+
+**Fact — the mask's two values, restated from L3′ and reproduced at the C1 shape.** A masked entry is `0xff7fffff`, the most negative finite F32; an attended entry is `0x80000000`, **negative** zero, because the reference multiplies the fill by a boolean rather than writing a zero.
+
+**Measurement — the C1 causal mask, row by row.** At `T = S = 10` the attended counts are `1 2 3 4 5 6 7 8 9 10` and no row has zero attended positions. Row `t = 2` is `0x80000000 0x80000000 0x80000000` followed by seven `0xff7fffff`.
+
+**Measurement — the C1 row cannot discriminate the mask's fill convention at all, and that is now measured rather than argued.** Replacing the finite fill with `-inf` over the whole `[8, 2, 10, 10]` score tensor changes 0 of 1,600 softmax outputs, because every masked argument is far enough below the row maximum that `Exp` returns exactly `+0.0` under both conventions. The same comparison *does* discriminate where the case is reachable: a fully masked width-10 row returns uniform `0x3dcccccd` under the finite fill and ten `0x7fc00000` NaNs under `-inf`. **Inference — this sharpens L3′'s decision D-1 from "the workload does not reach the case" to "the conformance row cannot falsify either answer".** A conformance corpus that only ran C1 would pass with the wrong mask convention installed, so the synthetic fully-masked row is not optional coverage; it is the only case that tests the choice at all.
+
+**Measurement — a masked position contributes a *signed* zero to the value contraction, and the sign is rewritten inside the fold.** At the C1 shape, query position 0 attends to position 0 alone, so its probability row is `0x3f800000` followed by nine exact `0x00000000`. With `v[key 0, lane 0]` set to `-0.0`, the value contraction's first product — which is also the strict fold's seed, since the profile declares no `initial` — is `0x80000000`, the next contributor is `+0.0 × v[1]` = `0x00000000`, and the completed strict ascending fold over all ten contributors is `0x00000000`. The reference returns the same. **Inference — the masked tail is what performs that sign change**, so a schedule that skipped masked contributors as a causal-structure optimization would return `-0.0` where the reference returns `+0.0`, on an operand the workload can actually contain. That is **unresolved decision D-9** below, and it is the single most valuable optimization in causal attention meeting the single least visible numerical difference in it.
+
+### Worked example: score, scale, mask, and softmax at the C1 shape
+
+**Measurement — every bit pattern below was computed in the pinned environment on 2026-07-31, not derived by hand**, and is retained in the [attention-block probe's record](../../../spikes/program-planning/attention-block-reference/results/2026-07-31-c1-attention-block-cpu-f32-torch2.6.0-transformers4.51.0/record.tsv). The subject is one row of the C1 prefill score tensor: query head 0 — group `g = 0`, repetition `r = 0` — at query position `t = 2`, over all ten key positions. Operands are synthetic at a fixed seed; the *shape*, the mask structure, and the zero pattern are the workload's, and the score values are the seed's.
+
+| Step | Operation | Values (F32 bits), `s = 0 … 9` |
+| --- | --- | --- |
+| contraction result | 15, `grtd,gsd->grts` | `0xc0f54448` `0x40f22030` `0xc0c28c53` `0x41680580` `0x40d628da` `0xc00e6ef7` `0xc134df10` `0x401fab04` `0x403ecad2` `0xbfa04954` |
+| scaled | 16, `× 0x3db504f3` | `0xbf2d6e05` `0x3f2b3570` `0xbf0990fa` `0x3fa41060` `0x3f176f06` `0xbe496e6b` `0xbf7fca6b` `0x3e61ce00` `0x3e86e917` `0xbde2ade3` |
+| masked | 17, `+ mask[2, :]` | `0xbf2d6e05` `0x3f2b3570` `0xbf0990fa` `0xff7fffff` `0xff7fffff` `0xff7fffff` `0xff7fffff` `0xff7fffff` `0xff7fffff` `0xff7fffff` |
+| row maximum | inside 18 | `0x3f2b3570` (at `s = 1`) |
+| probabilities | 18, `Softmax` | `0x3e2adb30` `0x3f24260a` `0x3e448ca6` `0x00000000` `0x00000000` `0x00000000` `0x00000000` `0x00000000` `0x00000000` `0x00000000` |
+
+Logical properties: shape-preserving over the reduced axis `s` of extent `S`; two embedded reductions, one order-insensitive and one not; three attended contributors and seven masked ones at this row. The seven masked positions receive exactly `+0.0`, and the positions that do are exactly the seven the mask marks — the property that makes a finite fill behave like an exclusion without being one.
+
+**Measurement — this row's probabilities sum to exactly `0x3f800000`, and 49 of the tensor's 160 rows do not.** L3′'s four-wide example summed to `0x3f7ffffe`. Both are correct; whether a softmax row sums to exactly one in F32 is a per-row accident. **Inference — a conformance check may therefore assert neither**, and a check written from either example alone would be wrong on the other.
+
+**Fact — the scale's constant is `0x3db504f3`**, the F32 rounding of `128 ** -0.5 = 0.08838834764831845`, which is not exactly representable; the constant's own rounding is part of the contract.
+
+**Inference — candidate physical plans for this step, none selected here.** Four dispatches materializing the scores, the scaled scores, the masked scores, and the probabilities; two dispatches with the scale and mask fused into the contraction's epilogue; one dispatch computing the row's maximum, denominator, and normalized probabilities together; or a two-stage subprogram materializing only the row statistics. The elimination below is what chooses between them, and it turns on legality and feasibility before it turns on cost.
+
+### What the program does not contain
+
+Each is a boundary rather than an omission, and each already has an owner.
+
+- **The KV cache and the append.** L5's, via [`design-autoregressive-state-and-kv-cache`](../../../tickets/design-autoregressive-state-and-kv-cache.md) and [`scope-the-sequence-extending-tensor-family`](../../../tickets/scope-the-sequence-extending-tensor-family.md). The seam is outputs o1 and o2.
+- **The MLP half of the decoder layer.** Three structure-1 contractions, one SiLU, and one multiply, all owned by [`admit-the-silu-activation-family`](../../../tickets/admit-the-silu-activation-family.md) and the contraction chain. The block boundary stops at the attention residual because that is where the ticket's user-visible outcome stops.
+- **The embedding gather and the vocabulary projection.** L6's and [`admit-an-indirect-gather-family-for-tied-embedding-lookup`](../../../tickets/admit-an-indirect-gather-family-for-tied-embedding-lookup.md)'s.
+- **The rotary table construction.** L2 established that `cos` and `sin` are data-independent and host-precomputable, which removes `Sin` and `Cos` from the executed program. The trade is that the host computation joins the conformance oracle's comparison surface.
+- **BF16 ingestion.** L6's; L2 recommends host-side conversion.
+- **Any model-level numeric tolerance.** L8's, via [`design-model-level-qualification-and-optimization`](../../../tickets/design-model-level-qualification-and-optimization.md).
+
+## Legal candidate boundaries, stage by stage
+
+**Fact — today the answer for every row below is "none".** `FusionNumericalCapabilities::governed` in `crates/tiler-compiler/src/fusion_legality.rs` registers exactly four operation roles: `ValueSource` for `constant-f32`, `ElementwiseArithmetic` for `multiply-f32` and `add-f32`, and `OrderedReduction` for `strict-serial-sum-f32`. Contraction, softmax, RMS normalization, `Reindex`, and `Broadcast` have no registered role, and a family with no role yields no fusion legality at all. **Inference — so the first realizable attention program is one dispatch per operation**, and every fusion in this section is an alternative that becomes enumerable only after its families declare roles. Stating it this way keeps the design honest: the fused candidates are not withheld for cost reasons, they are currently unreachable.
+
+| Stage | Legal region candidates | What each needs | Ground for the preference |
+| --- | --- | --- | --- |
+| Q/K/V projection (2–4) | (a) three single-contraction regions; (b) one multi-output region `{1, 2, 3, 4}` retaining three outputs; (c) duplicating operation 1 into each consumer | (a) a contraction fusion role for nothing; (b) a physical multi-output kernel — [Q-PLAN-005](../../open-questions.md#q-plan-005--physical-multi-output-kernels) — and three boundary outputs, within the 8-output budget; (c) producer duplication, which is disabled outside oracle tests | (b) reads `xn` once instead of three times and is the only candidate that touches Q-PLAN-005; (a) is the baseline and is what ships first |
+| Head split and permute (5–7, 12–14) | (a) composed into each consumer's access map, emitting no dispatch; (b) materialized as a rearrangement kernel | (a) a fusion role for `Reindex`; (b) nothing, but it costs a full copy | The frontier explicitly rejects the `View` body variant, so a `Reindex` is *either* fused into a consumer or materialized by a copy kernel — there is no third, free outcome, and a design that assumed a metadata-only reshape would be assuming a variant the frontier refuses |
+| Per-head normalization (8–9) | (a) one kernel per `[…, 128]` row; (b) fused with the RoPE epilogue below | (b) is "pointwise epilogue after a reduction", a listed region-candidate rule | The reduced extent is a static 128, so the row fits one SIMD group and needs no cross-group protocol |
+| RoPE (10–11) | (a) a standalone elementwise dispatch; (b) fused as an epilogue after operations 8–9; (c) fused as a *prologue* on the score contraction's query operand | (c) needs a contraction prologue role | (c) is rejected on duplication: the prologue is evaluated per contraction iteration point, so each `q_rope[g, r, t, d]` would be recomputed once per key position — a factor of `S`, which is 8,192 at B1-d |
+| Score formation (15) with scale and mask (16–17) | (a) three dispatches; (b) the scale and mask fused as the contraction's epilogue | (b) needs a contraction fusion role and `ElementwiseArithmetic` after it | (b) costs one multiply and one add per output element and no duplication, and removes two full read-write passes over a tensor that is 4.00 GiB at B1-d. It is the highest-value fusion in the block and it consumes no numerical permission |
+| Softmax (18) | (a) one thread per row, serial over `S`; (b) SIMD-group cooperative over the row; (c) threadgroup-cooperative across several SIMD groups; (d) a two-stage `KernelSubprogram` materializing the row statistics | (a) nothing beyond a role; (b) reassociation for the sum pass and nothing for the maximum pass, plus [Q-PLAN-004](../../open-questions.md#q-plan-004--coexisting-reductions-in-one-kernel) for two reductions in one kernel; (c) a barrier; (d) Q-PLAN-004 avoided, the statistics materialized | (c) is **infeasible**: the kernel verifier admits no barrier under the implemented zero-synchronization schedule profile, so any schedule whose reduction spans more than one SIMD group has no synchronization construct to be built from |
+| Value composition (19) | (a) one contraction region; (b) fused with the softmax so probabilities are never materialized | (b) is the flash-attention shape and is rejected on legality below | The contracted extent is `S`, symbolic and growing, which is what makes the realization set here different from every other contraction in the block |
+| Output projection (21) with the residual (22) | (a) two dispatches; (b) the residual add fused as the contraction's epilogue | (b) needs a contraction fusion role | (b) is one add per output element with no duplication, over `[T, 1024]` — the cheapest fusion in the block and also the smallest saving |
+
+**Inference — the whole block is not enumerable, and the reason it is not must not be confused with the reason it would be rejected.** Two independent things stop it, and only one of them says anything about the block:
+
+- **The budget stops it first, and a budget stop says nothing about its subject.** `region_members` bounds a region at 32 semantic occurrences. Counting the graph rather than the step table — one normalization, three projections, three head splits, two per-head normalizations, ten nodes for each of the two rotary applications, four further structural nodes, one score contraction, a constant and a multiply, a broadcast and an add, a softmax, a value contraction, two nodes for the output merge, the output projection, and the residual add — gives at least forty-four occurrences, and more if each atomic normalization's weight enters as its own `Broadcast` rather than as an absorbed operand. `EnumerateRegionCandidates` therefore abandons that growth path with a typed budget stop and never decides the block's legality. The optimizer contract is explicit that such a stop never stands alone: whatever predicate the stopped analysis was deciding is recorded beside it with an `Unknown` evidence class, because inferring a pass from a budget stop is the more dangerous of the two possible misreadings.
+- **The independent legality ground is what would reject it if the budget were raised**, and it belongs in explain output rather than in a comment. The score contraction at `(g, r, t)` reads every key position, so a schedule owning one query tile would have to recompute `k_rope` for the whole context inside every threadgroup; the alternative — one threadgroup reading another's `k_rope` — is a cross-threadgroup dependency that fusion legality forbids without an atomic or a multi-pass protocol, and the multi-pass protocol *is* the split into dispatches.
+
+Stating only the first would suggest the block might fuse under a larger budget; stating only the second would claim a legality finding the enumerator never reached.
+
+## The three decompositions, and what eliminates each
+
+**Proposal — three candidate decompositions of the score-through-value chain.** The four projections and the structural operations are the same in all three; what differs is whether the `[8, 2, T, S]` intermediates exist.
+
+### D-A — materialize the scores
+
+The score contraction, the scale, the mask add, the softmax, and the value contraction run as separate dispatches, and the `[8, 2, T, S]` intermediates exist in device memory. How many of them exist at once is a plan property rather than a constant, and the ladder below enumerates the plans.
+
+**Inference — it is the correctness baseline and the smallest conventional vertical.** It consumes no numerical permission, needs no fusion role beyond the epilogues (and works without even those, at three more dispatches), and every one of its stages has a realization L3 already eliminated down to a survivor. It is what the delivery tickets below build first, and it is what any other candidate must be compared against.
+
+**Fact — its transient cost is `16 · T · S · 4` bytes per materialized `[8, 2, T, S]` tensor, and the number of such tensors is a plan property rather than a constant.** Four distinct plans of D-A materialize four, two, or one of them:
+
+| D-A plan | `[8, 2, T, S]` tensors alive | What it requires |
+| --- | --- | --- |
+| fully unfused, one dispatch per operation | 4 — `scores`, `scaled`, `masked`, `probs` | nothing; this is the only D-A plan reachable today |
+| scale and mask fused as the contraction's epilogue | 2 — `masked`, `probs` | a contraction fusion role and `ElementwiseArithmetic` after it |
+| the above plus a `StorageHandoff` retiring `masked` before `probs` is written | 1 | allocation reuse, which is not in-place execution and is therefore not blocked by [Q-PLAN-015](../../open-questions.md#q-plan-015--advanced-buffer-reuse-and-in-place-execution), but is not implemented |
+| D-B | 0 | recomputation of the score contraction |
+
+**Inference — L1's 4.00 GiB bound is D-A's *best* case, not its ordinary one.** L1 bounded "a prefill that materializes the full attention score matrix" at 16 heads × P × P × 4 = 4,294,967,296 bytes at P = 8,192, which is exactly one such tensor. Reaching that figure needs both the epilogue fusion and the allocation handoff. The plan that exists today — no fusion role for any family the block needs, one allocation per temporary — materializes four, which is 17,179,869,184 bytes at B1-d.
+
+**Fact — the complete transient requirement per row**, where "everything else" enumerates every non-weight program input, intermediate, and output of the fully unfused program and is therefore an upper bound on it. The 25,170,944 bytes of checkpoint weights are excluded because they are resident rather than transient.
+
+| Row | `T = S` | One `[8, 2, T, S]` | Everything else | Unfused (4×) | Epilogue-fused (2×) | With handoff (1×) | D-B (0×) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| C1 prefill | 10 | 6,400 | 1,075,608 | 1,101,208 | 1,088,408 | 1,082,008 | 1,076,888 |
+| B1-a prefill | 128 | 1,048,576 | 13,828,104 | 18,022,408 | 15,925,256 | 14,876,680 | 13,844,488 |
+| B1-b prefill | 512 | 16,777,216 | 56,098,824 | 123,207,688 | 89,653,256 | 72,876,040 | 56,164,360 |
+| B1-c prefill | 2,048 | 268,435,456 | 236,978,184 | 1,310,720,008 | 773,849,096 | 505,413,640 | 237,240,328 |
+| B1-d prefill | 8,192 | 4,294,967,296 | 1,149,239,304 | **18,329,108,488** (17.070 GiB) | 9,739,173,896 (9.070 GiB) | 5,444,206,600 (5.070 GiB) | **1,150,287,880** (1.071 GiB) |
+
+**Inference — the spread is the planning result.** At C1 every plan is within 3% of every other and the choice is irrelevant; at B1-d the reachable D-A plan needs 15.9× what D-B needs, and even the best D-A plan needs 4.7×. A design that picked one decomposition for the whole workload would be choosing on a row where the choice does not matter and paying for it on the row where it does.
+
+### D-B — materialize only the row statistics
+
+A two-stage `KernelSubprogram`. Stage 1 computes the scores, applies the scale and mask, and materializes only the per-row maximum `m` and denominator `d`, each `[8, 2, T]`. Stage 2 **recomputes** the score for each `(g, r, t, s)`, forms `p = Exp(s − m) · (1/d)` exactly as L3′'s pinned formula does, and accumulates `p · v` into the value contraction. The `[8, 2, T, S]` tensors never exist.
+
+**Inference — it consumes no numerical permission, and that is the whole point of writing it this way.** Every probability is formed by the same three roundings the reference performs and in the same order; the value contraction is a strict ascending fold over `s`; the row maximum and the denominator come from the same contributor sequences as D-A's. It is a *recomputation*, which the optimizer contract already classifies as a physical implementation of one logical DAG rather than a new logical equivalence group. Nothing about it is a relaxation.
+
+**Fact — the statistics are two `[8, 2, T]` tensors**: 640 bytes each at C1 and 524,288 bytes each at B1-d, against the 4,294,967,296-byte tensor they replace. The complete D-B column is in the table above.
+
+**Inference — it costs one extra evaluation of the score contraction.** Structure 2 performs `16 · T · S · 128` multiply-accumulates; D-B performs it twice. At B1-d that is an additional 1.374 × 10¹¹ multiply-accumulates per layer against 17,179,869,184 bytes of avoided materialization. **This record does not claim which wins**, because it holds no measurement of either structure at any row; the tickets below make D-A's numbers exist before D-B is scheduled.
+
+**Inference — the handoff between its two stages needs no barrier, and the precedent is already in the tree.** `crates/tiler-ir/src/program/model.rs` records for the split reduction that "a split reduction needs no barrier because the pass boundary *is* the dispatch boundary", and `crates/tiler-compiler/src/program.rs` makes the same point at the site that builds the edge: the ordinary `Data` dependency between two stages is what makes staged values visible. D-B's statistics handoff is that mechanism at a different subject.
+
+### D-C — the online, single-pass, flash-attention shape
+
+One kernel per query row. It walks key blocks, keeps a running maximum, a running denominator, and a running unnormalized output accumulator, rescales the accumulator whenever the maximum moves, and divides once at the end.
+
+**Inference — it is illegal today, and the dimension it consumes is not the one a reader expects.** Two separate permissions are involved and only one of them is the familiar one:
+
+- Rescaling a running sum when the maximum changes regroups the denominator's contributor sequence. That consumes **reassociation**, exactly as L3′ recorded for the two-pass online softmax.
+- The output accumulator is the decisive one. The reference computes `O = Σ_s (e_s · r) · v_s` where `r = 1/d`; the online form computes `O = (Σ_s e_s · v_s) · r`. Those are different rounded values — each term in the first is rounded twice and in the second once — and the transformation is factoring a common multiplier out of a sum. That is **distributivity**, the third numerical dimension, which [Numerical semantics](../../numerical-semantics.md#distributivity-is-outside-the-order-contract) defines and for which no contract Tiler can express admits any permission. [ADR 0080](../../decisions/0080-treat-distributivity-as-a-third-numerical-dimension.md) is the accepted decision behind that classification.
+
+**Inference — so the rejection must name distributivity, not reassociation.** Reporting a forbidden reassociation would imply that a contract permitting reassociation would admit the form, which is the inference the numerical contract forbids. The candidate would still fail closed on a future compiler that accepted both order permissions. **Inference — and D-B is what survives in its place**: it delivers the same materialization saving, at the price of recomputation rather than of a permission nobody has granted. The flash shape is not "the fused version of D-B"; it is a different arithmetic.
+
+### The elimination
+
+| Candidate | Survives? | Ground |
+| --- | --- | --- |
+| **D-A** materialized | **Yes**, consuming no permission | The correctness baseline. Feasible wherever `n · 16 · T · S · 4` bytes fit, with `n` the four, two, or one of its plan ladder; its predicate is stated below and it is the only candidate whose every stage has an eliminated realization already. **This is the first delivery.** |
+| **D-B** statistics and recompute | **Yes**, consuming no permission | The only candidate feasible at B1-d without an allocation-handoff plan, at 15.9× less transient memory than the only D-A plan reachable today and 4.7× less than D-A's best case. Its cost is one extra score contraction and it is unmeasured. **Filed second, after D-A's numbers exist.** |
+| **D-C** online single pass | **No** under every contract Tiler can express | Consumes distributivity, for which the numerical contract admits no permission, and additionally reassociation. A settled legality position, not an unexplored one. |
+| Opaque vendor attention | **No** | L3 measured `MPSMatrixMultiplication` refuted against all twenty-two named topologies with a shape-dependent evaluation on one device. The optimizer admits an implementation candidate "only when that guarantee refines every effective operation contract"; a provider that cannot state its accumulation order refines none. Inadmissible rather than expensive. |
+| Whole-block single kernel | **No** | A cross-threadgroup read of `k_rope` without an atomic or a multi-pass protocol, or a recomputation of the entire key projection inside every threadgroup. Fusion legality forbids the first; the second is the duplication cost the candidate existed to avoid. |
+| Materialized GQA repetition | **No**, and it was never necessary | A `[16, S, 128]` broadcast of `K` and of `V`, 67,108,864 bytes each at B1-d per layer, that the structure-carrying contraction never forms. This is the cost ADR 0087 recorded as avoided and this record measures the head mapping of. |
+| Pre-scaled query | **No** | A different F32 computation, not a rewrite: 1,404 of 1,600 score elements differ at the C1 shape. |
+| Derived index-domain mask | **No**, with a trigger | The registry admits no boolean dtype and ADR 0084's predicate vocabulary excludes an index-domain comparison by construction. L2 recorded the crossover; the trigger is a row where the `T × S` mask outgrows the program, and 268,435,456 bytes at B1-d is not yet that row. |
+| Threadgroup-cooperative softmax | **No** | The kernel verifier admits no barrier under the implemented zero-synchronization schedule profile. A SIMD-group-cooperative row reduction survives; anything wider does not. |
+| RoPE as a contraction prologue | **No** | Duplication factor `S` — 8,192 at B1-d — because a prologue is evaluated per contraction iteration point. |
+
+## Boundary properties, materializations, synchronization, and lifetimes
+
+**Fact — the block's internal boundaries need exactly the two implemented values of the two ordering dimensions.** The optimizer's boundary-property maturity table makes *availability after producing dispatch* and *visibility readable on the requiring affinity* implemented and satisfiable, while *availability after observed host completion* is a type-system reservation and *visibility requires an explicit coherence action* is reserved and deliberately unsatisfiable. **Inference — every handoff in D-A and D-B is producer-dispatch availability and same-affinity visibility**, because every step is on one device in one memory domain. The reserved values appear exactly once in the whole program, at the host readback of `h_out`, which ADR 0033 already governs as a separate boundary with terminal completion, a post-completion status check, error-record visibility, and interpretation as four ordered steps. Recording that the program needs none of the reserved values *internally* is the useful statement; a design that needed one would be refused rather than costed.
+
+**Proposal — the boundary table for D-A.** Layout class is row-major contiguous throughout and storage encoding is unpacked `f32`, so those two columns are constant and are omitted rather than repeated on every row.
+
+| Boundary value | Producer | Consumers | Materialized? | Live range | Bytes at C1 | Bytes at B1-d |
+| --- | --- | --- | --- | --- | --- | --- |
+| `xn` | 1 | 2, 3, 4 | yes — fan-out 3 | 1 → 4 | 40,960 | 33,554,432 |
+| `q_flat` | 2 | 5 | only if 5 is not fused | 2 → 5 | 81,920 | 67,108,864 |
+| `k_flat`, `v_flat` | 3, 4 | 6, 7 | only if 6, 7 are not fused | 3 → 7 | 40,960 each | 33,554,432 each |
+| `q_norm`, `k_norm` | 8, 9 | 10, 11 | only if RoPE is not fused as an epilogue | 8 → 11 | 81,920 / 40,960 | 67,108,864 / 33,554,432 |
+| `q_grouped` | 12 | 15 | only if 12 is not fused into 15's access map | 12 → 15 | 81,920 | 67,108,864 |
+| `k_rope` (**o1**) | 13 | 15, program output | **yes** — it is a program result | 13 → end | 40,960 | 33,554,432 |
+| `v_heads` (**o2**) | 14 | 19, program output | **yes** — it is a program result | 14 → end | 40,960 | 33,554,432 |
+| `masked` scores | 15 (+16, 17) | 18 | **yes** in D-A; absent in D-B | 15 → 18 | 6,400 | 4,294,967,296 |
+| `probs` | 18 | 19 | **yes** in D-A; absent in D-B | 18 → 19 | 6,400 | 4,294,967,296 |
+| row statistics `m`, `d` | — | — | absent in D-A; **yes** in D-B | stage 1 → stage 2 | 640 each | 524,288 each |
+| `ctx` | 19 | 20 | only if 20 is not fused | 19 → 20 | 81,920 | 67,108,864 |
+| `ctx_flat` | 20 | 21 | only if 20 is not fused into 21's access map | 20 → 21 | 81,920 | 67,108,864 |
+| `attn_out` | 21 | 22 | only if the residual is not fused as an epilogue | 21 → 22 | 40,960 | 33,554,432 |
+| `h_out` (**o0**) | 22 | program output | **yes** | 22 → end | 40,960 | 33,554,432 |
+
+**Inference — the fan-out at `xn` is evidence for materialization and not a rule.** Fusion and scheduling records that fan-out greater than one is evidence for materialization rather than a categorical boundary, and here the producer is an `RmsNorm` over 1,024 contributors: a large reduction is exactly the case the contract names as usually not worth duplicating. Materializing `xn` is the baseline, and the multi-output region is the alternative Q-PLAN-005 gates.
+
+**Fact — synchronization in this program is dispatch ordering and nothing else.** [IR](../../ir.md)'s kernel verifier states that no barrier is admitted by the implemented zero-synchronization schedule profile. **Inference — three consequences follow, and each is a design constraint rather than a preference.** A softmax row reduction may span at most one SIMD group. A `KernelSubprogram`'s internal handoff is an ordinary `Data` dependency between stages, which is why D-B needs no synchronization construct that does not exist. And no schedule in this block may be built on a threadgroup-wide cooperative reduction, which removes strategy 4 of the reduction implementation list from every stage until a barrier is admitted.
+
+## Feasibility predicates
+
+**Proposal — hard feasibility, kept separate from cost per the architectural contract.** Each rejects with an explainable reason and none is expressed as a large cost.
+
+1. **Materialized-score residency.** D-A requires `n · 16 · T · S · 4` bytes of transient device memory, where `n` is 4 with no fusion, 2 with the scale and mask fused as the contraction's epilogue, and 1 with a `StorageHandoff` additionally retiring the first tensor. A target profile whose declared transient budget is below the requirement rejects D-A and retains D-B. **The threshold is a target-profile fact and no measurement in this repository supplies one** — that is **unresolved decision D-11**, and it is the same gap L1 left open when it declined to call 32,768 positions a workload row.
+2. **The tiled contraction's contracted-extent precondition, which the conformance row fails.** L3's surviving strict realization refuses a contracted extent that is not a multiple of 16 rather than padding it. Structure 2's contracted extent is the static 128 and always passes. **Structure 3's contracted extent is `S`**, so:
+
+   | Row | `S` | `tiled` admissible for structure 3? |
+   | --- | --- | --- |
+   | C1 prefill | 10 | **no** |
+   | C1 decode, steps 1–8 | 11 … 18 | only at `S = 16` |
+   | B1-a prefill | 128 | yes |
+   | B1-a decode | 129 … 256 | at 8 of the 128 steps |
+   | B1-d prefill | 8,192 | yes |
+
+   **Inference — `direct` is the only strict realization that covers the conformance row's value contraction**, and a plan that selected `tiled` for structure 3 would need a per-step routing decision over `S mod 16`. That is what guards and routing are for — guards establish validity, routing chooses profitability — and it is the first place in this workload where the two are genuinely both required.
+3. **No K-padding.** Padding structure 3's contracted extent to a multiple of 16 would owe the neutrality proof [Numerical semantics](../../numerical-semantics.md) requires, and here the padding is not merely unproved but measurably wrong in the same way D-9 names: the padded contributors are `+0.0 × v`, exactly the signed zeros the mask already contributes, and the fold's seed is the first product rather than `+0.0`. The refusal is the correct outcome.
+4. **Bounded symbolic extents.** An extent symbol with no proved upper bound refuses rather than compiling a generic program; `ExtentInterval::states_no_upper_bound` exists for exactly this. `T` and `S` are bounded per row and both sit inside `max_position_embeddings = 32768`; a context beyond that refuses.
+5. **Two reductions in one kernel.** A single-kernel `Softmax` carries a maximum reduction and a sum reduction in one schedule, which [Q-PLAN-004](../../open-questions.md#q-plan-004--coexisting-reductions-in-one-kernel) reserves. Until it closes, the softmax is a two-dispatch subprogram; this is a capability boundary, not a cost.
+6. **No fusion role, no fused alternative.** Every fused candidate above resolves to `FusionLegality::Unknown` today and is withheld with that reason rather than being costed.
+
+## Cost inputs, and exactly how far they reach
+
+**Measurement — three of the block's six contraction occurrences have a measured cell at a declared row, and three do not.** From L3's settled-minimum GPU times on the Apple M3 Pro bench host:
+
+| Block occurrence | Row | L3 cell | `direct` | `tiled` |
+| --- | --- | --- | --- | --- |
+| `q_proj` (operation 2) | C1 prefill, `T = 10` | `w_prefill_q` | 327.4 µs | **149.0 µs** |
+| `k_proj` / `v_proj` (3, 4) | C1 and B1 decode, `T = 1` | `w_decode_kv` | 75.3 µs | **60.5 µs** |
+| `o_proj` (operation 21) | B1-a prefill, `T = 128` | `w_prefill_o` | 2,952 µs | **1,051 µs** |
+| `k_proj` / `v_proj` (3, 4) | C1 prefill, `T = 10` | — | unmeasured | unmeasured |
+| score contraction (15) | every row | — | unmeasured | unmeasured |
+| value contraction (19) | every row | — | unmeasured | unmeasured |
+
+**Inference — and L3's own qualification on the decode cell carries over unchanged.** That cell's `[1024, 1024]` weight is cache-resident because the harness reuses one buffer, so its 15.5 µs opaque-call figure implies a bandwidth above the host's DRAM rate; it bounds a cache-warm kernel and says nothing about a decode step walking 28 layers of distinct weights. Nothing in this record repairs that.
+
+**Inference — the arithmetic weight of the block inverts between the two bounded rows, and the crossover is exact.** The four projections perform `T · 6,291,456` multiply-accumulates; the two attention contractions perform `2 · 16 · T · S · 128`, which at `S = T` is `4,096 · T²`. They are equal at `T = 1,536`.
+
+| Row | `T` | Projections | Attention contractions | Ratio |
+| --- | --- | --- | --- | --- |
+| C1 prefill | 10 | 6.29 × 10⁷ | 4.10 × 10⁵ | projections dominate 154× |
+| B1-a prefill | 128 | 8.05 × 10⁸ | 6.71 × 10⁷ | projections dominate 12× |
+| B1-b prefill | 512 | 3.22 × 10⁹ | 1.07 × 10⁹ | projections dominate 3× |
+| B1-c prefill | 2,048 | 1.29 × 10¹⁰ | 1.72 × 10¹⁰ | attention dominates 1.3× |
+| B1-d prefill | 8,192 | 5.15 × 10¹⁰ | 2.75 × 10¹¹ | attention dominates 5.3× |
+
+**Inference — this is the planning result and it is why "optimize the attention chain" is the wrong first instruction.** At the conformance row and the first benchmark row the block's cost is the four ordinary projections, every one of which is L3's already-eliminated structure 1 with a measured survivor. The attention-specific chain only becomes the dominant term between B1-b and B1-c. So the delivery order below builds the conventional materialized decomposition first and defers D-B until there is a row where it matters — which is the same conclusion the feasibility predicate reaches from the other direction.
+
+**Inference — nothing here is a claim about the attention contractions' realized cost.** L3 deliberately left the batched forms unmeasured, and this record does not fill that gap with an extrapolation from structure 1. Multiply-accumulate counts are arithmetic, not measurements; two schedules with the same count differ by an order of magnitude in L3's own table.
+
+## Numerical evidence per stage
+
+| Stage | What must be reproduced | Evidence and its owner |
+| --- | --- | --- |
+| RMS normalization (1, 8, 9) | mean of squares with `eps = 1e-6` inside the `rsqrt` argument, `rsqrt` rather than `1/sqrt`, weight after the cast, exact `eps` bits in identity | L3′'s measured formula and its zero-row, subnormal-row, and overflow-row cases; [`admit-the-rms-normalization-family`](../../../tickets/admit-the-rms-normalization-family.md) |
+| Contractions (2, 3, 4, 15, 19, 21) | strict lexicographic fold, seeded from the first product and not from `+0.0`, subnormals flushed, canonical NaN, ADR 0015 contraction Forbidden | L3's attribution over twenty-two topologies and its `negative_zero_seed` counterexample; ADR 0087 item 5 |
+| Head layout (5–7, 12–14) | query head `h` reads key head `h // 2` | **Measurement** — 0 differing against `repeat_kv`, 17,920 differing under the `h mod 8` reading |
+| RoPE (10, 11) | `x · cos + rotate_half(x) · sin` with the half-split `rotate_half` | **Measurement** — 0 of 20,480 differing for the composition and for the full application; both perturbations differ at all 20,480 |
+| Scale (16) | `0x3db504f3`, applied to the score | **Measurement** — pre-scaling the query differs at 1,404 of 1,600 elements |
+| Mask (17) | fill `0xff7fffff`, attended entry `0x80000000` | L3′'s measurement, reproduced at the C1 shape; the attended entry is value-preserving on every score except `+0.0` |
+| Softmax (18) | row maximum subtracted, denominator's **reciprocal multiplied**, not divided | L3′'s width-2 and width-3 discrimination counts; the C1 worked row above |
+| Value contraction's masked contributors (19) | `+0.0 × v` is a signed zero and participates in the fold | **Measurement** — first product `0x80000000`, completed fold `0x00000000`, reference agrees |
+| Residual (22) | `tiler::add-f32@1`, already registered and reference-evaluated | the support matrix's pointwise row |
+| Whole block | the five observables of L1's oracle, at the block rather than the model level | [`retain-the-qwen-conformance-reference-logit-fixture`](../../../tickets/retain-the-qwen-conformance-reference-logit-fixture.md) holds the model-level fixture; the block-level comparison is the integration ticket below |
+
+**Inference — one measurement in this set is a statement about the *index structure* rather than about a realization, and it needs its two halves kept apart.** The `grtd,gsd->grts` einsum spelling and the reference's repeat-then-matmul differ at 943 of 1,600 F32 elements with a maximum absolute gap of 1.72 × 10⁻⁵, and agree at **0 of 1,600** when both are evaluated in float64 and rounded once. So the index structure denotes the same computation and the F32 disagreement is entirely the two paths' reduction orders. That is a measured demonstration of why ADR 0087 item 5 states the order contract generically rather than leaving it to a realization: two spellings of one structure that no permission distinguishes still return different bits.
+
+## Typed refusals this program requires
+
+Each is a place where a silent approximation would return a plausible tensor.
+
+- A contracted extent that is not a positive multiple of a realization's tile width refuses, naming that realization's own precondition, rather than padding. Structure 3 at `S = 10` is the conformance row's own shape, so this refusal fires on the workload's most-run case and is not hypothetical.
+- A schedule that omits masked contributors from the value contraction refuses, naming the signed-zero difference, unless a permission it does not have is granted. See D-9.
+- A `Reindex` whose coordinate function is not among the family's admitted initial forms refuses at construction, naming the form. The RoPE swap is the case that decides whether this refusal fires on a required operation. See D-10.
+- A softmax whose reduced axis is a symbol with no proved upper bound refuses; a reduction whose selected topology no admitted permission covers refuses, naming reassociation or permutation separately for the maximum pass and the sum pass.
+- A plan whose transient requirement exceeds the target profile's declared budget is rejected as infeasible with the exact byte requirement and the exact budget, never as an expensive alternative.
+- A schedule requiring a barrier refuses, because none is admitted; the diagnostic names the zero-synchronization schedule profile rather than reporting a generic scheduling failure.
+- A contraction, softmax, or normalization occurrence with no registered fusion role yields no fusion legality and the fused alternative is withheld with that typed reason, never silently absent.
+- A rewrite that factors the softmax denominator out of the value contraction refuses, naming the **distributivity** dimension. Naming reassociation instead would be inaccurate and would imply a contract that could admit it.
+
+## Unresolved decisions
+
+Continuing L3′'s D-1 … D-5 and L3's D-6 … D-8. Each carries what would close it.
+
+- **D-9 — whether a schedule may omit masked contributors from the value contraction.** Skipping the masked upper triangle is the central optimization of causal attention and removes about half the work at long `S`. **Measurement** shows it is a value change: at C1's query position 0 the fold's seed is `-0.0` and the masked tail turns it into `+0.0`, so a skipping schedule returns `-0.0` where the reference and a strict fold return `+0.0`. The design's position is derived rather than reserved — the architectural contract holds that an option returning a silently wrong result is a defect and not an alternative — so **skipping is forbidden today** and the refusal is required. What remains open is whether to admit a signed-zero relaxation, or a proof obligation that the skipped contributors cannot change the result, as a permission with its own identity. **Closes** inside [`scope-causal-structure-aware-attention-schedules`](../../../tickets/scope-causal-structure-aware-attention-schedules.md), which owns the permission question and the trigger.
+- **D-10 — whether `Reindex`'s admitted initial forms include a within-axis coordinate permutation.** The RoPE composition needs `(…, i, j) -> (…, 1 − i, j)` on a size-2 axis, and [IR](../../ir.md) spells the initial forms as "bijective permutations/split/merge mappings", which reads most naturally as axis permutation. The index-expression vocabulary admits the arithmetic; the question is the family's admission rule. If the answer is no, RoPE needs a structural form the corpus does not have, and L2's "no slice and no concatenate is required inside a layer" result narrows to "no slice, no concatenate, and one further form". **Closes** inside [`admit-the-reindex-and-broadcast-operation-families`](../../../tickets/admit-the-reindex-and-broadcast-operation-families.md), whose normative reference must state it either way, with [`compose-rotary-position-embedding-from-reindex-and-broadcast`](../../../tickets/compose-rotary-position-embedding-from-reindex-and-broadcast.md) as the consumer that would fail closed.
+- **D-11 — the transient-memory feasibility threshold.** The requirement is exact — between 4,294,967,296 and 17,179,869,184 bytes at B1-d depending on the plan — and the budget is not: no target profile in this repository declares a transient memory limit and no residency measurement bounds one. Until it exists, D-A's feasibility at B1-d is `Unknown` rather than proved or disproved, and an `Unknown` feasibility verdict keeps a candidate in explain and search state only. **Closes** when a target profile declares the budget or a residency measurement on a named host supplies it; the measurement half is L8's, under [`design-model-level-qualification-and-optimization`](../../../tickets/design-model-level-qualification-and-optimization.md).
+
+**Two earlier decisions gain evidence here rather than being reopened.**
+
+- **D-1 (the fully masked row) is now measured-unfalsifiable on the conformance row**, not merely unreached: the finite fill and a `-inf` fill produce bit-identical results at all 1,600 C1 score elements. So the conformance corpus must carry the synthetic fully-masked row — uniform `0x3dcccccd` against ten NaNs at width 10 — or the choice is untested rather than merely undecided.
+- **D-6 (the contraction accumulation dtype) has a longer accumulation than L3's profile contained.** L3 recorded that structure 1's 1,024-to-3,072 contributor counts "are the longest accumulations in the workload", which is true of the profile that record measured. Structure 3 accumulates `S` contributors — 8,192 at B1-d prefill and 8,320 at the end of B1-d's decode — so the workload's longest accumulation is the value contraction, and it is over probabilities in `[0, 1]` summing to approximately one, which is a different conditioning problem from a weight-activation dot product. The evidence belongs to [`implement-parallel-reduction-strategies`](../../../tickets/implement-parallel-reduction-strategies.md), which already owns D-6's closure.
+
+## What this record does not decide
+
+- **The KV cache, the append, and the decode step's schedule.** L5's. This record supplies the seam — `k_rope` and `v_heads` as retained outputs, `S` as a symbol distinct from `T` — and chooses nothing.
+- **Whether the attention contractions should be materialized at B1-d.** A feasibility question whose threshold does not exist yet; D-11.
+- **Whether D-A or D-B is faster at any row.** Neither structure 2 nor structure 3 has been measured at any shape. The delivery order makes D-A's numbers exist first.
+- **The MLP half of the decoder layer, the vocabulary projection, and ingestion.** L6's.
+- **Any numeric tolerance for a block-level or model-level comparison.** L8's, and L1 already fixes that composing one from per-operation tolerances is the defect rather than the method.
+- **Whether a distributivity permission should exist.** [`decide-whether-to-admit-a-distributivity-permission`](../../../tickets/decide-whether-to-admit-a-distributivity-permission.md) owns it. This record supplies the first workload evidence that something valuable depends on it, and takes no position on the answer.
+- **Whether a contraction node may consume more than two operands.** Reserved under Q-SEM-015. Every contraction in this block is binary, so the block supplies no evidence either way, and saying so is more useful than inventing pressure.
+
+## Delivery tickets filed from this record
+
+Dependency-ordered, smallest conventional vertical first. Each depends on the existing tickets named rather than duplicating them; nothing is filed for the flash-attention shape, the derived mask, or an opaque provider.
+
+| Order | Ticket | Outcome | Waits on |
+| --- | --- | --- | --- |
+| 1 | [`admit-the-attention-contraction-structures`](../../../tickets/admit-the-attention-contraction-structures.md) | Index structures 2 and 3 become statable and reference-evaluable under ADR 0087's one keyed family, with the free grouped-query index and the growing symbolic contracted extent. | [`admit-the-contraction-normative-reference`](../../../tickets/admit-the-contraction-normative-reference.md) |
+| 2 | [`compose-rotary-position-embedding-from-reindex-and-broadcast`](../../../tickets/compose-rotary-position-embedding-from-reindex-and-broadcast.md) | RoPE is a checked composition over admitted families, and D-10 is settled either way. | [`admit-the-reindex-and-broadcast-operation-families`](../../../tickets/admit-the-reindex-and-broadcast-operation-families.md) |
+| 3 | [`admit-the-grouped-query-head-layout-reindex-profile`](../../../tickets/admit-the-grouped-query-head-layout-reindex-profile.md) | The `(g, r)` head layout is a checked coordinate map and the repeat-tile reading is refused. | [`admit-the-reindex-and-broadcast-operation-families`](../../../tickets/admit-the-reindex-and-broadcast-operation-families.md) |
+| 4 | [`assemble-the-causal-self-attention-block-program`](../../../tickets/assemble-the-causal-self-attention-block-program.md) | The twenty-two-operation block verifies and reference-evaluates against the pinned reference at the C1 prefill shape, with three ordered named outputs. | 1, 2, 3, [`admit-the-softmax-family`](../../../tickets/admit-the-softmax-family.md) |
+| 5 | [`realize-the-attention-contractions-on-metal`](../../../tickets/realize-the-attention-contractions-on-metal.md) | Structures 2 and 3 become scheduled kernels, with the tiled precondition refusing the conformance row's value contraction rather than padding it. | 1, [`realize-the-strict-contraction-on-metal`](../../../tickets/realize-the-strict-contraction-on-metal.md) |
+| 6 | [`plan-the-materialized-attention-decomposition`](../../../tickets/plan-the-materialized-attention-decomposition.md) | D-A becomes a planned, costed, explained cover with its transient-residency feasibility predicate as a typed refusal. | 4, 5 |
+| 7 | [`integrate-the-attention-block-into-the-runtime`](../../../tickets/integrate-the-attention-block-into-the-runtime.md) | One complete causal self-attention block executes on Metal and its result is compared with the normative reference. **This is the rung's user-visible outcome.** | 6, [`integrate-the-contraction-vertical-into-the-runtime`](../../../tickets/integrate-the-contraction-vertical-into-the-runtime.md) |
+| 8 | [`retain-the-c1-attention-block-conformance-evidence`](../../../tickets/retain-the-c1-attention-block-conformance-evidence.md) | The block's exact bits, the signed-zero case, and the fully-masked-row pair become failures rather than drift. | 7 |
+| 9 | [`plan-the-recomputing-attention-decomposition`](../../../tickets/plan-the-recomputing-attention-decomposition.md) | D-B becomes a second cover, measured against D-A rather than assumed better. | 7 |
+| 10 | [`scope-causal-structure-aware-attention-schedules`](../../../tickets/scope-causal-structure-aware-attention-schedules.md) | D-9 is settled: either a permission with its own identity, or a durable refusal with a stated trigger. | 8 |
+
+## Consequences for the ladder
+
+**Inference.** L4's stated capability is "a complete attention program and transformer block", and that is not what this rung delivered. What it delivered is the program written down as typed operations over exact shapes, an elimination that leaves two decompositions standing on legality and feasibility rather than on cost, eight candidates rejected with grounds a reader can refute, and ten delivery tickets. The block itself is ticket 7, which depends on the contraction and softmax verticals rather than on more research. L5's trigger is "L4 delivers a block"; this delivers L4's design and names the seam L5 attaches to, and the block is still ahead.
+
+**Inference — the honest maturity claim.** Nothing moved. Contraction stays at R1, softmax and RMS normalization at R2, `Reindex` and `Broadcast` at R2, and the residual add and the attention scale were already at R6 and were not made so by this rung. No fusion role exists for any family the block needs, so the compiler would refuse every fused candidate in this record before costing it. The four-claim maturity vocabulary does not apply to a research record, and the measurements here qualify one CPU reference at one shape under one seed.

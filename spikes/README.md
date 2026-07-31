@@ -56,6 +56,7 @@ Only `spikes/numerics/check_witnesses.py` and
 ### Physical planning and lowering
 
 - [Bootstrap cost-model experiment](cost-model/README.md) — reproducible; executable-model; supports: [Initial cost model and calibration plan](../docs/research/cost-model/bootstrap-cost-model.md)
+- [C1 attention-block reference probe](program-planning/attention-block-reference/README.md) — reproducible; bounded-measurement; supports: [First attention program vertical](../docs/research/program-planning/first-attention-program-vertical.md)
 - [Bounded scalar CPU backend vertical](target-profiles/scalar-cpu-vertical/README.md) — reproducible; executable-model, bounded-measurement; supports: [Target profiles and phased physical feasibility](../docs/research/target-profiles/physical-feasibility-model.md), [Proposed CPU/SIMD target profile](../docs/backends/cpu.md)
 - [Exhaustive fusion-region oracle experiment](region-search/README.md) — reproducible; exhaustive-finite, executable-model; supports: [Exhaustive fusion-region oracle](../docs/research/region-search/exhaustive-region-oracle.md)
 - [Kernel-program planning experiment](program-planning/README.md) — reproducible; executable-model; supports: [KernelProgram and conservative buffer planning](../docs/research/program-planning/kernel-program-buffer-plan.md)
