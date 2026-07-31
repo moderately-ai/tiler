@@ -56,7 +56,7 @@ A cold consumer can state the expected identity it recorded without presenting
 that assertion as encoder-derived evidence, and runtime preflight rejects a
 different loaded artifact with both concepts named clearly.
 
-## What closes this
+## Implementation keys
 
 Introduce the distinct assertion type with immutable shared byte storage so repeated attempts and mismatch errors do not copy an identity whose governed bound is large. Its constructor accepts recorded bytes and rejects empty input, input above `MAX_ARTIFACT_IDENTITY_BYTES`, and an identity whose canonical leading frame is not the current `tiler.artifact-program.v11` domain. Domain recognition is syntax/type separation, not proof that the remainder is canonical or corresponds to an artifact.
 

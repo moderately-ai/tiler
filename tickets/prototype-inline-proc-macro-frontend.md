@@ -10,6 +10,14 @@ shared_scopes: [project/tickets, implementation/cargo-lock]
 paths: []
 tags: [implementation, frontend, proc-macro, inline-dx]
 ---
+## User-visible outcome
+
+An external Rust consumer imports only `tiler`, writes the accepted inline tensor region, receives span-local typed diagnostics, and executes a self-contained AOT result without a build script, source scan, runtime JIT, or consumer-specific compiler dependency.
+
+## Implementation keys
+
+Consume the admitted facade/macro crates, reviewed public compiler and neutral artifact codec, exact ShapeEnv/runtime-value adapter boundary, and canonical artifact-family request. Parse the approved declaration-block grammar into the public logical program, preserve token spans through typed failures, embed the selected artifact family, and generate only paths reachable through the consumer's declared `tiler` dependency.
+
 ## Outcome (2026-07-30)
 
 Tom approved candidate B: an expression-position `tiler::tensor!` macro with a leading declaration block, explicit symbolic extents and typed operands, ordinary Rust operators where they carry the intended logical operation, named calls for operations without an operator spelling, and `out` bindings returned to the surrounding Rust expression.
@@ -85,3 +93,9 @@ The 2026-07-30 readiness audit found that implementation was not yet reachable f
 ## Activated 2026-07-30
 
 Tom's approval of candidate B released the syntax question. The ticket becomes ready for implementation after the three exact dependencies above deliver; until then it must not scaffold a macro whose symbols, result value, or delivery policy have no public owner.
+
+## Graph maintenance
+
+- Keep all five declared prerequisites complete before claiming this implementation; syntax approval alone does not create its public compiler, value, or artifact authorities.
+- File broader fusion as a larger explicit inline-region ticket rather than inspecting surrounding Rust or creating an ambient registry.
+- Keep consumer-specific adapters and model integration downstream of this consumer-neutral frontend proof.

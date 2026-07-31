@@ -1,7 +1,7 @@
 ---
 id: decide-the-lookup-argument-type
 title: Decide the cache lookup argument type
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [accept-the-tiler-cache-public-boundary]
@@ -10,7 +10,11 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [cache, public-boundary, decision]
 ---
-## Draft the exact signature
+## User-visible outcome
+
+Cache lookup continues to accept a checked composed subject and derives its key once internally, without exposing raw-key lookup or adding an unused prepared token.
+
+## Implementation keys
 
 The public API must preserve two properties together: raw bytes cannot name an entry, and a caller that performs multiple operations for one subject need not pay repeated digest work.
 
@@ -27,3 +31,8 @@ The real `tiler-build` call path and a repeated-operation fixture establish whet
 Retain lookup by `&ComposedSubject`; do not add a prepared-subject token or key-taking overload. `CacheKey` already is the checked derived token: its public construction is `CacheKey::derive(&ComposedSubject)`, raw-byte and label parsing remain crate-private, and `CachedEntry::key()` exposes the validated key for later maintenance. The real `tiler-build` path performs one `get_or_publish` operation per subject, and that operation derives once internally. No real caller repeats digest work.
 
 A synthetic repeated-operation fixture would manufacture the consumer needed to justify the new API. Until a real path performs repeated subject operations before it has a `CachedEntry`, another token or overload would add public state and mismatch/lifetime surface without saving work. Carry the unchanged subject-taking signature into `accept-the-tiler-cache-public-boundary`; reconsider only when a named consumer demonstrates repeated derivation.
+
+## Graph maintenance
+
+- Keep this completed decision as a dependency of `accept-the-tiler-cache-public-boundary` so that review ratifies the retained `&ComposedSubject` call shape.
+- Reconsider only from a ticket naming a real repeated-operation consumer and measuring duplicated derivation on that path.

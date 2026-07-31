@@ -23,7 +23,7 @@ Tom receives a compile-checked private, review-ready design packet for a require
 - **Fact:** `DeliveredRealizationBuilder::declare` accepts arbitrary bytes and a caller-selected phase. It validates framing, not that a checked compiler plan selected the claim.
 - **Inference:** publishing the draft would freeze an incomplete and already-contradicted contract. The dtype key, structured means, provenance, dimension authority, constructor, readers, canonical encoding, and identity all require a coherent replacement.
 
-## Required design
+## Implementation keys
 
 ### Compiler-produced policy subjects, never inferred applicability
 

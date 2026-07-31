@@ -27,3 +27,9 @@ Power-of-two, uneven-tail, one-element, and empty extents agree with the referen
 ## Closes when
 
 The target-neutral synchronized alternative is verified beside serial, exact public drafts are reviewed by Tom, every check is mutation-proved, and targeted tests/Clippy plus the batch gate pass. Metal support remains downstream.
+
+## Graph maintenance
+
+- Keep this ticket after the typed synchronization authority, which itself follows cooperative workgroup dataflow; do not collapse those proof stages into backend lowering.
+- Release Metal realization only after the target-neutral program and its exact synchronization/resource requirements are independently verified.
+- Leave cost calibration downstream so legality and feasibility cannot be manufactured by a preference constant.

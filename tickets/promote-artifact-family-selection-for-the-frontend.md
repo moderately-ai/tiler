@@ -3,7 +3,7 @@ id: promote-artifact-family-selection-for-the-frontend
 title: Promote artifact-family selection for the frontend
 status: todo
 priority: p1
-dependencies: [prototype-artifact-family-delivery]
+dependencies: [prototype-artifact-family-delivery, admit-the-tiler-facade-and-proc-macro-crate-boundary]
 related: [prototype-inline-proc-macro-frontend, generate-cfg-gated-artifact-family-delivery]
 scopes: [implementation/frontend, implementation/metal-aot, contracts/integrations]
 shared_scopes: [project/tickets]
@@ -27,3 +27,9 @@ Present the exact owner/module/type/constructor/reader/error path and frontend c
 ## Closes when
 
 The frontend can construct and inspect one canonical selection, the AOT driver consumes the same value, no duplicate encoding or Apple host inference exists, public dependency direction is reviewed, mutation tests prove empty/duplicate/order/version checks can fail, and targeted tests/Clippy plus `make full` pass.
+
+## Graph maintenance
+
+- Follow facade admission explicitly because the reviewed packet includes the frontend call site; do not rely on frontend-scope collision for prerequisite order.
+- Keep generated consumer-`cfg` mapping in `generate-cfg-gated-artifact-family-delivery` and Apple tool discovery in the AOT owner.
+- Release the proc-macro proof only after one dependency-neutral canonical request is available without duplicating its encoder.

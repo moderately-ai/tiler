@@ -14,7 +14,7 @@ tags: [artifact, runtime, metal, correctness]
 
 A runtime refuses a route before commitment when the selected live device lacks a backend feature or numerical resource floor the artifact declares, and the refusal names the exact unmet requirement without putting Apple-specific vocabulary in the neutral artifact core.
 
-## Correctness derivation
+## Implementation keys
 
 Provenance alone is eliminated because it permits a known device mismatch to survive until pipeline creation after routing. Numeric floors and backend feature requirements are complementary rather than alternatives: floors express quantities such as threadgroup capacity and accessible buffer range, while a backend-scoped governed feature key expresses non-quantitative capabilities that equal floors cannot distinguish.
 

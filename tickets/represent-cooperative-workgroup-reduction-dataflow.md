@@ -14,7 +14,7 @@ tags: []
 
 A target-neutral schedule and KIR can describe the meaningful cross-invocation dataflow a bounded workgroup reduction needs before any synchronization point is admitted: local invocation coordinates, workgroup-shared staging storage, phased writes and reads, explicit lifetimes, and uniform participant convergence.
 
-## Correctness boundary
+## Implementation keys
 
 The current schedule has only a global-linear one-output mapping. KIR exposes boundary reads and one write, has no usable workgroup allocation or local-invocation coordinate, and rejects synchronization. Adding a barrier to that program is either semantically redundant or divergent under predication; it cannot prove cooperative execution.
 
@@ -27,3 +27,9 @@ The verifier accepts one cooperative tile and rejects overlapping writes, out-of
 ## Closes when
 
 The cooperative dataflow is explicit and verifier-owned across schedule and KIR, no synchronization or Metal support is overclaimed, exact public drafts are presented to Tom before acceptance, targeted `tiler-ir`/compiler/reference nextest and Clippy pass, and `admit-the-first-typed-synchronization-point-and-atomic-target-authority` can bind a real point to this dataflow.
+
+## Graph maintenance
+
+- Keep the synchronization-authority ticket downstream; this ticket must first make the cross-invocation dependency and uniform convergence meaningful.
+- Keep Metal lowering and hardware support downstream of the target-neutral dataflow and synchronization strategies.
+- Advance schedule/KIR identity only for encoded semantic changes and rebaseline pins on the merged tree.

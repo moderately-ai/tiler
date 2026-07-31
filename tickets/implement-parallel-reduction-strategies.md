@@ -16,6 +16,10 @@ A reduction can be scheduled as a single-workgroup or multi-pass strategy—not 
 
 Add single-workgroup and multi-pass reductions beyond the serial schedule. Define empty identities, accumulation dtype, deterministic/relaxed orders, synchronization, partial storage, feasibility and numerical evidence; selection may deliberately choose multiple kernels.
 
+## Implementation keys
+
+Treat this ticket as the rollup over the split dependency graph: target-neutral multi-pass, cooperative workgroup dataflow, typed synchronization authority, synchronized single-workgroup scheduling, Metal realization, and measured selection calibration. Preserve serial throughout, keep numerical permissions independent, and close only when the separately verified outcomes compose on the merged tree.
+
 ## Split execution graph (2026-07-30)
 
 The former single ticket was not executable as one unit. `implement-the-target-neutral-multi-pass-reduction-strategy` owns explicit cross-dispatch partials without an intra-workgroup barrier. `represent-cooperative-workgroup-reduction-dataflow` and `admit-the-first-typed-synchronization-point-and-atomic-target-authority` precede `implement-the-single-workgroup-synchronized-reduction-strategy`. `realize-parallel-reduction-strategies-on-metal` owns backend lowering, artifact/runtime obligations, and hardware execution. `calibrate-and-activate-parallel-reduction-selection` owns the measured crossover and selection activation.

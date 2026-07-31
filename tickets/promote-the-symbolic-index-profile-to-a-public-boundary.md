@@ -18,7 +18,7 @@ An external frontend can construct one immutable ShapeEnv-backed index region, i
 
 Tom approved promotion in principle on 2026-07-25. The implementation remained private because its constructor, error, extent-view, module-path, and semi-affine divisor shapes were still duplicated across five decision tickets. Those are not independent compatibility surfaces: the same sourced-extent authority must serve construction, inspection, and semi-affine expressions or the public API mints competing constant-or-symbol types.
 
-## Correctness-derived design
+## Implementation keys
 
 - Keep the existing static `IndexRegionBuilder::new(registry)` path. Add a distinct `IndexRegionBuilder::new_with_shape_environment(registry, Arc<ShapeEnv>)` constructor so the environment is fixed before any symbolic dimension exists and cannot be replaced. Remove the current repeatable consuming `with_shape_environment` draft rather than preserving two attachment paths. Do not add `Option<ShapeEnv>` to every static call site.
 - Preserve layered typed errors. `SymbolicExtentError` distinguishes source-environment refusal, structural index refusal, and shape-vocabulary refusal without reporting one authority's limit under another name. Provide ergonomic conversion only where it preserves those causes.

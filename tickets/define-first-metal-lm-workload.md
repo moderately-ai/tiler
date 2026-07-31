@@ -10,6 +10,10 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [research, planning, language-model, workload, metal, inference]
 ---
+## User-visible outcome
+
+The first model-level delivery target is a reproducible, bounded F32 execution of pinned `Qwen/Qwen3-0.6B-Base` whose prefill and decode logits, greedy tokens, latency envelope, artifacts, and exclusions are explicit enough to derive the implementation ladder without silently importing unrelated architectures or features.
+
 ## Outcome (2026-07-30)
 
 **Selected: Option B, `Qwen/Qwen3-0.6B-Base` at immutable revision `da87bfb608c14b7cf20ba1ce41287e8de496c0cd`.** The first complete language-model workload is the pinned dense Qwen checkpoint widened to F32, batch 1, on one Apple GPU, with bounded prompt, context, and decode lengths. This selection makes the first delivery graph prove the reusable modern dense-decoder surface—RMSNorm, Q/K RMSNorm, SwiGLU, RoPE, GQA, ordinary KV cache, and head dimensions independent of `hidden_size / heads`—without importing MoE, vision, hybrid recurrence, quantization, chat templates, sampling, or thinking-mode semantics.
@@ -94,6 +98,10 @@ The correctness oracle compares logits after prefill and every decode step under
 
 Replace the stale MSL 3.1 target row in the older research section with the current qualified `apple9-f32-unified-msl4-macos26` authority: Apple9/macOS/F32, MSL 4.0, offline `metalfe-32023.883`, and runtime/pipeline compiler `metalfe-32023.921`. Live execution and delivered-numerics claims remain host-qualified.
 
+## Implementation keys
+
+Record the two bounded workload rows, immutable model/tokenizer/weight/reference identities and acquisition policy, exact operation and shape surface, F32 memory arithmetic, per-step correctness oracle, target qualification, exclusions, and dependency-ordered follow-ups. Keep diagnostic GPT-2 fixtures subordinate to the representative Qwen workload and leave Qwen3.5 hybrid recurrence to its named downstream stress ticket.
+
 ## Closes when
 
 One bounded workload profile and its success envelope are durably recorded;
@@ -110,6 +118,12 @@ filed as a scoped ticket, or explicitly deferred with a trigger.
 **Rests on:** nothing — it is the ladder's first rung.
 
 Do not start this before its trigger fires. Each rung's scope is derived from the rung below it, so beginning early means deriving a surface from an assumption rather than from delivered evidence — which is how a discovery ticket turns into a rewrite.
+
+## Graph maintenance
+
+- Update the L2 operation-and-shape derivation from the pinned Qwen manifest rather than from remembered architecture defaults.
+- Link every newly exposed subsystem to an existing owner or file a bounded ticket with evidence and a reconsideration trigger; do not add implementation work to this research ticket.
+- Keep the Qwen3.5 hybrid text-tower ticket downstream of dense model qualification and preserve GPT-2 only as a diagnostic fixture family.
 
 ## Research 2026-07-27 — elimination run, one genuine choice remains
 

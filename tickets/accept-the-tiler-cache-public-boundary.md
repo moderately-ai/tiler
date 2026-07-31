@@ -18,7 +18,7 @@ ADR 0082 admits the crate but not the interface, so `tiler_cache::expansion` doc
 
 The former recommendation to accept before resolving three split signatures was backwards: acceptance would freeze the interface whose shape the children exist to determine. Its “no consumer” premise is also stale. `tiler-build` now depends on `tiler-cache`; `metal_cache.rs` composes the ordered backend-compilation and artifact-program subject and calls `get_or_publish`, and `metal_plan.rs` carries the resulting subject and resolution through the checked plan path.
 
-Resolve the subject cardinality and lookup argument as concrete implementation drafts first. Composition-time refusal is already the tested invariant. Then update the checklist to the exact resulting signatures and present one atomic public-boundary review.
+The subject cardinality and lookup argument decisions now retain the existing consumer-backed signatures: ordered `&[&[u8]]` backend compilation inputs at composition and lookup by `&ComposedSubject`, with one internal key derivation per operation. Composition-time refusal remains the tested invariant. Present those exact signatures in the atomic public-boundary review.
 
 ## Items to ratify
 
@@ -46,9 +46,9 @@ The staged `4f8ce90` constructor was rejected rather than merged: `CompilationId
 
 This makes both `SubjectFacets` fields producible. It does not create the orchestrator that holds both producers and the cache, so the cache remains unused end to end; the frontend orchestration decision still owns that integration.
 
-## Split status (2026-07-30)
+## Split status (updated 2026-07-31)
 
-The three shape questions remain explicit dependencies so acceptance cannot precede them. `decide-where-an-unfillable-subject-facet-is-refused` is done: a composed subject is identity-complete and partial assembly stays in the composer. The two remaining tickets must produce exact consumer-backed signatures before this ticket returns to `awaiting-decision`.
+All three shape questions remain explicit completed dependencies so their derivations stay visible to acceptance. `decide-where-an-unfillable-subject-facet-is-refused` keeps partial assembly in the composer. `decide-the-composed-subject-backend-compilations-shape` retains ordered borrowed `&[&[u8]]` input because a checked wrapper removes no validation or allocation. `decide-the-lookup-argument-type` retains `&ComposedSubject` because the real consumer performs one operation and `CacheKey` already is the checked derived token. No signature question remains; this ticket can proceed to its exact atomic public review.
 
 ## Excluded decision
 

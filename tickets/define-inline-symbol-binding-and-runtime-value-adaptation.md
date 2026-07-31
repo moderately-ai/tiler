@@ -3,7 +3,7 @@ id: define-inline-symbol-binding-and-runtime-value-adaptation
 title: Define inline symbol binding and runtime value adaptation
 status: todo
 priority: p1
-dependencies: [promote-the-symbolic-index-profile-to-a-public-boundary]
+dependencies: [promote-the-symbolic-index-profile-to-a-public-boundary, admit-the-tiler-facade-and-proc-macro-crate-boundary]
 related: [prototype-inline-proc-macro-frontend, promote-the-symbolic-index-profile-to-a-public-boundary]
 scopes: [implementation/frontend, implementation/ir, implementation/runtime, contracts/integrations]
 shared_scopes: [project/tickets]
@@ -14,7 +14,7 @@ tags: []
 
 The approved `sym n; in a: f32[n], ...; out ...` region binds every symbolic extent from actual operand metadata through one checked ShapeEnv environment, validates repeated uses consistently, and returns a consumer-neutral result through an explicit adapter rather than assuming a concrete tensor library.
 
-## Correctness-derived binding
+## Implementation keys
 
 `sym n;` declares one logical extent variable. Its runtime value is unified from every operand dimension that names `n`; at least one occurrence must source it, and every additional occurrence must equal the first checked value. The macro does not inspect values outside its invocation, infer dtype/shape at expansion, or choose one operand occurrence as a semantic identity authority. Generated binding facts name exact input keys and axes through the promoted ShapeEnv vocabulary, so declaration order does not change graph identity.
 
@@ -31,3 +31,9 @@ Compile-pass fixtures bind one symbol from one and multiple operands and return 
 ## Closes when
 
 The exact ShapeEnv-to-runtime binding and minimal opaque wrapper and adapter traits are compile-checked, the public facade boundary is reviewed by Tom, the proof demonstrates that an arbitrary external consumer can supply the adapter without a facade change or global registration, and `prototype-inline-proc-macro-frontend` can consume the boundary without inventing what `sym n` or `let d` means.
+
+## Graph maintenance
+
+- Follow facade admission explicitly because the accepted wrapper and adapter traits are facade-owned; shared frontend scope is not a substitute for that dependency.
+- Keep Candle and every other concrete consumer adapter outside this ticket and relate a later integration only after the neutral test adapter proves the boundary.
+- Release `prototype-inline-proc-macro-frontend` only after the exact public value and symbol-binding draft is reviewed and accepted.

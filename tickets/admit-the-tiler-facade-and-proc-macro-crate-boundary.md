@@ -6,7 +6,7 @@ priority: p1
 dependencies: []
 related: [prototype-inline-proc-macro-frontend]
 scopes: [implementation/frontend, implementation/workspace]
-shared_scopes: [implementation/cargo-lock]
+shared_scopes: [implementation/cargo-lock, project/tickets]
 paths: []
 tags: []
 ---
@@ -14,7 +14,7 @@ tags: []
 
 Consumers import one ordinary `tiler` facade and call `tiler::tensor!`; the procedural implementation lives in a separate `tiler-macros` proc-macro crate, while normal runtime/frontend types remain available from the facade.
 
-## Correctness derivation
+## Implementation keys
 
 The approved surface fixes the public path as `tiler::tensor!`. A proc-macro crate cannot be the durable normal-type/runtime facade because Rust restricts what a proc-macro crate exports. A standalone `tiler-macros` crate would either force users to depend on internal crates named by generated tokens or change the approved import path. A normal `tiler` facade re-exporting the macro from `tiler-macros` is the standard dependency direction and keeps generated paths stable.
 
@@ -31,3 +31,9 @@ Tom approved the `tiler` normal facade plus `tiler-macros` proc-macro implementa
 ## Closes when
 
 Tom ratifies the topology; both members, lockfile, and ticketsplease scope ownership land atomically; dependency checks prove compiler/IR remain frontend-independent; a compile-pass fixture imports only the facade; a deliberate missing re-export or wrong generated path fails; and targeted checks plus `make full` pass.
+
+## Graph maintenance
+
+- Add scope mappings for `crates/tiler/**` and `crates/tiler-macros/**` in the same commit that admits the members; paths alone do not make later frontend work schedulable.
+- Keep `define-inline-symbol-binding-and-runtime-value-adaptation` and `promote-artifact-family-selection-for-the-frontend` dependent on this admission rather than relying on shared-scope serialization.
+- Do not close `prototype-inline-proc-macro-frontend` from this ticket; it consumes the admitted facade after its separate symbol/value and artifact-family prerequisites land.

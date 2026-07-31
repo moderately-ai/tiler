@@ -27,3 +27,9 @@ Retained raw measurements identify stable crossover regions or explicitly report
 ## Closes when
 
 Selection uses measured target-specific evidence, explain output names why the winning strategy won, no infeasible plan is represented as expensive, every check is mutation-proved, and the performance record plus targeted gates pass.
+
+## Graph maintenance
+
+- Keep this ticket after Metal realization so calibration measures executable strategies rather than synthetic cost constants.
+- Close `implement-parallel-reduction-strategies` only after this ticket connects retained measurements to selection and the three-strategy rollup is true on one merged tree.
+- File a bounded environment-specific measurement follow-up instead of asserting a crossover when the qualified host or stable region is unavailable.

@@ -26,4 +26,10 @@ One program retains serial and multi-pass alternatives with distinct identities 
 
 ## Closes when
 
-The target-neutral multi-pass alternative is verified and artifact-replayable, every new check is mutation-proved, public schedule/program boundary changes are reviewed by Tom, and targeted tests/Clippy plus the batch gate pass. Metal realization and calibrated selection remain downstream.
+The target-neutral multi-pass alternative is verified and carries stable verified kernel-program identity, every new check is mutation-proved, public schedule/program boundary changes are reviewed by Tom, and targeted tests/Clippy plus the batch gate pass. Artifact packaging/replay, Metal realization, and calibrated selection remain downstream.
+
+## Graph maintenance
+
+- Keep artifact encoding and replay in `realize-parallel-reduction-strategies-on-metal`; this ticket closes on target-neutral verified program identity within its declared scopes.
+- Activate `implement-boundary-property-enforcers` only if its named mismatch test actually fails on the new cross-stage boundary.
+- Preserve both serial and multi-pass alternatives for downstream realization and measured calibration rather than selecting one here.

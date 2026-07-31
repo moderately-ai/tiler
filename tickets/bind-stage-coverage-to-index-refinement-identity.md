@@ -10,10 +10,14 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, identity]
 ---
+## User-visible outcome
+
+Every executable stage names the exact checked index-refinement receipt for each semantic occurrence it covers, so neither compiler planning nor artifact replay can silently substitute unrelated evidence.
+
 A verified executable stage must name the exact index-refinement evidence that
 proves each semantic occurrence it claims to implement.
 
-## Derived record shape
+## Implementation keys
 
 **The question, atomic:** what shape does a covered occurrence take once it must carry its refinement evidence?
 
