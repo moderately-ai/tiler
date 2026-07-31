@@ -1,7 +1,7 @@
 ---
 id: admit-the-tiler-facade-and-proc-macro-crate-boundary
 title: Admit the tiler facade and proc-macro crate boundary
-status: review
+status: done
 priority: p1
 dependencies: []
 related: [prototype-inline-proc-macro-frontend]
@@ -9,9 +9,6 @@ scopes: [implementation/frontend, implementation/workspace]
 shared_scopes: [implementation/cargo-lock, project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: loop-admit-the-ti
-lease_expires_at: 1785517249
 ---
 ## User-visible outcome
 
@@ -31,7 +28,11 @@ Ratify the two-crate topology and public `tiler::tensor!` path before workspace 
 
 Tom approved the `tiler` normal facade plus `tiler-macros` proc-macro implementation topology and the public `tiler::tensor!` path. Implementation may proceed with the dependency direction and exclusions above; the exact manifest/re-export diff remains part of acceptance evidence rather than a reopened topology choice.
 
-## Review packet (2026-07-31) — awaiting Tom's acceptance
+## Accepted (2026-07-31)
+
+Tom accepted the exact surface below without exception. The crate documentation now states the accepted status; the corpus amendment and admission ADR remain owned by `record-the-frontend-crate-admission-in-the-design-corpus`, which this acceptance unblocks.
+
+## Review packet (2026-07-31) — accepted above
 
 The implementation landed on `tkt/admit-the-tiler-facade-and-proc-macro-crate-boundary`. The ratification above settled the *topology*; the surface below is a concrete draft and **is not accepted until Tom accepts the exact interface**. ADR 0075 classifies both a new workspace member and a new crate-root `pub mod` as always requiring that review, and this diff is both. No document in the corpus describes this boundary as accepted, and `crates/tiler/src/lib.rs` says so in its own module documentation, per ADR 0074 §7.
 

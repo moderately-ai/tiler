@@ -22,19 +22,14 @@
 //!
 //! # Public boundary status
 //!
-//! This crate is a **reviewed draft boundary** (ADR 0074 §7, ADR 0075), on the
-//! same footing as `tiler_artifact::program` and `tiler_runtime::load`: it is
-//! `pub` so its shape can be reviewed as a whole, and it is not an accepted
-//! public facade until Tom accepts the exact interface. ADR 0075 classifies a
-//! new workspace member and a new crate-root `pub mod` as always requiring that
-//! review, and this crate is both.
-//!
-//! Tom ratified the two-crate topology and the `tiler::tensor!` path on
-//! 2026-07-30, which is narrower than accepting this surface: the manifests,
-//! the dependency direction, the re-export, and [`__private`] are the review
-//! packet, and unlike every other crate in the workspace these two carry no
-//! admission record yet. Admitting them stabilizes neither the macro grammar
-//! nor the runtime adapter, which their own tickets own.
+//! This crate is an **accepted public boundary**: Tom ratified the two-crate
+//! topology and the `tiler::tensor!` path on 2026-07-30 and accepted the exact
+//! surface — the manifests, the dependency direction, the re-export, and
+//! [`__private`] — on 2026-07-31 under
+//! `admit-the-tiler-facade-and-proc-macro-crate-boundary`. Acceptance
+//! stabilizes neither the macro grammar nor the runtime adapter, which their
+//! own tickets own, and the admission record in the design corpus is owned by
+//! `record-the-frontend-crate-admission-in-the-design-corpus`.
 //!
 //! # What is here today
 //!
