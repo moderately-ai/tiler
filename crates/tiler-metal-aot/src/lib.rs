@@ -23,6 +23,11 @@
 //!   canonical [`identity::CompilationIdentity`] to the request and exact
 //!   resolved paths that [`driver::PreparedCompilation::compile`] consumes, so a
 //!   cache lookup and its miss path cannot observe different selections.
+//! - **One stated family selection.** [`family::ArtifactFamilySelection`] is the
+//!   canonical typed request field ADR 0049 requires an inline AOT request to
+//!   carry. It fans out to one compile target per selected family, so a request
+//!   naming several families is several compilations and never one payload
+//!   relabelled. It is a reviewed draft boundary; see that module.
 //!
 //! The driver fails closed. When the toolchain or SDK cannot be resolved, when a
 //! tool reports failure, or when the linker's output does not begin with the
@@ -82,11 +87,11 @@
 pub mod diagnostic;
 /// The offline toolchain driver and its resolution and compilation entry points.
 pub mod driver;
-// The canonical artifact-family selection ADR 0049 requires every inline AOT
-// request to carry. Crate-private under ADR 0074 convention 7 until its facade
-// is reviewed; its module documentation names what it reserves, and states which
-// half of ADR 0053 belongs to the frontend proc-macro crate instead.
-mod family;
+// Documented by the module's own `//!` header, which states why the surface is
+// public here rather than copied into the frontend or moved beneath this crate,
+// and which half of ADR 0053 belongs to the frontend proc-macro crate instead.
+// Every item in it is a reviewed *draft* boundary (ADR 0074 convention 7).
+pub mod family;
 // Documented by the module's own `//!` header so its intra-doc links resolve in
 // the identity module's scope rather than this crate-root scope.
 pub mod identity;

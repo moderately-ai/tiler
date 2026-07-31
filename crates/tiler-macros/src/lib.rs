@@ -10,7 +10,9 @@
 //!
 //! # What this crate implements today
 //!
-//! Only the expansion entry point and the two behaviours [`tensor`] documents.
+//! The expansion entry point, the two behaviours [`tensor`] documents, and the
+//! frontend's statement of its artifact-family delivery policy, in the
+//! crate-private `delivery` module.
 //! There is no grammar here: token parsing, span mapping onto a tensor
 //! program, and ahead-of-time expansion are owned by
 //! `define-inline-symbol-binding-and-runtime-value-adaptation` and
@@ -19,8 +21,25 @@
 //!
 //! What the current expansion does prove is the part a later grammar cannot
 //! re-litigate cheaply: that `tiler::tensor!` resolves through the facade's
-//! re-export, and that generated tokens reach a stable path inside the facade
-//! the consumer already depends on.
+//! re-export, that generated tokens reach a stable path inside the facade the
+//! consumer already depends on, and that the delivery policy an expansion
+//! performs is a stated, validated, canonical value rather than an unstated
+//! consequence of what the expansion happens to do.
+//!
+//! # Why this crate, and not the facade, depends on the offline driver
+//!
+//! ADR 0049 requires every inline AOT request to carry a canonical typed
+//! `ArtifactFamilySelection`, and its one canonical encoder is
+//! [`tiler_metal_aot::family`] — copying it into the frontend would create a
+//! second authority over one identity subject, and moving it below the driver
+//! would spend the empty dependency closure ADR 0077 item 2 decides. So the
+//! frontend depends on the driver. It is *this* crate that holds the edge
+//! rather than `tiler`, because a `proc-macro` crate and its dependencies are
+//! built for the host and never reach a consumer's target build graph, whereas
+//! the same edge on the facade would link a process-spawning Apple toolchain
+//! driver into every consumer on every platform — the cost ADR 0077 item 4
+//! already refused for `tiler-metal`. `dependency_direction` in the `tiler`
+//! crate is what keeps the facade free of it.
 //!
 //! # This crate never becomes a dependency of the compiler
 //!
@@ -31,6 +50,8 @@
 //! and fails if an inward edge ever appears.
 
 use proc_macro::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenStream, TokenTree};
+
+mod delivery;
 
 /// The path generated tokens use to reach the facade.
 ///
@@ -52,10 +73,14 @@ const FACADE_ANCHOR_PATH: &str = "::tiler::__private::expansion_anchor()";
 ///
 /// The grammar is not defined yet, and this macro does not invent one:
 ///
-/// - Empty input expands to an inert anchor value —
-///   `::tiler::__private::expansion_anchor()` — which carries no tensor
+/// - Empty input states its artifact-family delivery policy
+///   (`delivery::stated_policy`, `FallbackOnly` today), validates it into a
+///   canonical `ArtifactFamilySelection`, and — because that selection invokes
+///   no backend compiler — expands to an inert anchor value,
+///   `::tiler::__private::expansion_anchor()`, which carries no tensor
 ///   semantics and exists so the facade re-export and the generated path are
-///   compiler-checked.
+///   compiler-checked. A policy this expansion cannot deliver becomes a
+///   spanned compile error rather than a silent fallback.
 /// - Any non-empty input is a compile error spanned at its first token. The
 ///   message names the tickets that own the grammar.
 ///
@@ -72,18 +97,7 @@ const FACADE_ANCHOR_PATH: &str = "::tiler::__private::expansion_anchor()";
 #[proc_macro]
 pub fn tensor(input: TokenStream) -> TokenStream {
     match input.into_iter().next() {
-        // Not `expect`: a panic here aborts rustc with "proc macro panicked"
-        // and no span, which is the worst diagnostic this crate could produce.
-        // The path is a fixed valid expression and this branch is not expected
-        // to be reachable, but the cost of routing it to a real error is one
-        // line and the cost of getting it wrong is a useless compiler message.
-        None => FACADE_ANCHOR_PATH.parse().unwrap_or_else(|_| {
-            spanned_compile_error(
-                Span::call_site(),
-                "`tiler-macros` failed to lex its own facade anchor path; this is a defect in \
-                 `tiler-macros`, not in the invocation",
-            )
-        }),
+        None => expand_region(),
         Some(first) => spanned_compile_error(
             first.span(),
             "`tiler::tensor!` has no grammar yet, so this input is rejected rather than \
@@ -91,6 +105,31 @@ pub fn tensor(input: TokenStream) -> TokenStream {
              `define-inline-symbol-binding-and-runtime-value-adaptation` and \
              `prototype-inline-proc-macro-frontend`",
         ),
+    }
+}
+
+/// Expands one region, after stating and validating its delivery policy.
+///
+/// The policy is stated before any tokens are produced, and a policy this
+/// expansion cannot deliver returns the refusal instead of the anchor. Emitting
+/// the fallback anyway would be the one thing ADR 0053 forbids outright: a
+/// selected family "cannot silently turn a selected-family build failure into
+/// fallback on the matching target".
+fn expand_region() -> TokenStream {
+    match delivery::stated_delivery(delivery::stated_policy()) {
+        // Not `expect`: a panic here aborts rustc with "proc macro panicked"
+        // and no span, which is the worst diagnostic this crate could produce.
+        // The path is a fixed valid expression and this branch is not expected
+        // to be reachable, but the cost of routing it to a real error is one
+        // line and the cost of getting it wrong is a useless compiler message.
+        Ok(_no_backend_work) => FACADE_ANCHOR_PATH.parse().unwrap_or_else(|_| {
+            spanned_compile_error(
+                Span::call_site(),
+                "`tiler-macros` failed to lex its own facade anchor path; this is a defect in \
+                 `tiler-macros`, not in the invocation",
+            )
+        }),
+        Err(refusal) => spanned_compile_error(Span::call_site(), &refusal.to_string()),
     }
 }
 

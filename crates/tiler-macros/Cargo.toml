@@ -13,5 +13,17 @@ test = true
 doctest = true
 doc = true
 
+# A `proc-macro` crate and everything it depends on are built for the *host* and
+# never enter a consumer's target build graph. That is what makes this the crate
+# permitted to hold the edge to the offline Apple driver: the frontend needs the
+# canonical `ArtifactFamilySelection` that ADR 0049 requires every inline AOT
+# request to carry, and putting the same edge on the `tiler` facade would link a
+# process-spawning toolchain driver into every consumer on every platform
+# instead. `crates/tiler/tests/dependency_direction.rs` keeps the facade free of
+# it. The edge is normal rather than development because the expansion itself
+# states the policy, not only its tests.
+[dependencies]
+tiler-metal-aot.workspace = true
+
 [lints]
 workspace = true

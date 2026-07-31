@@ -33,9 +33,8 @@
 //! be a second identity authority over the same subject. The subject is
 //! therefore emitted as canonical bytes and the caller that already owns the
 //! governed algorithm digests them, exactly as
-//! `ArtifactFamilySelection::canonical_bytes` does (ADR 0074 convention 2).
-//! That sibling is named rather than linked because `family` stays crate-private
-//! under convention 7, and a link a reader cannot follow is worse than a name.
+//! [`ArtifactFamilySelection::canonical_bytes`](crate::family::ArtifactFamilySelection::canonical_bytes)
+//! does (ADR 0074 convention 2).
 //!
 //! # What this module is *not*: the cache protocol
 //!

@@ -224,6 +224,24 @@ ArtifactDeliveryPolicy =
   | FallbackOnly
 ```
 
+That grammar has exactly one canonical encoder, `tiler_metal_aot::family`, and a
+frontend states a policy by validating it through
+`ArtifactFamilySelection::new`. Canonical family ordering, duplicate and empty
+refusal, the per-family deployment minimum and Metal language standard, and the
+selection's identity bytes are that module's; a frontend that restated any of
+them would be a second authority over one subject. The surface is a reviewed
+draft rather than a stable API until Tom accepts it.
+
+The frontend edge to that module belongs to the proc-macro crate, not to the
+consumer-facing facade. A `proc-macro` crate and its dependencies are built for
+the host and never enter a consumer's target build graph, so the macro crate can
+hold an edge to a process-spawning Apple toolchain driver at no cost to a
+consumer; the same edge on the facade would compile that driver into every
+consumer on every platform and would publish Apple backend policy on a
+consumer-neutral boundary. Nothing a consumer writes needs the type: a policy is
+stated in region syntax, and generated tokens name `#[cfg]` predicates and byte
+literals.
+
 For each selected family, successful expansion embeds its payload under the
 family's governed consumer-target `#[cfg]`. If that family cannot be built on
 the macro host, expansion emits the retained toolchain/compiler diagnostic as a

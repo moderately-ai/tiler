@@ -40,11 +40,77 @@
 //! distinguishable from "a producer assembled a selection and forgot to put a
 //! family in it". The second is [`FamilySelectionError::EmptySelection`], and
 //! rejecting it is what leaves `FallbackOnly` the only spelling of the first.
-
-#![allow(
-    dead_code,
-    reason = "the family selection is landed ahead of its production caller (ADR 0074 convention 7). It reserves the canonical `ArtifactFamilySelection` that ADR 0049 requires every inline AOT compilation request to carry, and its first non-test caller is the frontend proc-macro crate, which emits the `#[cfg]`-gated delivery half. What is absent is that caller and no longer the crate or the boundary it was once waiting on: `tiler-macros` and its `tiler` facade were admitted and accepted on 2026-07-31, and `prototype-public-compiler-api` is done — this crate's compilation identity is public and `tiler-build` consumes it through `PreparedCompilation::identity`. `tiler-macros` has no grammar today and expands only to the facade's anchor, so nothing constructs a selection yet; `promote-artifact-family-selection-for-the-frontend` owns promoting this type to that frontend and `prototype-inline-proc-macro-frontend` owns the grammar and the delivery half that would call it."
-)]
+//!
+//! # Why this module is public, and why it is public *here*
+//!
+//! Every public item here is a reviewed *draft* boundary under ADR 0074
+//! convention 7: it is not a stable request API and must not be treated as one
+//! until Tom accepts the exact surface that
+//! `promote-artifact-family-selection-for-the-frontend` presents.
+//!
+//! The frontend has to state this policy, and three of the four ways to give it
+//! the vocabulary fail before the fourth is chosen. Copying the types into the
+//! frontend would put a second canonical encoder over one subject, which is the
+//! duplication ADR 0074 convention 2 exists to prevent. Moving them to a lower
+//! crate — a new one, or `tiler-ir` — would require this crate to depend on that
+//! owner, and ADR 0077 item 2 decides this crate's dependency closure empty;
+//! `tiler-ir` would additionally acquire Apple backend vocabulary, which the
+//! architecture contract keeps out of the consumer-agnostic core. Re-exporting
+//! the vocabulary from the `tiler` facade would put a process-spawning Apple
+//! toolchain driver into the target build graph of every consumer on every
+//! platform, and would publish backend-only policy on a consumer-neutral
+//! frontend boundary — the cost ADR 0077 item 4 already refused for
+//! `tiler-metal`.
+//!
+//! What survives is that this crate is the lowest owner both sides may depend
+//! on: it has nothing beneath it, so a frontend edge to it costs the closure
+//! nothing. The edge is held by `tiler-macros` rather than by `tiler`, because
+//! a `proc-macro` crate and its dependencies are built for the host and never
+//! enter a consumer's target build graph, and because the proc-macro crate is
+//! the component the accepted packaging profile already charges with invoking
+//! the AOT pipeline.
+//!
+//! # What the driver does with a selection
+//!
+//! [`ArtifactFamilySelection::compile_targets`] is the fan-out: one
+//! [`MetalTarget`] per selected family, in canonical order. Each becomes one
+//! [`CompileRequest`](crate::input::CompileRequest) sharing the invocation's
+//! source and flags, and each is prepared and compiled separately — which is
+//! what "one envelope, N payloads" means at this layer.
+//!
+//! ```no_run
+//! use tiler_metal_aot::driver::Toolchain;
+//! use tiler_metal_aot::family::{
+//!     ArtifactDeliveryPolicy, ArtifactFamilySelection, FamilyRequirement, SelectedFamily,
+//! };
+//! use tiler_metal_aot::input::{
+//!     ApplePlatform, CompileRequest, DeploymentMinimum, MslVersion, NumericalRealization,
+//!     OptimizationLevel,
+//! };
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let selection = ArtifactFamilySelection::new(ArtifactDeliveryPolicy::SelectedFamilies {
+//!     families: vec![SelectedFamily {
+//!         family: ApplePlatform::MacOs,
+//!         deployment_minimum: DeploymentMinimum::new(14, 0),
+//!         msl_version: MslVersion::Metal3_1,
+//!     }],
+//!     requirement: FamilyRequirement::RequiredWhenTargetMatches,
+//! })?;
+//!
+//! let toolchain = Toolchain::system();
+//! for target in selection.compile_targets()? {
+//!     let request = CompileRequest::new(
+//!         "kernel void main0() {}",
+//!         target,
+//!         OptimizationLevel::Default,
+//!         NumericalRealization::strict_baseline(),
+//!     );
+//!     let _artifact = toolchain.prepare(&request)?.compile()?;
+//! }
+//! # Ok(())
+//! # }
+//! ```
 
 use core::fmt;
 
@@ -70,13 +136,13 @@ const SELECTION_DOMAIN: &[u8] = b"tiler.metal-aot.artifact-family-selection.v1\0
 /// A caller-constructed leaf value record, so its fields are visible
 /// (ADR 0074 convention 6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct SelectedFamily {
+pub struct SelectedFamily {
     /// The artifact family to build.
-    pub(crate) family: ApplePlatform,
+    pub family: ApplePlatform,
     /// The deployment minimum this family is built at.
-    pub(crate) deployment_minimum: DeploymentMinimum,
+    pub deployment_minimum: DeploymentMinimum,
     /// The MSL standard this family is compiled under.
-    pub(crate) msl_version: MslVersion,
+    pub msl_version: MslVersion,
 }
 
 impl SelectedFamily {
@@ -116,7 +182,7 @@ impl SelectedFamily {
 /// that the variant alone determines — which would let two selections meaning
 /// different things share identity bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ArtifactDeliveryPolicy {
+pub enum ArtifactDeliveryPolicy {
     /// Build each named family. A consumer target matching a selected family
     /// requires that family's artifact and must not silently receive another's.
     ///
@@ -147,7 +213,7 @@ pub(crate) enum ArtifactDeliveryPolicy {
 /// which makes adding a variant a compile error at the encoder
 /// (ADR 0074 convention 3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum FamilyRequirement {
+pub enum FamilyRequirement {
     /// The family's artifact is required; a build failure is a compile error on
     /// the matching target and never a silent fallback.
     RequiredWhenTargetMatches,
@@ -160,7 +226,7 @@ pub(crate) enum FamilyRequirement {
 /// selected list, and a family no governed SDK produces
 /// (ADR 0074 conventions 4 and 6).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ArtifactFamilySelection {
+pub struct ArtifactFamilySelection {
     policy: ArtifactDeliveryPolicy,
 }
 
@@ -181,7 +247,7 @@ impl ArtifactFamilySelection {
     /// [`FamilySelectionError::DuplicateFamily`] for a repeated family, or
     /// [`FamilySelectionError::InvalidTarget`] when one family's platform,
     /// minimum, and language revision are not a governed target.
-    pub(crate) fn new(policy: ArtifactDeliveryPolicy) -> Result<Self, FamilySelectionError> {
+    pub fn new(policy: ArtifactDeliveryPolicy) -> Result<Self, FamilySelectionError> {
         let policy = match policy {
             ArtifactDeliveryPolicy::FallbackOnly => ArtifactDeliveryPolicy::FallbackOnly,
             ArtifactDeliveryPolicy::SelectedFamilies {
@@ -212,13 +278,15 @@ impl ArtifactFamilySelection {
     }
 
     /// Returns the validated delivery policy.
-    pub(crate) const fn policy(&self) -> &ArtifactDeliveryPolicy {
+    #[must_use]
+    pub const fn policy(&self) -> &ArtifactDeliveryPolicy {
         &self.policy
     }
 
     /// Returns the selected families in canonical order, empty under
     /// `FallbackOnly`.
-    pub(crate) fn families(&self) -> &[SelectedFamily] {
+    #[must_use]
+    pub fn families(&self) -> &[SelectedFamily] {
         match &self.policy {
             ArtifactDeliveryPolicy::SelectedFamilies { families, .. } => families,
             ArtifactDeliveryPolicy::FallbackOnly => &[],
@@ -231,7 +299,8 @@ impl ArtifactFamilySelection {
     /// caller acts on and `FallbackOnly` is the *reason*; a caller that inferred
     /// the reason from an empty target list would also infer it from a selection
     /// this constructor rejects.
-    pub(crate) const fn invokes_backend_compiler(&self) -> bool {
+    #[must_use]
+    pub const fn invokes_backend_compiler(&self) -> bool {
         match &self.policy {
             ArtifactDeliveryPolicy::SelectedFamilies { .. } => true,
             ArtifactDeliveryPolicy::FallbackOnly => false,
@@ -250,7 +319,7 @@ impl ArtifactFamilySelection {
     /// Returns [`FamilySelectionError::InvalidTarget`]. The constructor already
     /// rejects that case, so this is a propagated impossibility rather than a
     /// reachable failure.
-    pub(crate) fn compile_targets(&self) -> Result<Vec<MetalTarget>, FamilySelectionError> {
+    pub fn compile_targets(&self) -> Result<Vec<MetalTarget>, FamilySelectionError> {
         self.families()
             .iter()
             .map(|selected| selected.compile_target())
@@ -272,14 +341,15 @@ impl ArtifactFamilySelection {
     /// already owns the governed algorithm digests these bytes instead
     /// (ADR 0074 convention 2).
     ///
-    /// The framing is [`crate::identity::push_len`], this crate's sole admitted
+    /// The framing is `crate::identity::push_len`, this crate's sole admitted
     /// copy of the workspace's canonical eight-byte big-endian prefix. It is not
     /// merely shared for tidiness: this function previously carried a private
     /// four-byte `u32` framing while `identity.rs` framed the compilation
     /// subject in eight, so one crate held two widths under one name, and a
     /// reader comparing the two encoders had nothing but the `u32` literal to
     /// tell them apart.
-    pub(crate) fn canonical_bytes(&self) -> Vec<u8> {
+    #[must_use]
+    pub fn canonical_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(SELECTION_DOMAIN);
         match &self.policy {
@@ -310,7 +380,7 @@ impl ArtifactFamilySelection {
 /// caller forwards or partially classifies, which no crate maps totally.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub(crate) enum FamilySelectionError {
+pub enum FamilySelectionError {
     /// `SelectedFamilies` named no family. `FallbackOnly` is the explicit
     /// spelling of a request that deliberately builds nothing.
     EmptySelection,
@@ -354,7 +424,10 @@ mod tests {
         ArtifactDeliveryPolicy, ArtifactFamilySelection, FamilyRequirement, FamilySelectionError,
         SelectedFamily,
     };
-    use crate::input::{ApplePlatform, AppleSdk, DeploymentMinimum, MslVersion};
+    use crate::input::{
+        ApplePlatform, AppleSdk, CompileRequest, DeploymentMinimum, MetalTargetError, MslVersion,
+        NumericalRealization, OptimizationLevel,
+    };
 
     fn selected(family: ApplePlatform, major: u16, minor: u16) -> SelectedFamily {
         SelectedFamily {
@@ -406,6 +479,65 @@ mod tests {
                 "a compilation must produce the family that selected it",
             );
         }
+    }
+
+    /// The driver's own request type consumes the selection, one per family.
+    ///
+    /// This is the consumption site the frontend shares: the selection fans out
+    /// to compile targets, each target becomes one [`CompileRequest`] carrying
+    /// the invocation's single source and flags, and each request is what
+    /// `Toolchain::prepare` binds. Asserting the *flags* rather than the target
+    /// is what shows the fan-out survives into the exact compiler invocation —
+    /// a selection that collapsed two families would produce one `-target`
+    /// here, not merely one target above.
+    #[test]
+    fn every_selected_family_becomes_its_own_compile_request() {
+        let selection = selection(vec![
+            selected(ApplePlatform::MacOs, 14, 0),
+            selected(ApplePlatform::IOsSimulator, 17, 0),
+        ]);
+        let requests: Vec<CompileRequest> = selection
+            .compile_targets()
+            .expect("every family resolves")
+            .into_iter()
+            .map(|target| {
+                CompileRequest::new(
+                    "kernel void main0() {}",
+                    target,
+                    OptimizationLevel::Default,
+                    NumericalRealization::strict_baseline(),
+                )
+            })
+            .collect();
+
+        assert_eq!(requests.len(), selection.families().len());
+        let triples: Vec<String> = requests
+            .iter()
+            .map(|request| request.compile_flags()[1].clone())
+            .collect();
+        assert_eq!(
+            triples,
+            ["air64-apple-ios17.0-simulator", "air64-apple-macos14.0"],
+            "the requests follow canonical family order, one invocation each",
+        );
+        for (request, family) in requests.iter().zip(selection.families()) {
+            assert_eq!(request.target.platform(), family.family);
+            assert_eq!(request.source, "kernel void main0() {}");
+        }
+    }
+
+    /// `FallbackOnly` produces no request at all, so no compiler is invoked.
+    #[test]
+    fn fallback_only_produces_no_compile_request() {
+        let selection = ArtifactFamilySelection::new(ArtifactDeliveryPolicy::FallbackOnly)
+            .expect("FallbackOnly is always valid");
+        assert!(
+            selection
+                .compile_targets()
+                .expect("no family to resolve")
+                .is_empty()
+        );
+        assert!(!selection.invokes_backend_compiler());
     }
 
     /// Two families are two compilations; neither is dropped or merged.
@@ -507,6 +639,33 @@ mod tests {
             error,
             FamilySelectionError::DuplicateFamily {
                 family: ApplePlatform::MacOs,
+            },
+        );
+    }
+
+    /// A family whose facts are not a governed target is rejected by the
+    /// *constructor*, not lazily at the first fan-out.
+    ///
+    /// That distinction is the whole of what a verified product buys here. A
+    /// selection that validated its families only when someone asked for
+    /// compile targets would let an unbuildable request reach identity, explain
+    /// output, and a cache subject looking exactly like a valid one.
+    #[test]
+    fn a_family_below_its_language_floor_is_rejected_at_construction() {
+        let error = ArtifactFamilySelection::new(ArtifactDeliveryPolicy::SelectedFamilies {
+            families: vec![selected(ApplePlatform::MacOs, 13, 0)],
+            requirement: FamilyRequirement::RequiredWhenTargetMatches,
+        })
+        .expect_err("MSL 3.1 requires macOS 14.0");
+        assert_eq!(
+            error,
+            FamilySelectionError::InvalidTarget {
+                source: MetalTargetError::DeploymentMinimumTooLow {
+                    platform: ApplePlatform::MacOs,
+                    language: MslVersion::Metal3_1,
+                    requested: DeploymentMinimum::new(13, 0),
+                    required: DeploymentMinimum::new(14, 0),
+                },
             },
         );
     }

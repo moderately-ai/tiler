@@ -35,6 +35,19 @@ Two conflicts in `docs/integration/frontends.md` (`contract_status: accepted`) w
 
 Separately settled: Tom accepted the exact facade surface on 2026-07-31, so the admission ADR this ticket writes records an accepted decision — `decision_status: accepted` is correct, not an assumption.
 
+## The macro crate's edge is no longer empty (2026-07-31)
+
+The third bullet above says the block needs `tiler-macros -> []`. That was true when it was written and is now conditional. `promote-artifact-family-selection-for-the-frontend` gives `tiler-macros` a normal dependency on `tiler-metal-aot`, so the frontend rows read:
+
+```text
+tiler-macros -> [tiler-metal-aot]
+tiler        -> [tiler-macros]      + development [trybuild]
+```
+
+Record the reasoning with them, because the placement is the decision rather than the edge: a `proc-macro` crate and its dependencies are built for the host and never enter a consumer's target build graph, which is why the macro crate may hold an edge to a process-spawning Apple toolchain driver and the facade may not — the same cost ADR 0077 item 4 refused for `tiler-metal`. `crates/tiler/tests/dependency_direction.rs` checks both halves. `tiler-metal-aot`'s empty closure is untouched: the edge points at the driver, not out of it. ADR 0077 item 3's own restatement of the block has the same omission and the same fix.
+
+**Not yet settled.** That promotion is presented to Tom under ADR 0075 and was unaccepted when this note was written. Record the edge only once it is accepted; if it is rejected or moved to the facade, the rows change accordingly.
+
 ## Closes when
 
 Every site above states what is true; the admission ADR exists with a `decision_status` matching Tom's actual acceptance; `docs/decisions/README.md` and the affected catalog views list it; the `docs/status.md` absence block runs green as written; and the two `frontends.md` conflicts are resolved by Tom's answer rather than by an edit that picks a side.
