@@ -59,15 +59,16 @@
 //! guarantee. What the harness substitutes, and why that substitution does not
 //! reach these properties, is stated in its own module documentation.
 //!
-//! # Collection is present, and not yet reachable
+//! # Maintenance is public, explicit, and never on the expansion path
 //!
-//! The private `collect` module implements whole-cache accounting, a bounded
-//! collection, and an out-of-service purge. Every one of its types is
-//! `pub(crate)` under ADR 0074 convention 7 and none is re-exported here, so
-//! **no consumer can collect anything today**. The review that would promote it
-//! is `accept-the-expansion-cache-maintenance-boundary`; the accepted expansion
-//! boundary deliberately excludes namespace-wide accounting, collection, and
-//! purge because they operate over a namespace rather than one key.
+//! Tom accepted the maintenance boundary on 2026-07-31 under
+//! `accept-the-expansion-cache-maintenance-boundary`: [`ExpansionCache::account`],
+//! [`ExpansionCache::collect`], and [`ExpansionCache::purge`] sit beside the
+//! key-oriented operations, with the report vocabulary re-exported here. Nothing
+//! calls any of them automatically — a bound exists exactly when a caller states
+//! one, [`CollectionBound::UNBOUNDED`] is the only bound this crate supplies and
+//! removes nothing, and every removal is named individually in the report that
+//! performed it.
 //!
 //! Its bound defaults to removing nothing, it never blocks on a key lock, and it
 //! names every entry it removes. What it preserves of the five properties above,
@@ -107,6 +108,10 @@ mod subject;
 mod tests;
 
 pub use bundle::{BundleRejection, BundleSection};
+pub use collect::{
+    CacheAccounting, CollectionBound, CollectionOrder, CollectionOutcome, CollectionReport,
+    EntryFact, PurgeReport, RemovedEntry,
+};
 pub use key::{CacheKey, KEY_LABEL_BYTES, KeyTextRejection};
 pub use layout::PathRejection;
 pub use limits::Limits;

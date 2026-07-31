@@ -44,7 +44,9 @@
 //! — the cache type and its operations, the composed-subject and key surface,
 //! the rejection and report vocabulary, [`expansion::Limits`], the promoted
 //! preflight probe, and the `tiler_artifact` digest promotion it consumes.
-//! Namespace-wide accounting, collection, and purge remain staged crate-private;
-//! `accept-the-expansion-cache-maintenance-boundary` owns that separate decision.
+//! Namespace-wide maintenance — accounting, bounded collection, and the
+//! out-of-service purge — was accepted separately on 2026-07-31 under
+//! `accept-the-expansion-cache-maintenance-boundary` and lives on the same
+//! cache type as explicit operations that never run on the expansion path.
 
 pub mod expansion;

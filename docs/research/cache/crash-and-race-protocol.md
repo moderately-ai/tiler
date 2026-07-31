@@ -357,9 +357,9 @@ of scope for this ticket.
    never-blocking collector that names every entry it removes, and a purge that
    retires the version root in one rename. `expansion::harness` runs the ladder
    at 1, 8, and 32 real writer processes against a real collecting process.
-   Every type is staged `pub(crate)` under ADR 0074 convention 7, so no consumer
-   can reach it until `accept-the-expansion-cache-maintenance-boundary` promotes
-   it, and nothing schedules a collection yet.
+   The maintenance surface was accepted and promoted on 2026-07-31 under
+   `accept-the-expansion-cache-maintenance-boundary`; nothing schedules a
+   collection yet, and nothing runs one automatically.
 7. Run the harness under Cargo and rust-analyzer process patterns once the
    proc-macro spike exists; this ticket only establishes the storage protocol.
 

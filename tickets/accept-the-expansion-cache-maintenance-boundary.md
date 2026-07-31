@@ -1,7 +1,7 @@
 ---
 id: accept-the-expansion-cache-maintenance-boundary
 title: Accept the expansion-cache maintenance boundary
-status: todo
+status: done
 priority: p2
 dependencies: [accept-the-tiler-cache-public-boundary]
 related: [design-bounded-expansion-cache-garbage-collection, decide-the-expansion-cache-collection-schedule]
@@ -20,6 +20,12 @@ This is separate from key-oriented lookup and publication because maintenance ha
 A maintenance caller can explain what occupies the cache, enforce an explicit
 bound, and report what was removed without making collection an implicit
 correctness dependency for ordinary compilation.
+
+## Accepted (2026-07-31)
+
+Tom decided both halves. Siting: maintenance stays on `ExpansionCache` — `account()`, `collect(&CollectionBound)`, and `purge()` join the accepted `evict` and `sweep_temporaries`, because a separate handle would duplicate the root state, split one root's operations across two types, and supersede an accepted surface while the never-on-the-expansion-path invariant is behavioural (explicit calls only) rather than structural. Vocabulary: accepted in full as implemented — `CollectionBound` (public optional ceilings, `UNBOUNDED` the only supplied bound, no default ceiling ever), single-variant `CollectionOrder::OldestPublicationFirst` with its recorded eliminations and honest insertion-recency cost, `EntryFact`, `CacheAccounting` (unrecognized reported never removed, quarantine counted never collected), `RemovedEntry`, `CollectionOutcome` with `BoundNotReached` carrying the remainder, `CollectionReport` with individual removals and the `accounts_for_every_entry` partition check, and `PurgeReport`.
+
+One narrowing against the packet as asked: the public `collect` takes only a bound — the order is reported on the result, not chosen by the caller, because exactly one order exists and a parameter would imply a choice the vocabulary cannot yet offer. The private removal step (`remove_if_unchanged`) and its `Disposition` remain crate-private as implementation. The promotion landed with the acceptance: the ADR 0074 §7 staging allow is removed, the vocabulary is re-exported from `tiler_cache::expansion`, crate and research docs state the accepted status, and `decide-the-expansion-cache-collection-schedule` can now name the accepted caller surface.
 
 ## Closes when
 

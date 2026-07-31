@@ -67,8 +67,8 @@
 //! republished, so a selected entry is removed only under its own key lock and
 //! only after a re-`stat` agrees with what the scan saw; a replacement is left
 //! alone as [`CollectionOutcome`]'s `superseded` count. See
-//! [`ExpansionCache::remove_if_unchanged`] for what that comparison does and
-//! does not establish.
+//! the removal-if-unchanged comparison on [`ExpansionCache::collect`] for what
+//! that comparison does and does not establish.
 //!
 //! **Crash and race behaviour.** Stated in full on [`ExpansionCache::collect`]
 //! and [`ExpansionCache::purge`].
@@ -98,16 +98,6 @@
 //! proc-macro frontend and no maintenance command to hang it on — and choosing
 //! a schedule now would be designing against an imagined caller.
 
-#![allow(
-    dead_code,
-    reason = "Convention 7 of ADR 0074: this authority is staged crate-private until Tom accepts \
-              its facade. It reserves whole-cache accounting, bounded collection, and the \
-              out-of-service purge, exercised in full by `expansion::tests` and \
-              `expansion::harness`. `accept-the-expansion-cache-maintenance-boundary` is the \
-              review that would promote it, and a proc-macro frontend or maintenance command is \
-              the slice that would call it."
-)]
-
 use std::cmp::Ordering;
 use std::fs;
 use std::io;
@@ -129,11 +119,11 @@ use super::store::ExpansionCache;
 /// A caller-constructed leaf value record, so its fields are visible
 /// (ADR 0074 convention 6).
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub(crate) struct CollectionBound {
+pub struct CollectionBound {
     /// Maximum total bytes of final entries the cache may retain.
-    pub(crate) max_total_bytes: Option<u64>,
+    pub max_total_bytes: Option<u64>,
     /// Maximum number of final entries the cache may retain.
-    pub(crate) max_entries: Option<u64>,
+    pub max_entries: Option<u64>,
 }
 
 impl CollectionBound {
@@ -141,7 +131,7 @@ impl CollectionBound {
     ///
     /// The default, and the only bound this crate supplies. Collecting under it
     /// is how a caller measures a cache without changing it.
-    pub(crate) const UNBOUNDED: Self = Self {
+    pub const UNBOUNDED: Self = Self {
         max_total_bytes: None,
         max_entries: None,
     };
@@ -189,7 +179,7 @@ impl CollectionBound {
 ///   objective: the cost of a wrong eviction is one recompilation regardless of
 ///   the entry's size, so ordering by size optimizes the metric nobody pays.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) enum CollectionOrder {
+pub enum CollectionOrder {
     /// Least recently published first, by the entry file's modification time.
     ///
     /// Publication sets it as a side effect of writing the temporary that is
@@ -208,7 +198,8 @@ pub(crate) enum CollectionOrder {
 
 impl CollectionOrder {
     /// Returns this order's stable lowercase identifier, for diagnostics.
-    pub(crate) const fn as_str(self) -> &'static str {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::OldestPublicationFirst => "oldest-publication-first",
         }
@@ -217,11 +208,11 @@ impl CollectionOrder {
 
 /// One final entry, as a scan observed it.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct EntryFact {
+pub struct EntryFact {
     /// The key the entry is filed under, parsed from its path.
-    pub(crate) key: CacheKey,
+    pub key: CacheKey,
     /// Bytes the entry file occupies.
-    pub(crate) bytes: u64,
+    pub bytes: u64,
     /// When the entry was published, or `None` when the host cannot report it.
     ///
     /// An unreportable time leaves the entry unordered, and it is sorted
@@ -230,7 +221,7 @@ pub(crate) struct EntryFact {
     /// unknown age, and for the same reason: keeping something collectable costs
     /// bounded disk, and removing something live costs work that has to be done
     /// again.
-    pub(crate) published: Option<SystemTime>,
+    pub published: Option<SystemTime>,
 }
 
 /// What a scan found in one cache, without changing any of it.
@@ -238,7 +229,7 @@ pub(crate) struct EntryFact {
 /// Transient by construction. Nothing here is written to disk, and no read path
 /// consults it.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct CacheAccounting {
+pub struct CacheAccounting {
     entries: Vec<EntryFact>,
     total_bytes: u64,
     unrecognized: Vec<PathBuf>,
@@ -248,17 +239,20 @@ pub(crate) struct CacheAccounting {
 
 impl CacheAccounting {
     /// Every final entry the scan recognized.
-    pub(crate) fn entries(&self) -> &[EntryFact] {
+    #[must_use]
+    pub fn entries(&self) -> &[EntryFact] {
         &self.entries
     }
 
     /// Number of final entries.
-    pub(crate) fn entry_count(&self) -> u64 {
+    #[must_use]
+    pub fn entry_count(&self) -> u64 {
         self.entries.len() as u64
     }
 
     /// Total bytes of every final entry.
-    pub(crate) const fn total_bytes(&self) -> u64 {
+    #[must_use]
+    pub const fn total_bytes(&self) -> u64 {
         self.total_bytes
     }
 
@@ -269,7 +263,8 @@ impl CacheAccounting {
     /// path parser is deliberately strict enough that an unrecognized file is
     /// news: it means something other than this crate is writing into the
     /// namespace, which an operator should see rather than have tidied away.
-    pub(crate) fn unrecognized(&self) -> &[PathBuf] {
+    #[must_use]
+    pub fn unrecognized(&self) -> &[PathBuf] {
         &self.unrecognized
     }
 
@@ -282,23 +277,25 @@ impl CacheAccounting {
     /// reported as [`super::QuarantineOutcome::BoundReached`] rather than
     /// silently discarding. Reclaiming retained evidence is a separate explicit
     /// act and this operation does not perform it.
-    pub(crate) const fn quarantine_bytes(&self) -> u64 {
+    #[must_use]
+    pub const fn quarantine_bytes(&self) -> u64 {
         self.quarantine_bytes
     }
 
     /// Files retained across every shard's quarantine.
-    pub(crate) const fn quarantine_files(&self) -> u64 {
+    #[must_use]
+    pub const fn quarantine_files(&self) -> u64 {
         self.quarantine_files
     }
 }
 
 /// One entry a collection removed.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct RemovedEntry {
+pub struct RemovedEntry {
     /// The key whose entry was removed.
-    pub(crate) key: CacheKey,
+    pub key: CacheKey,
     /// Bytes reclaimed, as measured by the scan that selected it.
-    pub(crate) bytes: u64,
+    pub bytes: u64,
 }
 
 /// Whether a collection satisfied the bound it was given.
@@ -306,7 +303,7 @@ pub(crate) struct RemovedEntry {
 /// `#[non_exhaustive]` under ADR 0074 convention 5a.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub(crate) enum CollectionOutcome {
+pub enum CollectionOutcome {
     /// The cache was already within the bound, so nothing was selected.
     WithinBound,
     /// Everything selected was removed and the bound is now satisfied.
@@ -328,7 +325,7 @@ pub(crate) enum CollectionOutcome {
 
 /// What one collection observed and did.
 #[derive(Debug)]
-pub(crate) struct CollectionReport {
+pub struct CollectionReport {
     accounting: CacheAccounting,
     bound: CollectionBound,
     order: CollectionOrder,
@@ -343,17 +340,20 @@ pub(crate) struct CollectionReport {
 
 impl CollectionReport {
     /// What the scan observed before anything was removed.
-    pub(crate) const fn accounting(&self) -> &CacheAccounting {
+    #[must_use]
+    pub const fn accounting(&self) -> &CacheAccounting {
         &self.accounting
     }
 
     /// The bound this collection was asked to enforce.
-    pub(crate) const fn bound(&self) -> CollectionBound {
+    #[must_use]
+    pub const fn bound(&self) -> CollectionBound {
         self.bound
     }
 
     /// The order the bound selected in.
-    pub(crate) const fn order(&self) -> CollectionOrder {
+    #[must_use]
+    pub const fn order(&self) -> CollectionOrder {
         self.order
     }
 
@@ -363,12 +363,14 @@ impl CollectionReport {
     /// that aggregated them away would be unable to answer the one question an
     /// operator asks after an unexpected rebuild — which entry left, and under
     /// which bound.
-    pub(crate) fn removed(&self) -> &[RemovedEntry] {
+    #[must_use]
+    pub fn removed(&self) -> &[RemovedEntry] {
         &self.removed
     }
 
     /// Bytes reclaimed, summed over [`Self::removed`].
-    pub(crate) fn reclaimed_bytes(&self) -> u64 {
+    #[must_use]
+    pub fn reclaimed_bytes(&self) -> u64 {
         self.removed.iter().map(|entry| entry.bytes).sum()
     }
 
@@ -376,12 +378,14 @@ impl CollectionReport {
     ///
     /// A held lock means a writer or an evictor is working on that key right
     /// now, which is evidence the entry is live rather than collectable.
-    pub(crate) const fn contended(&self) -> u64 {
+    #[must_use]
+    pub const fn contended(&self) -> u64 {
         self.contended
     }
 
     /// Selected entries left in place because they changed after the scan.
-    pub(crate) const fn superseded(&self) -> u64 {
+    #[must_use]
+    pub const fn superseded(&self) -> u64 {
         self.superseded
     }
 
@@ -389,7 +393,8 @@ impl CollectionReport {
     ///
     /// Ordinary under a second collector or an external deletion, and not
     /// counted as reclaimed: the bytes belong to whoever actually removed them.
-    pub(crate) const fn already_absent(&self) -> u64 {
+    #[must_use]
+    pub const fn already_absent(&self) -> u64 {
         self.already_absent
     }
 
@@ -399,17 +404,20 @@ impl CollectionReport {
     /// continues, so a single unreadable shard cannot stop the rest from being
     /// bounded. The failures reach the caller for the same reason every other
     /// refusal in this crate does.
-    pub(crate) fn failed(&self) -> &[CacheUnavailable] {
+    #[must_use]
+    pub fn failed(&self) -> &[CacheUnavailable] {
         &self.failed
     }
 
     /// Whether the bound was satisfied.
-    pub(crate) const fn outcome(&self) -> CollectionOutcome {
+    #[must_use]
+    pub const fn outcome(&self) -> CollectionOutcome {
         self.outcome
     }
 
     /// Number of entries the bound selected for removal.
-    pub(crate) const fn selected(&self) -> u64 {
+    #[must_use]
+    pub const fn selected(&self) -> u64 {
         self.selected
     }
 
@@ -421,7 +429,8 @@ impl CollectionReport {
     /// collection that dropped an entry it did not report would break this
     /// equality, which is why the tests assert it on every collection they make
     /// rather than only checking a removal count.
-    pub(crate) fn accounts_for_every_entry(&self) -> bool {
+    #[must_use]
+    pub fn accounts_for_every_entry(&self) -> bool {
         self.removed.len() as u64
             + self.contended
             + self.superseded
@@ -433,7 +442,7 @@ impl CollectionReport {
 
 /// What one purge retired and reclaimed.
 #[derive(Debug, Default)]
-pub(crate) struct PurgeReport {
+pub struct PurgeReport {
     retired: Option<PathBuf>,
     reclaimed_trees: u64,
     reclaimed_bytes: u64,
@@ -442,7 +451,8 @@ pub(crate) struct PurgeReport {
 
 impl PurgeReport {
     /// Where the live namespace was renamed to, or `None` when there was none.
-    pub(crate) fn retired(&self) -> Option<&Path> {
+    #[must_use]
+    pub fn retired(&self) -> Option<&Path> {
         self.retired.as_deref()
     }
 
@@ -450,12 +460,14 @@ impl PurgeReport {
     ///
     /// More than one when an earlier purge died between its rename and its
     /// removal: nothing reads a retired tree, so a later purge reclaims it.
-    pub(crate) const fn reclaimed_trees(&self) -> u64 {
+    #[must_use]
+    pub const fn reclaimed_trees(&self) -> u64 {
         self.reclaimed_trees
     }
 
     /// Bytes reclaimed across every retired tree that was removed.
-    pub(crate) const fn reclaimed_bytes(&self) -> u64 {
+    #[must_use]
+    pub const fn reclaimed_bytes(&self) -> u64 {
         self.reclaimed_bytes
     }
 
@@ -465,7 +477,8 @@ impl PurgeReport {
     /// and cannot affect correctness, but one that silently fails to be removed
     /// leaks disk indefinitely, which is precisely the thing an operator ran
     /// this to prevent.
-    pub(crate) fn failed(&self) -> &[CacheUnavailable] {
+    #[must_use]
+    pub fn failed(&self) -> &[CacheUnavailable] {
         &self.failed
     }
 }
@@ -487,7 +500,7 @@ impl ExpansionCache {
     /// Returns [`CacheUnavailable`] when the entries tree exists and cannot be
     /// listed. A namespace that does not exist yet is an empty cache rather than
     /// an error, matching [`ExpansionCache::open`], which also creates nothing.
-    pub(crate) fn account(&self) -> Result<CacheAccounting, CacheUnavailable> {
+    pub fn account(&self) -> Result<CacheAccounting, CacheUnavailable> {
         let mut accounting = CacheAccounting::default();
         let entries_root = self.layout().entries_root();
         for shard in shards(&entries_root)? {
@@ -549,8 +562,8 @@ impl ExpansionCache {
     ///
     /// # It never blocks, and therefore needs no work budget
     ///
-    /// Each selected entry is removed under its own key lock taken with
-    /// [`KeyLock::try_acquire`]. A key another process holds is skipped and
+    /// Each selected entry is removed under its own key lock taken with a
+    /// non-blocking `try_acquire`. A key another process holds is skipped and
     /// counted, never waited for. The research note's sixth gate asks for "a
     /// best-effort cleanup budget per invocation", and a non-blocking collector
     /// does not need one: its latency is its scan plus one lock attempt per
@@ -569,8 +582,8 @@ impl ExpansionCache {
     ///   it opened before the unlink. Removing a directory entry on the Unix and
     ///   Darwin hosts this crate targets does not reclaim the inode while a
     ///   descriptor is open, so the read completes and yields exactly the
-    ///   published bytes. `super::harness` measures this against the production
-    ///   bundle, across a real process boundary.
+    ///   published bytes. The crate's cross-process harness measures this
+    ///   against the production bundle, across a real process boundary.
     /// - **Not yet opened.** `File::open` reports the entry absent, which is
     ///   [`super::MissReason::Absent`] — the one miss the reporting module calls
     ///   "not evidence of a problem" — and the caller rebuilds.
@@ -583,8 +596,8 @@ impl ExpansionCache {
     ///
     /// The key lock serializes a removal against a publication's rename, and the
     /// re-`stat` under that lock is what keeps a collection from undoing a
-    /// publication it never measured — see
-    /// [`ExpansionCache::remove_if_unchanged`]. Two collectors may select
+    /// publication it never measured; the comparison and its deliberate
+    /// non-airtightness are documented on the private removal step. Two collectors may select
     /// overlapping sets; the loser finds the entry gone and records
     /// [`CollectionReport::already_absent`], so the bytes are credited once to
     /// whoever actually removed them.
@@ -597,18 +610,15 @@ impl ExpansionCache {
     /// killed at any point leaves a namespace indistinguishable from one where
     /// the collection had simply been given a looser bound, and the kernel
     /// releases its lock when its last descriptor closes — the same mechanism,
-    /// and the same absence of a stale-lock rule, that
-    /// [`super::lock`](super::lock) relies on for a killed writer.
+    /// and the same absence of a stale-lock rule, the per-key lock relies on
+    /// for a killed writer.
     ///
     /// # Errors
     ///
     /// Returns [`CacheUnavailable`] only when the scan itself cannot proceed.
     /// A failure on one key is recorded in [`CollectionReport::failed`] and the
     /// collection continues.
-    pub(crate) fn collect(
-        &self,
-        bound: &CollectionBound,
-    ) -> Result<CollectionReport, CacheUnavailable> {
+    pub fn collect(&self, bound: &CollectionBound) -> Result<CollectionReport, CacheUnavailable> {
         let accounting = self.account()?;
         let order = CollectionOrder::OldestPublicationFirst;
 
@@ -762,7 +772,7 @@ impl ExpansionCache {
     /// fresh, coherent namespace and never walks a half-deleted one. That is
     /// strictly more than `rm -r` offers: a recursive delete races directory
     /// creation, and — as the harness records — can unlink a *live lock inode*,
-    /// which is the failure [`super::layout`](super::layout) explains, splitting
+    /// which is the failure the layout module explains, splitting
     /// contenders into two groups that do not exclude each other.
     ///
     /// # What it deliberately does not promise
@@ -780,8 +790,8 @@ impl ExpansionCache {
     /// # Dying part-way through
     ///
     /// Two states, both safe. Before the rename, nothing happened. After it, the
-    /// tree is out of service — invisible to every reader, because
-    /// [`Layout`](super::layout::Layout) joins the version component exactly —
+    /// tree is out of service — invisible to every reader, because the layout joins the version component
+    /// exactly —
     /// and a later purge reclaims it. There is no third state, because the
     /// rename is atomic and the removal that follows it operates on something
     /// nothing else reads.
@@ -793,7 +803,7 @@ impl ExpansionCache {
     /// that is retired but cannot be removed is recorded in
     /// [`PurgeReport::failed`] and does not fail the purge, because it is
     /// already out of service.
-    pub(crate) fn purge(&self) -> Result<PurgeReport, CacheUnavailable> {
+    pub fn purge(&self) -> Result<PurgeReport, CacheUnavailable> {
         let mut report = PurgeReport::default();
         let version_root = self.layout().version_root();
 
