@@ -32,7 +32,7 @@ reported rather than silently dropped. Enumeration is validated against an
 independent exhaustive subset oracle that agrees set-for-set without budget
 pressure.
 
-Those five are region formation's own bounds, not the compilation's. Other stages carry their own, and one of them differs in kind rather than degree: a *search* budget stops one growth path while complete coverage survives, so what it costs is an alternative, whereas the [proof budget](optimizer.md#refinement-is-exhaustive-finite-evidence-with-an-explicit-gap) that bounds an index region's exhaustive access verification costs a *proof*, leaving its subject's predicate open while the plan containing it stands. Both are typed budget stops in the trace and they must not be read as the same finding.
+Those five are region formation's own bounds, not the compilation's. Other stages carry their own, and one of them differs in kind rather than degree: a *search* budget stops one growth path while complete coverage survives, so what it costs is an alternative, whereas the [proof budget](optimizer.md#refinement-requires-discharged-index-domain-evidence) that bounds an index region's exhaustive access verification costs a *proof*: nothing disproves the subject's predicate, so the region stays valid analysis state with the predicate open, and the occurrence is refused rather than allowed into an executable frontier until the proof is discharged. Both are typed budget stops in the trace and they must not be read as the same finding.
 
 Enumeration only proposes candidates. It selects no cover, chooses no
 implementation, lowers no index region, plans nothing physical, and costs
