@@ -1,7 +1,7 @@
 ---
 id: prototype-a-forkless-custom-metal-physical-provider
 title: Prototype a forkless custom Metal physical provider
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [draft-public-extension-seam-ownership-adr, prototype-complete-physical-plan-selection, implement-opaque-physical-call-providers]
@@ -9,6 +9,9 @@ scopes: [research/extensions]
 shared_scopes: [research/program-planning, project/tickets]
 paths: []
 tags: [backend-providers, pluggability, metal, spike]
+claimed_from: todo
+assignee: loop-prototype-a-
+lease_expires_at: 1785517249
 ---
 ## User-visible outcome
 

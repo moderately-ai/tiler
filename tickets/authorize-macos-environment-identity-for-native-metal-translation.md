@@ -1,7 +1,7 @@
 ---
 id: authorize-macos-environment-identity-for-native-metal-translation
 title: Authorize macOS environment identity for native Metal translation
-status: todo
+status: in-progress
 priority: p0
 dependencies: [prove-an-aot-compatible-metal-runtime-compiler-observer]
 related: [validate-macos-metal-profile-host-applicability]
@@ -9,6 +9,9 @@ scopes: [contracts/artifacts, contracts/decisions, research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: loop-authorize-ma
+lease_expires_at: 1785517248
 ---
 ## User-visible outcome
 

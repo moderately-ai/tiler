@@ -1,7 +1,7 @@
 ---
 id: promote-the-symbolic-index-profile-to-a-public-boundary
 title: Promote the sourced-extent and semi-affine index profile to a reviewed public boundary
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [implement-shapeenv-index-bindings, implement-shapeenv-core, decide-shapeenv-builder-attachment, decide-symbolic-extent-error-siting, decide-domain-dimension-symbolic-view, decide-shapeenv-module-path, represent-semi-affine-index-expressions-in-the-ir]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, shapes, indexing, api]
+claimed_from: todo
+assignee: loop-promote-the-
+lease_expires_at: 1785517249
 ---
 ## User-visible outcome
 

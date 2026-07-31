@@ -1,7 +1,7 @@
 ---
 id: carry-structured-provenance-through-numerical-rejections
 title: Carry structured provenance through numerical rejections
-status: todo
+status: in-progress
 priority: p1
 dependencies: [carry-the-honourability-fact-provenance-into-the-artifact-record]
 related: [redesign-the-delivered-realization-record-from-typed-evidence]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, contracts/numerics]
 shared_scopes: []
 paths: []
 tags: [implementation, numerics, provenance]
+claimed_from: todo
+assignee: loop-carry-struct
+lease_expires_at: 1785517250
 ---
 ## User-visible outcome
 

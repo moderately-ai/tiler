@@ -1,7 +1,7 @@
 ---
 id: admit-the-tiler-facade-and-proc-macro-crate-boundary
 title: Admit the tiler facade and proc-macro crate boundary
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [prototype-inline-proc-macro-frontend]
@@ -9,6 +9,9 @@ scopes: [implementation/frontend, implementation/workspace]
 shared_scopes: [implementation/cargo-lock, project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: loop-admit-the-ti
+lease_expires_at: 1785517249
 ---
 ## User-visible outcome
 
