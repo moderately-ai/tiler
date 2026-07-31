@@ -65,7 +65,9 @@
 //! collection, and an out-of-service purge. Every one of its types is
 //! `pub(crate)` under ADR 0074 convention 7 and none is re-exported here, so
 //! **no consumer can collect anything today**. The review that would promote it
-//! is `accept-the-tiler-cache-public-boundary`.
+//! is `accept-the-expansion-cache-maintenance-boundary`; the accepted expansion
+//! boundary deliberately excludes namespace-wide accounting, collection, and
+//! purge because they operate over a namespace rather than one key.
 //!
 //! Its bound defaults to removing nothing, it never blocks on a key lock, and it
 //! names every entry it removes. What it preserves of the five properties above,
@@ -108,6 +110,7 @@ pub use bundle::{BundleRejection, BundleSection};
 pub use key::{CacheKey, KEY_LABEL_BYTES, KeyTextRejection};
 pub use layout::PathRejection;
 pub use limits::Limits;
+pub use preflight::{PreflightReport, PreflightVerdict};
 pub use report::{
     CacheOperation, CacheReport, CacheUnavailable, EntryRejection, MissReason, PublicationRefusal,
     QuarantineOutcome,

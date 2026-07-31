@@ -39,9 +39,12 @@
 //!
 //! # Public boundary status
 //!
-//! [`expansion`] is a **reviewed draft boundary** (ADR 0074 §7, ADR 0075), on
-//! the same footing as [`tiler_artifact::program`] and `tiler_runtime::load`. It
-//! is `pub` so its shape can be reviewed as a whole; it is not an accepted
-//! public facade until Tom accepts the exact interface.
+//! [`expansion`] is an **accepted public boundary**: Tom ratified the exact
+//! exercised surface on 2026-07-31 under `accept-the-tiler-cache-public-boundary`
+//! — the cache type and its operations, the composed-subject and key surface,
+//! the rejection and report vocabulary, [`expansion::Limits`], the promoted
+//! preflight probe, and the `tiler_artifact` digest promotion it consumes.
+//! Namespace-wide accounting, collection, and purge remain staged crate-private;
+//! `accept-the-expansion-cache-maintenance-boundary` owns that separate decision.
 
 pub mod expansion;

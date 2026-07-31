@@ -103,9 +103,9 @@
     reason = "Convention 7 of ADR 0074: this authority is staged crate-private until Tom accepts \
               its facade. It reserves whole-cache accounting, bounded collection, and the \
               out-of-service purge, exercised in full by `expansion::tests` and \
-              `expansion::harness`. `accept-the-tiler-cache-public-boundary` is the review that \
-              would promote it, and a proc-macro frontend or maintenance command is the slice \
-              that would call it."
+              `expansion::harness`. `accept-the-expansion-cache-maintenance-boundary` is the \
+              review that would promote it, and a proc-macro frontend or maintenance command is \
+              the slice that would call it."
 )]
 
 use std::cmp::Ordering;

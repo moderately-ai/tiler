@@ -1,8 +1,3 @@
-#![allow(
-    dead_code,
-    reason = "ADR 0074 convention 7: a staged `pub(crate)` surface whose only callers are this module's own tests until `accept-the-tiler-cache-public-boundary` reviews and promotes it. Wiring a caller on the expansion path to satisfy the lint would do the one thing this module must not — put a filesystem probe on the lookup path — and wiring one anywhere else would promote the boundary without the review"
-)]
-
 //! A read-mostly probe of the locally decidable filesystem properties.
 //!
 //! [`ExpansionCache::preflight`] answers one question: does this root behave
@@ -33,7 +28,7 @@
 //! decidable from one host. Darwin's `mount_nfs(8)` `locallocks` and Linux's
 //! `nfs(5)` `local_lock=` both make a lock succeed while excluding only the
 //! local client, so a passing lock row here is evidence about this host and
-//! nothing else. [`PreflightReport::cross_host_exclusion_is_unchecked`] exists
+//! nothing else. [`PreflightReport::cross_host_exclusion_caveat`] exists
 //! so that a reader cannot mistake the row for the stronger claim.
 //!
 //! # No `statfs`
@@ -54,7 +49,7 @@ use super::store::ExpansionCache;
 
 /// One probed property and what this host answered for it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum PreflightVerdict {
+pub enum PreflightVerdict {
     /// The property held.
     Holds,
     /// The property was refuted.
@@ -70,7 +65,7 @@ pub(crate) enum PreflightVerdict {
 
 /// The properties the publication protocol rests on, as this root answered.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct PreflightReport {
+pub struct PreflightReport {
     root: PathBuf,
     same_device: PreflightVerdict,
     create_new_excludes: PreflightVerdict,
@@ -81,7 +76,8 @@ pub(crate) struct PreflightReport {
 
 impl PreflightReport {
     /// The root these verdicts describe.
-    pub(crate) fn root(&self) -> &Path {
+    #[must_use]
+    pub fn root(&self) -> &Path {
         &self.root
     }
 
@@ -89,7 +85,8 @@ impl PreflightReport {
     ///
     /// The publication rename is only atomic within a filesystem, so a root
     /// straddling two makes every publication an `EXDEV` failure.
-    pub(crate) const fn same_device(&self) -> PreflightVerdict {
+    #[must_use]
+    pub const fn same_device(&self) -> PreflightVerdict {
         self.same_device
     }
 
@@ -97,20 +94,23 @@ impl PreflightReport {
     ///
     /// Temporary uniqueness rests on this rather than on the nonce in the file
     /// name, which is a courtesy to a human reading the directory.
-    pub(crate) const fn create_new_excludes(&self) -> PreflightVerdict {
+    #[must_use]
+    pub const fn create_new_excludes(&self) -> PreflightVerdict {
         self.create_new_excludes
     }
 
     /// An exclusive advisory lock is acquirable and released on drop.
     ///
     /// **Local exclusion only.** See
-    /// [`Self::cross_host_exclusion_is_unchecked`].
-    pub(crate) const fn lock_excludes_locally(&self) -> PreflightVerdict {
+    /// [`Self::cross_host_exclusion_caveat`].
+    #[must_use]
+    pub const fn lock_excludes_locally(&self) -> PreflightVerdict {
         self.lock_excludes_locally
     }
 
     /// A rename from `tmp/` into `entries/` succeeds.
-    pub(crate) const fn rename_publishes(&self) -> PreflightVerdict {
+    #[must_use]
+    pub const fn rename_publishes(&self) -> PreflightVerdict {
         self.rename_publishes
     }
 
@@ -118,7 +118,8 @@ impl PreflightReport {
     ///
     /// Collection orders by it. A root that reports none does not break
     /// correctness; it makes eviction order arbitrary.
-    pub(crate) const fn modification_time_reported(&self) -> PreflightVerdict {
+    #[must_use]
+    pub const fn modification_time_reported(&self) -> PreflightVerdict {
         self.modification_time_reported
     }
 
@@ -133,7 +134,8 @@ impl PreflightReport {
     ///
     /// Returned as text rather than as a constant `true` so that a caller
     /// rendering the report prints the caveat instead of having to know it.
-    pub(crate) const fn cross_host_exclusion_caveat() -> &'static str {
+    #[must_use]
+    pub const fn cross_host_exclusion_caveat() -> &'static str {
         "the lock row is evidence about this host only: a mount that arbitrates \
          locks locally reports success while excluding no other host, and no \
          probe run from one host can detect that"
@@ -144,7 +146,8 @@ impl PreflightReport {
     /// `NotRun` does not count as holding: a report where nothing ran would
     /// otherwise read as a clean bill of health, which is the shape of vacuous
     /// pass this whole module is written to avoid.
-    pub(crate) fn all_probed_properties_hold(&self) -> bool {
+    #[must_use]
+    pub fn all_probed_properties_hold(&self) -> bool {
         [
             self.same_device,
             self.create_new_excludes,
@@ -168,7 +171,8 @@ impl ExpansionCache {
     /// A probe that cannot run reports [`PreflightVerdict::NotRun`] rather than
     /// failing: an unwritable root is a fact about the root worth reporting,
     /// not an error that should deny a caller the rows that did run.
-    pub(crate) fn preflight(&self) -> PreflightReport {
+    #[must_use]
+    pub fn preflight(&self) -> PreflightReport {
         let namespace = self.layout().version_root();
         let area = namespace.join("preflight");
         let prepared = fs::create_dir_all(&area).is_ok();

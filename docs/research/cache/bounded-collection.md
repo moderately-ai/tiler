@@ -139,7 +139,7 @@ There is no fourth position and no window in which a reader observes a partially
 - **The default durability policy** is unchanged and still `measure-expansion-cache-durability-policies`'s. Collection is orthogonal to it: no ordering or flushing decision changes what a removal does.
 - **Supported filesystems**, and with them whether `atime` could supply use recency, are settled by [the supported-filesystem note](supported-filesystems.md); the access-time answer is no, and the ordering above is unchanged by it.
 - **Framing fuzzing** and **deterministic I/O fault injection** remain `fuzz-the-expansion-cache-framing-paths` and `inject-deterministic-expansion-cache-io-failures`. The collector reads no entry bytes, so the framing paths it touches are the scan's `stat` calls rather than the decoder.
-- **The public facade.** Every type here is `pub(crate)` under ADR 0074 convention 7. Promoting it is `accept-the-tiler-cache-public-boundary`, and until that happens no consumer can collect anything.
+- **The public facade.** Every type here is `pub(crate)` under ADR 0074 convention 7. Promoting it is `accept-the-expansion-cache-maintenance-boundary` — the accepted expansion boundary deliberately excludes namespace-wide maintenance — and until that happens no consumer can collect anything.
 
 ## Traceability
 

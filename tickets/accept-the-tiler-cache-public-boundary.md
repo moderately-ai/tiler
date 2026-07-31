@@ -1,7 +1,7 @@
 ---
 id: accept-the-tiler-cache-public-boundary
 title: Accept the tiler-cache public boundary
-status: todo
+status: done
 priority: p1
 dependencies: [report-cache-publication-state-after-the-rename-boundary, decide-the-composed-subject-backend-compilations-shape, decide-where-an-unfillable-subject-facet-is-refused, decide-the-lookup-argument-type]
 related: [implement-the-expansion-cache-protocol, prototype-candle-metal-adapter]
@@ -67,6 +67,10 @@ This ticket previously said not to accept the outcome/report vocabulary until `r
 `ExpansionCache::preflight` landed `pub(crate)` under ADR 0074 convention 7 and was staged here rather than promoted. It carries a module-level `#[allow(dead_code)]` whose reason states why no caller was wired to satisfy the lint: the only place a caller would naturally go is the expansion path, and putting a filesystem probe there is the one thing the design forbids.
 
 **Fact — the author is `add-an-expansion-cache-root-preflight`, not `prototype-expansion-content-cache`.** Both authorship references on this ticket now name the same ticket, correcting one that named the wrong one. The exact check: `git log --oneline --diff-filter=A -- crates/tiler-cache/src/expansion/preflight.rs` → `0f98b1f Probe a cache root's filesystem properties on request`, and `git show --stat 0f98b1f` shows that commit editing `tickets/add-an-expansion-cache-root-preflight.md` and adding `crates/tiler-cache/src/expansion/preflight.rs`.
+
+## Accepted (2026-07-31)
+
+Tom ratified every item without exception, over the surface verified at `f5a1725`. The packet disclosed two facts beyond the item list and the acceptance covers both: `ExpansionCache::root()` is a public accessor the item list did not name, and the preflight surface was still `pub(crate)` at review time, so acceptance included its promotion. The promotion landed with this acceptance: `ExpansionCache::preflight`, `PreflightReport` (five verdict accessors, `root`, `all_probed_properties_hold`, associated `cross_host_exclusion_caveat` text), and `PreflightVerdict` are `pub` and re-exported from `tiler_cache::expansion`, the ADR 0074 §7 staging allow is removed, and two doc links that named a nonexistent `cross_host_exclusion_is_unchecked` accessor were corrected to `cross_host_exclusion_caveat`. Crate documentation now states the accepted status, and the stale claims in `expansion.rs`, `collect.rs`, `bounded-collection.md`, and `crash-and-race-protocol.md` that this ticket would promote the collection surface were repointed to `accept-the-expansion-cache-maintenance-boundary`, which the acceptance deliberately excludes.
 
 ## Graph maintenance
 
