@@ -21,7 +21,7 @@ research evidence, executable experiments, and proposed work.
    question.
 4. [System architecture](architecture.md): components and dependency direction.
 
-Use the [glossary](glossary.md) whenever a typed compiler term is unfamiliar.
+Use the [glossary](glossary.md) whenever a typed compiler term is unfamiliar. It also separates names that denote several unrelated subjects, which a search cannot do for you: [backend, device, and execution-context vocabulary](glossary.md#backend-device-and-execution-context-vocabulary) covers backend, backend family, provider, target profile, artifact family, representation, live device, execution context, execution environment, and runtime adapter, and indexes the senses of `family` and `environment`; [operation names shared across expression layers](glossary.md#operation-names-shared-across-expression-layers) covers `Select`, `Add`, and their siblings.
 
 ## Navigate by task
 

@@ -206,7 +206,7 @@ The implemented structured-kernel verifier rejects every current `Barrier` intri
 
 ### Live-device route requirements
 
-**Fact — a variant carries the additional requirements its route places on a live device, and the family is backend-neutral.** Two row kinds:
+**Fact — a variant carries the additional requirements its route places on a live device, and the row family is backend-neutral.** "Family" here is this row vocabulary itself and neither a *backend family* nor an *artifact family*; the [glossary](glossary.md#backend-device-and-execution-context-vocabulary) separates the senses, and one of the two kinds below is owned by a backend precisely because the other is not. Two row kinds:
 
 | Kind | Wire fields | Who decides it |
 | --- | --- | --- |
@@ -223,7 +223,7 @@ So the core quantitative vocabulary is narrow by derivation: `RouteResourceDimen
 
 **Fact — the neutral layer never interprets a backend payload, and still decides everything decidable without a device.** The payload is bytes the emitting backend minted; reading them here would put a backend's vocabulary — an Apple GPU family, say — inside the neutral core. What the neutral layer does own is the owner's governed-key grammar, the key and version, a non-empty payload bounded at `MAX_ROUTE_FEATURE_PAYLOAD_BYTES`, subject distinctness, and canonical order. An empty payload is refused rather than admitted as "no argument": at this layer an empty payload and a truncated one are the same bytes, and a capability taking no argument can spell that explicitly.
 
-**Fact — zero rows is a state and a missing row is undetectable here.** A route consuming no additional requirement declares none, and no feature key is emitted, so a reader that predates this family still loads it. Whether a row was *omitted* is decidable only against a producer-owned exhaustive declaration of what the selected payload uses, and no such declaration reaches the artifact. That is why the feature key is required rather than optional for an artifact that does carry rows: a reader that predates the family would otherwise parse a manifest that looks complete and route without evaluating a precondition the producer declared.
+**Fact — zero rows is a state and a missing row is undetectable here.** A route consuming no additional requirement declares none, and no feature key is emitted, so a reader that predates this row family still loads it. Whether a row was *omitted* is decidable only against a producer-owned exhaustive declaration of what the selected payload uses, and no such declaration reaches the artifact. That is why the feature key is required rather than optional for an artifact that does carry rows: a reader that predates the row family would otherwise parse a manifest that looks complete and route without evaluating a precondition the producer declared.
 
 **Fact — a route requirement is attached after the variant rather than inside `VariantSpec`.** A deferred predicate is minted with the plan, by the compiler that chose it. A route requirement states what the *emitted payload* consumes, which is known only after backend emission and to a different producer stage. `ArtifactProgramBuilder::require_route` takes the variant handle and the row; the exact call-site boundary is a reviewed draft under ADR 0074 convention 7.
 
@@ -793,7 +793,7 @@ or temporary paths are provenance rather than portable key material when
 equivalent content is otherwise established. Requested deployment minima stay
 in identity even when a trivial measured kernel happens to produce equal bytes.
 
-Those resolved component versions identify the offline compiler and only the offline compiler. Apple's runtime source compiler is a separately versioned build belonging to the execution environment rather than to the artifact, so no artifact identity can name it, and widening this list would not change that. The [Metal backend](backends/metal.md) contract records the measurement, the bounded cross-path agreement that accompanies it, and why Tiler's ahead-of-time exclusion is what keeps this provenance complete for every kernel Tiler compiles.
+Those resolved component versions identify the offline compiler and only the offline compiler. Apple's runtime source compiler is a separately versioned build belonging to the execution environment — the [host process and OS](glossary.md#backend-device-and-execution-context-vocabulary) a kernel happens to run in, not the host's stated device-free `ExecutionEnvironment` and not the recorded measurement environment — rather than to the artifact, so no artifact identity can name it, and widening this list would not change that. The [Metal backend](backends/metal.md) contract records the measurement, the bounded cross-path agreement that accompanies it, and why Tiler's ahead-of-time exclusion is what keeps this provenance complete for every kernel Tiler compiles.
 
 Target requirement predicates, the feasibility-profile descriptor/rule
 identity, artifact execution policy, deferred query contracts/phases, and exact
