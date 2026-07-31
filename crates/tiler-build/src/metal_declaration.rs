@@ -681,23 +681,22 @@ impl MetalPlanProfileMismatch {
 
 impl fmt::Display for MetalPlanProfileMismatch {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}: ", self.rule())?;
         match self {
-            Self::ProfileKey { declared, compiled } => write!(
-                formatter,
-                "{}: the bound declaration carries {declared:?} and the plan was compiled under \
-                 {compiled:?}",
-                self.rule(),
-            ),
+            Self::ProfileKey { declared, compiled } => {
+                write!(
+                    formatter,
+                    "declared {declared:?}, compiled under {compiled:?}"
+                )
+            }
             Self::ProfileDescriptor {
                 key,
                 declared_bytes,
                 compiled_bytes,
             } => write!(
                 formatter,
-                "{}: both sides name {key:?} and their descriptors differ ({declared_bytes} \
-                 declared byte(s) against {compiled_bytes} compiled byte(s)); recompile the plan \
-                 against the bound declaration",
-                self.rule(),
+                "{key:?} descriptors differ ({declared_bytes} declared, {compiled_bytes} \
+                 compiled byte(s)); recompile the plan",
             ),
         }
     }
@@ -765,32 +764,31 @@ impl From<MetalTargetError> for BoundMetalDeclarationError {
     }
 }
 
+/// One line, and the refusing authority is named before its own text.
+///
+/// Every delegating arm shares one `write!`, so a new variant carrying a cause
+/// adds a name rather than a sentence. The two arms below it are the only ones
+/// with nothing to delegate to.
 impl fmt::Display for BoundMetalDeclarationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ProfileKey(error) => {
-                write!(formatter, "the declared profile key is invalid: {error}")
+        let (what, cause): (_, &dyn fmt::Display) = match self {
+            Self::ProfileKey(error) => ("profile key", error),
+            Self::Provenance(error) => ("fact source", error),
+            Self::Profile(error) => ("compiler profile row", error),
+            Self::SubnormalProjection(error) => ("f32 subnormal projection", error),
+            Self::AotTarget(error) => ("AOT target", error),
+            Self::PreparedEntryQuery => {
+                return formatter
+                    .write_str("prepared-entry query: not statable at PreparedKernelPreflight");
             }
-            Self::Provenance(error) => {
-                write!(formatter, "a declared fact source is invalid: {error}")
+            Self::BufferCapacityExceedsEmissionLimit { compiler, emission } => {
+                return write!(
+                    formatter,
+                    "buffer capacity: compiler offers {compiler}, emission admits {emission}",
+                );
             }
-            Self::PreparedEntryQuery => formatter.write_str(
-                "the prepared-entry workgroup query is not statable at PreparedKernelPreflight",
-            ),
-            Self::Profile(error) => {
-                write!(formatter, "the compiler profile refused a row: {error}")
-            }
-            Self::SubnormalProjection(error) => error.fmt(formatter),
-            Self::BufferCapacityExceedsEmissionLimit { compiler, emission } => write!(
-                formatter,
-                "the compiler profile offers {compiler} buffer binding(s) and Metal emission \
-                 admits {emission}",
-            ),
-            Self::AotTarget(error) => write!(
-                formatter,
-                "the declared Metal facts are not a governed AOT target: {error}",
-            ),
-        }
+        };
+        write!(formatter, "{what}: {cause}")
     }
 }
 
