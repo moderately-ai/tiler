@@ -8,19 +8,25 @@ experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement"]
 supports: ["tiler.research.apple-targets.compatibility", "tiler.research.apple-targets.numerical-behaviour"]
-entrypoints: ["spikes/apple-targets/compatibility_probe.sh", "spikes/apple-targets/runtime_failure_probe.swift", "spikes/apple-targets/validate_compatibility_record.py", "spikes/apple-targets/validate_numerical_record.py", "spikes/apple-targets/test_probes.py", "spikes/apple-targets/numerical_probe.py", "spikes/apple-targets/numerical_probe_host.m", "spikes/apple-targets/test_numerical_probe.py", "spikes/apple-targets/bfloat_dispatch_probe.py"]
-last_verified: "2026-07-25"
+entrypoints: ["spikes/apple-targets/compatibility_probe.sh", "spikes/apple-targets/runtime_failure_probe.swift", "spikes/apple-targets/validate_compatibility_record.py", "spikes/apple-targets/validate_numerical_record.py", "spikes/apple-targets/test_probes.py", "spikes/apple-targets/numerical_probe.py", "spikes/apple-targets/numerical_probe_host.m", "spikes/apple-targets/test_numerical_probe.py", "spikes/apple-targets/bfloat_dispatch_probe.py", "spikes/apple-targets/aot-runtime-compiler-observer/run.sh"]
+last_verified: "2026-07-31"
 ticket: "apple-artifact-compatibility"
 ---
 
 # Apple Metal target compatibility and numerical spikes
 
-Two independent probes share this directory because they share a host row. The
+Three independent probes share this directory because they share a host row. The
 compatibility probe answers which artifact families and deployment minima
 produce which bytes. The numerical probe answers what Apple GPU scalar
 arithmetic actually does to subnormals, signed zero, and contraction — and, since
 the dtype axis was added, that the answer is not the same for `f32` and `f16`.
+The AOT runtime-compiler observer asks whether native metallib and pipeline
+preparation exposes an attributable compiler build without source JIT.
 Neither downloads or installs a toolchain component.
+
+## Native-AOT runtime-compiler observer
+
+The [preserved observer](aot-runtime-compiler-observer/README.md) takes only an offline-produced metallib through native library, function, and compute-pipeline preparation. It records compiler-related dyld membership before and after every stage while keeping disk presence, loaded-image membership, embedded strings, and attributable compiler identity separate. Its 2026-07-31 retained result found two plausible GPUCompiler library images already loaded before the route, no population change, and no exact build string; the source-JIT selector is forbidden and a mutation proves the check can reject it. Exact runtime-compiler attribution is therefore unavailable on this bounded AOT route, and the source-JIT compiler measured below is not an AOT host-eligibility predicate.
 
 ## Artifact-family and reproducibility probe
 

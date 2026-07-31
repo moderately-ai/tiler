@@ -1,0 +1,10 @@
+observation.compiler_images_at_process_start=2
+observation.compiler_images_after_pipeline=2
+observation.new_compiler_images_during_route=0
+observation.declared_embedded_compiler_builds_after_pipeline=0
+observation.explicit_embedded_compiler_build_rows_after_pipeline=0
+observation.mtlcompiler_images_at_process_start=0
+conclusion.exact_runtime_compiler_attribution=unavailable
+conclusion.evidence_class=loaded-image-membership-and-image-byte-scan
+conclusion.reason=dyld membership, deltas, and image strings do not associate a compiler build with native library or pipeline preparation
+observation.clean_repetitions=byte-identical

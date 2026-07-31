@@ -1,0 +1,6 @@
+validator.result_mutation=rejected
+validator.source_jit_sentinel_mutation=rejected
+validator.absent_metadata_fixture=rejected
+classifier.multiple_plausible_builds=unavailable
+validator.unavailable_host_fixture=rejected
+probe.status=validated

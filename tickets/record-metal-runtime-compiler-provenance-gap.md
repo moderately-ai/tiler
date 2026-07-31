@@ -4,7 +4,7 @@ title: Record that Metal artifact toolchain provenance names only the offline co
 status: done
 priority: p2
 dependencies: []
-related: [probe-metal-runtime-compilation-numerics, declare-metal-numerical-honourability, repoint-adr-0076-evidence-at-the-numerical-record, prototype-metal-bundle-assembly, carry-the-honourability-fact-provenance-into-the-artifact-record]
+related: [probe-metal-runtime-compilation-numerics, prove-an-aot-compatible-metal-runtime-compiler-observer, declare-metal-numerical-honourability, repoint-adr-0076-evidence-at-the-numerical-record, prototype-metal-bundle-assembly, carry-the-honourability-fact-provenance-into-the-artifact-record]
 scopes: [contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
@@ -75,3 +75,9 @@ This ticket cites `results/2026-07-24-numerics-xcode26.6-metal32023.883/record.t
 - `name-the-compiler-and-environment-in-adr-0076-target-facts` (p2, `contracts/decisions`) — the one sentence ADR 0076 should gain, with proposed wording.
 - `scope-tiler-numerical-claims-across-the-candle-kernel-boundary` (p2, `contracts/integrations`) — what a consumer may conclude when a Tiler kernel and a runtime-compiled Candle kernel share a command buffer, and re-pinning the Candle source claim against a real dependency revision.
 - `give-the-apple-open-questions-a-runtime-compiler-drift-axis` (p3, `contracts/navigation`) — Q-ART-007 closes on a matrix over machines and toolchain patch versions, and the runtime compilers move with the OS build and the simulator runtime instead.
+
+### Native AOT attribution result (2026-07-31)
+
+`prove-an-aot-compatible-metal-runtime-compiler-observer` subsequently exercised the route Tiler actually admits: offline metallib loading, function resolution, and compute-pipeline preparation with no source-JIT input. Its retained one-host measurement found two GPUCompiler library images already loaded before the route, no loaded-image population change through any preparation stage, and no embedded `metalfe-*` build string in either image. The experiment therefore could not attribute an exact compiler build to native AOT preparation, and it demonstrates why disk presence, loaded-image membership, dyld deltas, OS build, and the source-JIT measurement's `metalfe-32023.921` are not interchangeable evidence.
+
+This refines rather than reverses the ticket's outcome. Offline `metal` and `metallib` remain complete artifact provenance for the compilation Tiler performs. The separately measured source-JIT compiler still qualifies only the excluded `newLibraryWithSource` comparison path. The first AOT host-applicability policy consequently names the exact native OS, architecture, device, and Apple-family row exercised by the retained metallib; it leaves source-JIT compiler identity `Unknown` and outside eligibility unless a future admitted route consumes that compiler and can attribute it.
