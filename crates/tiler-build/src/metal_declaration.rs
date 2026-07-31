@@ -481,16 +481,16 @@ impl BoundMetalCompileDeclaration {
             ScalarSupport::Exact,
             measured.clone(),
         )?;
-        // **Inference, and the ledger labels it as one.** No retained case
-        // isolates operand permutation: the four rows around it each have an
-        // attribute or a result lane separating the modes, and permutation has
-        // neither. It is delivered by the same `safe` compilation, whose
-        // attribute strings carry no relaxation at all, so a permutation
-        // relaxation would have to be one the front end applied without
-        // recording it. Sound enough to construct a profile with, and not the
-        // same class of evidence as its neighbours; it must not be quoted as an
-        // isolated measurement. The ledger's fourth outcome names the two pieces
-        // of evidence that would close it.
+        // Isolated by a retained pair, not inferred from its neighbours. The
+        // `permutation_chain` and `permutation_chain_reordered` kernels carry the
+        // same three contributors in two orders and differ in nothing else, so
+        // under `safe` their results — `00000000` and `40000000` on every lane,
+        // from three bare `fadd`s each — are separated by contributor order
+        // alone. The permuted value is the discriminator because reassociating
+        // the canonical order cannot reach it: four leaves have exactly five
+        // parenthesizations and the harness enumerates all five for every
+        // operand. The reassociation row above therefore does not stand in for
+        // this one, which is what ADR 0014's separate permissions require.
         builder.declare_measured_permutation(
             f32.clone(),
             NumericalPermission::Forbidden,

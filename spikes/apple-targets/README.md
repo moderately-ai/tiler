@@ -130,8 +130,9 @@ family's runtime compiler is inherited from another's row.
 cover multiply, add — including one bare add whose subnormal operand comes
 straight from the buffer rather than out of a preceding multiply — division in
 both the power-of-two form the driver rewrites into a multiply and the form it
-keeps, a source-level `fma`, and a two-add chain whose value says where the
-parentheses went. The swept axes are the three math
+keeps, a source-level `fma`, a two-add chain whose value says where the
+parentheses went, and a three-add pair whose value says whether the contributors
+were reordered. The swept axes are the three math
 modes, the three contraction settings, both `-fmetal-math-fp32-functions`
 values, and all five offline optimization levels. That costs more than the gate
 should pay on every run, so `cases` assembles a `covering` set — at least one
@@ -140,6 +141,24 @@ value, plus every case a finding cites — and an `exhaustive` cross product
 selected by `TILER_APPLE_NUMERICS_EXHAUSTIVE`. `probe.matrix` names which one
 produced a record and `matrix_mismatch` refuses to compare one against a run of
 the other. A portable guard test holds the covering set to its coverage claim.
+
+**The last two kernels measure two different licences, which is why there are
+two.** ADR 0014 keeps reassociation and contributor permutation as independent
+permissions: the first moves the parentheses over a fixed leaf order, the second
+moves the leaves. `reassociation_chain` measures the first. `permutation_chain`
+and `permutation_chain_reordered` measure the second by carrying the *same three*
+contributors — `2**30`, `2.0`, `-2**30` — in two orders and differing in nothing
+else, so what separates their results is leaf order alone. The permuted value
+`40000000` is what makes the pair a measurement of permutation rather than a
+second reading of reassociation, and that is a finite property of the chosen
+constants rather than a claim: four leaves admit exactly five full binary trees,
+and `test_the_permutation_probe_is_unreachable_by_reassociating_the_canonical_order`
+enumerates all five for every operand and holds the permuted value to being
+absent from each. Both kernels witness on negative zero, the one non-subnormal
+operand whose result survives the relaxed licence folding the cancelling pair
+away; a witness anywhere else would report `disagrees` under `relaxed`, which
+fails validation rather than publishing a witness that measures the licence under
+test.
 
 **The dtype is not an axis of that matrix.** `DTYPES` names `f32`, `f16`, and
 `bf16`, and each one owns its operand vector, its result width, its MSL constant
@@ -255,7 +274,7 @@ file-local C++ function mangled with its parameter type, so the three dtypes
 spell it `_ZL35tiler_canonicalize_nan_f32_7fc00000f`,
 `_ZL31tiler_canonicalize_nan_f16_7e00Dh`, and
 `_ZL32tiler_canonicalize_nan_bf16_7fc0DF16b`. Every hand-written
-`SubnormalProbe`, `OrderProbe`, and `Witness` is also checked against `evaluate`,
+`SubnormalProbe`, `OrderProbe`, `PermutationProbe`, and `Witness` is also checked against `evaluate`,
 which derives each candidate result from the kernel under exact arithmetic and
 under the sign-preserving flush at that kernel's own dtype, so a mis-stated
 literal is a portable test failure rather than a silently wrong classification.
@@ -381,22 +400,22 @@ run that needs it; the harness leaves the device booted so subsequent runs pay
 only one `simctl spawn` per family. On a host with no Apple toolchain the whole
 thing skips in well under a second.
 
-The retained 2026-07-25 runs are
-[`results/2026-07-27-numerics-covering-xcode26.6-metal32023.883/record.tsv`](results/2026-07-27-numerics-covering-xcode26.6-metal32023.883/record.tsv)
+The retained runs are
+[`results/2026-07-31-numerics-covering-xcode26.6-metal32023.883/record.tsv`](results/2026-07-31-numerics-covering-xcode26.6-metal32023.883/record.tsv)
 and
-[`results/2026-07-27-numerics-exhaustive-xcode26.6-metal32023.883/record.tsv`](results/2026-07-27-numerics-exhaustive-xcode26.6-metal32023.883/record.tsv),
-schema `tiler.apple-numerical-behaviour/v6`. Both were rewritten in place when the
-third dtype landed, on the identical host, toolchain, and date row they already
-named, and every `case.*`, `comparison.*`, and `hazard.*` row they carried before
-reproduced unchanged. The exact check, which is the evidence that widening the
-dtype did not change what the harness asks about the dtypes already measured:
-of the 1921 such rows in the covering record and the 2401 in the exhaustive one,
-**0 disappeared and 0 changed**, and every one of the 480 and 696 rows added
-names a `bf16` kernel; independently, the generated MSL of all 23 pre-existing
-kernels is **byte-identical** to what the base commit's harness produced. The
-only non-`case`/`comparison`/`hazard` rows that moved are the schema, the two
-digests, the repository revision, the timestamp, `probe.dtypes`, and the new
-`probe.operands.bf16` and `environment.family.*.device_bfloat_support`. The schema `v3` record
+[`results/2026-07-31-numerics-exhaustive-xcode26.6-metal32023.883/record.tsv`](results/2026-07-31-numerics-exhaustive-xcode26.6-metal32023.883/record.tsv),
+schema `tiler.apple-numerical-behaviour/v6`. They replace the 2026-07-27 pair,
+which is retained beside them, and the reason for the new run is that the
+permutation pair widened the kernel table and so moved the harness digest every
+record carries. The same check applies as when the third dtype landed, and is the
+evidence that widening the question did not change any answer: against the
+2026-07-27 records, **0 `case.*`, `comparison.*`, or `hazard.*` rows disappeared
+and 0 changed** across 3,215 and 4,079 pre-existing rows, and every one of the 144
+rows added to each names a `permutation_chain` kernel. The only other rows that
+moved are the timestamp, the repository revision, and two producer digests — and
+`probe.host_source_sha256` moved because the 2026-07-27 records still named a
+dispatch host that commit `7559e87` had already replaced, so regenerating restored
+an agreement that had lapsed rather than breaking one. The schema `v3` record
 [`results/2026-07-24-numerics-families-xcode26.6-metal32023.883/record.tsv`](results/2026-07-24-numerics-families-xcode26.6-metal32023.883/record.tsv)
 is retained as the previous row and is no longer compared against. The directory
 name identifies the offline toolchain and the matrix; the `environment.family.*`
