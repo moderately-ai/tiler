@@ -832,6 +832,13 @@ mod tests {
         MslLanguageVersion,
     };
 
+    /// One named single-row mutation of the ledger transcription.
+    ///
+    /// A named pair rather than an inline tuple type, so the two mutation cases
+    /// below read as a table of rows and the label travels with the mutation it
+    /// describes -- a failure names which row did not reach the descriptor.
+    type RowPerturbation = (&'static str, fn(&mut LedgerRows));
+
     fn declared() -> BoundMetalCompileDeclaration {
         BoundMetalCompileDeclaration::first_macos_apple9()
             .expect("the ledger's rows assemble one bound declaration")
@@ -1143,11 +1150,11 @@ mod tests {
     #[test]
     fn every_projected_row_moves_the_profile_descriptor() {
         let baseline = descriptor(&FIRST_MACOS_APPLE9);
-        let perturbations: [(&str, fn(&mut LedgerRows)); 6] = [
+        let perturbations: [RowPerturbation; 6] = [
             ("grid-axis threads", |rows| rows.grid_axis_threads = 8),
             ("buffer bindings", |rows| rows.buffer_bindings = 16),
             ("local memory bytes", |rows| {
-                rows.local_memory_bytes = 16_384
+                rows.local_memory_bytes = 16_384;
             }),
             ("index arithmetic", |rows| {
                 rows.index_arithmetic = IndexArithmeticSupport::Unsupported;
@@ -1188,7 +1195,7 @@ mod tests {
     #[test]
     fn every_measurement_context_field_moves_the_profile_descriptor() {
         let baseline = descriptor(&FIRST_MACOS_APPLE9);
-        let perturbations: [(&str, fn(&mut LedgerRows)); 9] = [
+        let perturbations: [RowPerturbation; 9] = [
             ("the offline compiler version", |rows| {
                 rows.offline.compiler_version = "32023.884";
             }),
