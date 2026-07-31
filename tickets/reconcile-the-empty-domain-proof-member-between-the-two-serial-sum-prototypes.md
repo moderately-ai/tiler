@@ -5,8 +5,8 @@ status: todo
 priority: p1
 dependencies: []
 related: []
-scopes: [implementation/runtime, project/tickets]
-shared_scopes: []
+scopes: [implementation/runtime]
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, prototype, defect]
 ---
