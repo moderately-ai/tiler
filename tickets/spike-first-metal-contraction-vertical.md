@@ -1,7 +1,7 @@
 ---
 id: spike-first-metal-contraction-vertical
 title: Spike the first workload-derived Metal contraction vertical
-status: in-progress
+status: done
 priority: p1
 dependencies: [derive-transformer-operation-and-shape-surface, prototype-metal-runtime-proof]
 related: [scope-einsum-contraction-support, implement-opaque-physical-call-providers, implement-parallel-reduction-strategies, implement-analytical-component-cost-model]
@@ -9,9 +9,6 @@ scopes: [research/scheduling, research/apple-targets, research/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [spike, research, contraction, matmul, metal, language-model]
-claimed_from: todo
-assignee: loop-l3-spike
-lease_expires_at: 1785526607
 ---
 ## User-visible outcome
 
@@ -92,3 +89,7 @@ Do not start this before its trigger fires. Each rung's scope is derived from th
 - **An opaque/library realization candidate is an opaque physical call** — if the spike shows the library route wins, the admission machinery already exists (declaration, registration, frontier admission) and the gap is caller-supplied providers plus lowering; record that on `exercise-opaque-admissions-downstream-of-the-frontier` and the enforcers ticket rather than inventing a separate integration path.
 - **Measurements happen on the M3 bench host, serially** — never in parallel agents; interleave A/B; record exact environment per row.
 - **On close, update the roadmap ladder rung** and hand the shape/dtype profile to `derive-transformer-operation-and-shape-surface` if it is still open.
+
+## Closed (2026-07-31)
+
+Integrated at `28d7c9d`. The rung's closing condition is met on its own terms: one bounded contraction path (the tiled strict realization) is shown feasible with reproducible attribution, the eliminations carry their grounds, the measurement boundary is recorded, and the surviving work is seven dependency-ordered vertical tickets. The roadmap L3 row and the two catalog lines are coordinator-owed and land when `contracts/navigation` frees from the live p0 worker.
