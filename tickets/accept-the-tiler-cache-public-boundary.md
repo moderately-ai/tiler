@@ -6,7 +6,7 @@ priority: p1
 dependencies: [report-cache-publication-state-after-the-rename-boundary, decide-the-composed-subject-backend-compilations-shape, decide-where-an-unfillable-subject-facet-is-refused, decide-the-lookup-argument-type]
 related: [implement-the-expansion-cache-protocol, prototype-candle-metal-adapter]
 scopes: [implementation/cache, implementation/artifact]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [cache, api, decision]
 ---
@@ -19,6 +19,10 @@ ADR 0082 admits the crate but not the interface, so `tiler_cache::expansion` doc
 The former recommendation to accept before resolving three split signatures was backwards: acceptance would freeze the interface whose shape the children exist to determine. Its “no consumer” premise is also stale. `tiler-build` now depends on `tiler-cache`; `metal_cache.rs` composes the ordered backend-compilation and artifact-program subject and calls `get_or_publish`, and `metal_plan.rs` carries the resulting subject and resolution through the checked plan path.
 
 The subject cardinality and lookup argument decisions now retain the existing consumer-backed signatures: ordered `&[&[u8]]` backend compilation inputs at composition and lookup by `&ComposedSubject`, with one internal key derivation per operation. Composition-time refusal remains the tested invariant. Present those exact signatures in the atomic public-boundary review.
+
+## Implementation keys
+
+Review the exact existing surface as one consumer-backed unit. Retain ordered borrowed `&[&[u8]]` backend-compilation inputs because canonical composition performs the one necessary validation and allocation; retain lookup by `&ComposedSubject` because the real caller performs one operation and `CacheKey` already represents the checked derived token. Ratify the typed publication, refusal, reporting, digest, limits, and preflight surfaces listed below without adding a raw-key path, redundant checked wrapper, prepared token, or ambient filesystem probe.
 
 ## Items to ratify
 
@@ -63,3 +67,9 @@ This ticket previously said not to accept the outcome/report vocabulary until `r
 `ExpansionCache::preflight` landed `pub(crate)` under ADR 0074 convention 7 and was staged here rather than promoted. It carries a module-level `#[allow(dead_code)]` whose reason states why no caller was wired to satisfy the lint: the only place a caller would naturally go is the expansion path, and putting a filesystem probe there is the one thing the design forbids.
 
 **Fact — the author is `add-an-expansion-cache-root-preflight`, not `prototype-expansion-content-cache`.** Both authorship references on this ticket now name the same ticket, correcting one that named the wrong one. The exact check: `git log --oneline --diff-filter=A -- crates/tiler-cache/src/expansion/preflight.rs` → `0f98b1f Probe a cache root's filesystem properties on request`, and `git show --stat 0f98b1f` shows that commit editing `tickets/add-an-expansion-cache-root-preflight.md` and adding `crates/tiler-cache/src/expansion/preflight.rs`.
+
+## Graph maintenance
+
+- Move this ticket through the exact public-boundary review now that all four dependencies are done; do not redispatch the two completed signature decisions.
+- On acceptance, replace reviewed-draft wording only for the exercised `tiler_cache::expansion` surface and update every contract or catalog that names its status.
+- Keep namespace-wide accounting, collection, and purge under `accept-the-expansion-cache-maintenance-boundary`; this ticket must not absorb that separate lifecycle and caller boundary.
