@@ -44,8 +44,12 @@
 //! The bounded profile admits checked [`ProposalBody::ScheduledKernel`] and
 //! [`ProposalBody::KernelSubprogram`] proposals and explicitly rejects the
 //! reserved [`ProposalBody::View`] variant while keeping the additive
-//! sum-type/provider seam. Opaque physical-call contracts are owned by the
-//! reviewed `implement-opaque-physical-call-providers` ticket.
+//! sum-type/provider seam. [`ProposalBody::OpaqueCall`] is admitted too, by a
+//! different route: a call is declared and registered ahead of enumeration
+//! through [`crate::call_declaration`] and [`crate::call_registry`], and a
+//! proposal names an already-checked registration rather than carrying a body
+//! this module verifies. Both authorities are crate-private, so opaque
+//! admission is not an out-of-crate seam.
 //!
 //! A subprogram is what makes one semantic occurrence realizable by *several*
 //! dispatches: a scheduled kernel is one region and therefore one dispatch, so a
@@ -100,13 +104,15 @@ const PROPOSAL_IDENTITY_TAG: &[u8] = b"tiler.compiler.physical-implementation-pr
 /// reordered variant cannot silently keep its encoding.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum PhysicalProposalKind {
-    /// A checked scheduled kernel over one bounded index region. P0-admitted.
+    /// A checked scheduled kernel over one bounded index region. Admitted.
     ScheduledKernel,
-    /// A nested kernel subprogram. Reserved; rejected in P0.
+    /// An ordered chain of dispatches realizing one region subject. Admitted;
+    /// every stage re-enters the same checked verification a single kernel does.
     KernelSubprogram,
-    /// An opaque physical call. Reserved; owned by the opaque-call ticket.
+    /// An opaque physical call. Admitted only by naming a registration the
+    /// crate-private call registry already checked, never by carrying a body.
     OpaqueCall,
-    /// A metadata-only view. Reserved; rejected in P0.
+    /// A metadata-only view. Reserved; the one body variant still rejected.
     View,
 }
 
@@ -197,14 +203,14 @@ impl KernelSubprogram {
     }
 }
 
-/// A minimal typed placeholder for a reserved (non-P0) proposal body.
+/// A minimal typed placeholder for a reserved proposal body.
 ///
 /// It preserves the additive seam without asserting any of the contract the
 /// reserved variant will eventually carry: the descriptor is echoed in the
-/// rejection diagnostic but is otherwise uninterpreted. The
-/// `implement-opaque-physical-call-providers` ticket replaces the
-/// [`ProposalBody::OpaqueCall`] payload with its typed ABI, effect, aliasing,
-/// placement, and evidence contracts.
+/// rejection diagnostic but is otherwise uninterpreted. [`ProposalBody::View`]
+/// is the one body still carrying it; the opaque-call payload it once stood in
+/// for is now the typed [`OpaqueCallProposal`], and a subprogram carries its
+/// verified stages.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ReservedProposalSeam {
     descriptor: &'static str,
@@ -229,8 +235,9 @@ impl ReservedProposalSeam {
 /// The additive body of one proposed physical implementation.
 ///
 /// This is the sum-typed seam the mature model grows: the bounded profile
-/// implements only [`Self::ScheduledKernel`] and reserves the rest so an
-/// unsupported body rejects explicitly instead of being silently approximated.
+/// implements [`Self::ScheduledKernel`], [`Self::KernelSubprogram`], and
+/// [`Self::OpaqueCall`], and reserves [`Self::View`] so an unsupported body
+/// rejects explicitly instead of being silently approximated.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(
     dead_code,
@@ -257,7 +264,7 @@ pub(crate) enum ProposalBody {
     /// proves is **admitted**; each failure on that path is a distinct typed
     /// rejection naming what was wrong.
     OpaqueCall(Box<OpaqueCallProposal>),
-    /// A metadata-only view. Reserved; the P0 frontier rejects it.
+    /// A metadata-only view. Reserved; the bounded frontier rejects it.
     View(ReservedProposalSeam),
 }
 

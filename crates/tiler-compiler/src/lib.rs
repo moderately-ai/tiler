@@ -2,6 +2,11 @@
 //!
 //! This crate owns compiler decisions and may construct artifact plans. It must
 //! not depend on Metal emission, live runtime APIs, Candle, or frontend syntax.
+//!
+//! [`session`] is the one boundary over which a caller compiles; every public
+//! module beside it supplies something a request is composed from, never a
+//! second compilation path. The private `pipeline` module is that one path, and
+//! `session` is its only caller outside this crate's own tests.
 
 mod boundary;
 mod call_abi;
@@ -37,11 +42,3 @@ pub mod session;
 pub mod target;
 #[cfg(test)]
 mod workcount;
-
-// Keep the bounded compiler path in the ordinary library target while its
-// reviewed public facade is introduced by the capability and conformance
-// slices. This is a compile-time reachability assertion, not a public entry
-// point and not a second compilation path.
-const _: for<'a> fn(
-    request::CompilationRequest<'a>,
-) -> Result<pipeline::CompilationProduct, pipeline::CompileError> = pipeline::compile;

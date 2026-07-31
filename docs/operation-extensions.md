@@ -53,7 +53,7 @@ This measured limitation is accepted by ADR 0045. It does not make the
 compiler-core extension boundary consumer-specific or close the ordinary
 compiler API.
 
-**Fact — a public compile entry point now exists; supplying providers to it does not, so the list above still describes the intended boundary rather than a reachable one.** `tiler_compiler::session::compile_governed` compiles a semantic program an out-of-crate caller owns, and it names the governed profile rather than accepting a request: `CompilationRequest` and its installed-capability field are both crate-private, so every compilation resolves against the capabilities this build ships and no out-of-crate caller supplies its own. What *is* reachable out of crate is composition: a lowering-capability registry can be built entirely through the public capability surface, and one so composed has been driven through the compiler's own entry point from inside the crate. Composing a registry, installing one, and reaching the compiler are three separate claims and this contract keeps them apart; [`prototype-public-compiler-api`](../tickets/prototype-public-compiler-api.md) owns widening the boundary to the consumer-agnostic request that would make installation reachable.
+**Fact — the first clause of the list above is now reachable rather than intended: an ordinary compiler-API user does supply external operation providers to a session.** This paragraph previously recorded the opposite, that `session::compile_governed` named the governed profile and that `CompilationRequest` and its installed-capability field were crate-private, so composition was reachable out of crate and installation was not. [`prototype-public-compiler-api`](../tickets/prototype-public-compiler-api.md) closed that: `session::CompileRequest` is the consumer-agnostic request, `session::InstalledCapabilities::installed` binds a caller's `FrozenLoweringCapabilityRegistry` to the exact `FrozenScalarRegistry` it was frozen against, `session::CompileRequest::with_capabilities` installs the checked pair, and `session::compile` compiles through it; `session::compile_governed` is a single-target convenience spelling of that same path rather than a privileged one. Composing a registry, installing one, and reaching the compiler remain three separate claims and this contract still keeps them apart — all three now hold for the index/access family, and only the first holds for the scalar-lowering family, which no compile stage resolves.
 
 ## Public extension seams
 
@@ -80,7 +80,7 @@ Two further extension-shaped surfaces are deliberately unassigned and acquire no
 
 Intended participation is not a maturity claim, and a `pub` keyword is neither necessary nor sufficient for either. ADR 0078 records the rung each row has reached against the four claims `AGENTS.md` keeps apart — a type-system reservation, an architectural seam, implemented support, and a tested guarantee — and those rungs differ across the table and can differ between the two halves of one surface. **Inference — what this contract states in place of a rung, because a rung is a measurement that goes stale and an invariant is not:** a surface has reached a tested guarantee only when a provider written outside the defining crate's own governed set has driven it through the ordinary compile path and the resulting plan names that provider as its authority. Registration and resolution being implemented and tested is the weaker claim, and it is the one the scalar-lowering and reference rows hold: no compile-path caller resolves the scalar family, and `tiler-reference` is a development dependency of `tiler-compiler`, so neither is reachable from a production compiler stage.
 
-The lowering seam is the case where the two halves differ, and the asymmetry is deliberate. Its registration surface is public — a registry composes entirely through `tiler_compiler::capability` — while its installation path is not, for the reason the fact above states. Under ADR 0074's staging convention a crate-private authority is a temporary posture rather than a classification, so neither a private surface in this table nor a public one absent from it may be read as an intent.
+The lowering seam was the case where the two halves differed, and both are now public: a registry composes entirely through `tiler_compiler::capability` and installs through `tiler_compiler::session`, as the fact above records. What the two halves still differ in is *family* rather than visibility — the index/access family is installed and resolved on the compile path, the scalar-lowering family is installable and resolved by nothing. Under ADR 0074's staging convention a crate-private authority is a temporary posture rather than a classification, so neither a private surface in this table nor a public one absent from it may be read as an intent.
 
 ## Registry lifecycle and coherence
 
@@ -153,9 +153,12 @@ provider and proving the emitted work refines it — is implemented in
 and both halves now run on the ordinary compile path: every recognized
 occurrence resolves exactly one index/access capability and is then refined
 against the region that capability's provider emitted. The registered surface is
-a reviewed prototype boundary, not a stabilized compiler-session API; the
-ordinary public compiler session remains a later reviewed boundary these tickets
-must not silently stabilize.
+a reviewed prototype boundary, not a stabilized compiler-session API. The
+ordinary public compiler session exists —
+[`prototype-public-compiler-api`](../tickets/prototype-public-compiler-api.md)
+landed `tiler_compiler::session` and Tom reviewed it — and it is a reviewed
+experimental draft on the same terms: reviewed visibility is not stabilization,
+and no work may treat these surfaces as published or fixed.
 
 Two consequences belong to this contract rather than to the compiler's own. First, a resolved capability's provenance reaches the artifact: a selected plan records the `{provider identity, capability revision}` pair each occurrence resolved, and the compiler re-derives that set from the installed registry rather than trusting what a plan recorded. Second, resolution for this family fails closed, so the two failing dispositions this contract already distinguishes are load-bearing rather than diagnostic preferences — an absent capability says the installed authority was never extended to the occurrence, a contended one says two extensions contradict each other, and neither is resolved by a priority order or a default provider. [The optimizer contract](compiler/optimizer.md#lowering-capability-resolution-and-index-region-refinement) owns the stage's placement and behaviour.
 
@@ -309,11 +312,15 @@ semantic IR.
 
 "Separately versioned" is two revisions, not one. The implemented access-lowering family realizes it as a capability revision carried beside, and independent of, the admitting provider's own output-affecting revision: one provider may register several capabilities that move at different rates, and both revisions are retained wherever a lowering's provenance is recorded. A provider whose emitted lowering changes must raise the capability revision, because that is the half a compiled artifact's provenance is keyed on.
 
-The bounded P0 physical frontier implements scheduled-kernel providers only.
-The reviewed
+The bounded physical frontier implements scheduled-kernel and kernel-subprogram
+providers, and admits opaque calls through a separate compiler-owned declaration
+and registration path that
 [`implement-opaque-physical-call-providers`](../tickets/implement-opaque-physical-call-providers.md)
-ticket owns the later opaque-call capability after optimizer conformance and
-mature boundary-property and analytical-cost authorities.
+and [`integrate-opaque-calls-into-the-physical-frontier`](../tickets/integrate-opaque-calls-into-the-physical-frontier.md)
+delivered. That path is *not* a public seam: `OpaqueCallDeclaration` and
+`OpaqueCallRegistry` are crate-private, so no out-of-crate provider registers an
+opaque call, and this contract's provider obligations reach it as the shape a
+future seam would have to keep rather than as one it already offers.
 
 ## Capability coherence
 
@@ -349,9 +356,9 @@ The properties below are what a seam must *keep* rather than accidents of the bo
 
 **An exhausted analysis budget is an `Unknown` gap, not a rejection and not an admission.** When a checked proof cannot afford a region, the compiler records a typed budget stop naming the resource, its limit, and the required amount, and nothing about the emitted work was disproved. A budget stop is reported only when it is the sole diagnostic, so it can never stand in for a genuine refusal.
 
-**A reservation is not a capability.** A reserved body variant exists so an unsupported proposal rejects explicitly under its own name instead of being approximated by the nearest thing the bounded profile can emit; it carries an uninterpreted marker echoed into the rejection and read nowhere else. Reading the reserved physical-body variants as opaque-call support is wrong. The opaque-call contract is the typed ABI, effect, alias, placement, target, numerical, resource, and failure-stage boundary this contract requires above, and [`implement-opaque-physical-call-providers`](../tickets/implement-opaque-physical-call-providers.md) owns it; it does not exist.
+**A reservation is not a capability.** A reserved body variant exists so an unsupported proposal rejects explicitly under its own name instead of being approximated by the nearest thing the bounded profile can emit; it carries an uninterpreted marker echoed into the rejection and read nowhere else. `View` is the one body variant still reserved on that footing. `KernelSubprogram` and `OpaqueCall` are no longer reservations and must not be cited as ones: the first is admitted as a verified chain of stages, and the second carries the typed ABI, effect, alias, placement, target, numerical, resource, and failure-stage boundary this contract requires above. A reservation becoming a capability is the expected direction of travel and is why the seam is additive; the error to keep avoiding is the reverse reading, treating a variant that only rejects as evidence of the support it names.
 
-**A provider's revision is provenance, not a version negotiation.** A capability key carries its provider identity while resolution selects on family, operation, and signature alone, so no revision supersedes another, no later registration wins, and there is no precedence order and no default provider. **Inference, not a tested guarantee:** two revisions of one provider therefore register as two distinct keys that one selector matches, producing the same contention two unrelated providers would; [`test-two-revisions-of-one-provider-as-a-capability-ambiguity`](../tickets/test-two-revisions-of-one-provider-as-a-capability-ambiguity.md) owns pinning that behaviour.
+**A provider's revision is provenance, not a version negotiation.** A capability key carries its provider identity while resolution selects on family, operation, and signature alone, so no revision supersedes another, no later registration wins, and there is no precedence order and no default provider. **Measured, having been recorded here as an inference until [`test-two-revisions-of-one-provider-as-a-capability-ambiguity`](../tickets/test-two-revisions-of-one-provider-as-a-capability-ambiguity.md) pinned it:** two revisions of one provider register as two distinct keys that one selector matches, producing the same contention two unrelated providers would. `capability::tests::two_revisions_of_one_provider_resolve_to_an_ambiguity` observes both registrations succeeding, resolution returning an ambiguity, and the candidates being both identities in canonical ascending order in either registration order.
 
 **Contention at one seam is not contention at another, and neither rule generalizes.** Two providers claiming one occurrence is unresolvable in the lowering registry, because exactly one authority may define how an occurrence lowers. Two providers proposing an implementation of one region is additive: both are retained, separated by their folded provenance, and chosen between later on cost. A region may legitimately have several correct implementations; an occurrence may not have several meanings.
 

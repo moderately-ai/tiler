@@ -19,9 +19,21 @@ ticket: "prototype-target-neutral-baseline-slice"
 **Status:** research complete; accepted by ADR 0069
 
 **Evidence boundary:** the precedents and dependency argument below are
-primary-source synthesis. A private bounded compiler slice exercises part of
-the accepted boundary, but no retained experiment supports this report as an
+primary-source synthesis. A bounded compiler slice exercises part of the
+accepted boundary, but no retained experiment supports this report as an
 `executable-model` of the general mature contract.
+
+**Correction — 2026-07-31.** The evidence boundary above said *private*, and the
+slice is no longer private: `prototype-public-compiler-api` landed the reviewed
+`tiler_compiler::session` boundary, so an out-of-crate caller composes a request,
+installs its own lowering registry, states an ordered numerical-contract
+preference and its own target profiles, and reads the typed outcome. That is the
+general entry point this report recommended, reached by the route it recommended.
+What is unchanged is the evidence class: reachability is not coverage, the
+admitted program subject is still the bounded one — a single input and a single
+output over an `f32` pointwise or scale-bias-then-strict-serial-sum shape — and
+every other valid program is still rejected without approximation, exactly as the
+accepted disposition below requires.
 
 ## Question
 
@@ -45,10 +57,23 @@ support. ADR 0044 makes semantic and optional compilation capabilities
 explicit in a frozen registry. A valid operation may therefore lack a selected
 access, scheduling, target, or kernel-lowering provider.
 
-**Fact:** the current executable model recognizes one exact graph and uses
-fixed two-stage and three-buffer Rust arrays. Those cardinalities are evidence
-about the first strategy, not invariants of `CompilationRequest` or a mature
-compiler product.
+**Fact, as of this report's writing and since superseded:** the executable model
+then recognized one exact graph and used fixed two-stage and three-buffer Rust
+arrays. Those cardinalities were evidence about the first strategy, not
+invariants of `CompilationRequest` or a mature compiler product.
+
+**Correction — 2026-07-31.** Both halves have moved, in the direction the
+accepted disposition below asked for. Recognition is no longer one exact graph:
+`ResolveLoweringCapabilities` resolves one index/access capability per recognized
+occurrence against the registry the request carries, so which programs compile is
+a property of the installed authority rather than of a hard-coded shape.
+Cardinalities are no longer fixed arrays: `tiler_ir::program` carries `Vec`
+stages and buffers, and the governed deterministic budgets that bound them are
+request fields — widened from two regions and three buffers to three and four by
+[`enumerate-the-split-reduction-on-the-planning-frontier`](../../../tickets/enumerate-the-split-reduction-on-the-planning-frontier.md)
+so a split reduction's three stages over four values fit. That widening is
+itself the evidence for the original sentence's point: the numbers changed, and
+nothing downstream treated them as invariants.
 
 **Inference:** publishing the fixed normalized graph or its cardinalities would
 make current coverage look like the compiler's abstraction. Renaming the same
