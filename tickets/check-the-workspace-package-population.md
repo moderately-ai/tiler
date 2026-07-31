@@ -1,7 +1,7 @@
 ---
 id: check-the-workspace-package-population
 title: Check the workspace package population beside the dependency-direction test
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [correct-stale-post-vertical-integration-inventories]
@@ -9,9 +9,6 @@ scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, inventory, correctness]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785522836
 ---
 ## User-visible outcome
 
@@ -39,6 +36,10 @@ Adding or removing a workspace member fails a test that names the expected popul
 ## Closes when
 
 A test in `crates/tiler/tests/` derives the workspace package names from `cargo metadata --no-deps`, asserts the exact expected set and its count, fails when an expected name is removed, and passes at head; `cargo nextest run -p tiler` and `make full` are green.
+
+## Delivered (2026-07-31)
+
+`crates/tiler/tests/workspace_population.rs` derives the member names from `cargo metadata --no-deps`'s `workspace_members` field, handles both ID forms, and asserts the exact thirteen-name set and its count with named missing/unexpected members in the failure message. The perturbation was run against the real test: dropping `tiler-macros` from the expected list failed naming the count and the derived population, and the restored list passes. Hand-parsed per the filing ticket's constraint — no JSON dependency enters the facade crate's graph.
 
 ## Graph maintenance
 
