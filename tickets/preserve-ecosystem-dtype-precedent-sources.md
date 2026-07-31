@@ -1,7 +1,7 @@
 ---
 id: preserve-ecosystem-dtype-precedent-sources
 title: Preserve ecosystem dtype precedent sources
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [preserve-primary-dtype-standards-evidence, enumerate-the-mature-tensor-dtype-taxonomy, own-the-dtype-support-maturity-matrix]
@@ -9,9 +9,6 @@ scopes: [research/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, dtype, provenance, documentation]
-claimed_from: todo
-assignee: loop-preserve-eco
-lease_expires_at: 1785521298
 ---
 
 ## User-visible outcome
