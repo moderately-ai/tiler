@@ -1,7 +1,7 @@
 ---
 id: recheck-target-dtype-dispatch-after-semantic-rewrites
 title: Recheck target dtype dispatch after semantic rewrites
-status: todo
+status: deferred
 priority: p2
 dependencies: [admit-a-caller-declared-target-profile]
 related: [spike-bf16-through-the-second-dtype-seams]
