@@ -6,8 +6,8 @@ title: "Authority ledger for the first macOS Metal compile profile"
 topics: ["targets", "feasibility", "metal", "apple-targets", "numerics", "provenance"]
 catalog_group: "physical-planning-lowering"
 research_status: "complete"
-disposition: "pending"
-implementation_status: "not-started"
+disposition: "adopted"
+implementation_status: "implemented"
 evidence_classes: ["primary-source-synthesis", "bounded-measurement"]
 informs: ["tiler.contract.metal-backend", "tiler.contract.artifact-abi", "tiler.contract.numerical-semantics"]
 evidence: ["tiler.research.apple-targets.numerical-behaviour", "tiler.research.apple-targets.compatibility", "tiler.research.target-profiles.physical-feasibility-model"]
@@ -198,7 +198,7 @@ That is a direct, isolated observation of what the selected realization permits,
 | `subnormal_arithmetic` (F32 entry) | `FlushesToZero { PreservesSign }` | **Yes** — into both F32 subnormal dimensions |
 | `buffer_binding_limit` | 31 | **Yes** — into `BufferBindings` |
 
-**Fact.** The deployment minimum here is 26.0, not the 14.0 the current prototypes state, because `probe.fixed_flags -std=metal4.0` and `environment.family.macos.requested_target air64-apple-macos26.0` are the inputs the retained measurement actually used. Reusing the existing MSL 3.1 / macOS 14.0 record for this profile would attribute measurements to a compilation that did not produce them.
+**Fact.** The deployment minimum here is 26.0, because `probe.fixed_flags -std=metal4.0` and `environment.family.macos.requested_target air64-apple-macos26.0` are the inputs the retained measurement actually used. Reusing the older MSL 3.1 / macOS 14.0 record for this profile would attribute measurements to a compilation that did not produce them. Both prototypes stated that older record until the migration below; neither states any target fact now.
 
 **Selected, not a capability:** `MetalEmissionRealization { launch_index: LaunchIndexRealization::ThreadPositionInGridUInt }`. MSL 4.0 Table 5.8 permits `[[thread_position_in_grid]]` as either `ushort` or `uint`; Tiler selects `uint` and widens explicitly to the governed `uint64_t` index type. It is carried by the translation unit, it affects payload identity, and it proves nothing about grid capacity, arithmetic support, or address width — three `compile_fail` doctests in `crates/tiler-build/src/metal_plan.rs` already pin each of those three negatives.
 
@@ -225,11 +225,25 @@ The third is not a gap in this ledger. **Every compile-phase row above has its a
 
 The consequence for work item 5 of the owning ticket is exact and worth stating here so it is not rediscovered: `tiler_metal::applicability::MetalHostEligibility` holds a `NativeTranslationAuthority` whose one field is a private uninhabited enum, so a positive eligibility receipt is impossible to construct anywhere, including inside `tiler-metal`. A runner that offers this profile *only* from a receipt therefore cannot offer it on any host that exists today, and `evaluate_metal_host_applicability` returns `MetalHostApplicabilityRefusal::UnknownNativeTranslationAuthority` even for an observation matching the measured row in every public field. That is the accepted decision applied, not a defect to route around, and the cheaper alternative — treating the matching public environment row as sufficient — is the one ADR 0086 explicitly rejected, on the ground that an opaque translator can change while the observed row stays identical.
 
+## What consumed this ledger
+
+**Fact — the rows are constructed, and by one owner.** `tiler_build::BoundMetalCompileDeclaration` (`crates/tiler-build/src/metal_declaration.rs`) assembles the checked compiler `TargetProfile`, the exact `MetalTargetFacts`, the selected `MetalEmissionRealization` and `NumericalRealization`, the total `MetalTarget` projection, and the structured sources, from exactly the rows above. Its private `LedgerRows` record is the transcription, one field per row, so a mutation test can move one row and observe the descriptor move with it. The profile key is `tiler.metal.macos-apple9.msl4-0.f32.v1` and its canonical descriptor is 1,741 bytes.
+
+The authority classes are carried as this ledger states them, not flattened. The quantitative rows are external normative guarantees under three separately versioned references — the macOS 26.5 SDK dispatch header, the 2025-10-20 feature tables, and the MSL 4.0 address-space chapter — while dispatchability and every numerical row carry one `TargetCompileProfileMeasurementSource` pairing the four offline toolchain components with the execution environment. Absent rows stay absent: no device-address-width row, a `PreparedKernelPreflight` query rather than a workgroup fact, no synchronization row, and no F16 or BF16 row at all.
+
+**Fact — exactly two overlaps are validated.** Compiler buffer capacity is checked no greater than the Metal emission limit, and the F32 subnormal projection runs once through `declare_metal_f32_subnormal_behaviour`. Nothing else is compared: a language standard, artifact family, and deployment minimum have no compiler counterpart, and a test asserts that changing the language standard moves the AOT target while leaving the compiler descriptor byte-identical.
+
+**Fact — the migration landed and the deployment record moved with it.** `accept_or_publish_metal_plan` consumes the declaration and refuses a plan compiled under any other profile before emission, naming the key or the descriptor. Both prototypes now compile, emit, and route under it; neither states a target fact of its own, and both moved from MSL 3.1 / macOS 14.0 to MSL 4.0 / macOS 26.0.
+
+**Measurement — the bounded proof ran on the measured row.** On the Apple M4 Max under macOS 27.0 build 26A5388g, the producer published six members and the runner proved thirty operand cases across them, fused and materialized agreeing bit for bit with the published reference, plus the deep single-member proof over the fail-closed, device-preflight, and post-commit probes.
+
+**Measurement — the production offer path refused, exactly as outcome 3 predicts.** The same run reports `metal.host-applicability.unknown-translation-authority: native-translation-authority is unknown for tiler.metal.host-applicability.macos-27.0-26A5388g-arm64-m4max-apple9.v1`, on a host matching this ledger's execution-environment row in every public field. The envelope route is retained beside it as an explicitly labelled diagnostic — producer-declared equality, not host-earned eligibility — so the runtime machinery keeps being exercised on hardware without making the claim ADR 0086 gates.
+
 ## Outcomes
 
 Per the repository's research contract, this record closes with named outcomes rather than open notes.
 
-1. **Contract update, ready.** Every quantitative, index-arithmetic, dispatchability, and F32 subnormal row above has a named authority, an exact validity scope, and a reproducible reference. Work item 2 of the owning ticket may construct the bound declaration from exactly these rows and no others.
+1. **Contract update, applied.** Every quantitative, index-arithmetic, dispatchability, and F32 subnormal row above has a named authority, an exact validity scope, and a reproducible reference, and the section above names the owner that constructed the bound declaration from exactly these rows and no others.
 2. **Explicitly deferred, with a trigger.** The device-address-width row stays absent until a KIR operation consumes it.
 3. **Explicitly deferred, with a trigger.** The runtime host offer stays unavailable until one of ADR 0086's three reconsideration triggers supplies the missing authority. No implementation task closes it.
 4. **Open question, with the evidence that would close it.** One row — operand permutation — is an `Inference` rather than a `Measurement`, because no retained case isolates it and the emitted attribute strings that isolate its four neighbours have nothing to say about operand order. It closes either by a retained kernel whose result distinguishes an operand order under the exact offline compiler, or by a citation to MSL 4.0's normative statement of what `-fmetal-math-mode=safe` guarantees about it. Until then the row is constructible as stated, carrying the `Inference` label, and must not be quoted as an isolated measurement.
