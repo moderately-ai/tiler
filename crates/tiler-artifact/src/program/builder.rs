@@ -618,9 +618,13 @@ impl ArtifactProgramBuilder {
 
     /// Declares one complete plan variant at the next routing rank.
     ///
-    /// Every deferred predicate is minted from the complete compiler-produced
-    /// prepared-entry requirement. Its acquisition provider is part of that
-    /// requirement rather than an artifact-selected lowering provider.
+    /// Every deferred predicate is minted from the complete typed
+    /// prepared-entry requirement supplied by the producer. Its acquisition
+    /// provider is part of that requirement rather than an artifact-selected
+    /// lowering provider. This builder validates the assertion structurally; it
+    /// cannot authenticate that an arbitrary caller copied the requirement and
+    /// entry association from a compiler plan. The ordinary `tiler-build` path
+    /// owns that stronger producer guarantee.
     ///
     /// # Errors
     ///
