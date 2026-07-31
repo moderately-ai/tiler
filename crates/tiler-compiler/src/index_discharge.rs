@@ -671,16 +671,11 @@ mod tests {
             &self,
             registrar: &mut SemanticRegistryRegistrar<'_>,
         ) -> Result<(), RegistryError> {
-            registrar.register_value_type(ValueTypeDefinition::structurally_valid(
-                ValueTypeDefinitionKey::Nominal(TypeKey::new("tiler", "bool", 1).unwrap()),
-                NormativeDefinitionRef::new("test bool type for index discharge")?,
-                TypeDefinitionFacts::new(CanonicalValue::boolean(true)),
-            ))?;
-            registrar.register_value_type(ValueTypeDefinition::structurally_valid(
-                ValueTypeDefinitionKey::Parameterized(TypeKey::new("tiler", "complex", 1).unwrap()),
-                NormativeDefinitionRef::new("test complex family for index discharge")?,
-                TypeDefinitionFacts::new(CanonicalValue::boolean(true)),
-            ))?;
+            // The nominal and parameterized subjects are the governed
+            // `tiler::bool@1` and `tiler::complex@1` the standard registry
+            // itself admits, so this fixture no longer mints a second identity
+            // under a name the catalog owns. Only the encoded family, which
+            // the standard catalog admits no static contract for, is test-owned.
             registrar.register_value_type(ValueTypeDefinition::structurally_valid(
                 ValueTypeDefinitionKey::EncodedNumeric(
                     QuantSchemeKey::new("test", "encoded", 1).unwrap(),

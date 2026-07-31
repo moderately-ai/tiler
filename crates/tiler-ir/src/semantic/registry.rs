@@ -8,6 +8,7 @@ use std::sync::{Arc, OnceLock};
 use crate::identity::{push_len, push_slice};
 use crate::shape::Axis;
 
+use super::catalog::register_builtin_dtype_catalog;
 use super::operation::{
     CanonicalValueKind, F32_CONSTANT_BITS_ATTRIBUTE, OpKey, OperationAlgebraicCapabilities,
     OperationArity, OperationAttributeSchema, OperationAttributes, OperationConformance,
@@ -488,6 +489,39 @@ impl ValueTypeDefinition {
     #[must_use]
     pub const fn canonical_facts(&self) -> &TypeDefinitionFacts {
         &self.canonical_facts
+    }
+
+    /// Returns the immutable canonical descriptor bytes for this definition.
+    ///
+    /// ADR 0034 requires a published key to resolve to one immutable descriptor
+    /// and requires canonical serialization to validate that descriptor rather
+    /// than trust the key alone. These bytes are that subject: the family key,
+    /// the mandatory normative-definition reference, and the complete canonical
+    /// facts, under their own versioned domain separator.
+    ///
+    /// Deliberately not the provider. Two providers registering byte-identical
+    /// descriptors have registered the same meaning, and provider attribution is
+    /// already a separate identity subject
+    /// ([`SemanticCapabilityAuthority::admission_provenance`]). Folding it in
+    /// here would make a descriptor comparison answer a provenance question
+    /// instead.
+    #[must_use]
+    pub fn canonical_descriptor(&self) -> CanonicalValueTypeDescriptor {
+        let mut bytes = b"tiler.value-type-descriptor.v1\0".to_vec();
+        encode_type_definition(&mut bytes, &self.key, self);
+        CanonicalValueTypeDescriptor(bytes)
+    }
+}
+
+/// Collision-free immutable canonical descriptor of one value-type definition.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct CanonicalValueTypeDescriptor(Vec<u8>);
+
+impl CanonicalValueTypeDescriptor {
+    /// Returns the canonical descriptor bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
     }
 }
 
@@ -1967,29 +2001,12 @@ impl SemanticRegistryProvider for StandardSemantics {
     }
 
     fn register(&self, registrar: &mut SemanticRegistryRegistrar<'_>) -> Result<(), RegistryError> {
-        let facts = TypeDefinitionFacts::new(
-            CanonicalValue::record([
-                CanonicalField::new(
-                    super::operation::F32_TYPE_FACT_CLASS,
-                    CanonicalValue::utf8("ieee-binary").expect("the governed F32 class is bounded"),
-                ),
-                CanonicalField::new(
-                    super::operation::F32_TYPE_FACT_WIDTH_BITS,
-                    CanonicalValue::unsigned_u32(32),
-                ),
-            ])
-            .expect("the governed F32 facts are canonical"),
-        );
-        registrar.register_marked_value_type::<F32>(
-            ValueTypeDefinition::structurally_valid(
-                ValueTypeDefinitionKey::Nominal(
-                    TypeKey::new("tiler", "f32", 1).expect("the governed F32 key is valid"),
-                ),
-                NormativeDefinitionRef::new("IEEE 754-2019 binary32; tiler::f32@1")?,
-                facts,
-            ),
-            F32::resolved_type(),
-        )?;
+        // Every governed built-in identity, F32 included, comes from the one
+        // catalog table; this provider binds the Rust markers that a typed
+        // authoring handle needs and registers the operations that give a
+        // subset of those identities executable meaning.
+        register_builtin_dtype_catalog(registrar)?;
+        registrar.bind_marker::<F32>(F32::resolved_type())?;
         registrar.register_operation(OperationDefinition::new(
             constant_f32_op(),
             exact_schema(
@@ -3011,7 +3028,7 @@ mod tests {
     struct Families;
     impl SemanticRegistryProvider for Families {
         fn identity(&self) -> ProviderIdentity {
-            ProviderIdentity::new("tiler", "families", 1).unwrap()
+            ProviderIdentity::new("test", "families", 1).unwrap()
         }
 
         fn register(
@@ -3019,15 +3036,15 @@ mod tests {
             registrar: &mut SemanticRegistryRegistrar<'_>,
         ) -> Result<(), RegistryError> {
             registrar.register_value_type(ValueTypeDefinition::structurally_valid(
-                ValueTypeDefinitionKey::Parameterized(TypeKey::new("tiler", "complex", 1).unwrap()),
-                NormativeDefinitionRef::new("tiler complex v1")?,
+                ValueTypeDefinitionKey::Parameterized(TypeKey::new("test", "pair", 1).unwrap()),
+                NormativeDefinitionRef::new("test pair v1")?,
                 TypeDefinitionFacts::new(CanonicalValue::boolean(true)),
             ))?;
             registrar.register_value_type(ValueTypeDefinition::structurally_valid(
                 ValueTypeDefinitionKey::EncodedNumeric(
-                    QuantSchemeKey::new("tiler", "affine", 1).unwrap(),
+                    QuantSchemeKey::new("test", "affine", 1).unwrap(),
                 ),
-                NormativeDefinitionRef::new("tiler affine v1")?,
+                NormativeDefinitionRef::new("test affine v1")?,
                 TypeDefinitionFacts::new(CanonicalValue::boolean(true)),
             ))
         }
@@ -3085,7 +3102,7 @@ mod tests {
         builder.register_provider(&Families).unwrap();
         let registry = builder.freeze().unwrap();
         let complex = ResolvedValueType::parameterized(
-            TypeKey::new("tiler", "complex", 1).unwrap(),
+            TypeKey::new("test", "pair", 1).unwrap(),
             TypeArguments::new([CanonicalValue::value_type(F32::resolved_type())]).unwrap(),
         )
         .unwrap();
@@ -3099,7 +3116,7 @@ mod tests {
         builder.register_provider(&Families).unwrap();
         let registry = builder.freeze().unwrap();
         let encoded = ResolvedValueType::encoded_numeric(
-            QuantSchemeKey::new("tiler", "affine", 1).unwrap(),
+            QuantSchemeKey::new("test", "affine", 1).unwrap(),
             EncodedNumericContract::new([CanonicalField::new(
                 AttributeFieldId::new(1),
                 CanonicalValue::value_type(external_f8()),
@@ -3949,7 +3966,7 @@ mod tests {
         builder.register_provider(&Families).unwrap();
         let registry = builder.freeze().unwrap();
         let encoded = ResolvedValueType::encoded_numeric(
-            QuantSchemeKey::new("tiler", "affine", 1).unwrap(),
+            QuantSchemeKey::new("test", "affine", 1).unwrap(),
             EncodedNumericContract::new([CanonicalField::new(
                 AttributeFieldId::new(1),
                 CanonicalValue::value_type(external_f8()),
@@ -3958,7 +3975,7 @@ mod tests {
         )
         .unwrap();
         let nested = ResolvedValueType::parameterized(
-            TypeKey::new("tiler", "complex", 1).unwrap(),
+            TypeKey::new("test", "pair", 1).unwrap(),
             TypeArguments::new([CanonicalValue::value_type(encoded)]).unwrap(),
         )
         .unwrap();
@@ -3976,14 +3993,14 @@ mod tests {
             closure
                 .type_keys
                 .contains(&ValueTypeDefinitionKey::Parameterized(
-                    TypeKey::new("tiler", "complex", 1).unwrap()
+                    TypeKey::new("test", "pair", 1).unwrap()
                 ))
         );
         assert!(
             closure
                 .type_keys
                 .contains(&ValueTypeDefinitionKey::EncodedNumeric(
-                    QuantSchemeKey::new("tiler", "affine", 1).unwrap()
+                    QuantSchemeKey::new("test", "affine", 1).unwrap()
                 ))
         );
         assert!(closure.type_keys.contains(&ValueTypeDefinitionKey::Nominal(

@@ -135,11 +135,17 @@ pub fn dequantize_strict_affine_op() -> OpKey {
 pub(super) fn register_standard_quantization(
     registrar: &mut SemanticRegistryRegistrar<'_>,
 ) -> Result<(), RegistryError> {
-    register_integer::<U4>(registrar, "u4", 4, 15, U4::resolved_type())?;
-    register_integer::<U8>(registrar, "u8", 8, u8::MAX, U8::resolved_type())?;
+    // The U4 and U8 nominal identities are governed catalog rows registered by
+    // `catalog::register_builtin_dtype_catalog`; this module binds the Rust
+    // markers that the strict-affine authoring path resolves through, and owns
+    // the strict-affine scheme itself.
+    registrar.bind_marker::<U4>(U4::resolved_type())?;
+    registrar.bind_marker::<U8>(U8::resolved_type())?;
     registrar.register_value_type(ValueTypeDefinition::new(
         ValueTypeDefinitionKey::EncodedNumeric(strict_affine_scheme()),
-        NormativeDefinitionRef::new("Tiler strict affine quantization v1; ADRs 0029-0033")?,
+        NormativeDefinitionRef::new(
+            "Tiler strict affine quantization v1; ADRs 0029-0033; tiler::strict-affine@1",
+        )?,
         TypeDefinitionFacts::new(strict_affine_family_facts()),
         Arc::new(StrictAffineTypeValidator),
     ))?;
@@ -171,44 +177,6 @@ pub(super) fn register_standard_quantization(
         "code-equals-zero-point-produces-positive-zero; preserve-subnormals",
         SemanticPreconditionDeclarations::empty(),
         Arc::new(DequantizeStrictAffine),
-    )
-}
-
-fn register_integer<T: ValueTypeMarker>(
-    registrar: &mut SemanticRegistryRegistrar<'_>,
-    name: &str,
-    width: u32,
-    maximum: u8,
-    resolved_type: ResolvedValueType,
-) -> Result<(), RegistryError> {
-    registrar.register_marked_value_type::<T>(
-        ValueTypeDefinition::structurally_valid(
-            ValueTypeDefinitionKey::Nominal(
-                TypeKey::new("tiler", name, 1).expect("governed integer key is valid"),
-            ),
-            NormativeDefinitionRef::new(format!(
-                "Tiler governed unsigned {width}-bit logical integer; ADR 0028"
-            ))?,
-            TypeDefinitionFacts::new(
-                CanonicalValue::record([
-                    CanonicalField::new(
-                        AttributeFieldId::new(1),
-                        CanonicalValue::utf8("unsigned-integer")
-                            .expect("governed integer class is bounded"),
-                    ),
-                    CanonicalField::new(
-                        AttributeFieldId::new(2),
-                        CanonicalValue::unsigned_u32(width),
-                    ),
-                    CanonicalField::new(
-                        AttributeFieldId::new(3),
-                        CanonicalValue::unsigned_u8(maximum),
-                    ),
-                ])
-                .expect("governed integer facts are canonical"),
-            ),
-        ),
-        resolved_type,
     )
 }
 

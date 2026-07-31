@@ -5,6 +5,7 @@
 //! one-way, output-reachable compaction into an immutable
 //! [`SemanticProgram`](crate::semantic::SemanticProgram).
 
+mod catalog;
 mod error;
 mod handles;
 mod identity;
@@ -18,6 +19,10 @@ mod shape_evidence;
 mod standard_operations;
 mod types;
 
+pub use catalog::{
+    admitted_complex_component_types, builtin_scalar_value_types, complex_type_constructor,
+    complex_value_type, microscaling_scheme_keys,
+};
 pub use error::{
     BuildError, BuilderCreateError, EntityKind, HandleError, ProgramBuildError,
     ProgramBuildFailure, ReifyError, ShapeRefineError, ShapeWitnessError, ShapeWitnessSubject,
@@ -33,17 +38,24 @@ pub use operation::{
     ARITHMETIC_F32_FACT_CANONICAL_NAN_BITS, ARITHMETIC_F32_FACT_CONTRACTION_PERMITTED,
     ARITHMETIC_F32_FACT_ROUNDING, CANONICAL_F32_ARITHMETIC_NAN_BITS, CONFORMANCE_FACT_IDENTITY,
     CONFORMANCE_FACT_VERSION, CONSTANT_F32_FACT_PAYLOAD_RULE, CanonicalOperationAttributes,
-    CanonicalValueKind, Definition, F32_CONSTANT_BITS_ATTRIBUTE, F32_TYPE_FACT_CLASS,
-    F32_TYPE_FACT_WIDTH_BITS, MAX_OPERATION_ATTRIBUTES, MAX_OPERATION_OPERANDS,
-    MAX_OPERATION_RESULTS, MAX_PROVIDER_DIAGNOSTIC_CODE_BYTES,
+    CanonicalValueKind, Definition, F32_CONSTANT_BITS_ATTRIBUTE, MAX_OPERATION_ATTRIBUTES,
+    MAX_OPERATION_OPERANDS, MAX_OPERATION_RESULTS, MAX_PROVIDER_DIAGNOSTIC_CODE_BYTES,
     MAX_PROVIDER_DIAGNOSTIC_MESSAGE_BYTES, OpKey, OperationAlgebraicCapabilities, OperationArity,
     OperationArityRole, OperationAttributeSchema, OperationAttributes, OperationConformance,
     OperationDefinition, OperationDefinitionFacts, OperationEffect, OperationInferenceError,
     OperationInferenceOutputs, OperationInferenceRequest, OperationInferencer, OperationRef,
     OperationSchema, OperationSchemaError, ProviderDiagnosticCode, ProviderDiagnosticError,
-    REDUCTION_AXES_ATTRIBUTE, ResultIndex, SERIAL_SUM_F32_FACT_ACCUMULATION,
-    SERIAL_SUM_F32_FACT_CANONICAL_NAN_BITS, SERIAL_SUM_F32_FACT_FOLD_ORDER, ValueFact, ValueRef,
-    add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
+    REDUCTION_AXES_ATTRIBUTE, ResultIndex, SCALAR_TYPE_FACT_ALIAS_POLICY,
+    SCALAR_TYPE_FACT_BLOCK_SIZE, SCALAR_TYPE_FACT_CLASS, SCALAR_TYPE_FACT_COEFFICIENT_DIGITS,
+    SCALAR_TYPE_FACT_COMPONENT_ORDER, SCALAR_TYPE_FACT_COMPONENT_TYPES,
+    SCALAR_TYPE_FACT_EXPONENT_BIAS, SCALAR_TYPE_FACT_EXPONENT_BITS,
+    SCALAR_TYPE_FACT_HAS_INFINITIES, SCALAR_TYPE_FACT_HAS_NAN, SCALAR_TYPE_FACT_HAS_SIGNED_ZERO,
+    SCALAR_TYPE_FACT_HAS_SUBNORMALS, SCALAR_TYPE_FACT_HAS_ZERO, SCALAR_TYPE_FACT_SCALE_SELECTION,
+    SCALAR_TYPE_FACT_SIGN_BITS, SCALAR_TYPE_FACT_TRAILING_SIGNIFICAND_BITS,
+    SCALAR_TYPE_FACT_VALUE_CARDINALITY, SCALAR_TYPE_FACT_WIDTH_BITS,
+    SERIAL_SUM_F32_FACT_ACCUMULATION, SERIAL_SUM_F32_FACT_CANONICAL_NAN_BITS,
+    SERIAL_SUM_F32_FACT_FOLD_ORDER, ValueFact, ValueRef, add_f32_op, constant_f32_op,
+    multiply_f32_op, strict_serial_sum_f32_op,
 };
 pub use precondition::{
     MAX_OPERATION_SEMANTIC_PRECONDITIONS, MAX_SEMANTIC_PRECONDITION_OBLIGATION_IDENTITY_BYTES,
@@ -66,13 +78,14 @@ pub use quantization::{
 };
 pub(crate) use registry::canonical_f32_bits;
 pub use registry::{
-    DefinitionValueSubject, F32, FrozenSemanticRegistry, NormativeDefinitionRef,
-    OperationApplicationRejection, ProviderIdentity, RegistryError, RegistryLookupError,
-    SemanticAdmissionProvenanceIdentity, SemanticAuthorityResource, SemanticCapabilityAuthority,
-    SemanticDefinitionProjectionIdentity, SemanticRegistryBuilder, SemanticRegistryProvider,
-    SemanticRegistryRegistrar, SemanticRegistryResource, SemanticRegistrySnapshotIdentity,
-    TypeDefinitionFacts, TypeInstanceError, TypeInstanceRejection, ValueTypeDefinition,
-    ValueTypeDefinitionKey, ValueTypeInstanceValidator, ValueTypeMarker,
+    CanonicalValueTypeDescriptor, DefinitionValueSubject, F32, FrozenSemanticRegistry,
+    NormativeDefinitionRef, OperationApplicationRejection, ProviderIdentity, RegistryError,
+    RegistryLookupError, SemanticAdmissionProvenanceIdentity, SemanticAuthorityResource,
+    SemanticCapabilityAuthority, SemanticDefinitionProjectionIdentity, SemanticRegistryBuilder,
+    SemanticRegistryProvider, SemanticRegistryRegistrar, SemanticRegistryResource,
+    SemanticRegistrySnapshotIdentity, TypeDefinitionFacts, TypeInstanceError,
+    TypeInstanceRejection, ValueTypeDefinition, ValueTypeDefinitionKey, ValueTypeInstanceValidator,
+    ValueTypeMarker,
 };
 pub use shape_evidence::{SameShape, ShapePredicate, ShapeWitness, ShapedValue};
 pub use standard_operations::{F32Add, F32Constant, F32Multiply, StrictSerialF32Sum};
