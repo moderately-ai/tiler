@@ -1,7 +1,7 @@
 ---
 id: pin-the-serial-sum-producer-runner-shape-interface
 title: Pin the serial-sum producer/runner shape interface the way its filenames are pinned
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [construct-and-bind-the-first-authoritative-metal-compile-profile, prototype-metal-runtime-proof]

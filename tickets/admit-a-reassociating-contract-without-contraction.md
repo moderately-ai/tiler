@@ -1,7 +1,7 @@
 ---
 id: admit-a-reassociating-contract-without-contraction
 title: Admit a reassociating contract without contraction
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [enumerate-the-split-reduction-on-the-planning-frontier, calibrate-and-activate-parallel-reduction-selection]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [compiler, numerics, reductions]
-claimed_from: todo
-assignee: loop-admit-a-reas
-lease_expires_at: 1785533981
 ---
 ## User-visible outcome
 
@@ -62,3 +59,5 @@ A registered contract admits a legal multi-member region for the recognized seri
 - If the resolution is a new preset, `StrictF32NumericalContract::governed_profile` grows and `crate::policy::NumericalPolicyPreset` must state why the new resolution is a different meaning rather than a relaxation. **Done.** `governed_profile` now returns `[Self; NumericalPolicyPreset::ALL.len()]`, so a preset registered in the table and omitted from the admitted set is a build error.
 - **Public boundary, not self-accepted.** `NumericalContract::ReassociateF32` (a `#[non_exhaustive]` public enum, so additive) and `MAX_NUMERICAL_CONTRACT_PREFERENCES` moving `3 → 4` are both session-visible and go to Tom under ADR 0075 before acceptance.
 - Filed: [`correct-the-optimizer-contract-registered-preset-count`](correct-the-optimizer-contract-registered-preset-count.md) — `docs/compiler/optimizer.md` still names three registered contracts, and `contracts/optimizer` was outside this ticket's scopes.
+
+**Boundary acceptance (2026-07-31).** Tom accepted the public boundary as reviewed: `NumericalContract::ReassociateF32` with key `tiler.reassociate-f32.v1`, and the table-derived `MAX_NUMERICAL_CONTRACT_PREFERENCES` moving 3 to 4.
