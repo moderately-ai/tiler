@@ -417,6 +417,9 @@ dependencies = [
 [[package]]
 name = "tiler-macros"
 version = "0.0.0"
+dependencies = [
+ "tiler-metal-aot",
+]
 
 [[package]]
 name = "tiler-metal"

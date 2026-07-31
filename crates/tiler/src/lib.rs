@@ -34,10 +34,33 @@
 //! # What is here today
 //!
 //! The re-export and the generated-path anchor, and nothing else. No frontend
-//! or runtime types are re-exported yet — those are selected by
-//! `define-inline-symbol-binding-and-runtime-value-adaptation` and
-//! `promote-artifact-family-selection-for-the-frontend`, and re-exporting
-//! anything before then would publish a boundary this ticket did not review.
+//! or runtime types are re-exported yet: those are selected by
+//! `define-inline-symbol-binding-and-runtime-value-adaptation`, and
+//! re-exporting anything before then would publish a boundary its ticket did
+//! not review.
+//!
+//! # The artifact-family selection is deliberately *not* re-exported here
+//!
+//! `promote-artifact-family-selection-for-the-frontend` reviewed the canonical
+//! typed `ArtifactFamilySelection` that ADR 0049 requires every inline AOT
+//! request to carry, and placed the frontend's edge to it on `tiler-macros`
+//! rather than on this crate.
+//!
+//! The reason is what the edge would cost here. Its one canonical encoder lives
+//! in `tiler-metal-aot`, whose dependency closure ADR 0077 item 2 decides
+//! empty, so the vocabulary can be neither copied nor moved beneath the driver;
+//! the frontend must depend on the driver to state a selection at all. A
+//! `proc-macro` crate and its dependencies are built for the host and never
+//! enter a consumer's target build graph, so `tiler-macros` can hold that edge
+//! for free. This crate cannot: a normal dependency here would link a
+//! process-spawning Apple toolchain driver into every consumer on every
+//! platform, and would publish Apple backend policy on a consumer-neutral
+//! boundary — the same cost ADR 0077 item 4 already refused for `tiler-metal`.
+//!
+//! Nothing a consumer writes needs the type. A delivery policy is stated in
+//! region syntax, and generated tokens name `#[cfg]` predicates and byte
+//! literals, not the selection. `tests/dependency_direction.rs` is what keeps
+//! this property true rather than merely intended.
 //!
 //! ```
 //! // The re-export resolves, and the tokens it expands to reach back into
