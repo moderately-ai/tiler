@@ -5,7 +5,7 @@ status: todo
 priority: p0
 dependencies: [prove-an-aot-compatible-metal-runtime-compiler-observer]
 related: [validate-macos-metal-profile-host-applicability]
-scopes: [contracts/artifacts, research/apple-targets]
+scopes: [contracts/artifacts, contracts/decisions, research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
@@ -55,11 +55,12 @@ Choose Option 1. Correctness comes from the direct native result and its deliber
 
 ## Closes when
 
-Tom selects one surviving authority, the Metal and numerical provenance contracts record it as a Proposal or accepted decision at the correct status, the host-applicability ticket depends on and incorporates it, and `tkt lint` plus `git diff --check` pass. If Option 2 is selected, the ticket closes with the first profile explicitly blocked on a newly named observable/authority rather than with a fabricated implementation task.
+Tom selects one surviving authority; an accepted ADR records the choice and explicitly refines or supersedes the relevant applicability/provenance terms of ADR 0043; the hand-maintained decision catalog, Metal and numerical provenance contracts, and host-applicability ticket agree with it; and `tkt lint` plus `git diff --check` pass. A proposed ADR is valid only while the question remains unanswered and cannot close this ticket. If Option 2 is selected, the accepted decision closes with the first profile explicitly blocked on a newly named observable/authority rather than with a fabricated implementation task.
 
 ## Graph maintenance
 
 - Block `validate-macos-metal-profile-host-applicability` and therefore `construct-and-bind-the-first-authoritative-metal-compile-profile` until this decision is recorded.
 - Keep `prove-an-aot-compatible-metal-runtime-compiler-observer`, `record-metal-runtime-compiler-provenance-gap`, and `measure-macos-apple9-f32-under-unified-msl4-profile` related as the evidence chain.
+- Add or accept the durable ADR, update `docs/decisions/README.md` and every affected hand-maintained catalog block in the same change, and remove proposal-only disclosure after acceptance.
 - If Option 1 is accepted, the host policy owns exact environment matching while artifact identity continues to own the offline compiler and linker.
 - If Option 2 is accepted, file only a bounded observer/authority ticket with a concrete new evidence source; do not create an open-ended search for private symbols.
