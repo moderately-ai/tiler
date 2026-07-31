@@ -5,7 +5,7 @@ status: todo
 priority: p2
 dependencies: []
 related: [route-the-runtime-loader-through-the-dispatch-record]
-scopes: [implementation/artifact, implementation/runtime, contracts/artifacts, research/target-profiles]
+scopes: [implementation/artifact, implementation/runtime, contracts/artifacts, research/target-profiles, project/tickets]
 shared_scopes: []
 paths: []
 tags: [implementation, artifact, public-boundary]
