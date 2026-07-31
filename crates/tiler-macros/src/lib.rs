@@ -10,14 +10,26 @@
 //!
 //! # What this crate implements today
 //!
-//! The expansion entry point, the two behaviours [`tensor`] documents, and the
+//! The expansion entry point, the two behaviours [`tensor`] documents, the
 //! frontend's statement of its artifact-family delivery policy, in the
-//! crate-private `delivery` module.
+//! crate-private `delivery` module, and its statement of where an expansion
+//! looks for the expansion cache, in the crate-private `cache_root` module.
 //! There is no grammar here: token parsing, span mapping onto a tensor
 //! program, and ahead-of-time expansion are owned by
 //! `define-inline-symbol-binding-and-runtime-value-adaptation` and
 //! `prototype-inline-proc-macro-frontend`, and this crate rejects rather than
 //! guesses at input those tickets have not defined.
+//!
+//! # The cache root is chosen here, and opened nowhere yet
+//!
+//! `tiler-cache` takes a root from its caller and never consults the
+//! environment, so choosing one is the frontend's. `cache_root` states that
+//! choice — an override variable, a per-user macOS default, and a typed refusal
+//! for every root that is unusable or not private — as a pure function of an
+//! environment snapshot. Today's expansion opens no cache, so the resolver's
+//! only caller is its own test module; `prototype-inline-proc-macro-frontend` is
+//! the slice that calls it. Its consumer-visible spellings are a reviewed draft
+//! under ADR 0075 until Tom accepts them.
 //!
 //! What the current expansion does prove is the part a later grammar cannot
 //! re-litigate cheaply: that `tiler::tensor!` resolves through the facade's
@@ -51,6 +63,7 @@
 
 use proc_macro::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenStream, TokenTree};
 
+mod cache_root;
 mod delivery;
 
 /// The path generated tokens use to reach the facade.
