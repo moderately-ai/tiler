@@ -100,7 +100,7 @@
 
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
 
 use metal::{
     Buffer, CommandBufferRef, ComputePipelineDescriptor, ComputePipelineState, Device,
@@ -120,6 +120,10 @@ use tiler_ir::semantic::{
     SemanticProgramBuilder, StrictSerialF32Sum,
 };
 use tiler_ir::shape::{Axis, Shape};
+use tiler_metal::applicability::{
+    MetalGpuFamily, MetalGpuFamilySupport, MetalHostApplicabilityPolicy, MetalHostObservation,
+    evaluate_metal_host_applicability,
+};
 use tiler_metal::emit::emit_translation_unit;
 use tiler_metal::target::{
     LaunchIndexRealization, MetalDeploymentMinimum, MetalEmissionRealization,
@@ -525,6 +529,129 @@ fn host_environment(compilation: &Compilation) -> Result<ExecutionEnvironment, P
         representation: RepresentationKey::new(REPRESENTATION_KEY)
             .map_err(|_| ProofError::HostProfile)?,
     })
+}
+
+/// Reads one `sw_vers` field, or nothing when the tool does not answer.
+///
+/// A tool that is missing, fails, or prints nothing leaves the predicate
+/// *unobserved* rather than supplying a placeholder. The policy has a typed
+/// refusal for an unanswered predicate, and inventing a value here would spend
+/// that distinction to make an adapter bug look like a host fact.
+fn sw_vers(field: &str) -> Option<String> {
+    let output = Command::new("/usr/bin/sw_vers").arg(field).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8(output.stdout).ok()?;
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
+}
+
+/// Normalizes a Rust architecture name into the spelling the records use.
+///
+/// `std::env::consts::ARCH` reports `aarch64` for the machine every retained
+/// record spells `arm64`. Exactly that one spelling is mapped; everything else
+/// passes through unchanged, so an architecture nobody measured is refused by
+/// its own name rather than renamed into the one the policy wants.
+fn normalized_architecture(arch: &str) -> &str {
+    if arch == "aarch64" { "arm64" } else { arch }
+}
+
+/// Reads the highest named Apple GPU family this device reports supporting.
+///
+/// Highest first: the families are cumulative, so the first supported one is the
+/// most specific true statement. A device claiming none of them is reported as
+/// such rather than guessed at.
+fn highest_apple_family(device: &Device) -> MetalGpuFamilySupport {
+    [
+        (MTLGPUFamily::Apple9, MetalGpuFamily::Apple9),
+        (MTLGPUFamily::Apple8, MetalGpuFamily::Apple8),
+        (MTLGPUFamily::Apple7, MetalGpuFamily::Apple7),
+        (MTLGPUFamily::Apple6, MetalGpuFamily::Apple6),
+        (MTLGPUFamily::Apple5, MetalGpuFamily::Apple5),
+    ]
+    .into_iter()
+    .find(|(queried, _)| device.supports_family(*queried))
+    .map_or(MetalGpuFamilySupport::NoneNamed, |(_, named)| {
+        MetalGpuFamilySupport::Highest(named)
+    })
+}
+
+/// Observes the four host predicates that need no device.
+///
+/// Split from the device half so the composition is exercised without Metal, and
+/// so the policy's own cases never need either. Nothing here reads an artifact,
+/// a compilation, or a compiler identity: the whole point of the separate
+/// applicability check is that it cannot be satisfied by the producer's
+/// declaration.
+fn observe_host_environment() -> MetalHostObservation {
+    let mut observation = MetalHostObservation::unobserved()
+        .observing_os_family(std::env::consts::OS)
+        .observing_architecture(normalized_architecture(std::env::consts::ARCH));
+    if let Some(version) = sw_vers("-productVersion") {
+        observation = observation.observing_os_version(version);
+    }
+    if let Some(build) = sw_vers("-buildVersion") {
+        observation = observation.observing_os_build(build);
+    }
+    observation
+}
+
+/// Observes every predicate the first Metal profile's applicability row names.
+///
+/// The device contributes exactly two of them — the name it reports for itself
+/// and the Apple family it claims — and nothing else about the device reaches
+/// the policy. In particular the registry ID does not: ADR 0086 excludes it by
+/// name, because the retained records report two different values for this same
+/// named Apple M4 Max.
+fn observe_metal_host(device: &Device) -> MetalHostObservation {
+    observe_host_environment()
+        .observing_device_name(device.name())
+        .observing_gpu_family(highest_apple_family(device))
+}
+
+/// Reports what this host is, and why it earns no eligibility receipt.
+///
+/// Called before anything commits a route, because a refusal after a commit
+/// would be a fallback ADR 0051 does not permit. It **reports** rather than
+/// gates: `construct-and-bind-the-first-authoritative-metal-compile-profile`
+/// owns the eligible-host offer, and there is nothing to gate yet — the policy
+/// refuses on every host, so gating this proof on it would stop the value proof
+/// from running while proving nothing about eligibility.
+///
+/// The route this binary does take is still decided by
+/// [`ExecutionEnvironment::classify`], which answers a different question: it
+/// compares an artifact's declared target profile against the one this host
+/// states. That check is a tautology as far as *applicability* goes — this
+/// process states the profile from its own compilation — and the whole reason
+/// this adapter exists beside it is that it observes the host instead.
+fn report_host_applicability(device: &Device) {
+    let observation = observe_metal_host(device);
+    println!(
+        "host applicability observation: os {}/{}/{}, arch {}, device {}, family {}",
+        observation.os_family().unwrap_or("unobserved"),
+        observation.os_version().unwrap_or("unobserved"),
+        observation.os_build().unwrap_or("unobserved"),
+        observation.architecture().unwrap_or("unobserved"),
+        observation.device_name().unwrap_or("unobserved"),
+        match observation.gpu_family() {
+            Some(MetalGpuFamilySupport::Highest(family)) => family.as_str(),
+            Some(MetalGpuFamilySupport::NoneNamed) => "no named Apple family",
+            None => "unobserved",
+        },
+    );
+    let policy = MetalHostApplicabilityPolicy::FIRST_MACOS_APPLE9;
+    match evaluate_metal_host_applicability(policy, &observation) {
+        // Unreachable at the type level inside `tiler-metal`, where the receipt
+        // is visibly uninhabited. From here it is an opaque struct, so the arm
+        // is required — and writing it costs nothing, because reaching it needs
+        // a superseding decision under ADR 0086 rather than a code change.
+        Ok(receipt) => println!(
+            "  eligible under {}, which requires a superseding ADR 0086 decision",
+            receipt.policy().id(),
+        ),
+        Err(refusal) => println!("  refused before any routing commit: {refusal}"),
+    }
 }
 
 /// Builds a compute pipeline for one named function of one object image.
@@ -1318,7 +1445,7 @@ struct DeviceFacts {
     max_threads_per_threadgroup: u64,
     max_buffer_length: u64,
     recommended_working_set: u64,
-    highest_apple_family: Option<&'static str>,
+    highest_apple_family: MetalGpuFamilySupport,
 }
 
 /// One entry of a route, with the device objects its dispatch needs.
@@ -1594,26 +1721,12 @@ fn allocation_fits(
 
 /// Reads what this device reports about itself.
 fn device_facts(device: &Device) -> DeviceFacts {
-    // Highest first: the families are cumulative, so the first supported one is
-    // the most specific true statement. `None` is reported rather than guessed
-    // when the device claims none of them.
-    let highest_apple_family = [
-        (MTLGPUFamily::Apple9, "Apple9"),
-        (MTLGPUFamily::Apple8, "Apple8"),
-        (MTLGPUFamily::Apple7, "Apple7"),
-        (MTLGPUFamily::Apple6, "Apple6"),
-        (MTLGPUFamily::Apple5, "Apple5"),
-    ]
-    .into_iter()
-    .find(|(family, _)| device.supports_family(*family))
-    .map(|(_, name)| name);
-
     DeviceFacts {
         name: device.name().to_owned(),
         max_threads_per_threadgroup: device.max_threads_per_threadgroup().width,
         max_buffer_length: device.max_buffer_length(),
         recommended_working_set: device.recommended_max_working_set_size(),
-        highest_apple_family,
+        highest_apple_family: highest_apple_family(device),
     }
 }
 
@@ -1968,6 +2081,11 @@ fn run() -> Result<(), ProofError> {
     let device = &Device::system_default().ok_or(ProofError::NoDevice)?;
     println!("device: {}", device.name());
 
+    // Asked here, ahead of every routing commit this run makes. It is a separate
+    // question from the one the envelope path answers, and it is the one nothing
+    // in this process can make true: see `report_host_applicability`.
+    report_host_applicability(device);
+
     // ---- the direct path -------------------------------------------------
     let compilation = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
         .map_err(ProofError::Compile)?;
@@ -2105,9 +2223,10 @@ fn run() -> Result<(), ProofError> {
         "device preflight: {} ({}), {} thread(s) per threadgroup, buffers to {} byte(s), \
          working set {} byte(s)",
         facts.name,
-        facts
-            .highest_apple_family
-            .unwrap_or("no Apple family reported"),
+        match facts.highest_apple_family {
+            MetalGpuFamilySupport::Highest(family) => family.as_str(),
+            MetalGpuFamilySupport::NoneNamed => "no Apple family reported",
+        },
         facts.max_threads_per_threadgroup,
         facts.max_buffer_length,
         facts.recommended_working_set,
@@ -2536,8 +2655,10 @@ mod tests {
     //! hardware run is what would notice.
 
     use super::{
-        BACKEND_KEY, LoadRejection, PLAN_ROLES, Path, ProbeSubject, REDUCTION_CLASSES,
-        REPRESENTATION_KEY, ROWS, bind_interface, expected_shape, host_environment,
+        BACKEND_KEY, LoadRejection, MetalGpuFamily, MetalGpuFamilySupport,
+        MetalHostApplicabilityPolicy, PLAN_ROLES, Path, ProbeSubject, REDUCTION_CLASSES,
+        REPRESENTATION_KEY, ROWS, bind_interface, evaluate_metal_host_applicability,
+        expected_shape, host_environment, normalized_architecture, observe_host_environment,
         probe_accepted_baseline, probe_damaged_interior_byte, probe_damaged_section_content,
         probe_foreign_expected_identity, probe_other_backend_family,
         probe_other_profile_descriptor, probe_truncated_envelope, proof_member, serial_sum_program,
@@ -2563,6 +2684,7 @@ mod tests {
     };
     use tiler_ir::semantic::SemanticProgram;
     use tiler_ir::shape::Shape;
+    use tiler_metal::applicability::{MetalHostApplicabilityRefusal, MetalHostPredicate};
     use tiler_runtime::load::{DecodedProgram, ExecutionEnvironment};
 
     /// Columns of the fixture's input; the reduced axis.
@@ -3746,6 +3868,93 @@ mod tests {
         assert!(
             outcome.contains("runtime.unexecutable-payload"),
             "the refusal names the unexecutable-payload class: {outcome}",
+        );
+    }
+
+    /// Exactly one architecture spelling is rewritten, and nothing else is.
+    ///
+    /// The mapping exists because `std::env::consts::ARCH` and every retained
+    /// record disagree on one name. A map that rewrote anything else would turn
+    /// an unmeasured architecture into the measured one and hide the refusal the
+    /// policy exists to produce.
+    #[test]
+    fn the_architecture_normalization_rewrites_one_spelling() {
+        assert_eq!(normalized_architecture("aarch64"), "arm64");
+        assert_eq!(normalized_architecture("arm64"), "arm64");
+        for untouched in ["x86_64", "aarch64_be", "arm64e", "riscv64", ""] {
+            assert_eq!(
+                normalized_architecture(untouched),
+                untouched,
+                "only the `aarch64` spelling may be rewritten",
+            );
+        }
+    }
+
+    /// The device-free half answers its four predicates and invents no others.
+    ///
+    /// Runs on any macOS host: it asserts which predicates were *answered*, not
+    /// what they say, because what they say is the very thing the policy is
+    /// allowed to disagree with.
+    #[test]
+    fn the_device_free_observation_answers_only_the_device_free_predicates() {
+        let observation = observe_host_environment();
+        assert_eq!(observation.os_family(), Some(std::env::consts::OS));
+        assert_eq!(
+            observation.architecture(),
+            Some(normalized_architecture(std::env::consts::ARCH)),
+        );
+        assert!(
+            observation
+                .os_version()
+                .is_some_and(|value| !value.is_empty()),
+            "sw_vers -productVersion answered nothing",
+        );
+        assert!(
+            observation
+                .os_build()
+                .is_some_and(|value| !value.is_empty()),
+            "sw_vers -buildVersion answered nothing",
+        );
+        assert_eq!(observation.device_name(), None);
+        assert_eq!(observation.gpu_family(), None);
+    }
+
+    /// A device-free observation can never reach the translation-authority
+    /// predicate, because two predicates before it are unanswered.
+    #[test]
+    fn a_device_free_observation_refuses_before_the_authority() {
+        let refusal = evaluate_metal_host_applicability(
+            MetalHostApplicabilityPolicy::FIRST_MACOS_APPLE9,
+            &observe_host_environment(),
+        )
+        .expect_err("no observation earns a receipt");
+        assert_ne!(
+            refusal.predicate(),
+            MetalHostPredicate::NativeTranslationAuthority,
+            "an observation missing the device predicates must refuse on one of them",
+        );
+    }
+
+    /// Composing both halves leaves no predicate unanswered.
+    ///
+    /// The device values are stated here rather than read from a device, so this
+    /// runs without Metal. What it proves is about the *adapter*: the device-free
+    /// half plus the two device fields covers every predicate the policy
+    /// evaluates, so whatever refusal a real host gets is about the host and not
+    /// about a field nobody filled in.
+    #[test]
+    fn the_composed_observation_answers_every_predicate() {
+        let complete = observe_host_environment()
+            .observing_device_name("Apple M4 Max")
+            .observing_gpu_family(MetalGpuFamilySupport::Highest(MetalGpuFamily::Apple9));
+        let refusal = evaluate_metal_host_applicability(
+            MetalHostApplicabilityPolicy::FIRST_MACOS_APPLE9,
+            &complete,
+        )
+        .expect_err("no observation earns a receipt");
+        assert!(
+            !matches!(refusal, MetalHostApplicabilityRefusal::Unobserved { .. }),
+            "the adapter left a predicate unanswered: {refusal}",
         );
     }
 }
