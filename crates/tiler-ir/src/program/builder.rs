@@ -41,16 +41,16 @@ use super::handles::{
 use super::model::{
     AllocationData, AllocationOwnership, AllocationSpec, ByteWindow, DependencyData,
     DependencyReasonData, KernelProgramData, MaterializedComponentSpec, MaterializedOrigin,
-    MaterializedValueData, MaterializedValueSpec, MemorySpace, ProgramOutputData,
-    ROUTING_COMMIT_TRANSITIONS, RoutingCommitState, RoutingCommitTransition, SemanticOccurrence,
-    StageAccess, StageAccessData, StageAccessMode, StageData, StageLaunch, StageLaunchData,
-    StorageEncoding, StorageScalar, ValueRole, VerifiedKernelProgram, ViewData, element_bytes,
-    encode_identity,
+    MaterializedValueData, MaterializedValueSpec, MemorySpace, PartialReduction,
+    PartialReductionData, ProgramOutputData, ROUTING_COMMIT_TRANSITIONS, RoutingCommitState,
+    RoutingCommitTransition, SemanticOccurrence, StageAccess, StageAccessData, StageAccessMode,
+    StageData, StageLaunch, StageLaunchData, StorageEncoding, StorageScalar, ValueRole,
+    VerifiedKernelProgram, ViewData, element_bytes, encode_identity,
 };
 use super::{
     MAX_PROGRAM_ABI_EXPRESSIONS, MAX_PROGRAM_ALLOCATIONS, MAX_PROGRAM_DEPENDENCIES,
-    MAX_PROGRAM_OUTPUTS, MAX_PROGRAM_STAGES, MAX_PROGRAM_VALUES, MAX_PROGRAM_VIEWS,
-    MAX_STAGE_ACCESSES, MAX_STAGE_COVERAGE,
+    MAX_PROGRAM_OUTPUTS, MAX_PROGRAM_PARTIAL_REDUCTIONS, MAX_PROGRAM_STAGES, MAX_PROGRAM_VALUES,
+    MAX_PROGRAM_VIEWS, MAX_STAGE_ACCESSES, MAX_STAGE_COVERAGE,
 };
 
 /// The unforgeable semantic subject one kernel program must completely realize.
@@ -72,6 +72,7 @@ pub struct KernelProgramBuilder {
     views: Vec<ViewData>,
     allocations: Vec<AllocationData>,
     dependencies: Vec<DependencyData>,
+    partial_reductions: Vec<PartialReductionData>,
     outputs: Vec<ProgramOutputData>,
     covered: Vec<SemanticOccurrence>,
     claimed_inputs: Vec<(InputKey, Option<EncodedComponentRole>)>,
@@ -133,6 +134,7 @@ impl KernelProgramBuilder {
             views: Vec::new(),
             allocations: Vec::new(),
             dependencies: Vec::new(),
+            partial_reductions: Vec::new(),
             outputs: Vec::new(),
             covered: Vec::new(),
             claimed_inputs: Vec::new(),
@@ -646,6 +648,59 @@ impl KernelProgramBuilder {
         )
     }
 
+    /// Declares that two stages realize one reduction split over a partial tensor.
+    ///
+    /// The declaration states the physical contract a split reduction carries
+    /// across its dispatch boundary; the ordering that makes the partials
+    /// visible is the ordinary data dependency between the two stages, which
+    /// [`Self::push_data_dependency`] declares and whole-program verification
+    /// requires for the read.
+    ///
+    /// # Errors
+    ///
+    /// Returns a handle error,
+    /// [`KernelProgramBuildError::SelfDependency`] when one stage is named as
+    /// both passes, [`KernelProgramBuildError::DuplicatePartialReduction`] when
+    /// the same partial value is split twice, or a structural-limit error.
+    pub fn push_partial_reduction(
+        &mut self,
+        split: PartialReduction,
+    ) -> Result<(), KernelProgramBuildError> {
+        self.resolve_stage(split.producer)?;
+        self.resolve_stage(split.combiner)?;
+        self.resolve_value(split.partial)?;
+        self.resolve_value(split.result)?;
+        // One stage cannot both stage the partials and combine them: the split
+        // exists precisely to put a dispatch boundary between the two, and a
+        // self-edge is what a program declares when it has not.
+        if split.producer.index == split.combiner.index {
+            return Err(KernelProgramBuildError::SelfDependency);
+        }
+        // A partial tensor combined by two different splits would leave the
+        // contributor coverage of each unprovable against the other.
+        if self
+            .partial_reductions
+            .iter()
+            .any(|declared| declared.partial == split.partial.index)
+        {
+            return Err(KernelProgramBuildError::DuplicatePartialReduction);
+        }
+        limit(
+            self.partial_reductions.len().saturating_add(1),
+            MAX_PROGRAM_PARTIAL_REDUCTIONS,
+            ProgramLimitKind::PartialReductions,
+        )?;
+        self.partial_reductions.push(PartialReductionData {
+            producer: split.producer.index,
+            combiner: split.combiner.index,
+            partial: split.partial.index,
+            result: split.result.index,
+            partitions: split.partitions,
+            contributors_per_partition: split.contributors_per_partition,
+        });
+        Ok(())
+    }
+
     /// Publishes one materialized value under a named semantic output key.
     ///
     /// # Errors
@@ -753,6 +808,7 @@ impl KernelProgramBuilder {
             views: std::mem::take(&mut self.views),
             allocations: std::mem::take(&mut self.allocations),
             dependencies: std::mem::take(&mut self.dependencies),
+            partial_reductions: std::mem::take(&mut self.partial_reductions),
             outputs: std::mem::take(&mut self.outputs),
             abi_expressions: std::mem::take(&mut self.expressions),
             applicability_guard: self.applicability_guard,
@@ -768,6 +824,7 @@ impl KernelProgramBuilder {
         self.views = data.views;
         self.allocations = data.allocations;
         self.dependencies = data.dependencies;
+        self.partial_reductions = data.partial_reductions;
         self.outputs = data.outputs;
         self.expressions = data.abi_expressions;
         self.routing_commit = data.routing_commit;
@@ -999,13 +1056,20 @@ impl KernelProgramBuilder {
         }
     }
 
+    /// Checks one stage's claimed coverage against the bound semantic subject.
+    ///
+    /// Empty coverage is *not* rejected here, and that is the one thing this
+    /// check deliberately leaves to whole-program scope. A split reduction's
+    /// final pass computes no operation of its own — the pass it combines
+    /// already claims the reduction — so a stage covering nothing is legitimate
+    /// exactly when a declared split names it as a combiner, and a split is
+    /// declared after its stages exist. Whole-program verification is therefore
+    /// where the question can be answered, and it answers it as
+    /// [`super::error::KernelProgramDiagnostic::UncoveringStage`].
     fn check_coverage(
         &self,
         coverage: &[SemanticOccurrence],
     ) -> Result<Vec<SemanticOccurrence>, KernelProgramBuildError> {
-        if coverage.is_empty() {
-            return Err(KernelProgramBuildError::EmptyCoverage);
-        }
         limit(
             coverage.len(),
             MAX_STAGE_COVERAGE,

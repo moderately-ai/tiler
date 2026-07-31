@@ -26,7 +26,7 @@ use crate::shape::Shape;
 use super::MAX_PROGRAM_IDENTITY_BYTES;
 use super::abi::{AbiArenaTraversal, ExprNode, canonical_arena_traversal};
 use super::error::KernelProgramDiagnostic;
-use super::handles::{AbiExprId, ViewId};
+use super::handles::{AbiExprId, MaterializedValueId, StageId, ViewId};
 
 /// Converts a stored compact arena ordinal into a host index.
 ///
@@ -409,6 +409,45 @@ pub struct RoutingCommitTransition {
 /// The complete ordered routing-commit lifecycle every program must span.
 pub(super) const ROUTING_COMMIT_TRANSITIONS: usize = 3;
 
+/// One reduction split across two stages over an explicit partial tensor.
+///
+/// This is the *program-scope* half of a multi-pass reduction. Each pass's own
+/// region already proves its share — the partial pass that its split covers its
+/// contributor sequence exactly once each, the final pass that it combines one
+/// contributor per partition — but neither region can see the other, so neither
+/// can prove they agree on the same split, on the same partial tensor, or that
+/// the partial is written before it is read. That is what this declares and
+/// what [`super::KernelProgramBuilder::build`] proves.
+///
+/// It states a physical contract rather than implying one from the stage count:
+/// which stage writes the partials, which reads them, where they live, and how
+/// many contributors each carries. The dispatch dependency that makes the
+/// partials visible is the ordinary
+/// [`DependencyReasonView::Data`] edge between the two stages — a split
+/// reduction needs no barrier because the pass boundary *is* the dispatch
+/// boundary.
+///
+/// `contributors_per_partition` is the one field program scope cannot derive:
+/// the partial and result extents fix the partition count, but nothing at this
+/// layer knows how many original contributors a partial combines. It is
+/// therefore folded into program identity rather than checked away, and the
+/// planning layer that scheduled both passes is what cross-checks it.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct PartialReduction {
+    /// Stage that fully initializes the partial values.
+    pub producer: StageId,
+    /// Stage that combines them into the reduction result.
+    pub combiner: StageId,
+    /// Materialized value carrying the partial results.
+    pub partial: MaterializedValueId,
+    /// Materialized value carrying the combined reduction result.
+    pub result: MaterializedValueId,
+    /// Partial values produced per result position.
+    pub partitions: u64,
+    /// Original contributors each partial value combines.
+    pub contributors_per_partition: u64,
+}
+
 /// The declared facts of one materialized program value.
 ///
 /// The required byte count is derived from the shape, storage scalar, and
@@ -554,6 +593,17 @@ pub(super) enum DependencyReasonData {
     StorageHandoff(u32),
 }
 
+/// Storage for one split-reduction contract.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct PartialReductionData {
+    pub(super) producer: u32,
+    pub(super) combiner: u32,
+    pub(super) partial: u32,
+    pub(super) result: u32,
+    pub(super) partitions: u64,
+    pub(super) contributors_per_partition: u64,
+}
+
 /// Storage for one named program output.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ProgramOutputData {
@@ -570,6 +620,7 @@ pub(super) struct KernelProgramData {
     pub(super) views: Vec<ViewData>,
     pub(super) allocations: Vec<AllocationData>,
     pub(super) dependencies: Vec<DependencyData>,
+    pub(super) partial_reductions: Vec<PartialReductionData>,
     pub(super) outputs: Vec<ProgramOutputData>,
     /// The shared ABI expression arena, in canonical arena order.
     pub(super) abi_expressions: Vec<ExprNode>,
@@ -726,6 +777,15 @@ impl VerifiedKernelProgram {
         (0..self.data.dependencies.len()).map(move |index| DependencyRef {
             program: self,
             dependency: index,
+        })
+    }
+
+    /// Returns the declared split-reduction contracts in declaration order.
+    #[must_use]
+    pub fn partial_reductions(&self) -> impl ExactSizeIterator<Item = PartialReductionRef<'_>> {
+        (0..self.data.partial_reductions.len()).map(move |index| PartialReductionRef {
+            program: self,
+            reduction: index,
         })
     }
 
@@ -1138,6 +1198,77 @@ pub enum DependencyReasonView<'a> {
     StorageHandoff(AllocationRef<'a>),
 }
 
+/// A read-only view of one split-reduction contract.
+#[derive(Clone, Copy, Debug)]
+pub struct PartialReductionRef<'a> {
+    program: &'a VerifiedKernelProgram,
+    reduction: usize,
+}
+
+impl<'a> PartialReductionRef<'a> {
+    /// Returns the stage that fully initializes the partial values.
+    #[must_use]
+    pub fn producer(self) -> StageRef<'a> {
+        StageRef {
+            program: self.program,
+            stage: position(self.data().producer),
+        }
+    }
+
+    /// Returns the stage that combines them into the reduction result.
+    #[must_use]
+    pub fn combiner(self) -> StageRef<'a> {
+        StageRef {
+            program: self.program,
+            stage: position(self.data().combiner),
+        }
+    }
+
+    /// Returns the materialized value carrying the partial results.
+    #[must_use]
+    pub fn partial(self) -> MaterializedValueRef<'a> {
+        MaterializedValueRef {
+            program: self.program,
+            value: position(self.data().partial),
+        }
+    }
+
+    /// Returns the materialized value carrying the combined result.
+    #[must_use]
+    pub fn result(self) -> MaterializedValueRef<'a> {
+        MaterializedValueRef {
+            program: self.program,
+            value: position(self.data().result),
+        }
+    }
+
+    /// Returns the partial values produced per result position.
+    #[must_use]
+    pub fn partitions(self) -> u64 {
+        self.data().partitions
+    }
+
+    /// Returns the original contributors each partial value combines.
+    #[must_use]
+    pub fn contributors_per_partition(self) -> u64 {
+        self.data().contributors_per_partition
+    }
+
+    /// Returns the contributors the split covers, or `None` when it overflows.
+    ///
+    /// Verification proves the product does not overflow before a verified
+    /// program exists, so a verified program's answer is always `Some`.
+    #[must_use]
+    pub fn total_contributors(self) -> Option<u64> {
+        self.partitions()
+            .checked_mul(self.contributors_per_partition())
+    }
+
+    fn data(self) -> PartialReductionData {
+        self.program.data.partial_reductions[self.reduction]
+    }
+}
+
 /// A read-only view of one named program output.
 #[derive(Clone, Copy, Debug)]
 pub struct ProgramOutputRef<'a> {
@@ -1207,7 +1338,16 @@ const ALLOCATION_KEY_DOMAIN: &[u8] = b"tiler.kernel-program.allocation.v1\0";
 /// It also lets ordinary values carry a storage encoding rather than making
 /// packing imply compound semantics. Both facts change byte interpretation and
 /// must therefore be identity, not construction-only metadata.
-const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v5\0";
+///
+/// `v6` folds the declared split-reduction contracts. A
+/// [`PartialReduction`]'s `contributors_per_partition` is the one field program
+/// scope cannot derive from the entities already folded here — the partial and
+/// result extents fix only the partition count — so two programs identical in
+/// every stage, value and edge can still claim different contributor coverage.
+/// The tag steps rather than the section being appended silently, because every
+/// program ever encoded maps to different bytes now and a cache or artifact
+/// holding a `v5` identity must miss rather than match.
+const PROGRAM_DOMAIN: &[u8] = b"tiler.kernel-program.v6\0";
 
 fn push_shape(bytes: &mut Vec<u8>, shape: &Shape) {
     push_len(bytes, shape.rank());
@@ -1597,6 +1737,20 @@ pub(super) fn encode_identity(
         push_slice(&mut bytes, &edge);
     }
 
+    // Sorted by canonical content, like the edges above: a split-reduction
+    // contract names entities rather than being named by one, so its
+    // declaration position carries no meaning identity should preserve.
+    let mut splits: Vec<Vec<u8>> = data
+        .partial_reductions
+        .iter()
+        .map(|split| encode_partial_reduction(split, &stages, &values))
+        .collect();
+    splits.sort_unstable();
+    push_len(&mut bytes, splits.len());
+    for split in splits {
+        push_slice(&mut bytes, &split);
+    }
+
     let mut outputs: Vec<Vec<u8>> = data
         .outputs
         .iter()
@@ -1687,6 +1841,21 @@ fn push_allocation(
     for value in bound {
         bytes.extend_from_slice(&value.to_be_bytes());
     }
+}
+
+fn encode_partial_reduction(
+    split: &PartialReductionData,
+    stages: &CanonicalIds,
+    values: &CanonicalIds,
+) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    stages.push(&mut bytes, split.producer);
+    stages.push(&mut bytes, split.combiner);
+    values.push(&mut bytes, split.partial);
+    values.push(&mut bytes, split.result);
+    bytes.extend_from_slice(&split.partitions.to_be_bytes());
+    bytes.extend_from_slice(&split.contributors_per_partition.to_be_bytes());
+    bytes
 }
 
 fn encode_dependency(

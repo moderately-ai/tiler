@@ -13,9 +13,9 @@ use crate::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
     ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
     NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
-    OwnershipWitnessId, PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionTopology,
-    RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
-    VerifiedScheduledRegion,
+    OwnershipWitnessId, PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionPass,
+    ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy,
+    TensorRole, VerifiedScheduledRegion,
 };
 use crate::semantic::{
     STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
@@ -712,6 +712,14 @@ fn body_shaping_vocabulary_is_closed(
         match topology {
             ReductionTopology::None => "none",
             ReductionTopology::Serial { .. } => "serial",
+            ReductionTopology::MultiPass {
+                pass: ReductionPass::Partial,
+                ..
+            } => "multi-pass-partial",
+            ReductionTopology::MultiPass {
+                pass: ReductionPass::Final,
+                ..
+            } => "multi-pass-final",
         },
         match program {
             ScalarProgram::PointwiseF32(_) => "pointwise-f32",

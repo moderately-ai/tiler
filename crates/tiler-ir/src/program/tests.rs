@@ -26,9 +26,9 @@ use super::{
     AbiExprId, AllocationId, AllocationOwnership, AllocationSpec, ByteWindow,
     KernelProgramBuildError, KernelProgramBuilder, KernelProgramDiagnostic,
     MaterializedComponentSpec, MaterializedOrigin, MaterializedValueId, MaterializedValueSpec,
-    MemorySpace, ProgramAbiUse, ProgramEntityKind, RoutingCommitState, RoutingCommitTransition,
-    SemanticOccurrence, StageAccess, StageAccessMode, StageId, StageLaunch, StorageEncoding,
-    StorageScalar, ValueRole, VerifiedKernelProgram, ViewId,
+    MemorySpace, PartialReduction, ProgramAbiUse, ProgramEntityKind, RoutingCommitState,
+    RoutingCommitTransition, SemanticOccurrence, StageAccess, StageAccessMode, StageId,
+    StageLaunch, StorageEncoding, StorageScalar, ValueRole, VerifiedKernelProgram, ViewId,
 };
 
 const SCALE_BITS: u32 = 0x4000_0000; // 2.0f32
@@ -636,6 +636,12 @@ enum TwoStageShape {
     /// The identical accessible byte counts, written as products rather than
     /// literals.
     ComputedAccessibleBytes,
+    /// The first stage claims every occurrence and the second claims none.
+    ///
+    /// This is the coverage shape of a split reduction: the pass that computes
+    /// the reduction claims it, and the pass that only combines its partials
+    /// claims nothing, because claiming it again would double-cover the graph.
+    UncoveringSecondStage,
 }
 
 /// The allocations, values, and views of the two-stage fixture.
@@ -723,6 +729,7 @@ fn wire_two_stage(
     let (pointwise_coverage, reduction_coverage) = match shape {
         TwoStageShape::ShiftedCoverage => (occurrences(0..3), occurrences(3..5)),
         TwoStageShape::ReservedCoverage => (occurrences(0..2), occurrences(2..4)),
+        TwoStageShape::UncoveringSecondStage => (occurrences(0..5), Vec::new()),
         TwoStageShape::Canonical
         | TwoStageShape::SharedOutputStorage
         | TwoStageShape::ReversedDeclaration
@@ -2524,5 +2531,238 @@ fn identity_distinguishes_two_arenas_that_differ_only_in_their_wiring() {
     assert_ne!(
         left.canonical_identity().as_bytes(),
         right.canonical_identity().as_bytes()
+    );
+}
+
+/// Declares the canonical split contract over the two-stage fixture.
+///
+/// The fixture's temporary is `[2, 3]` and its output `[2]`, so a split of
+/// three partitions each combining one contributor is the structurally exact
+/// contract over it. That the pointwise stage is not *semantically* a partial
+/// reducer is deliberate and not a gap: this layer proves the structure of a
+/// split — who writes the partials, who reads them, and that the coverage
+/// arithmetic closes — while whether each pass really is the reduction pass it
+/// claims is proven by the region verifier in `crate::schedule`.
+fn split_over(wired: &TwoStage) -> PartialReduction {
+    PartialReduction {
+        producer: wired.pointwise,
+        combiner: wired.reduction,
+        partial: wired.temporary,
+        result: wired.output,
+        partitions: 3,
+        contributors_per_partition: 1,
+    }
+}
+
+fn program_with_split(
+    semantic: &SemanticProgram,
+    amend: impl FnOnce(&TwoStage, PartialReduction) -> PartialReduction,
+) -> Result<VerifiedKernelProgram, KernelProgramDiagnostic> {
+    let wired = two_stage(semantic, TwoStageShape::Canonical);
+    let split = amend(&wired, split_over(&wired));
+    let mut builder = wire_two_stage_structure(wired);
+    builder
+        .push_partial_reduction(split)
+        .expect("a well-formed split declaration");
+    declare_program_contract(&mut builder);
+    builder
+        .build()
+        .map_err(|error| *error.diagnostics().first().expect("one diagnostic"))
+}
+
+/// A declared split verifies and is readable back off the verified program.
+#[test]
+fn a_declared_split_reduction_is_verified_and_retained() {
+    let semantic = serial_sum_program(SCALE_BITS);
+    let program = program_with_split(&semantic, |_, split| split).expect("verified program");
+    let split = program
+        .partial_reductions()
+        .next()
+        .expect("one declared split");
+    assert_eq!(split.partitions(), 3);
+    assert_eq!(split.contributors_per_partition(), 1);
+    assert_eq!(split.total_contributors(), Some(3));
+    assert_eq!(split.producer(), program.stages().next().expect("a stage"));
+    // The partials the producer stages are exactly the ones the combiner reads,
+    // and the dispatch dependency between the two is the ordinary data edge.
+    assert_eq!(split.partial().definition(), Some(split.producer()));
+    assert!(program.dependencies().any(|edge| {
+        edge.predecessor() == split.producer() && edge.successor() == split.combiner()
+    }));
+}
+
+/// The split contract changes program identity, so two splits never collide.
+#[test]
+fn the_declared_split_separates_kernel_program_identity() {
+    let semantic = serial_sum_program(SCALE_BITS);
+    let undeclared = canonical_program(&semantic);
+    let declared = program_with_split(&semantic, |_, split| split).expect("verified program");
+    assert_ne!(
+        undeclared.canonical_identity(),
+        declared.canonical_identity(),
+        "a program that proves a split must not share identity with one that does not"
+    );
+    // `contributors_per_partition` is the field program scope cannot derive, so
+    // it is exactly the one identity has to carry.
+    let restated = program_with_split(&semantic, |_, split| PartialReduction {
+        contributors_per_partition: 7,
+        ..split
+    })
+    .expect("verified program");
+    assert_ne!(
+        declared.canonical_identity(),
+        restated.canonical_identity(),
+        "two splits claiming different contributor coverage must differ"
+    );
+}
+
+/// A split whose partial is written by some other stage is rejected.
+#[test]
+fn a_partial_not_initialized_by_its_producer_is_rejected() {
+    let semantic = serial_sum_program(SCALE_BITS);
+    assert_eq!(
+        program_with_split(&semantic, |wired, split| PartialReduction {
+            producer: wired.reduction,
+            combiner: wired.pointwise,
+            ..split
+        }),
+        Err(KernelProgramDiagnostic::PartialNotInitializedByProducer)
+    );
+}
+
+/// A split whose combiner does not produce the result is rejected.
+#[test]
+fn a_result_not_produced_by_its_combiner_is_rejected() {
+    let semantic = serial_sum_program(SCALE_BITS);
+    assert_eq!(
+        program_with_split(&semantic, |wired, split| PartialReduction {
+            result: wired.temporary,
+            partial: wired.output,
+            ..split
+        }),
+        // The output is written by the combiner, not the producer, so the
+        // partial obligation is the first one that fails.
+        Err(KernelProgramDiagnostic::PartialNotInitializedByProducer)
+    );
+}
+
+/// A split staging its partials in a published output is rejected.
+#[test]
+fn a_partial_that_is_not_an_internal_temporary_is_rejected() {
+    let semantic = serial_sum_program(SCALE_BITS);
+    let wired = two_stage(&semantic, TwoStageShape::Canonical);
+    let split = PartialReduction {
+        producer: wired.reduction,
+        combiner: wired.pointwise,
+        partial: wired.output,
+        result: wired.temporary,
+        partitions: 3,
+        contributors_per_partition: 1,
+    };
+    let mut builder = wire_two_stage_structure(wired);
+    builder
+        .push_partial_reduction(split)
+        .expect("a well-formed split declaration");
+    declare_program_contract(&mut builder);
+    // The output *is* written by the named producer and read by nobody, so this
+    // reaches the consumption rule rather than the materialization one; either
+    // way the published output cannot serve as a split's staging tensor.
+    assert_eq!(
+        builder
+            .build()
+            .map_err(|error| *error.diagnostics().first().expect("one diagnostic")),
+        Err(KernelProgramDiagnostic::PartialNotConsumedByCombiner)
+    );
+}
+
+/// A split whose partial extent is not one value per partition is rejected.
+#[test]
+fn a_partial_extent_that_is_not_one_value_per_partition_is_rejected() {
+    let semantic = serial_sum_program(SCALE_BITS);
+    for partitions in [2, 4, 6] {
+        assert_eq!(
+            program_with_split(&semantic, |_, split| PartialReduction {
+                partitions,
+                ..split
+            }),
+            Err(KernelProgramDiagnostic::PartialExtentMismatch),
+            "a `[2]` result and a `[2, 3]` partial admit only three partitions"
+        );
+    }
+}
+
+/// A split covering nothing, or an unrepresentable amount, is rejected.
+#[test]
+fn an_unrepresentable_split_coverage_is_rejected() {
+    let semantic = serial_sum_program(SCALE_BITS);
+    for (partitions, contributors_per_partition) in [(0, 4), (3, u64::MAX)] {
+        assert_eq!(
+            program_with_split(&semantic, |_, split| PartialReduction {
+                partitions,
+                contributors_per_partition,
+                ..split
+            }),
+            Err(KernelProgramDiagnostic::PartialCoverageUnrepresentable),
+            "{partitions} x {contributors_per_partition} states no checkable coverage"
+        );
+    }
+}
+
+/// One stage cannot be both passes, and one partial cannot be split twice.
+#[test]
+fn a_malformed_split_declaration_is_rejected_at_insertion() {
+    let semantic = serial_sum_program(SCALE_BITS);
+    let wired = two_stage(&semantic, TwoStageShape::Canonical);
+    let split = split_over(&wired);
+    let mut builder = wire_two_stage_structure(wired);
+    assert_eq!(
+        builder.push_partial_reduction(PartialReduction {
+            combiner: split.producer,
+            ..split
+        }),
+        Err(KernelProgramBuildError::SelfDependency)
+    );
+    builder
+        .push_partial_reduction(split)
+        .expect("the first declaration is well formed");
+    assert_eq!(
+        builder.push_partial_reduction(PartialReduction {
+            partitions: 1,
+            contributors_per_partition: 3,
+            ..split
+        }),
+        Err(KernelProgramBuildError::DuplicatePartialReduction)
+    );
+}
+
+/// A stage computing nothing is admitted only as a declared split's combiner.
+///
+/// Both directions are driven from the same coverage shape, so the difference
+/// between them is exactly the declaration: without it the program has a
+/// dispatch it cannot account for, and with it the dispatch is the final pass
+/// of a split whose partial pass already claims the reduction.
+#[test]
+fn an_uncovering_stage_is_admitted_only_as_a_declared_splits_combiner() {
+    let semantic = serial_sum_program(SCALE_BITS);
+
+    let undeclared = complete_two_stage(two_stage(&semantic, TwoStageShape::UncoveringSecondStage));
+    assert_eq!(
+        undeclared
+            .build()
+            .map_err(|error| *error.diagnostics().first().expect("one diagnostic")),
+        Err(KernelProgramDiagnostic::UncoveringStage)
+    );
+
+    let wired = two_stage(&semantic, TwoStageShape::UncoveringSecondStage);
+    let split = split_over(&wired);
+    let mut declared = wire_two_stage_structure(wired);
+    declared
+        .push_partial_reduction(split)
+        .expect("a well-formed split declaration");
+    declare_program_contract(&mut declared);
+    let program = declared.build().expect("verified program");
+    assert!(
+        program.stages().any(|stage| stage.coverage().is_empty()),
+        "the combiner is retained as the uncovering stage the split accounts for"
     );
 }

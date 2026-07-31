@@ -12,8 +12,8 @@ use crate::shape::{Axis, Shape};
 use super::error::{ContributorError, ElementCountOverflow};
 use super::handles::{BoundsWitnessId, OwnershipWitnessId, RegionId};
 use super::numerics::{
-    ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, NumericalRealization,
-    SubnormalMode, ValueDomainProvenance,
+    ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
+    NumericalRealization, SubnormalMode, ValueDomainProvenance,
 };
 use super::pointwise::{PointwiseF32Expression, PointwiseF32Node};
 
@@ -374,6 +374,140 @@ pub enum ReductionTopology {
         /// Whether the contract permits contributor permutation.
         permits_permutation: bool,
     },
+    /// The region realizes one pass of a split, multi-dispatch reduction.
+    ///
+    /// The split writes and reads explicit partial tensors across a dispatch
+    /// boundary, so it needs no intra-workgroup barrier: the partial pass
+    /// commits its values, and the dispatch dependency the kernel program
+    /// declares is what makes them visible to the final pass.
+    ///
+    /// Every field of the split is stated rather than implied by the pass
+    /// count. `partition` fixes the partial shape and storage extent, `order`
+    /// fixes each pass's reduction order, `accumulation` fixes the width each
+    /// combining step is performed at, and the region's scalar program fixes
+    /// the empty-domain identity — a pass that inherited any of these from its
+    /// sibling would be a contract two regions could disagree about.
+    MultiPass {
+        /// Which pass of the split this region realizes.
+        pass: ReductionPass,
+        /// How the contributor sequence is split across partial values.
+        partition: ContributorPartition,
+        /// Reduced axes of *this pass*, in canonical ascending order.
+        ///
+        /// The partial pass reduces the original axes; the final pass reduces
+        /// the single partition axis of the partial tensor, so the two passes
+        /// deliberately name different axis sets.
+        axes: Vec<Axis>,
+        /// Contributor combination order within this pass.
+        order: ContributorOrder,
+        /// Width every combining step of this pass is performed at.
+        ///
+        /// Carried explicitly rather than inherited from the element type: a
+        /// strategy that accumulated at a narrower width than the contract
+        /// admits is a different computation, and a field the region does not
+        /// carry cannot be rejected for being wrong.
+        accumulation: ArithmeticType,
+        /// Whether the contract permits reassociation.
+        ///
+        /// A multi-pass split *is* a reassociation of the declared contributor
+        /// sequence, so the schedule verifier admits this topology only when
+        /// this is true.
+        permits_reassociation: bool,
+        /// Whether the contract permits contributor permutation.
+        ///
+        /// Recorded because the region preserves the declared realization
+        /// whole, and deliberately *not* consulted to admit the split: this
+        /// strategy preserves contributor order, so granting permutation never
+        /// makes an otherwise illegal split legal.
+        permits_permutation: bool,
+    },
+}
+
+/// Which pass of a multi-pass reduction one region realizes.
+///
+/// `#[non_exhaustive]` under ADR 0074 convention 5a: every out-of-crate
+/// consumer constructs a variant or reads a field, and none classifies this
+/// type by exhaustive match, so a third pass role lands additively. Total maps
+/// *inside* `tiler-ir` are unaffected, because the attribute has no effect
+/// within the defining crate, which is what keeps them breaking.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum ReductionPass {
+    /// Combines one partition's contributors into one partial value.
+    ///
+    /// The region writes a materialized partial tensor a later pass consumes;
+    /// it never writes the reduction's own output.
+    Partial,
+    /// Combines every partial value of one output position into the result.
+    ///
+    /// Its contributors are the partial values, not the original ones, so its
+    /// contributor count is the partition count.
+    Final,
+}
+
+impl ReductionPass {
+    /// Returns the canonical tag naming this pass in an identity encoding.
+    ///
+    /// Written by an exhaustive match rather than read from the discriminant,
+    /// so adding or reordering a variant is a build error here instead of a
+    /// silent change to every identity ever produced (ADR 0074 convention 3).
+    #[must_use]
+    pub const fn tag(self) -> u8 {
+        match self {
+            Self::Partial => 0x01,
+            Self::Final => 0x02,
+        }
+    }
+}
+
+/// How a multi-pass reduction splits one output's contributor sequence.
+///
+/// The split is a *physical* contract, not a semantic one: it says how many
+/// partial values one output position is built from and how many contributors
+/// each of them combines, so the total the two passes cover is a single
+/// multiplication rather than a claim a reader has to reconstruct. Requiring
+/// the product to be exact is what makes "every contributor exactly once"
+/// checkable — a ragged final partition would need a second extent and a
+/// second trip count, and [`ContributorPartition::covers`] rejects one rather
+/// than approximating it.
+///
+/// Contributor order is preserved: partition `p` covers the contiguous
+/// contributor range `p * contributors_per_partition ..
+/// (p + 1) * contributors_per_partition` of the [`ContributorOrder`] the region
+/// declares, and the final pass combines the partials in ascending `p`. A
+/// multi-pass split is therefore a *reassociation* of the declared contributor
+/// sequence and never a permutation of it — the two permissions stay
+/// independent, and this strategy consumes only the first.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ContributorPartition {
+    /// Partial values produced per output position.
+    pub partitions: u64,
+    /// Contributors every partition combines.
+    pub contributors_per_partition: u64,
+}
+
+impl ContributorPartition {
+    /// Returns the contributors this split covers, or `None` when it overflows.
+    #[must_use]
+    pub const fn total_contributors(self) -> Option<u64> {
+        self.partitions.checked_mul(self.contributors_per_partition)
+    }
+
+    /// Returns whether this split covers `contributors` exactly once each.
+    ///
+    /// A split with no partitions covers nothing and is rejected even for an
+    /// empty reduction: the final pass would then have no contributor to
+    /// combine and no place to read the empty identity from.
+    #[must_use]
+    pub const fn covers(self, contributors: u64) -> bool {
+        if self.partitions == 0 {
+            return false;
+        }
+        match self.total_contributors() {
+            Some(total) => total == contributors,
+            None => false,
+        }
+    }
 }
 
 /// The symbolic launch geometry a schedule dispatches.
@@ -536,6 +670,39 @@ pub fn element_count(shape: &Shape) -> Result<u64, ElementCountOverflow> {
         .ok_or(ElementCountOverflow)
 }
 
+/// Returns the physical shape of the partial tensor a split reduction stages.
+///
+/// The partition axis is appended rather than inserted, so the partial tensor
+/// is the reduction's own output shape with one partial value per partition in
+/// row-major order. That makes the partial pass's linear write index and its
+/// global invocation index the same number, and makes the final pass an
+/// ordinary reduction of the trailing axis — the reason this layout is fixed
+/// here rather than chosen per producer.
+///
+/// Returns `None` when appending the axis would exceed the governed rank bound.
+#[must_use]
+pub fn partial_reduction_shape(
+    output_shape: &Shape,
+    partition: ContributorPartition,
+) -> Option<Shape> {
+    Shape::try_new(
+        output_shape
+            .extents()
+            .iter()
+            .copied()
+            .chain(std::iter::once(crate::shape::Extent::new(
+                partition.partitions,
+            ))),
+    )
+    .ok()
+}
+
+/// Returns the axis of a partial tensor the final pass of a split reduces.
+#[must_use]
+pub fn partial_reduction_axis(output_shape: &Shape) -> Option<Axis> {
+    u32::try_from(output_shape.rank()).ok().map(Axis::new)
+}
+
 /// Returns whether `axes` is a strictly ascending in-range axis set.
 #[must_use]
 pub fn axes_are_canonical(axes: &[Axis], rank: usize) -> bool {
@@ -624,6 +791,16 @@ const TAG_SCALAR_POINTWISE_F32: u8 = 0x24;
 const TAG_SCALAR_STRICT_AFFINE_U4_DEQUANTIZE: u8 = 0x25;
 const TAG_REDUCTION_NONE: u8 = 0x31;
 const TAG_REDUCTION_SERIAL: u8 = 0x32;
+/// Reduction-topology tag of a split, multi-dispatch reduction pass.
+///
+/// Appended rather than inserted, and the `tiler.schedule.v2` domain
+/// deliberately does not step with it: no previously encodable region's bytes
+/// move, because `None` and `Serial` keep their tags and every other field
+/// keeps its position. Injectivity is what a domain separator protects, and a
+/// fresh tag byte preserves it — a reader that reaches `0x33` is reading a
+/// region the earlier vocabulary could not express, never an earlier region
+/// under a new interpretation.
+const TAG_REDUCTION_MULTI_PASS: u8 = 0x33;
 
 fn push_shape(bytes: &mut Vec<u8>, shape: &Shape) {
     push_len(bytes, shape.rank());
@@ -904,6 +1081,25 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
             bytes.push(TAG_REDUCTION_SERIAL);
             push_axes(bytes, axes);
             push_order(bytes, *order);
+            bytes.push(u8::from(*permits_reassociation));
+            bytes.push(u8::from(*permits_permutation));
+        }
+        ReductionTopology::MultiPass {
+            pass,
+            partition,
+            axes,
+            order,
+            accumulation,
+            permits_reassociation,
+            permits_permutation,
+        } => {
+            bytes.push(TAG_REDUCTION_MULTI_PASS);
+            bytes.push(pass.tag());
+            bytes.extend_from_slice(&partition.partitions.to_be_bytes());
+            bytes.extend_from_slice(&partition.contributors_per_partition.to_be_bytes());
+            push_axes(bytes, axes);
+            push_order(bytes, *order);
+            bytes.push(accumulation.tag());
             bytes.push(u8::from(*permits_reassociation));
             bytes.push(u8::from(*permits_permutation));
         }

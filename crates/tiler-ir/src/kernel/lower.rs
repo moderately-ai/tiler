@@ -17,7 +17,7 @@
 
 use crate::schedule::{
     Access, BoundsWitnessId, CanonicalScheduledRegionIdentity, LogicalAccess, NumericalRealization,
-    OwnershipWitnessId, PointwiseF32Expression, PointwiseF32Node, ReductionTopology,
+    OwnershipWitnessId, PointwiseF32Expression, PointwiseF32Node, ReductionPass, ReductionTopology,
     ResourceRequirements, ScalarProgram, ScheduledRegion, TensorRole, VerifiedScheduledRegion,
     contributor_count,
 };
@@ -57,6 +57,21 @@ enum ReadAddressing {
     Identity,
     /// A reduction contributor position linearized over the input shape.
     Linearized(Vec<OffsetTerm>),
+    /// A partitioned contributor position of one pass of a split reduction.
+    ///
+    /// The invocation index carries the output coordinate *and* the partition
+    /// ordinal, because the partial pass runs one invocation per
+    /// (output, partition) pair. Splitting them here is what keeps the shared
+    /// linearization below unchanged: it still receives one linear output
+    /// coordinate and one linear contributor coordinate.
+    Partitioned {
+        /// Row-major terms over the read tensor's own shape.
+        terms: Vec<OffsetTerm>,
+        /// Partial values per output position.
+        partitions: u64,
+        /// Contributors each partition combines.
+        contributors_per_partition: u64,
+    },
 }
 
 /// Everything the canonical emission needs, resolved before any operation.
@@ -128,11 +143,22 @@ pub(super) fn derive_canonical(
 fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnostic> {
     let (reads, write) = boundary_accesses(schedule)?;
     let read = reads.first().ok_or(KernelDiagnostic::ScheduleAccessCount)?;
+    // The contributors *one invocation* combines. For a partial pass that is
+    // its own partition's share, not the whole reduction's sequence, which is
+    // exactly the difference the split exists to create.
     let contributors = match &schedule.schedule.reduction {
         ReductionTopology::None => 0,
-        ReductionTopology::Serial { axes, .. } => {
-            contributor_count(axes, &read.map).map_err(|_| KernelDiagnostic::ContributorDomain)?
-        }
+        ReductionTopology::Serial { axes, .. }
+        | ReductionTopology::MultiPass {
+            pass: ReductionPass::Final,
+            axes,
+            ..
+        } => contributor_count(axes, &read.map).map_err(|_| KernelDiagnostic::ContributorDomain)?,
+        ReductionTopology::MultiPass {
+            pass: ReductionPass::Partial,
+            partition,
+            ..
+        } => partition.contributors_per_partition,
     };
     Ok(CanonicalPlan {
         scalar: &schedule.index.scalar_program,
@@ -154,13 +180,16 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
         ) {
             ReadAddressing::Identity
         } else {
-            addressing(read)?
+            addressing(read, &schedule.schedule.reduction)?
         },
     })
 }
 
 /// Resolves how the read access computes its element offset.
-fn addressing(read: &Access) -> Result<ReadAddressing, KernelDiagnostic> {
+fn addressing(
+    read: &Access,
+    reduction: &ReductionTopology,
+) -> Result<ReadAddressing, KernelDiagnostic> {
     match &read.map {
         LogicalAccess::LinearIdentity => Ok(ReadAddressing::Identity),
         LogicalAccess::ScalarBroadcast | LogicalAccess::PackedU4LsbZeroTail { .. } => {
@@ -176,7 +205,24 @@ fn addressing(read: &Access) -> Result<ReadAddressing, KernelDiagnostic> {
             if reduced.iter().any(|axis| *axis >= input_shape.rank()) {
                 return Err(KernelDiagnostic::ContributorDomain);
             }
-            Ok(ReadAddressing::Linearized(linearize(input_shape, &reduced)))
+            let terms = linearize(input_shape, &reduced);
+            // Only the partial pass splits its invocation index. A final pass
+            // runs one invocation per output, exactly as a serial reduction
+            // does, so it uses the unsplit form.
+            match reduction {
+                ReductionTopology::MultiPass {
+                    pass: ReductionPass::Partial,
+                    partition,
+                    ..
+                } => Ok(ReadAddressing::Partitioned {
+                    terms,
+                    partitions: partition.partitions,
+                    contributors_per_partition: partition.contributors_per_partition,
+                }),
+                ReductionTopology::None
+                | ReductionTopology::Serial { .. }
+                | ReductionTopology::MultiPass { .. } => Ok(ReadAddressing::Linearized(terms)),
+            }
         }
     }
 }
@@ -549,6 +595,65 @@ fn emit_reduction(
     )
 }
 
+/// Splits a partial pass's invocation index into its output and partition parts.
+///
+/// One invocation covers one (output, partition) pair, laid out so the
+/// partition ordinal is the innermost coordinate — which is also what makes the
+/// partial tensor's linear write index equal to the invocation index. Returns
+/// the linear output coordinate and the partition's first contributor ordinal.
+///
+/// A single partition needs neither operation: the output coordinate is the
+/// invocation and the partition ordinal is constantly zero, so emitting the
+/// division and remainder would put two provably identity operations into the
+/// canonical body a refinement gate compares against.
+fn split_partitioned_invocation(
+    builder: &mut KernelBuilder,
+    invocation: KernelValueId,
+    partitions: u64,
+) -> Result<(KernelValueId, Option<KernelValueId>), KernelBuildError> {
+    if partitions <= 1 {
+        return Ok((invocation, None));
+    }
+    let extent = builder.constant(KernelConstant::Index(partitions))?;
+    let output = builder.binary(BinaryOp::IndexDivide, invocation, extent)?;
+    let partition = builder.binary(BinaryOp::IndexModulo, invocation, extent)?;
+    Ok((output, Some(partition)))
+}
+
+/// Emits the contributor ordinal one partitioned load addresses.
+///
+/// The ordinal is `partition * contributors_per_partition + within`, which is
+/// the contiguous range this partition owns in the region's declared
+/// contributor order. `within` is `None` for the seed load, whose position
+/// inside the partition is zero.
+///
+/// `None` comes back only when the whole ordinal is provably zero — a single
+/// partition seeding at its first contributor — so the caller drops every
+/// contributor term exactly as the unsplit lowering does.
+fn emit_partition_contributor(
+    builder: &mut KernelBuilder,
+    partition: Option<KernelValueId>,
+    within: Option<KernelValueId>,
+    contributors_per_partition: u64,
+) -> Result<Option<KernelValueId>, KernelBuildError> {
+    let base = match partition {
+        None => None,
+        Some(partition) => {
+            if contributors_per_partition <= 1 {
+                Some(partition)
+            } else {
+                let stride = builder.constant(KernelConstant::Index(contributors_per_partition))?;
+                Some(builder.binary(BinaryOp::IndexMultiply, partition, stride)?)
+            }
+        }
+    };
+    Ok(match (base, within) {
+        (None, within) => within,
+        (Some(base), None) => Some(base),
+        (Some(base), Some(within)) => Some(builder.binary(BinaryOp::IndexAdd, base, within)?),
+    })
+}
+
 /// Emits the element offset of one read access.
 ///
 /// `contributor` is `None` for the seed load, whose contributor coordinate is
@@ -559,14 +664,28 @@ fn emit_offset(
     invocation: KernelValueId,
     contributor: Option<KernelValueId>,
 ) -> Result<KernelValueId, KernelBuildError> {
-    let terms = match &plan.addressing {
+    let (terms, output, contributor) = match &plan.addressing {
         ReadAddressing::Identity => return Ok(invocation),
-        ReadAddressing::Linearized(terms) => terms,
+        ReadAddressing::Linearized(terms) => (terms, invocation, contributor),
+        ReadAddressing::Partitioned {
+            terms,
+            partitions,
+            contributors_per_partition,
+        } => {
+            let (output, base) = split_partitioned_invocation(builder, invocation, *partitions)?;
+            let contributor = emit_partition_contributor(
+                builder,
+                base,
+                contributor,
+                *contributors_per_partition,
+            )?;
+            (terms, output, contributor)
+        }
     };
     let mut total: Option<KernelValueId> = None;
     for term in terms {
         let root = match term.root {
-            OffsetRoot::Output => invocation,
+            OffsetRoot::Output => output,
             OffsetRoot::Contributor => match contributor {
                 Some(value) => value,
                 None => continue,

@@ -1514,3 +1514,118 @@ fn maximum_rank_reduction_classifies_many_axes_linearly() {
         Err(ReferenceOperationError::InvalidApplication)
     );
 }
+
+/// A one-partition split is bit-identical to the serial fold it replaces.
+///
+/// The split's whole freedom is *where* the sequence is cut, so a cut that
+/// takes the whole sequence must reproduce the strict reading exactly. If it
+/// did not, every later comparison would be measuring the harness rather than
+/// the split.
+#[test]
+fn a_single_partition_split_reproduces_the_serial_reduction_exactly() {
+    for (shape, values, contributors) in [
+        // A domain with nothing to reduce.
+        (Shape::from_dims([2, 0]), Vec::new(), 0),
+        // A single contributor per output.
+        (Shape::from_dims([3, 1]), vec![-0.0, 1.5, f32::INFINITY], 1),
+        // A genuine fold, including a negative zero the identity must not eat.
+        (
+            Shape::from_dims([2, 3]),
+            vec![-0.0, -0.0, -0.0, 1.0, 2.0, 3.0],
+            3,
+        ),
+    ] {
+        let input = f32_tensor(shape, values);
+        let axes = [Axis::new(1)];
+        let serial = strict_sum(&input, &axes).unwrap();
+        let split = strict_partitioned_sum(&input, &axes, 1, contributors).unwrap();
+        assert_eq!(
+            f32_bits(&split),
+            f32_bits(&serial),
+            "a one-partition split must reproduce the strict reading bit for bit"
+        );
+    }
+}
+
+/// An exact split folds every contributor exactly once, in its declared order.
+///
+/// The expected values are written out rather than derived, so this states what
+/// the split *means* instead of re-running the implementation: partition `p`
+/// takes contributors `2p` and `2p + 1`, and the final pass adds the three
+/// partial sums left to right.
+#[test]
+fn an_exact_split_folds_each_contributor_exactly_once() {
+    let input = f32_tensor(
+        Shape::from_dims([2, 6]),
+        vec![
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, //
+            10.0, 20.0, 30.0, 40.0, 50.0, 60.0,
+        ],
+    );
+    let axes = [Axis::new(1)];
+    let partials = strict_partial_sums(&input, &axes, 3, 2).unwrap();
+    assert_eq!(*partials.shape(), Shape::from_dims([2, 3]));
+    assert_eq!(
+        f32_values(&partials),
+        vec![3.0, 7.0, 11.0, 30.0, 70.0, 110.0]
+    );
+    let split = strict_partitioned_sum(&input, &axes, 3, 2).unwrap();
+    assert_eq!(f32_values(&split), vec![21.0, 210.0]);
+    // Exact arithmetic here, so the split and the serial fold agree; the point
+    // is coverage, and a dropped or repeated contributor would change the sum.
+    assert_eq!(
+        f32_bits(&split),
+        f32_bits(&strict_sum(&input, &axes).unwrap())
+    );
+}
+
+/// The split is a reassociation, and the oracle answers for the chosen order.
+///
+/// These magnitudes make the strict left fold and the split disagree in `f32`.
+/// A single oracle answering "the" value for a reassociation-permitting
+/// contract would therefore have to be wrong for one of them, which is why the
+/// split has its own evaluator rather than a relaxed comparison against the
+/// serial one.
+#[test]
+fn a_split_selects_one_legal_order_the_serial_fold_does_not_produce() {
+    let large = 1.0e8_f32;
+    let input = f32_tensor(Shape::from_dims([1, 4]), vec![large, 1.0, -large, 1.0]);
+    let axes = [Axis::new(1)];
+    // (((1e8 + 1) - 1e8) + 1): the middle term is lost to rounding.
+    let serial = f32_values(&strict_sum(&input, &axes).unwrap());
+    // ((1e8 + 1) + (-1e8 + 1)): both ones are lost instead.
+    let split = f32_values(&strict_partitioned_sum(&input, &axes, 2, 2).unwrap());
+    assert_eq!(serial, vec![1.0]);
+    assert_eq!(split, vec![0.0]);
+}
+
+/// A split that does not cover the contributor sequence exactly is refused.
+#[test]
+fn an_inexact_split_is_refused_by_the_reference() {
+    let input = f32_tensor(Shape::from_dims([2, 6]), vec![1.0; 12]);
+    let axes = [Axis::new(1)];
+    for (partitions, per_partition) in [(4, 2), (5, 1), (0, 6), (3, 3)] {
+        assert_eq!(
+            strict_partial_sums(&input, &axes, partitions, per_partition),
+            Err(ReferenceOperationError::InvalidApplication),
+            "{partitions} x {per_partition} does not cover six contributors"
+        );
+    }
+    // The exact split of the same tensor is admitted, so the refusals above are
+    // about coverage rather than about the fixture.
+    assert!(strict_partial_sums(&input, &axes, 3, 2).is_ok());
+}
+
+/// An empty reduction commits the identity once per partition, and sums to it.
+#[test]
+fn an_empty_split_commits_the_identity_in_every_partition() {
+    let input = f32_tensor(Shape::from_dims([2, 0]), Vec::new());
+    let axes = [Axis::new(1)];
+    let partials = strict_partial_sums(&input, &axes, 4, 0).unwrap();
+    assert_eq!(*partials.shape(), Shape::from_dims([2, 4]));
+    assert_eq!(f32_bits(&partials), vec![0.0_f32.to_bits(); 8]);
+    assert_eq!(
+        f32_bits(&strict_partitioned_sum(&input, &axes, 4, 0).unwrap()),
+        vec![0.0_f32.to_bits(); 2]
+    );
+}

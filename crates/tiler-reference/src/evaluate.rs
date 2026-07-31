@@ -365,6 +365,172 @@ pub(crate) fn strict_sum(input: &Tensor, axes: &[Axis]) -> Result<Tensor, Refere
         .map_err(|_| ReferenceOperationError::ShapeTooLarge)
 }
 
+/// Evaluates the partial values one pass of a split reduction must produce.
+///
+/// The split is the one a multi-pass schedule declares: partition `p` combines
+/// the contiguous contributor range
+/// `p * contributors_per_partition .. (p + 1) * contributors_per_partition` of
+/// the same original-axis lexicographic sequence the strict serial sum folds,
+/// and the
+/// result carries one value per `(output position, partition)` pair with the
+/// partition as the innermost axis.
+///
+/// This is a *second* exact oracle rather than a relaxation of the first. A
+/// contract that permits reassociation admits a set of results, so no oracle
+/// can answer "the" value for it; what a plan can be checked against is the one
+/// order it selected, and this evaluates exactly that order.
+///
+/// # Errors
+///
+/// Returns [`ReferenceOperationError::InvalidApplication`] when the axes are
+/// not a canonical in-range set or the split does not cover the contributor
+/// sequence exactly once each, and a resource error when the staged partial
+/// tensor exceeds the reference bounds.
+pub fn strict_partial_sums(
+    input: &Tensor,
+    axes: &[Axis],
+    partitions: u64,
+    contributors_per_partition: u64,
+) -> Result<Tensor, ReferenceOperationError> {
+    let mut reduced_mask = vec![false; input.shape().rank()];
+    let mut reduced = Vec::with_capacity(axes.len());
+    for requested_axis in axes {
+        let dimension = usize::try_from(requested_axis.get())
+            .map_err(|_| ReferenceOperationError::InvalidApplication)?;
+        let Some(is_reduced) = reduced_mask.get_mut(dimension) else {
+            return Err(ReferenceOperationError::InvalidApplication);
+        };
+        if std::mem::replace(is_reduced, true) {
+            return Err(ReferenceOperationError::InvalidApplication);
+        }
+        reduced.push(dimension);
+    }
+    let survivor: Vec<usize> = (0..input.shape().rank())
+        .filter(|axis| !reduced_mask[*axis])
+        .collect();
+    let reduction_shape =
+        Shape::try_new(survivor.iter().map(|axis| input.shape().extents()[*axis]))
+            .map_err(|_| ReferenceOperationError::ShapeTooLarge)?;
+    let reduced_shape = Shape::try_new(reduced.iter().map(|axis| input.shape().extents()[*axis]))
+        .map_err(|_| ReferenceOperationError::ShapeTooLarge)?;
+    let reduced_count = reduced_shape
+        .element_count()
+        .ok_or(ReferenceOperationError::ShapeTooLarge)?;
+    // The split must cover the contributor sequence exactly once each. An
+    // inexact split is refused rather than truncated or padded: either would
+    // make this oracle answer for a plan no schedule could legally declare.
+    let covered = partitions
+        .checked_mul(contributors_per_partition)
+        .and_then(|total| usize::try_from(total).ok())
+        .ok_or(ReferenceOperationError::InvalidApplication)?;
+    let partition_count =
+        usize::try_from(partitions).map_err(|_| ReferenceOperationError::InvalidApplication)?;
+    let chunk = usize::try_from(contributors_per_partition)
+        .map_err(|_| ReferenceOperationError::InvalidApplication)?;
+    if partition_count == 0 || covered != reduced_count {
+        return Err(ReferenceOperationError::InvalidApplication);
+    }
+
+    let partial_shape = Shape::try_new(
+        reduction_shape
+            .extents()
+            .iter()
+            .copied()
+            .chain(std::iter::once(tiler_ir::shape::Extent::new(partitions))),
+    )
+    .map_err(|_| ReferenceOperationError::ShapeTooLarge)?;
+    let partial_count = partial_shape
+        .element_count()
+        .ok_or(ReferenceOperationError::ShapeTooLarge)?;
+    preflight_f32_output(partial_count)?;
+    if partial_count == 0 {
+        return Tensor::dense(F32::resolved_type(), partial_shape, Vec::new())
+            .map_err(|_| ReferenceOperationError::ShapeTooLarge);
+    }
+    let reduction_count = reduction_shape
+        .element_count()
+        .ok_or(ReferenceOperationError::ShapeTooLarge)?;
+
+    let input_elements = f32_elements(input)?;
+    let input_strides = row_major_strides(input.shape())?;
+    let reduction_strides = row_major_strides(&reduction_shape)?;
+    let reduced_strides = row_major_strides(&reduced_shape)?;
+    let mut elements = Vec::with_capacity(partial_count);
+    let mut output_coordinate = vec![0_usize; reduction_shape.rank()];
+    let mut reduced_coordinate = vec![0_usize; reduced_shape.rank()];
+    let mut input_coordinate = vec![0_usize; input.shape().rank()];
+
+    for output_linear in 0..reduction_count {
+        decode_coordinate(
+            output_linear,
+            &reduction_shape,
+            &reduction_strides,
+            &mut output_coordinate,
+        )?;
+        for partition in 0..partition_count {
+            let mut accumulator = None;
+            for within in 0..chunk {
+                let reduced_linear = partition * chunk + within;
+                decode_coordinate(
+                    reduced_linear,
+                    &reduced_shape,
+                    &reduced_strides,
+                    &mut reduced_coordinate,
+                )?;
+                input_coordinate.fill(0);
+                for (coordinate, axis) in output_coordinate.iter().zip(&survivor) {
+                    input_coordinate[*axis] = *coordinate;
+                }
+                for (coordinate, axis) in reduced_coordinate.iter().zip(&reduced) {
+                    input_coordinate[*axis] = *coordinate;
+                }
+                let linear = input_coordinate
+                    .iter()
+                    .zip(&input_strides)
+                    .map(|(coordinate, stride)| coordinate * stride)
+                    .sum::<usize>();
+                let contributor = decode_f32(&input_elements[linear])?;
+                accumulator = Some(match accumulator {
+                    None => contributor,
+                    Some(value) => canonicalize_arithmetic_f32(value + contributor),
+                });
+            }
+            // An empty partition commits the reduction identity, exactly as an
+            // empty whole reduction does; a partition of one commits its single
+            // contributor through the same canonicalizing result boundary.
+            elements.push(f32_element(canonicalize_arithmetic_f32(
+                accumulator.unwrap_or(0.0_f32),
+            ))?);
+        }
+    }
+    Tensor::dense(F32::resolved_type(), partial_shape, elements)
+        .map_err(|_| ReferenceOperationError::ShapeTooLarge)
+}
+
+/// Evaluates the whole reduction a declared split computes.
+///
+/// This is [`strict_partial_sums`] followed by a strict serial sum of the
+/// trailing partition axis — the same two folds the two passes perform, in the
+/// same order, so it is the value a correct split must produce rather than an
+/// independent re-derivation of it.
+///
+/// # Errors
+///
+/// Returns whatever either fold rejects.
+pub fn strict_partitioned_sum(
+    input: &Tensor,
+    axes: &[Axis],
+    partitions: u64,
+    contributors_per_partition: u64,
+) -> Result<Tensor, ReferenceOperationError> {
+    let partials = strict_partial_sums(input, axes, partitions, contributors_per_partition)?;
+    let partition_axis = u32::try_from(partials.shape().rank())
+        .ok()
+        .and_then(|rank| rank.checked_sub(1))
+        .ok_or(ReferenceOperationError::InvalidApplication)?;
+    strict_sum(&partials, &[Axis::new(partition_axis)])
+}
+
 fn preflight_f32_output(output_count: usize) -> Result<(), ReferenceOperationError> {
     if output_count > MAX_REFERENCE_TENSOR_ELEMENTS {
         return Err(ReferenceOperationError::OutputElementsExceeded {

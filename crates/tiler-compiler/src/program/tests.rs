@@ -465,3 +465,47 @@ fn artifact_receipt_rejects_provider_program_and_receipt_mutations() {
         })
     );
 }
+
+/// The balanced split is exact, and its degenerate inputs are refused.
+#[test]
+fn the_governed_split_covers_its_contributor_sequence_exactly() {
+    for contributors in [4_u64, 6, 8, 9, 12, 16, 36] {
+        let partition = crate::physical::governed_partition(contributors)
+            .unwrap_or_else(|| panic!("{contributors} admits a balanced split"));
+        assert_eq!(partition.total_contributors(), Some(contributors));
+        assert!(partition.partitions >= 2);
+        assert!(partition.contributors_per_partition >= 2);
+        assert!(partition.covers(contributors));
+    }
+    // Nothing to split, and nothing splittable: a prime extent has no exact
+    // split whose partitions each fold more than one contributor, so the
+    // proposal is withheld rather than offered as a dispatch that does no work.
+    for contributors in [0_u64, 1, 2, 3, 5, 7, 11, 13] {
+        assert_eq!(crate::physical::governed_partition(contributors), None);
+    }
+}
+
+/// A split proposed under a contract that forbids reassociation is refused.
+#[test]
+fn a_split_under_a_reassociation_forbidding_contract_is_refused() {
+    let (_, request, _) = fixture();
+    // The `[2, 2]` fixture reduces two contributors, which the balanced rule
+    // withholds a split for, so the split under test is stated directly: the
+    // subject here is the contract, not the choice of partition.
+    let partition = tiler_ir::schedule::ContributorPartition {
+        partitions: 2,
+        contributors_per_partition: 1,
+    };
+    let (partial, members) =
+        crate::physical::partial_reduction_region(&request, partition).expect("a partial pass");
+    // The governed strict contract forbids reassociation, so the region the
+    // constructor produces carries `permits_reassociation: false` and the
+    // schedule verifier refuses it rather than costing it.
+    assert_eq!(
+        crate::physical::verify_schedule(partial, members, &request),
+        Err(crate::physical::PhysicalError::Intrinsic {
+            rule: "numerical-or-access-refinement",
+            region: crate::physical::RegionId::new(2),
+        })
+    );
+}

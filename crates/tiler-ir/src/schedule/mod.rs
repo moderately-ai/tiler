@@ -147,10 +147,11 @@ pub use error::{
 pub use handles::{BoundsWitnessId, OwnershipWitnessId, RegionId};
 pub use model::{
     Access, AccessMode, BoundsProof, BoundsProofKind, CanonicalScheduledRegionIdentity,
-    ContributorOrder, ExecutionBinding, IndexRegion, KernelSchedule, LaunchPlan, LogicalAccess,
-    OwnershipProof, OwnershipProofKind, ReductionTopology, ResourceRequirements, ScalarProgram,
-    ScheduledRegion, TailPolicy, TensorRole, VerifiedScheduledRegion, axes_are_canonical,
-    contributor_count, element_count,
+    ContributorOrder, ContributorPartition, ExecutionBinding, IndexRegion, KernelSchedule,
+    LaunchPlan, LogicalAccess, OwnershipProof, OwnershipProofKind, ReductionPass,
+    ReductionTopology, ResourceRequirements, ScalarProgram, ScheduledRegion, TailPolicy,
+    TensorRole, VerifiedScheduledRegion, axes_are_canonical, contributor_count, element_count,
+    partial_reduction_axis, partial_reduction_shape,
 };
 pub use numerics::{
     ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign,

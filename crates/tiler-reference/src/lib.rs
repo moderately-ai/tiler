@@ -47,7 +47,7 @@ pub use error::{
     EvaluationError, ReferenceOperationError, ReferenceRegistryError, ReferenceRegistryResource,
     ReferenceResource, ReferenceValueError,
 };
-pub use evaluate::ReferenceEvaluator;
+pub use evaluate::{ReferenceEvaluator, strict_partial_sums, strict_partitioned_sum};
 pub use oracle::{
     CanonicalScalarReferenceRegistryIdentity, FrozenScalarReferenceRegistry,
     IndexReferenceResource, IndexRegionAuthority, IndexRegionEvaluation,
