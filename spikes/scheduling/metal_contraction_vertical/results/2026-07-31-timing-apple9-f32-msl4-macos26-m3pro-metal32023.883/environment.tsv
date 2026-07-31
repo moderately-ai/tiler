@@ -1,0 +1,29 @@
+key	value
+device	Apple M3 Pro
+device_apple9	supported
+device_max_buffer_length	10726686720
+device_max_threads_per_threadgroup	1024
+host_arch	arm64
+host_name	Mac
+host_os	27.0 26A5378n
+host_source_sha256	f7e6a0bdf1cd2171843cbe05beaceded390a219be548912e4936c7818e92698c
+kernels_sha256	59aea2344f1fce24d6c2508938aeef9ce1d1741c0df63a65d3cf26c20060debd
+macos_sdk_build	25F70
+macos_sdk_version	26.5
+metallib_sha256	71ddcdcac8898b56fecf1da956b9a661d8228e0e9b453c24399e91e066cef1a6
+modes	timing
+mps_supported	yes
+offline_compiler	Apple metal version 32023.883 (metalfe-32023.883)
+offline_flags	-target air64-apple-macos26.0 -std=metal4.0 -O2 -fmetal-math-mode=safe -fmetal-math-fp32-functions=precise -ffp-contract=off
+pipeline.contract_direct.max_threads	1024
+pipeline.contract_direct_zero_seed.max_threads	1024
+pipeline.contract_ksplit_contiguous.max_threads	1024
+pipeline.contract_ksplit_strided.max_threads	1024
+pipeline.contract_simdgroup.max_threads	1024
+pipeline.contract_tiled.max_threads	1024
+probe_date	2026-07-31
+probe_sha256	47c8e2202f9d782baf6e6a9ca28023c8177dab3819bae0d75f8117a359d22fbe
+python_version	3.9.6
+timing_reps_per_round	7
+timing_rounds	5
+xcode	Xcode 26.6;Build version 17F113

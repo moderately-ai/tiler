@@ -61,6 +61,31 @@ tickets with explicit user-visible outcomes.
 
 Do not start this before its trigger fires. Each rung's scope is derived from the rung below it, so beginning early means deriving a surface from an assumption rather than from delivered evidence — which is how a discovery ticket turns into a rewrite.
 
+## Outcome — 2026-07-31
+
+**Delivered:** the [first Metal contraction realizations](../docs/research/scheduling/first-metal-contraction-realizations.md) record and the [realization probe](../spikes/scheduling/metal_contraction_vertical/README.md), with correctness measured on an Apple M4 Max and timing on the M3 Pro bench host. The status is not "L3 runs end to end": what this rung produced is the profile, the elimination, and two measured host rows, and the end-to-end remainder is [`integrate-the-contraction-vertical-into-the-runtime`](integrate-the-contraction-vertical-into-the-runtime.md).
+
+**The profile.** Index structure 1, `td,od->to`, which L2 resolved 197 of the workload's 253 contraction occurrences into, at the workload's own extents in F32: six correctness cells and eight timing cells covering all six of L1's weight shape classes. Structures 2 and 3 are deferred with a derivation, not omitted — both take a cached `K`/`V` operand whose production is the KV-state model L5 owns and L2 recorded as absent in both candidate mechanisms.
+
+**The elimination, with the ground per candidate.** Six realizations measured; each attributed against twenty-two named reduction topologies computed in exact rational arithmetic.
+
+| Candidate | Survives | Ground |
+| --- | --- | --- |
+| direct | yes, no permission | uniquely `strict_fold+ftz`; bit-identical to the host oracle at every cell |
+| tiled | **yes, no permission — the surviving realization** | same attribution and byte-identical results, 2.6x–4.3x faster at prefill |
+| contiguous K-split | only under reassociation | uniquely `contiguous_split+ftz`; fastest candidate at the full decode vocabulary projection |
+| strided K-split | only under reassociation *and* permutation | uniquely `strided_split+ftz`; the measured demonstration that the two permissions are different plans |
+| `simdgroup_float8x8` | no, under the governed contract | delivers a fused multiply-add under `-ffp-contract=off`, and seeds its accumulator at `+0.0`; also refuses `M=1` and `M=10` |
+| `MPSMatrixMultiplication` | no, and for a different reason | refuted against all twenty-two topologies, and shape-dependent on one device — inadmissible before it is costed |
+
+**Three measurements worth carrying forward.** `-ffp-contract=off` does not reach a matrix-multiply-accumulate instruction, which is finding 16 of the Apple numerical record at a new construct. The accumulator seed is observable, so the idiomatic `acc = 0` matmul loop computes a *seeded* reduction rather than the unseeded fold. And the price of the strict contract is shape-dependent rather than uniform: 12% at the complete vocabulary projection, which is bandwidth-bound at about 146 GB/s and where the reassociation-only split is the *fastest* candidate; 3.9x at the small per-layer decode projection, a cell whose 4.19 MB weight is cache-resident and therefore does not extrapolate to a real decode step's 1.76 GiB; and 7.6x at prefill.
+
+**Seven dependency-ordered delivery tickets filed**, for surviving work only: `admit-the-contraction-semantic-profile`, `admit-the-contraction-normative-reference`, `realize-the-strict-contraction-on-metal`, `admit-reassociated-contraction-schedule-alternatives`, `qualify-the-simdgroup-matrix-contraction-realization`, `integrate-the-contraction-vertical-into-the-runtime`, `retain-contraction-conformance-evidence`. Nothing is filed for the MPS route as a realization; its consequences are recorded on [`exercise-opaque-admissions-downstream-of-the-frontier`](exercise-opaque-admissions-downstream-of-the-frontier.md) per the graph maintenance below.
+
+**Measurement boundary.** Correctness on one Apple M4 Max under macOS build `26A5388g`; timing on one Apple M3 Pro under build `26A5378n`; both Apple9, one offline toolchain `metalfe-32023.883`, offline compilation only. No iOS family, no other Apple generation, no F16/BF16/quantized dtype, and no runtime-compilation path. The `simdgroup` and MPS topology results are empirical eliminations over a finite named set, not guarantees.
+
+**Nothing under `crates/` was touched and nothing moved the support matrix.** The contraction row stays at R1.
+
 ## Graph maintenance
 
 - **This is a spike**: it lives under `spikes/`, runs from its own directory with the invocation its README records, and no `make` target reaches it. Keep the harness, inputs, and result fixtures checked in; `.gitignore` only regenerable outputs.

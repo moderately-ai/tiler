@@ -28,3 +28,10 @@ rustc --edition 2021 --test spikes/scheduling/scheduled_region_model.rs -o /tmp/
 
 It models the common schedule contract without claiming Metal, CUDA, or CPU
 backend completeness.
+
+A second scheduling experiment lives beside this one and has its own README,
+prerequisites, and retained records: the
+[Metal contraction realization probe](metal_contraction_vertical/README.md),
+which measures which reduction topology each candidate realization of the
+language-model workload's projection contraction actually delivers on an Apple9
+GPU, and what each costs.

@@ -1,0 +1,241 @@
+cell	realization	m	n	k	round	status	min_gpu_microseconds	gflop_per_second	workload_role
+w_decode_kv	direct	1	1024	1024	0	ok	288.833	7.26	decode k_proj / v_proj, T=1
+w_decode_kv	direct	1	1024	1024	1	ok	75.250	27.87	decode k_proj / v_proj, T=1
+w_decode_kv	direct	1	1024	1024	2	ok	77.750	26.97	decode k_proj / v_proj, T=1
+w_decode_kv	direct	1	1024	1024	3	ok	78.500	26.72	decode k_proj / v_proj, T=1
+w_decode_kv	direct	1	1024	1024	4	ok	78.000	26.89	decode k_proj / v_proj, T=1
+w_decode_kv	tiled	1	1024	1024	0	ok	61.000	34.38	decode k_proj / v_proj, T=1
+w_decode_kv	tiled	1	1024	1024	1	ok	61.250	34.24	decode k_proj / v_proj, T=1
+w_decode_kv	tiled	1	1024	1024	2	ok	60.750	34.52	decode k_proj / v_proj, T=1
+w_decode_kv	tiled	1	1024	1024	3	ok	60.500	34.66	decode k_proj / v_proj, T=1
+w_decode_kv	tiled	1	1024	1024	4	ok	61.000	34.38	decode k_proj / v_proj, T=1
+w_decode_kv	ksplit_contiguous	1	1024	1024	0	ok	29.250	71.70	decode k_proj / v_proj, T=1
+w_decode_kv	ksplit_contiguous	1	1024	1024	1	ok	28.833	72.73	decode k_proj / v_proj, T=1
+w_decode_kv	ksplit_contiguous	1	1024	1024	2	ok	28.625	73.26	decode k_proj / v_proj, T=1
+w_decode_kv	ksplit_contiguous	1	1024	1024	3	ok	29.083	72.11	decode k_proj / v_proj, T=1
+w_decode_kv	ksplit_contiguous	1	1024	1024	4	ok	28.917	72.52	decode k_proj / v_proj, T=1
+w_decode_kv	ksplit_strided	1	1024	1024	0	ok	22.625	92.69	decode k_proj / v_proj, T=1
+w_decode_kv	ksplit_strided	1	1024	1024	1	ok	22.708	92.35	decode k_proj / v_proj, T=1
+w_decode_kv	ksplit_strided	1	1024	1024	2	ok	22.750	92.18	decode k_proj / v_proj, T=1
+w_decode_kv	ksplit_strided	1	1024	1024	3	ok	22.792	92.01	decode k_proj / v_proj, T=1
+w_decode_kv	ksplit_strided	1	1024	1024	4	ok	22.750	92.18	decode k_proj / v_proj, T=1
+w_decode_kv	simdgroup	1	1024	1024	0	refused:simdgroup-requires-extents-multiple-of-8			decode k_proj / v_proj, T=1
+w_decode_kv	simdgroup	1	1024	1024	1	refused:simdgroup-requires-extents-multiple-of-8			decode k_proj / v_proj, T=1
+w_decode_kv	simdgroup	1	1024	1024	2	refused:simdgroup-requires-extents-multiple-of-8			decode k_proj / v_proj, T=1
+w_decode_kv	simdgroup	1	1024	1024	3	refused:simdgroup-requires-extents-multiple-of-8			decode k_proj / v_proj, T=1
+w_decode_kv	simdgroup	1	1024	1024	4	refused:simdgroup-requires-extents-multiple-of-8			decode k_proj / v_proj, T=1
+w_decode_kv	opaque_mps	1	1024	1024	0	ok	15.500	135.30	decode k_proj / v_proj, T=1
+w_decode_kv	opaque_mps	1	1024	1024	1	ok	15.542	134.93	decode k_proj / v_proj, T=1
+w_decode_kv	opaque_mps	1	1024	1024	2	ok	15.625	134.22	decode k_proj / v_proj, T=1
+w_decode_kv	opaque_mps	1	1024	1024	3	ok	15.583	134.58	decode k_proj / v_proj, T=1
+w_decode_kv	opaque_mps	1	1024	1024	4	ok	15.666	133.87	decode k_proj / v_proj, T=1
+w_prefill_q	direct	10	2048	1024	0	ok	1338.667	31.33	C1 prefill q_proj, T=10
+w_prefill_q	direct	10	2048	1024	1	ok	327.375	128.12	C1 prefill q_proj, T=10
+w_prefill_q	direct	10	2048	1024	2	ok	328.375	127.73	C1 prefill q_proj, T=10
+w_prefill_q	direct	10	2048	1024	3	ok	327.500	128.07	C1 prefill q_proj, T=10
+w_prefill_q	direct	10	2048	1024	4	ok	327.917	127.91	C1 prefill q_proj, T=10
+w_prefill_q	tiled	10	2048	1024	0	ok	148.708	282.05	C1 prefill q_proj, T=10
+w_prefill_q	tiled	10	2048	1024	1	ok	148.958	281.58	C1 prefill q_proj, T=10
+w_prefill_q	tiled	10	2048	1024	2	ok	149.542	280.48	C1 prefill q_proj, T=10
+w_prefill_q	tiled	10	2048	1024	3	ok	150.500	278.69	C1 prefill q_proj, T=10
+w_prefill_q	tiled	10	2048	1024	4	ok	150.125	279.39	C1 prefill q_proj, T=10
+w_prefill_q	ksplit_contiguous	10	2048	1024	0	ok	410.917	102.07	C1 prefill q_proj, T=10
+w_prefill_q	ksplit_contiguous	10	2048	1024	1	ok	411.625	101.90	C1 prefill q_proj, T=10
+w_prefill_q	ksplit_contiguous	10	2048	1024	2	ok	411.667	101.89	C1 prefill q_proj, T=10
+w_prefill_q	ksplit_contiguous	10	2048	1024	3	ok	409.625	102.39	C1 prefill q_proj, T=10
+w_prefill_q	ksplit_contiguous	10	2048	1024	4	ok	409.875	102.33	C1 prefill q_proj, T=10
+w_prefill_q	ksplit_strided	10	2048	1024	0	ok	197.333	212.55	C1 prefill q_proj, T=10
+w_prefill_q	ksplit_strided	10	2048	1024	1	ok	196.417	213.54	C1 prefill q_proj, T=10
+w_prefill_q	ksplit_strided	10	2048	1024	2	ok	196.417	213.54	C1 prefill q_proj, T=10
+w_prefill_q	ksplit_strided	10	2048	1024	3	ok	196.458	213.50	C1 prefill q_proj, T=10
+w_prefill_q	ksplit_strided	10	2048	1024	4	ok	196.417	213.54	C1 prefill q_proj, T=10
+w_prefill_q	simdgroup	10	2048	1024	0	refused:simdgroup-requires-extents-multiple-of-8			C1 prefill q_proj, T=10
+w_prefill_q	simdgroup	10	2048	1024	1	refused:simdgroup-requires-extents-multiple-of-8			C1 prefill q_proj, T=10
+w_prefill_q	simdgroup	10	2048	1024	2	refused:simdgroup-requires-extents-multiple-of-8			C1 prefill q_proj, T=10
+w_prefill_q	simdgroup	10	2048	1024	3	refused:simdgroup-requires-extents-multiple-of-8			C1 prefill q_proj, T=10
+w_prefill_q	simdgroup	10	2048	1024	4	refused:simdgroup-requires-extents-multiple-of-8			C1 prefill q_proj, T=10
+w_prefill_q	opaque_mps	10	2048	1024	0	ok	58.875	712.41	C1 prefill q_proj, T=10
+w_prefill_q	opaque_mps	10	2048	1024	1	ok	59.125	709.40	C1 prefill q_proj, T=10
+w_prefill_q	opaque_mps	10	2048	1024	2	ok	58.875	712.41	C1 prefill q_proj, T=10
+w_prefill_q	opaque_mps	10	2048	1024	3	ok	59.875	700.51	C1 prefill q_proj, T=10
+w_prefill_q	opaque_mps	10	2048	1024	4	ok	59.083	709.90	C1 prefill q_proj, T=10
+w_prefill_mlp_in	direct	128	3072	1024	0	ok	4236.875	190.07	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	direct	128	3072	1024	1	ok	4222.000	190.74	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	direct	128	3072	1024	2	ok	4238.208	190.01	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	direct	128	3072	1024	3	ok	4219.375	190.86	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	direct	128	3072	1024	4	ok	4220.208	190.82	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	tiled	128	3072	1024	0	ok	1602.750	502.45	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	tiled	128	3072	1024	1	ok	1603.500	502.22	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	tiled	128	3072	1024	2	ok	1604.375	501.94	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	tiled	128	3072	1024	3	ok	1603.625	502.18	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	tiled	128	3072	1024	4	ok	1601.833	502.74	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	ksplit_contiguous	128	3072	1024	0	ok	8049.667	100.04	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	ksplit_contiguous	128	3072	1024	1	ok	8124.958	99.12	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	ksplit_contiguous	128	3072	1024	2	ok	7985.625	100.84	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	ksplit_contiguous	128	3072	1024	3	ok	7735.417	104.11	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	ksplit_contiguous	128	3072	1024	4	ok	8027.875	100.31	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	ksplit_strided	128	3072	1024	0	ok	3560.625	226.17	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	ksplit_strided	128	3072	1024	1	ok	3560.125	226.20	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	ksplit_strided	128	3072	1024	2	ok	3560.375	226.19	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	ksplit_strided	128	3072	1024	3	ok	3560.875	226.15	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	ksplit_strided	128	3072	1024	4	ok	3559.250	226.26	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	simdgroup	128	3072	1024	0	ok	943.958	853.12	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	simdgroup	128	3072	1024	1	ok	943.667	853.38	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	simdgroup	128	3072	1024	2	ok	943.375	853.64	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	simdgroup	128	3072	1024	3	ok	943.917	853.15	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	simdgroup	128	3072	1024	4	ok	943.833	853.23	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	opaque_mps	128	3072	1024	0	ok	228.250	3528.18	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	opaque_mps	128	3072	1024	1	ok	228.250	3528.18	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	opaque_mps	128	3072	1024	2	ok	228.917	3517.90	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	opaque_mps	128	3072	1024	3	ok	228.083	3530.76	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_in	opaque_mps	128	3072	1024	4	ok	228.375	3526.25	B1-a prefill gate_proj / up_proj
+w_prefill_mlp_out	direct	128	1024	3072	0	ok	6945.375	115.95	B1-a prefill down_proj
+w_prefill_mlp_out	direct	128	1024	3072	1	ok	6939.000	116.06	B1-a prefill down_proj
+w_prefill_mlp_out	direct	128	1024	3072	2	ok	6953.791	115.81	B1-a prefill down_proj
+w_prefill_mlp_out	direct	128	1024	3072	3	ok	6883.250	117.00	B1-a prefill down_proj
+w_prefill_mlp_out	direct	128	1024	3072	4	ok	6978.875	115.39	B1-a prefill down_proj
+w_prefill_mlp_out	tiled	128	1024	3072	0	ok	1603.250	502.30	B1-a prefill down_proj
+w_prefill_mlp_out	tiled	128	1024	3072	1	ok	1603.250	502.30	B1-a prefill down_proj
+w_prefill_mlp_out	tiled	128	1024	3072	2	ok	1599.667	503.42	B1-a prefill down_proj
+w_prefill_mlp_out	tiled	128	1024	3072	3	ok	1599.917	503.34	B1-a prefill down_proj
+w_prefill_mlp_out	tiled	128	1024	3072	4	ok	1599.459	503.49	B1-a prefill down_proj
+w_prefill_mlp_out	ksplit_contiguous	128	1024	3072	0	ok	10714.833	75.16	B1-a prefill down_proj
+w_prefill_mlp_out	ksplit_contiguous	128	1024	3072	1	ok	10712.584	75.17	B1-a prefill down_proj
+w_prefill_mlp_out	ksplit_contiguous	128	1024	3072	2	ok	10712.125	75.18	B1-a prefill down_proj
+w_prefill_mlp_out	ksplit_contiguous	128	1024	3072	3	ok	10707.333	75.21	B1-a prefill down_proj
+w_prefill_mlp_out	ksplit_contiguous	128	1024	3072	4	ok	10713.958	75.16	B1-a prefill down_proj
+w_prefill_mlp_out	ksplit_strided	128	1024	3072	0	ok	2404.500	334.92	B1-a prefill down_proj
+w_prefill_mlp_out	ksplit_strided	128	1024	3072	1	ok	2392.208	336.64	B1-a prefill down_proj
+w_prefill_mlp_out	ksplit_strided	128	1024	3072	2	ok	2395.500	336.17	B1-a prefill down_proj
+w_prefill_mlp_out	ksplit_strided	128	1024	3072	3	ok	2405.750	334.74	B1-a prefill down_proj
+w_prefill_mlp_out	ksplit_strided	128	1024	3072	4	ok	2410.250	334.12	B1-a prefill down_proj
+w_prefill_mlp_out	simdgroup	128	1024	3072	0	ok	957.875	840.72	B1-a prefill down_proj
+w_prefill_mlp_out	simdgroup	128	1024	3072	1	ok	957.625	840.94	B1-a prefill down_proj
+w_prefill_mlp_out	simdgroup	128	1024	3072	2	ok	957.792	840.79	B1-a prefill down_proj
+w_prefill_mlp_out	simdgroup	128	1024	3072	3	ok	957.875	840.72	B1-a prefill down_proj
+w_prefill_mlp_out	simdgroup	128	1024	3072	4	ok	957.583	840.98	B1-a prefill down_proj
+w_prefill_mlp_out	opaque_mps	128	1024	3072	0	ok	266.875	3017.54	B1-a prefill down_proj
+w_prefill_mlp_out	opaque_mps	128	1024	3072	1	ok	267.000	3016.13	B1-a prefill down_proj
+w_prefill_mlp_out	opaque_mps	128	1024	3072	2	ok	267.167	3014.24	B1-a prefill down_proj
+w_prefill_mlp_out	opaque_mps	128	1024	3072	3	ok	266.208	3025.10	B1-a prefill down_proj
+w_prefill_mlp_out	opaque_mps	128	1024	3072	4	ok	266.792	3018.48	B1-a prefill down_proj
+w_prefill_o	direct	128	1024	2048	0	ok	2942.042	182.48	B1-a prefill o_proj
+w_prefill_o	direct	128	1024	2048	1	ok	2952.083	181.86	B1-a prefill o_proj
+w_prefill_o	direct	128	1024	2048	2	ok	2977.000	180.34	B1-a prefill o_proj
+w_prefill_o	direct	128	1024	2048	3	ok	2976.375	180.38	B1-a prefill o_proj
+w_prefill_o	direct	128	1024	2048	4	ok	2957.875	181.51	B1-a prefill o_proj
+w_prefill_o	tiled	128	1024	2048	0	ok	1054.083	509.33	B1-a prefill o_proj
+w_prefill_o	tiled	128	1024	2048	1	ok	1052.625	510.03	B1-a prefill o_proj
+w_prefill_o	tiled	128	1024	2048	2	ok	1053.542	509.59	B1-a prefill o_proj
+w_prefill_o	tiled	128	1024	2048	3	ok	1051.458	510.60	B1-a prefill o_proj
+w_prefill_o	tiled	128	1024	2048	4	ok	1052.375	510.15	B1-a prefill o_proj
+w_prefill_o	ksplit_contiguous	128	1024	2048	0	ok	5091.125	105.45	B1-a prefill o_proj
+w_prefill_o	ksplit_contiguous	128	1024	2048	1	ok	5093.167	105.41	B1-a prefill o_proj
+w_prefill_o	ksplit_contiguous	128	1024	2048	2	ok	5090.667	105.46	B1-a prefill o_proj
+w_prefill_o	ksplit_contiguous	128	1024	2048	3	ok	5093.625	105.40	B1-a prefill o_proj
+w_prefill_o	ksplit_contiguous	128	1024	2048	4	ok	5095.000	105.37	B1-a prefill o_proj
+w_prefill_o	ksplit_strided	128	1024	2048	0	ok	1801.500	298.01	B1-a prefill o_proj
+w_prefill_o	ksplit_strided	128	1024	2048	1	ok	1805.542	297.35	B1-a prefill o_proj
+w_prefill_o	ksplit_strided	128	1024	2048	2	ok	1814.500	295.88	B1-a prefill o_proj
+w_prefill_o	ksplit_strided	128	1024	2048	3	ok	1828.292	293.65	B1-a prefill o_proj
+w_prefill_o	ksplit_strided	128	1024	2048	4	ok	1845.875	290.85	B1-a prefill o_proj
+w_prefill_o	simdgroup	128	1024	2048	0	ok	639.875	839.02	B1-a prefill o_proj
+w_prefill_o	simdgroup	128	1024	2048	1	ok	640.750	837.88	B1-a prefill o_proj
+w_prefill_o	simdgroup	128	1024	2048	2	ok	640.083	838.75	B1-a prefill o_proj
+w_prefill_o	simdgroup	128	1024	2048	3	ok	640.208	838.59	B1-a prefill o_proj
+w_prefill_o	simdgroup	128	1024	2048	4	ok	639.833	839.08	B1-a prefill o_proj
+w_prefill_o	opaque_mps	128	1024	2048	0	ok	178.667	3004.87	B1-a prefill o_proj
+w_prefill_o	opaque_mps	128	1024	2048	1	ok	179.125	2997.19	B1-a prefill o_proj
+w_prefill_o	opaque_mps	128	1024	2048	2	ok	178.833	3002.08	B1-a prefill o_proj
+w_prefill_o	opaque_mps	128	1024	2048	3	ok	178.875	3001.37	B1-a prefill o_proj
+w_prefill_o	opaque_mps	128	1024	2048	4	ok	178.500	3007.68	B1-a prefill o_proj
+w_vocab_slice	direct	1	8192	1024	0	ok	217.083	77.28	decode vocabulary projection, first 8192 rows
+w_vocab_slice	direct	1	8192	1024	1	ok	252.958	66.32	decode vocabulary projection, first 8192 rows
+w_vocab_slice	direct	1	8192	1024	2	ok	252.125	66.54	decode vocabulary projection, first 8192 rows
+w_vocab_slice	direct	1	8192	1024	3	ok	252.667	66.40	decode vocabulary projection, first 8192 rows
+w_vocab_slice	direct	1	8192	1024	4	ok	251.417	66.73	decode vocabulary projection, first 8192 rows
+w_vocab_slice	tiled	1	8192	1024	0	ok	524.625	31.98	decode vocabulary projection, first 8192 rows
+w_vocab_slice	tiled	1	8192	1024	1	ok	524.250	32.00	decode vocabulary projection, first 8192 rows
+w_vocab_slice	tiled	1	8192	1024	2	ok	524.583	31.98	decode vocabulary projection, first 8192 rows
+w_vocab_slice	tiled	1	8192	1024	3	ok	526.625	31.86	decode vocabulary projection, first 8192 rows
+w_vocab_slice	tiled	1	8192	1024	4	ok	523.500	32.05	decode vocabulary projection, first 8192 rows
+w_vocab_slice	ksplit_contiguous	1	8192	1024	0	ok	235.458	71.25	decode vocabulary projection, first 8192 rows
+w_vocab_slice	ksplit_contiguous	1	8192	1024	1	ok	234.500	71.54	decode vocabulary projection, first 8192 rows
+w_vocab_slice	ksplit_contiguous	1	8192	1024	2	ok	235.375	71.28	decode vocabulary projection, first 8192 rows
+w_vocab_slice	ksplit_contiguous	1	8192	1024	3	ok	236.167	71.04	decode vocabulary projection, first 8192 rows
+w_vocab_slice	ksplit_contiguous	1	8192	1024	4	ok	234.000	71.70	decode vocabulary projection, first 8192 rows
+w_vocab_slice	ksplit_strided	1	8192	1024	0	ok	249.250	67.31	decode vocabulary projection, first 8192 rows
+w_vocab_slice	ksplit_strided	1	8192	1024	1	ok	249.167	67.33	decode vocabulary projection, first 8192 rows
+w_vocab_slice	ksplit_strided	1	8192	1024	2	ok	248.625	67.48	decode vocabulary projection, first 8192 rows
+w_vocab_slice	ksplit_strided	1	8192	1024	3	ok	249.292	67.30	decode vocabulary projection, first 8192 rows
+w_vocab_slice	ksplit_strided	1	8192	1024	4	ok	247.417	67.81	decode vocabulary projection, first 8192 rows
+w_vocab_slice	simdgroup	1	8192	1024	0	refused:simdgroup-requires-extents-multiple-of-8			decode vocabulary projection, first 8192 rows
+w_vocab_slice	simdgroup	1	8192	1024	1	refused:simdgroup-requires-extents-multiple-of-8			decode vocabulary projection, first 8192 rows
+w_vocab_slice	simdgroup	1	8192	1024	2	refused:simdgroup-requires-extents-multiple-of-8			decode vocabulary projection, first 8192 rows
+w_vocab_slice	simdgroup	1	8192	1024	3	refused:simdgroup-requires-extents-multiple-of-8			decode vocabulary projection, first 8192 rows
+w_vocab_slice	simdgroup	1	8192	1024	4	refused:simdgroup-requires-extents-multiple-of-8			decode vocabulary projection, first 8192 rows
+w_vocab_slice	opaque_mps	1	8192	1024	0	ok	239.375	70.09	decode vocabulary projection, first 8192 rows
+w_vocab_slice	opaque_mps	1	8192	1024	1	ok	237.917	70.52	decode vocabulary projection, first 8192 rows
+w_vocab_slice	opaque_mps	1	8192	1024	2	ok	238.250	70.42	decode vocabulary projection, first 8192 rows
+w_vocab_slice	opaque_mps	1	8192	1024	3	ok	239.750	69.98	decode vocabulary projection, first 8192 rows
+w_vocab_slice	opaque_mps	1	8192	1024	4	ok	238.833	70.25	decode vocabulary projection, first 8192 rows
+t_vocab_full	direct	1	151936	1024	0	ok	4754.708	65.44	decode vocabulary projection, complete
+t_vocab_full	direct	1	151936	1024	1	ok	4756.500	65.42	decode vocabulary projection, complete
+t_vocab_full	direct	1	151936	1024	2	ok	4761.375	65.35	decode vocabulary projection, complete
+t_vocab_full	direct	1	151936	1024	3	ok	4762.875	65.33	decode vocabulary projection, complete
+t_vocab_full	direct	1	151936	1024	4	ok	4758.792	65.39	decode vocabulary projection, complete
+t_vocab_full	tiled	1	151936	1024	0	ok	9673.292	32.17	decode vocabulary projection, complete
+t_vocab_full	tiled	1	151936	1024	1	ok	9668.583	32.18	decode vocabulary projection, complete
+t_vocab_full	tiled	1	151936	1024	2	ok	9671.833	32.17	decode vocabulary projection, complete
+t_vocab_full	tiled	1	151936	1024	3	ok	9671.417	32.17	decode vocabulary projection, complete
+t_vocab_full	tiled	1	151936	1024	4	ok	9678.500	32.15	decode vocabulary projection, complete
+t_vocab_full	ksplit_contiguous	1	151936	1024	0	ok	4254.042	73.15	decode vocabulary projection, complete
+t_vocab_full	ksplit_contiguous	1	151936	1024	1	ok	4247.500	73.26	decode vocabulary projection, complete
+t_vocab_full	ksplit_contiguous	1	151936	1024	2	ok	4254.833	73.13	decode vocabulary projection, complete
+t_vocab_full	ksplit_contiguous	1	151936	1024	3	ok	4247.375	73.26	decode vocabulary projection, complete
+t_vocab_full	ksplit_contiguous	1	151936	1024	4	ok	4249.750	73.22	decode vocabulary projection, complete
+t_vocab_full	ksplit_strided	1	151936	1024	0	ok	4350.958	71.52	decode vocabulary projection, complete
+t_vocab_full	ksplit_strided	1	151936	1024	1	ok	4351.875	71.50	decode vocabulary projection, complete
+t_vocab_full	ksplit_strided	1	151936	1024	2	ok	4350.667	71.52	decode vocabulary projection, complete
+t_vocab_full	ksplit_strided	1	151936	1024	3	ok	4352.375	71.49	decode vocabulary projection, complete
+t_vocab_full	ksplit_strided	1	151936	1024	4	ok	4352.125	71.50	decode vocabulary projection, complete
+t_vocab_full	simdgroup	1	151936	1024	0	refused:simdgroup-requires-extents-multiple-of-8			decode vocabulary projection, complete
+t_vocab_full	simdgroup	1	151936	1024	1	refused:simdgroup-requires-extents-multiple-of-8			decode vocabulary projection, complete
+t_vocab_full	simdgroup	1	151936	1024	2	refused:simdgroup-requires-extents-multiple-of-8			decode vocabulary projection, complete
+t_vocab_full	simdgroup	1	151936	1024	3	refused:simdgroup-requires-extents-multiple-of-8			decode vocabulary projection, complete
+t_vocab_full	simdgroup	1	151936	1024	4	refused:simdgroup-requires-extents-multiple-of-8			decode vocabulary projection, complete
+t_vocab_full	opaque_mps	1	151936	1024	0	ok	4420.667	70.39	decode vocabulary projection, complete
+t_vocab_full	opaque_mps	1	151936	1024	1	ok	4424.833	70.32	decode vocabulary projection, complete
+t_vocab_full	opaque_mps	1	151936	1024	2	ok	4426.500	70.30	decode vocabulary projection, complete
+t_vocab_full	opaque_mps	1	151936	1024	3	ok	4418.292	70.43	decode vocabulary projection, complete
+t_vocab_full	opaque_mps	1	151936	1024	4	ok	4426.375	70.30	decode vocabulary projection, complete
+t_prefill_mlp_512	direct	512	3072	1024	0	ok	16668.917	193.25	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	direct	512	3072	1024	1	ok	16662.750	193.32	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	direct	512	3072	1024	2	ok	16668.250	193.26	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	direct	512	3072	1024	3	ok	16664.542	193.30	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	direct	512	3072	1024	4	ok	16668.083	193.26	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	tiled	512	3072	1024	0	ok	6397.000	503.55	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	tiled	512	3072	1024	1	ok	6395.375	503.68	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	tiled	512	3072	1024	2	ok	6396.500	503.59	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	tiled	512	3072	1024	3	ok	6399.042	503.39	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	tiled	512	3072	1024	4	ok	6400.875	503.25	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	ksplit_contiguous	512	3072	1024	0	ok	30911.250	104.21	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	ksplit_contiguous	512	3072	1024	1	ok	30907.000	104.22	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	ksplit_contiguous	512	3072	1024	2	ok	30894.083	104.27	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	ksplit_contiguous	512	3072	1024	3	ok	30896.333	104.26	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	ksplit_contiguous	512	3072	1024	4	ok	30902.375	104.24	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	ksplit_strided	512	3072	1024	0	ok	14221.750	226.50	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	ksplit_strided	512	3072	1024	1	ok	14255.000	225.97	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	ksplit_strided	512	3072	1024	2	ok	14248.958	226.07	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	ksplit_strided	512	3072	1024	3	ok	14264.875	225.82	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	ksplit_strided	512	3072	1024	4	ok	14241.875	226.18	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	simdgroup	512	3072	1024	0	ok	3733.917	862.69	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	simdgroup	512	3072	1024	1	ok	3733.750	862.73	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	simdgroup	512	3072	1024	2	ok	3733.667	862.75	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	simdgroup	512	3072	1024	3	ok	3733.792	862.72	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	simdgroup	512	3072	1024	4	ok	3734.375	862.59	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	opaque_mps	512	3072	1024	0	ok	839.417	3837.46	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	opaque_mps	512	3072	1024	1	ok	840.125	3834.22	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	opaque_mps	512	3072	1024	2	ok	840.875	3830.80	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	opaque_mps	512	3072	1024	3	ok	839.875	3835.36	B1-b prefill gate_proj / up_proj
+t_prefill_mlp_512	opaque_mps	512	3072	1024	4	ok	838.750	3840.51	B1-b prefill gate_proj / up_proj
