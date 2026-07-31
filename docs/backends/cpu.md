@@ -6,7 +6,7 @@ title: "Proposed CPU/SIMD target profile"
 topics: ["backends", "cpu", "simd", "target-profiles"]
 contract_status: "proposed"
 implementation_status: "not-started"
-evidence: ["tiler.research.placement.device-memory-domains", "tiler.research.transfers.synchronization-lifetime"]
+evidence: ["tiler.research.placement.device-memory-domains", "tiler.research.transfers.synchronization-lifetime", "tiler.spike.target-profiles.scalar-cpu-vertical"]
 ---
 
 # Proposed CPU/SIMD target profile
@@ -37,4 +37,15 @@ and runtime ownership rather than borrowing GPU barrier semantics.
 
 This proposed contract owns the CPU/SIMD target-profile sketch, not tensor
 semantics or runtime implementations. Placement and transfer research supplies
-its physical-resource boundary; implementation evidence does not yet exist.
+its physical-resource boundary.
+
+The [bounded scalar CPU backend vertical](../../spikes/target-profiles/scalar-cpu-vertical/README.md)
+is the only implementation evidence, and it deliberately covers the *scalar*
+half of this sketch alone. It declares a target triple, ABI/data layout, address
+width, and scalar execution model, carries one `f32` payload from that profile to
+a bitwise agreement with the reference evaluator, and leaves every vector,
+scalable-vector, mask/tail, threading, and cache claim above undeclared and
+therefore `Unknown`. Its README records which parts of the neutral target-profile
+and artifact vocabularies had no CPU referent. This contract stays proposed and
+Q-PLAN-011 stays open: one executed scalar vertical is not an implementation
+plan, and nothing here has been accepted.
