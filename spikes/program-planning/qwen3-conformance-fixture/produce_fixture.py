@@ -1,0 +1,717 @@
+#!/usr/bin/env python3
+"""Produce the C1 conformance reference logit fixture for Qwen/Qwen3-0.6B-Base.
+
+The workload profile at `docs/research/program-planning/first-metal-lm-workload.md`
+supplies every constant below -- the pinned revision, the per-file manifest, the
+prompt token IDs, the decode budget, the termination rule, and the tie policy.
+Nothing here re-derives them; the constants are transcribed and the profile is
+the authority.
+
+What the run produces, in order:
+
+1. The checkpoint is acquired at the pinned revision into the Hugging Face cache
+   outside this repository, and every manifest file is hashed locally. This is
+   the step that converts the profile's API-reported Git-LFS object id for
+   `model.safetensors` into a digest computed from bytes on this host.
+2. The installed `transformers` reference sources are hashed against the
+   profile's pinned-commit digests, so "the pinned reference was evaluated" is a
+   checked claim rather than an inference from a version string.
+3. The F32 reference is evaluated on CPU with `attn_implementation="eager"` and
+   `logits_to_keep=0`, greedy, over all 10 prefill positions and 8 decode steps.
+4. The same staging is evaluated twice more in float64 to measure the
+   reference's own sensitivity envelope; see ENVELOPE below for why there are
+   two float64 passes rather than one.
+
+Run it by hand from this directory; no `make` target reaches a spike:
+
+    uv run --locked python produce_fixture.py --out results/<slug>
+
+`--compare DIR` re-runs the whole production into a scratch directory and
+byte-compares every retained file against `DIR`, which is how reproducibility is
+demonstrated rather than asserted.
+"""
+
+from __future__ import annotations
+
+import argparse
+import gc
+import hashlib
+import json
+import platform
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Transcribed from the workload profile. A mismatch against any of these is a
+# stop, never a warning: the retained record is only evidence about the pinned
+# workload, so a run against different bytes is not a weaker fixture, it is a
+# fixture for a different question.
+# ---------------------------------------------------------------------------
+
+REPO_ID = "Qwen/Qwen3-0.6B-Base"
+REVISION = "da87bfb608c14b7cf20ba1ce41287e8de496c0cd"
+
+# (filename, byte size, SHA-256 of content bytes)
+CHECKPOINT_MANIFEST = [
+    ("config.json", 727, "504a6b58c4271583724e66584b6b7698aea18450209df6b2f7582df0e89cee59"),
+    ("generation_config.json", 138, "8c970692323e3ea0e9b8b0a4dca79388d31226e41f83c9fd6014804280ebf6e8"),
+    ("model.safetensors", 1192135096, "cd2a512003e2f9f3cd3c32a9c3573f820bb28c940f73c57b1ddaa983d9223eba"),
+    ("tokenizer.json", 7031645, "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539"),
+    ("tokenizer_config.json", 9678, "3c04ed3ca964ea2f6b2b5faf0dc4d31aec1cb1e8b4bcf63f402d295046b422b5"),
+    ("vocab.json", 2776833, "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"),
+    ("merges.txt", 1671853, "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5"),
+    ("LICENSE", 11343, "832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e"),
+    ("README.md", 2973, "910d9be25c648ab1cb5a7b1d20d67ca6d43d43559a705010198886f9af68e8f1"),
+]
+
+# The `transformers` v4.51.0 sources the profile pins by git commit
+# 0720e206c6ba28887e4d60ef60a6a089f6c1cc76. Verifying the *installed* files
+# against these digests is what makes "evaluated the pinned reference" checkable.
+REFERENCE_SOURCE_MANIFEST = [
+    ("models/qwen3/modeling_qwen3.py", "704c914530530a1acb0b443add1f520404e3ac2c28c0ab7e16f80f86cfe8ccb2"),
+    ("models/qwen3/configuration_qwen3.py", "87f0d17326c44f2dfe1bfc329faf9201ab4b19a89ad555da085b4cc81461b201"),
+    ("modeling_rope_utils.py", "c28b3e88edca8fdb5497e5c36091bf753db49bd94ace33a84e9f9c61cbf66032"),
+]
+
+PROMPT_TEXT = "The quick brown fox jumps over the lazy dog."
+PROMPT_IDS = [785, 3974, 13876, 38835, 34208, 916, 279, 15678, 5562, 13]
+DECODE_STEPS = 8
+EOS_TOKEN_ID = 151643
+VOCAB_SIZE = 151936
+TOP_K = 32
+
+# 10 prefill positions plus 8 decode forward passes. The eighth decode pass
+# consumes the eighth generated token, so the retained set is 18 logit vectors
+# at positions 0..17 and the maximum context reached is 18 -- both figures the
+# profile's C1 table states. The argmax at position 17 is recorded per position
+# but is not appended to the sequence, because the 8-step budget is spent.
+EXPECTED_POSITIONS = len(PROMPT_IDS) + DECODE_STEPS
+
+# ---------------------------------------------------------------------------
+# ENVELOPE -- why there are two float64 passes.
+#
+# The profile asks for "a float64 path rounded to F32 at the observable".
+# Loading the pinned reference at float64 does not by itself produce one. Three
+# float32 spellings in the pinned source are unconditional, so at model dtype
+# float64 they are *downcasts* rather than the upcasts they are for a BF16
+# model:
+#
+#   modeling_qwen3.py:73       Qwen3RMSNorm.forward      hidden_states.to(torch.float32)
+#   modeling_qwen3.py:162      eager_attention_forward   softmax(..., dtype=torch.float32)
+#   modeling_qwen3.py:336-344  Qwen3RotaryEmbedding.forward  .float() on inv_freq,
+#                              position_ids, freqs, cos and sin
+#
+# Those are the mean-of-squares normalization, the attention softmax, and the
+# RoPE table: three of the most cancellation-prone stages in the model. In an
+# unmodified float64 pass they round *identically* to the F32 pass and so
+# contribute exactly zero to the measured deviation, which understates the
+# envelope precisely where it matters most. The run therefore retains both:
+#
+#   f64_unmodified -- the pinned reference verbatim at dtype float64. Needs no
+#       patching, reproduces from the checked-in environment alone, and is the
+#       conservative floor.
+#   f64_promoted   -- the same three sites promoted to float64, each a
+#       line-for-line copy of the pinned source with the float32 spelling
+#       changed and nothing else moved. This is the pass that actually reorders
+#       the sensitive stages.
+#
+# Neither sets a budget; `design-model-level-qualification-and-optimization`
+# owns that. Both are Measurements bound to the host row recorded beside them.
+# ---------------------------------------------------------------------------
+
+RESULT_FILES = [
+    "environment.tsv",
+    "sequence.tsv",
+    "positions.tsv",
+    "top32.tsv",
+    "envelope.tsv",
+]
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def fail(message: str):
+    print(f"FIXTURE STOP: {message}", file=sys.stderr)
+    raise SystemExit(4)
+
+
+def host_row():
+    def command(argv):
+        try:
+            return subprocess.run(argv, capture_output=True, text=True, check=True).stdout.strip()
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return "unavailable"
+
+    return [
+        ("host.os_product", command(["sw_vers", "-productName"])),
+        ("host.os_version", command(["sw_vers", "-productVersion"])),
+        ("host.os_build", command(["sw_vers", "-buildVersion"])),
+        ("host.cpu", command(["sysctl", "-n", "machdep.cpu.brand_string"])),
+        ("host.machine", platform.machine()),
+        ("host.memory_bytes", command(["sysctl", "-n", "hw.memsize"])),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Verification steps, all fail-closed.
+# ---------------------------------------------------------------------------
+
+
+def acquire_and_verify_checkpoint():
+    from huggingface_hub import snapshot_download
+
+    snapshot = Path(
+        snapshot_download(
+            repo_id=REPO_ID,
+            revision=REVISION,
+            allow_patterns=[name for name, _, _ in CHECKPOINT_MANIFEST],
+        )
+    )
+
+    records = []
+    for name, expected_size, expected_digest in CHECKPOINT_MANIFEST:
+        path = snapshot / name
+        if not path.exists():
+            fail(f"{name} missing from the acquired snapshot at {snapshot}")
+        actual_size = path.resolve().stat().st_size
+        if actual_size != expected_size:
+            fail(f"{name} is {actual_size} bytes, the manifest says {expected_size}")
+        actual_digest = sha256_file(path)
+        if actual_digest != expected_digest:
+            fail(
+                f"{name} hashed to {actual_digest}, the manifest says {expected_digest}. "
+                "The acquired bytes are not the pinned revision."
+            )
+        records.append((f"checkpoint.bytes.{name}", str(actual_size)))
+        records.append((f"checkpoint.sha256.{name}", actual_digest))
+    return snapshot, records
+
+
+def verify_reference_sources():
+    import transformers
+
+    root = Path(transformers.__file__).parent
+    records = []
+    for relative, expected_digest in REFERENCE_SOURCE_MANIFEST:
+        path = root / relative
+        if not path.exists():
+            fail(f"the installed transformers is missing {relative}")
+        actual_digest = sha256_file(path)
+        if actual_digest != expected_digest:
+            fail(
+                f"the installed {relative} hashed to {actual_digest}, the pinned commit's "
+                f"digest is {expected_digest}. The evaluated implementation is not the "
+                "pinned reference."
+            )
+        records.append((f"reference.bytes.{relative}", str(path.stat().st_size)))
+        records.append((f"reference.sha256.{relative}", actual_digest))
+    return records
+
+
+def verify_prompt_tokenization(snapshot: Path):
+    """Cross-check the profile's recorded prompt IDs against the pinned tokenizer.
+
+    The profile fixes the workload as token IDs precisely so that a differing
+    tokenizer shows up as a visible mismatch instead of a silent change of
+    input. This is that check, run against the tokenizer file whose digest the
+    checkpoint step already verified.
+    """
+    import tokenizers
+    from tokenizers import Tokenizer
+
+    tokenizer = Tokenizer.from_file(str(snapshot / "tokenizer.json"))
+    encoded = tokenizer.encode(PROMPT_TEXT, add_special_tokens=False).ids
+    if encoded != PROMPT_IDS:
+        fail(
+            f"the pinned tokenizer encodes the prompt as {encoded}, the profile records "
+            f"{PROMPT_IDS}. The workload input is not what the profile says it is."
+        )
+    decoded = tokenizer.decode(PROMPT_IDS)
+    if decoded != PROMPT_TEXT:
+        fail(f"decoding the recorded IDs returned {decoded!r}, not {PROMPT_TEXT!r}")
+    return [
+        ("tokenizer.library", "tokenizers"),
+        ("tokenizer.version", tokenizers.__version__),
+        ("tokenizer.prompt_ids_match_profile", "true"),
+        ("tokenizer.roundtrip_matches_prompt_text", "true"),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Evaluation.
+# ---------------------------------------------------------------------------
+
+
+def promote_reference_to_float64(modeling):
+    """Replace the three unconditional float32 sites with float64 copies.
+
+    Each replacement is a line-for-line copy of the pinned source with the
+    float32 spelling changed; nothing else about the computation moves.
+    """
+    import torch
+    from torch import nn
+    from transformers.modeling_rope_utils import dynamic_rope_update
+
+    def rms_norm_forward(self, hidden_states):  # modeling_qwen3.py:71-76
+        input_dtype = hidden_states.dtype
+        hidden_states = hidden_states.to(torch.float64)
+        variance = hidden_states.pow(2).mean(-1, keepdim=True)
+        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+        return self.weight * hidden_states.to(input_dtype)
+
+    def eager_attention_forward(  # modeling_qwen3.py:144-167
+        module, query, key, value, attention_mask, scaling, dropout=0.0, **kwargs
+    ):
+        key_states = modeling.repeat_kv(key, module.num_key_value_groups)
+        value_states = modeling.repeat_kv(value, module.num_key_value_groups)
+
+        attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
+        if attention_mask is not None:
+            causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
+            attn_weights = attn_weights + causal_mask
+
+        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float64).to(query.dtype)
+        attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
+        attn_output = torch.matmul(attn_weights, value_states)
+        attn_output = attn_output.transpose(1, 2).contiguous()
+
+        return attn_output, attn_weights
+
+    @torch.no_grad()
+    @dynamic_rope_update
+    def rotary_forward(self, x, position_ids):  # modeling_qwen3.py:333-346
+        inv_freq_expanded = (
+            self.inv_freq[None, :, None].double().expand(position_ids.shape[0], -1, 1).to(x.device)
+        )
+        position_ids_expanded = position_ids[:, None, :].double()
+
+        device_type = x.device.type if isinstance(x.device.type, str) and x.device.type != "mps" else "cpu"
+        with torch.autocast(device_type=device_type, enabled=False):
+            freqs = (inv_freq_expanded.double() @ position_ids_expanded.double()).transpose(1, 2)
+            emb = torch.cat((freqs, freqs), dim=-1)
+            cos = emb.cos() * self.attention_scaling
+            sin = emb.sin() * self.attention_scaling
+
+        return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
+
+    modeling.Qwen3RMSNorm.forward = rms_norm_forward
+    modeling.eager_attention_forward = eager_attention_forward
+    modeling.Qwen3RotaryEmbedding.forward = rotary_forward
+
+
+def load_model(snapshot: Path, dtype):
+    from transformers import AutoModelForCausalLM
+
+    model = AutoModelForCausalLM.from_pretrained(
+        str(snapshot), torch_dtype=dtype, attn_implementation="eager"
+    )
+    model.eval()
+    if model.config._attn_implementation != "eager":
+        fail(
+            "the loaded model reports attention implementation "
+            f"{model.config._attn_implementation!r}, not 'eager'"
+        )
+    actual_dtype = next(model.parameters()).dtype
+    if actual_dtype != dtype:
+        fail(f"the loaded model parameters are {actual_dtype}, not {dtype}")
+    return model
+
+
+def greedy_token(row) -> int:
+    """The lowest vocabulary index among all indices attaining the maximum logit.
+
+    This is the profile's declared tie policy, applied rather than inherited
+    from whatever `torch.argmax` happens to return for a tie.
+    """
+    import torch
+
+    maximum = torch.max(row)
+    return int(torch.nonzero(row == maximum, as_tuple=False)[0].item())
+
+
+def evaluate(model, forced_tokens=None):
+    """Run prefill plus the decode budget, returning one float32 logit row per position.
+
+    `forced_tokens` teacher-forces the decode input on an already-established
+    sequence. The float64 passes use it so that every position compares the same
+    inputs; without it a single argmax flip would make every later position a
+    comparison of two different computations, and the reported deviation would
+    describe divergent sequences rather than reordering. Each pass still records
+    its own argmax at every position, so a flip stays visible rather than being
+    hidden by the forcing.
+
+    Returns (rows, generated, terminated_on) where `rows` is a list of
+    (stage, float32 numpy array) and `generated` holds the tokens this pass
+    selected greedily -- 8 of them under the budget, fewer only on EOS.
+    """
+    import numpy as np
+    import torch
+    from transformers import DynamicCache
+
+    rows = []
+    generated = []
+
+    with torch.inference_mode():
+        cache = DynamicCache()
+        input_ids = torch.tensor([PROMPT_IDS], dtype=torch.long)
+        output = model(
+            input_ids=input_ids,
+            attention_mask=torch.ones_like(input_ids),
+            past_key_values=cache,
+            use_cache=True,
+            logits_to_keep=0,
+        )
+        prefill_logits = output.logits[0]
+        if tuple(prefill_logits.shape) != (len(PROMPT_IDS), VOCAB_SIZE):
+            fail(f"prefill produced logits of shape {tuple(prefill_logits.shape)}")
+        for index in range(len(PROMPT_IDS)):
+            rows.append(("prefill", prefill_logits[index].to(torch.float32).numpy().copy()))
+
+        generated.append(greedy_token(prefill_logits[-1]))
+        terminated_on = "eos" if generated[0] == EOS_TOKEN_ID else None
+
+        step = 0
+        while terminated_on is None and step < DECODE_STEPS:
+            fed = forced_tokens[step] if forced_tokens is not None else generated[step]
+            input_ids = torch.tensor([[fed]], dtype=torch.long)
+            output = model(
+                input_ids=input_ids,
+                attention_mask=torch.ones((1, len(PROMPT_IDS) + step + 1), dtype=torch.long),
+                past_key_values=cache,
+                use_cache=True,
+                logits_to_keep=0,
+            )
+            step_logits = output.logits[0]
+            if tuple(step_logits.shape) != (1, VOCAB_SIZE):
+                fail(f"decode pass {step + 1} produced logits of shape {tuple(step_logits.shape)}")
+            rows.append(("decode", step_logits[0].to(torch.float32).numpy().copy()))
+
+            candidate = greedy_token(step_logits[0])
+            # The final pass's argmax is computed and retained per position but
+            # is not appended: appending it would spend a ninth decode step the
+            # profile's budget does not have.
+            if step + 1 < DECODE_STEPS:
+                generated.append(candidate)
+                if candidate == EOS_TOKEN_ID:
+                    terminated_on = "eos"
+            step += 1
+
+        if terminated_on is None:
+            terminated_on = "budget"
+
+    assert all(isinstance(row, np.ndarray) for _, row in rows)
+    return rows, generated, terminated_on
+
+
+def analyse(rows, envelope_rows, logit_dir: Path):
+    """Turn raw logit rows into the retained per-position, top-32 and envelope records."""
+    import numpy as np
+
+    logit_dir.mkdir(parents=True, exist_ok=True)
+
+    def monotone(bits):
+        """Map IEEE-754 binary32 bit patterns to a monotone integer for ULP distance."""
+        signed = bits.astype(np.int64)
+        return np.where(signed & 0x80000000, 0x80000000 - (signed & 0x7FFFFFFF), signed + 0x80000000)
+
+    def descending_order(values):
+        """Rank by descending logit, ties broken toward the lower vocabulary index."""
+        return np.lexsort((np.arange(VOCAB_SIZE), -values))
+
+    positions = []
+    top32 = []
+    envelope = []
+
+    baseline = [np.ascontiguousarray(row, dtype=np.float32) for _, row in rows]
+
+    for index, ((stage, _), values) in enumerate(zip(rows, baseline)):
+        raw = values.astype("<f4").tobytes()
+        if len(raw) != VOCAB_SIZE * 4:
+            fail(f"position {index} serialized to {len(raw)} bytes")
+        (logit_dir / f"position-{index:02d}.f32le.bin").write_bytes(raw)
+
+        order = descending_order(values)
+        best = int(order[0])
+        runner = int(order[1])
+        bits = values.view(np.uint32)
+        gap = float(values[best]) - float(values[runner])
+
+        positions.append(
+            {
+                "position": index,
+                "stage": stage,
+                "logits_sha256": hashlib.sha256(raw).hexdigest(),
+                "greedy_token": best,
+                "greedy_logit_hex": f"0x{bits[best]:08x}",
+                "greedy_logit": repr(float(values[best])),
+                "runner_up_token": runner,
+                "runner_up_logit_hex": f"0x{bits[runner]:08x}",
+                "runner_up_logit": repr(float(values[runner])),
+                "runner_up_gap": repr(gap),
+                "max_attaining_indices": int(np.count_nonzero(values == values[best])),
+                "top_two_bit_identical": str(bool(bits[best] == bits[runner])).lower(),
+            }
+        )
+
+        for rank in range(TOP_K):
+            token = int(order[rank])
+            top32.append(
+                {
+                    "position": index,
+                    "rank": rank,
+                    "token_id": token,
+                    "logit_hex": f"0x{bits[token]:08x}",
+                    "logit": repr(float(values[token])),
+                }
+            )
+
+    for label in sorted(envelope_rows):
+        compared_rows = [np.ascontiguousarray(row, dtype=np.float32) for _, row in envelope_rows[label]]
+        if len(compared_rows) != len(baseline):
+            fail(f"{label} produced {len(compared_rows)} positions, the baseline has {len(baseline)}")
+        for index, (reference, compared) in enumerate(zip(baseline, compared_rows)):
+            wide_reference = reference.astype(np.float64)
+            wide_compared = compared.astype(np.float64)
+            difference = np.abs(wide_reference - wide_compared)
+            ulp = np.abs(monotone(reference.view(np.uint32)) - monotone(compared.view(np.uint32)))
+            scale = np.maximum(np.abs(wide_reference), np.abs(wide_compared))
+            relative = np.where(scale > 0.0, difference / np.where(scale > 0.0, scale, 1.0), 0.0)
+            top_order = descending_order(reference)[:TOP_K]
+
+            envelope.append(
+                {
+                    "position": index,
+                    "variant": label,
+                    "bit_identical_logits": int(np.count_nonzero(difference == 0.0)),
+                    "max_abs_deviation": repr(float(difference.max())),
+                    "max_ulp_deviation": int(ulp.max()),
+                    "max_rel_deviation": repr(float(relative.max())),
+                    "top32_max_abs_deviation": repr(float(difference[top_order].max())),
+                    "top32_max_ulp_deviation": int(ulp[top_order].max()),
+                    "greedy_token_agrees": str(
+                        int(descending_order(reference)[0]) == int(descending_order(compared)[0])
+                    ).lower(),
+                }
+            )
+
+    return positions, top32, envelope
+
+
+def write_tsv(path: Path, rows, columns) -> None:
+    lines = ["\t".join(columns)]
+    lines.extend("\t".join(str(row[column]) for column in columns) for row in rows)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_kv_tsv(path: Path, rows) -> None:
+    lines = ["key\tvalue"]
+    lines.extend(f"{key}\t{value}" for key, value in rows)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def produce(out_dir: Path, logit_dir: Path) -> None:
+    import numpy
+    import torch
+    import transformers
+    from transformers.models.qwen3 import modeling_qwen3
+
+    # One thread removes intra-op reduction-order variation as a source of
+    # digest drift between two runs on this host. It is a determinism control,
+    # not a performance choice; the record states the thread count so a reader
+    # knows which realization the digests describe.
+    torch.set_num_threads(1)
+    torch.set_grad_enabled(False)
+
+    snapshot, checkpoint_records = acquire_and_verify_checkpoint()
+    reference_records = verify_reference_sources()
+    tokenizer_records = verify_prompt_tokenization(snapshot)
+
+    model = load_model(snapshot, torch.float32)
+    rows, generated, terminated_on = evaluate(model)
+    del model
+    gc.collect()
+
+    if terminated_on not in ("eos", "budget"):
+        fail(f"the run terminated on {terminated_on!r}, which is neither EOS nor the budget")
+    if terminated_on == "budget" and len(rows) != EXPECTED_POSITIONS:
+        fail(f"the F32 pass retained {len(rows)} positions, the profile's C1 row is {EXPECTED_POSITIONS}")
+    if terminated_on == "budget" and len(generated) != DECODE_STEPS:
+        fail(f"the F32 pass generated {len(generated)} tokens under an {DECODE_STEPS}-step budget")
+
+    envelope_rows = {}
+
+    model = load_model(snapshot, torch.float64)
+    envelope_rows["f64_unmodified"] = evaluate(model, forced_tokens=generated)[0]
+    del model
+    gc.collect()
+
+    saved = {
+        "rms": modeling_qwen3.Qwen3RMSNorm.forward,
+        "attn": modeling_qwen3.eager_attention_forward,
+        "rope": modeling_qwen3.Qwen3RotaryEmbedding.forward,
+    }
+    try:
+        promote_reference_to_float64(modeling_qwen3)
+        model = load_model(snapshot, torch.float64)
+        envelope_rows["f64_promoted"] = evaluate(model, forced_tokens=generated)[0]
+        del model
+        gc.collect()
+    finally:
+        modeling_qwen3.Qwen3RMSNorm.forward = saved["rms"]
+        modeling_qwen3.eager_attention_forward = saved["attn"]
+        modeling_qwen3.Qwen3RotaryEmbedding.forward = saved["rope"]
+
+    positions, top32, envelope = analyse(rows, envelope_rows, logit_dir)
+
+    sequence = [
+        {"index": index, "role": "prompt", "token_id": token} for index, token in enumerate(PROMPT_IDS)
+    ]
+    sequence.extend(
+        {"index": len(PROMPT_IDS) + offset, "role": "generated", "token_id": token}
+        for offset, token in enumerate(generated)
+    )
+
+    environment = [
+        ("workload.repo_id", REPO_ID),
+        ("workload.revision", REVISION),
+        ("workload.prompt_text", PROMPT_TEXT),
+        ("workload.prompt_token_ids", json.dumps(PROMPT_IDS, separators=(",", ":"))),
+        ("workload.prompt_length", str(len(PROMPT_IDS))),
+        ("workload.decode_budget", str(DECODE_STEPS)),
+        ("workload.eos_token_id", str(EOS_TOKEN_ID)),
+        ("workload.vocab_size", str(VOCAB_SIZE)),
+        ("workload.retained_positions", str(len(rows))),
+        ("workload.sequence_length", str(len(sequence))),
+        ("run.dtype", "float32"),
+        ("run.device", "cpu"),
+        ("run.attn_implementation", "eager"),
+        ("run.logits_to_keep", "0"),
+        ("run.decode_strategy", "greedy, lowest vocabulary index among maxima"),
+        ("run.terminated_on", terminated_on),
+        ("run.generated_token_count", str(len(generated))),
+        ("run.torch_num_threads", "1"),
+        ("run.logit_byte_order", "little-endian IEEE-754 binary32, C-contiguous"),
+        ("envelope.variants", "f64_unmodified,f64_promoted"),
+        ("envelope.rounding_point", "logits cast to float32 at the observable"),
+        ("envelope.decode_input", "teacher-forced on the F32 pass token sequence"),
+        ("version.python", platform.python_version()),
+        ("version.torch", torch.__version__),
+        ("version.transformers", transformers.__version__),
+        ("version.numpy", numpy.__version__),
+    ]
+    environment.extend(tokenizer_records)
+    environment.extend(host_row())
+    environment.extend(checkpoint_records)
+    environment.extend(reference_records)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    write_kv_tsv(out_dir / "environment.tsv", environment)
+    write_tsv(out_dir / "sequence.tsv", sequence, ["index", "role", "token_id"])
+    write_tsv(
+        out_dir / "positions.tsv",
+        positions,
+        [
+            "position",
+            "stage",
+            "logits_sha256",
+            "greedy_token",
+            "greedy_logit_hex",
+            "greedy_logit",
+            "runner_up_token",
+            "runner_up_logit_hex",
+            "runner_up_logit",
+            "runner_up_gap",
+            "max_attaining_indices",
+            "top_two_bit_identical",
+        ],
+    )
+    write_tsv(out_dir / "top32.tsv", top32, ["position", "rank", "token_id", "logit_hex", "logit"])
+    write_tsv(
+        out_dir / "envelope.tsv",
+        envelope,
+        [
+            "position",
+            "variant",
+            "bit_identical_logits",
+            "max_abs_deviation",
+            "max_ulp_deviation",
+            "max_rel_deviation",
+            "top32_max_abs_deviation",
+            "top32_max_ulp_deviation",
+            "greedy_token_agrees",
+        ],
+    )
+
+    # The manifest hashes the retained records and the producer's own inputs, so
+    # a later reader can tell an edited fixture from a regenerated one without
+    # owning a model. `verify_fixture.py` is what checks it.
+    manifest = [(f"result.sha256.{name}", sha256_file(out_dir / name)) for name in RESULT_FILES]
+    root = Path(__file__).resolve().parent
+    for relative in ("produce_fixture.py", "verify_fixture.py", "pyproject.toml", "uv.lock"):
+        manifest.append((f"producer.sha256.{relative}", sha256_file(root / relative)))
+    write_kv_tsv(out_dir / "manifest.tsv", manifest)
+
+
+def compare_directories(produced: Path, retained: Path) -> int:
+    differences = 0
+    for name in RESULT_FILES + ["manifest.tsv"]:
+        retained_path = retained / name
+        if not retained_path.exists():
+            print(f"MISSING from {retained}: {name}")
+            differences += 1
+            continue
+        if (produced / name).read_bytes() != retained_path.read_bytes():
+            print(f"DIFFERS: {name}")
+            differences += 1
+        else:
+            print(f"identical: {name}")
+    return differences
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Produce the C1 conformance reference logit fixture.")
+    parser.add_argument("--out", type=Path, help="directory to write the retained records into")
+    parser.add_argument(
+        "--compare",
+        type=Path,
+        help="re-run production into a scratch directory and byte-compare against this one",
+    )
+    parser.add_argument(
+        "--logit-dir",
+        type=Path,
+        default=Path(__file__).resolve().parent / "local-work" / "logits",
+        help="where the complete F32 logit bytes go; regenerable local data, not version controlled",
+    )
+    arguments = parser.parse_args()
+
+    if arguments.compare is not None:
+        scratch = Path(tempfile.mkdtemp(prefix="qwen3-fixture-compare-"))
+        try:
+            produce(scratch, arguments.logit_dir)
+            differences = compare_directories(scratch, arguments.compare)
+            if differences:
+                print(f"\n{differences} retained file(s) differ from {arguments.compare}")
+                return 5
+            print(f"\nall {len(RESULT_FILES) + 1} retained files reproduced byte-for-byte")
+            return 0
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
+
+    if arguments.out is None:
+        fail("--out is required when not comparing")
+    produce(arguments.out, arguments.logit_dir)
+    print(f"retained records written to {arguments.out}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

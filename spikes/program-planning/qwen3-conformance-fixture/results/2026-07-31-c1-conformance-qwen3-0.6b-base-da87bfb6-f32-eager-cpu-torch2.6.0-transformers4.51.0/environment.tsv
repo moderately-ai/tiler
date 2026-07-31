@@ -1,0 +1,61 @@
+key	value
+workload.repo_id	Qwen/Qwen3-0.6B-Base
+workload.revision	da87bfb608c14b7cf20ba1ce41287e8de496c0cd
+workload.prompt_text	The quick brown fox jumps over the lazy dog.
+workload.prompt_token_ids	[785,3974,13876,38835,34208,916,279,15678,5562,13]
+workload.prompt_length	10
+workload.decode_budget	8
+workload.eos_token_id	151643
+workload.vocab_size	151936
+workload.retained_positions	18
+workload.sequence_length	18
+run.dtype	float32
+run.device	cpu
+run.attn_implementation	eager
+run.logits_to_keep	0
+run.decode_strategy	greedy, lowest vocabulary index among maxima
+run.terminated_on	budget
+run.generated_token_count	8
+run.torch_num_threads	1
+run.logit_byte_order	little-endian IEEE-754 binary32, C-contiguous
+envelope.variants	f64_unmodified,f64_promoted
+envelope.rounding_point	logits cast to float32 at the observable
+envelope.decode_input	teacher-forced on the F32 pass token sequence
+version.python	3.11.12
+version.torch	2.6.0
+version.transformers	4.51.0
+version.numpy	2.2.5
+tokenizer.library	tokenizers
+tokenizer.version	0.21.1
+tokenizer.prompt_ids_match_profile	true
+tokenizer.roundtrip_matches_prompt_text	true
+host.os_product	macOS
+host.os_version	27.0
+host.os_build	26A5388g
+host.cpu	Apple M4 Max
+host.machine	arm64
+host.memory_bytes	38654705664
+checkpoint.bytes.config.json	727
+checkpoint.sha256.config.json	504a6b58c4271583724e66584b6b7698aea18450209df6b2f7582df0e89cee59
+checkpoint.bytes.generation_config.json	138
+checkpoint.sha256.generation_config.json	8c970692323e3ea0e9b8b0a4dca79388d31226e41f83c9fd6014804280ebf6e8
+checkpoint.bytes.model.safetensors	1192135096
+checkpoint.sha256.model.safetensors	cd2a512003e2f9f3cd3c32a9c3573f820bb28c940f73c57b1ddaa983d9223eba
+checkpoint.bytes.tokenizer.json	7031645
+checkpoint.sha256.tokenizer.json	c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539
+checkpoint.bytes.tokenizer_config.json	9678
+checkpoint.sha256.tokenizer_config.json	3c04ed3ca964ea2f6b2b5faf0dc4d31aec1cb1e8b4bcf63f402d295046b422b5
+checkpoint.bytes.vocab.json	2776833
+checkpoint.sha256.vocab.json	ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910
+checkpoint.bytes.merges.txt	1671853
+checkpoint.sha256.merges.txt	8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5
+checkpoint.bytes.LICENSE	11343
+checkpoint.sha256.LICENSE	832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e
+checkpoint.bytes.README.md	2973
+checkpoint.sha256.README.md	910d9be25c648ab1cb5a7b1d20d67ca6d43d43559a705010198886f9af68e8f1
+reference.bytes.models/qwen3/modeling_qwen3.py	51968
+reference.sha256.models/qwen3/modeling_qwen3.py	704c914530530a1acb0b443add1f520404e3ac2c28c0ab7e16f80f86cfe8ccb2
+reference.bytes.models/qwen3/configuration_qwen3.py	11202
+reference.sha256.models/qwen3/configuration_qwen3.py	87f0d17326c44f2dfe1bfc329faf9201ab4b19a89ad555da085b4cc81461b201
+reference.bytes.modeling_rope_utils.py	32952
+reference.sha256.modeling_rope_utils.py	c28b3e88edca8fdb5497e5c36091bf753db49bd94ace33a84e9f9c61cbf66032
