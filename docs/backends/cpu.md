@@ -19,6 +19,8 @@ target triple, CPU/features, ABI/data layout, address widths, fixed and scalable
 vector models, threading runtime contract, and governed memory/execution
 scopes.
 
+It is a *backend* in the [glossary's sense](../glossary.md#backend-device-and-execution-context-vocabulary) — the responsibility of translating verified physical work into one target representation and declaring the target facts that translation depends on — and nothing here requires it to reproduce the Metal package layout. It states its own governed backend family and executable representation, and whether AOT invocation, artifact assembly, and live execution are separate crates as they are for Metal is a packaging question this sketch does not decide. The bounded scalar vertical below declares both keys from a spike rather than from a crate at all, which is the evidence that the role and the topology are separable.
+
 Vector legality is contextual on operation, dtype, fixed or scalable shape,
 mask/tail support, address space, width, and alignment. LLVM-style legality and
 cost providers are useful implementation precedent, but their provider/version
