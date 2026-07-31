@@ -1,7 +1,7 @@
 ---
 id: construct-and-bind-the-first-authoritative-metal-compile-profile
 title: Construct and bind the first authoritative Metal compile-time target profile
-status: todo
+status: in-progress
 priority: p0
 dependencies: [express-metal-honourability-in-the-shared-form, admit-measured-compile-profile-sources-across-fact-families, measure-macos-apple9-f32-under-unified-msl4-profile, source-or-rephase-first-metal-launch-limits, separate-metal-launch-index-from-index-and-address-width, replace-or-justify-the-barrier-count-axis, validate-macos-metal-profile-host-applicability]
 related: [admit-a-caller-declared-target-profile, carry-the-honourability-fact-provenance-into-the-artifact-record, decide-per-dtype-dispatchability-as-a-target-capability, record-metal-runtime-compiler-provenance-gap, prototype-metal-runtime-proof, measure-apple-numerics-on-physical-ios-device, spike-bf16-through-the-second-dtype-seams, redesign-the-delivered-realization-record-from-typed-evidence]
@@ -9,6 +9,9 @@ scopes: [implementation/build, implementation/compiler, implementation/metal, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, metal, target-profile, numerics, runtime, provenance]
+claimed_from: todo
+assignee: loop-p0-profile
+lease_expires_at: 1785527940
 ---
 ## User-visible outcome
 
