@@ -57,6 +57,7 @@ Three deliberate perturbations were run on 2026-07-31 and each produced the fail
 ## Traceability
 
 - **Supported claim:** [Transformer non-linear, normalization, and reduction contracts](../../../docs/research/numerics/transformer-nonlinear-normalization-and-reductions.md).
+- **The other half of the question, taken from the specification rather than the compiler:** [Metal elementary-function accuracy guarantee](../../../docs/research/numerics/metal-elementary-function-accuracy.md). It records what Apple normatively guarantees for the intrinsic families this probe measures the *selection* of, and it treats this probe's rows as corroboration of an applicability reading rather than as evidence of any bound — which is the boundary stated above, unchanged.
 - **Neighbouring measurement whose gap this fills:** [Apple GPU numerical behaviour](../../../docs/research/apple-targets/numerical-behaviour.md), finding 18 and its stated boundary.
 - **Normative owner:** [Numerical semantics](../../../docs/numerical-semantics.md).
 - **Work record:** [`scope-transformer-nonlinear-normalization-and-reductions`](../../../tickets/scope-transformer-nonlinear-normalization-and-reductions.md).

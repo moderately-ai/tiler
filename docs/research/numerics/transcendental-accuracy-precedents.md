@@ -75,6 +75,8 @@ These names are backend implementation profiles. They become usable for a
 Tiler contract only through the applicable normative versioned specification
 and explicit exceptional-value/subnormal behavior.
 
+That specification has since been read and its entries quoted with their revision, digest, section, table, and page: see [Metal elementary-function accuracy guarantee](metal-elementary-function-accuracy.md). The paragraph above stands as written — the tables do contain all four shapes — and the later record supplies the numbers this survey deliberately did not, together with the four reasons none of them is adoptable without a stated derivation. It is a target-specific, revision-pinned record rather than part of this survey's vocabulary question, which is why it is a sibling rather than a section here.
+
 ### CUDA
 
 The [CUDA C Programming Guide mathematical functions appendix](https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/mathematical-functions.html)

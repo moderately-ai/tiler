@@ -99,6 +99,7 @@ The implementation graph now maps these contracts to bounded coding tickets:
 - Owner/track: [Numerical semantics](numerical-semantics.md), Milestones 1–2.
 - Close: operation/dtype/accuracy allowlist with reference and backend
   conformance evidence.
+- Backend half, partially supplied and still open: the [Metal elementary-function accuracy guarantee](research/numerics/metal-elementary-function-accuracy.md) record quotes Apple's normative Table 8.1 for `exp` (≤ 4 ULP under Apple's own ULP definition), `rsqrt`, and division at F32 under the governed compile flags, so the backend evidence for those tuples is a cited vendor guarantee rather than `Unknown`. It does not close this question: adopting the `exp` bound needs a registered cross-metric implication because Apple's ULP definition is a different key, adopting any correctly rounded entry needs the rounding mode Metal's §8.2 declines to fix, and neither the exceptional-value contract nor the reference half is supplied. The reference half remains wholly open.
 
 ### Q-SEM-005 — First-profile float-to-integer tuples
 
