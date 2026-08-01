@@ -2952,10 +2952,16 @@ mod tests {
         assert!(assessment.facts().iter().any(|fact| {
             fact.key().as_str() == "rewrite-count" && matches!(fact.value(), FactValue::Count(1))
         }));
+        // Compared against the contract's own key rather than a literal: the key
+        // is derived from the dimension vector, so a literal here would have to
+        // be rebaselined by hand every time the scheme moved and would not be
+        // checking the thing it names — that the fact carries *this* contract's
+        // identity.
+        let strict = StrictF32NumericalContract::governed().key;
         assert!(assessment.facts().iter().any(|fact| {
             fact.key().as_str() == "numerical-contract"
                 && matches!(fact.value(), FactValue::Identity(key)
-                    if key.as_str() == "tiler.strict-f32.v1")
+                    if key.as_str() == strict)
         }));
         assert!(trace.render().contains("normalization admitted"));
     }

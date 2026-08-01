@@ -227,7 +227,7 @@ fn compile_under(
         .map_err(ProducerError::TargetRequest)?;
     let batch = compile(CompileRequest::new(
         program,
-        NumericalContract::FlushSubnormalsToZeroF32,
+        NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
         targets,
     ))
     .map_err(ProducerError::Compile)?;
@@ -1016,7 +1016,7 @@ mod tests {
         let batch = compile(
             CompileRequest::new(
                 &program,
-                NumericalContract::FlushSubnormalsToZeroF32,
+                NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
                 declared_targets(),
             )
             .with_capabilities(installed),
@@ -1060,7 +1060,7 @@ mod tests {
         let outcome = compile(
             CompileRequest::new(
                 &program,
-                NumericalContract::FlushSubnormalsToZeroF32,
+                NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
                 declared_targets(),
             )
             .with_capabilities(installed),
@@ -1251,7 +1251,7 @@ mod tests {
 
         let batch = compile(CompileRequest::new(
             &program,
-            NumericalContract::StrictF32,
+            NumericalContract::STRICT_F32,
             declared_targets(),
         ))
         .expect("the strict request is well formed");

@@ -94,19 +94,27 @@
 //! that today has exactly one entry, and gains a second when the measurement
 //! does.
 //!
-//! # The numerical contract is derived, not chosen
+//! # The numerical contract was derived, and is now an open decision
 //!
 //! The region grammar has no numerical statement, so the expansion states one.
-//! There is nothing to choose: the bound declaration's measured `f32` row
-//! flushes subnormals to zero, so `StrictF32` and `ReassociateF32` — both of
-//! which require preserved input subnormals — are refused by the target's own
-//! numerical contract check before any plan is assessed, and `RelaxedF32`
-//! permits arithmetic contraction, which `fusion_legality` declines for any
-//! region holding a multiply adjacent to an add. One contract survives, and
-//! `only_one_numerical_contract_is_admissible_for_the_bound_declaration` is what
-//! keeps that a measured fact rather than a preference: if the declaration ever
-//! admits a second, that test fails and the choice becomes a real one to put to
-//! Tom.
+//! While a caller chose from four named presets there was nothing to choose: the
+//! bound declaration's measured `f32` row flushes subnormals to zero, so the
+//! strict and permit-reassociation contracts — both of which require preserved
+//! input subnormals — were refused by the target's own numerical contract check
+//! before any plan was assessed, and the relaxed one permits arithmetic
+//! contraction, which `fusion_legality` declines for any region holding a
+//! multiply adjacent to an add. One survived, and a test kept that a measured
+//! fact rather than a preference.
+//!
+//! **That test has since fired, exactly as it was designed to.**
+//! `NumericalContract` is composed from its dimensions now, so subnormal
+//! flushing and ordered regrouping are resolved independently and this
+//! declaration admits the combination of the two as well —
+//! `the_bound_declaration_admits_the_two_flushing_contracts` pins the pair.
+//! [`CONTRACT`] stays where it is because moving it would change what every
+//! expanded program *means*, not how it is planned, and
+//! `decide-the-inline-frontend-numerical-contract` is where that decision is
+//! recorded for Tom.
 
 use core::fmt;
 
@@ -130,9 +138,10 @@ use crate::delivery::{DeliveryPlan, FamilyDelivery, PlanRefusal};
 
 /// The numerical contract every delivering expansion compiles under.
 ///
-/// Derived rather than selected; see this module's documentation for the
-/// elimination and for the test that keeps it one.
-pub(crate) const CONTRACT: NumericalContract = NumericalContract::FlushSubnormalsToZeroF32;
+/// It was the sole survivor of an elimination and is now one of two admissible
+/// contracts; see this module's documentation for what changed and where the
+/// decision is recorded.
+pub(crate) const CONTRACT: NumericalContract = NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32;
 
 /// The optimization level every delivering expansion compiles at.
 ///

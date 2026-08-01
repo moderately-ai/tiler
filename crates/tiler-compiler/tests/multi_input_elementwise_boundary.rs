@@ -83,11 +83,12 @@ use tiler_ir::shape::Shape;
 /// Stated exhaustively rather than sampled: the outcome is structural, so a
 /// contract that behaved differently would mean the boundary moved for a reason
 /// this file does not model, and sampling one preset would hide it.
-const CONTRACTS: [NumericalContract; 4] = [
-    NumericalContract::StrictF32,
-    NumericalContract::FlushSubnormalsToZeroF32,
-    NumericalContract::RelaxedF32,
-    NumericalContract::ReassociateF32,
+const CONTRACTS: [NumericalContract; 5] = [
+    NumericalContract::STRICT_F32,
+    NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
+    NumericalContract::RELAXED_F32,
+    NumericalContract::REASSOCIATE_F32,
+    NumericalContract::FLUSH_AND_REASSOCIATE_F32,
 ];
 
 /// The one contract that permits arithmetic contraction.
@@ -95,7 +96,7 @@ const CONTRACTS: [NumericalContract; 4] = [
 /// Named rather than matched inline so the reason a mixed multiply/add body
 /// behaves differently under it is the *contraction permission* and not the
 /// preset's name.
-const CONTRACTION_PERMITTED: NumericalContract = NumericalContract::RelaxedF32;
+const CONTRACTION_PERMITTED: NumericalContract = NumericalContract::RELAXED_F32;
 
 /// The approved inline region: `sym n; in a, b, c; out (a * b) + c`.
 ///

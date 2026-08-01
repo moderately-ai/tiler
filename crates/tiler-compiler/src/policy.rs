@@ -99,6 +99,14 @@ use tiler_ir::semantic::{F32, OpKey};
 pub(crate) const RELAXED_APPROXIMATION_ENVELOPE: ApproximationEnvelope =
     ApproximationEnvelope::BackendElementary;
 
+/// The key a composed contract carries before one is derived for it.
+///
+/// A spelling no canonical key can collide with — every derived key opens with
+/// `crate::request::CONTRACT_KEY_DOMAIN` — so a contract that reached admission
+/// without being keyed is refused by name rather than admitted under a plausible
+/// string. Nothing outside [`strict_contract`] writes it.
+pub(crate) const UNKEYED_CONTRACT: &str = "tiler.contract.unkeyed";
+
 /// The dimensions [`tiler_ir::schedule::NumericalRealization`] carries.
 ///
 /// A dimension outside this set cannot differ between two scheduled regions,
@@ -643,120 +651,27 @@ pub(crate) fn dimension_requirements(
         .collect()
 }
 
-/// A named numerical policy preset this build registers.
-///
-/// Each variant is a **claim about what a caller requests**, stated once here so
-/// that a caller naming a preset and a caller spelling the same contract
-/// dimension by dimension produce byte-identical requests. The variants are not
-/// ordered by strength and nothing selects between them: which one a program
-/// means is the caller's statement, made before compilation.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) enum NumericalPolicyPreset {
-    /// Every freedom refused and both subnormal dimensions preserved.
-    ///
-    /// The claim: this program's results are the strict IEEE-754 reading under
-    /// round-to-nearest, ties-to-even, with gradual underflow, with every
-    /// arithmetic NaN canonicalized, and with no reordering, fusion, or
-    /// substitution of any operation.
-    Strict,
-    /// Strict, except that both subnormal dimensions flush to a sign-preserving
-    /// zero.
-    ///
-    /// The claim: flushing subnormals to the zero of their own sign is part of
-    /// what this program means. `PreservesSign` because that is what the measured
-    /// hardware does — `0x80400000 * 2.0f` returns `0x80000000` — and a contract
-    /// must name which zero it accepts, since the two zeros are observably
-    /// different results.
-    ///
-    /// It widens exactly one dimension, so accepting flushing does not silently
-    /// accept reassociation.
-    FlushSubnormalsToZero,
-    /// Subnormals preserved, and the reshaping freedoms this build can express
-    /// authorized.
-    ///
-    /// The claim: this program's results may differ from the strict reading by
-    /// fused multiply-add contraction, by ordered regrouping of one
-    /// same-operation operand sequence (including a reduction's contributor
-    /// sequence), by replacing a division with a reciprocal multiplication, and
-    /// by an approximate elementary function within
-    /// [`RELAXED_APPROXIMATION_ENVELOPE`].
-    ///
-    /// **What it deliberately does not authorize.** Operand permutation,
-    /// signed-zero elimination, and both exceptional-value assumptions stay at
-    /// their strict resolution. The realization can represent those freedoms,
-    /// but this preset does not silently broaden its established meaning.
-    Relaxed,
-    /// Strict, except that ordered regrouping of one same-operation operand
-    /// sequence is authorized.
-    ///
-    /// The claim: this program's results may differ from the strict reading by
-    /// regrouping a same-operation operand sequence while retaining its leaves
-    /// and their order — a reduction's contributor sequence being the instance
-    /// that reaches a physical alternative — and by nothing else.
-    ///
-    /// **Why this is a different meaning rather than a relaxation of
-    /// [`Self::Relaxed`], and not a knob added to make a plan reachable.** The
-    /// presets are not ordered by strength and nothing selects between them, so
-    /// "narrower" is not a relation this table has. What separates the two is
-    /// which observable results a caller has agreed to: under [`Self::Relaxed`]
-    /// a multiply feeding an add may round once instead of twice, a division may
-    /// become a reciprocal multiply, and an elementary function may be
-    /// approximate; under this preset none of them may, and a program's result
-    /// may differ from the strict one only by grouping. A caller that wants a
-    /// split reduction and exact separate rounding could not state that at all
-    /// before — its only reassociating option also authorized contraction — and
-    /// the two are independent by ADR 0015, so collapsing them would price one
-    /// freedom at the cost of another.
-    ///
-    /// **What it deliberately does not authorize.** Contraction, operand
-    /// permutation, signed-zero elimination, reciprocal replacement, approximate
-    /// intrinsics, subnormal flushing, and both exceptional-value assumptions
-    /// stay at their strict resolution.
-    PermitReassociation,
-}
-
-impl NumericalPolicyPreset {
-    /// Every preset this build registers, in canonical order.
-    pub(crate) const ALL: [Self; 4] = [
-        Self::Strict,
-        Self::FlushSubnormalsToZero,
-        Self::Relaxed,
-        Self::PermitReassociation,
-    ];
-
-    /// The versioned key of the contract this preset resolves to.
-    ///
-    /// Each preset resolves to a *different contract*, not to a flag on one:
-    /// the three give the same program different observable results, so they must
-    /// give it different canonical identities, artifacts, and cache entries.
-    pub(crate) const fn contract_key(self) -> &'static str {
-        self.contract().key
-    }
-
-    /// Resolves this preset into the complete contract it names.
-    pub(crate) const fn contract(self) -> StrictF32NumericalContract {
-        match self {
-            Self::Strict => StrictF32NumericalContract::governed(),
-            Self::FlushSubnormalsToZero => StrictF32NumericalContract::governed_flush_to_zero(),
-            Self::Relaxed => StrictF32NumericalContract::governed_relaxed(),
-            Self::PermitReassociation => StrictF32NumericalContract::governed_reassociating(),
-        }
-    }
-}
-
 /// The strict resolution of every dimension, for one arithmetic type.
 ///
-/// Shared by every preset so that "strict on this dimension" has one spelling.
-/// A preset that widens a dimension overrides exactly that field, which is what
-/// makes "this preset widens exactly one dimension" a readable property of the
-/// constructor rather than a claim in a comment.
+/// **The fail-closed default, and the base every composition starts from.**
+/// "Strict on this dimension" has one spelling, so a contract that widens a
+/// dimension overrides exactly that field and "this contract widens exactly two
+/// dimensions" is a readable property of the constructor rather than a claim in
+/// a comment. An unstated dimension resolves here, which is what makes omission
+/// unable to widen a contract — and what makes a dimension added to the
+/// vocabulary later arrive forbidden in every contract that predates it.
+///
+/// The key is deliberately absent: it is derived from the dimensions by
+/// `crate::request::StrictF32NumericalContract::keyed`, so it cannot be stated
+/// beside a vector it does not describe. The placeholder this returns is never
+/// admitted — `is_governed` compares the key against the canonical encoding of
+/// the very fields beside it.
 pub(crate) const fn strict_contract(
-    key: &'static str,
     arithmetic: ArithmeticType,
     canonical_arithmetic_nan_bits: u32,
 ) -> StrictF32NumericalContract {
     StrictF32NumericalContract {
-        key,
+        key: UNKEYED_CONTRACT,
         arithmetic,
         canonical_arithmetic_nan_bits,
         input_subnormals: SubnormalMode::Preserve,
@@ -776,9 +691,8 @@ pub(crate) const fn strict_contract(
 #[cfg(test)]
 mod tests {
     use super::{
-        ELEMENTARY_UNCARRIED_DIMENSIONS, NumericalPolicyPreset, REALIZED_DIMENSIONS,
-        dimension_requirements, is_consumable, operation_capabilities, operation_capability,
-        unrepresentable_dimension,
+        ELEMENTARY_UNCARRIED_DIMENSIONS, REALIZED_DIMENSIONS, dimension_requirements,
+        is_consumable, operation_capabilities, operation_capability, unrepresentable_dimension,
     };
     use crate::request::StrictF32NumericalContract;
     use crate::target::honourability::{
@@ -792,16 +706,24 @@ mod tests {
         rms_norm_f32_op, silu_f32_op, softmax_f32_op,
     };
 
-    /// Every registered preset states a contract this build can actually realize.
+    /// Every named contract states one this build can actually realize.
     ///
-    /// This is the check that keeps the preset table honest as it grows: a preset
-    /// that widened a consumable dimension the realization cannot carry would
-    /// produce two meanings under one region identity, and it fails here rather
-    /// than in a cache.
+    /// This is the check that keeps the named set honest as it grows: a named
+    /// contract that widened a consumable dimension the realization cannot carry
+    /// would produce two meanings under one region identity, and it fails here
+    /// rather than in a cache.
+    ///
+    /// It is deliberately *not* a claim about the statable space, which is the
+    /// whole dimension product and far larger than what this build realizes. The
+    /// gate for an arbitrary composed contract is
+    /// [`unrepresentable_dimension`] itself, called at the request boundary
+    /// before any target is consulted; this loop only pins the points the build
+    /// documents.
     #[test]
-    fn every_registered_preset_is_representable_by_this_build() {
-        for preset in NumericalPolicyPreset::ALL {
-            let contract = preset.contract();
+    fn every_named_contract_is_representable_by_this_build() {
+        let named = StrictF32NumericalContract::named_profile();
+        assert_eq!(named.len(), 5, "the named set is the population under test");
+        for contract in named {
             assert_eq!(
                 unrepresentable_dimension(&contract),
                 None,
@@ -1129,7 +1051,7 @@ mod tests {
     /// Per-operation effective permissions intersect the ceiling with capability.
     #[test]
     fn effective_permissions_intersect_the_ceiling_with_the_operation_capability() {
-        let ceiling = NumericalPolicyPreset::Relaxed.contract();
+        let ceiling = StrictF32NumericalContract::governed_relaxed();
         let capabilities = operation_capabilities();
         let constant = capabilities
             .iter()
@@ -1162,8 +1084,8 @@ mod tests {
     /// Pointwise arithmetic owns the ordered-reassociation decision.
     #[test]
     fn pointwise_arithmetic_reassociation_is_capability_gated_and_contract_resolved() {
-        let strict = NumericalPolicyPreset::Strict.contract();
-        let relaxed = NumericalPolicyPreset::Relaxed.contract();
+        let strict = StrictF32NumericalContract::governed();
+        let relaxed = StrictF32NumericalContract::governed_relaxed();
         for operation in [add_f32_op(), multiply_f32_op()] {
             let capability =
                 operation_capability(&operation).expect("pointwise arithmetic is admitted");
@@ -1188,16 +1110,21 @@ mod tests {
         );
     }
 
-    /// Every preset resolves to a distinct versioned contract key.
+    /// Every named contract resolves to a distinct key.
+    ///
+    /// A named point of the space, not the space: injectivity over the whole
+    /// dimension product is checked exhaustively by
+    /// `crate::request::tests::the_canonical_key_is_injective_over_the_statable_space`.
+    /// This pins the documented five, so a named contract accidentally spelled
+    /// the same as a sibling fails here rather than by two names quietly sharing
+    /// one artifact.
     #[test]
-    fn preset_contract_keys_are_distinct() {
-        let mut keys: Vec<_> = NumericalPolicyPreset::ALL
-            .iter()
-            .map(|preset| preset.contract_key())
-            .collect();
+    fn named_contract_keys_are_distinct() {
+        let named = StrictF32NumericalContract::named_profile();
+        let mut keys: Vec<_> = named.iter().map(|contract| contract.key).collect();
         keys.sort_unstable();
         keys.dedup();
-        assert_eq!(keys.len(), NumericalPolicyPreset::ALL.len());
+        assert_eq!(keys.len(), named.len());
     }
 
     /// Operation capability keys are unique, so a lookup cannot be ambiguous.

@@ -330,8 +330,8 @@ fn an_external_profile_compiles_and_exact_dtype_refusals_remain_target_local() {
     let request = CompileRequest::preferring(
         &program,
         [
-            NumericalContract::StrictF32,
-            NumericalContract::FlushSubnormalsToZeroF32,
+            NumericalContract::STRICT_F32,
+            NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
         ],
         targets,
     )
@@ -383,7 +383,10 @@ fn an_external_profile_compiles_and_exact_dtype_refusals_remain_target_local() {
             .iter()
             .map(TargetNumericalContractRejection::contract_key)
             .collect::<Vec<_>>(),
-        ["tiler.strict-f32.v1", "tiler.flush-f32.v1"],
+        [
+            NumericalContract::STRICT_F32.key(),
+            NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32.key(),
+        ],
         "typed numerical detail preserves the caller's exact contract order",
     );
     assert_eq!(
@@ -419,7 +422,7 @@ fn declared_numerical_refusal_exposes_exact_subject_means_honoured_and_profile()
         NumericalDeclarations::UnsupportedPreserveWithExactFlush,
     );
     let targets = TargetRequest::new([profile.clone()]).unwrap();
-    let request = CompileRequest::new(&program, NumericalContract::StrictF32, targets);
+    let request = CompileRequest::new(&program, NumericalContract::STRICT_F32, targets);
     let batch = compile(request).unwrap();
     let failure = batch.targets().next().unwrap().outcome().unwrap_err();
     assert!(std::error::Error::source(failure).is_some());
@@ -534,7 +537,7 @@ fn measured_declared_refusal(profile: &TargetProfile) -> TargetDeclaredNumerical
     let program = semantic_program();
     let batch = compile(CompileRequest::new(
         &program,
-        NumericalContract::StrictF32,
+        NumericalContract::STRICT_F32,
         TargetRequest::new([profile.clone()]).unwrap(),
     ))
     .unwrap();
@@ -659,7 +662,7 @@ fn successful_batch_slots_share_the_frozen_provider_set() {
     );
     let batch = compile(CompileRequest::new(
         &program,
-        NumericalContract::StrictF32,
+        NumericalContract::STRICT_F32,
         TargetRequest::new([first, second]).unwrap(),
     ))
     .unwrap();
@@ -681,7 +684,7 @@ fn numerical_preference_cardinality_and_uniqueness_fail_as_invalid_requests() {
     let targets = || TargetRequest::new([profile.clone()]).unwrap();
     let duplicate = CompileRequest::preferring(
         &program,
-        [NumericalContract::StrictF32, NumericalContract::StrictF32],
+        [NumericalContract::STRICT_F32, NumericalContract::STRICT_F32],
         targets(),
     )
     .unwrap_err();
@@ -695,7 +698,7 @@ fn numerical_preference_cardinality_and_uniqueness_fail_as_invalid_requests() {
     let consumed = std::cell::Cell::new(0);
     let over_limit = std::iter::repeat_with(|| {
         consumed.set(consumed.get() + 1);
-        NumericalContract::StrictF32
+        NumericalContract::STRICT_F32
     });
     let overflow = CompileRequest::preferring(&program, over_limit, targets()).unwrap_err();
     assert_eq!(consumed.get(), MAX_NUMERICAL_CONTRACT_PREFERENCES + 1);

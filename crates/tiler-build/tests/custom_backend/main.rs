@@ -100,7 +100,7 @@ fn scalar_host_compilation(program: &SemanticProgram) -> Compilation {
     let profile = profile::scalar_host_profile().expect("the scalar-host profile declares");
     compile(CompileRequest::new(
         program,
-        NumericalContract::StrictF32,
+        NumericalContract::STRICT_F32,
         TargetRequest::new([profile]).expect("a singleton target request"),
     ))
     .expect("the program compiles against the scalar-host profile")
@@ -1200,7 +1200,7 @@ fn a_cache_entry_whose_payload_moved_is_refused_after_resolution() {
 #[test]
 fn a_plan_compiled_under_another_profile_is_refused_before_translation() {
     let semantic = semantic_program();
-    let foreign = compile_governed(&semantic, NumericalContract::StrictF32)
+    let foreign = compile_governed(&semantic, NumericalContract::STRICT_F32)
         .expect("the governed prototype profile compiles this program");
     let plan = foreign.selected().expect("one selected plan");
     let refusal = produce(&semantic, plan, EntryPerturbation::default(), None)

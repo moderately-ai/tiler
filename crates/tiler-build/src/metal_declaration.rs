@@ -1557,7 +1557,7 @@ mod tests {
         let declaration = declared();
         let batch = compile(CompileRequest::new(
             &program(),
-            NumericalContract::FlushSubnormalsToZeroF32,
+            NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
             TargetRequest::new([declaration.profile().clone()])
                 .expect("a singleton target request"),
         ))
@@ -1584,7 +1584,7 @@ mod tests {
         let declaration = declared();
         let batch = compile(CompileRequest::new(
             &program(),
-            NumericalContract::StrictF32,
+            NumericalContract::STRICT_F32,
             TargetRequest::new([declaration.profile().clone()])
                 .expect("a singleton target request"),
         ))

@@ -506,11 +506,17 @@ pub(crate) fn analytical_plan_cost(plan: &SelectedPlan) -> AnalyticalPlanCost {
                 //
                 // **The element width is derived fail-closed.** `IndexRegion`
                 // carries no dtype; it carries `numerical.profile_key`, naming
-                // the governing contract. A recognized f32 contract implies four
-                // bytes and anything else declines to answer, so a widened dtype
-                // vocabulary arrives with a new key, falls to the wildcard, and
-                // reports `Unknown` instead of silently continuing to multiply by
-                // four. Deliberately *not* inferred from
+                // the governing contract. A key minted by the current `f32`
+                // contract scheme implies four bytes and anything else declines
+                // to answer, so a widened dtype vocabulary arrives under a
+                // different key domain, fails the prefix test, and reports
+                // `Unknown` instead of silently continuing to multiply by four.
+                // This used to be a match against four literal contract keys;
+                // composition made that list unwritable — a caller resolves the
+                // dimensions directly, so there is no finite set of names to
+                // enumerate — and the domain prefix is what carries the same
+                // fail-closed claim over the whole space.
+                // Deliberately *not* inferred from
                 // `canonical_arithmetic_nan_bits` being 32 bits wide, which would
                 // read meaning out of a field's type and happen to be right for
                 // the wrong reason.
@@ -529,13 +535,12 @@ pub(crate) fn analytical_plan_cost(plan: &SelectedPlan) -> AnalyticalPlanCost {
                                     .iter()
                                     .try_fold(bounds, |(low, high), stage| {
                                         let region = &stage.region().index;
-                                        let width = match region.numerical.profile_key {
-                                            crate::request::NUMERICAL_CONTRACT_KEY
-                                            | crate::request::FLUSH_CONTRACT_KEY
-                                            | crate::request::RELAXED_CONTRACT_KEY
-                                            | crate::request::REASSOCIATE_CONTRACT_KEY => 4_u64,
-                                            _ => return None,
-                                        };
+                                        if !crate::request::is_f32_contract_key(
+                                            region.numerical.profile_key,
+                                        ) {
+                                            return None;
+                                        }
+                                        let width = 4_u64;
                                         let points = element_count(&region.iteration_shape).ok()?;
                                         let bytes = points.checked_mul(width)?;
                                         let writes = u64::try_from(

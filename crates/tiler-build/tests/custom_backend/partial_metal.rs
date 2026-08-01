@@ -54,7 +54,7 @@ pub fn metal_compilation(
 ) -> Compilation {
     compile(CompileRequest::new(
         program,
-        NumericalContract::FlushSubnormalsToZeroF32,
+        NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
         TargetRequest::new([declaration.profile().clone()]).expect("a singleton target request"),
     ))
     .expect("the program compiles against the authoritative Metal profile")

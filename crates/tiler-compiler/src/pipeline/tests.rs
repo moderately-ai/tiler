@@ -2449,7 +2449,7 @@ fn final_portfolio_verifier_rejects_deletion_owner_and_origin_misbinding() {
 
 #[test]
 fn contract_groups_fall_back_after_infeasibility_and_do_not_plan_later_groups() {
-    let stated = StrictF32NumericalContract::governed_profile();
+    let stated = StrictF32NumericalContract::named_profile();
     let groups = vec![
         (stated[0].key, vec![("preferred", false)]),
         (stated[1].key, vec![("fallback", true)]),
@@ -2483,7 +2483,7 @@ fn contract_groups_fall_back_after_infeasibility_and_do_not_plan_later_groups() 
 
 #[test]
 fn contract_group_evaluation_rejects_an_unstated_contract_key() {
-    let stated = StrictF32NumericalContract::governed_profile();
+    let stated = StrictF32NumericalContract::named_profile();
     let error = evaluate_preferred_groups(
         &stated,
         vec![("test.unstated-contract", vec![("candidate", true)])],
@@ -3518,6 +3518,76 @@ fn the_frontier_retains_the_workgroup_tree_beside_serial_and_the_split() {
         tree.cost().temporary_bytes(),
         serial.cost().temporary_bytes()
     );
+}
+
+/// A cooperative region's assembled program declares the launch it needs.
+///
+/// **The regression this pins.** The host ABI used to declare one literal `1`
+/// as every stage's workgroup width, and to reuse whichever element count
+/// happened to equal a stage's work items as its grid. Both hold for a region
+/// that runs one independent invocation per result element, and both are false
+/// for a single-workgroup tree: it launches one invocation per participant
+/// inside one workgroup, so its work items and its width are the participant
+/// count while its output count is one. `verify_stage_abi` and the shared
+/// kernel-program builder each prove the declared launch against the schedule,
+/// so the effect was the whole compilation failing as invalid compiler output —
+/// `ThreadsPerWorkgroupDisagreement { expected: 2, actual: 1 }` on the first
+/// tree to reach a kernel program.
+///
+/// **Watched failing.** Restoring either half — a literal `1` width, or
+/// `abi.output_elements` as the grid — makes this test fail on the tree's stage
+/// while the serial reduction beside it still passes, which is what distinguishes
+/// a launch derived from the schedule from one that agrees by coincidence.
+#[test]
+fn a_cooperative_region_declares_its_own_launch() {
+    let (semantic, request) = tree_request(Shape::from_dims([1, 8]), tree_target());
+    let (tree, members) =
+        crate::physical::single_workgroup_tree_region(&request).expect("the tree is available");
+    let tree =
+        crate::physical::verify_schedule(tree, members, &request).expect("the tree verifies");
+    // The tree replaces the reduction of the materialized pair; its prologue is
+    // the ordinary pointwise stage, which is what makes the two stages' launches
+    // differ in both quantities inside one program.
+    let serial = crate::physical::build_scheduled_regions(&request).expect("the serial pair");
+    let [pointwise, _] = serial.as_slice() else {
+        panic!("the materialized strategy is a pointwise stage and a reduction");
+    };
+    let scheduled = vec![pointwise.clone(), tree];
+    let program = crate::program::build_kernel_program(&semantic, &request, &scheduled)
+        .expect("the tree's program assembles");
+    let expressions = program.core().abi_expressions();
+    let literal = |position: u32| match expressions
+        .get(usize::try_from(position).expect("an arena position fits a usize"))
+    {
+        Some(tiler_ir::program::abi::ExprNode::Root(
+            tiler_ir::program::abi::AbiRoot::UnsignedLiteral(value),
+        )) => *value,
+        other => panic!("a launch quantity is not a declared literal: {other:?}"),
+    };
+    let stages: Vec<_> = program.core().stages().collect();
+    assert_eq!(stages.len(), scheduled.len());
+    let cooperative = scheduled
+        .iter()
+        .filter(|region| region.region().schedule.threads_per_workgroup > 1)
+        .count();
+    assert_eq!(
+        cooperative, 1,
+        "exactly one stage must be cooperative, or the check is vacuous",
+    );
+    for (stage, region) in stages.iter().zip(&scheduled) {
+        let schedule = &region.region().schedule;
+        let launch = stage.launch();
+        assert_eq!(
+            (
+                literal(launch.grid_threads),
+                literal(launch.threads_per_workgroup),
+            ),
+            (
+                schedule.work_items,
+                u64::from(schedule.threads_per_workgroup)
+            ),
+        );
+    }
 }
 
 /// Every way the tree can fail rejects before admission with its own reason.

@@ -43,11 +43,12 @@ use tiler_ir::shape::{Axis, Shape};
 /// Stated exhaustively rather than sampled, because the outcome is structural: a
 /// contract under which the softmax program compiled would mean the ceiling is
 /// not where this file says it is.
-const CONTRACTS: [NumericalContract; 4] = [
-    NumericalContract::StrictF32,
-    NumericalContract::FlushSubnormalsToZeroF32,
-    NumericalContract::RelaxedF32,
-    NumericalContract::ReassociateF32,
+const CONTRACTS: [NumericalContract; 5] = [
+    NumericalContract::STRICT_F32,
+    NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
+    NumericalContract::RELAXED_F32,
+    NumericalContract::REASSOCIATE_F32,
+    NumericalContract::FLUSH_AND_REASSOCIATE_F32,
 ];
 
 /// A one-occurrence softmax program over the C1 row's score shape.

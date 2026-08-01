@@ -3991,7 +3991,21 @@ mod tests {
                 // which is inside the subject for the reason the split-program
                 // widening already recorded. The trace's own two record lines are
                 // unchanged; nothing about explain's content moved.
-                "tiler-explain-v7 request=701c39d4a41e1a22\n",
+                // Rebaselined from `701c39d4a41e1a22` when the numerical contract
+                // became a composed dimension vector and its key became the
+                // canonical injective encoding of that vector under
+                // `tiler.contract.f32.v2`. The resolved contract and the caller's
+                // stated preference are both inside the request subject, and the
+                // key is encoded there beside the dimensions it names, so every
+                // request's qualifier moves — including this one, whose contract
+                // is the strict resolution and whose dimension values did not
+                // change. That is the intended consequence of an identity-domain
+                // step rather than collateral: a subject minted under the four
+                // hand-written names described a contract vocabulary that no
+                // longer exists, so a cache or a trace holding one must miss
+                // rather than match. The trace's own two record lines are
+                // unchanged; nothing about explain's content moved.
+                "tiler-explain-v7 request=b81673209f732002\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

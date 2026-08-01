@@ -427,6 +427,7 @@ mod tests {
         Compilation, CompileRequest, NumericalContract, PlanAlternative, compile, compile_governed,
     };
     use tiler_compiler::target::TargetRequest;
+    use tiler_ir::program::abi::{AbiRoot, ExprNode};
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
         SemanticProgramBuilder, StrictSerialF32Sum,
@@ -480,7 +481,7 @@ mod tests {
     ) -> Compilation {
         let batch = compile(CompileRequest::new(
             program,
-            NumericalContract::FlushSubnormalsToZeroF32,
+            NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
             TargetRequest::new([declaration.profile().clone()])
                 .expect("a singleton target request"),
         ))
@@ -715,7 +716,7 @@ mod tests {
         let (toolchain, counter) = counted_toolchain(&directory);
         let program = semantic_program();
         let declaration = declaration();
-        let foreign = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32)
+        let foreign = compile_governed(&program, NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32)
             .expect("the governed prototype profile still compiles this program");
         let plan = foreign.selected().expect("one selected plan");
 
@@ -820,6 +821,36 @@ mod tests {
     /// saw only its half.
     ///
     ///
+    /// **Both moved again when the numerical contract became a composed
+    /// dimension vector, and neither value below was rebaselined on this
+    /// branch.** The contract key is the canonical encoding of that vector now,
+    /// under `tiler.contract.f32.v2`, so it differs from every `v1` preset name;
+    /// the scheduled region writes it beside the realization fields it names, and
+    /// the kernel, program, and artifact identities fold those bytes by
+    /// reference. No encoding above the key moved, and every identity through it
+    /// does — which is the intended consequence of an identity-domain step, since
+    /// a cache entry published against a contract vocabulary that no longer
+    /// exists must miss rather than match.
+    ///
+    /// The values are recorded rather than written in because a sibling branch
+    /// may move the same two pins from its own base, and two branch-local
+    /// rebaselines cannot compose: a pinned identity is recomputed on the tree
+    /// the step lands into, never taken from either side. Observed on this branch:
+    /// `ARTIFACT_IDENTITY`
+    /// `4e91bfbe59072c3e501f191b086b838e24f37f3bdbfb5b58af54e8467addaa9a`,
+    /// `CACHE_SUBJECT`
+    /// `2a192388f39a85842c08e7759be23abfb06e7bae246662d762dbc3fe7fdfad80`.
+    /// Regenerate on the merged tree with:
+    ///
+    /// ```text
+    /// cargo nextest run -p tiler-build -E \
+    ///   'test(the_standard_metal_path_publishes_its_recorded_identities)'
+    /// ```
+    ///
+    /// and take each assertion's `left` value in turn — the cache subject is
+    /// asserted second, so the artifact identity has to be moved first for the
+    /// run to reach it.
+    ///
     /// [`assemble_plan_artifact`]: crate::assemble_plan_artifact
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
@@ -871,20 +902,34 @@ mod tests {
             .label()
     }
 
-    /// A reassociating sum over four contributors per output, on two outputs.
+    /// A reassociating sum over four contributors, on one output.
     ///
-    /// Four is the smallest contributor count `governed_partition` splits at all
-    /// — it requires at least two partitions of at least two contributors each —
-    /// and two outputs keeps the widest launch this profile's grid-axis row
-    /// admits: the tree launches one invocation per participant per output, so
-    /// two participants across two outputs is exactly four threads.
+    /// **Four contributors, because below that nothing splits.**
+    /// `governed_partition` requires at least two partitions of at least two
+    /// contributors each, so four is the smallest extent at which a split or a
+    /// tree exists to be retained at all. It is also the smallest extent above
+    /// `correct-the-declined-strategy-record-for-an-unsplittable-reduction`,
+    /// which records a sub-four reduction failing with `InvalidCompilerOutput`
+    /// under a reassociation-permitting contract; this fixture is sized above
+    /// that defect rather than around it.
+    ///
+    /// **One output, because the widest stage has to fit the grid axis.** This
+    /// profile's grid-axis row admits four threads. The measured launches are:
+    /// the fused reduction, one invocation per output; the tree, one per
+    /// participant per output, so two; the split's partial stage, one per
+    /// partition per output, so two; and the materialized pointwise stage, one
+    /// per *element*, so four — the widest, and exactly at the limit. A second
+    /// output doubles the pointwise stage to eight and the whole compilation
+    /// fails `target.grid-axis` before any plan composes, which is what the
+    /// two-output shape did the first time a parallel strategy was reachable
+    /// here at all.
     fn reassociating_program() -> SemanticProgram {
         let mut builder =
             SemanticProgramBuilder::try_standard().expect("the semantic profile composes");
         let input = builder
             .input::<F32>(
                 InputKey::new("input").expect("the input key is valid"),
-                Shape::from_dims([2, 4]),
+                Shape::from_dims([1, 4]),
             )
             .expect("the input binds");
         let scale = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).expect("the scale applies");
@@ -902,46 +947,73 @@ mod tests {
         builder.build().expect("the program verifies")
     }
 
-    /// **No admitted contract reaches a parallel reduction on Apple hardware,
-    /// and the gate is the contract vocabulary rather than this profile.**
+    /// **A flush-and-reassociate contract reaches a parallel reduction
+    /// portfolio on the authoritative Apple profile.**
     ///
-    /// Both halves are driven, because either alone is misreadable. The first
-    /// shows the *reassociating* contract refused before any strategy is
-    /// considered, and refused on **subnormals**: `ReassociateF32` is the strict
-    /// contract widened on one dimension, so it still requires preserved
-    /// subnormals, and Apple `f32` arithmetic measurably flushes them in every
-    /// math mode. The second shows the contract Apple *can* deliver —
-    /// `FlushSubnormalsToZeroF32` — compiling and retaining no split, because
-    /// that preset deliberately widens subnormals alone and grants no
-    /// regrouping.
+    /// The positive successor of
+    /// `no_registered_contract_both_flushes_subnormals_and_permits_reassociation`,
+    /// and it keeps that test's two-halves record of what the gap was, because
+    /// the shape of the gap is what makes this result mean anything.
     ///
-    /// Together they bound the gap exactly: the four registered contracts are
+    /// **What the gap was.** The four registered contracts were
     /// `tiler.strict-f32.v1`, `tiler.flush-f32.v1`, `tiler.relaxed-f32.v1`, and
-    /// `tiler.reassociate-f32.v1`, and **none of them both flushes subnormals
-    /// and permits reassociation**. `CompileRequest` accepts only that
-    /// four-value preset enumeration, so no caller outside `tiler-compiler` can
-    /// state the combination either. Every parallel reduction strategy regroups
-    /// the declared contributor sequence, so on this target all of them are
-    /// unreachable — not for want of a target fact, but for want of a contract
-    /// a caller is able to name.
+    /// `tiler.reassociate-f32.v1`, and none of them both flushed subnormals and
+    /// permitted reassociation: the two granting regrouping were built on the
+    /// strict reading and required *preserved* subnormals, which Apple `f32`
+    /// arithmetic measurably flushes in every math mode, while the one this
+    /// hardware delivers widened subnormals alone. `CompileRequest` accepted only
+    /// that four-value preset enumeration, so no caller outside `tiler-compiler`
+    /// could state the combination either. Every parallel reduction strategy
+    /// regroups the declared contributor sequence, so on this target all of them
+    /// were unreachable — not for want of a target fact, but for want of a
+    /// contract a caller was able to name. Both halves of that record are still
+    /// driven below, first and second, before the positive claim.
     ///
-    /// This test is therefore the activation trigger for
-    /// `realize-parallel-reduction-strategies-on-metal`'s backend evidence: it
-    /// fails the moment a flush-and-reassociate contract is registered, which is
-    /// exactly when the profile rows this declaration now carries — the
-    /// synchronization realization and the permitted resolution of reassociation
-    /// — stop being unreachable.
+    /// **What closed it.** `NumericalContract` is composed from its dimensions
+    /// rather than chosen from a list, so subnormal flushing and ordered
+    /// regrouping are resolved independently and
+    /// `NumericalContract::FLUSH_AND_REASSOCIATE_F32` is an ordinary statement.
+    /// Nothing about this profile changed.
+    ///
+    /// **What is asserted, in order.** The strict-based reassociating contract is
+    /// still refused, and still on `InputSubnormals` rather than on the
+    /// regrouping. The flush-only contract still compiles and still retains no
+    /// split, because it grants no regrouping. And the composed contract compiles
+    /// and its portfolio retains, beside the serial fold, both the multi-pass
+    /// split and the single-workgroup tree — the two strategies the declaration's
+    /// synchronization realization and permitted resolution of reassociation
+    /// exist to make reachable.
+    ///
+    /// **How each strategy is recognized through the public surface.** The
+    /// `session` boundary exposes a plan alternative's kernels and its ABI
+    /// entries, not its reduction topology, so each strategy is identified by an
+    /// observable it alone has. The multi-pass split is the only alternative with
+    /// **three** stages — pointwise, partial, and final. The single-workgroup
+    /// tree is the only one declaring an entry wider than **one thread per
+    /// workgroup**: it launches one invocation per participant inside one
+    /// workgroup, where every independent-invocation region declares a width of
+    /// one. The serial fold declares neither, and is what the flush-only contract
+    /// retains on its own.
+    ///
+    /// **Four contributors, deliberately.** `governed_partition` splits nothing
+    /// below four, and
+    /// `correct-the-declined-strategy-record-for-an-unsplittable-reduction`
+    /// records that a sub-four contributor reduction fails with
+    /// `InvalidCompilerOutput` under a reassociation-permitting contract. That is
+    /// a separate defect with its own ticket; this fixture is sized above it
+    /// rather than around it.
     #[test]
-    fn no_registered_contract_both_flushes_subnormals_and_permits_reassociation() {
+    fn a_flush_and_reassociate_contract_reaches_a_parallel_portfolio() {
         let declaration = declaration();
         let program = reassociating_program();
         let targets =
             || TargetRequest::new([declaration.profile().clone()]).expect("a singleton request");
 
-        // The regrouping contract is refused, and not for the regrouping.
+        // The strict-based regrouping contract is refused, and not for the
+        // regrouping.
         let reassociating = compile(CompileRequest::new(
             &program,
-            NumericalContract::ReassociateF32,
+            NumericalContract::REASSOCIATE_F32,
             targets(),
         ))
         .expect("the batch resolves")
@@ -958,29 +1030,113 @@ mod tests {
             "the refusal moved off the subnormal dimension: {rendered}",
         );
 
-        // The contract this target *can* deliver reaches a plan, and that plan
-        // has no parallel alternative to select between.
-        let flushing = compile(CompileRequest::new(
+        // The flush-only contract still reaches a plan, and neither parallel
+        // strategy is in it, because it grants no regrouping.
+        let flushing = compiled(
+            NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
             &program,
-            NumericalContract::FlushSubnormalsToZeroF32,
             targets(),
-        ))
-        .expect("the batch resolves")
-        .into_targets()
-        .pop()
-        .expect("one target outcome")
-        .into_parts()
-        .1
-        .expect("the flush contract is what this hardware delivers");
-        let stages: Vec<usize> = flushing
-            .alternatives()
-            .map(|alternative| alternative.kernels().len())
-            .collect();
-        assert!(
-            !stages.contains(&3),
-            "a multi-pass split reached a portfolio under a contract granting no regrouping: \
-             {stages:?}",
         );
+        let flushing_shape = portfolio_shape(&flushing);
+        assert!(
+            !flushing_shape.iter().any(|(stages, _)| *stages == 3),
+            "a multi-pass split reached a portfolio under a contract granting no regrouping: \
+             {flushing_shape:?}",
+        );
+        assert!(
+            !flushing_shape.iter().any(|(_, width)| *width > 1),
+            "a cooperative entry reached a portfolio under a contract granting no regrouping: \
+             {flushing_shape:?}",
+        );
+        assert!(
+            !flushing_shape.is_empty(),
+            "the flush contract is what this hardware delivers, so it must retain a plan",
+        );
+
+        // The composed contract reaches the parallel portfolio, and retains both
+        // strategies beside the serial fold rather than replacing it.
+        let composed = compiled(
+            NumericalContract::FLUSH_AND_REASSOCIATE_F32,
+            &program,
+            targets(),
+        );
+        let composed_shape = portfolio_shape(&composed);
+        assert!(
+            composed_shape.iter().any(|(stages, _)| *stages == 3),
+            "the multi-pass split is not in the portfolio: {composed_shape:?}",
+        );
+        assert!(
+            composed_shape.iter().any(|(_, width)| *width > 1),
+            "the single-workgroup tree is not in the portfolio: {composed_shape:?}",
+        );
+        assert!(
+            composed_shape
+                .iter()
+                .any(|(stages, width)| *stages < 3 && *width == 1),
+            "the serial fold was replaced rather than kept beside the parallel strategies: \
+             {composed_shape:?}",
+        );
+        assert!(
+            composed_shape.len() > flushing_shape.len(),
+            "the composed contract retained no alternative the flush-only contract did not: \
+             {composed_shape:?} against {flushing_shape:?}",
+        );
+    }
+
+    /// Compiles one program under one contract against one target request.
+    fn compiled(
+        contract: NumericalContract,
+        program: &SemanticProgram,
+        targets: TargetRequest,
+    ) -> Compilation {
+        compile(CompileRequest::new(program, contract, targets))
+            .expect("the batch resolves")
+            .into_targets()
+            .pop()
+            .expect("one target outcome")
+            .into_parts()
+            .1
+            .expect("the contract is honourable on this profile")
+    }
+
+    /// Each retained alternative's stage count and widest declared workgroup.
+    ///
+    /// Two observables per alternative, both read through the public boundary,
+    /// because neither alone separates the three strategies: the split is the
+    /// only three-stage alternative and the tree is the only one declaring a
+    /// workgroup wider than one thread.
+    ///
+    /// `AbiEntry::threads_per_workgroup` returns an *arena position*, which its
+    /// own documentation states and which is easy to read as a width — the
+    /// mistake is silent, because a position is a plausible small number. The
+    /// value is resolved here by indexing the alternative's expression arena and
+    /// reading the literal, and a node that is not an unsigned literal is a
+    /// failure rather than a skip: this profile declares every launch quantity as
+    /// a literal, so a formula appearing here would mean the derivation moved and
+    /// this check had stopped measuring what it names.
+    fn portfolio_shape(compilation: &Compilation) -> Vec<(usize, u64)> {
+        compilation
+            .alternatives()
+            .map(|alternative| {
+                let abi = alternative.abi();
+                let expressions = abi.expressions();
+                let width = abi
+                    .entries()
+                    .map(|entry| {
+                        let position = usize::try_from(entry.threads_per_workgroup())
+                            .expect("an arena position fits a usize");
+                        match expressions.get(position) {
+                            Some(ExprNode::Root(AbiRoot::UnsignedLiteral(width))) => *width,
+                            other => {
+                                panic!("the workgroup width is not a declared literal: {other:?}")
+                            }
+                        }
+                    })
+                    .max()
+                    .unwrap_or(0);
+                (alternative.kernels().len(), width)
+            })
+            .collect()
     }
 
     /// One envelope carries one payload per artifact family, at its own position.
@@ -1383,7 +1539,7 @@ mod tests {
     fn a_direct_emitter_call_still_fails_closed_on_the_declared_realization() {
         let program = semantic_program();
         let declaration = declaration();
-        let strict = compile_governed(&program, NumericalContract::StrictF32)
+        let strict = compile_governed(&program, NumericalContract::STRICT_F32)
             .expect("the governed prototype profile admits preserved subnormals");
         let plan = strict.selected().expect("one selected plan");
         let kernels: Vec<_> = plan.kernels().iter().collect();

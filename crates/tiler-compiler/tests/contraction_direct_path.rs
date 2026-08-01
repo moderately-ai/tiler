@@ -54,11 +54,12 @@ use tiler_ir::shape::Shape;
 /// permission — it is the declared contributor sequence itself — so the outcome
 /// must be identical under all four, and a contract that behaved differently
 /// would mean the realization is consuming something it does not declare.
-const CONTRACTS: [NumericalContract; 4] = [
-    NumericalContract::StrictF32,
-    NumericalContract::FlushSubnormalsToZeroF32,
-    NumericalContract::RelaxedF32,
-    NumericalContract::ReassociateF32,
+const CONTRACTS: [NumericalContract; 5] = [
+    NumericalContract::STRICT_F32,
+    NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
+    NumericalContract::RELAXED_F32,
+    NumericalContract::REASSOCIATE_F32,
+    NumericalContract::FLUSH_AND_REASSOCIATE_F32,
 ];
 
 /// The profile's index structure, `td,od->to`, spelled with arbitrary frontend
@@ -182,7 +183,7 @@ fn a_contraction_compiles_through_the_ordinary_entry_point() {
 fn no_k_multiple_refusal_exists_on_the_direct_path() {
     for k in [1_u64, 2, 3, 5, 7] {
         assert_eq!(
-            compile_under(&projection(2, 2, k), NumericalContract::StrictF32),
+            compile_under(&projection(2, 2, k), NumericalContract::STRICT_F32),
             Ok(()),
             "a contracted extent of {k} was refused, so a width precondition \
              this realization does not have has been introduced",
@@ -191,7 +192,7 @@ fn no_k_multiple_refusal_exists_on_the_direct_path() {
     // And the odd free extents too, so the absence above is about the contracted
     // axis rather than about every extent happening to be even.
     assert_eq!(
-        compile_under(&projection(1, 3, 3), NumericalContract::StrictF32),
+        compile_under(&projection(1, 3, 3), NumericalContract::STRICT_F32),
         Ok(())
     );
 }
@@ -331,7 +332,7 @@ fn a_structure_whose_contracted_index_sits_at_different_axes_compiles() {
     let program = builder.build().unwrap();
 
     assert_eq!(
-        compile_under(&program, NumericalContract::StrictF32),
+        compile_under(&program, NumericalContract::STRICT_F32),
         Ok(()),
         "a general binary structure is refused, so the widening is narrower than \
          the representation admits",
