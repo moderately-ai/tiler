@@ -24,6 +24,16 @@
 //! reassociating, so the arithmetic does not depend on invocation order; what
 //! does depend on it is only which store lands last where two invocations write
 //! one element, and the schedule's write-ownership witness forbids that.
+//!
+//! # One entry shape covers both a pointwise map and a reduction
+//!
+//! An entry declares `rows`, `columns`, and an affine contributor map, and
+//! computes one output element per row by summing `operand * scale + bias` over
+//! the row's columns. A `columns` of one therefore *is* a pointwise map — the
+//! sum of a single contributor is that contributor — which is what lets the
+//! materialized member's two stages share one format rather than needing a
+//! second one. See [`IDENTITY_SCALE_BITS`] for why the reduction stage's affine
+//! map is an exact identity rather than an approximate one.
 
 use std::fmt;
 
@@ -43,6 +53,26 @@ pub const IMAGE_SCHEMA: (u16, u16) = (1, 0);
 
 /// Bytes of one `f32` element in this representation's storage encoding.
 pub const ELEMENT_BYTES: u64 = 4;
+
+/// Multiplicative half of the exact identity contributor map, `1.0f32`.
+pub const IDENTITY_SCALE_BITS: u32 = 0x3f80_0000;
+
+/// Additive half of the exact identity contributor map, **negative** zero.
+///
+/// `-0.0` rather than `+0.0`, and the difference is the whole reason this
+/// constant is named. Under round-to-nearest `x + (+0.0)` maps `-0.0` to `+0.0`,
+/// so a stage declaring `+0.0` as its bias would silently canonicalize the sign
+/// of a zero contributor — a value change this backend's strict realization does
+/// not permit, and one no operand in the current fixture happens to expose. With
+/// `-0.0` the map is the exact bitwise identity on every finite value including
+/// both zeros: `x * 1.0` preserves `x`'s sign and magnitude, and `x + (-0.0)`
+/// returns `x` for `+0.0`, for `-0.0`, and for every nonzero finite `x`.
+///
+/// The materialized member depends on this: its reduction stage must sum the
+/// contributors its pointwise stage produced, *unchanged*, or its bit-for-bit
+/// agreement with the reference would be a property of the chosen operands
+/// rather than of the decomposition.
+pub const IDENTITY_BIAS_BITS: u32 = 0x8000_0000;
 
 /// One executable entry of a scalar image.
 ///
@@ -419,6 +449,13 @@ pub struct Placement {
 /// Reached **after** the routing commit, so none of these is a fallback: each is
 /// reported. Every one fails closed rather than leaving whatever the output
 /// storage happened to hold.
+///
+/// Every variant names the entry it happened in, for the same reason every
+/// pre-commit refusal does. A multi-entry route that reported only "one of two
+/// invocations ran" would leave a caller unable to tell a route that failed
+/// before doing anything from one that failed with earlier stages already
+/// complete — and those are different states of the caller's storage, not two
+/// descriptions of one.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ExecutionFault {
     /// An invocation addressed an element outside its placement.
@@ -428,6 +465,8 @@ pub enum ExecutionFault {
     /// retained as the check that makes a widened image format a refusal here
     /// rather than a read of whatever storage follows.
     OutOfRange {
+        /// Position of the entry in the route's execution order.
+        entry: usize,
         /// Which access escaped its range.
         role: &'static str,
         /// Byte the invocation addressed.
@@ -437,6 +476,12 @@ pub enum ExecutionFault {
     },
     /// The run did not reach every invocation the route launched.
     Incomplete {
+        /// Position of the entry in the route's execution order.
+        ///
+        /// A nonzero position is the partial-execution case: every earlier
+        /// entry reached terminal success and its writes are in the storage
+        /// this route allocated.
+        entry: usize,
         /// Invocations that ran.
         executed: u64,
         /// Invocations the routed launch declared.
@@ -447,15 +492,24 @@ pub enum ExecutionFault {
 impl fmt::Display for ExecutionFault {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::OutOfRange { role, byte, bytes } => write!(
+            Self::OutOfRange {
+                entry,
+                role,
+                byte,
+                bytes,
+            } => write!(
                 formatter,
-                "scalar-host.execute.range: a {role} addressed byte {byte} of a {bytes}-byte \
-                 placement",
+                "scalar-host.execute.range: entry {entry}'s {role} addressed byte {byte} of a \
+                 {bytes}-byte placement",
             ),
-            Self::Incomplete { executed, expected } => write!(
+            Self::Incomplete {
+                entry,
+                executed,
+                expected,
+            } => write!(
                 formatter,
-                "scalar-host.execute.incomplete: {executed} of {expected} invocation(s) ran, and \
-                 the routing commit forbids another route",
+                "scalar-host.execute.incomplete: {executed} of {expected} invocation(s) ran in \
+                 entry {entry}, and the routing commit forbids another route",
             ),
         }
     }
@@ -482,6 +536,7 @@ impl std::error::Error for ExecutionFault {}
 /// commit, so a missing allocation is a defect in the adapter rather than a
 /// route it should have refused.
 pub fn execute(
+    position: usize,
     entry: &ScalarEntry,
     read: Placement,
     write: Placement,
@@ -513,6 +568,7 @@ pub fn execute(
             let byte = element * ELEMENT_BYTES;
             if byte + ELEMENT_BYTES > read.bytes {
                 return Err(ExecutionFault::OutOfRange {
+                    entry: position,
                     role: "read",
                     byte,
                     bytes: read.bytes,
@@ -536,6 +592,7 @@ pub fn execute(
         let byte = row * ELEMENT_BYTES;
         if byte + ELEMENT_BYTES > write.bytes {
             return Err(ExecutionFault::OutOfRange {
+                entry: position,
                 role: "write",
                 byte,
                 bytes: write.bytes,

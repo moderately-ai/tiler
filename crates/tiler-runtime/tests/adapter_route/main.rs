@@ -82,17 +82,21 @@ fn bind_facts(program: &DecodedProgram) -> AbiFacts {
 }
 
 /// Runs one fixture through one adapter, end to end.
-fn route(spec: &FixtureSpec, mut host: ScalarHostAdapter) -> (Outcome, Vec<Stage>) {
+///
+/// The adapter is returned rather than only its stage log. Its storage outlives
+/// the route, and reading that storage afterwards is how a test observes both
+/// the shared allocation's contents and the state a partially executed route
+/// left behind — neither of which any returned value carries.
+fn route(spec: &FixtureSpec, mut host: ScalarHostAdapter) -> (Outcome, ScalarHostAdapter) {
     let built = assemble(spec);
     let mut program = DecodedProgram::decode(&built.bytes).expect("the fixture artifact decodes");
     let facts = bind_facts(&program);
     let outcome = route_with_adapter(&mut program, &mut host, &built.expected, &facts);
-    (outcome, host.stages.clone())
+    (outcome, host)
 }
 
-/// Evaluates the same semantic program through the independent oracle.
-fn reference_bits() -> Vec<u32> {
-    let program = fixture::semantic_program();
+/// Evaluates one semantic program over [`OPERANDS`] through the independent oracle.
+fn evaluate(program: &tiler_ir::semantic::SemanticProgram) -> Vec<u32> {
     let key = fixture::input_key();
     let tensor = Tensor::dense(
         tiler_ir::semantic::F32::resolved_type(),
@@ -111,7 +115,7 @@ fn reference_bits() -> Vec<u32> {
     .expect("the input tensor is well formed");
     let outputs = ReferenceEvaluator::standard()
         .expect("the governed reference profile composes")
-        .evaluate(&program, &[InputBinding::new(&key, &tensor)])
+        .evaluate(program, &[InputBinding::new(&key, &tensor)])
         .expect("the reference evaluates the program");
     match outputs[0].payload() {
         TensorPayloadView::Dense(elements) => elements
@@ -124,6 +128,21 @@ fn reference_bits() -> Vec<u32> {
             .collect(),
         payload => panic!("expected a dense f32 reference output, got {payload:?}"),
     }
+}
+
+/// Evaluates the packaged semantic program through the independent oracle.
+fn reference_bits() -> Vec<u32> {
+    evaluate(&fixture::semantic_program())
+}
+
+/// Evaluates the pointwise prefix alone, as the oracle for the intermediate.
+///
+/// The value the materialized member's *first* stage is obliged to write. It is
+/// an evaluation of a semantic program rather than a restatement of the
+/// interpreter's arithmetic, so an adapter and a fixture that agreed on a wrong
+/// intermediate would still fail this.
+fn pointwise_reference_bits() -> Vec<u32> {
+    evaluate(&fixture::pointwise_semantic_program())
 }
 
 /// The stages a route runs when nothing refuses.
@@ -149,7 +168,7 @@ const COMPLETE_ROUTE: [Stage; 7] = [
 /// than about this test's own arithmetic.
 #[test]
 fn a_carried_payload_routes_through_a_selected_adapter_and_matches_the_reference() {
-    let (outcome, stages) = route(&FixtureSpec::default(), ScalarHostAdapter::new(&OPERANDS));
+    let (outcome, host) = route(&FixtureSpec::default(), ScalarHostAdapter::new(&OPERANDS));
     let completion = outcome.expect("the unperturbed route completes");
     assert_eq!(
         completion.result_bits,
@@ -159,8 +178,16 @@ fn a_carried_payload_routes_through_a_selected_adapter_and_matches_the_reference
     assert_eq!(completion.executed, fixture::ROWS);
     assert_eq!(completion.profile_key, fixture::PROFILE_KEY);
     assert_eq!(
-        stages, COMPLETE_ROUTE,
+        host.stages, COMPLETE_ROUTE,
         "the loader drives the adapter's stages in the order their facts become decidable",
+    );
+    // The empty case, asserted rather than left implicit. A single-entry route
+    // has no data dependency between entries and therefore no pairing, and
+    // *that* is what the materialized member below exists to stop being the only
+    // state this suite ever observes.
+    assert!(
+        host.shared_placements().is_empty(),
+        "a single-entry route pairs no allocations",
     );
 }
 
@@ -179,10 +206,10 @@ fn a_route_requiring_nothing_still_passes_through_both_device_stages() {
         deferred_predicates: Vec::new(),
         ..FixtureSpec::default()
     };
-    let (outcome, stages) = route(&spec, ScalarHostAdapter::new(&OPERANDS));
+    let (outcome, host) = route(&spec, ScalarHostAdapter::new(&OPERANDS));
     assert!(outcome.is_ok(), "a route requiring nothing still completes");
     assert_eq!(
-        stages,
+        host.stages,
         [
             Stage::Bind,
             Stage::ValidatePayload,
@@ -237,7 +264,7 @@ fn a_foreign_expected_identity_is_a_program_mismatch() {
 /// A context reporting another target family refuses the variant's declaration.
 #[test]
 fn another_profile_key_is_an_incompatible_variant_target() {
-    let (outcome, stages) = route(
+    let (outcome, host) = route(
         &FixtureSpec::default(),
         ScalarHostAdapter::new(&OPERANDS).perturbed(Perturbation::ForeignProfileKey),
     );
@@ -253,7 +280,7 @@ fn another_profile_key_is_an_incompatible_variant_target() {
         classification,
         TargetCompatibility::ProfileKeyMismatch { .. }
     ));
-    assert_eq!(stages, [Stage::Bind]);
+    assert_eq!(host.stages, [Stage::Bind]);
 }
 
 /// The same family under another exact descriptor is a *separate* refusal.
@@ -263,7 +290,7 @@ fn another_profile_key_is_an_incompatible_variant_target() {
 /// would go and fix the wrong thing.
 #[test]
 fn another_profile_descriptor_is_an_incompatible_variant_target() {
-    let (outcome, stages) = route(
+    let (outcome, host) = route(
         &FixtureSpec::default(),
         ScalarHostAdapter::new(&OPERANDS).perturbed(Perturbation::ForeignProfileDescriptor),
     );
@@ -279,7 +306,7 @@ fn another_profile_descriptor_is_an_incompatible_variant_target() {
         classification,
         TargetCompatibility::DescriptorMismatch { .. }
     ));
-    assert_eq!(stages, [Stage::Bind]);
+    assert_eq!(host.stages, [Stage::Bind]);
 }
 
 /// The backend family and the representation are compared **as a pair**.
@@ -303,7 +330,7 @@ fn either_half_of_the_backend_representation_pair_is_an_unexecutable_payload() {
         Perturbation::ForeignBackend,
         Perturbation::ForeignRepresentation,
     ] {
-        let (outcome, stages) = route(
+        let (outcome, host) = route(
             &spec,
             ScalarHostAdapter::new(&OPERANDS).perturbed(perturbation),
         );
@@ -323,7 +350,7 @@ fn either_half_of_the_backend_representation_pair_is_an_unexecutable_payload() {
                 || host_representation != fixture::REPRESENTATION_KEY,
             "{perturbation:?}: the refusal must name what this host reported",
         );
-        assert_eq!(stages, [Stage::Bind], "{perturbation:?}");
+        assert_eq!(host.stages, [Stage::Bind], "{perturbation:?}");
     }
 }
 
@@ -342,7 +369,7 @@ fn a_payload_built_for_another_profile_refuses_as_the_payload_declaration() {
         ),
         ..FixtureSpec::default()
     };
-    let (outcome, stages) = route(&spec, ScalarHostAdapter::new(&OPERANDS));
+    let (outcome, host) = route(&spec, ScalarHostAdapter::new(&OPERANDS));
     let Err(AdapterRouteFailure::Load(LoadRejection::IncompatibleTarget {
         declaration,
         classification,
@@ -355,7 +382,7 @@ fn a_payload_built_for_another_profile_refuses_as_the_payload_declaration() {
         classification,
         TargetCompatibility::DescriptorMismatch { .. }
     ));
-    assert_eq!(stages, [Stage::Bind]);
+    assert_eq!(host.stages, [Stage::Bind]);
 }
 
 /// A payload needing device translation is undeliverable through this loader.
@@ -365,7 +392,7 @@ fn a_payload_requiring_device_translation_is_undeliverable() {
         execution_policy: ArtifactExecutionPolicy::RequiresDeviceTranslation,
         ..FixtureSpec::default()
     };
-    let (outcome, stages) = route(&spec, ScalarHostAdapter::new(&OPERANDS));
+    let (outcome, host) = route(&spec, ScalarHostAdapter::new(&OPERANDS));
     assert!(
         matches!(
             outcome,
@@ -375,7 +402,7 @@ fn a_payload_requiring_device_translation_is_undeliverable() {
         ),
         "expected an undeliverable execution policy",
     );
-    assert_eq!(stages, [Stage::Bind]);
+    assert_eq!(host.stages, [Stage::Bind]);
 }
 
 /// A row owned by another backend is refused without consulting the adapter.
@@ -393,7 +420,7 @@ fn a_foreign_route_requirement_owner_is_refused_without_consulting_the_adapter()
         )],
         ..FixtureSpec::default()
     };
-    let (outcome, stages) = route(&spec, ScalarHostAdapter::new(&OPERANDS));
+    let (outcome, host) = route(&spec, ScalarHostAdapter::new(&OPERANDS));
     assert!(
         matches!(
             outcome,
@@ -404,7 +431,7 @@ fn a_foreign_route_requirement_owner_is_refused_without_consulting_the_adapter()
         "expected a foreign route-requirement owner",
     );
     assert_eq!(
-        stages,
+        host.stages,
         [Stage::Bind],
         "no adapter may be asked about a row owned by a backend this host is not",
     );
@@ -433,7 +460,7 @@ fn each_undecidable_live_device_answer_refuses_by_its_own_class() {
         (Perturbation::MisanswerLiveDevice, "misanswered"),
         (Perturbation::RefuseLiveDeviceFeature, "unsatisfied"),
     ] {
-        let (outcome, stages) = route(
+        let (outcome, host) = route(
             &FixtureSpec::default(),
             ScalarHostAdapter::new(&OPERANDS).perturbed(perturbation),
         );
@@ -453,7 +480,7 @@ fn each_undecidable_live_device_answer_refuses_by_its_own_class() {
             "{name}: the refusal must name the exact row the artifact declared",
         );
         assert_eq!(
-            stages,
+            host.stages,
             [
                 Stage::Bind,
                 Stage::ValidatePayload,
@@ -471,7 +498,7 @@ fn each_undecidable_live_device_answer_refuses_by_its_own_class() {
 /// which is the mistake this pair exists to make impossible.
 #[test]
 fn a_prepared_entry_property_refuses_exactly_at_its_boundary() {
-    let (below, below_stages) = route(
+    let (below, below_host) = route(
         &FixtureSpec::default(),
         ScalarHostAdapter::new(&OPERANDS).perturbed(Perturbation::UnderreportPreparedEntry),
     );
@@ -489,7 +516,7 @@ fn a_prepared_entry_property_refuses_exactly_at_its_boundary() {
         "one below the threshold must refuse",
     );
     assert_eq!(
-        below_stages,
+        below_host.stages,
         [
             Stage::Bind,
             Stage::ValidatePayload,
@@ -500,12 +527,12 @@ fn a_prepared_entry_property_refuses_exactly_at_its_boundary() {
         "nothing is allocated once a prepared-entry property has refused",
     );
 
-    let (at, at_stages) = route(
+    let (at, at_host) = route(
         &FixtureSpec::default(),
         ScalarHostAdapter::new(&OPERANDS).perturbed(Perturbation::ReportPreparedEntryAtThreshold),
     );
     assert!(at.is_ok(), "the threshold itself must route");
-    assert_eq!(at_stages, COMPLETE_ROUTE);
+    assert_eq!(at_host.stages, COMPLETE_ROUTE);
 }
 
 // -------------------------------------------------------------------------
@@ -645,7 +672,7 @@ fn every_payload_defect_is_the_backends_refusal_and_the_artifact_layer_accepts_t
             panic!("{name}: the artifact layer accepts it: {rejection}")
         });
 
-        let (outcome, stages) = route(&spec, ScalarHostAdapter::new(&OPERANDS));
+        let (outcome, host) = route(&spec, ScalarHostAdapter::new(&OPERANDS));
         let Err(AdapterRouteFailure::Payload { entry, refusal }) = &outcome else {
             panic!(
                 "{name}: expected a backend payload refusal, got {:?}",
@@ -668,7 +695,7 @@ fn every_payload_defect_is_the_backends_refusal_and_the_artifact_layer_accepts_t
             "{name}: a payload refusal arrives while a fallback is still permitted",
         );
         assert_eq!(
-            stages,
+            host.stages,
             [Stage::Bind, Stage::ValidatePayload],
             "{name}: payload validation runs before the first live-device question",
         );
@@ -682,18 +709,18 @@ fn every_payload_defect_is_the_backends_refusal_and_the_artifact_layer_accepts_t
 /// An adapter that binds no context refuses before the artifact is routed.
 #[test]
 fn an_unbound_execution_context_refuses_before_anything_is_routed() {
-    let (outcome, stages) = route(
+    let (outcome, host) = route(
         &FixtureSpec::default(),
         ScalarHostAdapter::new(&OPERANDS).perturbed(Perturbation::NoContext),
     );
     assert!(matches!(outcome, Err(AdapterRouteFailure::Context(_))));
-    assert_eq!(stages, [Stage::Bind]);
+    assert_eq!(host.stages, [Stage::Bind]);
 }
 
 /// A launch beyond what this interpreter admits refuses at preparation.
 #[test]
 fn a_launch_beyond_the_interpreters_budget_refuses_at_preparation() {
-    let (outcome, stages) = route(
+    let (outcome, host) = route(
         &FixtureSpec::default(),
         ScalarHostAdapter::new(&OPERANDS).perturbed(Perturbation::RefusePreparation),
     );
@@ -707,7 +734,7 @@ fn a_launch_beyond_the_interpreters_budget_refuses_at_preparation() {
         "expected a preparation refusal naming the entry",
     );
     assert_eq!(
-        stages,
+        host.stages,
         [
             Stage::Bind,
             Stage::ValidatePayload,
@@ -720,7 +747,7 @@ fn a_launch_beyond_the_interpreters_budget_refuses_at_preparation() {
 /// Caller storage shorter than the route's published range refuses before the commit.
 #[test]
 fn undersized_caller_storage_refuses_before_the_commit() {
-    let (outcome, stages) = route(
+    let (outcome, host) = route(
         &FixtureSpec::default(),
         ScalarHostAdapter::new(&OPERANDS).perturbed(Perturbation::UndersizedInput),
     );
@@ -734,7 +761,7 @@ fn undersized_caller_storage_refuses_before_the_commit() {
         "expected a planning refusal naming the entry and slot",
     );
     assert_eq!(
-        stages,
+        host.stages,
         [
             Stage::Bind,
             Stage::ValidatePayload,
@@ -758,7 +785,7 @@ fn undersized_caller_storage_refuses_before_the_commit() {
 /// `fallback_permitted` is how a caller learns the same thing from the outside.
 #[test]
 fn a_post_commit_dispatch_failure_is_reported_and_forecloses_a_fallback() {
-    let (outcome, stages) = route(
+    let (outcome, host) = route(
         &FixtureSpec::default(),
         ScalarHostAdapter::new(&OPERANDS).perturbed(Perturbation::HaltAfterOneInvocation),
     );
@@ -769,6 +796,7 @@ fn a_post_commit_dispatch_failure_is_reported_and_forecloses_a_fallback() {
         matches!(
             failure,
             AdapterRouteFailure::Dispatch(image::ExecutionFault::Incomplete {
+                entry: 0,
                 executed: 1,
                 expected: 2,
             }),
@@ -780,7 +808,7 @@ fn a_post_commit_dispatch_failure_is_reported_and_forecloses_a_fallback() {
         "nothing follows a committed dispatch that failed",
     );
     assert_eq!(
-        stages, COMPLETE_ROUTE,
+        host.stages, COMPLETE_ROUTE,
         "the failure is reached through the whole route rather than short of it",
     );
 }
@@ -802,7 +830,7 @@ fn the_commit_is_the_only_boundary_that_forecloses_a_fallback() {
         Perturbation::UndersizedInput,
     ];
     for perturbation in pre_commit {
-        let (outcome, stages) = route(
+        let (outcome, host) = route(
             &FixtureSpec::default(),
             ScalarHostAdapter::new(&OPERANDS).perturbed(perturbation),
         );
@@ -814,7 +842,7 @@ fn the_commit_is_the_only_boundary_that_forecloses_a_fallback() {
             "{perturbation:?} is reached before the commit: {failure}",
         );
         assert!(
-            !stages.contains(&Stage::Dispatch),
+            !host.stages.contains(&Stage::Dispatch),
             "{perturbation:?} must not reach a dispatch",
         );
     }
@@ -856,4 +884,277 @@ fn the_routed_interface_is_the_one_the_artifact_declares() {
         [fixture::ROWS, fixture::COLUMNS],
         "the fixture's operands are sized by what the artifact declares",
     );
+}
+
+// -------------------------------------------------------------------------
+// The multi-entry route and its shared allocation
+// -------------------------------------------------------------------------
+
+/// The stages a two-entry route runs when nothing refuses.
+///
+/// Every per-entry stage appears twice and every per-route stage once, which is
+/// the difference the empty case above cannot show: a seam that validated one
+/// payload, prepared once, or asked about one prepared entry and then executed
+/// two would produce a *shorter* log and the same result.
+const MATERIALIZED_ROUTE: [Stage; 9] = [
+    Stage::Bind,
+    Stage::ValidatePayload,
+    Stage::ValidatePayload,
+    Stage::ObserveLiveDevice,
+    Stage::PrepareEntries,
+    Stage::ObservePreparedEntry,
+    Stage::ObservePreparedEntry,
+    Stage::PlanDispatch,
+    Stage::Dispatch,
+];
+
+/// Invocations the materialized route runs, summed over both entries.
+const MATERIALIZED_INVOCATIONS: u64 = fixture::ROWS * fixture::COLUMNS + fixture::ROWS;
+
+/// Bytes the shared scratch must reach, derived from the declared extents.
+const SCRATCH_BYTES: u64 = fixture::ROWS * fixture::COLUMNS * 4;
+
+/// Bytes [`Perturbation::UndersizeSharedAllocation`] leaves it holding.
+const SHORT_SCRATCH_BYTES: u64 = SCRATCH_BYTES - 4;
+
+/// Two entries over one shared scratch produce the same bits as one fused entry.
+///
+/// The three claims this suite could not previously make, in one route:
+///
+/// 1. **The stage log spans both entries.** Payload validation and prepared-entry
+///    observation each run per entry; binding, live-device qualification,
+///    preparation, planning, and dispatch each run once for the route.
+/// 2. **One allocation backs both ends of the pairing.** The two slots resolve to
+///    the same host allocation, and it is still readable after the last dispatch
+///    that used it — holding exactly what the producing stage was obliged to
+///    write, checked against `tiler-reference` rather than against the
+///    interpreter.
+/// 3. **The result is the fused member's, bit for bit.** Two plans over one
+///    semantic program must agree with one oracle, and the consumer reading a
+///    fresh buffer instead of the producer's would not.
+#[test]
+fn a_two_stage_route_shares_one_allocation_and_matches_the_reference() {
+    let (outcome, host) = route(
+        &FixtureSpec::materialized(),
+        ScalarHostAdapter::new(&OPERANDS),
+    );
+    let completion = outcome.expect("the unperturbed materialized route completes");
+
+    assert_eq!(
+        host.stages, MATERIALIZED_ROUTE,
+        "the loader drives the per-entry stages once per entry and the rest once",
+    );
+    assert_eq!(
+        completion.result_bits,
+        reference_bits(),
+        "a materialized plan must agree with the same oracle the fused plan does",
+    );
+    assert_eq!(
+        completion.executed, MATERIALIZED_INVOCATIONS,
+        "every invocation of both entries ran",
+    );
+
+    let [shared] = host.shared_placements() else {
+        panic!(
+            "the one data dependency between these stages pairs one allocation, got {:?}",
+            host.shared_placements(),
+        );
+    };
+    // The producing end writes and the consuming end reads, and the producer
+    // precedes the consumer in execution order. A pairing oriented the other way
+    // would still be one allocation and would still be wrong.
+    assert_eq!(shared.producer, (0, 1), "entry 0's write slot produces");
+    assert_eq!(shared.consumer, (1, 0), "entry 1's read slot consumes");
+    assert_eq!(
+        host.placement(0, 1).allocation,
+        host.placement(1, 0).allocation,
+        "both ends of the pairing must resolve to one host allocation",
+    );
+    assert_eq!(host.placement(0, 1).allocation, shared.allocation);
+
+    // Read after the route returned, so the storage outlived its final device
+    // use, and compared against the pointwise oracle, so it holds what the
+    // producing stage owed rather than merely something nonzero.
+    assert_eq!(
+        host.allocation_bits(shared.allocation),
+        pointwise_reference_bits(),
+        "the shared scratch still holds the producing stage's output",
+    );
+}
+
+/// A shared allocation short of the published range refuses before the commit.
+///
+/// The one allocation this planner sizes from *two* statements rather than one,
+/// which is why it is the one where its own arithmetic has to be checked against
+/// the route instead of trusted. Refusing here is what keeps the interpreter's
+/// bounds check unreachable: a route that committed on a short buffer would
+/// either read past it or fail after the point where failing is reportable only.
+#[test]
+fn a_shared_allocation_shorter_than_the_route_publishes_refuses_before_the_commit() {
+    let (outcome, host) = route(
+        &FixtureSpec::materialized(),
+        ScalarHostAdapter::new(&OPERANDS).perturbed(Perturbation::UndersizeSharedAllocation),
+    );
+    let Err(failure) = outcome else {
+        panic!("a shared allocation short of the route's range must refuse");
+    };
+    assert!(
+        matches!(
+            failure,
+            AdapterRouteFailure::Plan(adapter::ScalarRefusal::UndersizedStorage {
+                entry: 0,
+                slot: 1,
+                required: SCRATCH_BYTES,
+                supplied: SHORT_SCRATCH_BYTES,
+            }),
+        ),
+        "expected a planning refusal naming the producing end of the pairing: {failure}",
+    );
+    assert!(
+        failure.fallback_permitted(),
+        "a planning refusal arrives while a fallback is still permitted",
+    );
+    assert_eq!(
+        host.stages,
+        [
+            Stage::Bind,
+            Stage::ValidatePayload,
+            Stage::ValidatePayload,
+            Stage::ObserveLiveDevice,
+            Stage::PrepareEntries,
+            Stage::ObservePreparedEntry,
+            Stage::ObservePreparedEntry,
+            Stage::PlanDispatch,
+        ],
+        "nothing is dispatched once an allocation has refused",
+    );
+}
+
+/// Dispatching the two entries back to front returns a wrong answer, not a refusal.
+///
+/// The failure mode `SharedAllocation`'s own documentation names as the one place
+/// in this stack that would fail open, made concrete: nothing refuses, both
+/// entries reach terminal success, every invocation runs, and the bits are
+/// wrong — because the reduction read the scratch before the pointwise stage
+/// wrote it.
+///
+/// The scratch is asserted *correct* at the end, which is the sharp part: the
+/// storage was right, the pairing was right, and the order alone decided the
+/// answer. That is why the accepted case above cannot treat its agreement with
+/// the oracle as a property of the allocation.
+#[test]
+fn dispatching_the_two_entries_out_of_order_returns_a_wrong_answer_rather_than_a_refusal() {
+    let (outcome, host) = route(
+        &FixtureSpec::materialized(),
+        ScalarHostAdapter::new(&OPERANDS).perturbed(Perturbation::ReverseStageOrder),
+    );
+    let completion = outcome.expect("a reordered dispatch is not refused by anything");
+    assert_eq!(
+        host.stages, MATERIALIZED_ROUTE,
+        "the route runs to completion; only the encoding order changed",
+    );
+    assert_eq!(
+        completion.executed, MATERIALIZED_INVOCATIONS,
+        "both entries reached terminal success",
+    );
+    assert_ne!(
+        completion.result_bits,
+        reference_bits(),
+        "a consumer dispatched before its producer cannot produce the right answer",
+    );
+
+    let [shared] = host.shared_placements() else {
+        panic!("the pairing is unchanged by the dispatch order");
+    };
+    assert_eq!(
+        host.allocation_bits(shared.allocation),
+        pointwise_reference_bits(),
+        "the producing stage wrote the right scratch — after the stage that read it",
+    );
+}
+
+/// A halt in the second entry is a post-commit failure naming that entry.
+///
+/// The partial-execution case a single-entry route cannot be in: one entry
+/// reached terminal success and the next did not. The classification names the
+/// entry, because "one of two invocations ran" is the same sentence for a route
+/// that did nothing first and one that did everything first, and those leave the
+/// caller's storage in different states.
+#[test]
+fn a_halt_in_the_second_entry_is_a_post_commit_failure_naming_that_entry() {
+    let (outcome, host) = route(
+        &FixtureSpec::materialized(),
+        ScalarHostAdapter::new(&OPERANDS)
+            .perturbed(Perturbation::HaltSecondEntryAfterOneInvocation),
+    );
+    let Err(failure) = outcome else {
+        panic!("a halted run must not report a completion");
+    };
+    assert!(
+        matches!(
+            failure,
+            AdapterRouteFailure::Dispatch(image::ExecutionFault::Incomplete {
+                entry: 1,
+                executed: 1,
+                expected: fixture::ROWS,
+            }),
+        ),
+        "expected a terminal-success failure attributed to the second entry: {failure}",
+    );
+    assert!(
+        !failure.fallback_permitted(),
+        "nothing follows a committed dispatch that failed, however far it got",
+    );
+    assert_eq!(
+        host.stages, MATERIALIZED_ROUTE,
+        "the failure is reached through the whole route rather than short of it",
+    );
+
+    // The first entry completed. Its output is in the shared scratch, and the
+    // second entry's partial writes are in the output storage: one row of two.
+    let [shared] = host.shared_placements() else {
+        panic!("the pairing is unchanged by a halted dispatch");
+    };
+    assert_eq!(
+        host.allocation_bits(shared.allocation),
+        pointwise_reference_bits(),
+        "the entry before the halted one reached terminal success",
+    );
+    let written = host.allocation_bits(host.placement(1, 1).allocation);
+    assert_eq!(
+        written,
+        vec![reference_bits()[0], 0],
+        "the halted entry wrote the one row it ran and left the rest as allocated",
+    );
+}
+
+/// The materialized member's own pre-commit refusals still permit a fallback.
+///
+/// The same population claim the fused member makes, over the perturbations only
+/// a multi-entry route can reach. Kept separate rather than merged because the
+/// two members refuse in different places, and a single list would hide which
+/// member a regression came from.
+#[test]
+fn the_multi_entry_pre_commit_refusals_still_permit_a_fallback() {
+    for perturbation in [
+        Perturbation::UndersizeSharedAllocation,
+        Perturbation::RefusePreparation,
+        Perturbation::UndersizedInput,
+    ] {
+        let (outcome, host) = route(
+            &FixtureSpec::materialized(),
+            ScalarHostAdapter::new(&OPERANDS).perturbed(perturbation),
+        );
+        let failure = outcome
+            .err()
+            .unwrap_or_else(|| panic!("{perturbation:?} must refuse"));
+        assert!(
+            failure.fallback_permitted(),
+            "{perturbation:?} is reached before the commit: {failure}",
+        );
+        assert!(
+            !host.stages.contains(&Stage::Dispatch),
+            "{perturbation:?} must not reach a dispatch",
+        );
+    }
 }
