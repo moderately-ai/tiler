@@ -6,7 +6,7 @@ priority: p2
 dependencies: []
 related: [reconcile-the-two-target-profile-key-grammars]
 scopes: [contracts/artifacts, contracts/decisions, contracts/foundation, research/extensions]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [identity, documentation]
 claimed_from: todo
@@ -73,4 +73,6 @@ Documentation-only, at base `7ad2aca`. Six sentences corrected across four files
 - **Checked and left alone.** `docs/artifact-abi.md:239` ("the neutral layer … does own the owner's governed-key grammar") and `docs/glossary.md:25` ("the neutral artifact layer validates the key's grammar") were already true and are more true now. `docs/decisions/README.md` and `docs/README.md` carry no claim about the key grammar and no frontmatter changed, so no catalog block needed editing.
 - **Reported, not corrected — two rustdoc claims outside this ticket's scopes.** `crates/tiler-artifact/src/program/keys.rs:82-83` says "`tiler_compiler` publishes `MAX_TARGET_PROFILE_DESCRIPTOR_BYTES`", but that constant is `pub(crate)` at `crates/tiler-compiler/src/target/feasibility.rs:1555` inside a `pub(crate) mod feasibility` (`target.rs:129`), so nothing outside the crate can read it — "publishes" overstates a bound that is in fact held by review. Symmetrically, that constant's own doc comment justifies its value as "the largest value `tiler-artifact` will hold: that crate's `MAX_OPAQUE_IDENTITY_BYTES`", but `MAX_OPAQUE_IDENTITY_BYTES` is 1,024 and no longer bounds a descriptor; the number 64 KiB agrees with `tiler-artifact`'s `MAX_TARGET_PROFILE_DESCRIPTOR_BYTES` but the comment names the wrong constant for the agreement. Both are `crates/` edits under no scope this ticket holds, and both are the kind of doc-comment claim a later worker reads as fact.
 
-**Commands.** The `grep` reproductions above; `tkt lint`; `git diff --check`; `tkt guard --base b6e14e2`; `make full`.
+**The guard said no first, which is how it was shown to work.** `tkt guard --base b6e14e2 tkt/record-the-settled-governed-key-grammar-in-the-contracts` returned `CONFLICT` (exit 6) on the documentation commit: this ticket was dispatched with `shared_scopes: []`, so its own Outcome read as an undeclared exclusive touch of `project/tickets` and collided directly with three live tickets. The dispatch brief asserted that guard treats the claimed ticket's file as the worker's own; running it refuted that. Corrected with `tkt set … --add-shared-scope project/tickets`, which is what 560 tickets in the tree — including the three it collided with — already declare for exactly this reason. Re-run: `verdict: ok`, exit 0, with the three collisions now reported as `COLLISION (shared)`, the non-blocking kind.
+
+**Commands.** The `grep` reproductions above; `tkt lint` (clean); `git diff --check` (clean); `tkt guard --base b6e14e2 tkt/record-the-settled-governed-key-grammar-in-the-contracts` (`CONFLICT`, then `ok` after the shared-scope declaration); `make full` (exit 0; 703 tests, `tkt lint` and shellcheck included — the run proves this documentation-only change left `crates/` untouched).
