@@ -136,13 +136,15 @@ use tiler_ir::program::abi::{
     AvailabilityPhase, TargetPropertyKey, TargetPropertyProviderIdentity, TargetPropertyQuery,
 };
 use tiler_ir::schedule::{
-    ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, SubnormalMode,
+    ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
+    SubnormalMode, SynchronizationSubject,
 };
 use tiler_ir::semantic::{F32, ResolvedValueType};
 
 use crate::target::feasibility::{
-    CapabilityAxis, CapabilityFact, CapabilityQuery, CheckedTargetProfile, FactAuthority,
-    FactProvenance, FactValidityScope, FeasibilityError, MAX_TARGET_PROFILE_DESCRIPTOR_BYTES,
+    CapabilityAxis, CapabilityFact, CapabilityQuery, CheckedTargetProfile,
+    DeclaredSynchronizationRealization, FactAuthority, FactProvenance, FactValidityScope,
+    FeasibilityError, MAX_TARGET_PROFILE_DESCRIPTOR_BYTES, SynchronizationRealization,
 };
 use crate::target::honourability::{
     CompilerBuildIdentity, CompilerBuildRole, DeclaredBehaviour, DimensionBehaviour,
@@ -155,15 +157,29 @@ use crate::target::honourability::{
 pub(crate) const GOVERNED_TARGET_PROFILE_KEY: &str = "tiler.prototype-target-neutral-baseline.v1";
 /// Domain of the complete producer declaration carried into artifact identity.
 ///
-/// This is a new grammar, not a continuation of feasibility's
-/// `tiler.target-profile.descriptor.v9`: the checked descriptor remains an
-/// internal feasibility component, while this v10 declaration encodes the same
-/// capability and numerical semantics plus exact dtype dispatch through one
-/// shared provenance table. A reader of an older domain therefore cannot
-/// mistake these bytes for the new grammar.
-const COMPLETE_PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.declaration.v10\0";
+/// This is a new grammar, not a continuation of feasibility's checked
+/// descriptor: that one remains an internal feasibility component, while this
+/// declaration encodes the same capability and numerical semantics plus exact
+/// dtype dispatch and synchronization realization through one shared provenance
+/// table. A reader of an older domain therefore cannot mistake these bytes for
+/// the new grammar.
+///
+/// `v11` appends the synchronization-realization rows. Every profile's bytes
+/// move, including a profile that declares none: the row family writes its
+/// domain separator and a count, so "this target says nothing about
+/// synchronization" becomes a recorded fact rather than an absence recoverable
+/// from bytes that never stated it. That is the point of the step — a `v10`
+/// declaration could not distinguish a target that had been asked from one that
+/// had not, and those admit different candidates.
+const COMPLETE_PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.declaration.v11\0";
 const PROFILE_SOURCE_DOMAIN: &[u8] = b"tiler.target-profile.fact-sources.v4\0";
 const DISPATCHABILITY_DOMAIN: &[u8] = b"tiler.target-profile.dtype-dispatchability.v2\0";
+/// Domain separating the synchronization-realization rows of one declaration.
+///
+/// A separator of its own, exactly as the dispatchability rows have one: the two
+/// grammars are independent, so a reader must not be able to consume one row
+/// family's bytes at the other's offset.
+const SYNCHRONIZATION_DOMAIN: &[u8] = b"tiler.target-profile.synchronization-realization.v1\0";
 
 /// Maximum byte length of one target-profile key.
 ///
@@ -670,6 +686,11 @@ impl TargetFactSource {
         let value =
             FactSourceProvenance::measured(phase, authority, validity, producer.0, contexts);
         Ok(Self(Arc::new(value)))
+    }
+
+    /// The shared structured provenance this source carries.
+    fn provenance(&self) -> Arc<FactSourceProvenance> {
+        Arc::clone(&self.0)
     }
 }
 
@@ -1537,6 +1558,7 @@ pub struct TargetProfileBuilder {
     queries: Vec<QuantitativeCapabilityQueryDeclaration>,
     scalar: Vec<ScalarHonourabilityDeclaration>,
     dispatchability: Vec<DTypeDispatchabilityFact>,
+    synchronization: Vec<DeclaredSynchronizationRealization>,
 }
 
 impl TargetProfileBuilder {
@@ -1551,7 +1573,56 @@ impl TargetProfileBuilder {
             queries: Vec::new(),
             scalar: Vec::new(),
             dispatchability: Vec::new(),
+            synchronization: Vec::new(),
         }
+    }
+
+    /// Declares whether this target realizes one *complete* synchronization
+    /// subject.
+    ///
+    /// The whole subject is one argument on purpose, and there is deliberately
+    /// no per-dimension spelling — no `declare_barrier_execution_scope`, no
+    /// `declare_fenced_spaces`. Each dimension is separately true of some
+    /// realization on some machine, so a profile able to state them
+    /// independently would let a caller's conjunction be satisfied by facts none
+    /// of which is about it. A target realizing two subjects declares two facts.
+    ///
+    /// The verdict is stated rather than implied by presence, so a measured
+    /// negative is recordable: an absent declaration is `Unknown` and rejects
+    /// before executable-frontier admission, while
+    /// [`SynchronizationSupport::Unrealizable`] is a typed refusal a caller can
+    /// act on.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TargetProfileBuildError`] when a fact for the same subject and
+    /// phase is already declared, or when the subject fences no memory domain —
+    /// a fence over nothing publishes nothing, so no handoff could consume it.
+    pub fn declare_synchronization_realization(
+        &mut self,
+        subject: SynchronizationSubject,
+        support: SynchronizationSupport,
+        source: &TargetFactSource,
+    ) -> Result<(), TargetProfileBuildError> {
+        let realization = support.realization();
+        if subject.fenced_spaces.is_empty() {
+            return Err(TargetProfileBuildError::VacuousSynchronizationSubject);
+        }
+        let source = source.provenance();
+        if self
+            .synchronization
+            .iter()
+            .any(|declared| declared.subject() == subject && declared.phase() == source.phase())
+        {
+            return Err(TargetProfileBuildError::DuplicateSynchronizationRealization);
+        }
+        self.synchronization
+            .push(DeclaredSynchronizationRealization::new(
+                subject,
+                realization,
+                source,
+            ));
+        Ok(())
     }
 
     fn governed() -> Self {
@@ -2681,7 +2752,7 @@ impl TargetProfileBuilder {
             .iter()
             .map(|declared| declared.attributed_to(identity.clone()))
             .collect();
-        let checked = CheckedTargetProfile::new_with_queries(
+        let checked = CheckedTargetProfile::new_complete(
             identity.clone(),
             self.quantitative.iter().map(fact).collect(),
             self.queries
@@ -2691,6 +2762,10 @@ impl TargetProfileBuilder {
                 })
                 .collect(),
             honourability,
+            self.synchronization
+                .iter()
+                .map(|declared| declared.clone().attributed_to(identity.clone()))
+                .collect(),
         )
         .map_err(TargetProfileBuildError::from)?;
 
@@ -2700,6 +2775,7 @@ impl TargetProfileBuilder {
             &self.queries,
             &self.scalar,
             &self.dispatchability,
+            &self.synchronization,
         );
         if descriptor.len() > MAX_TARGET_PROFILE_DESCRIPTOR_BYTES {
             return Err(TargetProfileBuildError::DescriptorTooLong {
@@ -2713,6 +2789,7 @@ impl TargetProfileBuilder {
             queries: _,
             scalar,
             dispatchability,
+            synchronization: _,
         } = self;
         Ok(TargetProfile {
             data: Arc::new(TargetProfileData {
@@ -2847,12 +2924,42 @@ impl ScalarSupport {
     }
 }
 
+/// Public synchronization-declaration disposition.
+///
+/// Two valued, and the negative is *statable*: a target that has been measured
+/// not to provide a realization records that, and a target that was never asked
+/// records nothing. Those are different states — a typed rejection and an
+/// `Unknown` — and a vocabulary with only a positive spelling would collapse
+/// them into one silence.
+///
+/// There is deliberately no "supported under a relaxation" spelling. A weaker
+/// realization is a *different subject*, so a target that provides one declares
+/// that subject; letting a caller's subject be satisfied by a neighbouring one
+/// is exactly the composition the atomic fact exists to prevent.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SynchronizationSupport {
+    /// The target realizes exactly the declared subject.
+    Realized,
+    /// The target explicitly does not realize it.
+    Unrealizable,
+}
+
+impl SynchronizationSupport {
+    const fn realization(self) -> SynchronizationRealization {
+        match self {
+            Self::Realized => SynchronizationRealization::Realized,
+            Self::Unrealizable => SynchronizationRealization::Unrealizable,
+        }
+    }
+}
+
 fn complete_descriptor(
     key: &TargetProfileKey,
     quantitative: &[QuantitativeCapabilityDeclaration],
     queries: &[QuantitativeCapabilityQueryDeclaration],
     scalar: &[ScalarHonourabilityDeclaration],
     dispatchability: &[DTypeDispatchabilityFact],
+    synchronization: &[DeclaredSynchronizationRealization],
 ) -> Vec<u8> {
     let mut bytes = Vec::new();
     push_slice(&mut bytes, COMPLETE_PROFILE_DESCRIPTOR_DOMAIN);
@@ -2863,6 +2970,11 @@ fn complete_descriptor(
         .map(|fact| fact.source.as_ref())
         .chain(scalar.iter().map(|declaration| declaration.source.as_ref()))
         .chain(dispatchability.iter().map(|fact| fact.source.as_ref()))
+        .chain(
+            synchronization
+                .iter()
+                .map(DeclaredSynchronizationRealization::source_ref),
+        )
         .map(|source| (source.canonical_bytes(), source))
         .collect();
     sources.sort_by(|left, right| left.0.cmp(&right.0));
@@ -2932,6 +3044,27 @@ fn complete_descriptor(
             .binary_search_by(|candidate| candidate.0.cmp(&source_bytes))
             .expect("every dispatch source was inserted into the source table");
         fact.encode(&mut bytes, source_index);
+    }
+    // The complete subject and its verdict, in the canonical order the builder
+    // sorted them into. Every dimension is encoded: two profiles differing only
+    // in which memory domain they fence declare different realizations and must
+    // not share a descriptor, which is the whole reason the fact is atomic.
+    push_slice(&mut bytes, SYNCHRONIZATION_DOMAIN);
+    push_len(&mut bytes, synchronization.len());
+    for declared in synchronization {
+        let subject = declared.subject();
+        bytes.push(subject.kind.tag());
+        bytes.push(subject.execution_scope.tag());
+        bytes.push(subject.visibility_scope.tag());
+        bytes.push(u8::from(subject.fenced_spaces.workgroup));
+        bytes.push(u8::from(subject.fenced_spaces.device));
+        bytes.push(subject.ordering.tag());
+        bytes.push(declared.realization().tag());
+        let source_bytes = declared.source_ref().canonical_bytes();
+        let source_index = sources
+            .binary_search_by(|candidate| candidate.0.cmp(&source_bytes))
+            .expect("every synchronization source was inserted into the source table");
+        encode_compact_index(&mut bytes, source_index);
     }
     bytes
 }
@@ -3231,6 +3364,17 @@ pub enum TargetProfileBuildError {
         /// Stable governed axis key.
         axis: &'static str,
     },
+    /// The same synchronization subject was declared twice at one phase.
+    ///
+    /// The verdict is deliberately not part of that key: a profile declaring one
+    /// subject both realized and unrealizable has stated a contradiction, and
+    /// admitting both rows would leave whichever the sort put first deciding.
+    DuplicateSynchronizationRealization,
+    /// A declared synchronization subject fences no memory domain.
+    ///
+    /// A fence over nothing publishes nothing, so no handoff could consume it and
+    /// a realization of one would be a permission for an operation with no effect.
+    VacuousSynchronizationSubject,
     /// The same numerical behaviour was declared twice at the same phase.
     DuplicateScalarDeclaration,
     /// A complete measured subnormal table would overlap an existing row.

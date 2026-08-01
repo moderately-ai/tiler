@@ -103,6 +103,14 @@ pub(crate) enum TagSubject {
     SectionDisposition,
     /// Whether one backend payload carries its content in this envelope.
     PayloadContent,
+    /// The operation kind of one entry's synchronization realization.
+    SynchronizationKind,
+    /// An invocation scope of one entry's synchronization realization.
+    SynchronizationScope,
+    /// The memory ordering of one entry's synchronization realization.
+    MemoryOrdering,
+    /// Whether one entry requires a synchronization realization at all.
+    SynchronizationPresence,
     /// A Boolean field encoded as one byte.
     Boolean,
 }

@@ -118,6 +118,17 @@ pub enum ScheduledRegionDiagnostic {
         /// The violated cross-invocation dataflow rule.
         rule: CooperativeTileRule,
     },
+    /// A schedule's synchronization authority violated one rule.
+    ///
+    /// Separate from [`Self::CooperativeTile`] because the two answer different
+    /// questions about one region: the tile rules say whether the dataflow is
+    /// well formed, and these say whether anything legally orders it. A producer
+    /// whose staging is correct but whose point sits at the wrong boundary needs
+    /// to be told the second, not the first.
+    Synchronization {
+        /// The violated synchronization rule.
+        rule: super::synchronization::SynchronizationRule,
+    },
 }
 
 /// One violated rule of a cooperative workgroup tile's dataflow.
@@ -222,6 +233,7 @@ impl ScheduledRegionDiagnostic {
             Self::NumericalOrAccessRefinement => "numerical-or-access-refinement",
             Self::ShapeProductOverflow => "shape-product-overflow",
             Self::CooperativeTile { rule } => rule.rule(),
+            Self::Synchronization { rule } => rule.rule(),
         }
     }
 }

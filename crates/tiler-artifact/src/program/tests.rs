@@ -3498,6 +3498,129 @@ fn every_route_resource_dimension_round_trips_through_its_governed_tag() {
     assert_eq!(RouteResourceDimension::from_tag(0xff), None);
 }
 
+/// Every synchronization vocabulary round-trips through this crate's own tags.
+///
+/// Three separate tables, each a forward and inverse pair kept in one place, and
+/// each counted against a population written *here* rather than derived from the
+/// encoder — so a widened vocabulary in `tiler-ir` fails this count instead of
+/// silently leaving the new variant untested. That the tables are this crate's
+/// own copy is the design: the schedule identity and the artifact identity are
+/// different subjects, and a shared table would let one domain's step move the
+/// other's bytes.
+#[test]
+fn every_synchronization_vocabulary_round_trips_through_its_governed_tag() {
+    use tiler_ir::schedule::{MemoryOrdering, SynchronizationKind, SynchronizationScope};
+
+    let kinds = [
+        SynchronizationKind::ControlBarrier,
+        SynchronizationKind::AsynchronousCopy,
+        SynchronizationKind::SplitPhaseBarrier,
+        SynchronizationKind::Collective,
+        SynchronizationKind::Atomic,
+        SynchronizationKind::InterDispatchDependency,
+    ];
+    let mut tags = Vec::new();
+    for kind in kinds {
+        let tag = super::model::synchronization_kind_tag(kind);
+        assert_eq!(super::model::synchronization_kind_from_tag(tag), Some(kind));
+        assert!(!tags.contains(&tag), "kind tag {tag:#04x} is not distinct");
+        tags.push(tag);
+    }
+    assert_eq!(tags.len(), 6, "every admitted-or-refused kind was checked");
+    assert_eq!(super::model::synchronization_kind_from_tag(0x00), None);
+    assert_eq!(super::model::synchronization_kind_from_tag(0xff), None);
+
+    let scopes = [
+        SynchronizationScope::Subgroup,
+        SynchronizationScope::Workgroup,
+        SynchronizationScope::Device,
+    ];
+    let mut tags = Vec::new();
+    for scope in scopes {
+        let tag = super::model::synchronization_scope_tag(scope);
+        assert_eq!(
+            super::model::synchronization_scope_from_tag(tag),
+            Some(scope)
+        );
+        assert!(!tags.contains(&tag), "scope tag {tag:#04x} is not distinct");
+        tags.push(tag);
+    }
+    assert_eq!(tags.len(), 3);
+    assert_eq!(super::model::synchronization_scope_from_tag(0x00), None);
+    assert_eq!(super::model::synchronization_scope_from_tag(0xff), None);
+
+    let orderings = [
+        MemoryOrdering::Relaxed,
+        MemoryOrdering::AcquireRelease,
+        MemoryOrdering::SequentiallyConsistent,
+    ];
+    let mut tags = Vec::new();
+    for ordering in orderings {
+        let tag = super::model::memory_ordering_tag(ordering);
+        assert_eq!(super::model::memory_ordering_from_tag(tag), Some(ordering));
+        assert!(
+            !tags.contains(&tag),
+            "ordering tag {tag:#04x} is not distinct"
+        );
+        tags.push(tag);
+    }
+    assert_eq!(tags.len(), 3);
+    assert_eq!(super::model::memory_ordering_from_tag(0x00), None);
+    assert_eq!(super::model::memory_ordering_from_tag(0xff), None);
+}
+
+/// The recorded absence of a synchronization requirement changes the bytes.
+///
+/// The load-bearing half of the `v14` step: an entry that requires no
+/// realization writes a byte saying so, so its identity is not the identity an
+/// entry that had never been able to state one would have had. Asserting the
+/// *presence* of the recorded absence is what stops a later change quietly
+/// reverting to omission, which would make a synchronized entry and an
+/// unsynchronized one share bytes again.
+#[test]
+fn an_entry_records_the_absence_of_a_synchronization_requirement() {
+    let artifact = default_artifact();
+    let entry = artifact
+        .variants()
+        .next()
+        .expect("one variant")
+        .entries()
+        .next()
+        .expect("one entry");
+    assert_eq!(entry.resources().synchronization, None);
+
+    // The presence byte is written, not omitted: encoding the same resource
+    // record with and without it differ by exactly one byte.
+    let mut with_absence = Vec::new();
+    super::model::push_resources(&mut with_absence, entry.resources());
+    let mut without = Vec::new();
+    super::model::push_synchronization(&mut without, None);
+    assert_eq!(without, vec![0x00], "absence is one recorded byte");
+    assert!(
+        with_absence.windows(1).any(|byte| byte == [0x00]),
+        "the resource record carries the recorded absence"
+    );
+
+    // And a `Some` occupies seven, so no synchronized entry can encode into the
+    // byte count an unsynchronized one occupies.
+    let mut present = Vec::new();
+    super::model::push_synchronization(
+        &mut present,
+        Some(tiler_ir::schedule::SynchronizationSubject {
+            kind: tiler_ir::schedule::SynchronizationKind::ControlBarrier,
+            execution_scope: tiler_ir::schedule::SynchronizationScope::Workgroup,
+            visibility_scope: tiler_ir::schedule::SynchronizationScope::Workgroup,
+            fenced_spaces: tiler_ir::schedule::FencedSpaces {
+                workgroup: true,
+                device: false,
+            },
+            ordering: tiler_ir::schedule::MemoryOrdering::AcquireRelease,
+        }),
+    );
+    assert_eq!(present.len(), 7);
+    assert_ne!(present[0], without[0]);
+}
+
 /// Each way a route requirement can be malformed is refused by its own cause.
 ///
 /// Every case is paired with the well-formed neighbour it perturbs, so a

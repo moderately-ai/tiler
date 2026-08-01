@@ -11,7 +11,7 @@
 //! only ever exist as a refinement of an already intrinsically verified
 //! schedule. There is no constructor that accepts an unverified region.
 
-use crate::schedule::{BoundsWitnessId, OwnershipWitnessId};
+use crate::schedule::{BoundsWitnessId, OwnershipWitnessId, PhaseId};
 use crate::schedule::{
     CanonicalScheduledRegionIdentity, NumericalRealization, RegionId, ResourceRequirements,
     ScheduledRegion, VerifiedScheduledRegion, subnormal_freedom_of,
@@ -21,7 +21,9 @@ use super::error::{
     KernelBuildError, KernelComponent, KernelDiagnostic, KernelEntityKind, KernelLimitKind,
     KernelVerificationError, invalid_handle,
 };
-use super::handles::{KernelBufferId, KernelBuilderId, KernelValueId, next_kernel_builder_id};
+use super::handles::{
+    KernelBufferId, KernelBuilderId, KernelStagingId, KernelValueId, next_kernel_builder_id,
+};
 use super::model::{
     BarrierSpec, BinaryOp, BlockData, BufferAccess, BufferParameter, Builtin, CompareOp, ConvertOp,
     KernelConstant, KernelData, KernelType, OperationData, OperationKind, PackedExtractOp,
@@ -200,25 +202,34 @@ impl KernelBuilder {
 
     /// Declares one workgroup staging allocation.
     ///
-    /// Deliberately returns no handle. A staging allocation is an allocation,
-    /// not an argument: nothing in the current operation vocabulary can address
-    /// one, because the staged load and store that would need a handle are
-    /// inseparable from the synchronization point that orders them, and no
-    /// schedule authorizes one. Handing out a handle here would reserve a
-    /// reference to storage no operation can reach.
+    /// Returns a handle in its own space, not a [`KernelBufferId`]: the two
+    /// index separate declaration lists, and a buffer parameter's position is
+    /// its argument-table ordinal while an allocation's is not an argument at
+    /// all. One handle type would let a staged load reach a buffer parameter by
+    /// ordinal coincidence.
     ///
     /// # Errors
     ///
     /// Returns [`KernelBuildError::StructuralLimit`] when the staging limit is
     /// exceeded.
-    pub fn declare_staging(&mut self, parameter: StagingParameter) -> Result<(), KernelBuildError> {
+    pub fn declare_staging(
+        &mut self,
+        parameter: StagingParameter,
+    ) -> Result<KernelStagingId, KernelBuildError> {
         limit(
             self.staging.len().saturating_add(1),
             MAX_KERNEL_STAGING,
             KernelLimitKind::Staging,
         )?;
+        let id = KernelStagingId::from_len(self.owner, self.staging.len()).ok_or(
+            KernelBuildError::StructuralLimit {
+                resource: KernelLimitKind::Staging,
+                actual: self.staging.len().saturating_add(1),
+                limit: MAX_KERNEL_STAGING,
+            },
+        )?;
         self.staging.push(parameter);
-        Ok(())
+        Ok(id)
     }
 
     /// Admits one governed launch builtin into the kernel signature.
@@ -490,7 +501,73 @@ impl KernelBuilder {
         .map(|_| ())
     }
 
+    /// Stores one element into a workgroup staging allocation.
+    ///
+    /// The phase names the tile phase whose declared staged write authorizes
+    /// this effect; whole-kernel verification resolves it against the region's
+    /// cooperative tile, so a producer cannot stage in a phase that declares no
+    /// write. There is no access-mode check here because a staging allocation is
+    /// both read and written by its workgroup, which is why it is not a
+    /// [`BufferParameter`] and why [`BufferAccess`] stayed a two-value
+    /// vocabulary.
+    ///
+    /// # Errors
+    ///
+    /// Returns a handle, scope, type, or structural-limit error.
+    pub fn staged_store(
+        &mut self,
+        staging: KernelStagingId,
+        offset: KernelValueId,
+        value: KernelValueId,
+        phase: PhaseId,
+    ) -> Result<(), KernelBuildError> {
+        let parameter = self.resolve_staging(staging)?;
+        expect_type(KernelType::Index, self.resolve(offset)?.value_type)?;
+        expect_type(parameter.element_type, self.resolve(value)?.value_type)?;
+        self.emit(
+            OperationKind::StagedStore {
+                staging: staging.index,
+                offset: offset.index,
+                value: value.index,
+                phase,
+            },
+            &[],
+            None,
+        )
+        .map(|_| ())
+    }
+
+    /// Loads one element from a workgroup staging allocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a handle, scope, type, or structural-limit error.
+    pub fn staged_load(
+        &mut self,
+        staging: KernelStagingId,
+        offset: KernelValueId,
+        phase: PhaseId,
+    ) -> Result<KernelValueId, KernelBuildError> {
+        let parameter = self.resolve_staging(staging)?;
+        expect_type(KernelType::Index, self.resolve(offset)?.value_type)?;
+        self.emit_single(
+            OperationKind::StagedLoad {
+                staging: staging.index,
+                offset: offset.index,
+                phase,
+            },
+            parameter.element_type,
+            None,
+        )
+    }
+
     /// Emits one synchronization point with explicitly named scopes and fences.
+    ///
+    /// The spec names the schedule synchronization point this barrier realizes.
+    /// Whole-kernel verification resolves that reference against the region's
+    /// cooperative tile and proves the declared spelling projects onto the
+    /// point's subject, so a barrier can never be a second authority over what
+    /// the schedule requires.
     ///
     /// # Errors
     ///
@@ -900,6 +977,16 @@ impl KernelBuilder {
             .get(id.as_usize())
             .copied()
             .ok_or_else(|| invalid_handle(KernelEntityKind::Buffer, false))
+    }
+
+    fn resolve_staging(&self, id: KernelStagingId) -> Result<StagingParameter, KernelBuildError> {
+        if id.owner != self.owner {
+            return Err(invalid_handle(KernelEntityKind::Staging, true));
+        }
+        self.staging
+            .get(id.as_usize())
+            .copied()
+            .ok_or_else(|| invalid_handle(KernelEntityKind::Staging, false))
     }
 }
 

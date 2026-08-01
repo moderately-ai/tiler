@@ -659,6 +659,26 @@ fn every_wired_authority_emits_its_typed_explain_records() {
         }),
         "a zero-synchronization program emitted an invented barrier capability fact"
     );
+    // The same absence one layer up. The retired barrier-count axis is gone, and
+    // the *realization* record that replaced it must not appear either: a program
+    // with no synchronization point derives no requirement, so the authority
+    // consults no fact and there is no check to report. A record saying
+    // "undeclared" would be the manufactured zero in a new spelling — it would
+    // read as a target limitation rather than as a question never asked.
+    assert!(
+        trace.records().iter().all(|record| {
+            !record
+                .rule()
+                .key()
+                .as_str()
+                .starts_with("target.synchronization")
+                && !matches!(
+                    record.event(),
+                    ExplainEvent::SynchronizationRealization { .. }
+                )
+        }),
+        "a zero-synchronization program emitted a synchronization-realization record"
+    );
     assert!(
         trace.records().iter().all(|record| {
             record.rule().key().as_str() != "target.device-address-bits"

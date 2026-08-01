@@ -446,6 +446,7 @@ pub(super) fn record_frontier(
             }
             crate::frontier::FrontierRejection::Infeasible { .. }
             | crate::frontier::FrontierRejection::Unhonourable { .. }
+            | crate::frontier::FrontierRejection::Unsynchronizable { .. }
             | crate::frontier::FrontierRejection::UnsupportedVariant { .. }
             | crate::frontier::FrontierRejection::NotApplicable { .. } => {}
         }
@@ -1034,6 +1035,19 @@ pub(super) fn record_target_rejection(
                 })
             })(),
         ),
+        PhysicalError::Synchronization { cause, .. } => (
+            format!("target.synchronization.{}", cause.subject().kind.key()),
+            (|| -> Result<_, CompileError> {
+                Ok(synchronization_event(
+                    cause.subject(),
+                    crate::explain::SynchronizationOutcome::Unrealizable {
+                        profile: crate::explain::SubjectKey::new(
+                            cause.fact().provenance().profile().key(),
+                        )?,
+                    },
+                )?)
+            })(),
+        ),
         PhysicalError::Intrinsic { .. }
         | PhysicalError::Refinement { .. }
         | PhysicalError::ShapeProductOverflow { .. } => {
@@ -1166,8 +1180,60 @@ pub(super) fn record_target_admissions(
                 record_cause(cause),
             )?;
         }
+        // One record for the one atomic realization, and **no record at all**
+        // when the region requires none. That absence is the canonical state, not
+        // an omission: a zero-synchronization program consulted no target fact,
+        // so a row saying so would be a check that never ran.
+        if let Some(realized) = admitted.synchronization() {
+            cause = explain_step(
+                (|| -> Result<_, CompileError> {
+                    let subject = explain.subject(SubjectKind::Region, &key)?;
+                    let event = synchronization_event(
+                        realized.subject(),
+                        crate::explain::SynchronizationOutcome::Realized {
+                            profile: crate::explain::SubjectKey::new(
+                                realized.fact().provenance().profile().key(),
+                            )?,
+                        },
+                    )?;
+                    Ok(explain.push_detail(
+                        RuleRef::builtin(format!(
+                            "target.synchronization.{}",
+                            realized.subject().kind.key()
+                        ))?,
+                        vec![subject],
+                        event,
+                        vec![cause],
+                    )?)
+                })(),
+                ExplainStage::TargetFeasibility,
+                SubjectKind::Region,
+                &key,
+                record_cause(cause),
+            )?;
+        }
     }
     Ok(cause)
+}
+
+/// Builds the one explain record for a complete synchronization subject.
+///
+/// One helper for both the admitted and the refused path, so the rendered
+/// subject cannot differ between them — a reader comparing a refusal against a
+/// later admission is comparing the same six fields spelled the same way.
+fn synchronization_event(
+    subject: tiler_ir::schedule::SynchronizationSubject,
+    outcome: crate::explain::SynchronizationOutcome,
+) -> Result<ExplainEvent, ExplainError> {
+    Ok(ExplainEvent::SynchronizationRealization {
+        kind: ReasonCode::new(subject.kind.key())?,
+        execution_scope: ReasonCode::new(subject.execution_scope.key())?,
+        visibility_scope: ReasonCode::new(subject.visibility_scope.key())?,
+        fences_workgroup: subject.fenced_spaces.workgroup,
+        fences_device: subject.fenced_spaces.device,
+        ordering: ReasonCode::new(subject.ordering.key())?,
+        outcome,
+    })
 }
 
 pub(super) fn target_quantity(rule: &str, value: u64) -> Result<Quantity, ExplainError> {
@@ -1576,6 +1642,7 @@ mod tests {
                 threads_per_workgroup: 1,
                 local_memory_bytes: 0,
                 requires_device_memory: true,
+                synchronization: None,
                 input_subnormals: realization.input_subnormals,
                 result_subnormals: realization.result_subnormals,
                 contraction: realization.contraction,

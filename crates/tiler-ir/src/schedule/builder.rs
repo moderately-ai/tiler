@@ -9,7 +9,7 @@
 //! agreement, and zero-domain behaviour. No later cost or feasibility query can
 //! repair a schedule this verifier rejects.
 
-use super::cooperative::{CooperativeTile, ParticipantRange, StagedSpan};
+use super::cooperative::{CooperativeTile, ParticipantRange, StagedSpan, VisibilityEdge};
 use super::error::{
     CooperativeTileRule, ScheduleBuildError, ScheduleComponent, ScheduleLimitKind,
     ScheduledRegionBuildError, ScheduledRegionDiagnostic,
@@ -24,9 +24,11 @@ use super::model::{
     partial_reduction_axis, partial_reduction_shape,
 };
 use super::numerics::{ArithmeticType, ExceptionalValueAssumption, NumericalRealization};
+use super::synchronization::{ConvergenceEvidence, SynchronizationRule, required_subject};
 use super::{
     MAX_COOPERATIVE_PARTICIPANTS, MAX_COOPERATIVE_PHASE_ACCESSES, MAX_COOPERATIVE_PHASES,
-    MAX_COOPERATIVE_STAGING_SLOTS, MAX_SCHEDULE_ACCESSES, MAX_SCHEDULE_BOUNDS_PROOFS,
+    MAX_COOPERATIVE_STAGING_SLOTS, MAX_COOPERATIVE_SYNCHRONIZATION_POINTS, MAX_SCHEDULE_ACCESSES,
+    MAX_SCHEDULE_BOUNDS_PROOFS,
 };
 use crate::semantic::{
     STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
@@ -1156,10 +1158,135 @@ fn verify_cooperative_tile(
         }
     }
 
-    if tile.visibility_edges().is_empty() {
+    let edges = tile.visibility_edges();
+    if edges.is_empty() {
         return Err(cooperative(CooperativeTileRule::NoVisibilityEdge));
     }
+    verify_synchronization(tile, &edges)
+}
+
+/// Verifies the synchronization authority that orders one tile's handoffs.
+///
+/// Runs after the dataflow rules and reads their results, which is why it takes
+/// the derived edges rather than recomputing them: the edges are the obligation,
+/// and this decides whether anything legally discharges each one. Every rule is
+/// stated against a fact a point *declares*, so each is separately perturbable
+/// — the model can express an unadmitted kind, a boundary that is not a program
+/// point, a narrowed participant set, a weaker ordering, or a convergence claim
+/// with nothing behind it.
+fn verify_synchronization(
+    tile: &CooperativeTile,
+    edges: &[VisibilityEdge],
+) -> Result<(), ScheduledRegionDiagnostic> {
+    let participants = tile.coordinates.participants;
+    // A tile whose participants are one invocation stages values it reads back
+    // itself: program order already orders the handoff, so a point there is the
+    // semantically redundant barrier this authority exists to eliminate.
+    if participants.count < 2 {
+        return Err(synchronization(SynchronizationRule::SingleParticipant));
+    }
+    if tile.synchronization.len() > MAX_COOPERATIVE_SYNCHRONIZATION_POINTS {
+        return Err(synchronization(SynchronizationRule::StructuralLimit));
+    }
+    if tile
+        .synchronization
+        .iter()
+        .enumerate()
+        .any(|(position, point)| u32::try_from(position) != Ok(point.id.get()))
+    {
+        return Err(synchronization(SynchronizationRule::PointSequence));
+    }
+
+    // The one realization every point of this tile must state. Derived from the
+    // edges rather than read from any point, so the points are checked against
+    // the dependency instead of against each other.
+    let required = required_subject(edges)
+        .ok_or_else(|| synchronization(SynchronizationRule::UndischargedVisibility))?;
+    let phase_count = u32::try_from(tile.phases.len())
+        .map_err(|_| cooperative(CooperativeTileRule::StructuralLimit))?;
+
+    for point in &tile.synchronization {
+        // The kind is checked first and separately, because a point naming an
+        // unadmitted construct fails for a reason none of the dimension checks
+        // below would name: its contract is undefined here, so comparing its
+        // scopes against a control barrier's would be comparing the wrong thing.
+        if point.subject.kind != required.kind {
+            return Err(synchronization(SynchronizationRule::UnadmittedKind));
+        }
+        let preceding = point.placement.preceding();
+        let following = point.placement.following();
+        // A real program point sits between two consecutive phases. A "boundary"
+        // spanning a phase is not one: that phase's own effects would fall on an
+        // undetermined side of the fence.
+        if following.get() >= phase_count || preceding.get().checked_add(1) != Some(following.get())
+        {
+            return Err(synchronization(SynchronizationRule::Placement));
+        }
+        if point.participants != participants {
+            return Err(synchronization(SynchronizationRule::ParticipantSet));
+        }
+        if point.subject.execution_scope != required.execution_scope {
+            return Err(synchronization(SynchronizationRule::ExecutionScope));
+        }
+        if point.subject.visibility_scope != required.visibility_scope {
+            return Err(synchronization(SynchronizationRule::VisibilityScope));
+        }
+        if point.subject.fenced_spaces != required.fenced_spaces {
+            return Err(synchronization(SynchronizationRule::FencedSpaces));
+        }
+        if point.subject.ordering != required.ordering {
+            return Err(synchronization(SynchronizationRule::Ordering));
+        }
+        // The evidence class, then the derivation it names. A caller's assertion
+        // is refused whatever the tile looks like; the derived class is only as
+        // good as the re-derivation below, which is why both run.
+        if point.convergence != ConvergenceEvidence::EveryParticipantReachesThePoint {
+            return Err(synchronization(SynchronizationRule::ConvergenceEvidence));
+        }
+        if !phases_are_reached_by(tile, &[preceding, following], participants) {
+            return Err(synchronization(SynchronizationRule::Convergence));
+        }
+        // A point that orders nothing consumes a target authority for an
+        // operation the program has no reason to perform.
+        if !edges.iter().any(|edge| point.discharges(*edge)) {
+            return Err(synchronization(SynchronizationRule::RedundantPoint));
+        }
+    }
+
+    // Exactly one point per edge. Zero leaves a race; two are two schedules
+    // spelling one realization, which would give one program two identities.
+    for edge in edges {
+        match tile.discharging_points(*edge).len() {
+            1 => {}
+            0 => return Err(synchronization(SynchronizationRule::UndischargedVisibility)),
+            _ => return Err(synchronization(SynchronizationRule::RedundantPoint)),
+        }
+    }
     Ok(())
+}
+
+/// Returns whether every named phase is reached by exactly `participants`.
+///
+/// The convergence derivation, written over the tile's own per-phase
+/// participation rather than assumed from the tile-wide rule that currently
+/// implies it. Keeping it explicit is what lets a phase-participation change
+/// break this check rather than silently leaving a point convergent by
+/// inheritance.
+fn phases_are_reached_by(
+    tile: &CooperativeTile,
+    phases: &[super::handles::PhaseId],
+    participants: ParticipantRange,
+) -> bool {
+    phases.iter().all(|id| {
+        tile.phases
+            .iter()
+            .find(|phase| phase.id == *id)
+            .is_some_and(|phase| phase.participation == participants)
+    })
+}
+
+const fn synchronization(rule: SynchronizationRule) -> ScheduledRegionDiagnostic {
+    ScheduledRegionDiagnostic::Synchronization { rule }
 }
 
 /// Resolves one staged access's allocation, refusing an ordinal the tile lacks.
@@ -1359,11 +1486,17 @@ mod tests {
         ParticipantRange, StagedElement, StagedRead, StagedSpan, StagedWrite, VisibilityEdge,
         WorkgroupStaging,
     };
-    use crate::schedule::handles::{BoundsWitnessId, OwnershipWitnessId, PhaseId, StagingId};
+    use crate::schedule::handles::{
+        BoundsWitnessId, OwnershipWitnessId, PhaseId, StagingId, SyncPointId,
+    };
     use crate::schedule::model::{ContributorOrder, ContributorPartition, LaunchPlan};
     use crate::schedule::numerics::{
         ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
         SubnormalMode, ValueDomainProvenance,
+    };
+    use crate::schedule::synchronization::{
+        FencedSpaces, MemoryOrdering, SynchronizationKind, SynchronizationPlacement,
+        SynchronizationPoint, SynchronizationScope, SynchronizationSubject,
     };
     use crate::shape::{Axis, Shape};
 
@@ -2760,9 +2893,37 @@ mod tests {
         }
     }
 
+    /// The point that orders the fixture's one handoff.
+    ///
+    /// Every field is the value the tile's own dependency derives, so a
+    /// perturbation test changes exactly one of them and the rejection names the
+    /// dimension it changed.
+    fn tile_point() -> SynchronizationPoint {
+        SynchronizationPoint {
+            id: SyncPointId::FIRST,
+            subject: SynchronizationSubject {
+                kind: SynchronizationKind::ControlBarrier,
+                execution_scope: SynchronizationScope::Workgroup,
+                visibility_scope: SynchronizationScope::Workgroup,
+                fenced_spaces: FencedSpaces {
+                    workgroup: true,
+                    device: false,
+                },
+                ordering: MemoryOrdering::AcquireRelease,
+            },
+            placement: SynchronizationPlacement::PhaseBoundary {
+                preceding: PhaseId::FIRST,
+                following: PhaseId::new(1),
+            },
+            participants: ParticipantRange { first: 0, count: 3 },
+            convergence: ConvergenceEvidence::EveryParticipantReachesThePoint,
+        }
+    }
+
     /// The well-formed tile: write your own slot, then read the whole set.
     fn cooperative_tile_fixture() -> CooperativeTile {
         CooperativeTile {
+            synchronization: vec![tile_point()],
             coordinates: LocalCoordinates {
                 source: LocalCoordinateSource::LocalLinearInvocation,
                 participants: ParticipantRange { first: 0, count: 3 },
@@ -2801,8 +2962,15 @@ mod tests {
     }
 
     fn cooperative_topology(tile: CooperativeTile) -> ReductionTopology {
+        cooperative_topology_with(tile, SPLIT)
+    }
+
+    fn cooperative_topology_with(
+        tile: CooperativeTile,
+        partition: ContributorPartition,
+    ) -> ReductionTopology {
         ReductionTopology::CooperativeWorkgroup {
-            partition: SPLIT,
+            partition,
             tile,
             axes: vec![Axis::new(1)],
             order: ContributorOrder::OriginalAxisLexicographic,
@@ -2819,12 +2987,20 @@ mod tests {
     /// appended — the same layout a partial pass uses, which is what keeps the
     /// participant ordinal the innermost coordinate of the invocation index.
     fn cooperative_builder(tile: CooperativeTile) -> ScheduledRegionBuilder {
-        let participants = tile.coordinates.participants.count;
+        cooperative_builder_with(tile, SPLIT)
+    }
+
+    /// The same fixture over an explicit split, for the widths `SPLIT` fixes.
+    fn cooperative_builder_with(
+        tile: CooperativeTile,
+        split: ContributorPartition,
+    ) -> ScheduledRegionBuilder {
+        let participants = split.partitions;
         let work_items = 2 * participants;
         let mut builder = ScheduledRegionBuilder::new(RegionId::new(4));
         builder
             .iteration_shape(
-                partial_reduction_shape(&Shape::from_dims([2]), SPLIT)
+                partial_reduction_shape(&Shape::from_dims([2]), split)
                     .expect("a rank-two cooperative domain is within the governed bound"),
             )
             .unwrap();
@@ -2896,7 +3072,7 @@ mod tests {
         builder
             .schedule(KernelSchedule {
                 threads_per_workgroup: threads,
-                reduction: cooperative_topology(tile),
+                reduction: cooperative_topology_with(tile, split),
                 launch: LaunchPlan {
                     grid_threads: work_items,
                     threads_per_workgroup: threads,
@@ -2957,6 +3133,221 @@ mod tests {
             verified.requirements().permutation,
             NumericalPermission::Forbidden
         );
+    }
+
+    /// The verified tile derives exactly one atomic synchronization requirement.
+    ///
+    /// One value, not one per point and not five independent dimensions: a
+    /// region requires one realization however many times it performs it, and a
+    /// target fact must equal the whole subject rather than any part of it.
+    #[test]
+    fn a_synchronized_tile_derives_one_atomic_realization_requirement() {
+        let verified = cooperative_builder(cooperative_tile_fixture())
+            .build()
+            .expect("the cooperative fixture verifies");
+        assert_eq!(
+            verified.requirements().synchronization,
+            Some(SynchronizationSubject {
+                kind: SynchronizationKind::ControlBarrier,
+                execution_scope: SynchronizationScope::Workgroup,
+                visibility_scope: SynchronizationScope::Workgroup,
+                fenced_spaces: FencedSpaces {
+                    workgroup: true,
+                    device: false,
+                },
+                ordering: MemoryOrdering::AcquireRelease,
+            })
+        );
+        // The point discharges the tile's one edge, and the derivation agrees
+        // with the declaration rather than restating it.
+        let tile = cooperative_tile(&verified.region().schedule.reduction)
+            .expect("the topology carries its tile");
+        let [edge] = tile.visibility_edges()[..] else {
+            panic!("the fixture states exactly one handoff")
+        };
+        assert_eq!(tile.discharging_points(edge).len(), 1);
+    }
+
+    /// A schedule with no cooperative tile derives no synchronization at all.
+    ///
+    /// Absence rather than a zero: nothing downstream may read this as "zero
+    /// barriers required", because there is no requirement to read.
+    #[test]
+    fn a_zero_synchronization_schedule_derives_no_requirement() {
+        let verified = pointwise_builder(RegionId::new(0), Shape::from_dims([2, 3]), 6)
+            .build()
+            .expect("the pointwise fixture verifies");
+        assert_eq!(verified.requirements().synchronization, None);
+    }
+
+    /// Every synchronization rule of the schedule verifier, driven once each.
+    ///
+    /// Each row changes exactly one fact of the well-formed fixture, so the
+    /// diagnostic names the dimension the change touched. The subject rows are
+    /// what make the target fact atomic rather than composable: a schedule
+    /// cannot state four correct dimensions and one wrong one and be admitted.
+    #[test]
+    fn each_schedule_synchronization_rule_refuses_its_own_defect() {
+        /// One named perturbation of the fixture tile and the rule it violates.
+        type Perturbation = (
+            &'static str,
+            Box<dyn Fn(&mut CooperativeTile)>,
+            SynchronizationRule,
+        );
+        let edits: Vec<Perturbation> = vec![
+            (
+                "an unadmitted operation kind",
+                Box::new(|tile: &mut CooperativeTile| {
+                    tile.synchronization[0].subject.kind = SynchronizationKind::Collective;
+                }),
+                SynchronizationRule::UnadmittedKind,
+            ),
+            (
+                "a boundary that is not a program point",
+                Box::new(|tile: &mut CooperativeTile| {
+                    tile.synchronization[0].placement = SynchronizationPlacement::PhaseBoundary {
+                        preceding: PhaseId::new(1),
+                        following: PhaseId::new(2),
+                    };
+                }),
+                SynchronizationRule::Placement,
+            ),
+            (
+                "a participant set narrower than the tile's",
+                Box::new(|tile: &mut CooperativeTile| {
+                    tile.synchronization[0].participants = ParticipantRange { first: 0, count: 2 };
+                }),
+                SynchronizationRule::ParticipantSet,
+            ),
+            (
+                "an arrival scope the handoff does not require",
+                Box::new(|tile: &mut CooperativeTile| {
+                    tile.synchronization[0].subject.execution_scope =
+                        SynchronizationScope::Subgroup;
+                }),
+                SynchronizationRule::ExecutionScope,
+            ),
+            (
+                "a publication scope the handoff does not require",
+                Box::new(|tile: &mut CooperativeTile| {
+                    tile.synchronization[0].subject.visibility_scope = SynchronizationScope::Device;
+                }),
+                SynchronizationRule::VisibilityScope,
+            ),
+            (
+                "a fence over a memory domain the handoff does not cross",
+                Box::new(|tile: &mut CooperativeTile| {
+                    tile.synchronization[0].subject.fenced_spaces.device = true;
+                }),
+                SynchronizationRule::FencedSpaces,
+            ),
+            (
+                "an ordering that establishes no happens-before edge",
+                Box::new(|tile: &mut CooperativeTile| {
+                    tile.synchronization[0].subject.ordering = MemoryOrdering::Relaxed;
+                }),
+                SynchronizationRule::Ordering,
+            ),
+            (
+                "convergence asserted rather than derived",
+                Box::new(|tile: &mut CooperativeTile| {
+                    tile.synchronization[0].convergence = ConvergenceEvidence::CallerAsserted;
+                }),
+                SynchronizationRule::ConvergenceEvidence,
+            ),
+            (
+                "no point at all for a declared handoff",
+                Box::new(|tile: &mut CooperativeTile| {
+                    tile.synchronization.clear();
+                }),
+                SynchronizationRule::UndischargedVisibility,
+            ),
+            (
+                "two points over one handoff",
+                Box::new(|tile: &mut CooperativeTile| {
+                    let mut second = tile.synchronization[0];
+                    second.id = SyncPointId::new(1);
+                    tile.synchronization.push(second);
+                }),
+                SynchronizationRule::RedundantPoint,
+            ),
+            (
+                "point ordinals that are not the dense ascending run",
+                Box::new(|tile: &mut CooperativeTile| {
+                    tile.synchronization[0].id = SyncPointId::new(1);
+                }),
+                SynchronizationRule::PointSequence,
+            ),
+        ];
+        for (name, edit, expected) in edits {
+            assert_eq!(
+                cooperative_rejection(perturbed(|tile| edit(tile))),
+                ScheduledRegionDiagnostic::Synchronization { rule: expected },
+                "{name} was admitted"
+            );
+        }
+    }
+
+    /// A single-participant tile's handoff is within one invocation.
+    ///
+    /// The semantically redundant barrier this authority exists to eliminate:
+    /// program order already orders a value an invocation stages and reads back
+    /// itself, so a point there consumes a target authority for nothing.
+    #[test]
+    fn a_single_participant_tile_cannot_carry_a_synchronization_point() {
+        let mut tile = cooperative_tile_fixture();
+        tile.coordinates.participants = ParticipantRange { first: 0, count: 1 };
+        for phase in &mut tile.phases {
+            phase.participation = ParticipantRange { first: 0, count: 1 };
+        }
+        tile.staging[0].slots = 1;
+        tile.phases[1].reads[0].span.count = 1;
+        tile.synchronization[0].participants = ParticipantRange { first: 0, count: 1 };
+        let builder = cooperative_builder_with(
+            tile,
+            ContributorPartition {
+                partitions: 1,
+                contributors_per_partition: 6,
+            },
+        );
+        assert_eq!(
+            cooperative_rejection(builder),
+            ScheduledRegionDiagnostic::Synchronization {
+                rule: SynchronizationRule::SingleParticipant,
+            }
+        );
+    }
+
+    /// The convergence derivation refuses a phase not every participant reaches.
+    ///
+    /// Driven against the derivation directly, and the reason is stated rather
+    /// than hidden: the tile's own per-phase participation rule refuses a
+    /// non-uniform phase first, so this rule cannot fire end to end today. It is
+    /// re-derived here anyway rather than inherited, so a later relaxation of
+    /// that tile rule breaks this check instead of silently leaving every point
+    /// convergent by inheritance.
+    #[test]
+    fn the_convergence_derivation_refuses_a_phase_a_participant_skips() {
+        let mut tile = cooperative_tile_fixture();
+        let participants = tile.coordinates.participants;
+        assert!(phases_are_reached_by(
+            &tile,
+            &[PhaseId::FIRST, PhaseId::new(1)],
+            participants
+        ));
+        tile.phases[1].participation = ParticipantRange { first: 0, count: 2 };
+        assert!(!phases_are_reached_by(
+            &tile,
+            &[PhaseId::FIRST, PhaseId::new(1)],
+            participants
+        ));
+        // And a phase the tile does not have is not reached either, which is
+        // what stops a placement naming one from reading as convergent.
+        assert!(!phases_are_reached_by(
+            &tile,
+            &[PhaseId::new(7)],
+            participants
+        ));
     }
 
     /// Two participants writing one slot is a race the tile can state.

@@ -516,7 +516,9 @@ impl From<PhysicalError> for CompileError {
             | PhysicalError::ShapeProductOverflow { .. } => {
                 Self::InvalidCompilerOutput(CompilerOutputError::Physical(value))
             }
-            PhysicalError::Target { .. } | PhysicalError::Numerical { .. } => {
+            PhysicalError::Target { .. }
+            | PhysicalError::Numerical { .. }
+            | PhysicalError::Synchronization { .. } => {
                 Self::NoFeasiblePlan(NoFeasiblePlanError::Physical(value))
             }
         }
@@ -1434,9 +1436,9 @@ const fn physical_error_stage(error: &PhysicalError) -> ExplainStage {
         // not a numerical-legality one: `NumericalLegality` is where a *rewrite*
         // is judged against the contract, and this is the target being judged
         // against the same contract.
-        PhysicalError::Target { .. } | PhysicalError::Numerical { .. } => {
-            ExplainStage::TargetFeasibility
-        }
+        PhysicalError::Target { .. }
+        | PhysicalError::Numerical { .. }
+        | PhysicalError::Synchronization { .. } => ExplainStage::TargetFeasibility,
         PhysicalError::Intrinsic { .. } | PhysicalError::ShapeProductOverflow { .. } => {
             ExplainStage::IntrinsicScheduling
         }
@@ -1516,6 +1518,10 @@ fn target_axis(error: &PhysicalError) -> &'static str {
         | PhysicalError::Intrinsic { rule, .. }
         | PhysicalError::Refinement { rule, .. } => rule,
         PhysicalError::Numerical { cause, .. } => cause.dimension().key(),
+        // The operation kind, not the whole subject: this yields one stable rule
+        // key for a presentation index, and the subject a caller acts on travels
+        // on the error itself rather than being flattened into a string.
+        PhysicalError::Synchronization { cause, .. } => cause.subject().kind.key(),
         PhysicalError::ShapeProductOverflow { .. } => "shape-product-overflow",
     }
 }
@@ -1742,6 +1748,23 @@ fn failure_source_details(error: &CompileError) -> (String, SubjectKind, String)
                 "{}-{}",
                 cause.dimension().key().replace('.', "-"),
                 cause.required().key()
+            ),
+            SubjectKind::Region,
+            format!("failed-region:{}", region.get()),
+        ),
+        // The reason names the refused operation kind and the scope that had to
+        // arrive, which is the pair a reader can act on: a different strategy
+        // needs a different arrival scope, and a bound is not what changed.
+        CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(
+            PhysicalError::Synchronization { cause, region },
+        ))
+        | CompileError::InvalidCompilerOutput(CompilerOutputError::Physical(
+            PhysicalError::Synchronization { cause, region },
+        )) => (
+            format!(
+                "synchronization-{}-{}",
+                cause.subject().kind.key(),
+                cause.subject().execution_scope.key()
             ),
             SubjectKind::Region,
             format!("failed-region:{}", region.get()),

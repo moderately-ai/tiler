@@ -169,7 +169,10 @@ pub use error::{
     KernelBuildError, KernelComponent, KernelDiagnostic, KernelEntityKind, KernelLimitKind,
     KernelLoweringError, KernelVerificationError, VerifiedKernelHandleError,
 };
-pub use handles::{KernelBufferId, KernelValueId, VerifiedBufferId, VerifiedValueId};
+pub use handles::{
+    KernelBufferId, KernelStagingId, KernelValueId, VerifiedBufferId, VerifiedStagingId,
+    VerifiedValueId,
+};
 pub use lower::lower_scheduled_region;
 pub use model::{
     AddressSpace, BarrierOrdering, BarrierSpec, BinaryOp, BlockRef, BufferAccess, BufferParameter,

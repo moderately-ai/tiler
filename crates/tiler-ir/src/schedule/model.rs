@@ -20,6 +20,7 @@ use super::numerics::{
     NumericalRealization, SubnormalFreedom, SubnormalMode, ValueDomainProvenance,
 };
 use super::pointwise::{PointwiseF32Expression, PointwiseF32Node};
+use super::synchronization::{SynchronizationPoint, SynchronizationSubject, required_subject};
 
 /// The role a boundary tensor plays for one scheduled region.
 ///
@@ -777,6 +778,23 @@ pub struct ResourceRequirements {
     pub local_memory_bytes: u64,
     /// Whether the region requires a device address space.
     pub requires_device_memory: bool,
+    /// The synchronization realization the region's schedule requires, if any.
+    ///
+    /// `None` is the canonical absence a schedule with no synchronization point
+    /// derives, and it is not a zero: it emits no requirement, no target query,
+    /// no explain row, and no artifact field, so a target that declares nothing
+    /// about synchronization is *feasible* for such a region rather than merely
+    /// untested. A `Some` is the complete
+    /// [`SynchronizationSubject`](super::SynchronizationSubject) one atomic
+    /// target fact must equal; it is deliberately not five independent
+    /// dimensions, because each of them is separately true of some realization
+    /// and their conjunction is what the region actually needs.
+    ///
+    /// One value rather than one per point: every point of a region is checked
+    /// against the same derivation, so a region requires one realization however
+    /// many times it performs it. A count of points would be the barrier-count
+    /// capacity `replace-or-justify-the-barrier-count-axis` retired.
+    pub synchronization: Option<SynchronizationSubject>,
     /// Subnormal input handling the region's declared realization requires.
     pub input_subnormals: SubnormalMode,
     /// Subnormal result handling the region's declared realization requires.
@@ -967,6 +985,22 @@ pub fn cooperative_local_memory_bytes(reduction: &ReductionTopology) -> Option<u
     cooperative_tile(reduction).and_then(CooperativeTile::local_memory_bytes)
 }
 
+/// Returns the synchronization realization one reduction topology requires.
+///
+/// `None` for every topology that stages nothing across invocations, which is
+/// the canonical absence: no requirement, no target query, no explain row, no
+/// artifact field. A cooperative tile's answer is derived from the visibility
+/// edges its own phases and staged accesses determine, so a producer cannot
+/// widen or narrow it by editing the points it declared — the intrinsic verifier
+/// requires every declared point to state exactly this subject.
+#[must_use]
+pub fn cooperative_synchronization_requirement(
+    reduction: &ReductionTopology,
+) -> Option<SynchronizationSubject> {
+    let tile = cooperative_tile(reduction)?;
+    required_subject(&tile.visibility_edges())
+}
+
 /// Returns whether `axes` is a strictly ascending in-range axis set.
 #[must_use]
 pub fn axes_are_canonical(axes: &[Axis], rank: usize) -> bool {
@@ -1020,10 +1054,11 @@ pub fn contributor_count(axes: &[Axis], access: &LogicalAccess) -> Result<u64, C
 ///
 /// Bindings follow the region's access count; the launch fixes the thread
 /// count; local memory is the workgroup storage a cooperative tile allocates and
-/// zero for every topology that stages nothing. No synchronization requirement
-/// is derived, because none is authorized: a cooperative tile records the
-/// visibility dependency its staging creates without asserting that anything
-/// discharges it. The numerical
+/// zero for every topology that stages nothing. The synchronization requirement
+/// is derived from the *visibility edges* a cooperative tile carries rather than
+/// from the points a producer declared, so it is one derivation the intrinsic
+/// verifier has already proved every declared point equal to — and a region with
+/// no edges derives `None`, which is an absence rather than a zero. The numerical
 /// realization is carried forward whole rather than reduced to a predicate:
 /// deriving one bit here would decide, inside intrinsic verification, which
 /// dimensions a target is allowed to be asked about, and that decision belongs
@@ -1040,6 +1075,7 @@ pub(super) fn derive_requirements(region: &ScheduledRegion) -> ResourceRequireme
         threads_per_workgroup: region.schedule.threads_per_workgroup,
         local_memory_bytes: cooperative_local_memory_bytes(&region.schedule.reduction).unwrap_or(0),
         requires_device_memory: true,
+        synchronization: cooperative_synchronization_requirement(&region.schedule.reduction),
         input_subnormals: region.index.numerical.input_subnormals,
         result_subnormals: region.index.numerical.result_subnormals,
         contraction: region.index.numerical.contraction,
@@ -1515,12 +1551,53 @@ fn push_cooperative_phase(bytes: &mut Vec<u8>, phase: &CooperativePhase) {
     }
 }
 
+/// Encodes the complete realization one synchronization point requires.
+///
+/// Five tag bytes plus the two fence flags, in the field order
+/// [`SynchronizationSubject`] declares. Every enumeration goes through its own
+/// `tag` method, so widening one is a build error at that method rather than a
+/// silent renumbering here.
+fn push_synchronization_subject(bytes: &mut Vec<u8>, subject: SynchronizationSubject) {
+    bytes.push(subject.kind.tag());
+    bytes.push(subject.execution_scope.tag());
+    bytes.push(subject.visibility_scope.tag());
+    bytes.push(u8::from(subject.fenced_spaces.workgroup));
+    bytes.push(u8::from(subject.fenced_spaces.device));
+    bytes.push(subject.ordering.tag());
+}
+
+/// Encodes one synchronization point of a cooperative tile.
+///
+/// The discharged edge set is deliberately *not* encoded, for the reason the
+/// visibility edges are not: it is a total function of the placement and the
+/// phases already written, so encoding it would add bytes no two distinguishable
+/// tiles differ in.
+fn push_synchronization_point(bytes: &mut Vec<u8>, point: &SynchronizationPoint) {
+    bytes.extend_from_slice(&point.id.get().to_be_bytes());
+    push_synchronization_subject(bytes, point.subject);
+    bytes.push(point.placement.tag());
+    bytes.extend_from_slice(&point.placement.preceding().get().to_be_bytes());
+    bytes.extend_from_slice(&point.placement.following().get().to_be_bytes());
+    push_participant_range(bytes, point.participants);
+    bytes.push(point.convergence.tag());
+}
+
 /// Encodes one cooperative tile's complete cross-invocation dataflow.
 ///
 /// The visibility edges are deliberately *not* encoded: they are a total
 /// function of the phases and staged accesses already written here, so encoding
 /// them would add bytes no two distinguishable tiles differ in — and would give
 /// a producer a second place to state a fact the verifier derives.
+///
+/// The synchronization points *are* encoded, and the distinction is the whole
+/// difference between a derivation and an authority: which boundary a producer
+/// chose to order a handoff at is a physical decision with more than one legal
+/// answer, so two tiles differing only in it are two schedules. They are written
+/// last inside this payload, ahead of the topology's remaining fields, which
+/// shifts no earlier subject's bytes: the payload is reachable only from the
+/// appended `0x35` topology tag, and no cooperative region has ever been
+/// encodable into a retained identity — the structured-kernel verifier refused
+/// every one before a kernel, program, artifact, or cache entry could hold it.
 fn push_cooperative_tile(bytes: &mut Vec<u8>, tile: &CooperativeTile) {
     let LocalCoordinates {
         source,
@@ -1535,6 +1612,10 @@ fn push_cooperative_tile(bytes: &mut Vec<u8>, tile: &CooperativeTile) {
     push_len(bytes, tile.phases.len());
     for phase in &tile.phases {
         push_cooperative_phase(bytes, phase);
+    }
+    push_len(bytes, tile.synchronization.len());
+    for point in &tile.synchronization {
+        push_synchronization_point(bytes, point);
     }
     push_participant_range(bytes, tile.commit);
 }

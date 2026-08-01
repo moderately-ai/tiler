@@ -71,7 +71,18 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 /// wrong even if the framing survived — a reader that cannot resolve a delivery
 /// position has no basis for choosing among several objects — which is what the
 /// separate required-feature key states for a reader at this schema.
-pub(super) const MANIFEST_SCHEMA: (u16, u16) = (11, 0);
+///
+/// Raised to `12.0` when the fixed executable-entry resource record gained the
+/// synchronization realization the entry's schedule requires. Major for the same
+/// framing reason the `8.0` step was, in the other direction: an `11.0` reader
+/// would consume the presence byte as the input-subnormal tag and lose framing
+/// for every field after it. There is deliberately **no** required-feature key
+/// beside it, and the asymmetry with the route-requirement family is the reason:
+/// a variant with zero route rows stays readable by a reader that predates them,
+/// so its feature key marks the artifacts that are not — whereas every artifact
+/// at this schema writes the presence byte, so no `11.0` reader can read any of
+/// them and a key would mark nothing.
+pub(super) const MANIFEST_SCHEMA: (u16, u16) = (12, 0);
 
 /// Versioned domain tag opening the canonical manifest bytes.
 pub(super) const MANIFEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.manifest.v1\0";

@@ -256,7 +256,7 @@ fn an_encoded_envelope_round_trips_to_an_equal_model() {
         artifact
             .canonical_identity()
             .as_bytes()
-            .starts_with(b"tiler.artifact-program.v13\0")
+            .starts_with(b"tiler.artifact-program.v14\0")
     );
 }
 
@@ -290,7 +290,7 @@ fn the_framing_header_is_the_fixed_width_it_declares() {
         &bytes[HEADER_BYTES..HEADER_BYTES + MANIFEST_DOMAIN.len()],
         MANIFEST_DOMAIN,
     );
-    assert_eq!(MANIFEST_SCHEMA, (11, 0));
+    assert_eq!(MANIFEST_SCHEMA, (12, 0));
 }
 
 #[test]
@@ -1913,6 +1913,10 @@ fn a_decoded_artifact_carries_everything_one_dispatch_needs() {
 
     let entry = variant.entries().next().expect("one executable entry");
     assert_eq!(entry.resources().buffer_bindings, 2);
+    // The absence survives the round trip *as an absence*. It is recorded rather
+    // than omitted, so a decoder recovers "this entry requires no realization"
+    // from a byte that says so, never from bytes that never mentioned it.
+    assert_eq!(entry.resources().synchronization, None);
     assert_eq!(entry.numerical().profile_key(), "tiler.test.strict-f32");
     assert_eq!(
         entry.numerical().contraction(),

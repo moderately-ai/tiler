@@ -59,6 +59,14 @@ draft_handle!(
     "A builder-owned structured-kernel SSA value."
 );
 draft_handle!(KernelBufferId, "A builder-owned kernel buffer parameter.");
+draft_handle!(
+    KernelStagingId,
+    "A builder-owned workgroup staging allocation.\n\nA separate handle space from [`KernelBufferId`], because the two index \
+     separate declaration lists: a buffer parameter's position is its \
+     argument-table ordinal and a staging allocation's is not an argument at \
+     all. One handle type for both would let a staged load address a buffer \
+     parameter by ordinal coincidence."
+);
 
 macro_rules! verified_handle {
     ($name:ident, $docs:literal) => {
@@ -88,4 +96,8 @@ verified_handle!(
 verified_handle!(
     VerifiedBufferId,
     "A verified kernel-local buffer parameter."
+);
+verified_handle!(
+    VerifiedStagingId,
+    "A verified kernel-local workgroup staging allocation."
 );

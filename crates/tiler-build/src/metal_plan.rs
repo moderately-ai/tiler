@@ -779,18 +779,32 @@ mod tests {
     /// identity revision — which must move the goldens in the commit that states
     /// why — or the defect this test exists to catch.
     ///
-    /// Both moved once since, at the `tiler.artifact-program.v13` step: an
-    /// executable entry is realized once per delivery position, so its identity
-    /// record writes a counted run of payload keys where it wrote exactly one.
-    /// The subject moves with it because it frames the artifact identity.
+    /// Both moved at the `tiler.artifact-program.v13` step: an executable entry
+    /// is realized once per delivery position, so its identity record writes a
+    /// counted run of payload keys where it wrote exactly one. The subject moves
+    /// with it because it frames the artifact identity.
+    ///
+    /// Both moved again at `v14`, and this program is exactly the case the step
+    /// exists to separate: it performs **no** synchronization, and its entry now
+    /// records that absence rather than leaving it unstated. Three domains moved
+    /// together and each for the same reason — `tiler.kernel.v5` to `v6` for the
+    /// field in the resource record, `tiler.artifact-program.v13` to `v14` for
+    /// the same field in the entry record, and
+    /// `tiler.target-profile.declaration.v10` to `v11` for the row family a
+    /// profile now declares realizations in, which the artifact folds as its
+    /// target-profile descriptor digest. A zero-synchronization program's
+    /// identity moving is the intended consequence: a `v13` subject described an
+    /// entry that could not state a synchronization obligation at all, and a
+    /// `v10` declaration described a target that could not be asked, so a cache
+    /// holding either must miss rather than match.
     ///
     /// [`assemble_plan_artifact`]: crate::assemble_plan_artifact
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "cee402b825426ba2b39f50c0e548c2c69ef9ced9bf9103c0d61bbc46e9f8853f";
+            "8cb1a5e2d20f120f8801698da3d070f623d1bb6b0a1c7ed96cd2c55a928e951b";
         const CACHE_SUBJECT: &str =
-            "3f86db909b123264af67cc58d0b0dc10e79b4a349512aa65f17894a2a65e58f3";
+            "d4493d4711c310403ca3805ec2f41ea14f5dcdde45f9b4b67ac1f7a943cc35bf";
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));

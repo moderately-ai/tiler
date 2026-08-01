@@ -11,13 +11,16 @@ use std::cell::Cell;
 use super::*;
 use crate::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
-    ContributorPartition, CooperativePhase, CooperativeTile, ExceptionalValueAssumption,
-    ExecutionBinding, InputOrdinal, KernelSchedule, LaunchPlan, LocalCoordinateSource,
-    LocalCoordinates, LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof,
-    OwnershipProofKind, OwnershipWitnessId, ParticipantRange, PhaseId, PointwiseF32Expression,
+    ContributorPartition, ConvergenceEvidence, CooperativePhase, CooperativeTile,
+    ExceptionalValueAssumption, ExecutionBinding, FencedSpaces, InputOrdinal, KernelSchedule,
+    LaunchPlan, LocalCoordinateSource, LocalCoordinates, LogicalAccess, MemoryOrdering,
+    NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
+    OwnershipWitnessId, ParticipantRange, PhaseId, PointwiseF32Expression,
     PointwiseF32ExpressionBuilder, ReductionPass, ReductionTopology, RegionId, ScalarProgram,
     ScheduledRegionBuilder, StagedElement, StagedRead, StagedSpan, StagedWrite, StagingId,
-    SubnormalMode, TailPolicy, TensorRole, VerifiedScheduledRegion, WorkgroupStaging,
+    SubnormalMode, SyncPointId, SynchronizationKind, SynchronizationPlacement,
+    SynchronizationPoint, SynchronizationScope, SynchronizationSubject, TailPolicy, TensorRole,
+    VerifiedScheduledRegion, WorkgroupStaging,
 };
 use crate::semantic::{
     STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
@@ -488,6 +491,8 @@ fn loaded_buffers(kernel: &VerifiedKernel) -> Vec<VerifiedBufferId> {
                 | OperationView::Unary { .. }
                 | OperationView::PackedExtract { .. }
                 | OperationView::Store { .. }
+                | OperationView::StagedStore { .. }
+                | OperationView::StagedLoad { .. }
                 | OperationView::Barrier { .. } => {}
             }
         }
@@ -1493,6 +1498,7 @@ fn a_barrier_the_schedule_does_not_require_is_rejected_explicitly() {
         .predicated(active, |builder| {
             let loaded = builder.load(read, invocation, BoundsWitnessId::new(0))?;
             builder.barrier(BarrierSpec {
+                point: SyncPointId::FIRST,
                 execution_scope: ExecutionScope::Workgroup,
                 memory_scope: MemoryScope::Device,
                 fenced_spaces: vec![AddressSpace::Device],
@@ -1848,11 +1854,44 @@ fn diagnostics_and_errors_expose_stable_rule_identifiers() {
 
 // ---- Cooperative workgroup tiles ------------------------------------------
 //
-// The structured-kernel half of the cooperative dataflow: a kernel can *name*
-// the local invocation coordinate and *declare* the workgroup storage its
-// region's tile allocates, and the verifier proves both against that tile. It
-// cannot yet contain a body, because the staged handoff a tile describes is
-// correct only when something orders its phases and nothing does.
+// The structured-kernel half of the cooperative dataflow: a kernel names the
+// local invocation coordinate, declares the workgroup storage its region's tile
+// allocates, stages its partials, and realizes the schedule's synchronization
+// point — and the verifier proves every one of those against the tile.
+
+/// The synchronization point ordering the cooperative fixture's one handoff.
+fn cooperative_point() -> SynchronizationPoint {
+    SynchronizationPoint {
+        id: SyncPointId::FIRST,
+        subject: SynchronizationSubject {
+            kind: SynchronizationKind::ControlBarrier,
+            execution_scope: SynchronizationScope::Workgroup,
+            visibility_scope: SynchronizationScope::Workgroup,
+            fenced_spaces: FencedSpaces {
+                workgroup: true,
+                device: false,
+            },
+            ordering: MemoryOrdering::AcquireRelease,
+        },
+        placement: SynchronizationPlacement::PhaseBoundary {
+            preceding: PhaseId::FIRST,
+            following: PhaseId::new(1),
+        },
+        participants: ParticipantRange { first: 0, count: 3 },
+        convergence: ConvergenceEvidence::EveryParticipantReachesThePoint,
+    }
+}
+
+/// The barrier spelling that realizes [`cooperative_point`].
+fn cooperative_barrier() -> BarrierSpec {
+    BarrierSpec {
+        point: SyncPointId::FIRST,
+        execution_scope: ExecutionScope::Workgroup,
+        memory_scope: MemoryScope::Workgroup,
+        fenced_spaces: vec![AddressSpace::Workgroup],
+        ordering: BarrierOrdering::AcquireRelease,
+    }
+}
 
 /// Builds the cooperative realization of a `[2, 6] -> [2]` strict serial sum.
 ///
@@ -1976,6 +2015,7 @@ fn cooperative_region() -> VerifiedScheduledRegion {
                             }],
                         },
                     ],
+                    synchronization: vec![cooperative_point()],
                     commit: ParticipantRange { first: 0, count: 1 },
                 },
                 axes: vec![Axis::new(1)],
@@ -2063,35 +2103,252 @@ fn a_cooperative_region_requires_the_workgroup_storage_its_tile_allocates() {
     assert_eq!(scheduled.requirements().threads_per_workgroup, 3);
 }
 
-/// No canonical body exists for a cooperative tile, and lowering says so.
+/// The cooperative region lowers to a verified kernel, and the body is exact.
 ///
-/// The refusal is the point. A body realizing the tile's phases would stage and
-/// re-read across invocations with nothing ordering the two, which is a race,
-/// so the lowering refuses the region before inserting any operation instead of
-/// authoring one.
+/// This is the whole vertical's positive evidence at the KIR layer: a schedule
+/// that owns a synchronization point produces a body that stages, fences, and
+/// consumes, and the verifier admits it. Every structural claim below is
+/// asserted rather than described, because the shape is the correctness
+/// argument — the fence sits between the two phases and outside both guards.
 #[test]
-fn lowering_a_cooperative_region_is_refused_as_an_undischarged_visibility() {
+fn a_cooperative_region_lowers_to_a_staged_fenced_body() {
     let scheduled = cooperative_region();
+    let kernel = lower_scheduled_region(&scheduled).expect("the cooperative region lowers");
+
+    // Exactly one barrier, realizing the schedule's one point, at the top level.
+    let top: Vec<_> = kernel.body().operations().map(OperationRef::view).collect();
+    let barriers: Vec<_> = top
+        .iter()
+        .filter_map(|view| match view {
+            OperationView::Barrier { spec } => Some(*spec),
+            _ => None,
+        })
+        .collect();
     assert_eq!(
-        lower_scheduled_region(&scheduled).unwrap_err(),
-        KernelLoweringError::Verification(KernelDiagnostic::UndischargedVisibility)
+        barriers.len(),
+        1,
+        "the fence is not at the kernel's top level"
+    );
+    assert_eq!(barriers[0], &cooperative_barrier());
+
+    // The fence sits between the two guarded regions, not inside either.
+    let guarded: Vec<usize> = top
+        .iter()
+        .enumerate()
+        .filter(|(_, view)| matches!(view, OperationView::Predicated { .. }))
+        .map(|(position, _)| position)
+        .collect();
+    let fence = top
+        .iter()
+        .position(|view| matches!(view, OperationView::Barrier { .. }))
+        .expect("the body carries a fence");
+    assert_eq!(guarded.len(), 2);
+    assert!(guarded[0] < fence && fence < guarded[1]);
+
+    // The producing phase writes staging and the consuming phase reads it. Two
+    // static reads, not three: the fold seeds at the first slot and its bounded
+    // loop carries the remaining `participants - 1`.
+    let (writes, reads) = staged_accesses(&kernel);
+    assert_eq!(writes, [PhaseId::FIRST]);
+    assert_eq!(reads, [PhaseId::new(1); 2]);
+
+    // The kernel declares the synchronization realization its schedule requires,
+    // and it is the *derived* one rather than anything the body stated.
+    assert_eq!(
+        kernel.requirements().synchronization,
+        Some(cooperative_point().subject)
     );
 }
 
-/// A hand-built cooperative kernel is refused for the same undischarged edge.
+/// Returns the phases of every staged write and staged read, in body order.
+fn staged_accesses(kernel: &VerifiedKernel) -> (Vec<PhaseId>, Vec<PhaseId>) {
+    fn walk(block: BlockRef<'_>, writes: &mut Vec<PhaseId>, reads: &mut Vec<PhaseId>) {
+        for operation in block.operations() {
+            match operation.view() {
+                OperationView::StagedStore { phase, .. } => writes.push(phase),
+                OperationView::StagedLoad { phase, .. } => reads.push(phase),
+                OperationView::Predicated { body, .. } => walk(body, writes, reads),
+                OperationView::SerialLoop(serial) => walk(serial.body(), writes, reads),
+                _ => {}
+            }
+        }
+    }
+    let (mut writes, mut reads) = (Vec::new(), Vec::new());
+    walk(kernel.body(), &mut writes, &mut reads);
+    (writes, reads)
+}
+
+/// One deliberate deviation from the correct cooperative body.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BodyChange {
+    /// The body the rules below are measured against.
+    None,
+    /// The fence moves inside the iteration guard.
+    FenceInsideTheGuard,
+    /// The fence is omitted.
+    NoFence,
+    /// The staged read is emitted ahead of the fence.
+    ReadBeforeTheFence,
+    /// The fence names a point the region's tile does not declare.
+    UnknownPoint,
+    /// The fence fences device memory rather than workgroup memory.
+    DeviceFence,
+    /// The staged store names the phase that declares no write.
+    WrongPhase,
+}
+
+/// Hand-builds a cooperative body carrying exactly one deviation.
 ///
-/// The signature and staging declarations are exactly what the tile states, so
-/// this reaches the visibility rule rather than failing earlier — which is what
-/// makes the three negative tests below evidence about *their* rules.
-#[test]
-fn a_correctly_declared_cooperative_kernel_is_still_refused() {
+/// The body is deliberately *not* the canonical one — it folds nothing — so the
+/// unchanged case fails at the reduction contract. That is the control: each
+/// change below moves the diagnostic to its own synchronization rule, which is
+/// what proves the rule fired rather than something upstream of it.
+fn cooperative_body(change: BodyChange) -> KernelDiagnostic {
     let scheduled = cooperative_region();
     let mut builder = KernelBuilder::new(&scheduled).unwrap();
-    cooperative_signature(&mut builder, &scheduled);
+    let (read, write) = cooperative_signature(&mut builder, &scheduled);
+    let staging = builder.declare_staging(COOPERATIVE_STAGING).unwrap();
+
+    let fence = |builder: &mut KernelBuilder| {
+        let spec = match change {
+            BodyChange::UnknownPoint => BarrierSpec {
+                point: SyncPointId::new(1),
+                ..cooperative_barrier()
+            },
+            BodyChange::DeviceFence => BarrierSpec {
+                fenced_spaces: vec![AddressSpace::Device],
+                ..cooperative_barrier()
+            },
+            _ => cooperative_barrier(),
+        };
+        builder.barrier(spec)
+    };
+
+    let gid = builder.builtin(Builtin::GlobalInvocationIndex).unwrap();
+    let lid = builder.builtin(Builtin::LocalInvocationIndex).unwrap();
+    let participants = builder.constant(KernelConstant::Index(3)).unwrap();
+    let output = builder
+        .binary(BinaryOp::IndexDivide, gid, participants)
+        .unwrap();
+    let extent = builder.constant(KernelConstant::Index(6)).unwrap();
+    let active = builder
+        .compare(CompareOp::IndexLessThan, gid, extent)
+        .unwrap();
+    builder
+        .predicated(active, |builder| {
+            let value = builder.load(read, gid, BoundsWitnessId::new(0))?;
+            let phase = if change == BodyChange::WrongPhase {
+                PhaseId::new(1)
+            } else {
+                PhaseId::FIRST
+            };
+            builder.staged_store(staging, lid, value, phase)?;
+            if change == BodyChange::FenceInsideTheGuard {
+                fence(builder)?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    if change == BodyChange::ReadBeforeTheFence {
+        builder
+            .predicated(active, |builder| {
+                let zero = builder.constant(KernelConstant::Index(0))?;
+                builder.staged_load(staging, zero, PhaseId::new(1))?;
+                Ok(())
+            })
+            .unwrap();
+    }
+    if !matches!(
+        change,
+        BodyChange::NoFence | BodyChange::FenceInsideTheGuard
+    ) {
+        fence(&mut builder).unwrap();
+    }
+    builder
+        .predicated(active, |builder| {
+            let one = builder.constant(KernelConstant::Index(1))?;
+            let commits = builder.compare(CompareOp::IndexLessThan, lid, one)?;
+            builder.predicated(commits, |builder| {
+                let zero = builder.constant(KernelConstant::Index(0))?;
+                let staged = builder.staged_load(staging, zero, PhaseId::new(1))?;
+                builder.store(
+                    write,
+                    output,
+                    staged,
+                    BoundsWitnessId::new(1),
+                    OwnershipWitnessId::new(0),
+                )
+            })
+        })
+        .unwrap();
+    cooperative_diagnostic(builder)
+}
+
+/// Every synchronization rule of the structured-kernel verifier, driven once.
+#[test]
+fn each_kernel_synchronization_rule_refuses_its_own_defect() {
+    // The control. An unchanged body reaches the reduction contract, so every
+    // row below is evidence that its own rule fired first.
+    assert_eq!(
+        cooperative_body(BodyChange::None),
+        KernelDiagnostic::ReductionContract
+    );
+    for (change, expected) in [
+        (
+            BodyChange::FenceInsideTheGuard,
+            KernelDiagnostic::SynchronizationConvergence,
+        ),
+        (
+            BodyChange::NoFence,
+            KernelDiagnostic::UndischargedVisibility,
+        ),
+        (
+            BodyChange::ReadBeforeTheFence,
+            KernelDiagnostic::UnorderedStagedHandoff,
+        ),
+        (
+            BodyChange::UnknownPoint,
+            KernelDiagnostic::UnexpectedSynchronization,
+        ),
+        (
+            BodyChange::DeviceFence,
+            KernelDiagnostic::SynchronizationContract,
+        ),
+        (
+            BodyChange::WrongPhase,
+            KernelDiagnostic::StagedAccessEvidence,
+        ),
+    ] {
+        assert_eq!(cooperative_body(change), expected, "{change:?}");
+    }
+}
+
+/// A kernel that stages without a cooperative region is refused by name.
+#[test]
+fn a_staged_access_without_a_tile_is_refused() {
+    let scheduled = pointwise_region(RegionId::new(0), &Shape::from_dims([2, 3]));
+    let mut builder = KernelBuilder::new(&scheduled).unwrap();
+    let (read, write) = pointwise_signature(&mut builder, &scheduled, 6);
+    let (invocation, active) = guard(&mut builder, 6);
+    builder
+        .predicated(active, |builder| {
+            let loaded = builder.load(read, invocation, BoundsWitnessId::new(0))?;
+            let value = scale_bias(builder, loaded);
+            builder.store(
+                write,
+                invocation,
+                value,
+                BoundsWitnessId::new(1),
+                OwnershipWitnessId::new(0),
+            )
+        })
+        .unwrap();
+    // A region with no tile may declare no workgroup storage at all, so the
+    // declaration is refused before a staged operation could even name one.
     builder.declare_staging(COOPERATIVE_STAGING).unwrap();
     assert_eq!(
         cooperative_diagnostic(builder),
-        KernelDiagnostic::UndischargedVisibility
+        KernelDiagnostic::StagingContract
     );
 }
 

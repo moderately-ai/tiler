@@ -89,7 +89,9 @@ use crate::physical::{
 };
 use crate::region::SemanticMemberId;
 use crate::request::{TargetProfile, TargetProfileKey, VerifiedTargetRequest};
-use crate::target::feasibility::{FeasibilityError, RejectionCause, ResolvedPredicate};
+use crate::target::feasibility::{
+    FeasibilityError, RejectionCause, ResolvedPredicate, UnrealizableSynchronization,
+};
 use crate::target::honourability::UnhonouredDimension;
 
 /// The single structural cost model the bounded P0 frontier attributes estimates
@@ -808,6 +810,14 @@ fn access_domain_shape<'a>(
 /// dimensions are taken from the first stage because every stage of an admitted
 /// subprogram implements the same request contract, which
 /// [`verify_schedule_with_feasibility`] proved for each of them separately.
+///
+/// **The synchronization requirement is not a peak, and it is not aggregated.**
+/// It is one atomic subject, so "the largest of them" is undefined: two stages
+/// requiring different realizations require *both*, and carrying either one
+/// forward would compose a permission for one stage out of a fact about the
+/// other. A subprogram whose stages disagree therefore has no single requirement
+/// and is refused here, before any target is asked. Stages that all require
+/// nothing carry `None`; stages that all require the same subject carry it once.
 fn subprogram_resources(stages: &[VerifiedScheduledRegion]) -> Option<ResourceRequirements> {
     let mut peak = stages.first()?.requirements();
     for stage in &stages[1..] {
@@ -816,6 +826,11 @@ fn subprogram_resources(stages: &[VerifiedScheduledRegion]) -> Option<ResourceRe
         peak.threads_per_workgroup = peak.threads_per_workgroup.max(stage.threads_per_workgroup);
         peak.local_memory_bytes = peak.local_memory_bytes.max(stage.local_memory_bytes);
         peak.requires_device_memory |= stage.requires_device_memory;
+        peak.synchronization = match (peak.synchronization, stage.synchronization) {
+            (None, other) | (other, None) => other,
+            (Some(left), Some(right)) if left == right => Some(left),
+            (Some(_), Some(_)) => return None,
+        };
     }
     Some(peak)
 }
@@ -1496,6 +1511,20 @@ pub(crate) enum FrontierRejection {
         /// alternative, and declaring profile.
         cause: UnhonouredDimension,
     },
+    /// The proposal is applicable and valid, but the target declares it cannot
+    /// realize the synchronization the proposal's dataflow requires.
+    ///
+    /// Distinct from both variants above. A capability rejection says this plan
+    /// does not fit; an unhonourable dimension says the target cannot compute
+    /// what was asked. This says the target cannot *order* what this strategy's
+    /// staged handoff requires — so a different strategy may well fit, but not by
+    /// adjusting a bound.
+    Unsynchronizable {
+        /// The provider whose proposal was rejected.
+        provider: PhysicalProviderProvenance,
+        /// The complete refused subject and the fact that refused it.
+        cause: Box<UnrealizableSynchronization>,
+    },
     /// An opaque call proposal was refused, retaining its complete identity,
     /// ordered bindings, and typed cause.
     OpaqueCall {
@@ -1583,6 +1612,21 @@ impl FrontierRejection {
                 output.push(4);
                 encode_provider(output, provider.provider());
                 cause.encode(output);
+            }
+            // Appended tag `7`: every earlier rejection keeps its tag and its
+            // field layout. The whole subject is encoded, because two refusals
+            // differing only in fenced domain are different refusals.
+            Self::Unsynchronizable { provider, cause } => {
+                let subject = cause.subject();
+                output.push(7);
+                encode_provider(output, provider.provider());
+                output.push(subject.kind.tag());
+                output.push(subject.execution_scope.tag());
+                output.push(subject.visibility_scope.tag());
+                output.push(u8::from(subject.fenced_spaces.workgroup));
+                output.push(u8::from(subject.fenced_spaces.device));
+                output.push(subject.ordering.tag());
+                push_slice(output, cause.fact().provenance().profile().key().as_bytes());
             }
             Self::OpaqueCall {
                 provider,
@@ -2104,6 +2148,12 @@ pub(crate) fn enumerate_frontier(
                         cause,
                     });
                 }
+                Err(PhysicalError::Synchronization { cause, .. }) => {
+                    rejections.push(FrontierRejection::Unsynchronizable {
+                        provider: provenance.clone(),
+                        cause,
+                    });
+                }
                 Err(
                     source @ (PhysicalError::Intrinsic { .. }
                     | PhysicalError::Refinement { .. }
@@ -2146,7 +2196,15 @@ fn classify_opaque_resource_verdict(
                 source,
             });
         }
-        ResourceVerdict::Unknown => {
+        // A registered call declares its own resource requirements, and that
+        // declaration surface cannot state a synchronization one — so a call
+        // never carries the requirement and the refusal is unreachable today. It
+        // shares the unresolved arm rather than being wildcarded: both mean this
+        // call's feasibility was not decided, which is the same thing to report,
+        // and spelling the pattern keeps a later reachable path visible in this
+        // match instead of swallowed by a `_`.
+        ResourceVerdict::Rejected(RejectionCause::Synchronization(_))
+        | ResourceVerdict::Unknown => {
             return Err(FrontierError::UnresolvedOpaqueCallAssessment {
                 provider: provider.provider().clone(),
                 proposal: Box::new(proposal.clone()),
@@ -2540,6 +2598,12 @@ fn admit_subprogram(
                     cause,
                 }));
             }
+            Err(PhysicalError::Synchronization { cause, .. }) => {
+                return Ok(Err(FrontierRejection::Unsynchronizable {
+                    provider: provider.clone(),
+                    cause,
+                }));
+            }
             Err(
                 source @ (PhysicalError::Intrinsic { .. }
                 | PhysicalError::Refinement { .. }
@@ -2578,6 +2642,12 @@ fn admit_subprogram(
             return Ok(Err(FrontierRejection::Unhonourable {
                 provider: provider.clone(),
                 cause,
+            }));
+        }
+        Err(ResourceVerdict::Rejected(RejectionCause::Synchronization(cause))) => {
+            return Ok(Err(FrontierRejection::Unsynchronizable {
+                provider: provider.clone(),
+                cause: Box::new(cause),
             }));
         }
         Err(ResourceVerdict::Intrinsic(_) | ResourceVerdict::Unknown) => {
@@ -3752,6 +3822,7 @@ mod tests {
                 threads_per_workgroup: 1,
                 local_memory_bytes: 0,
                 requires_device_memory: true,
+                synchronization: None,
                 input_subnormals: SubnormalMode::Preserve,
                 result_subnormals: SubnormalMode::Preserve,
                 contraction: NumericalPermission::Forbidden,
@@ -3897,6 +3968,7 @@ mod tests {
             threads_per_workgroup: 1,
             local_memory_bytes: 0,
             requires_device_memory: true,
+            synchronization: None,
             input_subnormals: contract.input_subnormals,
             result_subnormals: contract.result_subnormals,
             contraction: contract.contraction,
@@ -4079,6 +4151,7 @@ mod tests {
                 threads_per_workgroup: 1,
                 local_memory_bytes: 0,
                 requires_device_memory: true,
+                synchronization: None,
                 input_subnormals: SubnormalMode::Preserve,
                 result_subnormals: SubnormalMode::Preserve,
                 contraction: NumericalPermission::Forbidden,
@@ -4193,6 +4266,7 @@ mod tests {
                 threads_per_workgroup: 1,
                 local_memory_bytes: 0,
                 requires_device_memory: true,
+                synchronization: None,
                 input_subnormals: SubnormalMode::Preserve,
                 result_subnormals: SubnormalMode::Preserve,
                 contraction: NumericalPermission::Forbidden,
@@ -4320,6 +4394,7 @@ mod tests {
                 threads_per_workgroup: 1,
                 local_memory_bytes: 0,
                 requires_device_memory: true,
+                synchronization: None,
                 input_subnormals: SubnormalMode::Preserve,
                 result_subnormals: SubnormalMode::Preserve,
                 contraction: NumericalPermission::Forbidden,

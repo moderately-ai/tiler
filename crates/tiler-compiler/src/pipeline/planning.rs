@@ -261,6 +261,12 @@ pub(super) fn enumerate_complete_plans(
                                 cause: cause.clone(),
                             })
                         }
+                        crate::frontier::FrontierRejection::Unsynchronizable { cause, .. } => {
+                            Some(PhysicalError::Synchronization {
+                                region: region_id_of(cover, region),
+                                cause: cause.clone(),
+                            })
+                        }
                         // A reserved body variant, an unregistered opaque call,
                         // and an inapplicable proposal are not target verdicts
                         // and carry no rejection to attribute to this region.
