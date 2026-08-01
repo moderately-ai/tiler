@@ -1,7 +1,7 @@
 ---
 id: route-an-embedded-artifact-through-a-consumer-storage-seam
 title: Dispatch an embedded artifact through a consumer storage seam
-status: todo
+status: in-progress
 priority: p1
 dependencies: [prototype-inline-aot-integration-proof]
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/frontend, implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, inline-dx, runtime, public-boundary]
+claimed_from: todo
+assignee: worker-route-an-emb
+lease_expires_at: 1785568847
 ---
 ## Why this exists
 

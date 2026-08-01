@@ -1,7 +1,7 @@
 ---
 id: design-model-ingestion-and-complete-execution
 title: Design model ingestion and complete supported-model execution
-status: todo
+status: in-progress
 priority: p1
 dependencies: [derive-transformer-operation-and-shape-surface, design-autoregressive-state-and-kv-cache]
 related: [prototype-public-compiler-api, prototype-candle-metal-adapter, prototype-inline-proc-macro-frontend]
@@ -9,6 +9,9 @@ scopes: [contracts/integrations, contracts/navigation, research/program-planning
 shared_scopes: [project/tickets]
 paths: []
 tags: [design, frontend, model, weights, integration, language-model]
+claimed_from: todo
+assignee: worker-design-model
+lease_expires_at: 1785568846
 ---
 ## User-visible outcome
 
