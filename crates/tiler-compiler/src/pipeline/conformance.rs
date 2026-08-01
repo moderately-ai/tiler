@@ -413,7 +413,7 @@ fn ordered_multi_output_programs_reject_explicitly() {
         error,
         CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
             phase: "strategy",
-            rule: "signature",
+            rule: "output-arity",
         })
     );
 }

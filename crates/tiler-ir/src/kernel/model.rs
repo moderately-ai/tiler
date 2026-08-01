@@ -28,6 +28,13 @@ use super::MAX_KERNEL_IDENTITY_BYTES;
 /// Named so [`encode_identity`] and [`identity_encoded_len`] measure the same
 /// bytes rather than agreeing on a literal by inspection.
 ///
+/// `v5` gives a buffer parameter's input role its ordinal, so a kernel can bind
+/// several distinct input tensors. The ordinal lands inside the repeated
+/// buffer-parameter record, so a v4 reader would consume the component-role tag
+/// at the old offset and lose framing for every buffer after it — and every
+/// kernel ever encoded maps to different bytes now, which is what a cache or
+/// artifact holding a v4 identity must miss on rather than match.
+///
 /// `v4` removes the invalid numeric barrier-capacity field from the fixed
 /// resource-requirement record. A v3 reader would otherwise consume the
 /// following fields at the old offset.
@@ -39,7 +46,7 @@ use super::MAX_KERNEL_IDENTITY_BYTES;
 /// their earlier values and new variants receive appended tags. These changes
 /// advance the domain rather than letting an earlier reader interpret the
 /// kernel incompletely.
-const KERNEL_DOMAIN: &[u8] = b"tiler.kernel.v4\0";
+const KERNEL_DOMAIN: &[u8] = b"tiler.kernel.v5\0";
 
 /// The width [`push_len`] frames a length in, as ADR 0074 fixes it.
 const LENGTH_BYTES: usize = size_of::<u64>();
@@ -1072,12 +1079,29 @@ impl<'a> SerialLoopRef<'a> {
     }
 }
 
+/// Encodes one buffer parameter's boundary tensor role.
+///
+/// A second, independent copy of the scheduled-region role table by design: the
+/// two identities are different subjects, and a shared encoder would let one
+/// domain's step silently move the other's bytes. Adding a role is a build error
+/// at both.
 fn push_tensor_role(bytes: &mut Vec<u8>, role: TensorRole) {
-    bytes.push(match role {
-        TensorRole::Input => 0x01,
-        TensorRole::Intermediate => 0x02,
-        TensorRole::Output => 0x03,
-    });
+    match role {
+        TensorRole::Input { ordinal } => {
+            bytes.push(0x01);
+            bytes.extend_from_slice(&ordinal.get().to_be_bytes());
+        }
+        TensorRole::Intermediate => bytes.push(0x02),
+        TensorRole::Output => bytes.push(0x03),
+    }
+}
+
+/// Mirrors [`push_tensor_role`]: one tag byte, plus an ordinal for an input.
+const fn tensor_role_encoded_len(role: TensorRole) -> usize {
+    match role {
+        TensorRole::Input { ordinal } => 1 + size_of_val(&ordinal.get()),
+        TensorRole::Intermediate | TensorRole::Output => 1,
+    }
 }
 
 fn push_subnormal(bytes: &mut Vec<u8>, mode: SubnormalMode) {
@@ -1379,7 +1403,9 @@ fn buffer_encoded_len(buffer: &BufferParameter) -> usize {
     } else {
         1
     };
-    4_usize
+    tensor_role_encoded_len(buffer.tensor)
+        // The element type, address space, and access tags.
+        .saturating_add(3)
         .saturating_add(component)
         .saturating_add(size_of_val(&buffer.element_count))
 }

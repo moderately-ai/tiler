@@ -68,7 +68,7 @@ use tiler_ir::kernel::{
 };
 use tiler_ir::schedule::{
     ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, NumericalRealization,
-    SubnormalMode, ValueDomainProvenance,
+    SubnormalMode, TensorRole, ValueDomainProvenance,
 };
 
 use crate::diagnostic::{BarrierRejection, MetalEmitError, MetalOperationFamily};
@@ -461,9 +461,9 @@ fn emit_entry_point(
         let parameter = binding.parameter();
         emit!(
             text,
-            "//   buffer({}): {:?} tensor, {:?}, {:?} space, {:?} access, {} element(s)\n",
+            "//   buffer({}): {} tensor, {:?}, {:?} space, {:?} access, {} element(s)\n",
             binding.index(),
-            parameter.tensor,
+            tensor_role_comment(parameter.tensor),
             parameter.element_type,
             parameter.address_space,
             parameter.access,
@@ -502,6 +502,19 @@ fn emit_entry_point(
 }
 
 /// Returns the MSL declaration of one buffer parameter.
+/// Names one boundary tensor role for the emitted signature comment.
+///
+/// Rendered rather than `Debug`-formatted: a role carrying an ordinal prints as
+/// a Rust struct literal under `{:?}`, and this text lands in generated Metal
+/// source that a reader reads beside the buffer index it explains.
+fn tensor_role_comment(role: TensorRole) -> String {
+    match role {
+        TensorRole::Input { ordinal } => format!("Input {}", ordinal.get()),
+        TensorRole::Intermediate => "Intermediate".to_owned(),
+        TensorRole::Output => "Output".to_owned(),
+    }
+}
+
 fn parameter_declaration(binding: &MetalBufferBinding) -> Result<String, MetalEmitError> {
     let parameter = binding.parameter();
     let element = msl_type(parameter.element_type);

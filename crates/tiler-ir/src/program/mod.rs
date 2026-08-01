@@ -87,7 +87,7 @@
 //!     ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
 //!     NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
 //!     OwnershipWitnessId, RegionId, ReductionTopology, ScalarProgram, ScheduledRegionBuilder,
-//!     SubnormalMode, TailPolicy, TensorRole,
+//!     InputOrdinal, SubnormalMode, TailPolicy, TensorRole,
 //! };
 //! use tiler_ir::semantic::{
 //!     F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgramBuilder,
@@ -118,7 +118,9 @@
 //! let mut region = ScheduledRegionBuilder::new(RegionId::new(0));
 //! region.iteration_shape(Shape::from_dims([2]))?;
 //! region.push_access(Access {
-//!     tensor: TensorRole::Input,
+//!     tensor: TensorRole::Input {
+//!         ordinal: InputOrdinal::FIRST,
+//!     },
 //!     component_role: None,
 //!     mode: AccessMode::Read,
 //!     map: contributor,
@@ -135,7 +137,9 @@
 //! })?;
 //! region.push_bounds_proof(BoundsProof {
 //!     id: BoundsWitnessId::new(0),
-//!     tensor: TensorRole::Input,
+//!     tensor: TensorRole::Input {
+//!         ordinal: InputOrdinal::FIRST,
+//!     },
 //!     component_role: None,
 //!     kind: BoundsProofKind::ReductionDomain {
 //!         input_shape: Shape::from_dims([2, 3]),

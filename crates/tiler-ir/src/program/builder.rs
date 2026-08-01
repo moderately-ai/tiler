@@ -1127,11 +1127,11 @@ impl KernelProgramBuilder {
                     actual: access.mode,
                 });
             }
-            if buffer.tensor != value.role.tensor_role() {
+            if !value.role.fills(buffer.tensor) {
                 return Err(KernelProgramBuildError::StageTensorRole {
                     position,
                     expected: buffer.tensor,
-                    actual: value.role.tensor_role(),
+                    actual: value.role,
                 });
             }
             if buffer.component_role != value.component_role {

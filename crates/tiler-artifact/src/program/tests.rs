@@ -22,8 +22,8 @@ use tiler_ir::program::{
 };
 use tiler_ir::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
-    ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
-    NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
+    ExceptionalValueAssumption, ExecutionBinding, InputOrdinal, KernelSchedule, LaunchPlan,
+    LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
     OwnershipWitnessId, PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
     ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
 };
@@ -302,7 +302,9 @@ pub(super) fn fused_kernel(scale_bits: u32) -> VerifiedKernel {
     region.iteration_shape(output_shape()).unwrap();
     region
         .push_access(Access {
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::ReductionContributor {
@@ -328,7 +330,9 @@ pub(super) fn fused_kernel(scale_bits: u32) -> VerifiedKernel {
     region
         .push_bounds_proof(BoundsProof {
             id: BoundsWitnessId::new(0),
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: None,
             kind: BoundsProofKind::ReductionDomain {
                 input_shape: input_shape(),
@@ -494,7 +498,9 @@ fn pointwise_kernel() -> VerifiedKernel {
     region.iteration_shape(input_shape()).unwrap();
     region
         .push_access(Access {
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::LinearIdentity,
@@ -512,7 +518,15 @@ fn pointwise_kernel() -> VerifiedKernel {
             ownership: Some(OwnershipWitnessId::new(0)),
         })
         .unwrap();
-    for (witness, tensor) in [(0, TensorRole::Input), (1, TensorRole::Intermediate)] {
+    for (witness, tensor) in [
+        (
+            0,
+            TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+        ),
+        (1, TensorRole::Intermediate),
+    ] {
         region
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(witness),
@@ -534,7 +548,7 @@ fn pointwise_kernel() -> VerifiedKernel {
         })
         .unwrap();
     let mut expression = PointwiseF32ExpressionBuilder::new();
-    let input = expression.input().unwrap();
+    let input = expression.input(InputOrdinal::FIRST).unwrap();
     let scale = expression.constant(SCALE_BITS).unwrap();
     let product = expression.multiply(input, scale).unwrap();
     let bias = expression.constant(BIAS_BITS).unwrap();
@@ -913,7 +927,9 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
         .expect("iteration shape");
     for access in [
         Access {
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: Some(STRICT_AFFINE_CODES_ROLE),
             mode: AccessMode::Read,
             map: LogicalAccess::PackedU4LsbZeroTail { logical_elements },
@@ -921,7 +937,9 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
             ownership: None,
         },
         Access {
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: Some(STRICT_AFFINE_SCALE_ROLE),
             mode: AccessMode::Read,
             map: LogicalAccess::ScalarBroadcast,
@@ -929,7 +947,9 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
             ownership: None,
         },
         Access {
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: Some(STRICT_AFFINE_ZERO_POINT_ROLE),
             mode: AccessMode::Read,
             map: LogicalAccess::ScalarBroadcast,
@@ -950,12 +970,28 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
     for (id, tensor, component_role, element_count) in [
         (
             0,
-            TensorRole::Input,
+            TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             Some(STRICT_AFFINE_CODES_ROLE),
             logical_elements.div_ceil(2),
         ),
-        (1, TensorRole::Input, Some(STRICT_AFFINE_SCALE_ROLE), 1),
-        (2, TensorRole::Input, Some(STRICT_AFFINE_ZERO_POINT_ROLE), 1),
+        (
+            1,
+            TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+            Some(STRICT_AFFINE_SCALE_ROLE),
+            1,
+        ),
+        (
+            2,
+            TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+            Some(STRICT_AFFINE_ZERO_POINT_ROLE),
+            1,
+        ),
         (3, TensorRole::Output, None, logical_elements),
     ] {
         region

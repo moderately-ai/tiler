@@ -3727,7 +3727,16 @@ mod tests {
                 // lowering-registry identity the subject binds changes as well.
                 // The trace's own two record lines are once more unchanged,
                 // because nothing about explain's content moved.
-                "tiler-explain-v7 request=bddeaf899938ede4\n",
+                // Rebaselined from `bddeaf899938ede4` when the governed target
+                // profile raised its declared buffer-binding bound from two to
+                // four, so a region reading several input tensors is feasible on
+                // it. The subject binds the complete target declaration, so a
+                // declared capability moving must move this digest: two requests
+                // compiled against targets that admit different signatures are
+                // different requests. The trace's own two record lines are
+                // unchanged again — the fixture's program has one input and one
+                // output, and nothing about explain's content moved.
+                "tiler-explain-v7 request=0b7759de2d9b5756\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

@@ -8,8 +8,8 @@
 use crate::kernel::{KernelType, VerifiedKernel, lower_scheduled_region};
 use crate::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
-    ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
-    NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
+    ExceptionalValueAssumption, ExecutionBinding, InputOrdinal, KernelSchedule, LaunchPlan,
+    LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
     OwnershipWitnessId, PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
     ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole, VerifiedScheduledRegion,
 };
@@ -81,7 +81,7 @@ fn output_shape() -> Shape {
 
 fn scale_bias_expression(scale_bits: u32) -> crate::schedule::PointwiseF32Expression {
     let mut expression = PointwiseF32ExpressionBuilder::new();
-    let input = expression.input().expect("input");
+    let input = expression.input(InputOrdinal::FIRST).expect("input");
     let scale = expression.constant(scale_bits).expect("scale");
     let product = expression.multiply(input, scale).expect("product");
     let bias = expression.constant(BIAS_BITS).expect("bias");
@@ -97,7 +97,9 @@ fn pointwise_region(region: u32, scale_bits: u32) -> VerifiedScheduledRegion {
     builder.iteration_shape(shape).expect("iteration shape");
     builder
         .push_access(Access {
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::LinearIdentity,
@@ -118,7 +120,9 @@ fn pointwise_region(region: u32, scale_bits: u32) -> VerifiedScheduledRegion {
     builder
         .push_bounds_proof(BoundsProof {
             id: BoundsWitnessId::new(0),
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: None,
             kind: BoundsProofKind::LinearRange {
                 element_count: count,
@@ -340,7 +344,9 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
         .expect("iteration shape");
     for access in [
         Access {
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: Some(STRICT_AFFINE_CODES_ROLE),
             mode: AccessMode::Read,
             map: LogicalAccess::PackedU4LsbZeroTail { logical_elements },
@@ -348,7 +354,9 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
             ownership: None,
         },
         Access {
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: Some(STRICT_AFFINE_SCALE_ROLE),
             mode: AccessMode::Read,
             map: LogicalAccess::ScalarBroadcast,
@@ -356,7 +364,9 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
             ownership: None,
         },
         Access {
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: Some(STRICT_AFFINE_ZERO_POINT_ROLE),
             mode: AccessMode::Read,
             map: LogicalAccess::ScalarBroadcast,
@@ -377,12 +387,28 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
     for (id, tensor, component_role, element_count) in [
         (
             0,
-            TensorRole::Input,
+            TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             Some(STRICT_AFFINE_CODES_ROLE),
             logical_elements.div_ceil(2),
         ),
-        (1, TensorRole::Input, Some(STRICT_AFFINE_SCALE_ROLE), 1),
-        (2, TensorRole::Input, Some(STRICT_AFFINE_ZERO_POINT_ROLE), 1),
+        (
+            1,
+            TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+            Some(STRICT_AFFINE_SCALE_ROLE),
+            1,
+        ),
+        (
+            2,
+            TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+            Some(STRICT_AFFINE_ZERO_POINT_ROLE),
+            1,
+        ),
         (3, TensorRole::Output, None, logical_elements),
     ] {
         builder
@@ -1425,8 +1451,10 @@ fn a_stage_access_must_realize_its_bound_kernel_signature() {
             .expect_err("tensor roles are checked"),
         KernelProgramBuildError::StageTensorRole {
             position: 0,
-            expected: TensorRole::Input,
-            actual: TensorRole::Intermediate,
+            expected: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+            actual: ValueRole::Temporary,
         }
     );
     assert_eq!(

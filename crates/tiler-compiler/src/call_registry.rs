@@ -363,7 +363,7 @@ impl OpaqueCallProposal {
             }
             subject.push_str(name);
             subject.push('=');
-            subject.push_str(tensor_role_name(*role));
+            push_tensor_role_name(&mut subject, *role);
         }
         subject.push(']');
         debug_assert_eq!(
@@ -381,23 +381,55 @@ fn proposal_subject_len(call: OpaqueCallIdentity, bindings: &[(&str, TensorRole)
             .iter()
             .enumerate()
             .map(|(index, (name, role))| {
-                name.len() + 1 + tensor_role_name(*role).len() + usize::from(index != 0)
+                name.len() + 1 + tensor_role_name_len(*role) + usize::from(index != 0)
             })
             .sum::<usize>()
 }
 
-const fn tensor_role_name(role: TensorRole) -> &'static str {
+/// Renders one bound tensor role into an exact opaque-call subject.
+///
+/// An input renders its ordinal too. Two parameters bound to two different
+/// input tensors are two different proposals, and a subject spelling both
+/// `input` would give one name to two things — which is exactly what a subject
+/// exists to prevent.
+fn push_tensor_role_name(subject: &mut String, role: TensorRole) {
     match role {
-        TensorRole::Input => "input",
-        TensorRole::Intermediate => "intermediate",
-        TensorRole::Output => "output",
+        TensorRole::Input { ordinal } => {
+            subject.push_str(INPUT_ROLE_PREFIX);
+            subject.push_str(&ordinal.get().to_string());
+        }
+        TensorRole::Intermediate => subject.push_str("intermediate"),
+        TensorRole::Output => subject.push_str("output"),
     }
 }
+
+/// Mirrors [`push_tensor_role_name`] so the precomputed bound stays exact.
+///
+/// Computed rather than formatted: this runs once per binding inside the
+/// admission check that `subject` later debug-asserts against, so it must agree
+/// with the renderer without allocating a string to find out.
+const fn tensor_role_name_len(role: TensorRole) -> usize {
+    match role {
+        TensorRole::Input { ordinal } => {
+            let digits = match ordinal.get().checked_ilog10() {
+                Some(log) => log as usize + 1,
+                None => 1,
+            };
+            INPUT_ROLE_PREFIX.len() + digits
+        }
+        TensorRole::Intermediate => "intermediate".len(),
+        TensorRole::Output => "output".len(),
+    }
+}
+
+/// Opens the rendering of an input role, ahead of its decimal ordinal.
+const INPUT_ROLE_PREFIX: &str = "input#";
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::call_declaration::WorkScaling;
+    use tiler_ir::schedule::InputOrdinal;
     use tiler_ir::schedule::{
         ExceptionalValueAssumption, NumericalPermission, ResourceRequirements, SubnormalMode,
     };
@@ -495,12 +527,28 @@ mod tests {
         let call = identity("c");
         let proposal = OpaqueCallProposal::new(
             call,
-            vec![("x", TensorRole::Input), ("y", TensorRole::Output)],
+            vec![
+                (
+                    "x",
+                    TensorRole::Input {
+                        ordinal: InputOrdinal::FIRST,
+                    },
+                ),
+                ("y", TensorRole::Output),
+            ],
         )
         .expect("bounded");
-        assert_eq!(proposal.subject(), "p/c@1[x=input,y=output]");
+        assert_eq!(proposal.subject(), "p/c@1[x=input#0,y=output]");
         assert_eq!(
-            OpaqueCallProposal::new(call, vec![("x/y", TensorRole::Input)]),
+            OpaqueCallProposal::new(
+                call,
+                vec![(
+                    "x/y",
+                    TensorRole::Input {
+                        ordinal: InputOrdinal::FIRST
+                    }
+                )]
+            ),
             Err(OpaqueCallProposalError::InvalidBindingName {
                 index: 0,
                 name: "x/y",

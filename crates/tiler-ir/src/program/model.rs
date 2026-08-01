@@ -88,13 +88,25 @@ impl ValueRole {
         }
     }
 
-    /// Returns the scheduled boundary tensor role this program role realizes.
+    /// Returns whether this program role can fill a buffer of `tensor`.
+    ///
+    /// A predicate rather than the `TensorRole` this role "is", because the two
+    /// vocabularies answer questions at different scopes. A [`TensorRole::Input`]
+    /// says *which of one region's* input tensors a buffer binds; a `ValueRole`
+    /// says what one *program* value is. A stage binds its buffers to values
+    /// positionally, so the ordinal is discharged by that position and this
+    /// check owes only the class — but it owes the class exhaustively, which is
+    /// why both sides are matched with no wildcard: a role added to either
+    /// vocabulary must stop here until someone decides what it can fill.
     #[must_use]
-    pub const fn tensor_role(self) -> TensorRole {
-        match self {
-            Self::Input => TensorRole::Input,
-            Self::Temporary => TensorRole::Intermediate,
-            Self::Output => TensorRole::Output,
+    pub const fn fills(self, tensor: TensorRole) -> bool {
+        match (self, tensor) {
+            (Self::Input, TensorRole::Input { .. })
+            | (Self::Temporary, TensorRole::Intermediate)
+            | (Self::Output, TensorRole::Output) => true,
+            (Self::Input, TensorRole::Intermediate | TensorRole::Output)
+            | (Self::Temporary, TensorRole::Input { .. } | TensorRole::Output)
+            | (Self::Output, TensorRole::Input { .. } | TensorRole::Intermediate) => false,
         }
     }
 }

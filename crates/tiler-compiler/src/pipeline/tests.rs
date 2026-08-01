@@ -30,7 +30,7 @@ fn test_root(explain: &mut ExplainWriter) -> ExplainRecordId {
 }
 use crate::explain::ExplainDisposition;
 use crate::frontier::PhysicalProposalKind;
-use crate::physical::{RegionId, TensorRole};
+use crate::physical::{InputOrdinal, RegionId, TensorRole};
 use crate::request::{
     CompilerCapabilitySnapshot, NumericalContractPreference, StrictF32NumericalContract,
     TargetProfile,
@@ -1119,12 +1119,12 @@ fn valid_but_unsupported_program_has_a_capability_failure() {
         error,
         CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
             phase: "strategy",
-            rule: "signature",
+            rule: "operation-set",
         })
     );
     assert_eq!(
         error.to_string(),
-        "compile.unsupported.strategy.signature: no installed capability can compile this valid semantic program"
+        "compile.unsupported.strategy.operation-set: no installed capability can compile this valid semantic program"
     );
 }
 
@@ -1179,7 +1179,7 @@ fn a_contraction_program_is_statable_and_refused_before_capability_resolution() 
         error,
         CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
             phase: "strategy",
-            rule: "signature",
+            rule: "operation-set",
         }),
         "the request boundary refuses a contraction program first; nothing here \
          reaches the lowering registry"
@@ -2648,9 +2648,25 @@ fn mixed_frontier_trace(
         call: crate::call_registry::OpaqueCallIdentity::new("call-owner", "mystery", call_revision)
             .unwrap(),
         bindings: if reverse_bindings {
-            vec![("output", TensorRole::Output), ("input", TensorRole::Input)]
+            vec![
+                ("output", TensorRole::Output),
+                (
+                    "input",
+                    TensorRole::Input {
+                        ordinal: InputOrdinal::FIRST,
+                    },
+                ),
+            ]
         } else {
-            vec![("input", TensorRole::Input), ("output", TensorRole::Output)]
+            vec![
+                (
+                    "input",
+                    TensorRole::Input {
+                        ordinal: InputOrdinal::FIRST,
+                    },
+                ),
+                ("output", TensorRole::Output),
+            ]
         },
     };
     let providers: Vec<&dyn PhysicalImplementationProvider> = if reverse_providers {
@@ -2717,7 +2733,7 @@ fn mixed_frontier_records_exact_opaque_call_rejection_detail() {
         [
             (
                 SubjectKind::OpaqueCall,
-                "call-owner/mystery@3[input=input,output=output]",
+                "call-owner/mystery@3[input=input#0,output=output]",
             ),
             (SubjectKind::Provider, "tiler.test.physical::opaque@7"),
         ]
@@ -2731,7 +2747,7 @@ fn mixed_frontier_records_exact_opaque_call_rejection_detail() {
     );
     let rendered = trace.render();
     assert!(rendered.starts_with("tiler-explain-v7 "));
-    assert!(rendered.contains("opaque-call:call-owner/mystery@3[input=input,output=output]"));
+    assert!(rendered.contains("opaque-call:call-owner/mystery@3[input=input#0,output=output]"));
     assert!(rendered.contains("provider:tiler.test.physical::opaque@7"));
     assert!(rendered.contains("admitted-count:count=1"));
     assert!(rendered.contains("rejected-count:count=1"));
