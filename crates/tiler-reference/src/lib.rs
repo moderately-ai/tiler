@@ -60,9 +60,10 @@ pub use accuracy::{
     exp_enclosure, rsqrt_enclosure,
 };
 pub use conformance::{ReferenceNumericalConformance, UnsupportedReferenceContract};
+pub use contraction::StagedStrictTensorContractionF32;
 pub use error::{
     EvaluationError, ReferenceOperationError, ReferenceRegistryError, ReferenceRegistryResource,
-    ReferenceResource, ReferenceValueError, UnsupportedBf16Declaration,
+    ReferenceResource, ReferenceValueError, StagedContractionError, UnsupportedBf16Declaration,
     UnsupportedContractionDeclaration,
 };
 pub use evaluate::{ReferenceEvaluator, strict_partial_sums, strict_partitioned_sum};

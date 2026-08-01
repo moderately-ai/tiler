@@ -89,6 +89,48 @@ impl fmt::Display for UnsupportedContractionDeclaration {
 
 impl Error for UnsupportedContractionDeclaration {}
 
+/// Why a staged contraction could not be planned.
+///
+/// Two failures with genuinely different causes, kept apart rather than merged.
+/// [`Self::UnsupportedDeclaration`] says the governed signature declares a
+/// contract this reference does not compute, which is a statement about the
+/// *declaration* and is repaired by changing what is declared or what is
+/// realized. [`Self::Operation`] says the operands, the structure, or the
+/// requested slab were refused, which is a statement about this application.
+/// Collapsing them would leave a caller unable to tell a moved contract from a
+/// mismatched pair of tensors.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum StagedContractionError {
+    /// The governed contraction signature declares an unrealizable contract.
+    UnsupportedDeclaration(UnsupportedContractionDeclaration),
+    /// The operands, the structure, or the requested slab were refused.
+    Operation(ReferenceOperationError),
+}
+
+impl fmt::Display for StagedContractionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedDeclaration(source) => write!(
+                formatter,
+                "a staged contraction cannot be planned against this declaration: {source}"
+            ),
+            Self::Operation(source) => {
+                write!(formatter, "a staged contraction was refused: {source}")
+            }
+        }
+    }
+}
+
+impl Error for StagedContractionError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::UnsupportedDeclaration(source) => Some(source),
+            Self::Operation(source) => Some(source),
+        }
+    }
+}
+
 /// Why the governed BF16 declarations cannot parameterize this reference.
 ///
 /// The BF16 evaluators restate no format parameter. Every number the decode, the
