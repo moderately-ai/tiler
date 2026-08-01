@@ -1706,6 +1706,20 @@ pub(crate) fn opaque_fused_portfolio_fixture(program: &SemanticProgram) -> Selec
 }
 
 #[cfg(test)]
+/// The coherent one-in/one-out opaque-call declaration these fixtures register.
+///
+/// Shared with the compile-path cases rather than restated there, so a call
+/// registered for a compilation is the same declaration the plans built here
+/// rest on: two copies would let one gain a resource, layout, or numerical
+/// answer the other never had, and the divergence would read as a difference
+/// between the two authorities.
+pub(crate) fn opaque_call_declaration_fixture(
+    aliasing: crate::effects::Aliasing,
+) -> crate::call_declaration::OpaqueCallDeclaration {
+    tests::opaque_declaration(aliasing)
+}
+
+#[cfg(test)]
 mod tests {
 
     /// The formation these cases run under, derived once per call site.
@@ -1818,7 +1832,7 @@ mod tests {
         }
     }
 
-    fn opaque_declaration(
+    pub(super) fn opaque_declaration(
         aliasing: crate::effects::Aliasing,
     ) -> crate::call_declaration::OpaqueCallDeclaration {
         use crate::boundary::{

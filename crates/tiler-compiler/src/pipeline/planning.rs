@@ -54,6 +54,7 @@ pub(super) fn enumerate_complete_plans(
     semantic: &tiler_ir::semantic::SemanticProgram,
     verified: &crate::request::VerifiedTargetRequest,
     formation: &RegionFormationOutcome,
+    physical: &PhysicalAuthorities<'_>,
     explain: &mut ExplainWriter,
     root: ExplainRecordId,
     whole_program_record: Option<ExplainRecordId>,
@@ -168,7 +169,6 @@ pub(super) fn enumerate_complete_plans(
         numerical = Some(Box::new(proof));
     }
 
-    let providers: [&dyn PhysicalImplementationProvider; 1] = [&GovernedPhysicalProvider];
     let mut sources = Vec::new();
     let mut rejections = TargetRejections::default();
     let mut frontier_cause = numerical_cause;
@@ -186,8 +186,8 @@ pub(super) fn enumerate_complete_plans(
     // places that region.
     //
     // `enumerate_frontier` is a pure function of the request, the subject, and
-    // the providers, and only the subject varies here — so a repeat is a
-    // re-derivation of a value already in hand. It repeats a lot: the governed
+    // the physical authorities, and only the subject varies here — so a repeat
+    // is a re-derivation of a value already in hand. It repeats a lot: the governed
     // five-operation program enumerates 48 times over 17 distinct subjects, and
     // the reduction region alone is enumerated 8 times because eight covers
     // place it.
@@ -221,19 +221,15 @@ pub(super) fn enumerate_complete_plans(
             {
                 enumerated.clone()
             } else {
-                let enumerated = enumerate_frontier(
-                    verified,
-                    &subject,
-                    &providers,
-                    &crate::call_registry::OpaqueCallRegistry::new(),
-                )
-                .map_err(|source| {
-                    failure_at_source(
-                        source.into(),
-                        ExplainStage::IntrinsicScheduling,
-                        record_cause(numerical_cause),
-                    )
-                })?;
+                let enumerated =
+                    enumerate_frontier(verified, &subject, physical.providers(), physical.calls())
+                        .map_err(|source| {
+                            failure_at_source(
+                                source.into(),
+                                ExplainStage::IntrinsicScheduling,
+                                record_cause(numerical_cause),
+                            )
+                        })?;
                 frontiers_by_subject.push((subject.clone(), enumerated.clone()));
                 enumerated
             };
