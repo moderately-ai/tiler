@@ -1,7 +1,7 @@
 ---
 id: retire-the-removed-loader-compatibility-refusals-outside-the-runtime-scope
 title: Retire the loader's removed compatibility refusals from the spike and the recorded measurements
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [select-executable-variants-across-registered-backend-families]
@@ -9,9 +9,6 @@ scopes: [research/target-profiles, research/extensions, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [runtime, backend-providers, documentation, spikes]
-claimed_from: todo
-assignee: worker-retire-the-r
-lease_expires_at: 1785567332
 ---
 ## User-visible outcome
 
