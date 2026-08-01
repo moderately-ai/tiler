@@ -782,6 +782,31 @@ pub fn builtin_scalar_value_types() -> Vec<ResolvedValueType> {
     types
 }
 
+/// Returns the immutable canonical descriptor facts of one governed built-in scalar.
+///
+/// `None` for a type this catalog does not govern, which is a different answer
+/// from an empty descriptor: a parameterized or encoded-numeric identity has
+/// facts, and they are not a *scalar* row's.
+///
+/// This exists for the same reason
+/// [`crate::semantic::strict_tensor_contraction_f32_facts`] does: a consumer that
+/// must parameterize itself on a format — deciding whether
+/// `tiler::ulp-reference-gap@1` can measure it, for instance — has to read the
+/// descriptor rather than carry its own copy of the parameters, because a copy is
+/// a second place for the format to be wrong. It returns the value from the same
+/// constructor the registration installs, not a restatement of it.
+#[must_use]
+pub fn builtin_scalar_value_type_facts(value_type: &ResolvedValueType) -> Option<CanonicalValue> {
+    let key = value_type.nominal_key()?;
+    if key.namespace() != "tiler" || key.semantic_version() != BUILT_IN_SEMANTIC_VERSION {
+        return None;
+    }
+    BUILT_IN_SCALARS
+        .iter()
+        .find(|scalar| scalar.name == key.name())
+        .map(BuiltInScalar::canonical_facts)
+}
+
 /// Returns every governed OCP microscaling scheme identity in canonical key order.
 #[must_use]
 pub fn microscaling_scheme_keys() -> Vec<QuantSchemeKey> {

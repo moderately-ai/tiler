@@ -5,6 +5,9 @@
 //! one-way, output-reachable compaction into an immutable
 //! [`SemanticProgram`](crate::semantic::SemanticProgram).
 
+/// The typed transcendental accuracy-contract vocabulary of ADRs 0016 and 0042.
+pub mod accuracy;
+
 mod broadcast;
 mod catalog;
 mod contraction;
@@ -32,8 +35,8 @@ pub use broadcast::{
     MAX_BROADCAST_MAPPING_AXES, broadcast_f32_op,
 };
 pub use catalog::{
-    admitted_complex_component_types, builtin_scalar_value_types, complex_type_constructor,
-    complex_value_type, microscaling_scheme_keys,
+    admitted_complex_component_types, builtin_scalar_value_type_facts, builtin_scalar_value_types,
+    complex_type_constructor, complex_value_type, microscaling_scheme_keys,
 };
 pub use contraction::{
     CONTRACTION_F32_FACT_ACCUMULATOR_TYPE, CONTRACTION_F32_FACT_ARITHMETIC_CONTRACTION_PERMITTED,

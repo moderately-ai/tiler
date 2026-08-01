@@ -51,3 +51,70 @@ The whole deliverable is public surface — the contract forms, the tolerance ty
 ## Reconsideration trigger
 
 Active now: three filed L3′ verticals cannot register a key without it, and the roadmap forbids registering one anyway. If a design pass shows the full ADR 0042 algebra cannot be landed in one change, split by *contract form* — the constant-rational `Ulp` clause the first tuples need before the named-profile form the fast-math tables need — and never by dropping the normalization, coverage, or refinement rules, which are what stop an unsound implication from being accepted.
+
+## Outcome
+
+**Landed as one change, not a form split.** The reconsideration trigger authorizes splitting by contract form if the full algebra cannot land at once. It can, and the derivation is that the split would not have divided the work: the four forms are the cheapest part of ADR 0042 — a discriminated enum, a rounding rule name, and a key plus a descriptor digest — while the predicate normalization, the accuracy-domain coverage decision, the metric's dtype-capability check, the refinement relation, the evidence classes, and the certified enclosure are *shared by every form* and are the whole of the volume. Deferring the named-elementary form would have removed about forty lines and left the trigger's forbidden remainder — normalization, coverage, and refinement — carrying the split anyway. So the constant-rational `Ulp` clause the first tuples need and the named-profile form the fast-math tables need both land, and no remainder ticket is filed.
+
+### The public packet, item by item
+
+Every item below is public surface and therefore Tom's to accept; a tested implementation is a concrete draft. Each carries what would refute its shape.
+
+1. **The four contract forms** — `AccuracyContractForm::{CorrectlyRounded, Faithful, BoundedPiecewise, NamedElementary}` in `crates/tiler-ir/src/semantic/accuracy/contract.rs`. Closed, discriminated, and never equated by name; `NamedElementary` carries a profile key, an immutable descriptor digest, and the authority whose descriptor defines the results. *Refuted by* a real specification that is none of the four, or by a case where the named-profile form needs to carry the descriptor's *content* rather than its digest.
+2. **The tolerance type** — `ExactTolerance` over `ExactRational` (`rational.rs`): exact, nonnegative by construction, in lowest terms so one number has one encoding, with no host floating-point constructor at all. *Refuted by* a specification whose tolerance is irrational (ADR 0042 sends those to a named profile, so finding one that cannot go there refutes the split).
+3. **The metric key** — `AccuracyMetricKey`, `ulp_reference_gap_metric_key()`, and `UlpFormat` (`metric.rs`). The scale is derived from the registered dtype descriptor through an explicit two-row rule table (`ieee-binary`, `bfloat`), each row carrying its normative basis; every other class is refused by name. *Refuted by* a dtype whose adjacent-value behaviour is derivable but whose class this table cannot state a basis for — that is a missing row, not a missing mechanism — or by a reading of ADR 0042 under which deriving IEEE parameters from the class is a "guess" rather than an application of the class's own authority.
+4. **The predicate language** — `AccuracyPredicate` with `absolute`, `relative`, `absolute_relative`, `ulp`, `all_of`, `any_of` (`predicate.rs`), normalized by construction and refusing every non-canonical spelling on decode. *Refuted by* a predicate shape a vendor states that none of the six expresses without approximation.
+5. **The accuracy-domain language** — `AccuracyDomain`, `AccuracyDomainClause`, `DomainInterval`, `ReferenceResultClass`, `ReferenceResultConstraint` (`domain.rs`), with decided coverage, intersection semantics, and a mandatory operation-specific proof behind any reference-result assertion. *Refuted by* an operation whose ordinary input domain is not a union of exact intervals per operand — a piecewise specification keyed on something other than the operand's value.
+6. **The evidence classes** — `ConformanceEvidenceClass` and `ConformanceEvidence` (`evidence.rs`), with `discharge()` as the only route to a hard feasibility conclusion and `Unknown`/`EmpiricalQualification` failing closed. *Refuted by* a required evidence field ADR 0042 lists that the nine-field record omits.
+7. **The refinement entry point** — `refines(candidate, required, registry)` returning `RefinementOutcome::{Refines, Unknown}` over an open `RegisteredImplicationRegistry` (`refinement.rs`). *Refuted by* an implication the closed algebra should establish and does not, in a direction that matters.
+8. **The reference half** — `CertifiedEnclosure`, `exp_enclosure`, `rsqrt_enclosure`, `decide_predicate`, `decide_contract`, `EnclosurePrecision` (`crates/tiler-reference/src/accuracy.rs`). *Refuted by* a corpus argument whose enclosure the governed halving or term bound cannot produce.
+
+### Every refusal, watched failing
+
+| Rule | Diagnostic code | Perturbation that produced it |
+| --- | --- | --- |
+| Non-canonical Boolean nesting | `accuracy.predicate.non-canonical-nesting` | a decoded `all-of` whose member is an `all-of` |
+| Non-canonical Boolean order | `accuracy.predicate.non-canonical-order` | the same two members encoded in the reverse of canonical-encoding order |
+| Duplicate Boolean member | `accuracy.predicate.duplicate-member` | one member encoded twice |
+| Non-canonical singleton | `accuracy.predicate.non-canonical-singleton` | a one-member `all-of` |
+| Empty collection | `accuracy.predicate.empty-collection` | a zero-member `all-of` and a zero-member `any-of` |
+| Undefined relative at a zero reference | `accuracy.predicate.undefined-relative-at-zero-reference` | a `Relative` clause whose reference constraint is `unconstrained`; the same clause with a justified `Nonzero` verifies |
+| Empty domain interval | `accuracy.domain.empty-interval` | `(1, 1]`; `[1, 1]` is admitted |
+| Empty clause set | `accuracy.domain.empty-clause-set` | a bounded contract with no clauses |
+| Unverifiable gap | `accuracy.domain.incomplete-coverage` | two clauses meeting at an open endpoint, witness `0`; closing one endpoint covers |
+| Coverage not decidable | `accuracy.domain.coverage-not-verifiable` | four operands × sixteen clauses, past the 4,096-cell budget |
+| Unjustified reference class | `accuracy.domain.unjustified-reference-result-class` | asserting `Nonzero` with no proof reference |
+| dtype/metric incompatibility | `accuracy.metric.incompatible-dtype` | every non-float governed scalar, counted: 5 compatible, 25 refused, 30 total |
+| Metric undefined | `accuracy.metric.reference-out-of-finite-range` | a reference one step above `f32::MAX` |
+| Empty composed result set | `accuracy.contract.empty-composed-result-set` | `Ulp(…, 1/4)`, an unbounded `Absolute`, and an `Absolute` below the proved spacing; `Ulp(…, 1/2)` verifies |
+| Unregistered cross-metric implication | `accuracy.refinement.unregistered-metric-implication` | `Ulp(apple::msl-ulp@1, 4)` against `Ulp(tiler::ulp-reference-gap@1, 4)`; registering a `ScaledMetric` row decides it, and a factor of two refuses it again |
+| Evidence cannot discharge | `accuracy.evidence.class-cannot-discharge` | empirical and unknown records, with the loop counting 3 discharged and 2 refused out of 5 |
+| Irreproducible measurement | `accuracy.evidence.{missing-reference-oracle,missing-corpus,malformed-digest}` | an empirical record missing each field in turn |
+| Enclosure refusals | `reference.enclosure.{argument-too-large,precision-unreachable,precision-too-coarse,outside-domain}` | `2^40`; a 5,000-bit grid; a four-bit grid on `rsqrt(2^-20)`; `rsqrt(0)` and `rsqrt(-1)` |
+| Undecided conformance | `reference.conformance.{enclosure-too-wide,reference-not-provably-nonzero,unsupported-metric,named-profile-not-interpretable,no-applicable-clause}` | see the enclosure proof below |
+
+### The enclosure's failure proof
+
+`a_degraded_enclosure_yields_undecided_rather_than_a_silent_pass` places a candidate exactly on a four-ULP boundary. At `EnclosurePrecision::binary32_corpus()` the decision is definite; at `EnclosurePrecision::new(2)` the same comparison returns `Undecided { EnclosureTooWide }`. It does not resolve toward `Conforms`, which is what a check that cannot fail would do, and it does not resolve toward `Violates`, which would reject correct implementations. Soundness is separately checked by identities the enclosure arithmetic must contain — `exp(x) · exp(-x) ∋ 1` over the whole L3′ corpus, `rsqrt(x)² · x ∋ 1`, strict monotonicity — plus decimal brackets on `e` and `exp(2)` to nineteen digits, which a too-narrow tail bound would miss. The decision also says *no*: `the_decision_says_both_yes_and_no` gets `Conforms` at the rounded value and `Violates` one binade away and at five ULPs against a four-ULP bound, with the same candidate conforming at six.
+
+### Identity, digests, and scope
+
+**The explain digest did not move.** `0b7759de2d9b5756` at `crates/tiler-compiler/src/explain.rs:3739` is unchanged and the full workspace suite is green, which is the traced expectation rather than a lucky pass: the vocabulary registers nothing into the frozen semantic snapshot, so `SemanticIdentity`'s registry-snapshot component cannot move. The contraction precedent moved the digest because it registered an operation; this registers none. **No `implementation/compiler` scope was needed or added.**
+
+### Navigation edits made, and one deliberately not made
+
+- The [support matrix](../docs/roadmap.md#operation-family-support-matrix) transcendentals row: its Fact cell said "no ticket implements one", which this landing makes false. Rewritten to state what exists, that the rung is unmoved because nothing is registered, and that the Milestone 1 precondition is now buildable rather than blocked.
+- Absence check 1 in the same file: it claimed "returns no output at all", **which was already false before this landing** — `crates/tiler-ir/src/semantic/broadcast/tests.rs` has named the rotary `cos`/`sin` tables in a comment since `762ba34`. Corrected, with the pre-existing staleness named rather than folded into this change's own effect.
+- **Not made, and out of scope:** ADR 0016 and ADR 0042 still carry `implementation_status: "not-started"`, which this landing makes stale — `partial` is what they now describe. `docs/decisions/[0-9]*.md` is `contracts/decisions`, which this ticket does not hold, so the roadmap row *names* the staleness instead of hiding it. **This needs a `contracts/decisions` edit before the next reader takes the frontmatter at face value.**
+- `docs/numerical-semantics.md`'s transcendental section is `contracts/numerics`, not held here, and nothing in it became false: it describes the accepted contract, which is unchanged, and its one implementation Fact is about `ApproximationEnvelope`, whose doc comment this change updated in place.
+
+### Unsupported cases and deliberate conservatism
+
+- `AnyOf` nonemptiness requires a *single* disjunct to hold across a whole cell, so a disjunction covered piecewise by two members is `Unknown` rather than accepted. Splitting the clause's domain is the contract-side answer, and the refusal names it.
+- The metric's format-rule table interprets two descriptor classes. `ocp-binary-element`, `ocp-exponent-scale`, and `ieee-decimal` are refused with a reason rather than approximated; each needs its own row with its own basis.
+- `decide_contract` reports a named-elementary profile as uninterpretable, because this build holds the descriptor's digest and not its content.
+- No operation key, no structured-kernel construct, no target honourability fact, and no profile tuple. Q-SEM-004 and `record-the-metal-elementary-function-accuracy-guarantee` remain open, and the cross-metric implication the latter will need is deliberately *unregistered* so it stays `Unknown` until someone derives it.
+
+### Verification
+
+`cargo fmt --all --check`; `cargo check -p tiler-ir -p tiler-reference --all-targets`; `cargo clippy -p tiler-ir -p tiler-reference --all-targets -- -D warnings` (clean, with no new `#[allow]`); `cargo nextest run --workspace` 1,793 → 1,798 passing; `cargo test --doc`; `RUSTDOCFLAGS="-D warnings" cargo doc`; `make full` including the release-profile `tiler-reference` numerical tests, which the enclosure passes by construction because every value in it is an exact integer ratio; `git diff --check`; `tkt lint`; `tkt guard`.

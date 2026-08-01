@@ -356,6 +356,12 @@ pub enum ExceptionalValueAssumption {
 pub enum ApproximationEnvelope {
     /// Approximate intrinsics are forbidden; every elementary function follows
     /// its own resolved accuracy contract.
+    ///
+    /// That contract now has a carrier rather than being a forward reference:
+    /// [`crate::semantic::accuracy::AccuracyContract`] is the ADR 0042 vocabulary
+    /// this resolution defers to. What it does *not* have is any operation
+    /// carrying one — the vocabulary registers no key — so this variant still
+    /// forbids a relaxation that nothing would currently be able to state.
     Forbidden,
     /// Permitted up to the backend-elementary envelope.
     ///
