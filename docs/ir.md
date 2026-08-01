@@ -1192,7 +1192,7 @@ Several adjacent concepts remain deliberately separate:
   predicate over typed capability facts, candidate resources, evaluated launch
   values, ABI/layout, and binding/access facts, including any named deferred
   phase.
-- `ResourceRequirements` records exact quantities or proven upper bounds used for feasibility, such as bindings, threads, and local-memory bytes. It does not encode synchronization as a barrier-operation count.
+- `ResourceRequirements` records exact quantities or proven upper bounds used for feasibility, such as bindings, threads, and local-memory bytes. Local-memory bytes are derived from the workgroup staging a cooperative tile allocates and are zero for every topology that stages nothing. It does not encode synchronization as a barrier-operation count.
 - `ResourceEstimate` records quantities that cannot yet prove feasibility, such
   as register pressure, occupancy, and source/code-size estimates.
 - `ApplicabilityPredicate` is a runtime-checkable condition over shapes,
@@ -1215,10 +1215,13 @@ Several adjacent concepts remain deliberately separate:
 - Tail elements are guarded correctly.
 - Vector access satisfies alignment and divisibility requirements.
 - Barriers and collectives are convergent.
+- A cooperative workgroup tile's participants are the whole launched workgroup, every phase is uniformly reachable, staged writes are disjoint and total over their allocation, staged reads are in range, within the declared lifetime, and produced by a strictly earlier phase, and exactly one participant commits the owning write.
 - Index ranges and coordinate maps cannot overflow under the declared guards.
 - The chosen schedule preserves the declared numerical contract.
 
-**Fact — the implemented schedule profile admits only the absence of synchronization.** Its normalized `KernelSchedule` has no identity-bearing synchronization point, phase, placement, participant set, or convergence proof. A schedule with no synchronization requirement is therefore admitted vacuously and consumes no target synchronization fact. This is an implemented subset, not a claim that synchronization can be reconstructed from a kernel operation or a numeric resource count.
+**Fact — the implemented schedule profile admits only the absence of synchronization, and that is now separable from the dataflow that would need it.** `ReductionTopology::CooperativeWorkgroup` carries a `CooperativeTile` stating the participant set, the local coordinate space, the workgroup staging allocations with their shapes and declared lifetimes, the ordered phases and the staged writes and reads each performs, and which single participant commits the owning write. The intrinsic verifier proves that dataflow: participants are exactly the launched workgroup, every phase is reachable by all of them, staged writes are a bijection onto the allocation's slots, every staged read is in range and in lifetime and has a strictly earlier producing phase, and the tile performs at least one cross-invocation handoff. `CooperativeTile::visibility_edges` derives, per (allocation, producing phase, consuming phase) triple, the exact dependency a synchronization point would have to discharge.
+
+**No such point exists.** The normalized `KernelSchedule` still has no identity-bearing synchronization point, placement, ordering, or convergence proof, so a tile's edges are *recorded and never discharged*, and the structured-kernel verifier refuses any kernel whose region carries one. A schedule with no cooperative tile has no edge and is therefore admitted vacuously, consuming no target synchronization fact. This is an implemented subset: a representable dataflow is a representation claim, not a claim that the handoff can be executed.
 
 ### Target feasibility assessment
 
@@ -1275,8 +1278,13 @@ classes are deferred until an optimization consumes them.
 
 Loads and stores carry dominating schedule-derived bounds evidence. Ordinary stores also carry output-ownership evidence; atomics and reductions name their selected protocols. The proposed complete barrier contract separately states execution scope, memory scope, fenced spaces, ordering, convergence, and the schedule synchronization point it realizes. The current `BarrierSpec` is only a type-system reservation for execution scope, memory scope, fenced spaces, and ordering: it has no schedule synchronization-point identity, phase, placement, participant set, visibility contract, or convergence proof. The implemented verifier therefore rejects every current barrier intrinsically as `UnexpectedSynchronization`, regardless of target facts. Serial reductions use explicit loops; collectives retain the selected participant set, combine order, identity/tail, owner/visibility, and numerical realization. Conversions distinguish semantic value conversion, representation conversion, checked index/address narrowing, and bitcast.
 
+Workgroup staging is declared separately from the buffer parameters, not as one of them. A buffer parameter's position is its argument-table ordinal, and a workgroup allocation is not an argument, so placing one in that list would re-base every later ordinal and change what an existing signature position means; a staging declaration instead names the scheduled staging ordinal it realizes, and the verifier proves the declared element type, address space, and slot count against the region's cooperative tile.
+
 Invocation coordinates are governed builtins admitted by the kernel signature
-and mapped to schedule execution axes, never backend source names. The schedule
+and mapped to schedule execution axes, never backend source names. A region
+carrying a cooperative tile additionally admits the local invocation
+coordinate, because its participants are named by their position within the
+workgroup. The schedule
 owns launch formulas; the kernel and artifact contain checked references or
 derivations rather than editable copies. General CFGs, recursion, unbounded
 loops, unrestricted pointers, and calls with unknown effects are outside the
@@ -1293,6 +1301,8 @@ initial form.
 - Every memory effect has dominating bounds evidence; every ordinary store
   matches its scheduled ownership witness.
 - Once admitted, barriers and collectives match scheduled participant, scope, fence, phase, convergence, visibility, and order requirements. No barrier is admitted by the implemented zero-synchronization schedule profile.
+- Declared workgroup staging realizes the region's cooperative tile exactly, and a region that stages nothing declares none.
+- A region whose cooperative tile carries any visibility edge is rejected as `UndischargedVisibility`, before any body is derived. No canonical lowering exists for such a region: a body realizing the tile's phases would stage and re-read across invocations with nothing ordering the two.
 - Builtins, loops, tails, accesses, conversions, and reductions refine the
   referenced schedule and numerical contracts.
 - Derived local-memory and launch requirements match the schedule. Target

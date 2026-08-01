@@ -25,11 +25,11 @@ use super::handles::{KernelBufferId, KernelBuilderId, KernelValueId, next_kernel
 use super::model::{
     BarrierSpec, BinaryOp, BlockData, BufferAccess, BufferParameter, Builtin, CompareOp, ConvertOp,
     KernelConstant, KernelData, KernelType, OperationData, OperationKind, PackedExtractOp,
-    SerialLoopSpec, UnaryOp, ValueData, VerifiedKernel, encode_identity,
+    SerialLoopSpec, StagingParameter, UnaryOp, ValueData, VerifiedKernel, encode_identity,
 };
 use super::{
     MAX_KERNEL_ADMITTED_BUILTINS, MAX_KERNEL_BLOCK_DEPTH, MAX_KERNEL_BLOCKS, MAX_KERNEL_BUFFERS,
-    MAX_KERNEL_LOOP_ACCUMULATORS, MAX_KERNEL_OPERATIONS, MAX_KERNEL_VALUES,
+    MAX_KERNEL_LOOP_ACCUMULATORS, MAX_KERNEL_OPERATIONS, MAX_KERNEL_STAGING, MAX_KERNEL_VALUES,
 };
 
 /// The induction variable and accumulator parameters of one structured loop.
@@ -98,6 +98,7 @@ pub struct KernelBuilder {
     schedule_identity: CanonicalScheduledRegionIdentity,
     derived_requirements: ResourceRequirements,
     buffers: Vec<BufferParameter>,
+    staging: Vec<StagingParameter>,
     admitted_builtins: Vec<Builtin>,
     numerical: Option<NumericalRealization>,
     requirements: Option<ResourceRequirements>,
@@ -111,6 +112,7 @@ pub struct KernelBuilder {
 #[derive(Clone, Copy, Debug)]
 struct Checkpoint {
     buffers: usize,
+    staging: usize,
     admitted_builtins: usize,
     values: usize,
     blocks: usize,
@@ -146,6 +148,7 @@ impl KernelBuilder {
             schedule_identity,
             derived_requirements,
             buffers: Vec::new(),
+            staging: Vec::new(),
             admitted_builtins: Vec::new(),
             numerical: None,
             requirements: None,
@@ -193,6 +196,29 @@ impl KernelBuilder {
         )?;
         self.buffers.push(parameter);
         Ok(id)
+    }
+
+    /// Declares one workgroup staging allocation.
+    ///
+    /// Deliberately returns no handle. A staging allocation is an allocation,
+    /// not an argument: nothing in the current operation vocabulary can address
+    /// one, because the staged load and store that would need a handle are
+    /// inseparable from the synchronization point that orders them, and no
+    /// schedule authorizes one. Handing out a handle here would reserve a
+    /// reference to storage no operation can reach.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KernelBuildError::StructuralLimit`] when the staging limit is
+    /// exceeded.
+    pub fn declare_staging(&mut self, parameter: StagingParameter) -> Result<(), KernelBuildError> {
+        limit(
+            self.staging.len().saturating_add(1),
+            MAX_KERNEL_STAGING,
+            KernelLimitKind::Staging,
+        )?;
+        self.staging.push(parameter);
+        Ok(())
     }
 
     /// Admits one governed launch builtin into the kernel signature.
@@ -661,6 +687,7 @@ impl KernelBuilder {
             })?;
         Ok(KernelData {
             buffers: std::mem::take(&mut self.buffers),
+            staging: std::mem::take(&mut self.staging),
             admitted_builtins: std::mem::take(&mut self.admitted_builtins),
             numerical,
             requirements,
@@ -673,6 +700,7 @@ impl KernelBuilder {
     /// [`KernelVerificationError`] documents.
     fn restore_data(&mut self, data: KernelData) {
         self.buffers = data.buffers;
+        self.staging = data.staging;
         self.admitted_builtins = data.admitted_builtins;
         self.values = data.values;
         self.blocks = data.blocks;
@@ -760,6 +788,7 @@ impl KernelBuilder {
     fn checkpoint(&self) -> Checkpoint {
         Checkpoint {
             buffers: self.buffers.len(),
+            staging: self.staging.len(),
             admitted_builtins: self.admitted_builtins.len(),
             values: self.values.len(),
             blocks: self.blocks.len(),
@@ -770,6 +799,7 @@ impl KernelBuilder {
 
     fn restore(&mut self, checkpoint: Checkpoint) {
         self.buffers.truncate(checkpoint.buffers);
+        self.staging.truncate(checkpoint.staging);
         self.admitted_builtins
             .truncate(checkpoint.admitted_builtins);
         self.values.truncate(checkpoint.values);

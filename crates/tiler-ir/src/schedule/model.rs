@@ -9,6 +9,10 @@ use crate::identity::{push_len, push_slice};
 use crate::semantic::EncodedComponentRole;
 use crate::shape::{Axis, Shape};
 
+use super::cooperative::{
+    CooperativePhase, CooperativeTile, LocalCoordinates, ParticipantRange, StagedRead, StagedSpan,
+    StagedWrite, WorkgroupStaging,
+};
 use super::error::{ContributorError, ElementCountOverflow};
 use super::handles::{BoundsWitnessId, InputOrdinal, OwnershipWitnessId, RegionId};
 use super::numerics::{
@@ -577,6 +581,46 @@ pub enum ReductionTopology {
         /// Whether the contract permits contributor permutation.
         permits_permutation: bool,
     },
+    /// One workgroup's invocations cooperate on each output position.
+    ///
+    /// The sibling of [`Self::MultiPass`], and the difference between them is
+    /// the whole reason this is a topology of its own. `MultiPass` splits a
+    /// contributor sequence across a *dispatch* boundary: it commits its
+    /// partials to a materialized tensor, and the dispatch dependency the kernel
+    /// program declares is what makes them visible, so it needs no
+    /// intra-workgroup ordering. This variant splits the same sequence across
+    /// the invocations of *one* workgroup and stages the partials in
+    /// workgroup-shared memory, so the handoff needs visibility that no dispatch
+    /// boundary supplies — which is exactly what
+    /// [`CooperativeTile::visibility_edges`] states and what no schedule can yet
+    /// authorize.
+    ///
+    /// The split is a reassociation of the declared contributor sequence and
+    /// never a permutation of it, for the reason [`ContributorPartition`]
+    /// records: participant `p` combines the contiguous contributor range that
+    /// partition owns, and the staged partials are combined in ascending `p`.
+    CooperativeWorkgroup {
+        /// How one output's contributor sequence is split across participants.
+        partition: ContributorPartition,
+        /// The cross-invocation dataflow that split requires.
+        tile: CooperativeTile,
+        /// Reduced axes in canonical ascending order.
+        axes: Vec<Axis>,
+        /// Contributor combination order.
+        order: ContributorOrder,
+        /// Width every combining step is performed at.
+        accumulation: ArithmeticType,
+        /// Whether the contract permits reassociation.
+        ///
+        /// The permission this strategy consumes; the verifier admits the
+        /// topology only when it holds.
+        permits_reassociation: bool,
+        /// Whether the contract permits contributor permutation.
+        ///
+        /// Recorded because the region preserves the declared realization
+        /// whole, and deliberately not consulted to admit the split.
+        permits_permutation: bool,
+    },
 }
 
 /// Which pass of a multi-pass reduction one region realizes.
@@ -897,6 +941,32 @@ pub fn partial_reduction_axis(output_shape: &Shape) -> Option<Axis> {
     u32::try_from(output_shape.rank()).ok().map(Axis::new)
 }
 
+/// Returns the cooperative tile one reduction topology carries, if any.
+///
+/// The one place the topology is matched to reach its tile, so a consumer that
+/// needs the dataflow cannot accidentally read it from some other variant.
+#[must_use]
+pub fn cooperative_tile(reduction: &ReductionTopology) -> Option<&CooperativeTile> {
+    match reduction {
+        ReductionTopology::CooperativeWorkgroup { tile, .. } => Some(tile),
+        ReductionTopology::None
+        | ReductionTopology::Serial { .. }
+        | ReductionTopology::MultiPass { .. }
+        | ReductionTopology::Contraction { .. } => None,
+    }
+}
+
+/// Returns the workgroup memory one reduction topology requires, in bytes.
+///
+/// `None` distinguishes "no tile, so nothing staged" from "a tile whose
+/// allocations overflow `u64`" only at the call site that cares: the intrinsic
+/// verifier refuses the overflow, and every later reader sees a value it already
+/// proved exact.
+#[must_use]
+pub fn cooperative_local_memory_bytes(reduction: &ReductionTopology) -> Option<u64> {
+    cooperative_tile(reduction).and_then(CooperativeTile::local_memory_bytes)
+}
+
 /// Returns whether `axes` is a strictly ascending in-range axis set.
 #[must_use]
 pub fn axes_are_canonical(axes: &[Axis], rank: usize) -> bool {
@@ -949,18 +1019,26 @@ pub fn contributor_count(axes: &[Axis], access: &LogicalAccess) -> Result<u64, C
 /// Derives the resource requirements of a verified region.
 ///
 /// Bindings follow the region's access count; the launch fixes the thread
-/// count; the bounded profile stages no local memory and introduces no
-/// synchronization requirement. The numerical
+/// count; local memory is the workgroup storage a cooperative tile allocates and
+/// zero for every topology that stages nothing. No synchronization requirement
+/// is derived, because none is authorized: a cooperative tile records the
+/// visibility dependency its staging creates without asserting that anything
+/// discharges it. The numerical
 /// realization is carried forward whole rather than reduced to a predicate:
 /// deriving one bit here would decide, inside intrinsic verification, which
 /// dimensions a target is allowed to be asked about, and that decision belongs
 /// to the feasibility authority that knows what the target declares.
+///
+/// The local-memory value is read through [`cooperative_local_memory_bytes`],
+/// whose overflow case the intrinsic verifier has already refused — so this
+/// never saturates a requirement a feasibility authority would then compose as
+/// if it were real.
 pub(super) fn derive_requirements(region: &ScheduledRegion) -> ResourceRequirements {
     let buffer_bindings = u32::try_from(region.index.accesses.len()).unwrap_or(u32::MAX);
     ResourceRequirements {
         buffer_bindings,
         threads_per_workgroup: region.schedule.threads_per_workgroup,
-        local_memory_bytes: 0,
+        local_memory_bytes: cooperative_local_memory_bytes(&region.schedule.reduction).unwrap_or(0),
         requires_device_memory: true,
         input_subnormals: region.index.numerical.input_subnormals,
         result_subnormals: region.index.numerical.result_subnormals,
@@ -1021,6 +1099,14 @@ const TAG_REDUCTION_MULTI_PASS: u8 = 0x33;
 /// Appended exactly as `0x33` was, and with the same injectivity argument:
 /// `None`, `Serial`, and `MultiPass` keep their tags and their field positions.
 const TAG_REDUCTION_CONTRACTION: u8 = 0x34;
+/// Reduction-topology tag of a cooperative workgroup tile.
+///
+/// Appended exactly as `0x33` and `0x34` were, and with the same injectivity
+/// argument: `None`, `Serial`, `MultiPass`, and `Contraction` keep their tags
+/// and their field positions, so no previously encodable region's bytes move and
+/// the schedule identity domain deliberately does not step. A reader that
+/// reaches `0x35` is reading a region the earlier vocabulary could not express.
+const TAG_REDUCTION_COOPERATIVE_WORKGROUP: u8 = 0x35;
 
 fn push_shape(bytes: &mut Vec<u8>, shape: &Shape) {
     push_len(bytes, shape.rank());
@@ -1387,6 +1473,72 @@ fn push_component_role(bytes: &mut Vec<u8>, role: Option<EncodedComponentRole>) 
     }
 }
 
+/// Encodes one contiguous run of local invocation coordinates.
+fn push_participant_range(bytes: &mut Vec<u8>, range: ParticipantRange) {
+    bytes.extend_from_slice(&range.first.to_be_bytes());
+    bytes.extend_from_slice(&range.count.to_be_bytes());
+}
+
+/// Encodes the slots one participant addresses in one phase.
+fn push_staged_span(bytes: &mut Vec<u8>, span: StagedSpan) {
+    bytes.extend_from_slice(&span.stride.to_be_bytes());
+    bytes.extend_from_slice(&span.offset.to_be_bytes());
+    bytes.extend_from_slice(&span.count.to_be_bytes());
+}
+
+/// Encodes one workgroup staging allocation and its declared lifetime.
+fn push_workgroup_staging(bytes: &mut Vec<u8>, staging: &WorkgroupStaging) {
+    bytes.extend_from_slice(&staging.id.get().to_be_bytes());
+    bytes.push(staging.element.tag());
+    bytes.extend_from_slice(&staging.slots.to_be_bytes());
+    bytes.extend_from_slice(&staging.live_from.get().to_be_bytes());
+    bytes.extend_from_slice(&staging.live_through.get().to_be_bytes());
+}
+
+/// Encodes one phase's reachable participants and its staged accesses.
+///
+/// Writes and reads are framed separately and in declaration order, so a tile
+/// that writes an allocation this phase and one that reads it here differ in
+/// these bytes even when the spans coincide.
+fn push_cooperative_phase(bytes: &mut Vec<u8>, phase: &CooperativePhase) {
+    bytes.extend_from_slice(&phase.id.get().to_be_bytes());
+    push_participant_range(bytes, phase.participation);
+    push_len(bytes, phase.writes.len());
+    for StagedWrite { staging, span } in &phase.writes {
+        bytes.extend_from_slice(&staging.get().to_be_bytes());
+        push_staged_span(bytes, *span);
+    }
+    push_len(bytes, phase.reads.len());
+    for StagedRead { staging, span } in &phase.reads {
+        bytes.extend_from_slice(&staging.get().to_be_bytes());
+        push_staged_span(bytes, *span);
+    }
+}
+
+/// Encodes one cooperative tile's complete cross-invocation dataflow.
+///
+/// The visibility edges are deliberately *not* encoded: they are a total
+/// function of the phases and staged accesses already written here, so encoding
+/// them would add bytes no two distinguishable tiles differ in — and would give
+/// a producer a second place to state a fact the verifier derives.
+fn push_cooperative_tile(bytes: &mut Vec<u8>, tile: &CooperativeTile) {
+    let LocalCoordinates {
+        source,
+        participants,
+    } = tile.coordinates;
+    bytes.push(source.tag());
+    push_participant_range(bytes, participants);
+    push_len(bytes, tile.staging.len());
+    for staging in &tile.staging {
+        push_workgroup_staging(bytes, staging);
+    }
+    push_len(bytes, tile.phases.len());
+    for phase in &tile.phases {
+        push_cooperative_phase(bytes, phase);
+    }
+    push_participant_range(bytes, tile.commit);
+}
+
 fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
     let ExecutionBinding::GlobalLinearInvocation = schedule.binding;
     bytes.push(0x01);
@@ -1437,6 +1589,25 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
             bytes.push(TAG_REDUCTION_CONTRACTION);
             push_shape(bytes, contracted_shape);
             push_order(bytes, *order);
+            bytes.push(u8::from(*permits_reassociation));
+            bytes.push(u8::from(*permits_permutation));
+        }
+        ReductionTopology::CooperativeWorkgroup {
+            partition,
+            tile,
+            axes,
+            order,
+            accumulation,
+            permits_reassociation,
+            permits_permutation,
+        } => {
+            bytes.push(TAG_REDUCTION_COOPERATIVE_WORKGROUP);
+            bytes.extend_from_slice(&partition.partitions.to_be_bytes());
+            bytes.extend_from_slice(&partition.contributors_per_partition.to_be_bytes());
+            push_cooperative_tile(bytes, tile);
+            push_axes(bytes, axes);
+            push_order(bytes, *order);
+            bytes.push(accumulation.tag());
             bytes.push(u8::from(*permits_reassociation));
             bytes.push(u8::from(*permits_permutation));
         }

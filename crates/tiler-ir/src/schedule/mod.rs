@@ -134,6 +134,7 @@
 //! ```
 
 mod builder;
+mod cooperative;
 mod error;
 mod handles;
 mod model;
@@ -141,19 +142,26 @@ mod numerics;
 mod pointwise;
 
 pub use builder::ScheduledRegionBuilder;
-pub use error::{
-    ContributorError, ElementCountOverflow, ScheduleBuildError, ScheduleComponent,
-    ScheduleLimitKind, ScheduledRegionBuildError, ScheduledRegionDiagnostic,
+pub use cooperative::{
+    CooperativePhase, CooperativeTile, LocalCoordinateSource, LocalCoordinates, ParticipantRange,
+    StagedElement, StagedRead, StagedSpan, StagedWrite, VisibilityEdge, WorkgroupStaging,
 };
-pub use handles::{BoundsWitnessId, InputOrdinal, OwnershipWitnessId, RegionId};
+pub use error::{
+    ContributorError, CooperativeTileRule, ElementCountOverflow, ScheduleBuildError,
+    ScheduleComponent, ScheduleLimitKind, ScheduledRegionBuildError, ScheduledRegionDiagnostic,
+};
+pub use handles::{
+    BoundsWitnessId, InputOrdinal, OwnershipWitnessId, PhaseId, RegionId, StagingId,
+};
 pub(crate) use model::subnormal_freedom_of;
 pub use model::{
     Access, AccessMode, BoundsProof, BoundsProofKind, CanonicalScheduledRegionIdentity,
     ContractionAxisSource, ContributorOrder, ContributorPartition, ExecutionBinding, IndexRegion,
     KernelSchedule, LaunchPlan, LogicalAccess, OwnershipProof, OwnershipProofKind, ReductionPass,
     ReductionTopology, ResourceRequirements, ScalarProgram, ScheduledRegion, TailPolicy,
-    TensorRole, VerifiedScheduledRegion, axes_are_canonical, contributor_count, element_count,
-    partial_reduction_axis, partial_reduction_shape,
+    TensorRole, VerifiedScheduledRegion, axes_are_canonical, contributor_count,
+    cooperative_local_memory_bytes, cooperative_tile, element_count, partial_reduction_axis,
+    partial_reduction_shape,
 };
 pub use numerics::{
     ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign,
@@ -171,3 +179,24 @@ pub use pointwise::{
 pub const MAX_SCHEDULE_ACCESSES: usize = 4_096;
 /// Maximum bounds proofs admitted by one scheduled region.
 pub const MAX_SCHEDULE_BOUNDS_PROOFS: usize = 4_096;
+/// Maximum participants admitted by one cooperative workgroup tile.
+///
+/// The bound exists so the tile's disjointness and coverage rules can be decided
+/// by enumerating every addressed slot rather than by a modular argument over an
+/// unbounded participant count. It is a verification bound, not a hardware
+/// claim: nothing here asserts a target admits this many invocations per
+/// workgroup, and a target profile's own workgroup-thread axis is what refuses
+/// one that does not.
+pub const MAX_COOPERATIVE_PARTICIPANTS: u64 = 4_096;
+/// Maximum staging slots admitted across one cooperative workgroup tile.
+///
+/// Bounded for the reason [`MAX_COOPERATIVE_PARTICIPANTS`] is, and separately,
+/// because coverage is decided over the slot space rather than the participant
+/// space. The derived local-memory requirement is composed against a target's
+/// declared workgroup memory by the feasibility authority; this bound never
+/// stands in for that.
+pub const MAX_COOPERATIVE_STAGING_SLOTS: u64 = 65_536;
+/// Maximum phases admitted by one cooperative workgroup tile.
+pub const MAX_COOPERATIVE_PHASES: usize = 64;
+/// Maximum staged accesses admitted by one cooperative phase.
+pub const MAX_COOPERATIVE_PHASE_ACCESSES: usize = 64;

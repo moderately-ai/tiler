@@ -175,11 +175,13 @@ pub use model::{
     AddressSpace, BarrierOrdering, BarrierSpec, BinaryOp, BlockRef, BufferAccess, BufferParameter,
     Builtin, CanonicalKernelIdentity, CompareOp, ConvertOp, ExecutionScope, KernelConstant,
     KernelType, MemoryScope, OperationRef, OperationView, PackedExtractOp, SerialLoopRef,
-    SerialLoopSpec, UnaryOp, VerifiedKernel,
+    SerialLoopSpec, StagingParameter, UnaryOp, VerifiedKernel,
 };
 
 /// Maximum buffer parameters admitted by one kernel signature.
 pub const MAX_KERNEL_BUFFERS: usize = 64;
+/// Maximum workgroup staging allocations declared by one kernel.
+pub const MAX_KERNEL_STAGING: usize = 64;
 /// Maximum launch builtins admitted by one kernel signature.
 pub const MAX_KERNEL_ADMITTED_BUILTINS: usize = 16;
 /// Maximum structured SSA values admitted by one kernel.
