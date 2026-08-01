@@ -1,7 +1,7 @@
 ---
 id: draft-the-backend-provider-composition-adr
 title: Draft the backend-provider composition ADR
-status: in-progress
+status: done
 priority: p1
 dependencies: [specify-the-consumer-neutral-backend-provider-composition-contract]
 related: [draft-public-extension-seam-ownership-adr, multi-device-and-sharding-scope-gate]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions, contracts/foundation, contracts/artifacts, contrac
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [backend-providers, pluggability, decision, adr]
-claimed_from: todo
-assignee: worker-draft-the-ba
-lease_expires_at: 1785552290
 ---
 ## User-visible outcome
 
