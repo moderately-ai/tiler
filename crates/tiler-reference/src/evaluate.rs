@@ -553,7 +553,7 @@ fn preflight_f32_output(output_count: usize) -> Result<(), ReferenceOperationErr
     Ok(())
 }
 
-fn decode_coordinate(
+pub(crate) fn decode_coordinate(
     linear: usize,
     shape: &Shape,
     strides: &[usize],

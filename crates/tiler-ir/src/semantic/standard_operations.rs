@@ -3,10 +3,12 @@
 use crate::shape::{Axis, ShapeEvidence, StaticShape};
 
 use super::{
-    BuildError, CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField, CanonicalValue,
+    BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, BuildError,
+    CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField, CanonicalValue,
     ContractionIndexStructure, F32, F32_CONSTANT_BITS_ATTRIBUTE, OperationAttributes,
-    REDUCTION_AXES_ATTRIBUTE, SemanticProgramBuilder, ShapedValue, Value, add_f32_op,
-    constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
+    REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, ReindexForm, SemanticProgramBuilder,
+    ShapedValue, Value, add_f32_op, broadcast_f32_op, constant_f32_op, multiply_f32_op,
+    reindex_f32_op, strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
 };
 
 /// Exact binary32 constant from its IEEE-754 payload.
@@ -282,6 +284,71 @@ impl F32TensorContraction {
             attributes,
             &[left.erase(), right.erase()],
         )
+    }
+}
+
+/// Binary32 `Reindex` over one admitted coordinate mapping form.
+///
+/// A reindex changes which coordinate reads which element and changes no value.
+/// It makes no claim that storage was transposed or copied; whether an
+/// occurrence costs a dispatch is a planning outcome.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct F32Reindex;
+
+impl F32Reindex {
+    /// Applies the registered reindex semantics.
+    ///
+    /// The form is stated once and validated once, by the registered operation
+    /// authority: a form outside the admitted set, and a form the operand's
+    /// shape does not admit, are both refused here rather than approximated. The
+    /// result's shape is derived from the form and the operand's extents, never
+    /// declared by a caller.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed construction error without mutating the graph on
+    /// failure, naming the mapping rule the form violated against this
+    /// occurrence's operand.
+    pub fn apply(
+        builder: &mut SemanticProgramBuilder,
+        form: &ReindexForm,
+        input: Value<F32>,
+    ) -> Result<Value<F32>, BuildError> {
+        let attributes = OperationAttributes::new([CanonicalField::new(
+            REINDEX_MAPPING_ATTRIBUTE,
+            form.canonical_value().clone(),
+        )])
+        .map_err(BuildError::InvalidOperationAttributes)?;
+        apply_single(builder, reindex_f32_op(), attributes, &[input.erase()])
+    }
+}
+
+/// Binary32 `Broadcast` over one explicit axis mapping.
+///
+/// Every result axis is accounted for and every many-to-one relation is stated,
+/// so nothing about the replication is inferred from a shape.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct F32Broadcast;
+
+impl F32Broadcast {
+    /// Applies the registered broadcast semantics.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed construction error without mutating the graph on
+    /// failure, naming the mapping rule the axis mapping violated against this
+    /// occurrence's operand.
+    pub fn apply(
+        builder: &mut SemanticProgramBuilder,
+        mapping: &BroadcastAxisMapping,
+        input: Value<F32>,
+    ) -> Result<Value<F32>, BuildError> {
+        let attributes = OperationAttributes::new([CanonicalField::new(
+            BROADCAST_AXIS_MAPPING_ATTRIBUTE,
+            mapping.canonical_value().clone(),
+        )])
+        .map_err(BuildError::InvalidOperationAttributes)?;
+        apply_single(builder, broadcast_f32_op(), attributes, &[input.erase()])
     }
 }
 

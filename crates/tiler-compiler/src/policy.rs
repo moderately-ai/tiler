@@ -269,6 +269,24 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
             key: "tiler::strict-tensor-contraction-f32@1",
             consumes: TENSOR_CONTRACTION,
         },
+        // The two structural families consume nothing, and the reason is not
+        // that their rows are unfinished. A reindex and a broadcast compute no
+        // value: each result element is an operand element with the same bits,
+        // so there is no rounding to relax, no order to change, and no signed
+        // zero or NaN to canonicalize. Subnormals in particular are *not*
+        // consumable here — a family that never performs an arithmetic operation
+        // cannot flush an input or a result, and declaring the dimension would
+        // let a target's flush mode be read as permission acting on data these
+        // families only move. An empty row is therefore the strict claim rather
+        // than the absent one, exactly as it is for `tiler::constant-f32@1`.
+        OperationNumericalCapability {
+            key: "tiler::reindex-f32@1",
+            consumes: &[],
+        },
+        OperationNumericalCapability {
+            key: "tiler::broadcast-f32@1",
+            consumes: &[],
+        },
         // These operations carry a complete, fixed strict-affine conversion
         // contract. No caller-selected generic freedom can weaken or substitute
         // it, and no physical lowering is implied by these rows.

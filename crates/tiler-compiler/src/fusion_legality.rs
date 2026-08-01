@@ -45,7 +45,8 @@ use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::schedule::NumericalPermission;
 use tiler_ir::semantic::{
     F32, FrozenSemanticRegistry, OpKey, OperationEffect, ProviderIdentity, SemanticProgram,
-    add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
+    add_f32_op, broadcast_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op,
+    strict_serial_sum_f32_op,
 };
 
 use crate::region::{
@@ -142,6 +143,26 @@ enum FusionOperationRole {
     ElementwiseArithmetic,
     /// A strict lexicographic left-fold reduction with a defined identity.
     OrderedReduction,
+    /// A pure coordinate relation that computes no value.
+    ///
+    /// A reindex or a broadcast rearranges or replicates which coordinate reads
+    /// which element and returns those elements unchanged. It is deliberately
+    /// *not* a [`Self::ValueSource`]: a value source contributes a value the
+    /// region did not otherwise have, while a coordinate relation contributes an
+    /// access map over a value the region already has. Collapsing the two would
+    /// make the structural counts below say a region has one more independent
+    /// value than it does.
+    ///
+    /// The role carries no obligation of its own, and that is derived rather
+    /// than deferred. Every numerical obligation this authority discharges is
+    /// about rounding, order, or an exceptional value produced by arithmetic;
+    /// a coordinate relation performs none, so fusing one neither adds nor
+    /// removes a rounding, a fold order, a conversion boundary, or a NaN
+    /// canonicalization. The one property it does introduce — a broadcast's
+    /// aliasing reads — is an index-verifier concern, where the alias contract
+    /// already admits aliasing reads and constrains writes, and it is not a
+    /// numerical-contract obligation.
+    CoordinateRelation,
 }
 
 impl FusionOperationRole {
@@ -155,6 +176,10 @@ impl FusionOperationRole {
 
     const fn is_value_source(self) -> bool {
         matches!(self, Self::ValueSource)
+    }
+
+    const fn is_coordinate_relation(self) -> bool {
+        matches!(self, Self::CoordinateRelation)
     }
 }
 
@@ -196,6 +221,8 @@ impl FusionNumericalCapabilities {
             strict_serial_sum_f32_op(),
             FusionOperationRole::OrderedReduction,
         );
+        roles.insert(reindex_f32_op(), FusionOperationRole::CoordinateRelation);
+        roles.insert(broadcast_f32_op(), FusionOperationRole::CoordinateRelation);
         Self {
             provider,
             revision: GOVERNED_PROVIDER_REVISION,
@@ -388,6 +415,13 @@ pub(crate) struct FusionRegionStructure {
     arithmetic: u32,
     /// Number of ordered-reduction members.
     reductions: u32,
+    /// Number of pure coordinate-relation members.
+    ///
+    /// Counted separately rather than folded into any of the three above, so
+    /// that the four role counts sum to `members`. A count that did not add up
+    /// would make a region containing an uncounted role structurally
+    /// indistinguishable from one without it.
+    coordinate_relations: u32,
     /// Number of boundary input values.
     boundary_inputs: u32,
     /// Number of retained boundary outputs.
@@ -415,6 +449,7 @@ impl FusionRegionStructure {
             self.value_sources,
             self.arithmetic,
             self.reductions,
+            self.coordinate_relations,
             self.boundary_inputs,
             self.retained_outputs,
         ] {
@@ -1022,6 +1057,8 @@ fn is_exact_governed_same_family_pointwise(members: &[MemberDerivation]) -> bool
     let constant = constant_f32_op();
     let add = add_f32_op();
     let multiply = multiply_f32_op();
+    let reindex = reindex_f32_op();
+    let broadcast = broadcast_f32_op();
     let mut arithmetic_count = 0_usize;
     let mut all_add = true;
     let mut all_multiply = true;
@@ -1029,12 +1066,26 @@ fn is_exact_governed_same_family_pointwise(members: &[MemberDerivation]) -> bool
     for member in members {
         match member.role {
             FusionOperationRole::ValueSource if member.reached.operation == constant => {}
+            // A governed coordinate relation neither creates nor removes a
+            // multiply-plus-add adjacency, so it is passed over rather than
+            // disqualifying the region. The soundness rests on what survives
+            // below: the conclusion is drawn only when every arithmetic member
+            // is an add or every one is a multiply, and inserting a pure data
+            // movement between two adds cannot introduce a product to fuse.
+            // Closed over the exact governed keys for the same reason the
+            // constant arm is: a future capability could classify another
+            // contraction-capable family as a coordinate relation.
+            FusionOperationRole::CoordinateRelation
+                if member.reached.operation == reindex || member.reached.operation == broadcast => {
+            }
             FusionOperationRole::ElementwiseArithmetic => {
                 arithmetic_count = arithmetic_count.saturating_add(1);
                 all_add &= member.reached.operation == add;
                 all_multiply &= member.reached.operation == multiply;
             }
-            FusionOperationRole::ValueSource | FusionOperationRole::OrderedReduction => {
+            FusionOperationRole::ValueSource
+            | FusionOperationRole::OrderedReduction
+            | FusionOperationRole::CoordinateRelation => {
                 return false;
             }
         }
@@ -1147,6 +1198,7 @@ fn region_structure(
         value_sources: count(FusionOperationRole::is_value_source),
         arithmetic: count(FusionOperationRole::is_arithmetic),
         reductions: count(FusionOperationRole::is_reduction),
+        coordinate_relations: count(FusionOperationRole::is_coordinate_relation),
         boundary_inputs: u32::try_from(candidate.boundary_inputs().len()).unwrap_or(u32::MAX),
         retained_outputs: u32::try_from(candidate.retained_outputs().len()).unwrap_or(u32::MAX),
     }
@@ -1327,10 +1379,12 @@ mod tests {
     use crate::region::{RegionCandidate, RegionFormationOutcome, form_region_candidates};
     use crate::request::{DeterministicBudgets, NumericalPermission, StrictF32NumericalContract};
     use tiler_ir::semantic::{
-        F32, F32Add, F32Constant, F32Multiply, InputKey, OpKey, OutputKey, SemanticProgram,
-        SemanticProgramBuilder, StrictSerialF32Sum, add_f32_op, constant_f32_op,
+        BroadcastAxisMapping, BroadcastAxisSource, F32, F32Add, F32Broadcast, F32Constant,
+        F32Multiply, F32Reindex, InputKey, OpKey, OutputKey, ReindexForm, SemanticProgram,
+        SemanticProgramBuilder, StrictSerialF32Sum, add_f32_op, broadcast_f32_op, constant_f32_op,
+        reindex_f32_op,
     };
-    use tiler_ir::shape::{Axis, Shape};
+    use tiler_ir::shape::{Axis, Extent, Shape};
 
     fn serial_sum_program() -> SemanticProgram {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
@@ -1346,6 +1400,166 @@ mod tests {
             .output(OutputKey::new("result").unwrap(), sum)
             .unwrap();
         builder.build().unwrap()
+    }
+
+    /// The RMS-normalization weight multiply, plus the head-layout transpose.
+    ///
+    /// `Multiply(x, Broadcast(w))` is the pinned workload's most frequent
+    /// structural occurrence — 113 of its 197 broadcasts — and the reindex is the
+    /// head-layout permutation that follows a projection. Both structural
+    /// families and one arithmetic family in one connected region is exactly the
+    /// shape a fusion role has to classify.
+    fn structural_program() -> SemanticProgram {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let activations = builder
+            .input::<F32>(
+                InputKey::new("activations").unwrap(),
+                Shape::from_dims([2, 3]),
+            )
+            .unwrap();
+        let weight = builder
+            .input::<F32>(InputKey::new("weight").unwrap(), Shape::from_dims([3]))
+            .unwrap();
+        let mapping = BroadcastAxisMapping::new(
+            [Extent::new(2), Extent::new(3)],
+            [
+                BroadcastAxisSource::Replicate,
+                BroadcastAxisSource::FromOperand(Axis::new(0)),
+            ],
+        )
+        .unwrap();
+        let widened = F32Broadcast::apply(&mut builder, &mapping, weight).unwrap();
+        let scaled = F32Multiply::apply(&mut builder, activations, widened).unwrap();
+        let form = ReindexForm::permute_axes([Axis::new(1), Axis::new(0)]).unwrap();
+        let transposed = F32Reindex::apply(&mut builder, &form, scaled).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), transposed)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    /// The structural families resolve a role, so a region containing them has
+    /// fusion legality instead of failing closed.
+    ///
+    /// The perturbation is the same region with one role withdrawn: it returns
+    /// to `unsupported-operation-capability`, which is what makes the positive
+    /// result a property of the registered role rather than of the region.
+    #[test]
+    fn a_region_containing_both_structural_families_derives_legality() {
+        let program = structural_program();
+        let budgets = DeterministicBudgets::governed();
+        let contract = StrictF32NumericalContract::governed();
+        let (formation, candidate) = whole_program_candidate(&program);
+
+        let outcome = derive_fusion_legality(
+            &program,
+            budgets,
+            contract,
+            &FusionNumericalCapabilities::governed(),
+            &formation,
+            &candidate,
+        )
+        .unwrap();
+        let FusionLegality::Legal(proof) = outcome else {
+            panic!("a governed structural region is legal, not {outcome:?}");
+        };
+        let structure = proof.content().structure();
+        assert_eq!(structure.members, 3);
+        assert_eq!(structure.arithmetic, 1);
+        assert_eq!(structure.coordinate_relations, 2);
+        assert_eq!(structure.value_sources, 0);
+        assert_eq!(structure.reductions, 0);
+        assert_eq!(
+            structure.members,
+            structure.value_sources
+                + structure.arithmetic
+                + structure.reductions
+                + structure.coordinate_relations,
+            "the four role counts account for every member, which is what a \
+             separate coordinate-relation count exists to keep true"
+        );
+
+        for excluded in [reindex_f32_op(), broadcast_f32_op()] {
+            let outcome = derive_fusion_legality(
+                &program,
+                budgets,
+                contract,
+                &FusionNumericalCapabilities::governed_without(&excluded),
+                &formation,
+                &candidate,
+            )
+            .unwrap();
+            let FusionLegality::Unknown(unknown) = outcome else {
+                panic!("withdrawing {excluded}'s role must fail closed, not {outcome:?}");
+            };
+            assert_eq!(
+                unknown.obligation(),
+                FusionObligation::OperationCapabilitiesResolved
+            );
+            assert_eq!(unknown.reason(), "unsupported-operation-capability");
+        }
+    }
+
+    /// A coordinate relation neither creates nor removes a contraction site.
+    ///
+    /// The same-family pointwise proof passes over a governed reindex or
+    /// broadcast rather than being disqualified by it, and the neighbouring case
+    /// shows the arm is not simply always true: a region mixing an add and a
+    /// multiply still falls through to the contract's own resolution.
+    #[test]
+    fn a_governed_coordinate_relation_does_not_disqualify_the_same_family_proof() {
+        let reindex = MemberDerivation {
+            role: FusionOperationRole::CoordinateRelation,
+            reached: ReachedDefinition {
+                operation: reindex_f32_op(),
+                normative_definition: String::new(),
+                effect_tag: 1,
+            },
+            pure: true,
+            homogeneous: true,
+        };
+        let broadcast = MemberDerivation {
+            role: FusionOperationRole::CoordinateRelation,
+            reached: ReachedDefinition {
+                operation: broadcast_f32_op(),
+                normative_definition: String::new(),
+                effect_tag: 1,
+            },
+            pure: true,
+            homogeneous: true,
+        };
+        let arithmetic = |operation: OpKey| MemberDerivation {
+            role: FusionOperationRole::ElementwiseArithmetic,
+            reached: ReachedDefinition {
+                operation,
+                normative_definition: String::new(),
+                effect_tag: 1,
+            },
+            pure: true,
+            homogeneous: true,
+        };
+        assert!(super::is_exact_governed_same_family_pointwise(&[
+            reindex,
+            broadcast,
+            arithmetic(add_f32_op()),
+        ]));
+        // An unrecognized coordinate relation is *not* passed over, for the same
+        // reason an unrecognized value source is not: a future capability could
+        // classify a contraction-capable family as one.
+        let foreign = MemberDerivation {
+            role: FusionOperationRole::CoordinateRelation,
+            reached: ReachedDefinition {
+                operation: OpKey::new("example", "unknown-relation", 1).unwrap(),
+                normative_definition: String::new(),
+                effect_tag: 1,
+            },
+            pure: true,
+            homogeneous: true,
+        };
+        assert!(!super::is_exact_governed_same_family_pointwise(&[
+            foreign,
+            arithmetic(add_f32_op()),
+        ]));
     }
 
     fn square_program() -> SemanticProgram {
