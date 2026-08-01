@@ -1,7 +1,7 @@
 ---
 id: admit-multi-input-tensors-in-the-scheduled-region-vocabulary
 title: Admit multiple input tensors in the scheduled-region and physical scalar vocabulary
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [admit-multi-input-elementwise-programs-at-the-compiler-boundary, prototype-inline-aot-integration-proof]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, schedule]
+claimed_from: todo
+assignee: worker-region-vocab
+lease_expires_at: 1785552221
 ---
 ## Why this exists
 
