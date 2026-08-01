@@ -1,7 +1,7 @@
 ---
 id: reconcile-the-two-target-profile-key-grammars
 title: Reconcile the two target-profile key grammars
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [reconcile-the-operation-identity-and-governed-key-grammars, record-the-settled-governed-key-grammar-in-the-contracts, restore-the-two-path-dependent-spikes-to-a-running-state]
@@ -9,9 +9,6 @@ scopes: [implementation/artifact, implementation/compiler, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifacts, identity, validation]
-claimed_from: todo
-assignee: worker-reconcile-th
-lease_expires_at: 1785559830
 ---
 ## User-visible outcome
 
@@ -101,3 +98,5 @@ Refusing is correct — an uppercase capability key is exactly the unequal-compa
 
 - Replacing `admits`'s body with `true` fails `a_governed_key_refuses_a_byte_outside_the_governed_alphabet` (`left: Ok(BackendKey("tiler.Metal"))`) and `the_decoding_constructor_enforces_the_governed_alphabet` (`left: Ok(TargetProfileKey("tiler.Target.v1"))`), while `a_governed_key_refuses_an_empty_and_an_oversized_spelling` still passes — confirming the new test does not silently depend on the pre-existing refusals.
 - Because the six keys share one validator, a neutered alphabet cannot show that the per-type `kind` is asserted. Changing `governed_key!(CapabilityKey, ArtifactKeyKind::Capability, …)` to `::Backend` fails the same test at the capability case with `left: …{ kind: Backend, … }` against `right: …{ kind: Capability, … }` — so a key wired to the wrong subject is caught.
+
+**Provisional boundary acceptance (2026-08-01, overnight mode).** The coordinator provisionally accepted the family-wide alphabet enforcement with the new `ArtifactBuildError::NoncanonicalKeyByte` refusal and the documented 128/256 bound asymmetry (minting bound vs holding bound). Fixture sweep proved nothing in the tree refuses. Recorded for Tom's morning review.
