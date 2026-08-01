@@ -1,7 +1,7 @@
 ---
 id: design-the-subgroup-execution-tier
 title: Design the subgroup execution tier in the schedule vocabulary
-status: in-progress
+status: done
 priority: p2
 dependencies: [implement-the-single-workgroup-synchronized-reduction-strategy]
 related: [qualify-the-simdgroup-matrix-contraction-realization, add-subgroup-memory-scope-when-collectives-land, represent-cooperative-workgroup-reduction-dataflow]
@@ -9,9 +9,6 @@ scopes: [research/scheduling]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, design, scheduling, execution-hierarchy, subgroup]
-claimed_from: todo
-assignee: worker-subgroup
-lease_expires_at: 1785598736
 ---
 ## User-visible outcome
 
