@@ -1,7 +1,7 @@
 ---
 id: bound-the-reference-contraction-iteration-space
 title: Name the reference contraction's iteration-space bound in its own diagnostic
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [admit-the-contraction-normative-reference]
@@ -9,9 +9,6 @@ scopes: [implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, reference, numerics, contraction]
-claimed_from: todo
-assignee: worker-ref-bound
-lease_expires_at: 1785566021
 ---
 The contraction reference bounds its multiply-accumulate work — `output_count * contracted_count`, which is larger than either operand and bounded by neither tensor limit the operands already passed — and reports the refusal as `ReferenceOperationError::ShapeTooLarge`, whose documented meaning is that *shape arithmetic* exceeded host limits.
 
@@ -48,3 +45,5 @@ The perturbation was reverted. The regression's other two cases pin the discrimi
 **Fact — one doc claim corrected.** `Tensor::dense`'s `# Errors` named only `ElementCount` and `ShapeTooLarge` while the body also returns `ResourceExceeded` for the element and retained-byte limits. Corrected in place; it is the same vocabulary this sweep read, and a stated error contract that omits a returned variant is a false claim rather than a terse one.
 
 **New public item, for Tom.** `ReferenceOperationError::IterationStepsExceeded { limit: usize, actual: usize }` — additive on a `#[non_exhaustive]` enum, so no external match breaks. No other public signature changed.
+
+**Provisional boundary acceptance (2026-08-01, overnight mode).** The coordinator provisionally accepted `ReferenceOperationError::IterationStepsExceeded` (additive on the `#[non_exhaustive]` enum, saturating count that only under-reports). Recorded for Tom's morning review.
