@@ -1,7 +1,7 @@
 ---
 id: restore-the-scalar-cpu-vertical-spike-against-the-current-crates
 title: Restore the scalar CPU vertical spike against the current crates
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [generalize-payload-provenance-beyond-the-apple-shape, prototype-a-bounded-scalar-cpu-backend-vertical]
@@ -9,9 +9,6 @@ scopes: [research/target-profiles]
 shared_scopes: [project/tickets]
 paths: []
 tags: [spikes, cpu, maintenance]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785626991
 ---
 ## User-visible outcome
 
