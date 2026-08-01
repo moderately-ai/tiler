@@ -1,0 +1,80 @@
+# host=macOS-27.0-arm64-arm-64bit machine=arm64 cpus=14 nightly-2026-07-19=rustc 1.99.0-nightly (eff8269f7 2026-07-18) nightly-2026-07-20=rustc 1.99.0-nightly (9f36de775 2026-07-19)
+# Exact rendered text, one block per failure class. Every class was reached
+# by a build that had to fail; a class whose build succeeded fails the run.
+
+## directory-unstated
+error: `embed!` requires `TILER_EMBED_DIR` to be set to a non-empty value, and will not substitute a default: an embedding that silently changed which artifact it carried would produce a consumer binary nobody named. Set `TILER_EMBED_DIR`, or set `TILER_EMBED_CACHE` to `off` to expand without a cache
+  --> consumer-a/src/main.rs:19:1
+   |
+19 | embed_macro::embed!(EMBEDDED, "a");
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `embed_macro::embed` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: could not compile `embed-consumer-a` (bin "embed-consumer-a") due to 1 previous error
+
+## slot-unstated
+error: `embed!` requires `TILER_EMBED_MEMBER_A` to be set to a non-empty value, and will not substitute a default: an embedding that silently changed which artifact it carried would produce a consumer binary nobody named. Set `TILER_EMBED_MEMBER_A`, or set `TILER_EMBED_CACHE` to `off` to expand without a cache
+  --> consumer-a/src/main.rs:19:1
+   |
+19 | embed_macro::embed!(EMBEDDED, "a");
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `embed_macro::embed` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: could not compile `embed-consumer-a` (bin "embed-consumer-a") due to 1 previous error
+
+## cache-root-unstated
+error: `embed!` requires `TILER_EMBED_CACHE` to be set to a non-empty value, and will not substitute a default: a cache root that arrives unstated is a cache that quietly relocates, and a developer sees only that builds became slow. Set it to an absolute directory path only you can write, or to `off` to expand without a cache
+  --> consumer-a/src/main.rs:19:1
+   |
+19 | embed_macro::embed!(EMBEDDED, "a");
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `embed_macro::embed` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: could not compile `embed-consumer-a` (bin "embed-consumer-a") due to 1 previous error
+
+## cache-root-relative
+error: `TILER_EMBED_CACHE` is set to `relative/cache`, which is not an absolute path. A proc macro runs in the build tool's working directory rather than yours, and `cargo` and `rust-analyzer` need not agree on it, so a relative root would name different directories in one project. Set `TILER_EMBED_CACHE` to an absolute directory path only you can write, or to `off` to expand without a cache
+  --> consumer-a/src/main.rs:19:1
+   |
+19 | embed_macro::embed!(EMBEDDED, "a");
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `embed_macro::embed` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: could not compile `embed-consumer-a` (bin "embed-consumer-a") due to 1 previous error
+
+## member-unavailable
+error: `embed!` cannot carry `serial-sum.tiler.nontrivial.selected`: /private/var/folders/7k/00gbj8p92d938w7bqf3k78040000gn/T/tiler-embedding-self-contained-83017/absent-artifacts/serial-sum.tiler.nontrivial.selected could not be read (No such file or directory (os error 2)), and no cache entry stood in for it. The artifact is an input to this expansion, so it must exist the first time a build expands this invocation; it is not needed afterwards, because the bytes are already in the expanded code. Re-run the producer, or point `TILER_EMBED_DIR` at a directory that holds it
+  --> consumer-a/src/main.rs:19:1
+   |
+19 | embed_macro::embed!(EMBEDDED, "a");
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `embed_macro::embed` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: could not compile `embed-consumer-a` (bin "embed-consumer-a") due to 1 previous error
+
+## invalid-artifact
+error: `embed!` read /private/var/folders/7k/00gbj8p92d938w7bqf3k78040000gn/T/tiler-embedding-self-contained-83017/truncated/serial-sum.tiler.nontrivial.selected for `serial-sum.tiler.nontrivial.selected`, but those bytes are not a decodable Tiler artifact (Malformed { detail: "TotalLengthMismatch { declared: 36838, actual: 18419 }" }); embedding them would put a payload in the consumer's binary that no runtime could accept. Re-run the producer that writes it
+  --> consumer-a/src/main.rs:19:1
+   |
+19 | embed_macro::embed!(EMBEDDED, "a");
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `embed_macro::embed` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: could not compile `embed-consumer-a` (bin "embed-consumer-a") due to 1 previous error
+
+## ceiling-exceeded
+error: `embed!` refuses to carry `serial-sum.tiler.nontrivial.selected`: it is 36838 bytes and this invocation's ceiling is 1024 bytes. The ceiling is a measured product bound rather than a Rust or linker limit, and every emitted copy counts against it, so crossing it is an explicit decision with a new measurement behind it. Raise `TILER_EMBED_CEILING_BYTES`, or split the region so each invocation carries less
+  --> consumer-a/src/main.rs:19:1
+   |
+19 | embed_macro::embed!(EMBEDDED, "a");
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `embed_macro::embed` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: could not compile `embed-consumer-a` (bin "embed-consumer-a") due to 1 previous error

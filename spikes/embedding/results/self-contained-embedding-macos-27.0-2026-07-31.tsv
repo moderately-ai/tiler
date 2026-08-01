@@ -1,0 +1,19 @@
+# host=macOS-27.0-arm64-arm-64bit machine=arm64 cpus=14 nightly-2026-07-19=rustc 1.99.0-nightly (eff8269f7 2026-07-18) nightly-2026-07-20=rustc 1.99.0-nightly (9f36de775 2026-07-19)
+# analyzer=/Users/tsanterre/.rustup/toolchains/nightly-aarch64-apple-darwin/bin/rust-analyzer proc_macro_srv=/Users/tsanterre/.rustup/toolchains/nightly-2026-07-19-aarch64-apple-darwin/libexec/rust-analyzer-proc-macro-srv
+# members serial-sum.tiler.nontrivial.selected=36838B serial-sum.tiler.singleton.materialized=46445B ceiling=1048576B standalone_crate_source=70984B
+scenario	driver	toolchain	crates	expansions	built	published	hit	uncached	processes	overlaps	cwds	seconds	bytes	note
+embedding-cold	cargo	nightly-2026-07-19	1	1	1	1	0	0	1	0	1	0.3	36838	envelope read from disk and published
+embedding-warm	cargo	nightly-2026-07-19	1	1	0	0	1	0	1	0	1	0.3	36838	validated cache hit; envelope not read
+artifacts-deleted-reexpand	cargo	nightly-2026-07-19	1	1	0	0	1	0	1	0	1	0.3	36838	12 Tiler-produced file(s) deleted; hit stood in
+cache-deleted-no-reexpand	cargo	nightly-2026-07-19	1	0	0	0	0	0	0	0	0	0.1	36838	2 cache file(s) deleted, envelopes already gone; no expansion, run unaffected
+cache-deleted-reexpand	cargo	nightly-2026-07-19	1	1	1	1	0	0	1	0	1	0.2	36838	republished from the restored envelope
+axis-source-edit-cold	cargo	nightly-2026-07-19	1	1	1	1	0	0	1	0	1	14.9	36838	fresh target directory, empty cache
+axis-source-edit-warm	cargo	nightly-2026-07-19	1	1	0	0	1	0	1	0	1	0.2	36838	edit re-expands; cache spares the read
+axis-toolchain-change	cargo	nightly-2026-07-20	1	1	0	0	1	0	1	0	1	18.0	36838	nightly-2026-07-19 -> nightly-2026-07-20; same target directory, no source edit
+axis-repeated-across-crates	cargo	nightly-2026-07-19	2	2	1	1	1	0	2	1	1	7.5	36838	one envelope read across two crates
+axis-unique-across-crates	cargo	nightly-2026-07-19	2	2	2	2	0	0	2	1	1	10.8	36838	two envelopes, two reads, no contention
+axis-analyzer-repeated-cold	rust-analyzer	nightly-2026-07-19	2	2	1	1	1	0	1	0	1	19.7	36838	one server, two crates, one envelope read
+axis-analyzer-repeated-warm	rust-analyzer	nightly-2026-07-19	2	2	0	0	2	0	1	0	1	5.3	36838	both invocations hit; no envelope read
+axis-analyzer-unique-cold	rust-analyzer	nightly-2026-07-19	2	2	2	2	0	0	1	0	1	5.4	46445	two envelopes, two reads, one server process
+axis-analyzer-toolchain-change	rust-analyzer	nightly-2026-07-20	2	2	0	0	2	0	1	0	1	12.0	46445	nightly-2026-07-19 -> nightly-2026-07-20 server; entries published by the pin still hit
+standalone-cold-everything-deleted	cargo	nightly-2026-07-19	1	1	0	0	1	0	1	0	1	0.4	36838	16 Tiler-produced file(s) deleted; one byte-string literal of 68076 source byte(s) for 36838 payload byte(s); no dependency, no proc macro
