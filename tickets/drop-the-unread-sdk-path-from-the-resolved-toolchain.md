@@ -1,7 +1,7 @@
 ---
 id: drop-the-unread-sdk-path-from-the-resolved-toolchain
 title: Drop the SDK path nothing reads from the resolved toolchain
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [avoid-toolchain-resolution-on-a-warm-expansion-cache-hit]
@@ -9,9 +9,6 @@ scopes: [implementation/metal-aot, implementation/build, contracts/integrations]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, performance]
-claimed_from: todo
-assignee: worker-sdk-drop
-lease_expires_at: 1785594086
 ---
 ## Why this exists
 
