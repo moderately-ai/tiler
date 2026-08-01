@@ -1,7 +1,7 @@
 ---
 id: carry-one-payload-per-artifact-family-in-one-envelope
 title: Carry one payload per artifact family in one envelope
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [deliver-several-artifact-families-from-one-expansion, first-authoritative-ios-metal-compile-declaration, generate-cfg-gated-artifact-family-delivery, carry-a-compatibility-contract-reference-on-the-payload-descriptor]
@@ -9,9 +9,6 @@ scopes: [implementation/artifact, implementation/build, implementation/runtime, 
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifacts, inline-dx]
-claimed_from: todo
-assignee: worker-envelope
-lease_expires_at: 1785577087
 ---
 Tom decided on 2026-07-25 that one selection produces **one envelope carrying one payload per built family**, so the whole selection has one identity and a partial delivery is impossible by construction. `tiler_macros::delivery::DeliveryPlan` implements the emission half completely — positional outcomes in canonical family order, a total `#[cfg]` selector, one byte-string literal — and `tiler::RouteFacts::payload` is already the position it resolves to. The neutral artifact model cannot yet express the envelope those halves describe.
 
