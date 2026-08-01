@@ -65,9 +65,14 @@ use std::sync::Arc;
 
 use candle_core::backend::BackendStorage;
 use candle_core::{DType, MetalDevice, MetalStorage, Shape};
-use candle_metal_kernels::metal::{Buffer, CommandBuffer, ComputePipeline, Fence, Library};
+use candle_metal_kernels::metal::{
+    Buffer, CommandBuffer, ComputePipeline, Fence, Function, Library,
+};
 use dispatch2::DispatchData;
-use objc2_metal::{MTLCommandBufferStatus, MTLCommandQueue, MTLDevice, MTLGPUFamily, MTLSize};
+use objc2_metal::{
+    MTLBinding, MTLBindingType, MTLCommandBufferStatus, MTLCommandQueue,
+    MTLComputePipelineDescriptor, MTLDevice, MTLGPUFamily, MTLPipelineOption, MTLSize,
+};
 
 use tiler_artifact::program::{
     BindingTarget, BufferAccess, RouteRequirement, RouteResourceDimension,
@@ -79,7 +84,7 @@ use tiler_runtime::load::{
     RoutedEntry, TargetPropertyRequest,
 };
 
-use crate::cache::{DeviceScope, PipelineCache};
+use crate::cache::{DeviceScope, PipelineCache, PreparedPipeline};
 use crate::refusal::{DispatchFailure, RouteRefusal};
 
 /// Governed key of the Metal requirement naming a minimum Apple GPU family.
@@ -306,13 +311,20 @@ impl CandleMetalAdapter {
         Ok(library)
     }
 
-    /// Builds one entry's compute pipeline, through the cache.
+    /// Builds one entry's compute pipeline and reads its argument table, through the cache.
+    ///
+    /// The pipeline is built through [`prepare_pipeline_with_reflection`] rather
+    /// than Candle's `new_compute_pipeline_state_with_function`, because that
+    /// wrapper discards the reflection out-param and no later call recovers it.
+    /// The table it returns is cached beside the pipeline; the *comparison*
+    /// against the entry's declaration is not cached, and runs in
+    /// [`RuntimeAdapter::prepare_entries`] on hits and misses alike.
     fn pipeline_for(
         &mut self,
         position: usize,
         library: &Library,
         symbol: &str,
-    ) -> Result<ComputePipeline, RouteRefusal> {
+    ) -> Result<PreparedPipeline, RouteRefusal> {
         let scope = DeviceScope::of(&self.device);
         let library_key = self
             .cache
@@ -331,17 +343,9 @@ impl CandleMetalAdapter {
                 detail: cause.to_string(),
             }
         })?;
-        let pipeline = self
-            .device
-            .metal_device()
-            .new_compute_pipeline_state_with_function(&function)
-            .map_err(|cause| RouteRefusal::PipelineRejected {
-                entry: position,
-                symbol: symbol.to_owned(),
-                detail: cause.to_string(),
-            })?;
-        self.cache.insert_pipeline(key, pipeline.clone());
-        Ok(pipeline)
+        let prepared = prepare_pipeline_with_reflection(&self.device, position, symbol, &function)?;
+        self.cache.insert_pipeline(key, prepared.clone());
+        Ok(prepared)
     }
 
     /// Allocates one buffer of at least `bytes` through Candle's own allocator.
@@ -396,6 +400,110 @@ pub fn load_library(
             entry,
             detail: cause.to_string(),
         })
+}
+
+/// Builds one compute pipeline **and** reads the argument table it addresses.
+///
+/// # Why this exists rather than Candle's own constructor
+///
+/// **Fact — Candle 0.11.0 discards reflection.**
+/// `Device::new_compute_pipeline_state_with_function`
+/// (`candle-metal-kernels/src/metal/device.rs`) calls
+/// `newComputePipelineStateWithFunction:error:`, the overload that takes no
+/// options and no reflection out-param, and `MTLComputePipelineState` publishes
+/// no argument table of its own. A consumer that builds through Candle therefore
+/// has no object to ask, at any later point, what slots the compiled function
+/// addresses — which is why ADR 0090 item 8's third obligation was open.
+///
+/// # Why a descriptor rather than the function overload
+///
+/// `objc2-metal` 0.3.2 declares
+/// `newComputePipelineStateWithFunction:options:reflection:error:` as an
+/// `unsafe fn` — it cannot check that a bare `MTLFunction` is safe to call with
+/// the arguments a caller will bind — while
+/// `newComputePipelineStateWithDescriptor:options:reflection:error:` is safe.
+/// Both produce the same reflection for a descriptor whose only set property is
+/// the compute function, so the safe one is taken and this crate keeps the
+/// workspace's `unsafe_code = "forbid"`.
+///
+/// # What is counted, and what is deliberately not
+///
+/// Only [`MTLBindingType::Buffer`] rows, because a transport slot *is* a
+/// `[[buffer(N)]]` index. Threadgroup bindings appear in the same reflection
+/// array and are numbered in the disjoint `[[threadgroup(N)]]` namespace, so
+/// counting them would compare two numberings against one and refuse a correct
+/// object.
+///
+/// **The bound that leaves, stated rather than implied.** The artifact ABI models
+/// buffer bindings and nothing else — `tiler-metal`'s emitter produces
+/// `[[buffer(N)]]` parameters plus launch builtins, and a routed binding carries
+/// only a transport slot — so a reflected texture, sampler, or threadgroup row
+/// has no declared counterpart to disagree with, and an object addressing one is
+/// not refused here. That sits *inside* this check's threat model rather than
+/// outside it, since the objects it exists to catch are exactly the ones the
+/// emitter did not produce;
+/// `refuse-a-metal-payload-addressing-resources-the-abi-cannot-declare` carries
+/// the remainder.
+///
+/// A row is counted whether or not it reports `isUsed`. What the comparison is
+/// about is the *argument table the object addresses* — a declared-but-unread
+/// parameter still occupies its index, and an entry that declares it is correct
+/// to bind it. Filtering by use would refuse an object the compiler merely
+/// optimized well.
+///
+/// # Errors
+///
+/// Returns [`RouteRefusal::PipelineRejected`] when the device refuses the
+/// pipeline, and [`RouteRefusal::ArgumentTableUnavailable`] when it builds one
+/// and returns no reflection.
+pub fn prepare_pipeline_with_reflection(
+    device: &MetalDevice,
+    entry: usize,
+    symbol: &str,
+    function: &Function,
+) -> Result<PreparedPipeline, RouteRefusal> {
+    let descriptor = MTLComputePipelineDescriptor::new();
+    descriptor.setComputeFunction(Some(function.as_ref()));
+
+    let mut reflection = None;
+    let raw = device
+        .metal_device()
+        .as_ref()
+        .newComputePipelineStateWithDescriptor_options_reflection_error(
+            &descriptor,
+            MTLPipelineOption::BindingInfo,
+            Some(&mut reflection),
+        )
+        .map_err(|cause| RouteRefusal::PipelineRejected {
+            entry,
+            symbol: symbol.to_owned(),
+            detail: cause.to_string(),
+        })?;
+
+    // Asked for and absent is a refusal, not an empty table. An empty argument
+    // table is a real answer — a kernel taking no buffers — and treating a
+    // missing reflection as one would silently accept every object.
+    let reflection = reflection.ok_or_else(|| RouteRefusal::ArgumentTableUnavailable {
+        entry,
+        symbol: symbol.to_owned(),
+    })?;
+
+    let bindings = reflection.bindings();
+    let mut addressed_slots = Vec::with_capacity(bindings.count());
+    for position in 0..bindings.count() {
+        let binding = bindings.objectAtIndex(position);
+        if binding.r#type() == MTLBindingType::Buffer {
+            addressed_slots.push(u64::try_from(binding.index()).unwrap_or(u64::MAX));
+        }
+    }
+    // Sorted so the comparison is against the table's content rather than the
+    // order the runtime happened to enumerate it in.
+    addressed_slots.sort_unstable();
+
+    Ok(PreparedPipeline {
+        pipeline: ComputePipeline::new(raw),
+        addressed_slots,
+    })
 }
 
 /// Reads what one bound Candle Metal device reports about itself.
@@ -515,14 +623,11 @@ impl RuntimeAdapter for CandleMetalAdapter {
     /// publishes the symbol the artifact declares, so both are asked here, while
     /// a refusal still costs nothing.
     ///
-    /// **What is not checked, stated rather than implied.** The third obligation
-    /// ADR 0090 item 8 names — that the slots the object addresses are the ones
-    /// the entry declares — is not discharged. Reading a Metal function's
-    /// argument table needs `newComputePipelineStateWithFunction:options:reflection:error:`
-    /// and an `MTLComputePipelineReflection`, which neither Candle's wrapper nor
-    /// this prototype builds. A slot disagreement therefore reaches the encoder
-    /// rather than this refusal; it is recorded as an unsupported case rather
-    /// than papered over.
+    /// **Where the third obligation is discharged, stated rather than implied.**
+    /// That the slots the object addresses are the ones the entry declares is
+    /// asked in [`Self::prepare_entries`], not here, because the argument table
+    /// exists only once the pipeline does. It is still pre-commit, and that
+    /// method records why the two stages divide where they do.
     fn validate_payload(
         &mut self,
         _context: &LiveExecutionContext,
@@ -588,6 +693,28 @@ impl RuntimeAdapter for CandleMetalAdapter {
     /// will not build must be refused here rather than discovered between two
     /// dispatches. Reversible — a pipeline an abandoned route never uses costs
     /// only the build.
+    ///
+    /// # ADR 0090 item 8's third obligation is discharged here, and why here
+    ///
+    /// That the slots the object addresses are the ones the entry declares is
+    /// asked at this stage and not in [`Self::validate_payload`], for a reason
+    /// that is structural rather than a preference: the argument table is a
+    /// property of the *compiled pipeline*, Metal publishes it only as the
+    /// reflection out-param of pipeline creation, and no pipeline exists until
+    /// this stage. Asking it earlier would mean building every pipeline during
+    /// payload validation — moving `PipelineRejected`, which is a route fact
+    /// about this device, into the stage that decides artifact invariants.
+    ///
+    /// The timing requirement is met regardless, and by construction: this
+    /// method returns [`Self::Refusal`], `route_with_adapter` runs it before
+    /// `resolve_target_properties`, `plan_dispatch`, and `Preflight::commit`, and
+    /// nothing has been allocated when it refuses. It is pre-commit in the seam's
+    /// own terms.
+    ///
+    /// The comparison runs per entry and on every route, including one served
+    /// entirely from the pipeline cache: the cache stores the reflected table as
+    /// a fact and never the verdict, because the declared side comes from *this*
+    /// attempt's routed bindings and is not part of the cache key.
     fn prepare_entries(
         &mut self,
         _context: &LiveExecutionContext,
@@ -596,7 +723,15 @@ impl RuntimeAdapter for CandleMetalAdapter {
         let mut prepared = Vec::with_capacity(entries.len());
         for (position, entry) in entries.iter().enumerate() {
             let library = self.validated[position].clone();
-            prepared.push(self.pipeline_for(position, &library, entry.entry_symbol())?);
+            let symbol = entry.entry_symbol();
+            let built = self.pipeline_for(position, &library, symbol)?;
+            argument_slots_agree(
+                position,
+                symbol,
+                &declared_transport_slots(entry),
+                &built.addressed_slots,
+            )?;
+            prepared.push(built.pipeline);
         }
         self.prepared = prepared;
         Ok(())
@@ -947,6 +1082,69 @@ pub fn allocation_holds(
     Ok(())
 }
 
+/// Returns the backend transport slots one routed entry declares, ascending.
+///
+/// [`RoutedBinding::transport_slot`] rather than [`RoutedBinding::slot`], and the
+/// distinction is the whole point: the ABI slot is the kernel signature's own
+/// ordinal and the transport slot is the argument-table index the backend places
+/// it at. Reflection reports indices, so comparing against ABI slots would
+/// silently pass on any mapping that is the identity and silently fail on every
+/// other one.
+///
+/// [`RoutedBinding::transport_slot`]: tiler_runtime::load::RoutedBinding::transport_slot
+/// [`RoutedBinding::slot`]: tiler_runtime::load::RoutedBinding::slot
+#[must_use]
+pub fn declared_transport_slots(entry: &RoutedEntry<'_>) -> Vec<u64> {
+    let mut declared: Vec<u64> = entry
+        .bindings()
+        .iter()
+        .map(|binding| u64::from(binding.transport_slot()))
+        .collect();
+    declared.sort_unstable();
+    declared
+}
+
+/// Whether the slots one compiled object addresses are the ones its entry declares.
+///
+/// ADR 0090 item 8's third obligation, and the comparison half of it: the device
+/// contributes the reflected table and this contributes the decision, for the
+/// same reason [`binding_fits`] is split — a comparison written inline against a
+/// live pipeline is one the repository gate cannot watch fail.
+///
+/// # Why exact sequence equality rather than a set or a count
+///
+/// Both directions are defects and both must refuse. A slot the object does not
+/// address is set and ignored; a slot it addresses that the entry does not
+/// declare is never set, and the kernel reads an unbound argument. Neither
+/// produces an error at encode time.
+///
+/// Duplicates are not collapsed, deliberately. Two declared bindings on one
+/// transport slot is itself a defect — the second binding overwrites the first
+/// and one of the two values never reaches the kernel — and a set comparison
+/// would accept it, because the reflected table cannot contain a duplicate index
+/// to disagree with. Comparing the sorted sequences makes that case a length
+/// disagreement rather than a silent pass.
+///
+/// # Errors
+///
+/// Returns [`RouteRefusal::ArgumentSlotsDisagree`] naming both tables.
+pub fn argument_slots_agree(
+    entry: usize,
+    symbol: &str,
+    declared: &[u64],
+    addressed: &[u64],
+) -> Result<(), RouteRefusal> {
+    if declared != addressed {
+        return Err(RouteRefusal::ArgumentSlotsDisagree {
+            entry,
+            symbol: symbol.to_owned(),
+            declared: declared.to_vec(),
+            addressed: addressed.to_vec(),
+        });
+    }
+    Ok(())
+}
+
 /// Whether a declared workgroup fits what one prepared pipeline admits.
 ///
 /// # Errors
@@ -1022,8 +1220,8 @@ pub fn bind_candle_storage(
 #[cfg(test)]
 mod tests {
     use super::{
-        SubmissionOutcome, allocation_holds, binding_fits, gpu_family_from_payload,
-        submission_outcome, workgroup_fits,
+        SubmissionOutcome, allocation_holds, argument_slots_agree, binding_fits,
+        gpu_family_from_payload, submission_outcome, workgroup_fits,
     };
     use objc2_metal::MTLCommandBufferStatus;
     use tiler_metal::applicability::MetalGpuFamily;
@@ -1103,6 +1301,50 @@ mod tests {
                 ..
             }),
         ));
+    }
+
+    /// An argument table agrees with its declaration, and every way it can differ refuses.
+    ///
+    /// The agreeing case leads, because a comparison that always refused would
+    /// pass any test built only from disagreements — and it would take the whole
+    /// adapter with it, since every route runs this check. The disagreeing
+    /// population is written out as the four *distinct* ways two tables differ
+    /// rather than as one representative: a slot the object addresses and the
+    /// entry does not declare, a slot the entry declares and the object does not
+    /// address, the same count at a renumbered index, and a duplicated
+    /// declaration — which a set comparison would wrongly accept.
+    #[test]
+    fn an_argument_table_agrees_with_its_declaration_or_names_the_disagreement() {
+        assert!(argument_slots_agree(0, "tiler_kernel", &[0, 1], &[0, 1]).is_ok());
+        // A kernel taking no buffers is a real answer and not a missing table.
+        assert!(argument_slots_agree(0, "tiler_kernel", &[], &[]).is_ok());
+
+        for (declared, addressed) in [
+            (vec![0, 1], vec![0, 1, 2]),
+            (vec![0, 1, 2], vec![0, 1]),
+            (vec![0, 1], vec![0, 2]),
+            (vec![0, 1, 1], vec![0, 1]),
+        ] {
+            // `let ... else` rather than `expect_err`, whose message is a plain
+            // `&str`: the tables have to be interpolated for the failure to say
+            // which row of the population did not refuse.
+            let Err(refusal) = argument_slots_agree(1, "tiler_kernel", &declared, &addressed)
+            else {
+                panic!("declared {declared:?} and addressed {addressed:?} are different tables");
+            };
+            assert!(
+                matches!(
+                    &refusal,
+                    super::RouteRefusal::ArgumentSlotsDisagree {
+                        entry: 1,
+                        declared: named_declared,
+                        addressed: named_addressed,
+                        ..
+                    } if *named_declared == declared && *named_addressed == addressed,
+                ),
+                "{refusal} does not carry both tables it compared",
+            );
+        }
     }
 
     /// A family payload is read through the governed vocabulary and nothing else.

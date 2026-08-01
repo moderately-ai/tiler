@@ -57,7 +57,7 @@ use tiler_metal::applicability::{
 };
 use tiler_runtime::load::ExecutionEnvironment;
 
-use crate::adapter::{SubmissionOutcome, load_library, submission_outcome};
+use crate::adapter::{SubmissionOutcome, argument_slots_agree, load_library, submission_outcome};
 use crate::refusal::{Realization, TensorRefusal};
 use crate::wrapper::{TilerPlan, WrapperError, candle_expression};
 
@@ -515,6 +515,65 @@ fn probe_tensor_refusals(
         .err()
         .ok_or(ProofError::ProbeAccepted("an absent entry symbol"))?;
     println!("  probe an entry symbol the object does not publish: {absent}");
+
+    // ADR 0090 item 8's third obligation, against the real published object's
+    // real argument table. The baseline is the agreement itself: the artifact's
+    // declared transport slots and the compiled function's reflected buffer
+    // arguments must already be the same table, or every perturbation below
+    // would be evidence about a route that was broken to begin with.
+    let observed = plan.probe_argument_slots(metal).map_err(|cause| {
+        ProofError::BaselineRefused(format!("the argument table could not be read: {cause}"))
+    })?;
+    argument_slots_agree(0, &observed.symbol, &observed.declared, &observed.addressed)
+        .map_err(|refusal| ProofError::BaselineRefused(refusal.to_string()))?;
+    println!(
+        "  probe baseline: entry 0's {:?} addresses buffer argument(s) {:?} and the artifact \
+         declares transport slot(s) {:?} — the same table, read from this object's own reflection",
+        observed.symbol, observed.addressed, observed.declared,
+    );
+
+    // Each perturbation moves the *declaration* away from the object's own
+    // table by one fact and leaves everything else alone, because the object is
+    // the side that cannot be perturbed: the envelope proves an integrity digest
+    // over the bytes, so an edited transport mapping is refused as a damaged
+    // envelope — the probe above — rather than reaching this comparison.
+    for (perturbation, declared) in [
+        ("one slot the object does not address", {
+            let mut wider = observed.declared.clone();
+            wider.push(observed.addressed.iter().copied().max().unwrap_or(0) + 1);
+            wider
+        }),
+        ("one declared slot dropped", {
+            let mut narrower = observed.declared.clone();
+            narrower.pop();
+            narrower
+        }),
+        ("the same count at a renumbered slot", {
+            let mut renumbered = observed.declared.clone();
+            if let Some(last) = renumbered.last_mut() {
+                *last += 1;
+            }
+            renumbered
+        }),
+    ] {
+        // A perturbation that did not actually change the declaration would be
+        // asserted as a refusal and prove nothing; a one-binding entry cannot
+        // exhibit every shape, so this states which ones it did exhibit.
+        if declared == observed.declared {
+            println!(
+                "  probe an argument table with {perturbation}: NOT EXHIBITABLE — this entry \
+                 declares {} slot(s), and the perturbation leaves the table unchanged",
+                observed.declared.len(),
+            );
+            continue;
+        }
+        let refusal = argument_slots_agree(0, &observed.symbol, &declared, &observed.addressed)
+            .err()
+            .ok_or(ProofError::ProbeAccepted(
+                "an argument table that disagrees with the entry's declaration",
+            ))?;
+        println!("  probe an argument table with {perturbation}: {refusal}");
+    }
 
     // A host offering another exact profile descriptor. Refused before Candle's
     // custom-op path is entered, which is what "target availability" means here.

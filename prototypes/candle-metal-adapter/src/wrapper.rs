@@ -69,7 +69,8 @@ use tiler_runtime::adapter::{AdapterRouteFailure, route_with_adapter};
 use tiler_runtime::load::{DecodedProgram, ExecutionEnvironment, LoadRejection};
 
 use crate::adapter::{
-    CandleMetalAdapter, DeviceFacts, INPUT_KEY, OUTPUT_KEY, bind_candle_storage, load_library,
+    CandleMetalAdapter, DeviceFacts, INPUT_KEY, OUTPUT_KEY, bind_candle_storage,
+    declared_transport_slots, load_library, prepare_pipeline_with_reflection,
 };
 use crate::refusal::{
     Delivered, DeliveredPath, DispatchFailure, FallbackAvailability, Realization, RouteRefusal,
@@ -154,6 +155,22 @@ pub struct Applied {
     pub delivered: Delivered,
     /// What the route observed, when the artifact path ran.
     pub report: Option<RouteReport>,
+}
+
+/// One real object's argument table beside the declaration it is compared against.
+///
+/// Both sides are carried because the *agreement* is the measurement worth
+/// reporting: it is the evidence that Metal's reflection on this toolchain row
+/// enumerates exactly the `[[buffer(N)]]` parameters the emitter declared, which
+/// no amount of unit-testing the comparison establishes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArgumentSlotProbe {
+    /// The entry symbol whose pipeline was reflected.
+    pub symbol: String,
+    /// The transport slots the artifact declares, ascending.
+    pub declared: Vec<u64>,
+    /// The buffer argument indices the compiled object addresses, ascending.
+    pub addressed: Vec<u64>,
 }
 
 /// One artifact, decoded far enough to preflight a tensor against it.
@@ -356,6 +373,65 @@ impl TilerPlan {
         drop(qualification);
         outcome.map_err(|refusal| {
             WrapperError::Route(Box::new(AdapterRouteFailure::Payload { entry: 0, refusal }))
+        })
+    }
+
+    /// Reads this artifact's first routed entry's declared and addressed argument tables.
+    ///
+    /// Both sides as the route itself obtains them: the declaration through
+    /// [`declared_transport_slots`] over the loader's own routed bindings, and
+    /// the addressed table through [`prepare_pipeline_with_reflection`] over a
+    /// pipeline built from the real published object — the same two functions
+    /// [`CandleMetalAdapter`]'s
+    /// [`prepare_entries`](tiler_runtime::adapter::RuntimeAdapter::prepare_entries)
+    /// compares.
+    ///
+    /// Exists so `crate::proof` can perturb one side of a *real* comparison and
+    /// watch the refusal arrive. Perturbing the artifact's own bytes is not an
+    /// available alternative: the envelope proves an integrity digest over them,
+    /// so an edited transport mapping is refused as a damaged envelope long
+    /// before any argument table is read — which is a different check passing,
+    /// not this one.
+    ///
+    /// The routing authority it mints is abandoned rather than committed, which
+    /// is exactly the fallback ADR 0051 permits.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WrapperError::Load`] when the artifact does not route, and
+    /// [`WrapperError::Route`] carrying the payload, symbol, or pipeline refusal.
+    pub fn probe_argument_slots(
+        &self,
+        device: &candle_core::MetalDevice,
+    ) -> Result<ArgumentSlotProbe, WrapperError> {
+        let mut program = DecodedProgram::decode(&self.bytes).map_err(WrapperError::Load)?;
+        let qualification = program
+            .prepare(&self.environment, &self.recorded, &self.facts)
+            .map_err(WrapperError::Load)?;
+        let entry = qualification
+            .entries()
+            .first()
+            .ok_or_else(|| WrapperError::Candle("this route has no entries".to_owned()))?;
+        let symbol = entry.entry_symbol().to_owned();
+        let declared = declared_transport_slots(entry);
+        let outcome = load_library(device, 0, entry.object()).and_then(|library| {
+            let function = library.get_function(&symbol, None).map_err(|cause| {
+                RouteRefusal::EntrySymbolAbsent {
+                    entry: 0,
+                    symbol: symbol.clone(),
+                    detail: cause.to_string(),
+                }
+            })?;
+            prepare_pipeline_with_reflection(device, 0, &symbol, &function)
+        });
+        drop(qualification);
+        let prepared = outcome.map_err(|refusal| {
+            WrapperError::Route(Box::new(AdapterRouteFailure::Preparation(refusal)))
+        })?;
+        Ok(ArgumentSlotProbe {
+            symbol,
+            declared,
+            addressed: prepared.addressed_slots,
         })
     }
 

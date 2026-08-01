@@ -398,6 +398,43 @@ pub enum RouteRefusal {
         /// What the Metal binding reported.
         detail: String,
     },
+    /// The device built the pipeline and returned no argument table for it.
+    ///
+    /// Fail-closed rather than skipped. Reflection is the only evidence that the
+    /// compiled object addresses the slots the entry declares, so a route that
+    /// proceeded without it would bind by declaration alone — which is the state
+    /// [`Self::ArgumentSlotsDisagree`] exists to detect. Distinct from a rejected
+    /// pipeline because the device accepted the function here: it is the
+    /// *reflection* that is missing, and that is a fact about this toolchain row
+    /// rather than about the object.
+    ArgumentTableUnavailable {
+        /// Position of the entry in the route's execution order.
+        entry: usize,
+        /// The symbol the pipeline was built for.
+        symbol: String,
+    },
+    /// The compiled object's buffer arguments are not the slots the entry declares.
+    ///
+    /// ADR 0090 item 8's third obligation. Deliberately a class of its own and
+    /// **not** [`Self::EntrySymbolAbsent`]: the object publishes the declared
+    /// symbol and loads, and what disagrees is the argument table the compiled
+    /// function addresses. The two remedies differ — an absent symbol means these
+    /// bytes are not the object the artifact names, and a slot disagreement means
+    /// they are an object built against a different ABI.
+    ///
+    /// Both sides are carried in full rather than summarized to a count, because
+    /// a renumbered mapping and a missing slot are different defects and a count
+    /// cannot tell them apart.
+    ArgumentSlotsDisagree {
+        /// Position of the entry in the route's execution order.
+        entry: usize,
+        /// The symbol whose pipeline was reflected.
+        symbol: String,
+        /// The backend transport slots the artifact declares, ascending.
+        declared: Vec<u64>,
+        /// The buffer argument indices the compiled object addresses, ascending.
+        addressed: Vec<u64>,
+    },
     /// A cache lookup named a device scope this cache was not built for.
     ///
     /// Unreachable through this adapter's own code, because a key carries the
@@ -516,6 +553,22 @@ impl fmt::Display for RouteRefusal {
             } => write!(
                 formatter,
                 "candle-metal.prepare: no pipeline state for entry {entry}'s {symbol:?}: {detail}",
+            ),
+            Self::ArgumentTableUnavailable { entry, symbol } => write!(
+                formatter,
+                "candle-metal.prepare: entry {entry}'s {symbol:?} built and the device returned no \
+                 argument-table reflection, so the slots it addresses cannot be compared against \
+                 the ones the entry declares",
+            ),
+            Self::ArgumentSlotsDisagree {
+                entry,
+                symbol,
+                declared,
+                addressed,
+            } => write!(
+                formatter,
+                "candle-metal.prepare: entry {entry}'s {symbol:?} addresses buffer argument(s) \
+                 {addressed:?} and the entry declares transport slot(s) {declared:?}",
             ),
             Self::ForeignDeviceScope { cache, lookup } => write!(
                 formatter,
@@ -773,6 +826,16 @@ mod tests {
                 entry: 0,
                 symbol: "tiler_kernel".to_owned(),
                 detail: "refused".to_owned(),
+            },
+            RouteRefusal::ArgumentTableUnavailable {
+                entry: 0,
+                symbol: "tiler_kernel".to_owned(),
+            },
+            RouteRefusal::ArgumentSlotsDisagree {
+                entry: 0,
+                symbol: "tiler_kernel".to_owned(),
+                declared: vec![0, 1],
+                addressed: vec![0, 1, 2],
             },
             RouteRefusal::ForeignDeviceScope {
                 cache: "a".to_owned(),
