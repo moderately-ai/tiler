@@ -1,0 +1,63 @@
+key	value
+joint.method	one deviation between two complete computations, per position and variant; three separately measured maxima are not produced and would be a forbidden composition
+joint.authority	the L8 qualification record, drafted at design-model-level-qualification-and-optimization pending its carrier
+joint.variants	joint_unmodified_outward,joint_unmodified_alternating,joint_promoted_outward,joint_promoted_alternating
+joint.baseline	the plain F32 pass retained in positions.tsv
+joint.decode_input	teacher-forced on the F32 pass token sequence
+preorder.mechanism	the fixture's existing f64_unmodified and f64_promoted orderings, reused rather than a third
+pelem.exp.contract	Ulp(tiler::ulp-reference-gap@1, 12)
+pelem.exp.ulps	12
+pelem.exp.authority	the registered contract, not Table 8.1's 4 ULP: that bound is stated under Apple's own ULP definition and crosses to Tiler's metric through the one registered ScaledMetric implication, whose derivation carries a factor of three
+pelem.exp.sites	the exponential subordinate to tiler::softmax-f32@1 and to tiler::silu-f32@1
+pelem.rsqrt.contract	Faithful
+pelem.rsqrt.ulps	1
+pelem.rsqrt.authority	a faithful result is one of the two F32 values bracketing the exact one, so its deviation is strictly below one ULP; one ULP is the supremum of that band
+pelem.rsqrt.sites	the reciprocal square root subordinate to tiler::rms-norm-f32@1
+pelem.sign_policies	outward,alternating
+pelem.sign_policy_boundary	each policy is a full-magnitude sample of the admitted band, not a search over the 2^N per-element sign assignments; the true worst case within these contracts is at least the measured band and is not bounded above by it
+pelem.control.elem_zero.variant	joint_unmodified_outward at 0 ULPs
+pelem.control.elem_zero.max_abs_deviation	0.0002048015594482422
+pelem.control.elem_zero.controlled_variant	joint_unmodified_outward
+pelem.control.elem_zero.controlled_variant_max_abs_deviation	0.0002067089080810547
+pelem.control.elem_zero.band_moved	true
+pflush.mechanism	torch.set_flush_denormal, which sets ARM FPCR.FZ on this host
+pflush.set_flush_denormal_true_returned	true
+pflush.set_flush_denormal_false_returned	true
+pflush.return_value_is_not_the_verification	true; both directions return the same value, so only the controls below decide
+pflush.control.elementwise.expression	float32 (-1e-38) * 0.01, exact result -1e-40
+pflush.control.elementwise.exact_subnormal_hex	0x800116c2
+pflush.control.elementwise.mode_off_hex	0x800116c2
+pflush.control.elementwise.mode_on_hex	0x80000000
+pflush.control.elementwise.mode_off_returned_the_exact_subnormal	true
+pflush.control.elementwise.mode_on_flushed_to_zero	true
+pflush.control.elementwise.flush_preserved_the_sign	true
+pflush.control.blas.expression	float32 [64,2] @ [2,64] with exact sum -2^-133 through torch.matmul
+pflush.control.blas.exact_subnormal_hex	0x80010000
+pflush.control.blas.mode_off_hex	0x80010000
+pflush.control.blas.mode_on_hex	0x80000000
+pflush.control.blas.mode_off_returned_the_exact_subnormal	true
+pflush.control.blas.mode_on_flushed_to_zero	true
+pflush.control.blas.flush_preserved_the_sign	true
+pflush.controls_passed	true
+pflush.f32_reachability.method	the plain F32 pass re-evaluated with the mode in force, compared bit for bit against the baseline at every position
+pflush.f32_reachability.bit_identical_positions	18
+pflush.f32_reachability.positions	18
+pflush.f32_reachability.max_abs_deviation	0.0
+pflush.carrier_control.method	joint_unmodified_outward re-evaluated with the mode off, compared byte for byte
+pflush.carrier_control.byte_identical	true
+pflush.carrier_precision	FPCR.FZ flushes at the precision each arithmetic site is evaluated in; the joint passes carry P-reorder as float64, whose subnormal range this workload never reaches
+pflush.term_state	established, and measured to be the identity on this row
+pflush.term_reason	the mechanism is proved by both controls, and the plain F32 pass re-evaluated with the mode in force is bit-identical to the baseline at every position, so no arithmetic site of this row produced or consumed an F32 subnormal and the joint band carries all three terms
+joint.terms_carried	P-reorder, P-flush, P-elem
+joint.band.max_abs_deviation	0.00022101402282714844
+joint.band.top32_max_abs_deviation	0.0001087188720703125
+joint.band.max_ulp_deviation	1849752155
+joint.band.top32_max_ulp_deviation	87
+joint.band.rows	72
+joint.band.greedy_agreeing_rows	72
+joint.band.greedy_agrees_everywhere	true
+joint.band.smallest_runner_up_gap	0.2660789489746094
+joint.band.gap_ratio	0.0008306332525698557
+joint.band.exact_greedy_gate_holds	true
+joint.band.boundary	one host, one checkpoint revision, one reference revision, one prompt, 18 positions, batch 1, greedy, F32; it qualifies no B1-length row, no other prompt, and no quantized path
+joint.band.reading	admissibility, not proof: a result outside the band is a defect, a result inside it is only indistinguishable at the model boundary from a legal realization
