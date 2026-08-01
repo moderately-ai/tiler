@@ -18,6 +18,28 @@
 //! here, because a second operation vocabulary disconnected from the public
 //! logical program is precisely what Tom's syntax decision does not authorize.
 //!
+//! `strict_serial_sum(…)` and a scalar literal resolve the same way, to
+//! [`strict_serial_sum_f32_op`] and [`constant_f32_op`]. Neither adds a rule:
+//! the reduction's result shape is the registry's `without_axes`, and the
+//! constant's rank-0 shape is what makes it the scalar side of the elementwise
+//! rule already quoted.
+//!
+//! # A reduction is where the derived shape stops agreeing for free
+//!
+//! Every other operation this profile spells is shape-preserving, so "the shape
+//! this module derived equals the shape the registry inferred" held whatever the
+//! derivation did with rank. A reduction removes axes, and *which* axes is a
+//! name resolution performed here — so the check below is the thing that catches
+//! a name resolved to the wrong position, and it is checked before an expansion
+//! can emit a result whose declared rank is not the program's.
+//!
+//! # Nothing here spells a plan
+//!
+//! A region states which axes it sums. Whether that becomes one kernel or two,
+//! and whether anything is materialized between them, is decided by the
+//! optimizer against a target profile; this module hands over the same program
+//! either way.
+//!
 //! # The public logical program is constructed exactly when it is representable
 //!
 //! `tiler_ir::shape::Shape` is a **fixed**-extent vocabulary: an
@@ -67,19 +89,22 @@
 //! [`AvailabilityPhase::LiveDevicePreflight`]: tiler_ir::program::abi::AvailabilityPhase::LiveDevicePreflight
 //! [`multiply_f32_op`]: tiler_ir::semantic::multiply_f32_op
 //! [`add_f32_op`]: tiler_ir::semantic::add_f32_op
+//! [`strict_serial_sum_f32_op`]: tiler_ir::semantic::strict_serial_sum_f32_op
+//! [`constant_f32_op`]: tiler_ir::semantic::constant_f32_op
 
 use core::fmt;
 
 use tiler_ir::program::StorageScalar;
 use tiler_ir::semantic::{
-    BuildError, F32, F32Add, F32Multiply, InputKey, OutputKey, SemanticProgram,
-    SemanticProgramBuilder, Value,
+    BuildError, F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
+    SemanticProgramBuilder, StrictSerialF32Sum, Value,
 };
-use tiler_ir::shape::Shape;
+use tiler_ir::shape::{Axis, Shape};
 
 use crate::binding::{BoundRegion, DeclaredAxis, RegionBindError, RegionDeclarations};
 use crate::grammar::{
-    AxisSyntax, Expression, Name, OperandSyntax, Operator, RegionSyntax, SyntaxError,
+    AxisExtentSyntax, AxisSyntax, Expression, Name, OperandSyntax, Operator, RegionSyntax,
+    ScalarSyntax, SyntaxError,
 };
 
 /// The interface key the region's single result is declared under.
@@ -98,6 +123,16 @@ const RESULT_KEY: &str = "out";
 /// registered over it. A region declaring another element type would have no
 /// operation to apply to it.
 const ELEMENT_TYPES: [(&str, StorageScalar); 1] = [("f32", StorageScalar::F32)];
+
+/// The element type a scalar constant written in a region body has.
+///
+/// Stated rather than inferred from the operands it sits beside: the registry
+/// registers one scalar-constant operation and it is `f32`, so `2.0` is an
+/// `f32` constant and there is nothing else it could be. Widening
+/// [`ELEMENT_TYPES`] would make that a real question — what `2.0` means beside a
+/// non-`f32` operand — and that is a syntax decision for Tom rather than an
+/// inference this module may quietly start making.
+const SCALAR_CONSTANT_TYPE: StorageScalar = StorageScalar::F32;
 
 /// Whether an expansion could construct the region's public logical program.
 ///
@@ -190,6 +225,56 @@ pub(crate) enum RegionError<S> {
         /// The operator token.
         span: S,
     },
+    /// A scalar literal is not a value this profile's constant can take.
+    MalformedScalarConstant {
+        /// The number as the region spells it.
+        text: String,
+        /// The literal token.
+        span: S,
+    },
+    /// A reduction names an axis the expression it reduces does not have.
+    UnknownReducedAxis {
+        /// The name as written.
+        name: String,
+        /// The axis names that expression does have, rendered.
+        available: String,
+        /// The name's token.
+        span: S,
+    },
+    /// A reduction names an axis that more than one axis answers to.
+    ///
+    /// `f32[n, n]` is a legal square shape, so the ambiguity is refused where it
+    /// is *used* rather than where it is declared: nothing is wrong with the
+    /// declaration until something has to pick one of the two axes.
+    AmbiguousReducedAxis {
+        /// The name as written.
+        name: String,
+        /// The name's token.
+        span: S,
+    },
+    /// One reduction names one axis twice.
+    RepeatedReducedAxis {
+        /// The name as written.
+        name: String,
+        /// The second mention.
+        span: S,
+    },
+    /// Two operands give one axis position two different names.
+    ///
+    /// Refused rather than resolved in favour of a side, because which operand
+    /// was written first is not a fact about the computation: taking the left
+    /// name would make `a + b` and `b + a` denote results whose axes reduce
+    /// under different spellings.
+    ConflictingAxisNames {
+        /// The axis position the two operands disagree about.
+        position: usize,
+        /// The name the left operand gives it.
+        left: String,
+        /// The name the right operand gives it.
+        right: String,
+        /// The operator token that combined them.
+        span: S,
+    },
     /// Constructing the region as a public logical program was refused.
     ///
     /// Carried rather than flattened (ADR 0074 convention 1): the semantic
@@ -248,6 +333,42 @@ impl<S> fmt::Display for RegionError<S> {
                 "`{operator}` cannot combine a `{left}` operand with a `{right}` one; operand \
                  shapes must match or one operand must be scalar"
             ),
+            Self::MalformedScalarConstant { text, .. } => write!(
+                formatter,
+                "`{text}` is not a value an `f32` constant can take; a region's scalar constant is a \
+                 finite number, and a literal that rounds to an infinity would compute something \
+                 other than what it spells"
+            ),
+            Self::UnknownReducedAxis {
+                name, available, ..
+            } => write!(
+                formatter,
+                "`{name}` is not a named axis of the expression this reduction sums, which has \
+                 {available}; an axis is named by the shape that declares it, so write `{name}` as \
+                 one of that operand's axes, as in `f32[{name}: 8]`"
+            ),
+            Self::AmbiguousReducedAxis { name, .. } => write!(
+                formatter,
+                "`{name}` names more than one axis of the expression this reduction sums, so which \
+                 axis to sum is not decided; give those axes distinct names in the shape that \
+                 declares them, as in `f32[{name}: 8, other: 8]`"
+            ),
+            Self::RepeatedReducedAxis { name, .. } => write!(
+                formatter,
+                "`{name}` is named twice by one reduction; a reduction sums each axis once, and \
+                 summing one twice is not a computation this vocabulary carries"
+            ),
+            Self::ConflictingAxisNames {
+                position,
+                left,
+                right,
+                ..
+            } => write!(
+                formatter,
+                "axis {position} is named `{left}` by one operand of this operation and `{right}` \
+                 by the other, so the axis its result exposes has no one name; name it the same \
+                 way in both shapes, or leave it unnamed in one of them"
+            ),
             Self::Program { detail, .. } => write!(
                 formatter,
                 "this region is not a valid public logical program: {detail}"
@@ -273,6 +394,11 @@ impl<S> RegionError<S> {
             | Self::InvalidInterfaceKey { span, .. }
             | Self::UnknownOperand { span, .. }
             | Self::IncompatibleOperandShapes { span, .. }
+            | Self::MalformedScalarConstant { span, .. }
+            | Self::UnknownReducedAxis { span, .. }
+            | Self::AmbiguousReducedAxis { span, .. }
+            | Self::RepeatedReducedAxis { span, .. }
+            | Self::ConflictingAxisNames { span, .. }
             | Self::Program { span, .. }
             | Self::ResultShapeDisagreement { span, .. } => span,
         }
@@ -300,18 +426,69 @@ fn rendered_element_types() -> String {
         .join(", ")
 }
 
+/// One axis of a resolved value: its extent, and what it is called here.
+///
+/// The name is carried beside the extent rather than inside [`DeclaredAxis`]
+/// because it reaches nothing the binding module emits: an axis name decides
+/// which position a reduction removes at expansion time, and the runtime facts
+/// describe extents. Putting it in the emitted vocabulary would publish a
+/// spelling that nothing at run time can act on.
+#[derive(Clone)]
+struct ResolvedAxis<S> {
+    declared: DeclaredAxis<S>,
+    name: Option<Name<S>>,
+}
+
 /// One operand after its element type and axes are resolved.
 struct ResolvedOperand<S> {
     key: InputKey,
     storage_scalar: StorageScalar,
-    axes: Vec<DeclaredAxis<S>>,
+    axes: Vec<ResolvedAxis<S>>,
     name: Name<S>,
 }
 
 /// One subexpression's declared element type and shape.
 struct ResolvedValue<S> {
     storage_scalar: StorageScalar,
-    axes: Vec<DeclaredAxis<S>>,
+    axes: Vec<ResolvedAxis<S>>,
+}
+
+/// One subexpression with every name already resolved to what it refers to.
+///
+/// Built once, beside the shape derivation that needed the same resolution, and
+/// then *applied*. The alternative — walking the syntax a second time to
+/// construct the program — makes two resolvers for one subject, and they would
+/// have to agree about which operand a name refers to and which position a
+/// reduced axis sits at. Where they disagreed, the derived shape and the
+/// constructed program would describe different computations.
+enum ResolvedExpression<S> {
+    /// A declared operand, by its position in the region's interface.
+    ///
+    /// The reference is retained beside the position so the one refusal this
+    /// carries — a position with no value, which nothing constructible reaches —
+    /// still names the token a consumer wrote.
+    Operand { position: usize, name: Name<S> },
+    /// A scalar constant, by its exact binary32 payload.
+    Constant { bits: u32, span: S },
+    /// A strict serial sum over resolved axis positions, strictly ascending.
+    Reduction {
+        span: S,
+        operand: Box<ResolvedExpression<S>>,
+        axes: Vec<usize>,
+    },
+    /// One registered binary operation.
+    Binary {
+        operator: Operator,
+        span: S,
+        left: Box<ResolvedExpression<S>>,
+        right: Box<ResolvedExpression<S>>,
+    },
+}
+
+/// One subexpression and the value it denotes.
+struct Resolved<S> {
+    expression: ResolvedExpression<S>,
+    value: ResolvedValue<S>,
 }
 
 /// Lowers one parsed region to the expansion it denotes.
@@ -332,7 +509,7 @@ pub(crate) fn lower<S: Copy>(syntax: &RegionSyntax<S>) -> Result<Expansion<S>, R
         declarations.operand(
             resolved.key.clone(),
             resolved.storage_scalar,
-            resolved.axes.clone(),
+            declared_axes(&resolved.axes),
             resolved.name.span,
         )?;
         operands.push(resolved);
@@ -348,8 +525,8 @@ pub(crate) fn lower<S: Copy>(syntax: &RegionSyntax<S>) -> Result<Expansion<S>, R
         })?;
     declarations.result(
         result_key,
-        result.storage_scalar,
-        result.axes.clone(),
+        result.value.storage_scalar,
+        declared_axes(&result.value.axes),
         syntax.out,
     )?;
 
@@ -383,7 +560,7 @@ fn refuse_undeclared_symbols<S: Copy>(
     operands: &[ResolvedOperand<S>],
 ) -> Result<(), RegionError<S>> {
     for axis in operands.iter().flat_map(|operand| &operand.axes) {
-        let DeclaredAxis::Symbol { name, span } = axis else {
+        let DeclaredAxis::Symbol { name, span } = &axis.declared else {
             continue;
         };
         if !syntax
@@ -424,38 +601,87 @@ fn resolve_operand<S: Copy>(
     Ok(ResolvedOperand {
         key,
         storage_scalar,
-        axes: operand
-            .axes
-            .iter()
-            .map(|axis| match axis {
-                AxisSyntax::Symbol(name) => DeclaredAxis::Symbol {
-                    name: name.text.clone(),
-                    span: name.span,
-                },
-                AxisSyntax::Literal { value, .. } => DeclaredAxis::Literal(*value),
-            })
-            .collect(),
+        axes: operand.axes.iter().map(resolve_axis).collect(),
         name: operand.name.clone(),
     })
 }
 
-/// Resolves one subexpression's element type and shape.
+/// Resolves one declared axis's extent and the name it is known by.
+fn resolve_axis<S: Copy>(axis: &AxisSyntax<S>) -> ResolvedAxis<S> {
+    ResolvedAxis {
+        declared: match &axis.extent {
+            AxisExtentSyntax::Symbol(name) => DeclaredAxis::Symbol {
+                name: name.text.clone(),
+                span: name.span,
+            },
+            AxisExtentSyntax::Literal { value, .. } => DeclaredAxis::Literal(*value),
+        },
+        name: axis.name().cloned(),
+    }
+}
+
+/// Resolves one subexpression's names, element type, and shape.
 fn resolve_expression<S: Copy>(
     expression: &Expression<S>,
     operands: &[ResolvedOperand<S>],
-) -> Result<ResolvedValue<S>, RegionError<S>> {
+) -> Result<Resolved<S>, RegionError<S>> {
     match expression {
         Expression::Operand(name) => operands
             .iter()
-            .find(|operand| operand.name.text == name.text)
-            .map(|operand| ResolvedValue {
-                storage_scalar: operand.storage_scalar,
-                axes: operand.axes.clone(),
+            .position(|operand| operand.name.text == name.text)
+            .map(|position| Resolved {
+                expression: ResolvedExpression::Operand {
+                    position,
+                    name: name.clone(),
+                },
+                value: ResolvedValue {
+                    storage_scalar: operands[position].storage_scalar,
+                    axes: operands[position].axes.clone(),
+                },
             })
             .ok_or_else(|| RegionError::UnknownOperand {
                 name: name.text.clone(),
                 span: name.span,
             }),
+        Expression::Scalar(scalar) => Ok(Resolved {
+            expression: ResolvedExpression::Constant {
+                bits: scalar_constant_bits(scalar)?,
+                span: scalar.span,
+            },
+            value: ResolvedValue {
+                storage_scalar: SCALAR_CONSTANT_TYPE,
+                // Rank 0, which is what makes a constant the scalar side of the
+                // registry's own elementwise rule rather than a value this
+                // module broadcasts itself.
+                axes: Vec::new(),
+            },
+        }),
+        Expression::Reduction {
+            span,
+            operand,
+            axes,
+        } => {
+            let reduced = resolve_expression(operand, operands)?;
+            let positions = reduced_positions(&reduced.value.axes, axes)?;
+            Ok(Resolved {
+                value: ResolvedValue {
+                    storage_scalar: reduced.value.storage_scalar,
+                    axes: reduced
+                        .value
+                        .axes
+                        .iter()
+                        .enumerate()
+                        .filter(|(position, _)| !positions.contains(position))
+                        .map(|(_, axis)| axis.clone())
+                        .collect(),
+                },
+                expression: ResolvedExpression::Reduction {
+                    span: *span,
+                    operand: Box::new(reduced.expression),
+                    axes: positions,
+                },
+            })
+        }
         Expression::Binary {
             operator,
             span,
@@ -468,58 +694,176 @@ fn resolve_expression<S: Copy>(
             // element type is `f32`, so the two sides cannot differ. The check
             // is written anyway because widening `ELEMENT_TYPES` must be a
             // refusal here rather than a silently mixed operation.
-            if left.storage_scalar != right.storage_scalar {
+            if left.value.storage_scalar != right.value.storage_scalar {
                 return Err(RegionError::IncompatibleOperandShapes {
                     operator: operator.as_str(),
-                    left: rendered_axes(&left.axes),
-                    right: rendered_axes(&right.axes),
+                    left: rendered_axes(&left.value.axes),
+                    right: rendered_axes(&right.value.axes),
                     span: *span,
                 });
             }
-            Ok(ResolvedValue {
-                storage_scalar: left.storage_scalar,
-                axes: elementwise_axes(*operator, &left.axes, &right.axes, *span)?,
+            Ok(Resolved {
+                value: ResolvedValue {
+                    storage_scalar: left.value.storage_scalar,
+                    axes: elementwise_axes(*operator, &left.value.axes, &right.value.axes, *span)?,
+                },
+                expression: ResolvedExpression::Binary {
+                    operator: *operator,
+                    span: *span,
+                    left: Box::new(left.expression),
+                    right: Box::new(right.expression),
+                },
             })
         }
     }
 }
 
-/// Applies the registry's elementwise shape rule to two declared shapes.
+/// Reads one scalar literal as the exact binary32 payload it denotes.
+///
+/// The rounding is Rust's own — the text is the text a consumer would have
+/// written in an `f32` literal beside the region, and it reaches `f32` through
+/// the same correctly-rounded parse. A value the format cannot hold is refused
+/// rather than saturated, matching what rustc does with `1e40f32`: a constant
+/// that silently became an infinity would decide what a kernel computes.
+fn scalar_constant_bits<S: Copy>(scalar: &ScalarSyntax<S>) -> Result<u32, RegionError<S>> {
+    let malformed = || RegionError::MalformedScalarConstant {
+        text: scalar.text.clone(),
+        span: scalar.span,
+    };
+    let value: f32 = scalar.text.parse().map_err(|_| malformed())?;
+    if !value.is_finite() {
+        return Err(malformed());
+    }
+    Ok(value.to_bits())
+}
+
+/// Resolves a reduction's named axes to positions, in canonical ascending order.
+///
+/// Ascending because *which* axes are summed is what the region means and the
+/// order they were written in is not — `[cols, rows]` and `[rows, cols]` denote
+/// one computation, and the registry's own canonical form is ascending, so
+/// sorting here is what keeps two spellings from becoming two programs.
+fn reduced_positions<S: Copy>(
+    axes: &[ResolvedAxis<S>],
+    named: &[Name<S>],
+) -> Result<Vec<usize>, RegionError<S>> {
+    let mut positions: Vec<usize> = Vec::with_capacity(named.len());
+    for wanted in named {
+        let mut matched = axes.iter().enumerate().filter(|(_, axis)| {
+            axis.name
+                .as_ref()
+                .is_some_and(|name| name.text == wanted.text)
+        });
+        let Some((position, _)) = matched.next() else {
+            return Err(RegionError::UnknownReducedAxis {
+                name: wanted.text.clone(),
+                available: rendered_axis_names(axes),
+                span: wanted.span,
+            });
+        };
+        if matched.next().is_some() {
+            return Err(RegionError::AmbiguousReducedAxis {
+                name: wanted.text.clone(),
+                span: wanted.span,
+            });
+        }
+        if positions.contains(&position) {
+            return Err(RegionError::RepeatedReducedAxis {
+                name: wanted.text.clone(),
+                span: wanted.span,
+            });
+        }
+        positions.push(position);
+    }
+    positions.sort_unstable();
+    Ok(positions)
+}
+
+/// Renders the axis names a diagnostic can offer for a value.
+fn rendered_axis_names<S>(axes: &[ResolvedAxis<S>]) -> String {
+    let named: Vec<String> = axes
+        .iter()
+        .filter_map(|axis| axis.name.as_ref())
+        .map(|name| format!("`{}`", name.text))
+        .collect();
+    if named.is_empty() {
+        "no named axis".to_owned()
+    } else {
+        format!("the axes {}", named.join(", "))
+    }
+}
+
+/// Returns the extents of a resolved shape, which is what the binding module
+/// takes.
+fn declared_axes<S: Clone>(axes: &[ResolvedAxis<S>]) -> Vec<DeclaredAxis<S>> {
+    axes.iter().map(|axis| axis.declared.clone()).collect()
+}
+
+/// Applies the registry's elementwise shape rule to two resolved shapes.
 ///
 /// Equal shapes, or one side scalar. Two axes naming different symbols are
 /// *not* equal: nothing at expansion time proves `n` and `m` take one value, and
 /// treating them as compatible would defer a shape error into a wrong result.
+///
+/// Axis *names* are unioned rather than taken from a side, so `a + b` and
+/// `b + a` expose the same named axes and a later reduction over one of them
+/// does not depend on which operand was written first.
 fn elementwise_axes<S: Copy>(
     operator: Operator,
-    left: &[DeclaredAxis<S>],
-    right: &[DeclaredAxis<S>],
+    left: &[ResolvedAxis<S>],
+    right: &[ResolvedAxis<S>],
     span: S,
-) -> Result<Vec<DeclaredAxis<S>>, RegionError<S>> {
+) -> Result<Vec<ResolvedAxis<S>>, RegionError<S>> {
     if left.is_empty() {
         return Ok(right.to_vec());
     }
-    if right.is_empty() || axes_agree(left, right) {
+    if right.is_empty() {
         return Ok(left.to_vec());
     }
-    Err(RegionError::IncompatibleOperandShapes {
-        operator: operator.as_str(),
-        left: rendered_axes(left),
-        right: rendered_axes(right),
-        span,
-    })
+    if !axes_agree(left, right) {
+        return Err(RegionError::IncompatibleOperandShapes {
+            operator: operator.as_str(),
+            left: rendered_axes(left),
+            right: rendered_axes(right),
+            span,
+        });
+    }
+
+    let mut merged = Vec::with_capacity(left.len());
+    for (position, (left_axis, right_axis)) in left.iter().zip(right).enumerate() {
+        let name = match (&left_axis.name, &right_axis.name) {
+            (Some(left_name), Some(right_name)) if left_name.text != right_name.text => {
+                return Err(RegionError::ConflictingAxisNames {
+                    position,
+                    left: left_name.text.clone(),
+                    right: right_name.text.clone(),
+                    span,
+                });
+            }
+            (Some(name), _) | (None, Some(name)) => Some(name.clone()),
+            (None, None) => None,
+        };
+        merged.push(ResolvedAxis {
+            declared: left_axis.declared.clone(),
+            name,
+        });
+    }
+    Ok(merged)
 }
 
-/// Reports whether two declared shapes name the same axes, spans aside.
+/// Reports whether two resolved shapes have the same extents, spans aside.
 ///
 /// A span is where a name was written, not part of what it means, so comparing
 /// [`DeclaredAxis`] values directly would make `f32[n] * f32[n]` depend on which
-/// tokens spelled the two `n`s.
-fn axes_agree<S>(left: &[DeclaredAxis<S>], right: &[DeclaredAxis<S>]) -> bool {
+/// tokens spelled the two `n`s. An axis *name* is not compared either: what two
+/// operands must agree about to be combined is their extents, and disagreeing
+/// names are a separate refusal with a separate reason.
+fn axes_agree<S>(left: &[ResolvedAxis<S>], right: &[ResolvedAxis<S>]) -> bool {
     left.len() == right.len()
         && left
             .iter()
             .zip(right)
-            .all(|(left, right)| match (left, right) {
+            .all(|(left, right)| match (&left.declared, &right.declared) {
                 (DeclaredAxis::Literal(left), DeclaredAxis::Literal(right)) => left == right,
                 (
                     DeclaredAxis::Symbol { name: left, .. },
@@ -529,11 +873,11 @@ fn axes_agree<S>(left: &[DeclaredAxis<S>], right: &[DeclaredAxis<S>]) -> bool {
             })
 }
 
-/// Renders one declared shape the way a region spells it.
-fn rendered_axes<S>(axes: &[DeclaredAxis<S>]) -> String {
+/// Renders one resolved shape's extents the way a region spells them.
+fn rendered_axes<S>(axes: &[ResolvedAxis<S>]) -> String {
     let rendered = axes
         .iter()
-        .map(|axis| match axis {
+        .map(|axis| match &axis.declared {
             DeclaredAxis::Literal(extent) => extent.to_string(),
             DeclaredAxis::Symbol { name, .. } => name.clone(),
         })
@@ -542,11 +886,12 @@ fn rendered_axes<S>(axes: &[DeclaredAxis<S>]) -> String {
     format!("[{rendered}]")
 }
 
-/// Returns the literal extents of a declared shape, or `None` if any is symbolic.
-fn literal_extents<S>(axes: &[DeclaredAxis<S>]) -> Option<Vec<u64>> {
+/// Returns the literal extents of a resolved shape, or `None` if any is
+/// symbolic.
+fn literal_extents<S>(axes: &[ResolvedAxis<S>]) -> Option<Vec<u64>> {
     axes.iter()
-        .map(|axis| match axis {
-            DeclaredAxis::Literal(extent) => Some(*extent),
+        .map(|axis| match axis.declared {
+            DeclaredAxis::Literal(extent) => Some(extent),
             DeclaredAxis::Symbol { .. } => None,
         })
         .collect()
@@ -560,7 +905,7 @@ fn literal_extents<S>(axes: &[DeclaredAxis<S>]) -> Option<Vec<u64>> {
 fn verify_public_logical_program<S: Copy>(
     syntax: &RegionSyntax<S>,
     operands: &[ResolvedOperand<S>],
-    result: &ResolvedValue<S>,
+    result: &Resolved<S>,
 ) -> Result<ProgramEvidence, RegionError<S>> {
     let mut extents = Vec::with_capacity(operands.len());
     for operand in operands {
@@ -569,7 +914,7 @@ fn verify_public_logical_program<S: Copy>(
         };
         extents.push(literal);
     }
-    let Some(derived) = literal_extents(&result.axes) else {
+    let Some(derived) = literal_extents(&result.value.axes) else {
         return Ok(ProgramEvidence::DeferredSymbolicExtent);
     };
 
@@ -586,7 +931,7 @@ fn verify_public_logical_program<S: Copy>(
             detail: source.to_string(),
         })?;
 
-    let mut values: Vec<(&str, Value<F32>)> = Vec::with_capacity(operands.len());
+    let mut values: Vec<Value<F32>> = Vec::with_capacity(operands.len());
     for (operand, extents) in operands.iter().zip(&extents) {
         let shape = Shape::try_from_dims(extents.iter().copied()).map_err(|source| {
             RegionError::Program {
@@ -597,10 +942,10 @@ fn verify_public_logical_program<S: Copy>(
         let value = builder
             .input::<F32>(operand.key.clone(), shape)
             .map_err(refused(operand.name.span))?;
-        values.push((operand.name.text.as_str(), value));
+        values.push(value);
     }
 
-    let root = apply_expression(&mut builder, &syntax.body, &values)?;
+    let root = apply_expression(&mut builder, &result.expression, &values)?;
     let output_key =
         OutputKey::new(RESULT_KEY).map_err(|source| RegionError::InvalidInterfaceKey {
             name: RESULT_KEY.to_owned(),
@@ -638,7 +983,7 @@ fn verify_public_logical_program<S: Copy>(
         .collect();
     if inferred_extents != derived {
         return Err(RegionError::ResultShapeDisagreement {
-            derived: rendered_axes(&result.axes),
+            derived: rendered_axes(&result.value.axes),
             inferred: inferred.to_string(),
             span: syntax.out,
         });
@@ -647,22 +992,62 @@ fn verify_public_logical_program<S: Copy>(
     Ok(ProgramEvidence::Verified(program))
 }
 
-/// Applies one subexpression through the governed operation facades.
+/// Applies one resolved subexpression through the governed operation facades.
+///
+/// A translation and not a second resolver: every name was decided by
+/// [`resolve_expression`], so an operand is an index into `values` and a reduced
+/// axis is a position. The only refusals it can produce are the authority's own.
 fn apply_expression<S: Copy>(
     builder: &mut SemanticProgramBuilder,
-    expression: &Expression<S>,
-    values: &[(&str, Value<F32>)],
+    expression: &ResolvedExpression<S>,
+    values: &[Value<F32>],
 ) -> Result<Value<F32>, RegionError<S>> {
     match expression {
-        Expression::Operand(name) => values
-            .iter()
-            .find(|(declared, _)| *declared == name.text)
-            .map(|(_, value)| *value)
+        // The `ok_or_else` arm is unreachable: the position came from
+        // `operands.iter().position(…)` over the same list `values` was built
+        // from, one value per operand. It is a refusal rather than an index
+        // panic anyway, because a panic inside an expansion aborts rustc with no
+        // span at all — and it is *this* refusal because "the position names no
+        // operand" is what a name that did not resolve would have meant.
+        ResolvedExpression::Operand { position, name } => values
+            .get(*position)
+            .copied()
             .ok_or_else(|| RegionError::UnknownOperand {
                 name: name.text.clone(),
                 span: name.span,
             }),
-        Expression::Binary {
+        ResolvedExpression::Constant { bits, span } => {
+            F32Constant::apply(builder, *bits).map_err(|source| RegionError::Program {
+                span: *span,
+                detail: source.to_string(),
+            })
+        }
+        ResolvedExpression::Reduction {
+            span,
+            operand,
+            axes,
+        } => {
+            let operand = apply_expression(builder, operand, values)?;
+            let axes: Vec<Axis> = axes
+                .iter()
+                .map(|position| {
+                    u32::try_from(*position)
+                        .map(Axis::new)
+                        .map_err(|_| RegionError::Program {
+                            span: *span,
+                            detail: "an axis position exceeds what an axis index addresses"
+                                .to_owned(),
+                        })
+                })
+                .collect::<Result<_, _>>()?;
+            StrictSerialF32Sum::apply(builder, operand, axes).map_err(|source| {
+                RegionError::Program {
+                    span: *span,
+                    detail: source.to_string(),
+                }
+            })
+        }
+        ResolvedExpression::Binary {
             operator,
             span,
             left,

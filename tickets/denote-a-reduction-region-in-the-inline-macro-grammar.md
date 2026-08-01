@@ -1,7 +1,7 @@
 ---
 id: denote-a-reduction-region-in-the-inline-macro-grammar
 title: Denote a reduction region in the inline macro grammar
-status: in-progress
+status: review
 priority: p2
 dependencies: []
 related: [package-a-multi-entry-bundle-from-one-expansion, admit-multi-input-elementwise-programs-at-the-compiler-boundary]
@@ -43,8 +43,37 @@ A region denoting the recognized serial-sum shape parses, lowers to a verified `
 
 A region denotes a reduction, the expansion compiles it, the public grammar surface is accepted by Tom, every new check is perturbation-proved, and targeted tests plus the batch gate pass.
 
+## The drafted surface, awaiting Tom's acceptance
+
+Three consumer-visible forms, implemented as a concrete draft. None is self-accepted.
+
+1. **The reduction spelling.** `strict_serial_sum(<expression>, [<axis-name>, …])`, in the body, filling the named-call form candidate B reserved for "operations without an operator spelling". It resolves to `tiler::strict-serial-sum-f32@1` and to no meaning defined in the frontend.
+
+   ```text
+   in x: f32[rows: 2, cols: 2];
+   out strict_serial_sum(x * 2.0 + 1.0, [cols])
+   ```
+
+   *Runner-up, with the trade.* `sum(…)`, which reads better and is what a consumer would reach for. Eliminated because *strict serial* is a numerical guarantee — the result is defined by a left fold in ascending contributor order — rather than an implementation note, so `sum` would commit a consumer to that fold without saying so and would have to be respelled the day a reassociating sum is registered beside it. The verbose spelling also matches how the compiler, the IR, and this ticket already write the shape.
+
+2. **The axis-naming form.** An operand's declared axis may carry a name: `f32[cols: 8]`, mirroring `in a: f32[…]`'s own `name: thing`. A symbolic extent is already a name — `f32[n]` names its axis `n` — so only a literal-extent axis needs the new form. An unnamed axis cannot be reduced; a name two axes answer to (`f32[n, n]`, still a legal square shape) is refused where it is *used*.
+
+   ```text
+   in x: f32[rows: 2, cols: 8];   // `rows` and `cols` name axes 0 and 1
+   in y: f32[batch: n, 8];        // a name over a symbolic extent, and an unnamed axis
+   ```
+
+3. **The scalar-literal form.** A plain real number in the body, rounded to binary32 exactly as the equivalent Rust `f32` literal is, resolving to `tiler::constant-f32@1`. A leading `-` signs the literal and is not a unary operator; a whole number still carries its point; a value `f32` cannot hold is refused rather than rounded to an infinity.
+
+   ```text
+   out x * 2.0 + -1.5      // `1e-6` and `1_000.5` too; `x * 2` is refused
+   out strict_serial_sum(x * 1e40 + 1.0, [cols])   // refused: not an `f32`
+   ```
+
 ## Graph maintenance
 
 - **Public boundary, not self-accepted.** The region grammar is consumer-visible syntax. The reduction spelling, the axis-naming form, and the scalar-literal form each go to Tom under ADR 0075 before acceptance; a working implementation is a concrete draft of the syntax, not approval of it.
+- **What the grammar deliberately does not check.** Whether a region's whole program is one the compiler recognizes stays the compiler's question. Restating today's serial-sum window in the frontend would be a second authority that goes stale the moment `admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary` lands, and would refuse regions that are semantically well-formed. What landed instead is the *diagnostic*: `crates/tiler-macros/src/aot.rs`'s `rendered_refusal` derives consumer-facing text from `CompileFailureClass` rather than printing `UnsupportedCapability { phase: "strategy", rule: "input-arity" }`.
+- **Grammar-expressible programs awaiting the recognizer generalization.** A bare `strict_serial_sum(x, [cols])`, a reduction over more than one input, a reduction of a pointwise chain deeper than one scale and one bias, and a reduction whose operand is itself a reduction all lower to verified `SemanticProgram`s today and are refused only at the compile boundary. They become compilable without any grammar change.
 - This ticket does **not** deliver a multi-entry bundle and must not be reported as doing so. It makes a region with more than one plan alternative *expressible*; which alternative is selected is `calibrate-and-activate-parallel-reduction-selection`'s, and the end-to-end packaging is `package-a-multi-entry-bundle-from-one-expansion`.
 - Reaching further shapes — softmax, RMS-norm, SiLU, contraction — is a compiler-recognizer question owned by `admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary`, not a grammar one.
