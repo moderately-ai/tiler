@@ -1,7 +1,7 @@
 ---
 id: design-model-level-qualification-and-optimization
 title: Design model-level correctness and performance qualification
-status: todo
+status: in-progress
 priority: p2
 dependencies: [define-first-metal-lm-workload, design-model-ingestion-and-complete-execution]
 related: [implement-analytical-component-cost-model, calibrate-device-cost-models, scope-first-quantized-lm-profile]
@@ -9,6 +9,9 @@ scopes: [research/cost-model, research/apple-targets, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [design, testing, performance, conformance, language-model, metal]
+claimed_from: todo
+assignee: coordinator
+lease_expires_at: 1785611639
 ---
 ## User-visible outcome
 

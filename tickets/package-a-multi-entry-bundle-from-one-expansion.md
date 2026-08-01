@@ -1,7 +1,7 @@
 ---
 id: package-a-multi-entry-bundle-from-one-expansion
 title: Package and dispatch a multi-entry bundle from one expansion
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [prototype-inline-aot-integration-proof, dispatch-a-tiler-region-on-metal-hardware, admit-multi-input-elementwise-programs-at-the-compiler-boundary]
@@ -9,6 +9,9 @@ scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, frontend, inline-dx, artifacts]
+claimed_from: todo
+assignee: coordinator
+lease_expires_at: 1785611640
 ---
 ## User-visible outcome
 
