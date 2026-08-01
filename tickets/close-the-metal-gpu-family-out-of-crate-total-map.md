@@ -96,3 +96,5 @@ A family added to `MetalGpuFamily` cannot be silently unprobed by any workspace 
 ### The residual, stated
 
 Nothing mechanically prevents a consumer from writing a family list beside its device call again — it would now have to reach for `apple_constant()` per family to do so, but it would compile. What the fix removes is the need for such a list and the pairing that made one wrong; what it adds is that a widened vocabulary stops the build in three places first. That is a real narrowing, not a closure, and it is why the population lives in the crate rather than being validated at each consumer.
+
+Tom accepted the `#[non_exhaustive]` removal and both new public items on 2026-08-01, in the review that approved this queue: the compatibility-contract change (a future family is source-breaking for out-of-crate matches) is the intended behaviour — a break at compile time is the closure this ticket existed to buy.

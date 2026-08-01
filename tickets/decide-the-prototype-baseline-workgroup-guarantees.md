@@ -1,7 +1,7 @@
 ---
 id: decide-the-prototype-baseline-workgroup-guarantees
 title: Decide what the prototype baseline guarantees about workgroup resources and synchronization
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [implement-the-single-workgroup-synchronized-reduction-strategy, realize-parallel-reduction-strategies-on-metal, construct-and-bind-the-first-authoritative-metal-compile-profile]
@@ -46,3 +46,7 @@ Tom records the choice. Option 2 closes on the record alone; option 1 closes whe
 ## Graph maintenance
 
 Do not fold this into `realize-parallel-reduction-strategies-on-metal`: that ticket owns the *Metal* profile's real authority, and this one is about what the target-neutral prototype baseline claims. The two answers are independent — the Metal profile can gain a measured realization while the baseline stays silent.
+
+## Decision (2026-08-01)
+
+Tom chose **option 2 — stay silent**, at the review that approved this queue: the baseline keeps `local-memory-bytes = 0` and declares no synchronization realization, because the prototype authority has no evidence for either claim and a declaration without evidence is exactly the capability overstatement the profile discipline refuses. The cooperative alternatives stay enumerated-and-rejected against the baseline — both rejections typed and test-driven — and admission waits for a profile with real authority (`construct-and-bind-the-first-authoritative-metal-compile-profile`, `realize-parallel-reduction-strategies-on-metal`). The test-only `workgroup_tree_target_for_test` remains the positive path's harness, which its own documentation already justifies.

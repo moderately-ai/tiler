@@ -1,7 +1,7 @@
 ---
 id: declare-the-cross-compilation-targets-in-the-toolchain-manifest
 title: Declare the cross-compilation targets in the toolchain manifest
-status: todo
+status: deferred
 priority: p3
 dependencies: []
 related: [strengthen-the-family-cfg-evidence-with-the-installed-cross-targets]
@@ -33,3 +33,7 @@ If Tom declines: close this, and record the decline in the test's doc comment so
 ## Closes when
 
 Either the gate runs the five-target matrix on a host that `./deps.sh` alone prepared, or the decision to keep it hand-run is recorded where the test explains itself.
+
+## Deferral (2026-08-01)
+
+Tom approved parking this with the iOS trigger: four of the five targets are the iOS ones deprioritized the same day, and a 555 MB-per-checkout toolchain policy whose main beneficiaries are parked rows fails the cost test. The matrix test stays `#[ignore]`d and hand-runnable. Reactivation triggers: the iOS park's own trigger (a consumer asking for an iOS artifact), or a decision to take the Linux-only subset (+156 MB) for the non-Apple negative control in the gate.

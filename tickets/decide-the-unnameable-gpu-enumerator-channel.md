@@ -1,7 +1,7 @@
 ---
 id: decide-the-unnameable-gpu-enumerator-channel
 title: Decide whether tiler-metal owns the unnameable-enumerator channel
-status: todo
+status: deferred
 priority: p3
 dependencies: []
 related: [close-the-serial-sum-run-gpu-family-probe-table, close-the-metal-gpu-family-out-of-crate-total-map, widen-the-metal-gpu-family-vocabulary-to-apple10]
@@ -50,3 +50,7 @@ The counterpoint Tom should weigh against that: the reasoning is subtle *now*, a
 ## Closes when
 
 Tom accepts one of the two surviving candidates. If the channel is accepted, `tiler-metal` grows it under `implementation/metal`, `prototypes/serial-sum-run` moves onto it and drops `ProbedGpuFamily`, and `prototypes/candle-metal-adapter` is updated to the new signature. If the deferral is accepted, the trigger above is recorded on `widen-the-metal-gpu-family-vocabulary-to-apple10` and this closes.
+
+## Deferral (2026-08-01)
+
+Tom approved the recommendation: defer. The runner is fail-closed regardless, and the general fallible-probe channel activates on the recorded triggers — a second raw-value-less binding needing the same decision, or `widen-the-metal-gpu-family-vocabulary-to-apple10` firing the build error the counted-population assertion now guarantees.
