@@ -79,29 +79,18 @@ pub use tiler_ir::program::StorageScalar;
 use crate::runtime::adapter::RuntimeAdapter;
 use crate::runtime::load::ExecutionEnvironment;
 
-/// Bytes one value of this scalar occupies per element.
-///
-/// Restated rather than imported: `tiler_ir::program::StorageScalar::byte_width`
-/// is private to its own crate. The restatement is safe because the match is
-/// exhaustive over a type that is deliberately not `#[non_exhaustive]` — a
-/// scalar added to the IR is a build error here rather than a silently wrong
-/// length.
-const fn byte_width(scalar: StorageScalar) -> u64 {
-    match scalar {
-        StorageScalar::U8 => 1,
-        StorageScalar::F32 => 4,
-    }
-}
-
 /// Returns the byte run one dense row-major value of this shape occupies.
 ///
 /// `None` on overflow, which is a refusal rather than a wrap: a truncated
 /// product would compare a real buffer against a length nothing describes.
+/// [`StorageScalar::byte_width`] is the single width authority for a physical
+/// carrier; restating the widths here would be a second table for the two to
+/// disagree in.
 pub(crate) fn dense_bytes(scalar: StorageScalar, extents: &[u64]) -> Option<u64> {
     extents
         .iter()
         .try_fold(1_u64, |elements, extent| elements.checked_mul(*extent))?
-        .checked_mul(byte_width(scalar))
+        .checked_mul(scalar.byte_width())
 }
 
 /// One capability a region may require of an adapter.
