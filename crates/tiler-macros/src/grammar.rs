@@ -55,6 +55,39 @@
 //! No `deliver` statement is not a missing one. Its absence resolves to
 //! `FallbackOnly`, the policy every region stated before this statement existed,
 //! so a region written without it expands to exactly the tokens it did before.
+//!
+//! # A body reduces, and it names constants
+//!
+//! Candidate B also approved "named calls for operations without an operator
+//! spelling", and this grammar fills exactly one of them:
+//! [`STRICT_SERIAL_SUM_CALL`], over a bracketed list of axis *names*. The
+//! bracket is the same one an operand's shape is written in, because it delimits
+//! the same thing — axes — and a reader who has read one `in` statement already
+//! knows what `[cols]` is.
+//!
+//! ```text
+//! in x: f32[rows: 2, cols: 2];
+//! out strict_serial_sum(x * 2.0 + 1.0, [cols])
+//! ```
+//!
+//! An axis acquires a name in the shape that declares it: `f32[n]` names its
+//! axis `n` — the symbol *is* the name — and `f32[cols: 8]` names an axis whose
+//! extent is a literal. Without the second form no region with fixed extents
+//! could reduce at all, and a fixed extent is exactly what an ahead-of-time
+//! compilation needs, so the two forms are one feature rather than a convenience
+//! beside it.
+//!
+//! `2.0` is the other half. A reduction that cannot be preceded by scalar
+//! arithmetic denotes a whole program no build compiles, so a region would parse
+//! and then fail; the scalar constant is what makes the reduction reachable. It
+//! is written as a plain real number, and a whole one still carries its point,
+//! because `x * 2` is not something the surrounding Rust would have accepted
+//! either. [`crate::region`] decides what element type it has and what it
+//! rounds to; this module decides only that the token is a real literal.
+//!
+//! Nothing here spells a *plan*. A region says which axes it sums; how many
+//! kernels that becomes, and whether anything is materialized between them, is
+//! the optimizer's to decide and has no spelling in this grammar.
 
 use core::fmt;
 
@@ -68,6 +101,17 @@ const IN_KEYWORD: &str = "in";
 const DELIVER_KEYWORD: &str = "deliver";
 /// The keyword introducing the region's result expression.
 const OUT_KEYWORD: &str = "out";
+
+/// The one named operation call this profile registers.
+///
+/// Named rather than spelled `sum`, and the reason is the key it resolves to:
+/// the governed profile registers `tiler::strict-serial-sum-f32@1` and nothing
+/// else that sums, and *strict serial* is a numerical guarantee — the result is
+/// defined by a left fold in ascending contributor order — rather than an
+/// implementation note. A region spelled `sum` would commit a consumer to that
+/// fold without saying so, and would have to be respelled the day a
+/// reassociating sum is registered beside it.
+const STRICT_SERIAL_SUM_CALL: &str = "strict_serial_sum";
 
 /// The punctuation that separates and terminates declarations.
 ///
@@ -87,18 +131,44 @@ pub(crate) struct Name<S> {
     pub(crate) span: S,
 }
 
-/// One declared axis of an operand.
+/// What fixes one declared axis's extent.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum AxisSyntax<S> {
-    /// An axis naming a declared symbol.
+pub(crate) enum AxisExtentSyntax<S> {
+    /// An extent naming a declared symbol.
     Symbol(Name<S>),
-    /// An axis fixed by a literal extent.
+    /// An extent fixed by a literal.
     Literal {
         /// The extent.
         value: u64,
         /// The token it was written at.
         span: S,
     },
+}
+
+/// One declared axis of an operand: what it is called, and how big it is.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AxisSyntax<S> {
+    /// The name written before the extent, as in `cols: 8`.
+    pub(crate) label: Option<Name<S>>,
+    /// What fixes the extent.
+    pub(crate) extent: AxisExtentSyntax<S>,
+}
+
+impl<S> AxisSyntax<S> {
+    /// Returns the name this axis is known by inside the region.
+    ///
+    /// A written label first, and a symbolic extent's own name otherwise: `n` in
+    /// `f32[n]` is already a name a consumer wrote for that axis, so requiring
+    /// `f32[n: n]` to reduce over it would be ceremony for nothing. A literal
+    /// extent with no label has no name, and a reduction naming it is refused
+    /// rather than resolved by position.
+    pub(crate) const fn name(&self) -> Option<&Name<S>> {
+        match (&self.label, &self.extent) {
+            (Some(label), _) => Some(label),
+            (None, AxisExtentSyntax::Symbol(symbol)) => Some(symbol),
+            (None, AxisExtentSyntax::Literal { .. }) => None,
+        }
+    }
 }
 
 /// One `in` operand: its name, its element type, and its shape.
@@ -178,11 +248,40 @@ impl Operator {
     }
 }
 
+/// One scalar constant as its tokens spell it.
+///
+/// The source text rather than a parsed number, for the reason
+/// [`DeploymentMinimumSyntax`] is read from text: what a literal *means* depends
+/// on the element type it is a constant of, and this module knows no element
+/// types. [`crate::region`] resolves the text against the profile's registered
+/// scalar-constant operation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ScalarSyntax<S> {
+    /// The literal as a number is written: any leading `-`, and no digit
+    /// separators.
+    pub(crate) text: String,
+    /// The literal token, which is where a refusal about the value lands.
+    pub(crate) span: S,
+}
+
 /// The region's result expression.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Expression<S> {
     /// A reference to a declared operand.
     Operand(Name<S>),
+    /// A scalar constant.
+    Scalar(ScalarSyntax<S>),
+    /// A strict serial sum over named axes of one subexpression.
+    Reduction {
+        /// The call name, which is where a refusal about the reduction lands.
+        span: S,
+        /// The subexpression being reduced.
+        operand: Box<Expression<S>>,
+        /// The axes named for reduction, in the order written. Never empty: the
+        /// grammar admits no `[]`, so a reduction over nothing cannot be
+        /// spelled.
+        axes: Vec<Name<S>>,
+    },
     /// One binary operation over two subexpressions.
     Binary {
         /// The operator.
@@ -281,6 +380,25 @@ pub(crate) enum SyntaxError<S> {
         /// The token.
         span: S,
     },
+    /// A literal in the body is not a plain real number.
+    MalformedScalarLiteral {
+        /// The literal as written.
+        text: String,
+        /// The token.
+        span: S,
+    },
+    /// A reduction's axis list is missing, so what it reduces is unstated.
+    ExpectedReductionAxes {
+        /// What was found.
+        found: String,
+        /// Where.
+        span: S,
+    },
+    /// A reduction's axis list names no axis.
+    EmptyReductionAxes {
+        /// The bracketed list.
+        span: S,
+    },
     /// A `deliver` statement's name is followed by neither its terminator nor a
     /// deployment minimum, so neither production is what was written.
     ExpectedDeliverySpecifier {
@@ -337,11 +455,12 @@ pub(crate) enum SyntaxError<S> {
         /// The token.
         span: S,
     },
-    /// The body spells a named operation call.
+    /// The body spells a named operation call this profile does not register.
     ///
     /// The approved syntax reserves named calls for operations without an
-    /// operator spelling, and this profile registers none. Refusing at the name
-    /// keeps the reservation open without inventing what it would mean.
+    /// operator spelling, and this profile fills exactly one of them. Refusing
+    /// at the name keeps the rest of the reservation open without inventing what
+    /// it would mean.
     NamedOperationCall {
         /// The name as written.
         name: String,
@@ -400,12 +519,31 @@ impl<S> fmt::Display for SyntaxError<S> {
             ),
             Self::ExpectedAxis { found, .. } => write!(
                 formatter,
-                "expected an axis — a declared symbol or a literal extent — and found {found}"
+                "expected an axis — a declared symbol, a literal extent, or either of those under a \
+                 name, as in `cols: 8` — and found {found}"
             ),
             Self::MalformedExtent { text, .. } => write!(
                 formatter,
                 "`{text}` is not a literal extent; a fixed axis is written as a plain non-negative \
                  integer with no suffix, as in `f32[4]`"
+            ),
+            Self::MalformedScalarLiteral { text, .. } => write!(
+                formatter,
+                "`{text}` is not a scalar constant; a region writes one as a plain real number with \
+                 no suffix, as in `2.0`, `-1.5`, or `1e-6`, and a whole number still carries its \
+                 point because `x * 2` is not what the surrounding Rust would have accepted either"
+            ),
+            Self::ExpectedReductionAxes { found, .. } => write!(
+                formatter,
+                "expected the bracketed axis names `{STRICT_SERIAL_SUM_CALL}` reduces and found \
+                 {found}; a reduction states which axes it sums, as in `{STRICT_SERIAL_SUM_CALL}(x \
+                 * 2.0 + 1.0, [cols])`"
+            ),
+            Self::EmptyReductionAxes { .. } => write!(
+                formatter,
+                "`{STRICT_SERIAL_SUM_CALL}` is given no axis to reduce; name at least one axis of \
+                 the expression it sums, as in `[cols]`, because a reduction over nothing is the \
+                 expression itself"
             ),
             Self::ExpectedDeliverySpecifier { found, .. } => write!(
                 formatter,
@@ -443,7 +581,8 @@ impl<S> fmt::Display for SyntaxError<S> {
             ),
             Self::ExpectedOperandReference { found, .. } => write!(
                 formatter,
-                "expected a declared operand or a parenthesized expression and found {found}"
+                "expected a declared operand, a scalar constant, a `{STRICT_SERIAL_SUM_CALL}(…)`, \
+                 or a parenthesized expression and found {found}"
             ),
             Self::UnsupportedOperator { operator, .. } => write!(
                 formatter,
@@ -453,9 +592,10 @@ impl<S> fmt::Display for SyntaxError<S> {
             ),
             Self::NamedOperationCall { name, .. } => write!(
                 formatter,
-                "`{name}(…)` is a named operation call, and this profile registers none; the \
-                 approved syntax reserves the form for operations without an operator spelling, \
-                 and no such operation is admitted yet"
+                "`{name}(…)` is a named operation call this profile does not register; \
+                 `{STRICT_SERIAL_SUM_CALL}` is the one it does, and the approved syntax reserves \
+                 the form for operations without an operator spelling rather than inventing a \
+                 meaning the public logical program cannot express"
             ),
             Self::UnsupportedGroup {
                 delimiter, role, ..
@@ -481,6 +621,9 @@ impl<S> SyntaxError<S> {
             | Self::ExpectedShape { span, .. }
             | Self::ExpectedAxis { span, .. }
             | Self::MalformedExtent { span, .. }
+            | Self::MalformedScalarLiteral { span, .. }
+            | Self::ExpectedReductionAxes { span, .. }
+            | Self::EmptyReductionAxes { span }
             | Self::ExpectedDeliverySpecifier { span, .. }
             | Self::ExpectedDeploymentMinimum { span, .. }
             | Self::MalformedDeploymentMinimum { span, .. }
@@ -768,41 +911,7 @@ fn parse_axes<S: Copy>(trees: &[Tree<S>], shape: S) -> Result<Vec<AxisSyntax<S>>
         return Ok(axes);
     }
     loop {
-        axes.push(match cursor.peek() {
-            Some(Tree::Ident {
-                raw: true,
-                name,
-                span,
-            }) => {
-                return Err(SyntaxError::RawIdentifier {
-                    name: name.clone(),
-                    span: *span,
-                });
-            }
-            Some(Tree::Ident { name, span, .. }) => {
-                let declared = AxisSyntax::Symbol(Name {
-                    text: name.clone(),
-                    span: *span,
-                });
-                let _consumed = cursor.advance();
-                declared
-            }
-            Some(Tree::Literal { text, span }) => {
-                let declared = AxisSyntax::Literal {
-                    value: literal_extent(text).ok_or_else(|| SyntaxError::MalformedExtent {
-                        text: text.clone(),
-                        span: *span,
-                    })?,
-                    span: *span,
-                };
-                let _consumed = cursor.advance();
-                declared
-            }
-            _ => {
-                let (found, span) = cursor.found_or(shape);
-                return Err(SyntaxError::ExpectedAxis { found, span });
-            }
-        });
+        axes.push(parse_axis(&mut cursor, shape)?);
 
         match cursor.peek() {
             None => return Ok(axes),
@@ -829,6 +938,81 @@ fn parse_axes<S: Copy>(trees: &[Tree<S>], shape: S) -> Result<Vec<AxisSyntax<S>>
     }
 }
 
+/// Reads one axis: an optional name, then what fixes its extent.
+///
+/// The two productions are told apart by the token *after* the first
+/// identifier, and by nothing else: a `:` makes it a name, and anything else
+/// makes it a symbolic extent. One token of lookahead, decided without knowing
+/// which symbols exist, which is what keeps `sym` resolution in
+/// [`crate::binding`].
+fn parse_axis<S: Copy>(
+    cursor: &mut Cursor<'_, S>,
+    shape: S,
+) -> Result<AxisSyntax<S>, SyntaxError<S>> {
+    let label = if names_an_axis(cursor) {
+        let label = cursor.name("an axis name", shape)?;
+        let _colon = cursor.punct(':', "after an axis name", label.span)?;
+        Some(label)
+    } else {
+        None
+    };
+    let previous = label.as_ref().map_or(shape, |label| label.span);
+
+    let extent = match cursor.peek() {
+        Some(Tree::Ident {
+            raw: true,
+            name,
+            span,
+        }) => {
+            return Err(SyntaxError::RawIdentifier {
+                name: name.clone(),
+                span: *span,
+            });
+        }
+        Some(Tree::Ident { name, span, .. }) => {
+            let declared = AxisExtentSyntax::Symbol(Name {
+                text: name.clone(),
+                span: *span,
+            });
+            let _consumed = cursor.advance();
+            declared
+        }
+        Some(Tree::Literal { text, span }) => {
+            let declared = AxisExtentSyntax::Literal {
+                value: literal_extent(text).ok_or_else(|| SyntaxError::MalformedExtent {
+                    text: text.clone(),
+                    span: *span,
+                })?,
+                span: *span,
+            };
+            let _consumed = cursor.advance();
+            declared
+        }
+        _ => {
+            let (found, span) = cursor.found_or(previous);
+            return Err(SyntaxError::ExpectedAxis { found, span });
+        }
+    };
+    Ok(AxisSyntax { label, extent })
+}
+
+/// Reports whether the cursor sits on `<name> :`, which names an axis.
+///
+/// A raw identifier is deliberately not matched, so `r#type: 4` reaches the
+/// extent arm and is refused as the raw identifier it is rather than accepted as
+/// a name this frontend cannot re-emit.
+fn names_an_axis<S: Copy>(cursor: &Cursor<'_, S>) -> bool {
+    matches!(cursor.peek(), Some(Tree::Ident { raw: false, .. }))
+        && matches!(
+            cursor.peek_at(1),
+            Some(Tree::Punct {
+                character: ':',
+                joint: false,
+                ..
+            })
+        )
+}
+
 /// Reads one literal extent: a plain non-negative integer with no suffix.
 ///
 /// Rust's own digit separators are accepted because `f32[1_024]` is what a
@@ -844,6 +1028,48 @@ fn literal_extent(text: &str) -> Option<u64> {
     }
     let digits: String = text.chars().filter(|character| *character != '_').collect();
     digits.parse().ok()
+}
+
+/// Reads one scalar constant's source text as a real number, separators removed.
+///
+/// The admitted form is Rust's own `<digits>[.<digits>][e[+-]<digits>]` with at
+/// least a fraction or an exponent, and digit separators are accepted because
+/// `1_000.0` is what a consumer writes. A suffix, a radix prefix, a sign inside
+/// the mantissa, and a bare integer are all refused, for the reason
+/// [`literal_extent`] refuses its own near misses and one more: `x * 2` is not
+/// something the surrounding Rust would have accepted against an `f32`, so a
+/// region that accepted it would read like Rust and mean something Rust does
+/// not.
+///
+/// What this does *not* decide is the value. Rounding a decimal to a binary
+/// format is a question about that format, and this module knows no element
+/// types; [`crate::region`] converts the text it returns.
+fn real_literal(text: &str) -> Option<String> {
+    let stripped: String = text.chars().filter(|character| *character != '_').collect();
+    let bytes = stripped.as_bytes();
+    let digits = |from: usize| {
+        let end = bytes[from..]
+            .iter()
+            .position(|byte| !byte.is_ascii_digit())
+            .map_or(bytes.len(), |offset| from.saturating_add(offset));
+        (end > from).then_some(end)
+    };
+
+    let mut at = digits(0)?;
+    let mut real = false;
+    if bytes.get(at) == Some(&b'.') {
+        at = digits(at.saturating_add(1))?;
+        real = true;
+    }
+    if matches!(bytes.get(at), Some(b'e' | b'E')) {
+        at = at.saturating_add(1);
+        if matches!(bytes.get(at), Some(b'+' | b'-')) {
+            at = at.saturating_add(1);
+        }
+        at = digits(at)?;
+        real = true;
+    }
+    (real && at == bytes.len()).then_some(stripped)
 }
 
 /// Reads the region's result expression, which runs to the end of the region.
@@ -893,7 +1119,8 @@ fn parse_product<S: Copy>(
     Ok(left)
 }
 
-/// Reads one operand reference or parenthesized subexpression.
+/// Reads one operand reference, scalar constant, reduction, or parenthesized
+/// subexpression.
 fn parse_atom<S: Copy>(
     cursor: &mut Cursor<'_, S>,
     context: S,
@@ -913,19 +1140,53 @@ fn parse_atom<S: Copy>(
                 span: *span,
             };
             let _consumed = cursor.advance();
-            // An identifier immediately followed by `( … )` is a call, which the
-            // approved syntax reserves and this profile does not fill.
+            // An identifier immediately followed by `( … )` is a named call.
+            // Exactly one is registered; every other name is refused at the name
+            // rather than given a meaning here.
             if let Some(Tree::Group {
                 delimiter: Delimiter::Parenthesis,
-                ..
+                trees,
+                span,
             }) = cursor.peek()
             {
-                return Err(SyntaxError::NamedOperationCall {
-                    name: reference.text,
-                    span: reference.span,
-                });
+                let (trees, group) = (trees.clone(), *span);
+                let _consumed = cursor.advance();
+                if reference.text != STRICT_SERIAL_SUM_CALL {
+                    return Err(SyntaxError::NamedOperationCall {
+                        name: reference.text,
+                        span: reference.span,
+                    });
+                }
+                return parse_reduction(&trees, reference.span, group);
             }
             Ok(Expression::Operand(reference))
+        }
+        // A leading `-` belongs to the literal it signs rather than to an
+        // operator: negation of an arbitrary expression is not an operation this
+        // profile registers, and admitting it here would invent one. `a - b` is
+        // unaffected, because a `-` in operator position never reaches this
+        // function.
+        Some(Tree::Punct {
+            character: '-',
+            span,
+            ..
+        }) => {
+            let sign = *span;
+            let _consumed = cursor.advance();
+            let Some(Tree::Literal { text, span }) = cursor.peek() else {
+                return Err(SyntaxError::UnsupportedOperator {
+                    operator: "-".to_owned(),
+                    span: sign,
+                });
+            };
+            let (text, span) = (text.clone(), *span);
+            let _consumed = cursor.advance();
+            Ok(Expression::Scalar(scalar_literal(&text, span, true)?))
+        }
+        Some(Tree::Literal { text, span }) => {
+            let (text, span) = (text.clone(), *span);
+            let _consumed = cursor.advance();
+            Ok(Expression::Scalar(scalar_literal(&text, span, false)?))
         }
         Some(Tree::Group {
             delimiter: Delimiter::Parenthesis,
@@ -968,6 +1229,116 @@ fn parse_atom<S: Copy>(
     }
 }
 
+/// Reads one scalar constant from a literal's source text.
+fn scalar_literal<S: Copy>(
+    text: &str,
+    span: S,
+    negated: bool,
+) -> Result<ScalarSyntax<S>, SyntaxError<S>> {
+    let Some(number) = real_literal(text) else {
+        return Err(SyntaxError::MalformedScalarLiteral {
+            // The sign is part of what the consumer wrote, so a refusal quotes
+            // it: `-2` and `2` are different mistakes to read past.
+            text: if negated {
+                format!("-{text}")
+            } else {
+                text.to_owned()
+            },
+            span,
+        });
+    };
+    Ok(ScalarSyntax {
+        text: if negated {
+            format!("-{number}")
+        } else {
+            number
+        },
+        span,
+    })
+}
+
+/// Reads `(<expression>, [<axis>, …])` after the reduction's call name.
+///
+/// `keyword` is the call name, which is where a refusal about the reduction as a
+/// whole lands, and `group` is its parenthesized arguments, which is where one
+/// about a missing argument does.
+fn parse_reduction<S: Copy>(
+    trees: &[Tree<S>],
+    keyword: S,
+    group: S,
+) -> Result<Expression<S>, SyntaxError<S>> {
+    let mut cursor = Cursor::new(trees);
+    if cursor.peek().is_none() {
+        return Err(SyntaxError::ExpectedOperandReference {
+            found: Delimiter::Parenthesis.as_str().to_owned(),
+            span: group,
+        });
+    }
+    // The `,` ends the expression rather than being refused as an operator,
+    // because `STATEMENT_PUNCT` holds it — the same rule that lets `out a;`
+    // report a trailing token instead of an unregistered operator.
+    let operand = parse_expression(&mut cursor, group)?;
+    let comma = cursor.punct(',', "between a reduction's operand and its axes", group)?;
+
+    let Some(Tree::Group {
+        delimiter: Delimiter::Bracket,
+        trees: named,
+        span,
+    }) = cursor.peek()
+    else {
+        let (found, span) = cursor.found_or(comma);
+        return Err(SyntaxError::ExpectedReductionAxes { found, span });
+    };
+    let (named, list) = (named.clone(), *span);
+    let _consumed = cursor.advance();
+    if let Some(extra) = cursor.peek() {
+        return Err(SyntaxError::TrailingTokens {
+            found: extra.describe(),
+            span: extra.span(),
+        });
+    }
+
+    Ok(Expression::Reduction {
+        span: keyword,
+        operand: Box::new(operand),
+        axes: parse_reduced_axes(&named, list)?,
+    })
+}
+
+/// Reads the comma-separated axis names inside a reduction's brackets.
+fn parse_reduced_axes<S: Copy>(trees: &[Tree<S>], list: S) -> Result<Vec<Name<S>>, SyntaxError<S>> {
+    let mut cursor = Cursor::new(trees);
+    if cursor.peek().is_none() {
+        return Err(SyntaxError::EmptyReductionAxes { span: list });
+    }
+    let mut axes = Vec::new();
+    loop {
+        axes.push(cursor.name("an axis name to reduce", list)?);
+        match cursor.peek() {
+            None => return Ok(axes),
+            Some(Tree::Punct {
+                character: ',',
+                joint: false,
+                ..
+            }) => {
+                let _comma = cursor.advance();
+                // A trailing comma closes the list, matching an operand's axes.
+                if cursor.peek().is_none() {
+                    return Ok(axes);
+                }
+            }
+            Some(other) => {
+                return Err(SyntaxError::ExpectedPunct {
+                    expected: ',',
+                    role: "between two reduced axes",
+                    found: other.describe(),
+                    span: other.span(),
+                });
+            }
+        }
+    }
+}
+
 /// What ended one comma-separated declaration list.
 enum Separator {
     /// Another entry follows.
@@ -991,6 +1362,11 @@ impl<'a, S: Copy> Cursor<'a, S> {
     /// Returns the token at the cursor without consuming it.
     fn peek(&self) -> Option<&'a Tree<S>> {
         self.trees.get(self.at)
+    }
+
+    /// Returns the token `offset` positions ahead without consuming anything.
+    fn peek_at(&self, offset: usize) -> Option<&'a Tree<S>> {
+        self.trees.get(self.at.saturating_add(offset))
     }
 
     /// Consumes the token at the cursor.

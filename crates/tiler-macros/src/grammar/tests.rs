@@ -11,8 +11,8 @@
 use crate::tokens::{Delimiter, Tree};
 
 use super::{
-    AxisSyntax, DeploymentMinimumSyntax, Expression, FamilyMinimumSyntax, Operator, RegionSyntax,
-    StatedDelivery, SyntaxError, parse,
+    AxisExtentSyntax, AxisSyntax, DeploymentMinimumSyntax, Expression, FamilyMinimumSyntax,
+    Operator, RegionSyntax, ScalarSyntax, StatedDelivery, SyntaxError, parse,
 };
 
 /// A span a test can construct and assert on.
@@ -21,6 +21,10 @@ struct At(u32);
 
 /// The span a refusal naming no single token is reported at.
 const REGION: At = At(0);
+
+/// One refusal case: what it is called, the tokens that cause it, and the
+/// refusal they must produce.
+type RefusalCase = (&'static str, Vec<Tree<At>>, SyntaxError<At>);
 
 fn ident(name: &str, at: u32) -> Tree<At> {
     Tree::Ident {
@@ -150,10 +154,13 @@ fn the_approved_region_parses_to_its_declarations_and_body() {
     assert_eq!(region.operands[2].dtype.span, At(25));
     assert_eq!(
         region.operands[0].axes,
-        vec![AxisSyntax::Symbol(super::Name {
-            text: "n".to_owned(),
-            span: At(14),
-        })],
+        vec![AxisSyntax {
+            label: None,
+            extent: AxisExtentSyntax::Symbol(super::Name {
+                text: "n".to_owned(),
+                span: At(14),
+            }),
+        }],
     );
 
     assert!(
@@ -317,7 +324,10 @@ fn a_literal_extent_must_be_a_plain_integer() {
     for (text, value) in [("4", 4_u64), ("1_024", 1024), ("0", 0)] {
         assert_eq!(
             parsed(&with_extent(text)).operands[0].axes,
-            vec![AxisSyntax::Literal { value, span: At(5) }],
+            vec![AxisSyntax {
+                label: None,
+                extent: AxisExtentSyntax::Literal { value, span: At(5) },
+            }],
         );
     }
 }
@@ -1066,4 +1076,388 @@ fn every_refusal_carries_the_span_of_its_own_token() {
     for (name, trees, expected) in cases {
         assert_eq!(*refused(&trees).span(), expected, "case `{name}`");
     }
+}
+
+/// `in x: f32[rows: 2, cols: 2]; out strict_serial_sum(x * 2.0 + 1.0, [cols])`,
+/// which is the reduction region every case below perturbs.
+///
+/// Written as one fixture rather than three so each refusal differs from an
+/// acceptance in exactly one token, which is what makes an acceptance evidence
+/// about the rule.
+fn reduction_region(axes: Vec<Tree<At>>, body: Vec<Tree<At>>) -> Vec<Tree<At>> {
+    let mut trees = vec![
+        ident("in", 1),
+        ident("x", 2),
+        punct(':', 3),
+        ident("f32", 4),
+        bracket(axes, 5),
+        punct(';', 6),
+        ident("out", 7),
+    ];
+    trees.extend(body);
+    trees
+}
+
+/// The two declared axis shapes: `rows: 2, cols: 2`.
+fn named_axes() -> Vec<Tree<At>> {
+    vec![
+        ident("rows", 10),
+        punct(':', 11),
+        literal("2", 12),
+        punct(',', 13),
+        ident("cols", 14),
+        punct(':', 15),
+        literal("2", 16),
+    ]
+}
+
+/// `strict_serial_sum(x * 2.0 + 1.0, [cols])`.
+fn reduction_body() -> Vec<Tree<At>> {
+    vec![
+        ident("strict_serial_sum", 20),
+        paren(
+            vec![
+                ident("x", 21),
+                punct('*', 22),
+                literal("2.0", 23),
+                punct('+', 24),
+                literal("1.0", 25),
+                punct(',', 26),
+                bracket(vec![ident("cols", 27)], 28),
+            ],
+            29,
+        ),
+    ]
+}
+
+/// A named axis, a scalar constant, and the one registered call all parse, and
+/// each carries the token it was written at.
+#[test]
+fn a_reduction_over_a_named_axis_parses() {
+    let region = parsed(&reduction_region(named_axes(), reduction_body()));
+
+    // A name is the axis's, and the extent stays a literal beside it.
+    assert_eq!(
+        region.operands[0].axes,
+        vec![
+            AxisSyntax {
+                label: Some(super::Name {
+                    text: "rows".to_owned(),
+                    span: At(10),
+                }),
+                extent: AxisExtentSyntax::Literal {
+                    value: 2,
+                    span: At(12),
+                },
+            },
+            AxisSyntax {
+                label: Some(super::Name {
+                    text: "cols".to_owned(),
+                    span: At(14),
+                }),
+                extent: AxisExtentSyntax::Literal {
+                    value: 2,
+                    span: At(16),
+                },
+            },
+        ],
+    );
+    assert_eq!(
+        region.operands[0].axes[1]
+            .name()
+            .map(|name| name.text.as_str()),
+        Some("cols"),
+    );
+
+    let Expression::Reduction {
+        span,
+        operand,
+        axes,
+    } = &region.body
+    else {
+        panic!("the root is a reduction: {:?}", region.body);
+    };
+    assert_eq!(
+        *span,
+        At(20),
+        "a refusal about the reduction names its call"
+    );
+    assert_eq!(axes.len(), 1);
+    assert_eq!(axes[0].text, "cols");
+    assert_eq!(axes[0].span, At(27), "an axis name carries its own token");
+
+    // The operand is the whole `x * 2.0 + 1.0`, with `,` ending it rather than
+    // being refused as an operator.
+    let Expression::Binary {
+        operator: Operator::Add,
+        left,
+        right,
+        ..
+    } = operand.as_ref()
+    else {
+        panic!("the reduced expression is an addition: {operand:?}");
+    };
+    assert!(matches!(
+        **left,
+        Expression::Binary {
+            operator: Operator::Multiply,
+            ..
+        }
+    ));
+    assert_eq!(
+        **right,
+        Expression::Scalar(ScalarSyntax {
+            text: "1.0".to_owned(),
+            span: At(25),
+        }),
+    );
+}
+
+/// A bare symbol axis names itself, so `f32[n]` needs no second spelling to be
+/// reducible once symbolic extents reach the semantic layer.
+#[test]
+fn a_symbolic_axis_is_named_by_its_own_symbol() {
+    let mut trees = vec![ident("sym", 1), ident("n", 2), punct(';', 3)];
+    trees.extend(reduction_region(
+        vec![ident("n", 10)],
+        vec![
+            ident("strict_serial_sum", 20),
+            paren(
+                vec![
+                    ident("x", 21),
+                    punct(',', 26),
+                    bracket(vec![ident("n", 27)], 28),
+                ],
+                29,
+            ),
+        ],
+    ));
+    let region = parsed(&trees);
+    assert_eq!(
+        region.operands[0].axes[0]
+            .name()
+            .map(|name| name.text.as_str()),
+        Some("n"),
+    );
+    assert!(region.operands[0].axes[0].label.is_none());
+}
+
+/// A scalar constant is a plain real number; a near miss is refused at the
+/// literal rather than guessed at.
+#[test]
+fn a_scalar_constant_must_be_a_plain_real_number() {
+    let with_constant = |body: Vec<Tree<At>>| reduction_region(named_axes(), body);
+    let times = |trees: Vec<Tree<At>>| {
+        let mut body = vec![ident("x", 20), punct('*', 21)];
+        body.extend(trees);
+        body
+    };
+
+    let rejected = ["2", "2.0f32", "2.0_f32", "0x10", "1.", "\"2.0\"", "2.0e"];
+    assert_eq!(
+        rejected.len(),
+        7,
+        "the population this test covers is every near-miss shape, counted",
+    );
+    for text in rejected {
+        assert_eq!(
+            refused(&with_constant(times(vec![literal(text, 22)]))),
+            SyntaxError::MalformedScalarLiteral {
+                text: text.to_owned(),
+                span: At(22),
+            },
+            "`{text}` must be refused as a scalar constant",
+        );
+    }
+
+    // The accepting neighbours, each differing from a rejected spelling in one
+    // way, and each carrying the number as a `str::parse` reads it.
+    for (text, number) in [
+        ("2.0", "2.0"),
+        ("1_000.5", "1000.5"),
+        ("1e-6", "1e-6"),
+        ("1.5E3", "1.5E3"),
+    ] {
+        let Expression::Binary { right, .. } =
+            parsed(&with_constant(times(vec![literal(text, 22)]))).body
+        else {
+            panic!("`{text}` parses as the right operand of `*`");
+        };
+        assert_eq!(
+            *right,
+            Expression::Scalar(ScalarSyntax {
+                text: number.to_owned(),
+                span: At(22),
+            }),
+        );
+    }
+
+    // A leading `-` signs the literal rather than naming an operator.
+    let Expression::Binary { right, .. } = parsed(&with_constant(times(vec![
+        punct('-', 22),
+        literal("1.5", 23),
+    ])))
+    .body
+    else {
+        panic!("a signed constant parses as the right operand of `*`");
+    };
+    assert_eq!(
+        *right,
+        Expression::Scalar(ScalarSyntax {
+            text: "-1.5".to_owned(),
+            span: At(23),
+        }),
+    );
+
+    // And it signs *a literal*: negation of an expression is not an operation
+    // this profile registers, so `-x` is refused at the sign.
+    assert_eq!(
+        refused(&with_constant(times(vec![punct('-', 22), ident("x", 23),]))),
+        SyntaxError::UnsupportedOperator {
+            operator: "-".to_owned(),
+            span: At(22),
+        },
+    );
+}
+
+/// Every way a reduction can be malformed is refused at its own token.
+#[test]
+fn a_malformed_reduction_is_refused_at_its_own_token() {
+    let call = |arguments: Vec<Tree<At>>| {
+        reduction_region(
+            named_axes(),
+            vec![ident("strict_serial_sum", 20), paren(arguments, 29)],
+        )
+    };
+    let cases: Vec<RefusalCase> = vec![
+        (
+            "no arguments at all",
+            call(Vec::new()),
+            SyntaxError::ExpectedOperandReference {
+                found: "( … )".to_owned(),
+                span: At(29),
+            },
+        ),
+        (
+            "an operand and no axes",
+            call(vec![ident("x", 21)]),
+            SyntaxError::ExpectedPunct {
+                expected: ',',
+                role: "between a reduction's operand and its axes",
+                found: "the end of the region".to_owned(),
+                span: At(29),
+            },
+        ),
+        (
+            "an axis argument that is not a list",
+            call(vec![ident("x", 21), punct(',', 26), ident("cols", 27)]),
+            SyntaxError::ExpectedReductionAxes {
+                found: "`cols`".to_owned(),
+                span: At(27),
+            },
+        ),
+        (
+            "an empty axis list",
+            call(vec![
+                ident("x", 21),
+                punct(',', 26),
+                bracket(Vec::new(), 28),
+            ]),
+            SyntaxError::EmptyReductionAxes { span: At(28) },
+        ),
+        (
+            "an axis list holding something that is not a name",
+            call(vec![
+                ident("x", 21),
+                punct(',', 26),
+                bracket(vec![literal("1", 27)], 28),
+            ]),
+            SyntaxError::ExpectedName {
+                role: "an axis name to reduce",
+                found: "`1`".to_owned(),
+                span: At(27),
+            },
+        ),
+        (
+            "a third argument",
+            call(vec![
+                ident("x", 21),
+                punct(',', 26),
+                bracket(vec![ident("cols", 27)], 28),
+                punct(',', 30),
+                ident("x", 31),
+            ]),
+            SyntaxError::TrailingTokens {
+                found: "`,`".to_owned(),
+                span: At(30),
+            },
+        ),
+    ];
+    assert_eq!(
+        cases.len(),
+        6,
+        "the population this test covers is every malformed argument shape, counted",
+    );
+    for (label, trees, expected) in cases {
+        assert_eq!(refused(&trees), expected, "case `{label}`");
+    }
+
+    // The accepting neighbour, differing from the last case by one token.
+    let _parses = parsed(&call(vec![
+        ident("x", 21),
+        punct(',', 26),
+        bracket(vec![ident("cols", 27)], 28),
+    ]));
+}
+
+/// A call this profile does not register is still refused at its name, and the
+/// refusal names the one it does.
+#[test]
+fn an_unregistered_call_is_refused_and_names_the_registered_one() {
+    let refusal = refused(&reduction_region(
+        named_axes(),
+        vec![ident("relu", 20), paren(vec![ident("x", 21)], 29)],
+    ));
+    assert_eq!(
+        refusal,
+        SyntaxError::NamedOperationCall {
+            name: "relu".to_owned(),
+            span: At(20),
+        },
+    );
+    assert!(
+        refusal.to_string().contains("strict_serial_sum"),
+        "the refusal must name the call that is registered: {refusal}",
+    );
+}
+
+/// A trailing comma closes a reduction's axis list, as it does an operand's.
+#[test]
+fn a_trailing_comma_closes_a_reduction_axis_list() {
+    let region = parsed(&reduction_region(
+        named_axes(),
+        vec![
+            ident("strict_serial_sum", 20),
+            paren(
+                vec![
+                    ident("x", 21),
+                    punct(',', 26),
+                    bracket(
+                        vec![
+                            ident("rows", 27),
+                            punct(',', 30),
+                            ident("cols", 31),
+                            punct(',', 32),
+                        ],
+                        28,
+                    ),
+                ],
+                29,
+            ),
+        ],
+    ));
+    let Expression::Reduction { axes, .. } = &region.body else {
+        panic!("the root is a reduction");
+    };
+    assert_eq!(axes.len(), 2);
 }

@@ -16,7 +16,7 @@ error: `+=` is not an operation this region vocabulary carries; the governed sem
 34 |         out a += b
    |               ^
 
-error: `relu(…)` is a named operation call, and this profile registers none; the approved syntax reserves the form for operations without an operator spelling, and no such operation is admitted yet
+error: `relu(…)` is a named operation call this profile does not register; `strict_serial_sum` is the one it does, and the approved syntax reserves the form for operations without an operator spelling rather than inventing a meaning the public logical program cannot express
   --> tests/facade/fail/region_syntax_diagnostics.rs:41:13
    |
 41 |         out relu(a)

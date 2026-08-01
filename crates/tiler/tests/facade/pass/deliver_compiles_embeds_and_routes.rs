@@ -226,4 +226,22 @@ fn main() {
         plain.expect("the fallback region binds"),
         Buffer::dense(StorageScalar::F32, vec![4]),
     );
+
+    // The second whole-program shape a region can denote: a reduction. It runs
+    // the same eight steps and costs a second Metal compilation on a cold cache,
+    // and that is what it is here to prove — that a region a consumer *writes*
+    // reaches a shape the compiler recognizes, rather than only a program a test
+    // assembled by hand. Both extents are 2 because the bound declaration's
+    // measured grid-axis capacity is four threads.
+    let x: Tensor<Toy> = Tensor::new(Buffer::dense(StorageScalar::F32, vec![2, 2]), ());
+    let summed = tiler::tensor! {
+        in x: f32[rows: 2, cols: 2];
+        deliver macos;
+        out strict_serial_sum(x * 2.0 + 1.0, [cols])
+    };
+    assert_eq!(
+        summed.expect("the operand honours the region's declared interface"),
+        Buffer::dense(StorageScalar::F32, vec![2]),
+        "the region's result is `f32[rows]`, one rank below its operand",
+    );
 }

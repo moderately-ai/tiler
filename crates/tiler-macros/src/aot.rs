@@ -116,7 +116,8 @@ use tiler_build::{
 };
 use tiler_cache::expansion::{ExpansionCache, Resolution};
 use tiler_compiler::session::{
-    CompileFailure, CompileRequest, NumericalContract, TargetCompileFailure, compile,
+    CompileFailure, CompileFailureClass, CompileRequest, NumericalContract, TargetCompileFailure,
+    compile,
 };
 use tiler_compiler::target::{TargetRequest, TargetRequestError};
 use tiler_ir::semantic::SemanticProgram;
@@ -131,7 +132,7 @@ use crate::delivery::{DeliveryPlan, FamilyDelivery, PlanRefusal};
 ///
 /// Derived rather than selected; see this module's documentation for the
 /// elimination and for the test that keeps it one.
-const CONTRACT: NumericalContract = NumericalContract::FlushSubnormalsToZeroF32;
+pub(crate) const CONTRACT: NumericalContract = NumericalContract::FlushSubnormalsToZeroF32;
 
 /// The optimization level every delivering expansion compiles at.
 ///
@@ -280,14 +281,19 @@ impl fmt::Display for AotRefusal {
                 formatter,
                 "the declared Metal target profile is not a compilable target request: {source}"
             ),
-            Self::Compile(source) => write!(
-                formatter,
-                "this region has no plan the compiler admits: {source:?}"
-            ),
+            Self::Compile(source) => {
+                write!(formatter, "{}", rendered_refusal(source.class(), "at all"))
+            }
             Self::TargetCompile(source) => write!(
                 formatter,
-                "this region has no plan for the declared Metal target profile under the \
-                 `{CONTRACT:?}` numerical contract: {source:?}"
+                "{}",
+                rendered_refusal(
+                    source.class(),
+                    &format!(
+                        "for the declared Metal target profile under the `{CONTRACT:?}` numerical \
+                         contract"
+                    ),
+                ),
             ),
             Self::NoSelectedPlan => formatter.write_str(
                 "the compiler admitted this region for the declared Metal target profile but \
@@ -309,6 +315,75 @@ impl fmt::Display for AotRefusal {
                  `tiler-macros`, not in the invocation: {source}"
             ),
         }
+    }
+}
+
+/// Renders a compiler refusal as something a consumer can act on.
+///
+/// Derived from [`CompileFailureClass`] rather than from the refusal's `Debug`
+/// rendering, and the difference is the whole point: `UnsupportedCapability {
+/// phase: "strategy", rule: "input-arity" }` is a true sentence about the
+/// compiler and tells a consumer who wrote a region nothing about what to
+/// change. The class is the compiler's own typed statement of *which boundary*
+/// refused, each boundary has a different consumer action, and the stable rule
+/// key is carried through so the exact check is still nameable.
+///
+/// What this deliberately does not do is restate which whole programs the
+/// compiler recognizes. That set belongs to
+/// `crates/tiler-compiler/src/request.rs` and is being widened by
+/// `admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary`,
+/// so a copy of it here would be a second authority that goes stale in silence.
+/// The two shapes named below are a weaker and durable claim — the ones
+/// `crate::region`'s own tests compile from a region today — and they stay true
+/// under any widening, because widening what is recognized cannot unrecognize
+/// them.
+///
+/// `scope` completes "no plan …": what a pre-target refusal and a target-scoped
+/// one mean is not the same thing, and a consumer reading the first should not
+/// think a different target would help.
+fn rendered_refusal(class: CompileFailureClass, scope: &str) -> String {
+    match class {
+        CompileFailureClass::UnsupportedCapability { rule } => format!(
+            "this region denotes a whole program the compiler does not recognize, so it has no \
+             plan {scope} (the check that refused is `{rule}`). A `deliver` statement compiles the \
+             region during this expansion, and the compiler plans a region only when the whole \
+             program its `out` expression denotes is one it recognizes. Two are known to compile \
+             from a region today: a pointwise chain over the declared operands, as in `out (a * b) \
+             + c`, and a strict serial sum over one scaled and shifted operand, as in `out \
+             strict_serial_sum(x * 2.0 + 1.0, [cols])`. Write the region as one of those, or state \
+             `fallback-only` to expand with the semantic fallback on every target. \
+             `admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary` is the \
+             work that widens what is recognized"
+        ),
+        CompileFailureClass::NoFeasiblePlan => format!(
+            "the compiler recognizes this region and found no feasible plan {scope}. A declared \
+             extent past the target's measured capacity is the usual cause, because feasibility is \
+             a hard refusal with a reason rather than an expensive plan: try smaller extents, or \
+             state `fallback-only` to expand with the semantic fallback on every target"
+        ),
+        CompileFailureClass::BudgetExhausted => format!(
+            "the compiler stopped searching for a plan {scope} because a deterministic search \
+             budget was exhausted; this is a fact about the region's size rather than about its \
+             correctness, so a smaller region compiles and `fallback-only` expands without \
+             compiling at all"
+        ),
+        CompileFailureClass::InvalidRequest { rule } => format!(
+            "`tiler::tensor!` built a compile request the compiler refused as malformed \
+             (`{rule}`), so this region has no plan {scope}; this is a defect in `tiler-macros`, \
+             not in the invocation"
+        ),
+        CompileFailureClass::InvalidCompilerOutput => format!(
+            "the compiler produced output its own verifier refused, so this region has no plan \
+             {scope}; this is a defect in Tiler, not in the invocation"
+        ),
+        // `CompileFailureClass` is `#[non_exhaustive]`, so a class added after
+        // this build still reaches a consumer as a refusal rather than as a
+        // pattern-match failure. It renders the class because that is the only
+        // thing this frontend knows about a boundary it has never seen.
+        other => format!(
+            "the compiler refused this region, so it has no plan {scope}: {other:?}. State \
+             `fallback-only` to expand with the semantic fallback on every target"
+        ),
     }
 }
 

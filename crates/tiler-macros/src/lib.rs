@@ -19,10 +19,11 @@
 //!   those types has diagnostics no test can observe.
 //! - `grammar` decides the *shape* of the approved region text and nothing about
 //!   what any name means, so a syntax refusal lands on the token that is wrong.
-//! - `region` resolves every name — element types, operands, and the governed
-//!   semantic operations `*` and `+` denote — derives the result, drives
-//!   `binding`'s symbol unification, and constructs the region as a public
-//!   logical program wherever the fixed-extent semantic layer can represent it.
+//! - `region` resolves every name — element types, operands, axis names, and the
+//!   governed semantic operations `*`, `+`, a scalar literal, and
+//!   `strict_serial_sum` denote — derives the result, drives `binding`'s symbol
+//!   unification, and constructs the region as a public logical program wherever
+//!   the fixed-extent semantic layer can represent it.
 //! - emission, below, turns that into tokens, keeping each operand's own span on
 //!   the identifier that names the Rust value it will be supplied from.
 //!
@@ -142,9 +143,39 @@ const ROUTE_FACTS_BINDING: &str = "__TILER_ROUTE_FACTS";
 ///
 /// `sym` declares one symbolic extent, unified from every operand axis naming
 /// it. `in` declares the region's operands, each with its element type and its
-/// axes; an axis is a declared symbol or a literal extent. `out` names the
-/// single result expression, built from the declared operands with `*` and `+`.
-/// Both statements may be repeated, and `out` is terminal.
+/// axes; an axis is a declared symbol or a literal extent, and either may carry
+/// a name. `out` names the single result expression. Both statements may be
+/// repeated, and `out` is terminal.
+///
+/// # The result expression
+///
+/// Built from the declared operands with `*` and `+`, from scalar constants
+/// written as plain real numbers, and from `strict_serial_sum`, which sums named
+/// axes:
+///
+/// ```text
+/// tiler::tensor! {
+///     in x: f32[rows: 2, cols: 2];
+///     out strict_serial_sum(x * 2.0 + 1.0, [cols])
+/// }
+/// ```
+///
+/// An axis is named by the shape that declares it. A symbolic extent is already
+/// a name — `f32[n]` names its axis `n` — and `cols: 2` names an axis whose
+/// extent is a literal. An axis with a literal extent and no name cannot be
+/// reduced, because a reduction names axes rather than counting positions. A
+/// name two axes answer to is refused where it is used rather than where it is
+/// declared, so `f32[n, n]` stays a legal square shape.
+///
+/// A scalar constant is an `f32` and is written the way the surrounding Rust
+/// would write one: `2.0`, `-1.5`, `1e-6`, `1_000.5`. A whole number still
+/// carries its point, and a value `f32` cannot hold is refused rather than
+/// rounded to an infinity.
+///
+/// The reduced axes are a set: `[rows, cols]` and `[cols, rows]` denote one
+/// computation. Nothing in the expression states a *plan* — how many kernels a
+/// region becomes, and whether anything is materialized between them, is decided
+/// against a target profile and has no spelling here.
 ///
 /// # Artifact-family delivery
 ///
