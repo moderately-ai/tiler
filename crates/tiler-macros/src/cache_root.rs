@@ -158,6 +158,12 @@ impl RootEnvironment {
     /// Builds a snapshot directly, for tests and for a caller that already holds
     /// the values.
     #[must_use]
+    #[allow(
+        dead_code,
+        reason = "constructed by tests supplying an exact environment; production uses \
+                  `from_process`. Kept because a stated-environment constructor is the \
+                  seam every non-process caller of the accepted policy needs."
+    )]
     pub(crate) fn new(stated: Option<OsString>, home: Option<OsString>) -> Self {
         Self { stated, home }
     }
@@ -205,6 +211,11 @@ pub(crate) enum CacheRootDecision {
 impl CacheRootDecision {
     /// The root, when one was decided.
     #[must_use]
+    #[allow(
+        dead_code,
+        reason = "read by tests asserting the resolved root; the production caller \
+                  branches on the decision variants directly."
+    )]
     pub(crate) fn root(&self) -> Option<&Path> {
         match self {
             Self::Directory { root, .. } => Some(root),
