@@ -6,7 +6,7 @@ priority: p1
 dependencies: [generate-cfg-gated-artifact-family-delivery]
 related: [prototype-inline-aot-integration-proof, prototype-inline-proc-macro-frontend]
 scopes: [implementation/frontend]
-shared_scopes: [contracts/navigation, contracts/integrations]
+shared_scopes: [contracts/navigation, contracts/integrations, project/tickets]
 paths: []
 tags: [decision, public-boundary, inline-dx, frontend, apple-targets]
 ---
