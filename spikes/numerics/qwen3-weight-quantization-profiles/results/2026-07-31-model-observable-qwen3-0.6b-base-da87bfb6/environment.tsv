@@ -1,0 +1,20 @@
+key	value
+repo_id	Qwen/Qwen3-0.6B-Base
+revision	da87bfb608c14b7cf20ba1ce41287e8de496c0cd
+row	C1
+prompt_ids	785 3974 13876 38835 34208 916 279 15678 5562 13
+decode_steps	8
+baseline_sequence	785 3974 13876 38835 34208 916 279 15678 5562 13 576 3974 13876 38835 34208 916 279 15678
+baseline_anchored_to_retained_fixture	True
+restore_bit_exact_after_all_profiles	True
+retained_fixture_sequence	785 3974 13876 38835 34208 916 279 15678 5562 13 576 3974 13876 38835 34208 916 279 15678
+reference_source	/Users/tsanterre/.pyenv/versions/3.11.13/lib/python3.11/site-packages/transformers/models/qwen3/modeling_qwen3.py
+reference_source_sha256	4b95c371fd26d40c69083dab36ac1eafd8cf82b415a0bb827275097c5ad2305b
+f32_baseline_weight_bytes	2383937536
+python	3.11.13
+numpy	2.4.6
+torch	2.10.0
+transformers	4.57.6
+torch_num_threads	1
+platform	macOS-27.0-arm64-arm-64bit
+machine	arm64

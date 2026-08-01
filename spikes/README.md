@@ -33,9 +33,7 @@ uv run --with pytest pytest spikes/embedding
 uv run --with mpmath python spikes/numerics/check_witnesses.py
 ```
 
-Only `spikes/numerics/check_witnesses.py` and
-`spikes/numerics/region_accuracy_probe.py` need a third-party package
-(`mpmath`); every other harness is standard library plus `pytest`.
+Most harnesses are standard library plus `pytest`. Four are not, and each says so in its own README: `spikes/numerics/check_witnesses.py` and `spikes/numerics/region_accuracy_probe.py` need `mpmath`; `spikes/program-planning/qwen3-conformance-fixture` pins its own locked `torch` and `transformers` environment, because there the dependency *is* the evidence and a floating resolution would silently re-baseline the retained digests; and `spikes/numerics/qwen3-weight-quantization-profiles` needs `numpy`, `torch`, and `transformers` from the host interpreter and deliberately pins none of them, because every reading it takes is a difference against a baseline it recomputes in the same process.
 
 <!-- BEGIN GENERATED EXPERIMENT CATALOG -->
 ### Foundation, semantics, and extensions
@@ -51,6 +49,7 @@ Only `spikes/numerics/check_witnesses.py` and
 
 - [Reduction contract probe](numerics/reduction_contract/README.md) — reproducible; executable-model, exhaustive-finite; supports: [Reduction semantics and legality](../docs/research/numerics/reduction-semantics-and-legality.md)
 - [Region accuracy observation probe](numerics/region_accuracy/README.md) — reproducible; bounded-measurement; supports: [Region accuracy contracts and analyzable error budgets](../docs/research/numerics/region-accuracy-contract.md)
+- [Qwen3-0.6B-Base candidate quantization profile probe](numerics/qwen3-weight-quantization-profiles/README.md) — reproducible; bounded-measurement; supports: [First quantized language-model profile](../docs/research/numerics/first-quantized-lm-profile.md)
 - [Sound accuracy probe](numerics/sound_accuracy/README.md) — reproducible; executable-model, bounded-measurement; supports: [Sound region-accuracy analyzer integration spike](../docs/research/numerics/sound-region-analyzer-spike.md), [Region accuracy contracts and analyzable error budgets](../docs/research/numerics/region-accuracy-contract.md)
 
 ### Physical planning and lowering
