@@ -462,6 +462,8 @@ What this section does constrain is which components may know about which, inclu
 
 **Fact — an accepted record adds one rule to that list for a role no crate holds yet.** [ADR 0090](decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md), accepted 2026-07-31, decides that a physical-provider crate depends *inward* — on `tiler-ir` for the proposal body and on `tiler-compiler` for the seam — and that nothing in the workspace depends on a provider crate, the compiler holding installed providers as values rather than as a dependency. It restates the three rules above rather than replacing them.
 
+The optimizer-specific instance of the compiler-core rule — the four surfaces physical-plan enumeration and selection may consult, so that no selection logic is rewritten when an execution tier or device family arrives, and the review obligation that is the only thing checking it — is stated once in [the optimizer contract](compiler/optimizer.md#the-four-surfaces-the-optimizer-may-consult).
+
 ## Proposed initial Rust/Metal integration composition
 
 One macro invocation can produce multiple region candidates and complete one-
