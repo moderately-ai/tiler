@@ -40,9 +40,9 @@ use tiler_ir::kernel::{BinaryOp, CompareOp, ConvertOp, KernelConstant, Operation
 use tiler_ir::program::abi::{AvailabilityPhase, TargetPropertyRequirementRelation};
 use tiler_ir::program::{DependencyReasonView, ValueRole};
 use tiler_ir::semantic::{
-    CANONICAL_F32_ARITHMETIC_NAN_BITS, ContractionIndex, ContractionIndexStructure, F32, F32Add,
-    F32Constant, F32Multiply, F32TensorContraction, InputKey, OutputKey, SemanticProgram,
-    SemanticProgramBuilder, StrictSerialF32Sum,
+    Bf16, Bf16Add, Bf16Constant, Bf16Multiply, CANONICAL_F32_ARITHMETIC_NAN_BITS, ContractionIndex,
+    ContractionIndexStructure, F32, F32Add, F32Constant, F32Multiply, F32TensorContraction,
+    InputKey, OutputKey, SemanticProgram, SemanticProgramBuilder, StrictSerialF32Sum,
 };
 use tiler_ir::shape::{Axis, Shape};
 use tiler_reference::{
@@ -1184,6 +1184,51 @@ fn a_contraction_program_is_statable_and_refused_before_capability_resolution() 
         "the request boundary refuses a contraction program first; nothing here \
          reaches the lowering registry"
     );
+}
+
+/// A pure-BF16 program builds and does not compile.
+///
+/// The gap this guards is the one registration opens: `builder.build()` now
+/// succeeds for BF16, and "the program verifies" is the step most easily
+/// mistaken for "the dtype works". Nothing below the semantic layer moved —
+/// there is no capability row, no lowering capability, and no target profile
+/// that can state a BF16 numerical contract — so the request boundary refuses
+/// it before any target is consulted.
+///
+/// The rule that says no is `dtype-f32` rather than `operation-set`: the
+/// bounded strategy requires the governed `f32` identity, and it reaches that
+/// check before it reaches the operation vocabulary. Asserting `operation-set`
+/// here would be fiction about which check refused.
+#[test]
+fn a_pure_bf16_program_is_statable_and_refused_at_the_request_boundary() {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let input = builder
+        .input::<Bf16>(InputKey::new("x").unwrap(), Shape::from_dims([2, 2]))
+        .unwrap();
+    // 1.0 and 2.0 in bf16.
+    let one = Bf16Constant::apply(&mut builder, 0x3f80).unwrap();
+    let two = Bf16Constant::apply(&mut builder, 0x4000).unwrap();
+    let scaled = Bf16Multiply::apply(&mut builder, input, one).unwrap();
+    let shifted = Bf16Add::apply(&mut builder, scaled, two).unwrap();
+    builder
+        .output(OutputKey::new("out").unwrap(), shifted)
+        .unwrap();
+    let bf16_program = builder.build().unwrap();
+    assert_eq!(bf16_program.operation_count(), 4);
+
+    assert_eq!(
+        compile(CompilationRequest::governed(&bf16_program)).unwrap_err(),
+        CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule: "dtype-f32",
+        }),
+        "a bf16 program is refused for its dtype, not routed to a target"
+    );
+
+    // The neighbour that keeps this about bf16 rather than about a dead
+    // request path: the same shape of program in f32 compiles.
+    compile(CompilationRequest::governed(&semantic(false)))
+        .expect("the governed f32 fixture still compiles");
 }
 
 #[test]
