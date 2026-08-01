@@ -1,7 +1,7 @@
 ---
 id: strengthen-the-family-cfg-evidence-with-the-installed-cross-targets
 title: Strengthen the family-cfg evidence with the installed cross-targets
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: worker-cross-target
+lease_expires_at: 1785562660
 ---
 ## User-visible outcome
 
