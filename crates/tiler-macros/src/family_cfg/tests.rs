@@ -6,8 +6,17 @@
 //! "is it right?", by evaluating the predicate this module actually emits
 //! against the compiler's own answer for a real target — including the four
 //! Apple targets and the non-Apple target `docs/correctness-and-testing.md`
-//! names, none of whose standard libraries are installed on this host and none
-//! of which therefore have to be.
+//! names.
+//!
+//! `--print cfg` reports a target's `cfg` set without needing that target's
+//! standard library, which is what lets the sweep below cover fifteen targets
+//! rather than the five this host can compile for. It is the wider evidence and
+//! the weaker one: it says which predicate holds where, not that the items
+//! gated by it are well-formed there.
+//! `crate::delivery::tests::every_emitted_shape_compiles_as_the_five_target_matrix_says`
+//! is the narrower, stronger form for the five normative targets — it compiles
+//! the delivery emitter's own output *for* the target — and that module's docs
+//! record the measured matrix and its `cargo check`-level boundary.
 
 use std::collections::BTreeSet;
 use std::process::Command;

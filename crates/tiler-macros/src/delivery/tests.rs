@@ -1,13 +1,53 @@
 //! The stated policy, the named profiles, and the tokens a plan delivers.
 //!
-//! Three kinds of evidence live here. Exact-text assertions pin what the emitter
+//! Four kinds of evidence live here. Exact-text assertions pin what the emitter
 //! writes, because the generated code is the product. Evaluation against
-//! `rustc --print cfg` decides what that text *means* on a real consumer target,
-//! which is the only way to check the five-target matrix
-//! `docs/correctness-and-testing.md` states without installing five standard
-//! libraries. And the fixture comparisons bind both to files the facade actually
-//! compiles, so the compile evidence is evidence about this emitter rather than
-//! about text someone wrote on the same day.
+//! `rustc --print cfg` decides what that text *means* on a consumer target
+//! without needing that target's standard library, which is what lets it cover
+//! fifteen of them. The fixture comparisons bind both to files the facade
+//! actually compiles, so the compile evidence is evidence about this emitter
+//! rather than about text someone wrote on the same day. And
+//! [`every_emitted_shape_compiles_as_the_five_target_matrix_says`] compiles the
+//! emitter's own output *for* the five targets
+//! `docs/correctness-and-testing.md` names, which is the only one of the four in
+//! which the compiler that will gate a consumer's build is the thing that
+//! decided the answer.
+//!
+//! # The five-target matrix under real cross-target compilation
+//!
+//! **Measurement — `rustc 1.99.0-nightly (eff8269f7 2026-07-18)`, 2026-08-01,
+//! `rustc --edition 2024 --crate-type lib --emit=metadata --target <triple>`
+//! over the items [`DeliveryPlan::items_source`] emits, one fixture per shape
+//! and target.** Fifteen compilations, and every one agreed with the matrix
+//! `the_emitted_arms_select_exactly_one_payload_per_consumer_target` and
+//! `a_retained_diagnostic_fires_only_on_the_family_it_names` derive from
+//! `rustc --print cfg`:
+//!
+//! | emitted shape | `aarch64-apple-darwin` | `aarch64-apple-ios` | `aarch64-apple-ios-sim` | `aarch64-apple-ios-macabi` | `x86_64-unknown-linux-gnu` |
+//! | --- | --- | --- | --- | --- | --- |
+//! | macOS and iOS device both built | payload 1 | payload 0 | fallback | fallback | fallback |
+//! | iOS device built, simulator retained | fallback | payload 0 | build fails on the retained diagnostic | fallback | fallback |
+//! | macOS retained, nothing built | build fails on the retained diagnostic | compiles, no item survives `#[cfg]` | compiles, no item survives `#[cfg]` | compiles, no item survives `#[cfg]` | compiles, no item survives `#[cfg]` |
+//!
+//! This replaces an inference with a compilation. The `rustc --print cfg`
+//! evidence establishes which predicate holds where; it cannot establish that
+//! the emitted *items* are well-formed on a target, that exactly one selector
+//! arm survives `#[cfg]` there, or that a byte-string literal of all 256 byte
+//! values lexes the same for a non-Apple target. Compiling for the target
+//! decides all three at once, because a second surviving arm is a duplicate
+//! definition and a gap is an undefined name.
+//!
+//! **Boundary — check level, no SDK, no link.** `--emit=metadata` is exactly
+//! what `cargo check` runs, so `#[cfg]` selection, selector totality, the
+//! byte-string literal, and the `const` assertions are decided by rustc for the
+//! named target. No linker runs, no Apple SDK is consulted, and nothing is
+//! linked or executed. It says the delivered *source* is correct for each
+//! target; it says nothing about whether a `metallib` carried in it would load
+//! there, which `docs/research/apple-targets/artifact-compatibility.md` owns.
+
+use core::fmt::Write as _;
+use std::path::Path;
+use std::process::Command;
 
 use tiler_metal_aot::family::{
     ArtifactDeliveryPolicy, ArtifactFamilySelection, FamilyRequirement, FamilySelectionError,
@@ -18,9 +58,9 @@ use tiler_metal_aot::input::{
 };
 
 use super::{
-    DeliveredFamily, DeliveryPlan, DeliveryRefusal, FamilyDelivery, NamedProfile,
-    PROFILE_MSL_VERSION, PlanRefusal, StatementRefusal, byte_string_literal, fallback_plan,
-    stated_delivery, stated_policy,
+    ARTIFACT_BINDING, DeliveredFamily, DeliveryPlan, DeliveryRefusal, FamilyDelivery, NamedProfile,
+    PROFILE_MSL_VERSION, PlanRefusal, SELECTED_PAYLOAD_BINDING, StatementRefusal,
+    byte_string_literal, fallback_plan, stated_delivery, stated_policy,
 };
 use crate::family_cfg::consumer_cfg;
 use crate::family_cfg::tests::{evaluate, target_cfg};
@@ -1236,4 +1276,408 @@ fn fixture(relative: &str) -> String {
     );
     std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("the facade fixture `{path}` is readable: {error}"))
+}
+
+/// The driver diagnostic every retained delivery below carries.
+///
+/// One string for both shapes and for the assertion that reads rustc's stderr,
+/// so "the message the consumer sees" and "the message this test looks for"
+/// cannot drift into two texts that are equal only by having been typed twice.
+const RETAINED_DIAGNOSTIC: &str = "xcrun: error: unable to find utility \"metal\"";
+
+/// What one consumer target's selector must resolve to for one emitted shape.
+///
+/// [`Self::NotEmitted`] is not "no payload": it is a plan in which *nothing*
+/// built, so the emitter writes no artifact and no selector at all and there is
+/// no name to assert on. Spelling it apart from [`Self::Fallback`] is what stops
+/// a shape that silently stopped emitting its selector from reading as a target
+/// that correctly took the fallback.
+#[derive(Clone, Copy, Debug)]
+enum SelectorOutcome {
+    /// The plan emits no artifact and no selector.
+    NotEmitted,
+    /// The selector resolves to this payload position within the one envelope.
+    Payload(usize),
+    /// The selector takes its `not(any(…))` arm: the semantic fallback.
+    Fallback,
+}
+
+/// One consumer target's row in one emitted shape's matrix.
+struct CrossTargetRow {
+    /// The Rust target triple the fixture is compiled for.
+    triple: &'static str,
+    /// What this target's selector must resolve to.
+    selector: SelectorOutcome,
+    /// The retained diagnostic this target's build must fail on, or nothing.
+    fatal: Option<&'static str>,
+}
+
+/// One emitted delivery shape and what each normative target must do with it.
+struct CrossTargetShape {
+    /// What this shape is, so a failure names the plan rather than a row index.
+    name: &'static str,
+    /// The items the emitter produced, verbatim.
+    items: String,
+    /// How many bytes the one envelope carries, or zero when nothing built.
+    artifact_bytes: usize,
+    /// One row per target in [`NORMATIVE_TARGETS`], in that order.
+    matrix: [CrossTargetRow; 5],
+}
+
+/// Compiles one fixture for one target at `cargo check` level.
+///
+/// `rustc --emit=metadata` is what `cargo check` runs. Cargo is skipped rather
+/// than avoided: the fixture is dependency-free by construction, so a manifest
+/// would contribute a target directory and a lockfile resolution and nothing
+/// else to the verdict, and the toolchain is the same one either way because
+/// `rust-toolchain.toml` resolves by directory ancestry — the same reason
+/// [`crate::family_cfg::tests::target_cfg`] spells `rustc` directly.
+///
+/// The edition is stated because rustc's command-line default is 2015, where the
+/// `::core::` paths the emitter writes do not resolve at all; 2024 is the
+/// workspace edition, which is the edition a consumer compiles the expansion in.
+fn check_for_target(directory: &Path, triple: &str, source: &str) -> Result<(), String> {
+    let fixture = directory.join("fixture.rs");
+    std::fs::write(&fixture, source)
+        .unwrap_or_else(|error| panic!("the fixture `{}` is writable: {error}", fixture.display()));
+
+    let output = Command::new("rustc")
+        .args([
+            "--edition",
+            "2024",
+            "--crate-name",
+            "tiler_family_cfg_fixture",
+            "--crate-type",
+            "lib",
+            "--emit",
+            "metadata",
+            "--target",
+            triple,
+            "-o",
+        ])
+        .arg(directory.join("fixture.rmeta"))
+        .arg(&fixture)
+        .output()
+        .unwrap_or_else(|error| panic!("`rustc --target {triple}` did not run: {error}"));
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).into_owned())
+    }
+}
+
+/// Fails when a target cannot be compiled for at all.
+///
+/// Two of the shapes below *expect* a non-zero exit, and a missing `rust-std`
+/// produces one too — so without this probe "the target is not installed" and
+/// "the gated `compile_error!` fired" would be the same observation, and the one
+/// that proves nothing would be counted as the one that proves the matrix. The
+/// probe compiles a fixture that must succeed on every target there is, so its
+/// failure is about the host and never about the emitter.
+fn require_installed_target(directory: &Path, triple: &str) {
+    if let Err(stderr) = check_for_target(
+        directory,
+        triple,
+        "pub const PROBE: ::core::option::Option<usize> = ::core::option::Option::None;\n",
+    ) {
+        panic!(
+            "`{triple}` cannot be compiled for, so no outcome for it would mean anything. Install \
+             its standard library with `rustup target add {triple}`:\n{stderr}"
+        );
+    }
+}
+
+/// Appends the expectation one target must satisfy to the emitter's own items.
+///
+/// `const _: () = assert!(…)` is evaluated by `--emit=metadata`, so the verdict
+/// comes from the compiler that will compile a consumer rather than from this
+/// crate's reading of its own predicates. Both emitted names are referenced,
+/// which is also what keeps the fixture free of unused-item lints without
+/// passing rustc a flag that would suppress them.
+fn with_expectation(shape: &CrossTargetShape, selector: SelectorOutcome) -> String {
+    let mut source = shape.items.clone();
+    let expected = match selector {
+        SelectorOutcome::NotEmitted => return source,
+        SelectorOutcome::Payload(position) => {
+            format!("::core::option::Option::Some({position}usize)")
+        }
+        SelectorOutcome::Fallback => "::core::option::Option::None".to_owned(),
+    };
+    write!(
+        source,
+        "const _: () = assert!(matches!({SELECTED_PAYLOAD_BINDING}, {expected}));\n\
+         const _: () = assert!({ARTIFACT_BINDING}.len() == {}usize);\n",
+        shape.artifact_bytes,
+    )
+    .expect("writing to a `String` cannot fail");
+    source
+}
+
+/// The three emitted shapes, in the order the module doc's table lists them.
+///
+/// They are the plans the three facade fixtures stand in for, built here through
+/// the same emitter, so this evidence and the `trybuild` evidence are about one
+/// text rather than two: `the_matching_fixture_compiles_what_this_emitter_produces`
+/// and its two siblings are what tie each fixture to the plan repeated below.
+fn cross_target_shapes() -> [CrossTargetShape; 3] {
+    let envelope: Vec<u8> = (0..=u8::MAX).collect();
+    [
+        // Canonical family order puts `ios-device` before `macos`, so macOS is
+        // payload 1 — a selector that ignored the family and took the first
+        // payload would be indistinguishable from a correct one otherwise.
+        CrossTargetShape {
+            name: "macOS and iOS device both built",
+            items: plan(
+                vec![
+                    selected(ApplePlatform::MacOs, 26, 0),
+                    selected(ApplePlatform::IOsDevice, 26, 0),
+                ],
+                &envelope,
+                vec![FamilyDelivery::Payload, FamilyDelivery::Payload],
+            )
+            .items_source(),
+            artifact_bytes: envelope.len(),
+            matrix: [
+                CrossTargetRow {
+                    triple: "aarch64-apple-darwin",
+                    selector: SelectorOutcome::Payload(1),
+                    fatal: None,
+                },
+                CrossTargetRow {
+                    triple: "aarch64-apple-ios",
+                    selector: SelectorOutcome::Payload(0),
+                    fatal: None,
+                },
+                CrossTargetRow {
+                    triple: "aarch64-apple-ios-sim",
+                    selector: SelectorOutcome::Fallback,
+                    fatal: None,
+                },
+                CrossTargetRow {
+                    triple: "aarch64-apple-ios-macabi",
+                    selector: SelectorOutcome::Fallback,
+                    fatal: None,
+                },
+                CrossTargetRow {
+                    triple: "x86_64-unknown-linux-gnu",
+                    selector: SelectorOutcome::Fallback,
+                    fatal: None,
+                },
+            ],
+        },
+        CrossTargetShape {
+            name: "iOS device built, iOS simulator retained",
+            items: plan(
+                vec![
+                    selected(ApplePlatform::IOsDevice, 26, 0),
+                    selected(ApplePlatform::IOsSimulator, 26, 0),
+                ],
+                b"tiler-artifact-envelope",
+                vec![
+                    FamilyDelivery::Payload,
+                    FamilyDelivery::Retained(RETAINED_DIAGNOSTIC.to_owned()),
+                ],
+            )
+            .items_source(),
+            artifact_bytes: b"tiler-artifact-envelope".len(),
+            matrix: [
+                CrossTargetRow {
+                    triple: "aarch64-apple-darwin",
+                    selector: SelectorOutcome::Fallback,
+                    fatal: None,
+                },
+                CrossTargetRow {
+                    triple: "aarch64-apple-ios",
+                    selector: SelectorOutcome::Payload(0),
+                    fatal: None,
+                },
+                // The retained family's own target, and the only one the
+                // diagnostic may reach. It still takes the fallback arm rather
+                // than an undefined name, which is why the build fails with one
+                // actionable error instead of two.
+                CrossTargetRow {
+                    triple: "aarch64-apple-ios-sim",
+                    selector: SelectorOutcome::Fallback,
+                    fatal: Some(RETAINED_DIAGNOSTIC),
+                },
+                CrossTargetRow {
+                    triple: "aarch64-apple-ios-macabi",
+                    selector: SelectorOutcome::Fallback,
+                    fatal: None,
+                },
+                CrossTargetRow {
+                    triple: "x86_64-unknown-linux-gnu",
+                    selector: SelectorOutcome::Fallback,
+                    fatal: None,
+                },
+            ],
+        },
+        CrossTargetShape {
+            name: "macOS retained, nothing built",
+            items: plan(
+                vec![selected(ApplePlatform::MacOs, 26, 0)],
+                b"",
+                vec![FamilyDelivery::Retained(RETAINED_DIAGNOSTIC.to_owned())],
+            )
+            .items_source(),
+            artifact_bytes: 0,
+            matrix: [
+                CrossTargetRow {
+                    triple: "aarch64-apple-darwin",
+                    selector: SelectorOutcome::NotEmitted,
+                    fatal: Some(RETAINED_DIAGNOSTIC),
+                },
+                CrossTargetRow {
+                    triple: "aarch64-apple-ios",
+                    selector: SelectorOutcome::NotEmitted,
+                    fatal: None,
+                },
+                CrossTargetRow {
+                    triple: "aarch64-apple-ios-sim",
+                    selector: SelectorOutcome::NotEmitted,
+                    fatal: None,
+                },
+                CrossTargetRow {
+                    triple: "aarch64-apple-ios-macabi",
+                    selector: SelectorOutcome::NotEmitted,
+                    fatal: None,
+                },
+                CrossTargetRow {
+                    triple: "x86_64-unknown-linux-gnu",
+                    selector: SelectorOutcome::NotEmitted,
+                    fatal: None,
+                },
+            ],
+        },
+    ]
+}
+
+/// Every emitted shape compiles for every normative target exactly as the matrix
+/// says, decided by rustc for that target.
+///
+/// This is the claim `generate-cfg-gated-artifact-family-delivery` recorded as
+/// out of reach while `aarch64-apple-darwin` was the only installed target: that
+/// "a nonmatching target compiles the semantic fallback" rests on a build that
+/// ran rather than on evaluating the predicates against `rustc --print cfg`. The
+/// module doc records the resulting five-target matrix, its `cargo check`-level
+/// boundary, and the toolchain that produced it.
+///
+/// It is `#[ignore]`d for a host reason and not a cost one — twenty check
+/// compilations measure in seconds. Four of the five targets are `rustup`
+/// `rust-std` components that `rust-toolchain.toml` does not declare and
+/// `deps.sh` neither installs nor verifies, so making this gate-resident would
+/// fail `make check` on a host bootstrapped exactly as this repository
+/// documents. Declaring them is a host-toolchain policy change and is tracked by
+/// `declare-the-cross-compilation-targets-in-the-toolchain-manifest`; a test
+/// that instead skipped the targets it could not find would report a clean pass
+/// over a population it never counted, which is the failure mode `AGENTS.md`
+/// names outright.
+///
+/// Run it by hand from the repository root:
+///
+/// ```text
+/// rustup target add aarch64-apple-ios aarch64-apple-ios-sim \
+///     aarch64-apple-ios-macabi x86_64-unknown-linux-gnu
+/// cargo nextest run -p tiler-macros --run-ignored all \
+///     -E 'test(every_emitted_shape_compiles_as_the_five_target_matrix_says)'
+/// ```
+#[test]
+#[ignore = "cross-compiles for four targets `deps.sh` neither installs nor verifies; run by hand"]
+fn every_emitted_shape_compiles_as_the_five_target_matrix_says() {
+    let directory = std::env::temp_dir().join(format!(
+        "tiler-family-cfg-cross-target-{}",
+        std::process::id(),
+    ));
+    // Removed first so a rerun cannot read a stale fixture, and reconstructed
+    // entirely from this harness — nothing here is a checked-in artifact.
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap_or_else(|error| {
+        panic!(
+            "the fixture directory `{}` is creatable: {error}",
+            directory.display()
+        )
+    });
+
+    for triple in NORMATIVE_TARGETS {
+        require_installed_target(&directory, triple);
+    }
+
+    let shapes = cross_target_shapes();
+    let mut compiled = 0_usize;
+    for shape in &shapes {
+        assert_eq!(
+            shape.matrix.each_ref().map(|row| row.triple),
+            NORMATIVE_TARGETS,
+            "`{}` must state a row for exactly the normative targets, in order",
+            shape.name,
+        );
+        // A shape whose matrix expects no fatal target must carry no diagnostic
+        // at all, and one that expects a fatal target must carry the diagnostic
+        // its non-matching targets then compile *without*. Otherwise the four
+        // targets that see an empty translation unit would pass by having been
+        // handed nothing to compile.
+        assert_eq!(
+            shape.items.contains("::core::compile_error!"),
+            shape.matrix.iter().any(|row| row.fatal.is_some()),
+            "`{}` emits a gated `compile_error!` exactly when its matrix expects one to fire:\n{}",
+            shape.name,
+            shape.items,
+        );
+
+        for row in &shape.matrix {
+            let source = with_expectation(shape, row.selector);
+            let outcome = check_for_target(&directory, row.triple, &source);
+            compiled += 1;
+
+            match (row.fatal, outcome) {
+                (None, Ok(())) => {}
+                (None, Err(stderr)) => panic!(
+                    "`{}` must compile for {}:\n{stderr}\nfixture:\n{source}",
+                    shape.name, row.triple,
+                ),
+                (Some(diagnostic), Ok(())) => panic!(
+                    "`{}` must fail for {} on the retained diagnostic `{diagnostic}`, and it \
+                     compiled:\nfixture:\n{source}",
+                    shape.name, row.triple,
+                ),
+                (Some(diagnostic), Err(stderr)) => {
+                    assert!(
+                        stderr.contains(diagnostic),
+                        "`{}` must fail for {} on the driver's own retained text, not on \
+                         something else:\n{stderr}",
+                        shape.name,
+                        row.triple,
+                    );
+                    // A failure that also carries a const-eval panic means the
+                    // selector was wrong as well, and the retained text alone
+                    // would have hidden it behind an expected non-zero exit.
+                    assert!(
+                        !stderr.contains("evaluation panicked"),
+                        "`{}` for {} fails on the retained diagnostic *and* on its selector \
+                         expectation:\n{stderr}",
+                        shape.name,
+                        row.triple,
+                    );
+                }
+            }
+        }
+    }
+
+    assert_eq!(
+        compiled,
+        shapes.len() * NORMATIVE_TARGETS.len(),
+        "the population this test covers is every emitted shape on every normative target, counted",
+    );
+    assert_eq!(
+        compiled, 15,
+        "three emitted shapes and five consumer targets"
+    );
+
+    std::fs::remove_dir_all(&directory).unwrap_or_else(|error| {
+        panic!(
+            "the fixture directory `{}` is removable: {error}",
+            directory.display()
+        )
+    });
 }
