@@ -1,7 +1,7 @@
 ---
 id: promote-the-build-time-cache-and-correspondence-seam
 title: Promote the build-time cache and correspondence seam
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [produce-a-custom-backend-payload-through-the-build-orchestrator]
@@ -9,9 +9,6 @@ scopes: [implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: [backend-providers, pluggability, implementation, build, cache]
-claimed_from: todo
-assignee: worker-promote-the-
-lease_expires_at: 1785566994
 ---
 ## User-visible outcome
 
@@ -78,3 +75,5 @@ Three type parameters because three different authorities carry three different 
 **Public boundary for Tom.** `accept_or_publish_single_payload_artifact`, `DeclaredPayload`, `AcceptedArtifact` (with `resolution`, `cache_subject`, `decoded`, `into_resolution`), `SinglePayloadCacheError<M, C, A>`, `SinglePayloadProtocolError<M>`, and the delegating `AcceptedMetalPlanArtifact::decoded`. `accept_or_publish_single_payload_metal_artifact` keeps its name and its error types but now returns `AcceptedArtifact`, and `AcceptedMetalPlanArtifact::into_parts` returns it too.
 
 **Named and not done.** `validate_metal_payload_metadata` stays `pub(crate)`, so an out-of-crate *partial Metal* provider can drive the promoted seam but cannot supply Metal's own correspondence check without restating it; the in-crate wrapper is how Metal reaches it. Publishing it is a separate public-boundary decision and was not taken here. Separately, [ADR 0090](../docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md)'s status paragraph still reads "the item-11 orchestration promotion remain unimplemented", which was already stale after `produce-a-custom-backend-payload-through-the-build-orchestrator` and is doubly stale now; correcting it is a `contracts/decisions` edit outside this ticket's scopes.
+
+**Provisional boundary acceptance (2026-08-01, overnight mode).** The coordinator provisionally accepted the promoted seam — `accept_or_publish_single_payload_artifact` with `DeclaredPayload`/`AcceptedArtifact`/the two error types — under the ADR 0090 item-11 umbrella, with the three-error-parameter remedy separation and the Metal one-to-one `From` mapping noted as the design's load-bearing halves. `validate_metal_payload_metadata`'s visibility stays a separate future boundary. Recorded for Tom's morning review.

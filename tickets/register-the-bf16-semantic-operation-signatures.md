@@ -1,7 +1,7 @@
 ---
 id: register-the-bf16-semantic-operation-signatures
 title: Register the pure-BF16 constant, multiply, and add operation signatures
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [spike-bf16-through-the-second-dtype-seams, register-the-accepted-built-in-dtype-catalog, own-operation-family-support-matrix, design-the-bf16-computation-and-accumulator-contract]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, bf16, semantics, operations]
+claimed_from: todo
+assignee: worker-bf16-sigs
+lease_expires_at: 1785569171
 ---
 ## User-visible outcome
 
