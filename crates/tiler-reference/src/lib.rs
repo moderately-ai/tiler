@@ -18,6 +18,7 @@
 //! | module | authority |
 //! | --- | --- |
 //! | `accuracy` | certified enclosures and the transcendental conformance decision |
+//! | `bf16` | the exact-rational pure-BF16 value set, arithmetic, and rounding |
 //! | `tensor` | what a reference value *is* — elements, components, tensors |
 //! | `registry` | the semantic capability registry and its dispatch vocabulary |
 //! | `evaluate` | executing a semantic program against that registry |
@@ -38,6 +39,7 @@
 
 mod accuracy;
 mod arithmetic;
+mod bf16;
 mod conformance;
 mod contraction;
 mod error;
@@ -60,7 +62,8 @@ pub use accuracy::{
 pub use conformance::{ReferenceNumericalConformance, UnsupportedReferenceContract};
 pub use error::{
     EvaluationError, ReferenceOperationError, ReferenceRegistryError, ReferenceRegistryResource,
-    ReferenceResource, ReferenceValueError, UnsupportedContractionDeclaration,
+    ReferenceResource, ReferenceValueError, UnsupportedBf16Declaration,
+    UnsupportedContractionDeclaration,
 };
 pub use evaluate::{ReferenceEvaluator, strict_partial_sums, strict_partitioned_sum};
 pub use oracle::{
@@ -103,6 +106,14 @@ pub(crate) const MAX_REFERENCE_REGISTRY_IDENTITY_BYTES: usize = 16 * 1024 * 1024
 /// result never depends on the host's choice of propagated payload. It applies
 /// to an *arithmetic result*: a value that is only read, or an exact constant
 /// payload, keeps its bits.
+///
+/// **The BF16 family applies this same rule, not a second one.** `bf16` has no
+/// host float type whose `is_nan` this function could ask, so [`bf16`] decides the
+/// class from the registered descriptor's own exponent and significand fields and
+/// takes its payload from the family's declared `BF16_FACT_CANONICAL_NAN_BITS`.
+/// What is shared is the rule stated here — one declared payload for every
+/// arithmetic NaN result and the operand's payload never — and what differs is
+/// only which declaration supplies that payload.
 pub(crate) fn canonicalize_arithmetic_f32(value: f32) -> f32 {
     if value.is_nan() {
         f32::from_bits(CANONICAL_F32_ARITHMETIC_NAN_BITS)

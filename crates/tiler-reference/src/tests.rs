@@ -21,8 +21,7 @@ use tiler_ir::semantic::{
     OperationDefinitionFacts, OperationEffect, OperationInferenceError, OperationInferencer,
     OperationSchema, OutputKey, SemanticProgramBuilder, SemanticRegistryBuilder,
     SemanticRegistryProvider, SemanticRegistryRegistrar, StrictSerialF32Sum, TypeDefinitionFacts,
-    Value, ValueTypeDefinition, ValueTypeDefinitionKey, add_bf16_op, constant_bf16_op,
-    multiply_bf16_op,
+    Value, ValueTypeDefinition, ValueTypeDefinitionKey,
 };
 use tiler_ir::semantic::{
     FrozenSemanticRegistry, OpKey, OperationAttributes, ProviderIdentity, ResolvedValueType,
@@ -829,15 +828,16 @@ fn missing_and_external_reference_capabilities_are_explicit() {
     );
 }
 
-/// Registering the BF16 signatures did not make a BF16 program evaluable.
+/// Each of the three BF16 keys now resolves a capability instead of failing closed.
 ///
-/// The semantic layer now verifies these programs, which is exactly why this
-/// check exists: "the graph builds" is the step that most easily reads as "the
-/// dtype works". The standard reference provider registers no BF16 capability,
-/// so each of the three keys fails closed by name rather than evaluating through
-/// an F32 evaluator that would silently compute at the wrong precision.
+/// This check previously asserted the opposite — that the standard provider
+/// registered no BF16 capability and each key answered `MissingCapability` — and
+/// it is inverted here rather than deleted, because *which* refusal disappeared is
+/// the thing worth pinning. What the three keys compute is `bf16`'s subject; this
+/// is only that the registry now reaches an implementation for each of them, and
+/// that a BF16 program is no longer refused for want of one.
 #[test]
-fn the_registered_bf16_operations_are_not_reference_evaluable() {
+fn the_registered_bf16_operations_resolve_a_reference_capability() {
     for build in [
         (|graph: &mut SemanticProgramBuilder| Bf16Constant::apply(graph, 0x3f80).unwrap().erase())
             as fn(&mut SemanticProgramBuilder) -> tiler_ir::semantic::ValueId,
@@ -857,37 +857,45 @@ fn the_registered_bf16_operations_are_not_reference_evaluable() {
         graph
             .output_resolved(OutputKey::new("result").unwrap(), result)
             .unwrap();
-        // The semantic layer verifies it. Nothing below the semantic layer does.
         let program = graph.build().unwrap();
 
-        let error = ReferenceEvaluator::standard()
-            .unwrap()
-            .evaluate(&program, &[])
-            .unwrap_err();
-        let EvaluationError::MissingCapability { operation, .. } = error else {
-            panic!("a bf16 program fails closed on a missing capability, not {error}");
-        };
         assert!(
-            [constant_bf16_op(), multiply_bf16_op(), add_bf16_op()].contains(&operation),
-            "the refusal names a bf16 operation, found {operation}"
+            ReferenceEvaluator::standard()
+                .unwrap()
+                .evaluate(&program, &[])
+                .is_ok()
         );
     }
 
-    // The neighbour that proves the evaluator is alive: the same shape of
-    // program in f32 evaluates.
-    let mut graph = SemanticProgramBuilder::try_standard().unwrap();
-    let left = constant(&mut graph, 1.0);
-    let right = constant(&mut graph, 2.0);
-    let sum = add(&mut graph, left, right);
+    // The refusal itself still works, on a key nothing registers: the three above
+    // pass because a capability exists, not because the check stopped checking.
+    let mut semantics = SemanticRegistryBuilder::standard().unwrap();
+    semantics
+        .register_provider(&ExternalSemanticProvider)
+        .unwrap();
+    let mut graph = SemanticProgramBuilder::try_new(semantics.freeze().unwrap()).unwrap();
+    let input: Value<F32> = graph
+        .input(InputKey::new("x").unwrap(), Shape::from_dims([2]))
+        .unwrap();
+    let result = graph
+        .apply(
+            external_identity_op(),
+            OperationAttributes::empty(),
+            &[input.erase()],
+        )
+        .unwrap();
     graph
-        .output_resolved(OutputKey::new("result").unwrap(), sum.erase())
+        .output_resolved(OutputKey::new("result").unwrap(), result[0])
         .unwrap();
     let program = graph.build().unwrap();
-    let outputs = ReferenceEvaluator::standard()
-        .unwrap()
-        .evaluate(&program, &[])
-        .unwrap();
-    assert_eq!(f32_values(&outputs[0]), [3.0]);
+    let tensor = f32_tensor(Shape::from_dims([2]), vec![1.0, 2.0]);
+    let key = InputKey::new("x").unwrap();
+    assert!(matches!(
+        ReferenceEvaluator::standard()
+            .unwrap()
+            .evaluate(&program, &[InputBinding::new(&key, &tensor)]),
+        Err(EvaluationError::MissingCapability { .. })
+    ));
 }
 
 #[test]

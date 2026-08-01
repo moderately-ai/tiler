@@ -12,6 +12,7 @@ use tiler_ir::semantic::{
     silu_f32_op, strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
 };
 
+use super::bf16::register_standard_bf16;
 use super::contraction::{ContractionContract, StrictTensorContractionF32Reference};
 use super::error::{ReferenceOperationError, ReferenceRegistryError, ReferenceValueError};
 use super::evaluate::{binary, reduction_axes, strict_sum};
@@ -119,6 +120,12 @@ impl ReferenceRegistryProvider for StandardReferenceProvider {
             revision,
             rms_norm_reference(),
         )?;
+        // The second dtype. Its value contract and its three capabilities are
+        // registered together and are parameterized by the registered
+        // `tiler::bf16@1` descriptor, so a catalog that stopped describing the
+        // format refuses this provider rather than binding an evaluator that
+        // would answer for a value set nobody declared.
+        register_standard_bf16(registrar, revision)?;
         register_standard_quantization(registrar, revision)
     }
 }

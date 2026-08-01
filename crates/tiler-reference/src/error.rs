@@ -89,6 +89,137 @@ impl fmt::Display for UnsupportedContractionDeclaration {
 
 impl Error for UnsupportedContractionDeclaration {}
 
+/// Why the governed BF16 declarations cannot parameterize this reference.
+///
+/// The BF16 evaluators restate no format parameter. Every number the decode, the
+/// rounding, and the encode need — the encoded width, the precision, the exponent
+/// range and its bias, whether subnormals are members, and the canonical
+/// arithmetic NaN payload — is read from the registered `tiler::bf16@1` descriptor
+/// and from the family's own declared fact record. So a declaration this evaluator
+/// cannot realize has to be refusable, and refusing *by what was read* is what
+/// makes the refusal usable: a reader learns which declared term this reference
+/// does not implement rather than which line of it panicked.
+///
+/// The refusal lands at registration. A reference that registered a capability
+/// against a descriptor it could not decode would answer with a value set nobody
+/// declared, and every later bit comparison would inherit that.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum UnsupportedBf16Declaration {
+    /// The governed catalog describes no `tiler::bf16@1` scalar at all.
+    MissingDescriptor,
+    /// A required declared field was absent or carried the wrong canonical kind.
+    MalformedFact {
+        /// What was being read, named for a reader rather than by field ID.
+        field: &'static str,
+    },
+    /// The descriptor does not expose an ordered finite value set to round onto.
+    ///
+    /// Carries `tiler::ulp-reference-gap@1`'s own refusal, because the rounding
+    /// this reference performs is that metric's format rule applied to BF16's
+    /// parameters, and a descriptor the metric rejects is one this cannot round to.
+    IncompatibleFormat(tiler_ir::semantic::accuracy::UlpFormatError),
+    /// The declared encoded width is not one this reference's element carrier holds.
+    UnsupportedWidth {
+        /// The declared encoded width in bits.
+        width_bits: u32,
+    },
+    /// The declared exponent range and the encoded width do not describe each other.
+    InconsistentExponentRange {
+        /// Exponent width derived from the encoded width and the precision.
+        exponent_bits: u32,
+        /// Greatest finite exponent the descriptor's own fields fix.
+        max_exponent: i32,
+    },
+    /// The descriptor overrides the exponent bias its exponent range implies.
+    ///
+    /// The decode below biases by the greatest finite exponent, which is the
+    /// parameterization the `bfloat` format rule names. A descriptor stating a
+    /// different bias describes a different encoding of the same value set, and
+    /// decoding it with the derived bias would misread every normal operand.
+    OverriddenExponentBias {
+        /// The bias the descriptor declares.
+        declared: i32,
+        /// The bias the declared exponent range implies.
+        derived: i32,
+    },
+    /// The descriptor declares no subnormals, which this family's semantics preserve.
+    SubnormalsAbsent,
+    /// The declared canonical arithmetic NaN payload is not a NaN encoding.
+    ArithmeticNanPayloadIsNotNan {
+        /// The declared payload.
+        bits: u16,
+    },
+}
+
+impl UnsupportedBf16Declaration {
+    /// The stable diagnostic rule this refusal reports under.
+    #[must_use]
+    pub const fn rule(&self) -> &'static str {
+        match self {
+            Self::MissingDescriptor => "reference.bf16.missing-descriptor",
+            Self::MalformedFact { .. } => "reference.bf16.malformed-fact",
+            Self::IncompatibleFormat(_) => "reference.bf16.incompatible-format",
+            Self::UnsupportedWidth { .. } => "reference.bf16.unsupported-width",
+            Self::InconsistentExponentRange { .. } => "reference.bf16.inconsistent-exponent-range",
+            Self::OverriddenExponentBias { .. } => "reference.bf16.overridden-exponent-bias",
+            Self::SubnormalsAbsent => "reference.bf16.subnormals-absent",
+            Self::ArithmeticNanPayloadIsNotNan { .. } => "reference.bf16.arithmetic-nan-not-nan",
+        }
+    }
+}
+
+impl fmt::Display for UnsupportedBf16Declaration {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let rule = self.rule();
+        match self {
+            Self::MissingDescriptor => write!(
+                formatter,
+                "{rule}: the governed catalog describes no tiler::bf16@1 scalar"
+            ),
+            Self::MalformedFact { field } => {
+                write!(formatter, "{rule}: {field} is absent or malformed")
+            }
+            Self::IncompatibleFormat(source) => write!(
+                formatter,
+                "{rule}: the bf16 descriptor has no roundable finite value set: {source}"
+            ),
+            Self::UnsupportedWidth { width_bits } => write!(
+                formatter,
+                "{rule}: this reference carries a bf16 element in a 16-bit word, not {width_bits} bits"
+            ),
+            Self::InconsistentExponentRange {
+                exponent_bits,
+                max_exponent,
+            } => write!(
+                formatter,
+                "{rule}: an exponent width of {exponent_bits} does not fix a greatest finite exponent of {max_exponent}"
+            ),
+            Self::OverriddenExponentBias { declared, derived } => write!(
+                formatter,
+                "{rule}: the descriptor declares exponent bias {declared} where its exponent range implies {derived}"
+            ),
+            Self::SubnormalsAbsent => write!(
+                formatter,
+                "{rule}: the bf16 arithmetic preserves subnormals, and the descriptor declares none"
+            ),
+            Self::ArithmeticNanPayloadIsNotNan { bits } => write!(
+                formatter,
+                "{rule}: the declared canonical arithmetic NaN payload {bits:#06x} is not a bf16 NaN encoding"
+            ),
+        }
+    }
+}
+
+impl Error for UnsupportedBf16Declaration {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::IncompatibleFormat(source) => Some(source),
+            _ => None,
+        }
+    }
+}
+
 /// Failure to construct or extend a reference registry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -151,6 +282,17 @@ pub enum ReferenceRegistryError {
         /// The declared term this reference does not realize.
         source: UnsupportedContractionDeclaration,
     },
+    /// The governed `tiler::bf16@1` declarations could not parameterize the BF16
+    /// evaluators, so no BF16 capability was registered.
+    ///
+    /// Refused for the reason [`Self::UnsupportedContraction`] states: the whole
+    /// BF16 value set this reference computes over is read from the registered
+    /// descriptor, and one that cannot be read leaves nothing to be exact against.
+    /// The resolved type is not carried because the variant names it.
+    UnsupportedBf16 {
+        /// The declared term this reference does not realize.
+        source: UnsupportedBf16Declaration,
+    },
 }
 
 impl fmt::Display for ReferenceRegistryError {
@@ -198,6 +340,10 @@ impl fmt::Display for ReferenceRegistryError {
                 formatter,
                 "reference operation {operation} declares an unrealizable signature: {source}"
             ),
+            Self::UnsupportedBf16 { source } => write!(
+                formatter,
+                "the governed tiler::bf16@1 declarations are unrealizable here: {source}"
+            ),
         }
     }
 }
@@ -209,6 +355,7 @@ impl Error for ReferenceRegistryError {
             | Self::SemanticAuthority { source, .. }
             | Self::SemanticValueAuthority { source, .. } => Some(source.as_ref()),
             Self::UnsupportedContraction { source, .. } => Some(source),
+            Self::UnsupportedBf16 { source, .. } => Some(source),
             _ => None,
         }
     }
