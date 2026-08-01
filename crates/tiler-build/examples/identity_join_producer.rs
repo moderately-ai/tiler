@@ -1116,12 +1116,26 @@ fn main() {
     // A second live process against the same cache root, from a different
     // working directory and with an extra variable in its environment. Anything
     // process-scoped that had reached a durable identity would move here.
-    let status = Command::new(std::env::current_exe().expect("a program knows its own path"))
+    //
+    // The child runs a private copy of this binary, never the path
+    // `current_exe` reports: that path is Cargo's shared hardlink under
+    // `target/debug/examples/`, and a concurrent `cargo run` from a sibling
+    // test process can unlink-and-relink it mid-run — spawning it directly
+    // raced the window where the name does not resolve. The copy lives in this
+    // run's own output root, which no other process touches, so the spawn is
+    // deterministic whatever the siblings are doing.
+    let child_binary = root.join("identity-join-producer-child");
+    std::fs::copy(
+        std::env::current_exe().expect("a program knows its own path"),
+        &child_binary,
+    )
+    .expect("the producer owns a private copy of itself");
+    let status = Command::new(&child_binary)
         .arg(&root)
         .arg("--child")
         .current_dir(&root)
         .env("TILER_IDENTITY_JOIN_CHILD", "1")
         .status()
-        .expect("the producer re-executes itself");
+        .expect("the producer re-executes its private copy");
     assert!(status.success(), "the second producer run failed: {status}");
 }

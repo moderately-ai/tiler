@@ -94,6 +94,8 @@ The test step is two commands because nextest does not run doc-tests at all: `ca
 
 `.config/nextest.toml` reports failures only and disables fail-fast, so a green run prints one summary line and a red run yields the complete failure list. It filters reporting, not tests; `--no-fail-fast`, `--status-level`, and `--profile` overrides still work per invocation.
 
+A test is deterministic by design, not by luck: ordering comes from observed state rather than wall-clock margins, populations are counted, concurrently-running processes share no mutable path, and a process that re-executes a binary owns a private copy of it — the shared Cargo hardlink under `target/` is unlinked and relinked by sibling invocations, and a gate once went red because a producer's own path stopped resolving mid-run. An intermittent failure is a defect in the mechanism to be root-caused and fixed; re-running until green, loosening the assertion, or shrugging it off as flaky each converts the gate into a dice roll, which is Tom's stated line.
+
 Run the gate on the exact commit being published, chain publication to it with `&&`, and confirm the remote holds that exact commit with zero divergence before treating it as a dispatch base.
 
 A backgrounded or redirected gate is verified from the log's own terminal lines, never from a compound command's exit status — `make full > log; echo $?` reports the `echo`, and that exact shape once declared a gate green that had failed at `fmt --check`. Write gate logs to commit-unique filenames: two concurrent agents once interleaved one shared log path, leaving an exit code that was trustworthy attached to terminal lines that belonged to the other agent's run.
