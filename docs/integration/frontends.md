@@ -337,7 +337,7 @@ Instead:
 
 - content hashing and cache hits must be cheap;
 - one unique cold expansion may compile once;
-- warm IDE and `cargo check` expansion must avoid `xcrun`;
+- a warm expansion resolves the Apple toolchain and compiles nothing, in the IDE and under `cargo check` alike;
 - emitted types and fallback behavior remain identical across analysis/codegen;
 - an optional analysis stub is considered only if measurements demonstrate a
   material problem and it can preserve type/diagnostic behavior.
@@ -345,6 +345,32 @@ Instead:
 Cold/warm IDE behavior remains a useful performance measurement. Correctness
 does not depend on it: expansion has identical types, diagnostics, artifact
 selection, and fallback semantics in every compiler process.
+
+### Why a warm expansion resolves the toolchain
+
+The third bullet above read "warm IDE and `cargo check` expansion must avoid `xcrun`" until 2026-08-01. It was corrected rather than implemented, for a structural reason and a measured one; `avoid-toolchain-resolution-on-a-warm-expansion-cache-hit` carries the derivation and the numbers.
+
+**The structural reason.** The compiler fingerprint is an *input* to the compilation identity, and that identity is a facet of the key deciding hit or miss. `Toolchain::prepare` must therefore observe the toolchain before a lookup exists to skip it. Reaching a cache entry without observing the toolchain would mean keying on something other than the compiler that would build a miss — which is the incomplete-key failure ADR 0050 exists to exclude.
+
+**What the observation is worth, stated exactly.** All five `xcrun` invocations a resolution makes are answered from `xcrun`'s own on-disk cache. `xcrun(1)` documents it through `-n/--no-cache` and `-k/--kill-cache`, and `xcrun --verbose` names both the store (`$TMPDIR/xcrun_db`) and the keys: a tool lookup is keyed `<tool>|<SDK path>|<TOOLCHAINS>|<DEVELOPER_DIR>|`, an SDK field `<selector>|<DEVELOPER_DIR>|<sdklookup>|<field>`, and each resolved tool path additionally carries a `<toolchain-signature>` entry. Re-running these each expansion re-reads Apple's cache rather than observing the installed toolchain, and its invalidation rule is Apple's and is not documented. The part that *does* observe the toolchain that will run is the two direct executions of the resolved `metal` and `metallib` binaries to read their reported versions — not `xcrun` invocations at all.
+
+So the invariant is narrower and stronger than "resolve every time": **identity must fold a fingerprint read by executing the binaries the same prepared token will execute.** `PreparedCompilation` already guarantees that structurally — it owns the resolved absolute paths and is consumed by the compilation. The consequence is what makes a stale observation harmless between processes: a stale fingerprint yields a stale key, and a stale key cannot collide with a fresh one, so no fresh build is ever served an entry keyed on a toolchain it did not resolve.
+
+**Measurement — macOS 27.0 arm64, Apple M4 Max, `nightly-2026-07-19`, `rust-analyzer 1.97.0-nightly (8b03437a 2026-05-12)`, 2026-08-01.** One out-of-tree consumer crate declaring only `tiler`, holding one `deliver macos;` region, against a private per-user cache root, with an `xcrun` shim first on `PATH` logging every invocation:
+
+| what | cost |
+| --- | ---: |
+| `Toolchain::resolve()` whole, warm | 44–97 ms (median 52–63, n=40×3) |
+| — each of five `xcrun` calls | ~6 ms |
+| — each of two direct `--version` executions | 10–16 ms |
+| bare process-spawn floor | ~1.2 ms |
+| one `xcrun --find` with `--no-cache` | ~3.33 s |
+| warm `cargo check`, whole crate | 170–190 ms |
+| live in-region edit, `semanticTokens` round trip | 137–217 ms (delivering) vs 10–16 ms (fallback-only) |
+
+A warm `cargo check` expansion makes **five** `xcrun` calls; a warm `cargo build` makes six, and the sixth is rustc's own `--show-sdk-path` at link time, which no Tiler change removes. In a live rust-analyzer session every settled edit *inside* a region costs exactly one expansion, so the resolution is roughly 30–45% of that round trip — the largest single component, though Tiler's own optimize, emit, assemble, and cache-validation work is the remainder.
+
+**Two designs were eliminated rather than deferred.** A cross-process cached fingerprint would be a second cache layered on `xcrun_db`, witnessing the same selection inputs Apple's cache already witnesses, and would need the full cache obligations — complete identity, validation on every hit, immutable entries, atomic publication, defined crash and race behavior — inside a crate whose dependency closure is pinned empty by ADR 0077 item 2 and which therefore owns no digest to key one with. A process-lifetime memo cannot help `cargo check` at all, because each check is a fresh process expanding once, and in a long-lived proc-macro server it would widen the window between observing a toolchain and executing it from one expansion to one session.
 
 ## Fusion visibility boundary
 
