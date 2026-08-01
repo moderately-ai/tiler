@@ -1546,8 +1546,9 @@ impl FeasibleSet {
 /// does not vary with the program because it is a property of the profile.
 ///
 /// **Why this number.** It is the largest value `tiler-artifact` will hold: that
-/// crate's `MAX_OPAQUE_IDENTITY_BYTES` is a codec resource ceiling, and a
-/// producer minting past it would publish a descriptor no reader could carry.
+/// crate's own `MAX_TARGET_PROFILE_DESCRIPTOR_BYTES` is the matching 64 KiB
+/// admission ceiling, and a producer minting past it would publish a descriptor
+/// no reader could carry.
 /// Nothing checks the two against each other and nothing can — neither crate
 /// depends on the other, and no library crate depends on both — so the
 /// relationship is held by this comment and by review. **Raising this bound
