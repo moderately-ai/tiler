@@ -117,15 +117,29 @@ The harness is [`spikes/embedding/self_contained.py`](../../../spikes/embedding/
 
 **Measurement.** Seven failure classes, every one reached by a build that had to fail. A class whose build *succeeded* fails the run, so none of these texts describes an unreachable path. The complete rustc rendering — span, caret, source line, and the macro-backtrace note — is in [the diagnostics fixture](../../../spikes/embedding/results/self-contained-diagnostics-macos-27.0-2026-07-31.txt); every class renders at the invocation's own span in `consumer-a/src/main.rs`. The messages, verbatim:
 
-| Class | Exact message |
-| --- | --- |
-| `directory-unstated` | ``` `embed!` requires `TILER_EMBED_DIR` to be set to a non-empty value, and will not substitute a default: an embedding that silently changed which artifact it carried would produce a consumer binary nobody named. Set `TILER_EMBED_DIR`, or set `TILER_EMBED_CACHE` to `off` to expand without a cache ``` |
-| `slot-unstated` | the same sentence naming `TILER_EMBED_MEMBER_A` |
-| `cache-root-unstated` | ``` `embed!` requires `TILER_EMBED_CACHE` to be set to a non-empty value, and will not substitute a default: a cache root that arrives unstated is a cache that quietly relocates, and a developer sees only that builds became slow. Set it to an absolute directory path only you can write, or to `off` to expand without a cache ``` |
-| `cache-root-relative` | ``` `TILER_EMBED_CACHE` is set to `relative/cache`, which is not an absolute path. A proc macro runs in the build tool's working directory rather than yours, and `cargo` and `rust-analyzer` need not agree on it, so a relative root would name different directories in one project. Set `TILER_EMBED_CACHE` to an absolute directory path only you can write, or to `off` to expand without a cache ``` |
-| `member-unavailable` | ``` `embed!` cannot carry `serial-sum.tiler.nontrivial.selected`: <path> could not be read (No such file or directory (os error 2)), and no cache entry stood in for it. The artifact is an input to this expansion, so it must exist the first time a build expands this invocation; it is not needed afterwards, because the bytes are already in the expanded code. Re-run the producer, or point `TILER_EMBED_DIR` at a directory that holds it ``` |
-| `invalid-artifact` | ``` `embed!` read <path> for `serial-sum.tiler.nontrivial.selected`, but those bytes are not a decodable Tiler artifact (Malformed { detail: "TotalLengthMismatch { declared: 36838, actual: 18419 }" }); embedding them would put a payload in the consumer's binary that no runtime could accept. Re-run the producer that writes it ``` |
-| `ceiling-exceeded` | ``` `embed!` refuses to carry `serial-sum.tiler.nontrivial.selected`: it is 36838 bytes and this invocation's ceiling is 1024 bytes. The ceiling is a measured product bound rather than a Rust or linker limit, and every emitted copy counts against it, so crossing it is an explicit decision with a new measurement behind it. Raise `TILER_EMBED_CEILING_BYTES`, or split the region so each invocation carries less ``` |
+`directory-unstated`, and the same sentence naming `TILER_EMBED_MEMBER_A` for `slot-unstated`:
+
+> `embed!` requires `TILER_EMBED_DIR` to be set to a non-empty value, and will not substitute a default: an embedding that silently changed which artifact it carried would produce a consumer binary nobody named. Set `TILER_EMBED_DIR`, or set `TILER_EMBED_CACHE` to `off` to expand without a cache
+
+`cache-root-unstated`:
+
+> `embed!` requires `TILER_EMBED_CACHE` to be set to a non-empty value, and will not substitute a default: a cache root that arrives unstated is a cache that quietly relocates, and a developer sees only that builds became slow. Set it to an absolute directory path only you can write, or to `off` to expand without a cache
+
+`cache-root-relative`:
+
+> `TILER_EMBED_CACHE` is set to `relative/cache`, which is not an absolute path. A proc macro runs in the build tool's working directory rather than yours, and `cargo` and `rust-analyzer` need not agree on it, so a relative root would name different directories in one project. Set `TILER_EMBED_CACHE` to an absolute directory path only you can write, or to `off` to expand without a cache
+
+`member-unavailable`, the state reached when both the envelope and any cache entry standing in for it are gone:
+
+> `embed!` cannot carry `serial-sum.tiler.nontrivial.selected`: <path> could not be read (No such file or directory (os error 2)), and no cache entry stood in for it. The artifact is an input to this expansion, so it must exist the first time a build expands this invocation; it is not needed afterwards, because the bytes are already in the expanded code. Re-run the producer, or point `TILER_EMBED_DIR` at a directory that holds it
+
+`invalid-artifact`:
+
+> `embed!` read <path> for `serial-sum.tiler.nontrivial.selected`, but those bytes are not a decodable Tiler artifact (Malformed { detail: "TotalLengthMismatch { declared: 36838, actual: 18419 }" }); embedding them would put a payload in the consumer's binary that no runtime could accept. Re-run the producer that writes it
+
+`ceiling-exceeded`:
+
+> `embed!` refuses to carry `serial-sum.tiler.nontrivial.selected`: it is 36838 bytes and this invocation's ceiling is 1024 bytes. The ceiling is a measured product bound rather than a Rust or linker limit, and every emitted copy counts against it, so crossing it is an explicit decision with a new measurement behind it. Raise `TILER_EMBED_CEILING_BYTES`, or split the region so each invocation carries less
 
 **Inference.** Two of these are load-bearing beyond their text. `invalid-artifact` is produced by truncating a real envelope to half its length and carries the cache's own `decode_artifact` rejection through to the consumer, so the validation on the embedding path is demonstrably not decorative. `ceiling-exceeded` is reached by lowering the ceiling to 1,024 bytes rather than by manufacturing a 1 MiB artifact — the ceiling is overridable *for that reason*, because a refusal no test can reach is a refusal no reader should believe.
 
