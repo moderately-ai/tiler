@@ -16,15 +16,12 @@ use std::error::Error;
 use std::fmt;
 
 use tiler_artifact::program::{
-    ArtifactBuildError, ArtifactCodecFailure, ArtifactProgramBuilder, ArtifactVerificationError,
-    BackendEntryKey, BackendEntryRef, BindingKind, BindingSpec, CapabilityKey,
-    CompilationEnvironment, DecodedArtifact, DeferredPredicateSpec, EntrySpec,
-    FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec, PayloadContent, PayloadId,
-    SelectedProvider, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
-    VariantSpec, VerifiedArtifactProgram,
+    ArtifactBuildError, ArtifactCodecFailure, ArtifactVerificationError, BindingKind,
+    DecodedArtifact, PayloadContent, VerifiedArtifactProgram,
 };
 use tiler_cache::expansion::{ComposedSubject, ExpansionCache, Resolution, SubjectRefusal};
-use tiler_compiler::session::{Compilation, PlanAlternative};
+use tiler_compiler::session::PlanAlternative;
+use tiler_ir::program::StageRef;
 use tiler_ir::semantic::SemanticProgram;
 use tiler_metal::diagnostic::MetalEmitError;
 use tiler_metal::emit::emit_translation_unit;
@@ -32,9 +29,10 @@ use tiler_metal_aot::driver::Toolchain;
 use tiler_metal_aot::input::OptimizationLevel;
 
 use crate::{
-    AcceptedMetalArtifact, BoundMetalCompileDeclaration, CompiledMetalPayload,
-    MetalArtifactProtocolError, MetalAssemblyError, MetalCacheError, MetalPlanProfileMismatch,
-    accept_or_publish_single_payload_metal_artifact, metal_compile_request, prepare_metal_payload,
+    AcceptedMetalArtifact, BackendEntryDeclaration, BoundMetalCompileDeclaration,
+    CompiledMetalPayload, MetalArtifactProtocolError, MetalAssemblyError, MetalCacheError,
+    MetalPlanProfileMismatch, PlanArtifactError, accept_or_publish_single_payload_metal_artifact,
+    assemble_plan_artifact, metal_compile_request, prepare_metal_payload,
 };
 
 /// Why a checked compiler plan did not produce an accepted Metal artifact.
@@ -215,16 +213,22 @@ pub fn accept_or_publish_metal_plan(
         .map_err(MetalPlanBuildError::Preparation)?;
     let payload =
         prepare_metal_payload(&unit, prepared).map_err(MetalPlanBuildError::Preparation)?;
-    let pending = assemble_artifact(semantic, plan, |builder, profile| {
-        payload.push_pending(builder, profile)
-    })
+    let pending = assemble_plan_artifact(
+        semantic,
+        plan,
+        |builder, profile| payload.push_pending(builder, profile),
+        |_, stage| Ok(metal_entry_declaration(stage)),
+    )
     .map_err(MetalPlanBuildError::from)?;
 
     let acceptance =
         accept_or_publish_single_payload_metal_artifact(cache, &pending, payload, |compiled| {
-            assemble_artifact(semantic, plan, |builder, profile| {
-                compiled.push_carried(builder, profile)
-            })
+            assemble_plan_artifact(
+                semantic,
+                plan,
+                |builder, profile| compiled.push_carried(builder, profile),
+                |_, stage| Ok(metal_entry_declaration(stage)),
+            )
         })
         .map_err(MetalPlanBuildError::from)?;
     let decoded = resolution_artifact(acceptance.resolution());
@@ -241,9 +245,12 @@ pub fn accept_or_publish_metal_plan(
         ))?
         .to_vec();
     let compiled = CompiledMetalPayload::from_content(PayloadContent { metadata, code });
-    let artifact = assemble_artifact(semantic, plan, |builder, profile| {
-        compiled.push_carried(builder, profile)
-    })
+    let artifact = assemble_plan_artifact(
+        semantic,
+        plan,
+        |builder, profile| compiled.push_carried(builder, profile),
+        |_, stage| Ok(metal_entry_declaration(stage)),
+    )
     .map_err(MetalPlanBuildError::from)?;
     if artifact.canonical_identity().as_bytes() != decoded.identity().as_bytes() {
         return Err(MetalPlanBuildError::CacheProtocol(
@@ -263,98 +270,25 @@ const fn resolution_artifact(resolution: &Resolution) -> &DecodedArtifact {
     }
 }
 
-fn assemble_artifact(
-    semantic: &SemanticProgram,
-    plan: PlanAlternative<'_>,
-    declare_payload: impl FnOnce(
-        &mut ArtifactProgramBuilder,
-        TargetProfileRef,
-    ) -> Result<PayloadId, ArtifactBuildError>,
-) -> Result<VerifiedArtifactProgram, PlanArtifactError> {
-    let compilation = plan.compilation();
-    let profile = target_profile(compilation)?;
-    let rules = feasibility_rules(compilation)?;
-    let environment = CompilationEnvironment::new(compilation.offered_providers().iter().cloned())?;
-    let mut builder = ArtifactProgramBuilder::new(semantic, environment)?;
-
-    for selected in plan.selected_capabilities() {
-        builder.select_provider(SelectedProvider {
-            provider: selected.provider().clone(),
-            capability: CapabilityKey::new(selected.capability_key())?,
-            capability_revision: selected.capability_revision(),
-        })?;
-    }
-
-    let payload_id = declare_payload(&mut builder, profile.clone())?;
-    let program = plan.abi().kernel_program();
-    let deferred_predicates = plan
-        .prepared_entry_target_requirements()
-        .map(|requirement| DeferredPredicateSpec {
-            requirement: requirement.requirement().clone(),
-            entry: requirement.entry(),
-        })
-        .collect();
-    let mut entries = Vec::with_capacity(program.stages().len());
-    for stage in program.stages() {
-        entries.push(EntrySpec {
-            bindings: stage
-                .accesses()
-                .map(|_| BindingSpec {
-                    kind: BindingKind::Buffer,
-                })
-                .collect(),
-            launch: LaunchSpec {
-                zero_work_skips_dispatch: true,
-                preconditions: Vec::new(),
-            },
-            implementation: BackendEntryRef {
-                payload: payload_id,
-                entry_key: BackendEntryKey::from_bytes(
-                    stage.kernel().canonical_identity().as_bytes(),
-                )?,
-            },
-        });
-    }
-
-    builder.push_variant(
-        program,
-        VariantSpec {
-            target_profile: profile,
-            feasibility_rules: rules,
-            deferred_predicates,
-            entries,
-        },
-    )?;
-    builder.build().map_err(PlanArtifactError::Verification)
-}
-
-fn target_profile(compilation: &Compilation) -> Result<TargetProfileRef, ArtifactBuildError> {
-    Ok(TargetProfileRef {
-        key: TargetProfileKey::new(compilation.target_profile_key())?,
-        descriptor: TargetProfileDescriptorDigest::from_bytes(
-            compilation.target_profile_descriptor(),
-        )?,
-    })
-}
-
-fn feasibility_rules(
-    compilation: &Compilation,
-) -> Result<FeasibilityRuleSetRef, ArtifactBuildError> {
-    Ok(FeasibilityRuleSetRef {
-        key: FeasibilityRuleSetKey::new(compilation.feasibility_rule_set_key())?,
-        revision: compilation.feasibility_rule_set_revision(),
-    })
-}
-
-#[derive(Debug)]
-enum PlanArtifactError {
-    Build(ArtifactBuildError),
-    Verification(ArtifactVerificationError),
-}
-
-impl From<ArtifactBuildError> for PlanArtifactError {
-    fn from(error: ArtifactBuildError) -> Self {
-        Self::Build(error)
+/// The three launch statements the standard Metal backend makes per stage.
+///
+/// Every Metal buffer parameter is a buffer binding, a zero-thread Metal
+/// dispatch is skippable, and this path declares no launch-time precondition —
+/// the workgroup bound it depends on is a *deferred* predicate the compiler
+/// minted, which the neutral facade carries from the plan and no backend
+/// restates. These are exactly the three statements
+/// [ADR 0090](../../docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md)
+/// item 11 names as not yet neutral; they are now this backend's answer rather
+/// than the orchestrator's assumption.
+///
+/// It takes neither the builder nor a failure path, which is itself the
+/// statement: this backend mints no expression of its own and has nothing to
+/// refuse here, so the three answers are a total function of the stage.
+fn metal_entry_declaration(stage: StageRef<'_>) -> BackendEntryDeclaration {
+    BackendEntryDeclaration {
+        bindings: stage.accesses().map(|_| BindingKind::Buffer).collect(),
+        zero_work_skips_dispatch: true,
+        preconditions: Vec::new(),
     }
 }
 
@@ -384,7 +318,7 @@ impl From<MetalCacheError<PlanArtifactError>> for MetalPlanBuildError {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use tiler_artifact::program::StageDependencyReason;
+    use tiler_artifact::program::{DigestAlgorithm, StageDependencyReason};
     use tiler_cache::expansion::{ExpansionCache, Resolution};
     use tiler_compiler::session::{
         Compilation, CompileRequest, NumericalContract, compile, compile_governed,
@@ -717,6 +651,73 @@ mod tests {
             matches!(mismatch, MetalPlanProfileMismatch::ProfileDescriptor { .. }),
             "unexpected mismatch: {mismatch}",
         );
+    }
+
+    /// The standard Metal path's published identities are pinned to exact bytes.
+    ///
+    /// Two artifacts with different payload bytes can share one canonical
+    /// identity, and a structural assertion over variants and entries would pass
+    /// through a change that silently moved what a consumer files or loads. The
+    /// two byte runs below are the whole producer-visible result of the standard
+    /// path: the artifact identity a loading host compares, and the composed
+    /// subject the expansion cache keys on.
+    ///
+    /// They are recorded rather than derived because the point is that they do
+    /// **not** move: this path was rewritten to route through the
+    /// backend-neutral [`assemble_plan_artifact`] facade, and these values were
+    /// captured before that rewrite. A change here is either a deliberate
+    /// identity revision — which must move the goldens in the commit that states
+    /// why — or the defect this test exists to catch.
+    ///
+    /// [`assemble_plan_artifact`]: crate::assemble_plan_artifact
+    #[test]
+    fn the_standard_metal_path_publishes_its_recorded_identities() {
+        const ARTIFACT_IDENTITY: &str =
+            "7a11d035c13036b7206b5388e59787f37722a6ee812798c99dd8292da8eafabd";
+        const CACHE_SUBJECT: &str =
+            "58a71c547d008574de8e2277ecf9121ea627b3f9d919fdc282140d237291945d";
+
+        let directory = scratch("golden");
+        let cache = ExpansionCache::open(directory.join("cache"));
+        let (toolchain, _counter) = counted_toolchain(&directory);
+        let program = semantic_program();
+        let declaration = declaration();
+        let compilation = declared_compilation(&declaration, &program);
+        let plan = compilation.selected().expect("one selected plan");
+
+        let accepted = accept_or_publish_metal_plan(
+            &cache,
+            &toolchain,
+            &program,
+            plan,
+            &declaration,
+            OptimizationLevel::Default,
+        )
+        .expect("the standard Metal path resolves");
+
+        assert_eq!(
+            pinned(accepted.artifact().canonical_identity().as_bytes()),
+            ARTIFACT_IDENTITY,
+            "the standard Metal artifact identity moved",
+        );
+        assert_eq!(
+            pinned(accepted.cache_subject().as_bytes()),
+            CACHE_SUBJECT,
+            "the standard Metal cache subject moved",
+        );
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    /// Renders a golden over an identity preimage rather than over its bytes.
+    ///
+    /// Both preimages here run to tens of kilobytes, so the recorded form is a
+    /// digest under this test's own domain. It is a comparison aid and never an
+    /// identity: nothing but this test reads it, and a collision would have to be
+    /// found deliberately in SHA-256 to hide a change.
+    fn pinned(preimage: &[u8]) -> String {
+        DigestAlgorithm::GOVERNED
+            .digest(b"tiler.build.metal-plan-golden.v1\0", preimage)
+            .label()
     }
 
     /// The backend's own realization recheck survives a direct emitter call.
