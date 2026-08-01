@@ -3,26 +3,36 @@ schema: "tiler-doc/v1"
 id: "tiler.spike.apple-targets"
 kind: "experiment"
 title: "Apple Metal target compatibility and numerical spikes"
-topics: ["apple-targets", "metal", "compatibility", "numerics", "subnormals", "runtime-compilation"]
+topics: ["apple-targets", "metal", "compatibility", "numerics", "subnormals", "runtime-compilation", "quantization"]
 experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement"]
 supports: ["tiler.research.apple-targets.compatibility", "tiler.research.apple-targets.numerical-behaviour"]
-entrypoints: ["spikes/apple-targets/compatibility_probe.sh", "spikes/apple-targets/runtime_failure_probe.swift", "spikes/apple-targets/validate_compatibility_record.py", "spikes/apple-targets/replay_retained_compatibility_record.sh", "spikes/apple-targets/validate_numerical_record.py", "spikes/apple-targets/test_probes.py", "spikes/apple-targets/numerical_probe.py", "spikes/apple-targets/numerical_probe_host.m", "spikes/apple-targets/test_numerical_probe.py", "spikes/apple-targets/bfloat_dispatch_probe.py", "spikes/apple-targets/aot-runtime-compiler-observer/run.sh"]
+entrypoints: ["spikes/apple-targets/compatibility_probe.sh", "spikes/apple-targets/runtime_failure_probe.swift", "spikes/apple-targets/validate_compatibility_record.py", "spikes/apple-targets/replay_retained_compatibility_record.sh", "spikes/apple-targets/validate_numerical_record.py", "spikes/apple-targets/test_probes.py", "spikes/apple-targets/numerical_probe.py", "spikes/apple-targets/numerical_probe_host.m", "spikes/apple-targets/test_numerical_probe.py", "spikes/apple-targets/bfloat_dispatch_probe.py", "spikes/apple-targets/aot-runtime-compiler-observer/run.sh", "spikes/apple-targets/code-domain-integer-decode/decode_probe.py", "spikes/apple-targets/code-domain-integer-decode/decode_probe_host.m", "spikes/apple-targets/code-domain-integer-decode/validate_decode_record.py", "spikes/apple-targets/code-domain-integer-decode/test_decode_probe.py"]
 last_verified: "2026-07-31"
 ticket: "apple-artifact-compatibility"
 ---
 
 # Apple Metal target compatibility and numerical spikes
 
-Three independent probes share this directory because they share a host row. The
+Four independent probes share this directory because they share a host row. The
 compatibility probe answers which artifact families and deployment minima
 produce which bytes. The numerical probe answers what Apple GPU scalar
 arithmetic actually does to subnormals, signed zero, and contraction — and, since
 the dtype axis was added, that the answer is not the same for `f32` and `f16`.
 The AOT runtime-compiler observer asks whether native metallib and pipeline
-preparation exposes an attributable compiler build without source JIT.
-Neither downloads or installs a toolchain component.
+preparation exposes an attributable compiler build without source JIT. The
+code-domain integer decode probe asks whether the emitted MSL for the registered
+strict-affine `u8` decode computes the contract's value over its complete finite
+code domain. None downloads or installs a toolchain component.
+
+## Code-domain integer decode probe
+
+The [sibling harness](code-domain-integer-decode/README.md) measures the strict-affine `u8` decode's integer machinery — a `uchar` read, a widening to `int`, an `int` subtraction, an `int`-to-`float` conversion, and a multiply by an `f32` scale — over the complete 256 × 256 code and zero-point grid against an exact rational reference rounded once to `binary32`. Its 2026-07-31 retained record found every cell of every normal-scale case bit-identical to that reference on both compilation paths, the subnormal scales flushing on the *input* rather than the result, and `+0.0` for the whole code-equals-zero-point diagonal.
+
+**It is a sibling rather than a dtype on the numerical probe, and the trade was priced rather than guessed.** The kernel table above is shared by every profile, so a new kernel family moves `probe.harness_sha256` in all four retained records — the 2026-07-31 permutation landing measured that cost — for a question none of them asks; and a 65,536-cell population cannot be a `case.*.results` row. The numerical probe's verdict vocabulary classifies a *subnormal observation*, where this one classifies agreement with a computed reference over a population. The two harnesses share the host row, the profile identity, the atomic-publication and retained-manifest conventions, and nothing else.
+
+**Its guard is the kernel rather than a witness.** Every operand of the arithmetic under test arrives in a buffer, so no stage of either compiler can fold it — which is precisely what the two-layer guard above exists to catch on kernels whose operands are immediates. Its emitted-operation recognizer nonetheless matches *every* named call rather than an expected intrinsic set, because this front end lowers `float(int)` to `air.convert.f.f32.s.i32` and not `sitofp`: naming the LLVM conversion opcodes would have reported the conversion stage absent from every module, which is the `air.fma.f32` retraction met again in a new spelling.
 
 ## Native-AOT runtime-compiler observer
 

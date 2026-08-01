@@ -1,0 +1,8 @@
+schema	tiler.apple-code-domain-integer-decode-input-manifest/v1
+profile	apple9-f32-unified-msl4-macos26
+msl_version	metal4.0
+runtime_language	4.0
+input.spikes/apple-targets/code-domain-integer-decode/decode_probe.py	6f1c671eea166808d54c3cbd20362f89f95dc21bc55e3904d861a00c05308fa1
+input.spikes/apple-targets/code-domain-integer-decode/decode_probe_host.m	fb2572c29fab84c2daf6852bfd7c1700a1f04fc1225fe401617237143a87ea3f
+input.spikes/apple-targets/code-domain-integer-decode/validate_decode_record.py	4f893d137ae863ed23ec7dc2f457c600c105644d2b202d69d17a2fe70423bd19
+source.sources/decode_strict_affine_u8.metal	b0b7e08364e430647984445db13915fca951f44df5688dfd19df5317d5402a2e
