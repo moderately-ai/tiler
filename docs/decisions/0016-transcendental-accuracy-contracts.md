@@ -6,7 +6,7 @@ title: "Resolve transcendental accuracy per operation"
 topics: ["numerics","transcendentals","accuracy"]
 catalog_group: "numerical-operations"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 applies_to: ["tiler.contract.numerical-semantics"]
 evidence: ["tiler.research.numerics.transcendental-accuracy-precedents"]
 ticket: "numerical-policy-contract"

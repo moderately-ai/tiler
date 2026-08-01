@@ -1,7 +1,7 @@
 ---
 id: implement-the-typed-accuracy-contract-vocabulary
 title: Implement the typed transcendental accuracy-contract vocabulary
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [admit-the-silu-activation-family, admit-the-rms-normalization-family, admit-the-softmax-family, record-the-metal-elementary-function-accuracy-guarantee, numerical-policy-contract, own-operation-family-support-matrix, scope-transformer-nonlinear-normalization-and-reductions]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/reference, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, semantics, numerics, transcendental, accuracy, boundary]
-claimed_from: todo
-assignee: worker-accuracy
-lease_expires_at: 1785557885
 ---
 ## User-visible outcome
 
@@ -118,3 +115,5 @@ Every item below is public surface and therefore Tom's to accept; a tested imple
 ### Verification
 
 `cargo fmt --all --check`; `cargo check -p tiler-ir -p tiler-reference --all-targets`; `cargo clippy -p tiler-ir -p tiler-reference --all-targets -- -D warnings` (clean, with no new `#[allow]`); `cargo nextest run --workspace` 1,793 → 1,798 passing; `cargo test --doc`; `RUSTDOCFLAGS="-D warnings" cargo doc`; `make full` including the release-profile `tiler-reference` numerical tests, which the enclosure passes by construction because every value in it is an exact integer ratio; `git diff --check`; `tkt lint`; `tkt guard`.
+
+**Provisional boundary acceptance (2026-08-01, overnight mode).** The coordinator provisionally accepted the eight-item public packet under Tom's stated bar — the four contract forms, exact tolerances, the `ulp-reference-gap` metric with rejection-not-guessing dtype compatibility, the six predicates with canonical-spelling refusal at decode, the domain language with witness-proved nonemptiness, the five evidence classes, the conservative refinement relation with the registered-implication registry (the Metal ≤4-ulp case demonstrably expressible and demonstrably NOT name-matched), and the certified-enclosure reference half with its failure-proof. Recorded for Tom's morning review with one-revert isolation.
