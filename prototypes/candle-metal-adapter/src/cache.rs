@@ -118,6 +118,28 @@ pub struct PipelineKey {
     symbol: String,
 }
 
+/// One compute pipeline together with the argument table its object addresses.
+///
+/// The two are cached as one value because they are one observation: the
+/// argument indices are read from the reflection the device returned *while
+/// compiling this exact pipeline*, and there is no second call that recovers
+/// them afterwards — `MTLComputePipelineState` publishes no argument table.
+///
+/// Caching the table rather than the verdict is deliberate. A cache that stored
+/// "this entry was validated" would discharge the comparison once and skip it on
+/// every hit, and the declared side is not a property of the cache key: the key
+/// names the device, the artifact, the entry position, and the symbol, and *not*
+/// the routed bindings the loader derived for this attempt. So the addressed
+/// slots are stored as a fact and [`crate::adapter::argument_slots_agree`] runs
+/// against the current route's declaration on every hit as well as every miss.
+#[derive(Clone, Debug)]
+pub struct PreparedPipeline {
+    /// The compiled pipeline state.
+    pub pipeline: ComputePipeline,
+    /// The buffer argument indices the compiled object addresses, ascending.
+    pub addressed_slots: Vec<u64>,
+}
+
 /// Libraries and pipelines this process built for one device and context.
 ///
 /// Never global and never shared between devices: every read and write goes
@@ -127,7 +149,7 @@ pub struct PipelineKey {
 pub struct PipelineCache {
     scope: DeviceScope,
     libraries: HashMap<LibraryKey, Library>,
-    pipelines: HashMap<PipelineKey, ComputePipeline>,
+    pipelines: HashMap<PipelineKey, PreparedPipeline>,
 }
 
 impl PipelineCache {
@@ -197,14 +219,14 @@ impl PipelineCache {
         }
     }
 
-    /// Returns a cached pipeline, or `None`.
-    pub fn pipeline(&self, key: &PipelineKey) -> Option<&ComputePipeline> {
+    /// Returns a cached pipeline and its argument table, or `None`.
+    pub fn pipeline(&self, key: &PipelineKey) -> Option<&PreparedPipeline> {
         self.pipelines.get(key)
     }
 
-    /// Stores one pipeline under its key.
-    pub fn insert_pipeline(&mut self, key: PipelineKey, pipeline: ComputePipeline) {
-        self.pipelines.insert(key, pipeline);
+    /// Stores one pipeline and its argument table under its key.
+    pub fn insert_pipeline(&mut self, key: PipelineKey, prepared: PreparedPipeline) {
+        self.pipelines.insert(key, prepared);
     }
 
     /// Returns how many libraries and pipelines this cache holds.

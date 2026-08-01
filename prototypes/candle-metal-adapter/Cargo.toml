@@ -36,17 +36,27 @@ tiler-runtime.workspace = true
 # through `candle-core` alone. The version must stay the one `candle-core`
 # resolves, or the two `Buffer` types are two types with one name.
 #
-# `objc2-metal` and `dispatch2` cover exactly two things Candle's own wrapper
+# `objc2-metal` and `dispatch2` cover exactly three things Candle's own wrapper
 # does not expose: `newLibraryWithData:error:`, which is how a precompiled
-# `metallib` becomes a library without compiling MSL at run time, and
-# `MTLCommandBufferStatus`, which is how a submission's terminal state is read.
-# Both are safe calls, so this crate keeps the workspace's `unsafe_code =
-# "forbid"` rather than diverging the way `tiler-prototype-run` must.
+# `metallib` becomes a library without compiling MSL at run time;
+# `MTLCommandBufferStatus`, which is how a submission's terminal state is read;
+# and `newComputePipelineStateWithDescriptor:options:reflection:error:`, which is
+# the only way to obtain the compiled object's own argument table — Candle's
+# `new_compute_pipeline_state_with_function` discards the reflection out-param.
+# All three are safe calls, so this crate keeps the workspace's `unsafe_code =
+# "forbid"` rather than diverging the way `tiler-prototype-run` must. The
+# *function*-taking reflection overload is `unsafe fn` in this binding and the
+# descriptor-taking one is not, which is why the adapter builds a descriptor.
 [target.'cfg(target_os = "macos")'.dependencies]
 candle-core = { version = "0.11.0", features = ["metal"] }
 candle-metal-kernels = "0.11.0"
 dispatch2 = { version = "0.3.1", features = ["block2"] }
 objc2-metal = { version = "0.3.1", features = [
+    # Carries no API this adapter names: it gates the reflection-bearing
+    # pipeline constructor's own `cfg`, and without it that method is absent.
+    "MTLAllocation",
+    # `MTLBinding`, `MTLBindingType`, and `MTLComputePipelineReflection::bindings`.
+    "MTLArgument",
     "MTLCommandBuffer",
     "MTLCommandEncoder",
     "MTLCommandQueue",
