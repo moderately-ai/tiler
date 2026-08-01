@@ -58,7 +58,11 @@ Do not close this by having the frontend invent extents, by compiling a represen
 
 **Deliberately not done.** No code changed and no type widened — this is the research ticket the three public boundaries required before implementation. `docs/ir.md` gained one paragraph stating the gap as a fact and pointing at the record; no other contract sentence moved, because none was false. The additive extent relation is untouched: it is already filed from L5 and the chain here neither depends on it nor duplicates it. No measurement was taken and none is claimed; the C1 artifact-count arithmetic is arithmetic over L5's stated row.
 
-**Verification.** `tkt lint` clean; `git diff --check` clean; `tkt guard --base bc39282` in scope; `make full` green on the final commit. The record's six reproducible checks each carry a positive control and each was run.
+**Verification.** `tkt lint` clean; `git diff --check` clean; `make full` green on the final commit — 1,751 workspace tests passed with 4 skipped, 610 release-profile numerical tests passed with 1 skipped, doc-tests, rustdoc, `ticketsplease lint`, and shellcheck all clean. The record's six reproducible checks each carry a positive control, and each check and each control was run.
+
+**Guard verdict: WARN at exit 0, which is a coordination note and not a scope escape.** Eleven files changed, affected scopes exactly equal declared scopes. `tkt guard` reports a *direct* collision with `implement-the-typed-accuracy-contract-vocabulary`, which is in-progress and also declares `contracts/navigation`, and shared `project/tickets` collisions with two more. The whole navigation footprint here is one inserted line in `docs/research/README.md` — `git diff --stat bc39282 -- docs/research/README.md` reports `1 insertion(+)` — placed at its alphabetical position in a sorted catalog, so the integrator should expect a one-line textual conflict there and nothing structural.
+
+**Environment note, because it cost a run and could cost another.** The first `make full` failed with `ENOSPC`: the root filesystem reached 100% with 118 MiB free while a second agent ran `make full` in a parallel worktree. Only this ticket's own regenerable `target/` was removed — other worktrees' build outputs belong to their tickets and were left alone — after which the gate ran clean. Four worktree target directories held about 12 GiB between them at the time.
 
 ## Graph maintenance
 
