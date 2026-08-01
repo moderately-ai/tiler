@@ -19,6 +19,7 @@ use tiler_ir::semantic::{
 use tiler_ir::shape::Shape;
 
 use super::{ContractionContract, ContractionSeed, contract_operands};
+use crate::MAX_REFERENCE_TENSOR_ELEMENTS;
 use crate::error::{ReferenceOperationError, UnsupportedContractionDeclaration};
 use crate::evaluate::{f32_element, f32_elements};
 use crate::tensor::Tensor;
@@ -239,6 +240,59 @@ fn an_empty_contracted_domain_is_refused_rather_than_returning_a_seed() {
     assert_eq!(
         result_bits(&contract_operands(&contract, &structure(), &left, &right).unwrap()),
         vec![0x40c0_0000]
+    );
+}
+
+/// The fold's work bound refuses under its own variant, not the storage bound's.
+///
+/// Three cases, because one refusal proves nothing about *which* bound spoke.
+/// With `d = 1` the output is the whole iteration space, so the stored-element
+/// bound is what refuses — the meaning `OutputElementsExceeded` documents. With
+/// `d = 2` and an output deliberately under that bound, no shape and no stored
+/// result is over any limit; only the fold's step count is, and only the work
+/// bound can name it. The third case is the same structure at a small extent, so
+/// the two refusals discriminate the bound rather than the fixture family.
+///
+/// Every fixture is built from extents: both refusals happen before the fold
+/// allocates its result or takes a step, so the test costs two small operands.
+#[test]
+fn an_iteration_space_over_the_bound_is_refused_as_iteration_work() {
+    let contract = ContractionContract::governed().expect("the governed signature is realizable");
+    let ones = |count: usize| vec![0x3f80_0000_u32; count];
+
+    // `td,od->to` with `d = 1`: `t * o` steps producing `t * o` elements.
+    let left = tensor([4096, 1], &ones(4096));
+    let right = tensor([4097, 1], &ones(4097));
+    assert_eq!(
+        contract_operands(&contract, &structure(), &left, &right),
+        Err(ReferenceOperationError::OutputElementsExceeded {
+            limit: MAX_REFERENCE_TENSOR_ELEMENTS,
+            actual: 4096 * 4097,
+        })
+    );
+
+    // `d = 2`: 8,389,712 output elements, under the limit, folded over two
+    // contributors each — 16,779,424 multiply-accumulate steps, over it.
+    let left = tensor([2896, 2], &ones(5792));
+    let right = tensor([2897, 2], &ones(5794));
+    // The premise the case rests on: this output is *not* over the storage bound,
+    // so the refusal below can only be the work bound.
+    const { assert!(2896 * 2897 <= MAX_REFERENCE_TENSOR_ELEMENTS) };
+    assert_eq!(
+        contract_operands(&contract, &structure(), &left, &right),
+        Err(ReferenceOperationError::IterationStepsExceeded {
+            limit: MAX_REFERENCE_TENSOR_ELEMENTS,
+            actual: 2896 * 2897 * 2,
+        })
+    );
+
+    // The admitted neighbour: the same structure and the same `d = 2` fold, at an
+    // extent whose work fits.
+    let left = tensor([2, 2], &ones(4));
+    let right = tensor([3, 2], &ones(6));
+    assert_eq!(
+        result_bits(&contract_operands(&contract, &structure(), &left, &right).unwrap()),
+        vec![0x4000_0000; 6]
     );
 }
 

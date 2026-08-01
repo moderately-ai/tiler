@@ -439,12 +439,20 @@ pub(crate) fn contract_operands(
     // The fold performs `output_count * contracted_count` multiply-accumulate
     // steps, which is larger than either operand and is bounded by neither of the
     // tensor limits the operands already passed. Refused before the loop rather
-    // than discovered inside it.
-    if output_count
-        .checked_mul(contracted_count)
-        .is_none_or(|steps| steps > MAX_REFERENCE_TENSOR_ELEMENTS)
-    {
-        return Err(ReferenceOperationError::ShapeTooLarge);
+    // than discovered inside it, and under the work bound's own variant: nothing
+    // about the shapes is too large here, so `ShapeTooLarge` would send a reader
+    // looking at the wrong quantity.
+    //
+    // Saturating rather than checked, because a product too large for `usize`
+    // still has to refuse: `usize::MAX` exceeds the limit, so the saturated count
+    // reports a floor of the work rather than turning an unnameable one into a
+    // wrapped small number the loop would then walk.
+    let steps = output_count.saturating_mul(contracted_count);
+    if steps > MAX_REFERENCE_TENSOR_ELEMENTS {
+        return Err(ReferenceOperationError::IterationStepsExceeded {
+            limit: MAX_REFERENCE_TENSOR_ELEMENTS,
+            actual: steps,
+        });
     }
     if output_count == 0 {
         return Tensor::dense(contract.result_type.clone(), output_shape, Vec::new())
