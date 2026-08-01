@@ -6,7 +6,7 @@ priority: p1
 dependencies: []
 related: [realize-parallel-reduction-strategies-on-metal, calibrate-and-activate-parallel-reduction-selection]
 scopes: [implementation/compiler, contracts/numerics]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: []
 ---
