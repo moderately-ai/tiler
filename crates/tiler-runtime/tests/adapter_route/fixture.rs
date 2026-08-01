@@ -47,8 +47,8 @@ use tiler_ir::program::{
 };
 use tiler_ir::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
-    ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
-    NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
+    ExceptionalValueAssumption, ExecutionBinding, InputOrdinal, KernelSchedule, LaunchPlan,
+    LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
     OwnershipWitnessId, ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder,
     SubnormalMode, TailPolicy, TensorRole,
 };
@@ -421,7 +421,9 @@ fn fused_kernel() -> VerifiedKernel {
         .expect("the iteration shape");
     region
         .push_access(Access {
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::ReductionContributor {
@@ -447,7 +449,9 @@ fn fused_kernel() -> VerifiedKernel {
     region
         .push_bounds_proof(BoundsProof {
             id: BoundsWitnessId::new(0),
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: None,
             kind: BoundsProofKind::ReductionDomain {
                 input_shape: input_shape(),
