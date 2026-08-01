@@ -287,7 +287,8 @@ pub struct OwnershipProof {
 ///         ScalarProgram::StrictSerialSum { .. }
 ///         | ScalarProgram::SquaredSerialSum { .. }
 ///         | ScalarProgram::FusedMultiplyAddSerialSum { .. }
-///         | ScalarProgram::StrictTensorContraction { .. } => true,
+///         | ScalarProgram::StrictTensorContraction { .. }
+///         | ScalarProgram::StrictSerialMaximum { .. } => true,
 ///     }
 /// }
 /// let program = ScalarProgram::StrictSerialSum {
@@ -391,6 +392,46 @@ pub enum ScalarProgram {
         /// Row-major shape of the contracted iteration space, in ascending
         /// canonical contracted-index order.
         contracted_shape: Shape,
+        /// Contributor combination order.
+        order: ContributorOrder,
+        /// Canonical arithmetic NaN bit pattern.
+        canonical_nan_bits: u32,
+    },
+    /// A serial reduction under the NaN-propagating `Maximum` extrema family.
+    ///
+    /// The first fold `tiler::softmax-f32@1` embeds, and this vocabulary's first
+    /// reduction whose combiner is not `Add`. It is a *new reducer* rather than a
+    /// prologue or epilogue over an existing one, which is the difference from
+    /// [`Self::SquaredSerialSum`]: no choice of per-contributor expression turns a
+    /// sum into a maximum.
+    ///
+    /// **There is deliberately no empty-domain identity, and the omission is the
+    /// contract rather than an oversight.** [Numerical
+    /// semantics](../../../../docs/numerical-semantics.md) records that an
+    /// identity-less reduction "is valid only with an explicit initial value or a
+    /// proven/runtime-validated non-empty domain", and the extrema families have
+    /// no identity: no binary32 value `i` satisfies `Maximum(i, x) == x` for every
+    /// `x`, because any candidate is itself a possible contributor. A field
+    /// carrying one would be a value that can never be correct — the same
+    /// reasoning [`Self::StrictTensorContraction`] states for its unseeded fold.
+    /// The schedule verifier refuses a reduced domain with no contributors
+    /// instead, and the lowering refuses it again where it could still emit.
+    ///
+    /// **The `-0.0 < +0.0` ordering makes this fold order-insensitive**, which is
+    /// what separates its legality from every sum in this vocabulary: the pinned
+    /// family is associative and commutative on *every* binary32 input, so any
+    /// tree over the same contributors gives the same bits. The topology admitted
+    /// here is nevertheless the serial one alone — a multi-pass extrema split is a
+    /// schedule the reduction-strategies work owns, and refusing it is fail-closed
+    /// rather than a claim that it is illegal.
+    ///
+    /// It carries `canonical_nan_bits` like every other reduction: a maximum
+    /// selects bit patterns rather than computing values, but a NaN it selects is
+    /// still an arithmetic reduction's result and follows the result-boundary
+    /// canonicalization rule.
+    StrictSerialMaximum {
+        /// Reduced axes in canonical ascending order.
+        axes: Vec<Axis>,
         /// Contributor combination order.
         order: ContributorOrder,
         /// Canonical arithmetic NaN bit pattern.
@@ -917,7 +958,12 @@ pub(crate) const fn subnormal_freedom_of(program: &ScalarProgram) -> SubnormalFr
         | ScalarProgram::StrictSerialSum { .. }
         | ScalarProgram::SquaredSerialSum { .. }
         | ScalarProgram::FusedMultiplyAddSerialSum { .. }
-        | ScalarProgram::StrictTensorContraction { .. } => SubnormalFreedom::Unproven,
+        | ScalarProgram::StrictTensorContraction { .. }
+        // A maximum performs no arithmetic, so it produces no *new* subnormal —
+        // but it selects between operands a flushing target would have already
+        // changed, so nothing here is proved and `Unproven` is the honest answer
+        // rather than a discharge this variant has not earned.
+        | ScalarProgram::StrictSerialMaximum { .. } => SubnormalFreedom::Unproven,
     }
 }
 
@@ -1129,6 +1175,14 @@ const TAG_SCALAR_SQUARED_SUM: u8 = 0x26;
 /// through `0x26` keep their meanings and their field positions, so the schedule
 /// identity domain does not step.
 const TAG_SCALAR_TENSOR_CONTRACTION: u8 = 0x27;
+/// Scalar-program tag of the strict serial `Maximum` reduction.
+///
+/// Appended for the same reason and with the same consequence as `0x26` and
+/// `0x27`: `0x22` through `0x27` keep their meanings and their field positions,
+/// so no previously encodable region's bytes move and the schedule identity
+/// domain does not step. A reader that reaches `0x28` is reading a region the
+/// earlier vocabulary could not express.
+const TAG_SCALAR_SERIAL_MAXIMUM: u8 = 0x28;
 const TAG_REDUCTION_NONE: u8 = 0x31;
 const TAG_REDUCTION_SERIAL: u8 = 0x32;
 /// Reduction-topology tag of a split, multi-dispatch reduction pass.
@@ -1398,6 +1452,20 @@ fn push_scalar_program(bytes: &mut Vec<u8>, program: &ScalarProgram) {
         } => {
             bytes.push(TAG_SCALAR_TENSOR_CONTRACTION);
             push_shape(bytes, contracted_shape);
+            push_order(bytes, *order);
+            bytes.extend_from_slice(&canonical_nan_bits.to_be_bytes());
+        }
+        // Appended for the same reason as `0x26` and `0x27`, and — like the
+        // contraction and unlike every sum — with no empty-domain identity to
+        // encode: the extrema family has none, so the verifier refuses an empty
+        // reduced domain rather than committing a value there.
+        ScalarProgram::StrictSerialMaximum {
+            axes,
+            order,
+            canonical_nan_bits,
+        } => {
+            bytes.push(TAG_SCALAR_SERIAL_MAXIMUM);
+            push_axes(bytes, axes);
             push_order(bytes, *order);
             bytes.extend_from_slice(&canonical_nan_bits.to_be_bytes());
         }

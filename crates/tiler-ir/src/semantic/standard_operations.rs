@@ -10,7 +10,8 @@ use super::{
     ShapedValue, Value, add_bf16_op, add_f32_op, broadcast_f32_op, canonical_bf16_bits,
     constant_bf16_op, constant_f32_op, multiply_bf16_op, multiply_f32_op, reindex_f32_op,
     rms_norm_f32_axis_attribute, rms_norm_f32_eps_attribute, rms_norm_f32_op, silu_f32_op,
-    strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
+    softmax_f32_axis_attribute, softmax_f32_op, strict_serial_sum_f32_op,
+    strict_tensor_contraction_f32_op,
 };
 
 /// Exact binary32 constant from its IEEE-754 payload.
@@ -451,6 +452,69 @@ impl F32RmsNorm {
             rms_norm_f32_op(),
             attributes,
             &[value.erase(), weight.erase()],
+        )
+    }
+}
+
+/// Binary32 softmax over one named axis.
+///
+/// One operand and never two: the causal mask is added *upstream* by a
+/// `tiler::add-f32@1` occurrence over a broadcast F32 mask input, so what reaches
+/// this key is already the shifted score tensor. That is why decision **D-1** is
+/// not a case this operation can recognize — by the time the scores arrive, a
+/// masked position is an ordinary very negative number.
+///
+/// Shape-preserving, so the result carries the operand's shape unchanged and a
+/// zero-length reduced axis produces a zero-length result.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct F32Softmax;
+
+impl F32Softmax {
+    /// Applies the registered softmax semantics.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed construction error without mutating the graph on failure,
+    /// including the named refusals for an absent, duplicated, multi-valued, or
+    /// out-of-range reduced axis.
+    pub fn apply(
+        builder: &mut SemanticProgramBuilder,
+        scores: Value<F32>,
+        axis: Axis,
+    ) -> Result<Value<F32>, BuildError> {
+        let attributes = OperationAttributes::new([CanonicalField::new(
+            super::SOFTMAX_REDUCED_AXES_ATTRIBUTE,
+            softmax_f32_axis_attribute(axis),
+        )])
+        .map_err(BuildError::InvalidOperationAttributes)?;
+        apply_single(builder, softmax_f32_op(), attributes, &[scores.erase()])
+    }
+
+    /// Applies the softmax through the canonical path and rechecks the operand
+    /// evidence on its result.
+    ///
+    /// The operation is shape-preserving, so the result carries the operand's own
+    /// shape evidence unchanged — which is exactly what distinguishes it from a
+    /// reduction over the same axis.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed construction or shape-refinement error.
+    pub fn apply_shaped<E: ShapeEvidence>(
+        builder: &mut SemanticProgramBuilder,
+        scores: ShapedValue<F32, E>,
+        axis: Axis,
+    ) -> Result<ShapedValue<F32, E>, BuildError> {
+        let attributes = OperationAttributes::new([CanonicalField::new(
+            super::SOFTMAX_REDUCED_AXES_ATTRIBUTE,
+            softmax_f32_axis_attribute(axis),
+        )])
+        .map_err(BuildError::InvalidOperationAttributes)?;
+        apply_shaped_single(
+            builder,
+            softmax_f32_op(),
+            attributes,
+            &[scores.weaken().erase()],
         )
     }
 }

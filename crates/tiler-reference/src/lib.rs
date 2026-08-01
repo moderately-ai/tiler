@@ -24,6 +24,7 @@
 //! | `evaluate` | executing a semantic program against that registry |
 //! | `silu` | the certified binary32 `SiLU` reference and its exponential |
 //! | `rms_norm` | the certified binary32 RMS normalization and its reciprocal square root |
+//! | `softmax` | the binary32 softmax, its extrema family, and its two folds |
 //! | `standard` | the one provider this crate ships, a consumer of the registry |
 //! | `structural` | reference semantics for the element-moving families |
 //! | `contraction` | reference semantics for the governed tensor contraction |
@@ -50,6 +51,7 @@ mod quantization;
 mod registry;
 mod rms_norm;
 mod silu;
+mod softmax;
 mod standard;
 mod structural;
 mod tensor;
@@ -83,6 +85,7 @@ pub use registry::{
 };
 pub use rms_norm::{certified_rsqrt_f32, rms_norm_f32};
 pub use silu::{certified_exp_f32, silu_f32};
+pub use softmax::{maximum_f32, softmax_f32};
 pub use tensor::{
     FloatBitOrder, InputBinding, ReferenceComponent, ReferenceComponentRole, ReferenceElement,
     Tensor, TensorPayloadView,

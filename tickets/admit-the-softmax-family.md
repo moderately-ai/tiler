@@ -4,7 +4,7 @@ title: Admit the softmax family
 status: in-progress
 priority: p1
 dependencies: [scope-transformer-nonlinear-normalization-and-reductions, admit-the-rms-normalization-family, implement-the-typed-accuracy-contract-vocabulary, record-the-metal-elementary-function-accuracy-guarantee]
-related: [admit-the-silu-activation-family, implement-parallel-reduction-strategies, own-operation-family-support-matrix, design-attention-program-vertical, promote-the-symbolic-index-profile-to-a-public-boundary, assemble-the-causal-self-attention-block-program, retain-the-c1-attention-block-conformance-evidence]
+related: [admit-the-silu-activation-family, implement-parallel-reduction-strategies, own-operation-family-support-matrix, design-attention-program-vertical, promote-the-symbolic-index-profile-to-a-public-boundary, assemble-the-causal-self-attention-block-program, retain-the-c1-attention-block-conformance-evidence, correct-the-softmax-worked-example-and-its-recorded-divergence, admit-a-parallel-topology-for-the-identity-less-extrema-fold, lower-a-two-region-occurrence-through-one-index-access-capability, reach-a-verified-kernel-through-the-structural-families, carry-a-sourced-shape-on-semantic-values]
 scopes: [implementation/ir, implementation/reference, implementation/compiler, implementation/metal, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
@@ -57,3 +57,75 @@ A general `Exp` key, a standalone maximum-reduction key, log-softmax, a derived 
 ## Reconsideration trigger
 
 Active now: 28 occurrences per forward pass and no alternative spelling. If the workload is superseded, re-derive the mask convention and the normalization form from the replacement's own reference — both were established here by measurement precisely because they are not what the conventional spelling suggests.
+
+## Outcome
+
+**Done at R5.** `tiler::softmax-f32@1` is registered, reference-evaluated, given a fusion role and a numerical capability row, carries a structured-kernel construct and a Metal emission, and has a bounded conformance corpus. The ceiling is the whole-program recognizer, not the family — see *R5* below.
+
+### D-2, the extrema family: `Maximum`, the NaN-propagating one
+
+**The two candidates are observationally indistinguishable through this operation, and that is a theorem rather than a corpus result.** They differ only on a row containing a NaN. On such a row, under *either* family, the NaN position's `e_i` is `Exp(NaN - m)` and therefore NaN; the denominator's `Add` propagates it unconditionally, so `d`, `c = 1.0 / d`, and every `r_i = e_i * c` are NaN. The whole row is NaN either way and no input separates them. `the_two_extrema_families_are_indistinguishable_through_the_pinned_formula` evaluates a five-row corpus twice, once per family, asserts bit equality, and asserts as its control that the two *maxima* genuinely disagree on the same inputs — so the equality is a property of the composition rather than of two identical functions.
+
+The choice therefore rests on grounds outside observable behaviour, and all three are stated rather than left implicit:
+
+1. **It is the family whose NaN rule agrees with the operation's own.** A fact naming `MaximumNumber` would be true of the reduction in isolation while inviting the reading that a NaN score does not poison its row, which is false.
+2. **`MaximumNumber`'s equivalence here is a property of the epilogue, not of the reduction.** Anything reusing the construct without a downstream sum — the online single-pass form, a log-sum-exp sibling — would have to re-derive it.
+3. **Between two families that cost the same, the one that never discards an input's NaN-ness is the fail-closed one**, which is what ADR 0023's "reduction operations name their scalar family explicitly" is for.
+
+**Measurement — the reference's own maximum propagates**, taken in the retained probe's pinned environment because the retained record has no such row. `torch.max` over `[1.0, NaN, 3.0]` is `0x7fc00000`, `softmax` of that row is three canonical NaNs, and `torch.max` over `[+0.0, -0.0]` is `+0.0` — the `-0.0 < +0.0` ordering both Tiler families share. The exact check for the gap: `grep -i nan spikes/numerics/transformer_reference_semantics/results/*/record.tsv` returns only `silu_inputs` and the SiLU result rows.
+
+### D-1, the fully masked row: no special case and no repair
+
+Under the workload's finite fill a fully masked row is a row of equal finite values, which the pinned formula maps to a uniform distribution with no branch taken; under a `-inf` fill it is a row of `-inf`, whose `s_i - m` is `-inf - -inf` and therefore NaN, which the same formula maps to NaNs with no branch taken. Making either one a *rule* means detecting the other and repairing it, and every route is eliminated:
+
+- **Construction** sees shapes and attributes, never element values — the route D-3 eliminated for the same reason.
+- **A proved value domain** would need a bound on the scores that no program input supplies, so the refusal would be unreachable rather than conservative.
+- **A runtime scan** is a costed second pass over 448·`T`·`S` contributors per forward pass plus a validation mechanism the bounded profile does not have.
+- **Naming the fill value** is impossible here, and this route is the decisive one: the mask is an *external F32 program input* added upstream by a `tiler::add-f32@1` occurrence, so by the time the scores reach this key they are ordinary numbers and "fully masked" is not a predicate over the operation's operands at all. A refusal would require the key's identity to carry a constant that is not part of the operation.
+
+The decision is therefore the refusal to add a repair — and it *is* a decision, because the reference model contains one (`AttentionMaskConverter._unmask_unattended`) which is guarded to `sdpa` on `cuda`/`xpu` and does not run on this path. Both answers are pinned in the corpus, since the L4 measurement records that the C1 row cannot falsify either. Neither answer is order-dependent, so nothing is refused for order-dependence. `Select` is not implied and its matrix row's trigger did not fire.
+
+### The two reductions, and two legality facts rather than one
+
+`SOFTMAX_F32_FACT_MAXIMUM_FOLD_LEGALITY` states free reassociation and free permutation consuming **no** permission, because the pinned family is associative and commutative on every binary32 input — NaN absorbing, `-0.0 < +0.0` total. `SOFTMAX_F32_FACT_SUM_FOLD_ORDER` states the strict left fold seeded at the first contributor, moving only under the separately resolved permissions. `the_two_reductions_state_their_order_obligations_separately` asserts they differ, so a change collapsing them fails. `SOFTMAX_F32_FACT_ONLINE_SINGLE_PASS_FORM` states that the online rescaling form is a **reassociation of the sum**, a legality question rather than a cost one.
+
+`FusionOperationRole::ExtremumShiftedOrderedReduction` is a new role rather than a reuse for exactly this reason: `PrologueCarryingOrderedReduction`'s contract is one fold, so one permission answers for the whole operation, and here it does not.
+
+### The key's facts
+
+Twenty fields. Beyond the two above: the evaluation order and its rounding boundaries; the complete resolved exponential contract; the extrema family; the `tiler::f32@1` accumulator declaration, consuming **D-5** for the second of the two sums the derivation identified (the maximum declares none, because it selects bit patterns rather than accumulating); the **normalization form**, `multiply-by-the-denominators-reciprocal-never-divide-by-the-denominator`, with `RECIPROCAL_TRANSFORM_PERMITTED` withheld in the *opposite* direction from its siblings' — they pin a division and refuse to become a multiply, this pins the multiply and refuses to become a division; the row sum, `not-exactly-one-and-deviating-in-both-directions`; the fully-masked row; the empty reduced axis, `outside-the-reduction-empty-domain-rules`; subnormals, signed zero, NaN behaviour and canonical bits; and contraction and approximate-intrinsic permissions both withheld.
+
+### Accuracy-contract reuse
+
+**The machinery is reused; the contract instance is not, and cannot be.** One certified exponential (`certified_exp_f32`, imported from the activation's module rather than copied — two copies would let this corpus pass against arithmetic the activation never runs), one `apple::msl-ulp@1` metric key, and one registered `RegisteredImplication::ScaledMetric` with factor three now serving two operations. A second `AccuracyContract` is necessary because it carries the `OpKey` it speaks about and `assess_elementary_accuracy` matches by that key before comparing anything else. The instances differ in exactly one further field: the domain closes at `+0.0` here, because the maximum subtraction confines every argument to the non-positive reals, where the activation's closes in the exponential's overflow band — so the finite-overflow rule is vacuous rather than absent. `SOFTMAX_F32_EXPONENTIAL_ULP_TOLERANCE` is declared separately from the activation's and asserted equal to it, so a divergence has to be deliberate. A third `ElementaryRealization` row is installed, sharing the activation's *bound* evidence (the same quoted Table 8.1 entry at the same digest) and carrying its own *exceptional* record, because the two operations reach different arguments.
+
+### Metal emission
+
+`air.exp.f32` is reused unchanged. For the maximum, **a fixup**, and the derivation is that neither Tiler extrema family agrees with `air.fmax.f32`: it is number-preferring, so it is not `Maximum`, and its signed-zero result depends on operand order, so it is not the deterministic `MaximumNumber` either — which is what [Numerical semantics](../docs/numerical-semantics.md) already records and ADR 0023 already requires a fixup for. The fixup is built from ordered comparisons plus one bitwise `and`, with **no `fmax` and no `isnan`**: `a < b`, `b < a`, then `a == b` resolved by `as_type<uint>(a) & as_type<uint>(b)` — which returns the common payload for equal values and clears the sign bit for the opposite-zero pair, i.e. `-0.0 < +0.0` as one operation — and finally the unordered case, which for binary32 means at least one NaN, returning the canonical pattern. The consequence worth stating: the retained emission probe measured *which intrinsic* `fmax` selects and nothing about what it returns, and this lowering does not rest on that unmeasured half at all. It records `SafeMathMode` (because `nnan` would license folding the unordered comparison) and deliberately **not** `PreciseFp32Functions` (it calls no F32 math function).
+
+### Digest movement
+
+`tiler-explain-v7 request=` moved from `1ac2bf9aeef5d035` (verified as the value on this tree at base `a5e9886`) to `a532d35f0cfdd29a`. Only the *semantic* half of the subject moves, as it did for the normalization. Nothing else moved: the kernel domain stays `tiler.kernel.v6` and the schedule domain `tiler.schedule.v3`, because `BinaryOp::F32Maximum` (`0x09`) and `ScalarProgram::StrictSerialMaximum` (`0x28`) are appended tags with no field inserted into any repeating record. `the_maximum_tag_separates_kernel_identity_from_the_addition` and `the_extrema_fold_has_its_own_canonical_identity` prove the two new tags separate rather than collide.
+
+### Watched failures
+
+Every new check was perturbed and observed to fire: the four malformed-axis refusals and the axis-element-type refusal (each with the well-formed occurrence as control); the arity and implicit-promotion refusals; the ULP bound at twelve versus thirteen ULP from the certified value; the extrema family against Rust's `f32::max` at three NaN rows and four signed-zero rows; the registered-implication perturbation, which refuses the softmax's declaration when the registry is stripped to the vocabulary's standard rows; the empty-reduced-domain refusal, with the bare sum over the identical shape as control; every non-serial topology refused for the extrema fold, with the serial fixture as control; the Metal fixup's absence of every `fmax` spelling; the absence of `PreciseFp32Functions`, with the normalization epilogue as control; and the recognizer refusal under all four numerical contracts, with a recognized pointwise program compiling under the same request. Two assertions I wrote *did* fail and were corrected rather than weakened: an argument 87 below the maximum is the smallest **normal** magnitude rather than a subnormal (the band starts at about 87.34), and the emission check had to test call spellings rather than bare words so the helper could still explain in prose why `fmax` was not selected.
+
+### The divergence the corpus found
+
+**The reference model applies an approximate reciprocal on rows of four or more contributors, and the L3′ record's worked example is one of them.** Computed from the reference's own `e` and `d`, both `e * (1/d)` and `e / d` give `0x3db861f3 0x3e7a9a1a 0x3f2a4d3b` summing to `0x3f800000`; `torch.nn.functional.softmax` gives the record's `0x3db861f2 0x3e7a9a18 0x3f2a4d3a` summing to `0x3f7ffffe`, and one constant — an implied reciprocal of `0x3f2a4d3a` against the correctly rounded `0x3f2a4d3b` — explains all three finite outputs. At widths two and three the reference agrees with the pinned formula at **every** element (40,000 and 60,000 elements, zero disagreements), which is stronger evidence for the reciprocal *form* than the retained probe's discriminating-element counts. The corpus pins the pinned formula's bits and records the reference's beside them; [`correct-the-softmax-worked-example-and-its-recorded-divergence`](correct-the-softmax-worked-example-and-its-recorded-divergence.md) owns the record correction, which is outside this ticket's scopes.
+
+### The symbolic extent `S`
+
+**The refusal the derivation asks for is deliberately absent, because it could never fire.** `crate::shape::Extent` is a `u64` newtype and `Shape` is a vector of them, so a semantic `ValueFact` cannot carry a symbolic extent at all — the rule "a softmax whose reduced axis is a symbol with no proved upper bound refuses" has nothing to refuse here, and shipping the check would ship one that cannot say no. Every distinct `S` is a separate compiled artifact *by construction* rather than by policy, and the conformance evidence is stated at the literal extents 0, 2, 3, 4, and 10 with nothing generalized.
+
+**Correction to this ticket's own dependency claim.** The Required-delivery text says the reduced extent "needs `promote-the-symbolic-index-profile-to-a-public-boundary` to reach a public boundary". That ticket is **done** and it promoted the *index* profile — `SourcedExtent`, `SourcedShape`, `ExtentSources`, `ExtentInterval::states_no_upper_bound`. It does not reach a semantic value's shape, and the tickets that would are [`carry-a-sourced-shape-on-semantic-values`](carry-a-sourced-shape-on-semantic-values.md), [`resolve-semantic-shape-inference-over-symbolic-extents`](resolve-semantic-shape-inference-over-symbolic-extents.md), and [`admit-symbolic-extents-at-the-compiler-request-boundary`](admit-symbolic-extents-at-the-compiler-request-boundary.md), all `todo`.
+
+### R5, and what holds it there
+
+`select_supported_strategy` recognizes three whole-program shapes — serial sum, contraction, standalone pointwise — and none contains a softmax. `crates/tiler-compiler/tests/softmax_recognizer_boundary.rs` compiles the program under all four numerical contracts, watches every one refuse, compiles a recognized control under the same request so the refusal is attributable, and asserts the refused program is itself a verified single-occurrence semantic program. The recognizer was **not** widened. No index-access lowering capability is registered, for the structural reason the normalization recorded and this family shares more strongly: a softmax occurrence realizes as *three* regions where `GovernedIndexAccess` emits one. [`reach-a-verified-kernel-through-the-structural-families`](reach-a-verified-kernel-through-the-structural-families.md) and [`lower-a-two-region-occurrence-through-one-index-access-capability`](lower-a-two-region-occurrence-through-one-index-access-capability.md) own R6.
+
+### Tickets filed
+
+- [`correct-the-softmax-worked-example-and-its-recorded-divergence`](correct-the-softmax-worked-example-and-its-recorded-divergence.md) — the record correction and the probe's `matches_neither` attribution, in `research/numerics`.
+- [`admit-a-parallel-topology-for-the-identity-less-extrema-fold`](admit-a-parallel-topology-for-the-identity-less-extrema-fold.md) — the maximum pass is legal to split and is admitted only under the serial topology, because both parallel paths destructure an empty-domain identity this family has none of.

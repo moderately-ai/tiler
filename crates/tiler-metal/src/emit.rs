@@ -206,7 +206,7 @@ pub(crate) fn reserve_symbol<'a>(
 fn assemble(
     target: &MetalTargetFacts,
     emission: MetalEmissionRealization,
-    helpers: &BTreeSet<u32>,
+    helpers: &BTreeSet<MetalHelper>,
     gaps: &BTreeSet<MetalNumericalGap>,
     unstated: &BTreeSet<MetalFloatArithmeticType>,
     bodies: &[String],
@@ -280,9 +280,9 @@ fn assemble(
     source.push_str("#include <metal_stdlib>\n");
     source.push_str("using namespace metal;\n");
 
-    for bits in helpers {
+    for helper in helpers {
         source.push('\n');
-        source.push_str(&canonicalize_helper(*bits));
+        source.push_str(&helper.definition());
     }
     for body in bodies {
         source.push('\n');
@@ -290,6 +290,113 @@ fn assemble(
     }
     source
 }
+
+/// One static helper an emitted translation unit may need.
+///
+/// A typed vocabulary rather than the bare canonical-NaN pattern the set once
+/// held, because there are now two helpers and they are not two constants of one
+/// shape: the canonicalization is parameterized by a bit pattern and the extrema
+/// fixup is not. The exhaustive match in [`Self::definition`] is what forces a
+/// third helper to state its own text rather than borrow whichever it resembles.
+///
+/// Ordering is by variant and then by payload, so the emitted preamble is
+/// deterministic whatever order the bodies requested their helpers in.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum MetalHelper {
+    /// Replaces an arithmetic NaN with one exact canonical pattern.
+    CanonicalizeF32Nan {
+        /// The canonical arithmetic-NaN payload this kernel declares.
+        bits: u32,
+    },
+    /// The IEEE 754-2019 `maximum` of two binary32 values.
+    MaximumF32,
+}
+
+impl MetalHelper {
+    /// Returns the helper's complete MSL definition.
+    fn definition(self) -> String {
+        match self {
+            Self::CanonicalizeF32Nan { bits } => canonicalize_helper(bits),
+            Self::MaximumF32 => maximum_helper(),
+        }
+    }
+}
+
+/// Returns the symbol of the binary32 `maximum` helper.
+const MAXIMUM_F32_SYMBOL: &str = "tiler_maximum_f32";
+
+/// Returns the exact realization of IEEE 754-2019 `maximum` at binary32.
+///
+/// # Why `fmax` does not appear in it
+///
+/// ADR 0023 admits two extrema families and requires a backend to lower one
+/// "only when the complete NaN and zero-tie behavior matches", emitting an exact
+/// fixup otherwise. Metal's `fmax` matches *neither*: [Numerical
+/// semantics](../../../docs/numerical-semantics.md) records that it is
+/// number-preferring — so it implements the `MaximumNumber` NaN rule rather than
+/// the propagating one — and that its signed-zero result can depend on operand
+/// order, so it does not deterministically implement `MaximumNumber` either.
+/// This is that fixup, and it is written without `fmax` at all rather than around
+/// it.
+///
+/// # Why it is comparisons rather than an intrinsic, and what that buys
+///
+/// The four arms below are exhaustive over the IEEE-754 trichotomy plus the
+/// unordered case, and each is exact:
+///
+/// - `a < b` and `b < a` give the greater operand;
+/// - `a == b` is true for identical values *and* for opposite zeros, and the
+///   bitwise `and` of the two payloads returns the common bits in the first case
+///   and clears the sign bit in the second — which is `-0.0 < +0.0` written as
+///   one operation rather than as a branch on a sign test;
+/// - all three comparisons false means the operands are *unordered*, which for
+///   binary32 means at least one is a NaN. That is where the propagating family
+///   differs from `fmax`, and the canonical pattern is returned directly rather
+///   than by producing some NaN and relying on a later canonicalization.
+///
+/// The consequence worth stating is what this *avoids* claiming. The retained
+/// emission probe measured which intrinsic `fmax(a, b)` selects under the
+/// governed flags and under the compiler default — `air.fmax.f32` and
+/// `air.fast_fmax.f32` — and measured nothing about what either *returns*. A
+/// lowering through the intrinsic would have to rest on the unmeasured half; this
+/// one rests on the language's comparison semantics, so the intrinsic-selection
+/// question does not arise for this construct at all.
+///
+/// **The safe math mode is nevertheless load-bearing, and the emitter records
+/// it.** Under `-fmetal-math-mode=fast` LLVM's `nnan` licence permits folding an
+/// unordered comparison to a constant, which would delete the NaN arm. The
+/// requirement is about the comparison's *operands*, exactly as the
+/// canonicalization helper's is.
+fn maximum_helper() -> String {
+    format!(
+        "// The IEEE 754-2019 maximum of two binary32 values: NaN-propagating, with\n\
+         // -0.0 ordered below +0.0.\n\
+         //\n\
+         // Deliberately not fmax, which prefers numbers and whose signed-zero result\n\
+         // depends on operand order, so it implements neither admitted extrema family.\n\
+         static inline float {MAXIMUM_F32_SYMBOL}(float left, float right) {{\n\
+         {INDENT}if (left < right) {{ return right; }}\n\
+         {INDENT}if (right < left) {{ return left; }}\n\
+         {INDENT}// Equal values, including the opposite-zero pair: the bitwise and returns\n\
+         {INDENT}// the common payload, and clears the sign bit exactly when one operand is\n\
+         {INDENT}// a positive zero.\n\
+         {INDENT}if (left == right) {{\n\
+         {INDENT}{INDENT}return as_type<float>(as_type<uint>(left) & as_type<uint>(right));\n\
+         {INDENT}}}\n\
+         {INDENT}// Unordered: at least one operand is a NaN, and this family propagates it.\n\
+         {INDENT}return as_type<float>({CANONICAL_F32_NAN:#010x}u);\n\
+         }}\n"
+    )
+}
+
+/// The canonical arithmetic-NaN payload the extrema fixup returns.
+///
+/// Stated as a constant rather than read from the kernel's declaration, because
+/// the fixup's NaN arm is *this helper's* answer to an unordered comparison
+/// rather than an arithmetic result the kernel canonicalizes. The reduction that
+/// consumes it applies `ConvertOp::CanonicalizeF32Nan` afterwards regardless, so a
+/// kernel declaring another pattern still commits its own.
+const CANONICAL_F32_NAN: u32 = 0x7fc0_0000;
 
 /// Returns the NaN-canonicalization helper for one exact canonical pattern.
 ///
@@ -374,7 +481,7 @@ fn emit_entry_point(
     kernel: &VerifiedKernel,
     target: &MetalTargetFacts,
     emission: MetalEmissionRealization,
-    helpers: &mut BTreeSet<u32>,
+    helpers: &mut BTreeSet<MetalHelper>,
     numerical: &mut BTreeSet<MetalNumericalRequirement>,
     gaps: &mut BTreeSet<MetalNumericalGap>,
     unstated: &mut BTreeSet<MetalFloatArithmeticType>,
@@ -760,7 +867,7 @@ struct KernelEmitter<'a> {
     kernel: &'a VerifiedKernel,
     target: &'a MetalTargetFacts,
     emission: MetalEmissionRealization,
-    helpers: &'a mut BTreeSet<u32>,
+    helpers: &'a mut BTreeSet<MetalHelper>,
     numerical: &'a mut BTreeSet<MetalNumericalRequirement>,
     gaps: &'a mut BTreeSet<MetalNumericalGap>,
     unstated: &'a mut BTreeSet<MetalFloatArithmeticType>,
@@ -1001,6 +1108,34 @@ impl KernelEmitter<'_> {
             // would rest the accuracy claim on a reading rather than on a
             // quotation.
             BinaryOp::F32Divide => ("/", Some(MetalFloatArithmeticType::F32)),
+            // The one binary construct emitted as a call rather than an
+            // operator, because MSL has no operator for it and the intrinsic
+            // that looks like one implements a different contract. The helper
+            // carries the whole derivation; the two obligations it needs are
+            // recorded below.
+            BinaryOp::F32Maximum => {
+                self.helpers.insert(MetalHelper::MaximumF32);
+                // A maximum performs no arithmetic and produces no new
+                // subnormal, but a target that flushed a subnormal *operand*
+                // before comparing would select the other one — so the input
+                // half of the obligation is real and the call records it.
+                self.record_subnormal_obligation(MetalFloatArithmeticType::F32);
+                // `nnan` would license folding the unordered comparison the
+                // NaN arm rests on. No precise-function requirement is recorded
+                // beside it, deliberately: the helper calls no F32 math
+                // function, so `-fmetal-math-fp32-functions` governs nothing in
+                // it.
+                self.numerical
+                    .insert(MetalNumericalRequirement::SafeMathMode);
+                let lhs = self.name(lhs)?.to_owned();
+                let rhs = self.name(rhs)?.to_owned();
+                let value_type = self.value_type(*result)?;
+                let name = self.bind(*result)?;
+                self.line(&format!(
+                    "{value_type} {name} = {MAXIMUM_F32_SYMBOL}({lhs}, {rhs});"
+                ));
+                return Ok(());
+            }
             _ => {
                 return Err(MetalEmitError::UnsupportedOperation {
                     family: MetalOperationFamily::Binary,
@@ -1179,7 +1314,8 @@ impl KernelEmitter<'_> {
                 if !is_f32_nan(bits) {
                     return Err(MetalEmitError::InvalidCanonicalNan { bits });
                 }
-                self.helpers.insert(bits);
+                self.helpers
+                    .insert(MetalHelper::CanonicalizeF32Nan { bits });
                 // The emitted predicate itself is integer-only and survives any
                 // math mode, but `nnan` leaves the arithmetic that produced a
                 // NaN with no defined result to canonicalize. The requirement is

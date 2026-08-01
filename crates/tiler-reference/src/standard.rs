@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tiler_ir::semantic::{
     CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE, ProviderIdentity, TypeKey, add_f32_op,
     broadcast_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op, rms_norm_f32_op,
-    silu_f32_op, strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
+    silu_f32_op, softmax_f32_op, strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
 };
 
 use super::bf16::register_standard_bf16;
@@ -24,6 +24,7 @@ use super::registry::{
 };
 use super::rms_norm::rms_norm_reference;
 use super::silu::silu_reference;
+use super::softmax::softmax_reference;
 use super::structural::{BroadcastF32Reference, ReindexF32Reference};
 use super::tensor::{FloatBitOrder, ReferenceElement, Tensor, TensorPayloadView};
 
@@ -31,7 +32,7 @@ pub(crate) struct StandardReferenceProvider;
 
 impl ReferenceRegistryProvider for StandardReferenceProvider {
     fn identity(&self) -> ProviderIdentity {
-        ProviderIdentity::new("tiler", "standard-reference", 6)
+        ProviderIdentity::new("tiler", "standard-reference", 7)
             .expect("the governed reference provider identity is valid")
     }
 
@@ -39,7 +40,7 @@ impl ReferenceRegistryProvider for StandardReferenceProvider {
         &self,
         registrar: &mut ReferenceRegistryRegistrar<'_>,
     ) -> Result<(), ReferenceRegistryError> {
-        let revision = ReferenceCapabilityRevision::new(6)?;
+        let revision = ReferenceCapabilityRevision::new(7)?;
         registrar.register_value_type(
             F32::resolved_type(),
             revision,
@@ -119,6 +120,17 @@ impl ReferenceRegistryProvider for StandardReferenceProvider {
             normalization_signature,
             revision,
             rms_norm_reference(),
+        )?;
+        // The softmax takes one operand and never two: the causal mask is added
+        // upstream by a `tiler::add-f32@1` occurrence over a broadcast mask
+        // input, so what reaches this signature is already the shifted score
+        // tensor. A two-operand signature that absorbed the mask would make the
+        // fill value part of this key's identity, which decision D-1 turns on.
+        registrar.register(
+            softmax_f32_op(),
+            ReferenceSignature::new([F32::resolved_type()], [F32::resolved_type()])?,
+            revision,
+            softmax_reference(),
         )?;
         // The second dtype. Its value contract and its three capabilities are
         // registered together and are parameterized by the registered

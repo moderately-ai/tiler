@@ -513,19 +513,27 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
     lower_scheduled_region(&builder.build().unwrap()).unwrap()
 }
 
-/// Which per-contributor prologue a reduction fixture fuses into its fold.
+/// Which reduction a fixture region carries.
 ///
-/// A named enum rather than a boolean, because there are now three cases and the
-/// two prologues are not two settings of one shape: `scale * x + bias` is affine
-/// in the contributor and `x * x` is quadratic, so neither expresses the other.
+/// A named enum rather than a boolean, because there are now four cases and they
+/// are not four settings of one shape. The two prologues differ in kind —
+/// `scale * x + bias` is affine in the contributor and `x * x` is quadratic, so
+/// neither expresses the other — and [`Self::Maximum`] is not a prologue at all
+/// but a different *reducer*, which is why the enum is named for the reduction
+/// rather than for the prologue it once only distinguished.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FixturePrologue {
-    /// No prologue; the contributor enters the fold unchanged.
-    None,
+enum FixtureReduction {
+    /// The bare strict serial sum; the contributor enters the fold unchanged.
+    BareSum,
     /// The scale-then-bias prologue of the fused serial sum.
-    ScaleBias,
+    ScaleBiasSum,
     /// The squaring prologue of `tiler::rms-norm-f32@1`'s embedded reduction.
-    Square,
+    SquaredSum,
+    /// The `Maximum` fold of `tiler::softmax-f32@1`'s first pass.
+    ///
+    /// A different combiner rather than a prologue, and the only fixture whose
+    /// scalar program carries no empty-domain identity.
+    Maximum,
 }
 
 /// A serial reduction region over `axes` of `input`, optionally fusing a
@@ -534,14 +542,18 @@ fn reduction_region(
     id: RegionId,
     input: &Shape,
     axes: &[Axis],
-    prologue: FixturePrologue,
+    reduction: FixtureReduction,
 ) -> VerifiedScheduledRegion {
     let output = input.without_axes(axes);
     let output_elements = element_count(&output).expect("bounded fixture shape");
     // A prologue reads the original input; a bare fold reads an intermediate.
-    let read_tensor = match prologue {
-        FixturePrologue::None => TensorRole::Intermediate,
-        FixturePrologue::ScaleBias | FixturePrologue::Square => TensorRole::Input {
+    // The extrema fold reads the original input too, because the softmax's
+    // maximum pass reads the scores rather than a materialized intermediate.
+    let read_tensor = match reduction {
+        FixtureReduction::BareSum => TensorRole::Intermediate,
+        FixtureReduction::ScaleBiasSum
+        | FixtureReduction::SquaredSum
+        | FixtureReduction::Maximum => TensorRole::Input {
             ordinal: InputOrdinal::FIRST,
         },
     };
@@ -604,8 +616,8 @@ fn reduction_region(
             },
         })
         .unwrap();
-    let scalar = match prologue {
-        FixturePrologue::ScaleBias => ScalarProgram::FusedMultiplyAddSerialSum {
+    let scalar = match reduction {
+        FixtureReduction::ScaleBiasSum => ScalarProgram::FusedMultiplyAddSerialSum {
             scale_bits: SCALE_BITS,
             bias_bits: BIAS_BITS,
             axes: axes.to_vec(),
@@ -614,13 +626,20 @@ fn reduction_region(
             empty_identity_bits: 0.0_f32.to_bits(),
             contraction: false,
         },
-        FixturePrologue::Square => ScalarProgram::SquaredSerialSum {
+        FixtureReduction::SquaredSum => ScalarProgram::SquaredSerialSum {
             axes: axes.to_vec(),
             order: ContributorOrder::OriginalAxisLexicographic,
             canonical_nan_bits: NAN_BITS,
             empty_identity_bits: 0.0_f32.to_bits(),
         },
-        FixturePrologue::None => ScalarProgram::StrictSerialSum {
+        // No `empty_identity_bits`, because the extrema family has none — the
+        // field does not exist on this variant rather than being defaulted here.
+        FixtureReduction::Maximum => ScalarProgram::StrictSerialMaximum {
+            axes: axes.to_vec(),
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: NAN_BITS,
+        },
+        FixtureReduction::BareSum => ScalarProgram::StrictSerialSum {
             axes: axes.to_vec(),
             order: ContributorOrder::OriginalAxisLexicographic,
             canonical_nan_bits: NAN_BITS,
@@ -764,7 +783,7 @@ pub(crate) fn single_axis_reduction_kernel() -> VerifiedKernel {
         RegionId::new(1),
         &Shape::from_dims([2, 3]),
         &[Axis::new(1)],
-        FixturePrologue::None,
+        FixtureReduction::BareSum,
     ))
     .expect("bounded reduction fixture lowers")
 }
@@ -774,7 +793,7 @@ pub(crate) fn multi_axis_reduction_kernel() -> VerifiedKernel {
         RegionId::new(2),
         &Shape::from_dims([2, 3, 4]),
         &[Axis::new(1), Axis::new(2)],
-        FixturePrologue::None,
+        FixtureReduction::BareSum,
     ))
     .expect("bounded multi-axis reduction fixture lowers")
 }
@@ -784,7 +803,7 @@ pub(crate) fn fused_reduction_kernel() -> VerifiedKernel {
         RegionId::new(3),
         &Shape::from_dims([2, 3]),
         &[Axis::new(1)],
-        FixturePrologue::ScaleBias,
+        FixtureReduction::ScaleBiasSum,
     ))
     .expect("bounded fused reduction fixture lowers")
 }
@@ -795,9 +814,20 @@ pub(crate) fn squared_reduction_kernel() -> VerifiedKernel {
         RegionId::new(22),
         &Shape::from_dims([2, 3]),
         &[Axis::new(1)],
-        FixturePrologue::Square,
+        FixtureReduction::SquaredSum,
     ))
     .expect("bounded squaring-prologue reduction fixture lowers")
+}
+
+/// The `Maximum` fold `tiler::softmax-f32@1`'s first pass embeds.
+pub(crate) fn maximum_reduction_kernel() -> VerifiedKernel {
+    lower_scheduled_region(&reduction_region(
+        RegionId::new(24),
+        &Shape::from_dims([2, 3]),
+        &[Axis::new(1)],
+        FixtureReduction::Maximum,
+    ))
+    .expect("bounded maximum reduction fixture lowers")
 }
 
 /// A reduction whose reduced axis has extent zero.
@@ -810,7 +840,7 @@ pub(crate) fn empty_domain_reduction_kernel() -> VerifiedKernel {
         RegionId::new(4),
         &Shape::from_dims([2, 0]),
         &[Axis::new(1)],
-        FixturePrologue::None,
+        FixtureReduction::BareSum,
     ))
     .expect("bounded empty-domain reduction fixture lowers")
 }
@@ -2323,4 +2353,208 @@ fn the_squaring_and_scale_bias_reductions_carry_different_identities() {
     let bare = single_axis_reduction_kernel();
     assert_ne!(squared.canonical_identity(), fused.canonical_identity());
     assert_ne!(squared.canonical_identity(), bare.canonical_identity());
+}
+
+/// The extrema fold emits an exact fixup, and never `fmax`.
+///
+/// **The negative half is the whole test.** ADR 0023 admits two extrema families
+/// and Metal's `fmax` implements neither: it prefers numbers, so it is not the
+/// propagating family, and its signed-zero result can depend on operand order, so
+/// it is not the deterministic number-preferring one either. Selecting it would
+/// be the substitution the ADR forbids, and the substitution is *available* —
+/// `fmax(a, b)` compiles and the retained emission probe measures which intrinsic
+/// it selects — which is why the absence is asserted rather than assumed.
+///
+/// The positive half pins the three clauses the fixup needs to be exact: the two
+/// ordered comparisons, the bitwise `and` that orders `-0.0` below `+0.0`, and
+/// the canonical NaN the unordered case returns.
+#[test]
+fn the_extrema_fold_emits_an_exact_fixup_rather_than_fmax() {
+    let kernel = maximum_reduction_kernel();
+    let unit = emit_translation_unit(&[&kernel], &target()).expect("the extrema fixture emits");
+    let source = unit.source();
+
+    // No spelling of the intrinsic, precise or fast, qualified or not. The
+    // *call* spellings rather than the bare words, because the helper's own
+    // comment names `fmax` in order to say it is not being used — and a check
+    // that could not tell the two apart would forbid explaining the decision.
+    for forbidden in [
+        "fmax(",
+        "fmin(",
+        "max(",
+        "min(",
+        "metal::max(",
+        "precise::fmax(",
+        "fast::fmax(",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "{forbidden} must not appear; it implements neither admitted extrema family:\n{source}"
+        );
+    }
+    // And the word does appear, exactly once, in the sentence that says why.
+    assert_eq!(
+        source.matches("Deliberately not fmax").count(),
+        1,
+        "the emitted text states why the intrinsic was not selected:\n{source}"
+    );
+
+    // The helper is defined once and called once, so the fold goes through it
+    // rather than through an inlined approximation of it.
+    assert_eq!(
+        source
+            .matches("static inline float tiler_maximum_f32(")
+            .count(),
+        1,
+        "the fixup is defined exactly once:\n{source}"
+    );
+    assert_eq!(
+        source.matches("tiler_maximum_f32(").count(),
+        2,
+        "one definition and one call site:\n{source}"
+    );
+
+    // The three clauses, each of which the fixup would be wrong without.
+    assert!(
+        source.contains("if (left < right) { return right; }"),
+        "the ordered clause is emitted:\n{source}"
+    );
+    assert!(
+        source.contains("as_type<uint>(left) & as_type<uint>(right)"),
+        "the signed-zero clause orders -0.0 below +0.0 by clearing the sign bit:\n{source}"
+    );
+    assert!(
+        source.contains("return as_type<float>(0x7fc00000u);"),
+        "the unordered clause propagates a NaN rather than preferring a number:\n{source}"
+    );
+}
+
+/// The extrema fold requires the safe math mode and *not* the precise selection.
+///
+/// Two claims, and the second is the one worth asserting: the fixup calls no F32
+/// math function at all, so `-fmetal-math-fp32-functions` governs nothing in it
+/// and demanding that flag would be a requirement nothing in the emitted text
+/// needs. The safe mode is separately load-bearing, because `nnan` licenses
+/// folding the unordered comparison the NaN clause rests on.
+#[test]
+fn the_extrema_fold_requires_the_safe_mode_and_not_the_precise_selection() {
+    let kernel = maximum_reduction_kernel();
+    let unit = emit_translation_unit(&[&kernel], &target()).expect("the extrema fixture emits");
+    let requirements = unit.numerical_requirements();
+    assert!(requirements.contains(&MetalNumericalRequirement::SafeMathMode));
+    assert!(
+        !requirements.contains(&MetalNumericalRequirement::PreciseFp32Functions),
+        "the fixup calls no F32 math function, so it demands no precise selection"
+    );
+
+    // The control: the normalization epilogue *does* demand it, so the absence
+    // above is a property of this kernel rather than of the requirement.
+    let epilogue = rms_norm_epilogue_kernel();
+    let precise = emit_translation_unit(&[&epilogue], &target()).expect("emits");
+    assert!(
+        precise
+            .numerical_requirements()
+            .contains(&MetalNumericalRequirement::PreciseFp32Functions)
+    );
+}
+
+/// The extrema fold commits no empty-domain identity, because it has none.
+///
+/// Every sum in the vocabulary writes a declared identity when its reduced domain
+/// is empty; the extrema family has no identity, so the schedule verifier refuses
+/// the region before a kernel can exist. This asserts that refusal at the layer
+/// that owns it, with the bare sum over the same shape as the control — so the
+/// refusal is about the family rather than about the zero extent.
+#[test]
+fn an_empty_extrema_domain_is_refused_where_an_empty_sum_commits_its_identity() {
+    let empty = Shape::from_dims([2, 0]);
+    let axes = [Axis::new(1)];
+
+    // The control: the bare sum over the same empty domain builds and emits.
+    let sum = reduction_region(RegionId::new(25), &empty, &axes, FixtureReduction::BareSum);
+    assert!(lower_scheduled_region(&sum).is_ok());
+
+    // The extrema fold over the same shape does not even reach a verified region.
+    let mut builder = ScheduledRegionBuilder::new(RegionId::new(26));
+    builder.iteration_shape(Shape::from_dims([2])).unwrap();
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+            component_role: None,
+            mode: AccessMode::Read,
+            map: LogicalAccess::ReductionContributor {
+                input_shape: empty.clone(),
+                output_shape: Shape::from_dims([2]),
+                axes: axes.to_vec(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+            },
+            bounds: BoundsWitnessId::new(0),
+            ownership: None,
+        })
+        .unwrap();
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Output,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(1),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        })
+        .unwrap();
+    builder
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(0),
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+            component_role: None,
+            kind: BoundsProofKind::ReductionDomain {
+                input_shape: empty,
+                output_shape: Shape::from_dims([2]),
+                axes: axes.to_vec(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+            },
+        })
+        .unwrap();
+    builder
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(1),
+            tensor: TensorRole::Output,
+            component_role: None,
+            kind: BoundsProofKind::LinearRange { element_count: 2 },
+        })
+        .unwrap();
+    builder
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 2 },
+        })
+        .unwrap();
+    builder
+        .scalar_program(ScalarProgram::StrictSerialMaximum {
+            axes: axes.to_vec(),
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: NAN_BITS,
+        })
+        .unwrap();
+    builder.numerical(numerical(NAN_BITS)).unwrap();
+    builder
+        .schedule(KernelSchedule {
+            reduction: ReductionTopology::Serial {
+                axes: axes.to_vec(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                permits_reassociation: false,
+                permits_permutation: false,
+            },
+            ..linear_schedule(2)
+        })
+        .unwrap();
+    assert!(
+        builder.build().is_err(),
+        "an identity-less fold over an empty reduced domain has no value to commit"
+    );
 }

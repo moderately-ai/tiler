@@ -46,7 +46,7 @@ use tiler_ir::schedule::NumericalPermission;
 use tiler_ir::semantic::{
     F32, FrozenSemanticRegistry, OpKey, OperationEffect, ProviderIdentity, SemanticProgram,
     add_f32_op, broadcast_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op,
-    rms_norm_f32_op, silu_f32_op, strict_serial_sum_f32_op,
+    rms_norm_f32_op, silu_f32_op, softmax_f32_op, strict_serial_sum_f32_op,
 };
 
 use crate::region::{
@@ -173,6 +173,33 @@ enum FusionOperationRole {
     /// member count and adding a fifth field would move every previously
     /// encodable region's content identity.
     PrologueCarryingOrderedReduction,
+    /// Two folds over one contributor sequence, carrying *different* order
+    /// obligations.
+    ///
+    /// `tiler::softmax-f32@1` reduces each row twice: an order-insensitive
+    /// `Maximum` whose result shifts every contributor, and an order-sensitive
+    /// sum of the shifted exponentials. Every reduction obligation
+    /// [`Self::OrderedReduction`] carries is carried here too — the second fold
+    /// is the same strict left fold over the same canonical contributor sequence
+    /// — so [`Self::is_reduction`] answers `true` and the four reduction
+    /// obligations are derived identically.
+    ///
+    /// **Why it is nevertheless not [`Self::PrologueCarryingOrderedReduction`].**
+    /// That role's contract is that the operation carries *one* fold, wrapped in
+    /// per-point arithmetic: one permission therefore answers for the whole
+    /// operation. Here it does not. The maximum is associative and commutative on
+    /// every binary32 input, so its pass may be reassociated and permuted with no
+    /// permission at all, while the sum's pass moves only under the separately
+    /// resolved ones. Classifying a softmax as prologue-carrying would state that
+    /// a permission covering the sum describes the whole operation, which is
+    /// wrong in one direction, and that a permission covering the maximum
+    /// licenses the sum, which is wrong in the other.
+    ///
+    /// It is counted under the reduction total for the same reason the
+    /// prologue-carrying role is: [`FusionRegionStructure`]'s four counts sum to
+    /// the member count, and a fifth field would move the content identity of
+    /// every region this vocabulary can already encode.
+    ExtremumShiftedOrderedReduction,
     /// A pure coordinate relation that computes no value.
     ///
     /// A reindex or a broadcast rearranges or replicates which coordinate reads
@@ -203,7 +230,9 @@ impl FusionOperationRole {
     const fn is_reduction(self) -> bool {
         matches!(
             self,
-            Self::OrderedReduction | Self::PrologueCarryingOrderedReduction
+            Self::OrderedReduction
+                | Self::PrologueCarryingOrderedReduction
+                | Self::ExtremumShiftedOrderedReduction
         )
     }
 
@@ -280,6 +309,21 @@ impl FusionNumericalCapabilities {
         roles.insert(
             rms_norm_f32_op(),
             FusionOperationRole::PrologueCarryingOrderedReduction,
+        );
+        // The softmax embeds *two* folds over one contributor sequence, and the
+        // L3′ derivation records that the maximum reduction "resolves to no
+        // fusion legality at all" without a role. Registering the
+        // extremum-shifted role is what gives the 28 occurrences per forward
+        // pass any legality to reason about — and what keeps the two passes'
+        // different order obligations from collapsing into one answer.
+        //
+        // The role says nothing about the operation's *accuracy*: fusing two
+        // regions neither adds nor removes a rounding, so the resolved contract
+        // of the subordinate exponential is unchanged by fusion and is not this
+        // authority's to assess.
+        roles.insert(
+            softmax_f32_op(),
+            FusionOperationRole::ExtremumShiftedOrderedReduction,
         );
         roles.insert(reindex_f32_op(), FusionOperationRole::CoordinateRelation);
         roles.insert(broadcast_f32_op(), FusionOperationRole::CoordinateRelation);
@@ -1153,9 +1197,14 @@ fn is_exact_governed_same_family_pointwise(members: &[MemberDerivation]) -> bool
             // rather than the fold's: its epilogue puts a multiply next to an add
             // — `u + eps` after `a / N` — so a region containing one has a
             // contraction opportunity that this closed proof cannot rule out.
+            // The extremum-shifted reduction disqualifies it for its own reason
+            // as well: its epilogue puts a multiply next to a division —
+            // `e_i * (1 / d)` — so a region containing one has an arithmetic
+            // adjacency this closed proof cannot rule out.
             FusionOperationRole::ValueSource
             | FusionOperationRole::OrderedReduction
             | FusionOperationRole::PrologueCarryingOrderedReduction
+            | FusionOperationRole::ExtremumShiftedOrderedReduction
             | FusionOperationRole::CoordinateRelation => {
                 return false;
             }
@@ -2202,5 +2251,69 @@ mod tests {
             discharged.assessment(),
             ObligationAssessment::Discharged
         ));
+    }
+}
+
+#[cfg(test)]
+mod softmax_role_tests {
+    use super::{FusionNumericalCapabilities, FusionOperationRole};
+    use tiler_ir::semantic::{
+        rms_norm_f32_op, silu_f32_op, softmax_f32_op, strict_serial_sum_f32_op,
+    };
+
+    /// The softmax resolves to a role of its own rather than to `Unknown`.
+    ///
+    /// Before this vertical a region containing a softmax had no registered
+    /// capability and therefore no derivable legality at all, which is the state
+    /// the L3′ derivation records for the maximum reduction. Asserting the role
+    /// by name is what keeps a later change from quietly reclassifying it as the
+    /// prologue-carrying one, whose single-fold contract would let one permission
+    /// answer for both of the softmax's passes.
+    #[test]
+    fn the_softmax_resolves_to_the_extremum_shifted_role() {
+        let capabilities = FusionNumericalCapabilities::governed();
+        assert_eq!(
+            capabilities.classify(&softmax_f32_op()),
+            Some(FusionOperationRole::ExtremumShiftedOrderedReduction)
+        );
+        // The three neighbours keep the roles they had, so the insertion widened
+        // the map rather than moving an entry.
+        assert_eq!(
+            capabilities.classify(&rms_norm_f32_op()),
+            Some(FusionOperationRole::PrologueCarryingOrderedReduction)
+        );
+        assert_eq!(
+            capabilities.classify(&strict_serial_sum_f32_op()),
+            Some(FusionOperationRole::OrderedReduction)
+        );
+        assert_eq!(
+            capabilities.classify(&silu_f32_op()),
+            Some(FusionOperationRole::ElementwiseArithmetic)
+        );
+    }
+
+    /// The role counts as a reduction, and the three reduction roles are distinct.
+    ///
+    /// `is_reduction` is what derives the four reduction obligations, so a role
+    /// that answered `false` would let a softmax region skip them. The
+    /// distinctness assertion is the other half: three roles answering `true` to
+    /// one predicate must still be three roles, or the order obligations they
+    /// carry would be indistinguishable.
+    #[test]
+    fn the_extremum_shifted_role_is_a_reduction_and_is_not_the_other_two() {
+        assert!(FusionOperationRole::ExtremumShiftedOrderedReduction.is_reduction());
+        assert!(FusionOperationRole::PrologueCarryingOrderedReduction.is_reduction());
+        assert!(FusionOperationRole::OrderedReduction.is_reduction());
+        assert_ne!(
+            FusionOperationRole::ExtremumShiftedOrderedReduction,
+            FusionOperationRole::PrologueCarryingOrderedReduction
+        );
+        assert_ne!(
+            FusionOperationRole::ExtremumShiftedOrderedReduction,
+            FusionOperationRole::OrderedReduction
+        );
+        // And it is not a value source or a coordinate relation, which are the
+        // two roles whose obligations a reduction must not inherit.
+        assert!(!FusionOperationRole::ExtremumShiftedOrderedReduction.is_value_source());
     }
 }

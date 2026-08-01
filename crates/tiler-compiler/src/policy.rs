@@ -293,6 +293,31 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
         NumericalDimension::NanAssumptions,
         NumericalDimension::InfinityAssumptions,
     ];
+    /// Dimensions the softmax can consume and this build carries.
+    ///
+    /// **It does *not* consume contraction, and the bare reduction row's reason
+    /// is not why.** The normalization's row gained contraction because
+    /// `accumulator + x_i * x_i` puts a multiply beside the fold's add and fusing
+    /// the two removes a rounding. The softmax has a multiply-add adjacency too —
+    /// `s_i + (-1) * m`, the maximum subtraction — but its multiply is an *exact*
+    /// sign flip, so a fused multiply-add there removes a rounding that never
+    /// happened and cannot change a result. Listing the dimension would enter it
+    /// into `is_consumable`'s union and place it on every contract, in order to
+    /// ask targets about a freedom this operation's answer is invariant under.
+    ///
+    /// Both order-contract dimensions are present for the *denominator* fold's
+    /// sake. The maximum fold consumes neither — it is associative and
+    /// commutative on every input — but a capability row is per operation rather
+    /// than per embedded fold, and the sum needs both.
+    const SOFTMAX: &[NumericalDimension] = &[
+        NumericalDimension::InputSubnormals,
+        NumericalDimension::ResultSubnormals,
+        NumericalDimension::Reassociation,
+        NumericalDimension::Permutation,
+        NumericalDimension::SignedZero,
+        NumericalDimension::NanAssumptions,
+        NumericalDimension::InfinityAssumptions,
+    ];
     &[
         // A constant retains its declared bit pattern until an operation's
         // semantics produce a new value, so no arithmetic freedom acts on it.
@@ -354,6 +379,20 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
             key: "tiler::rms-norm-f32@1",
             consumes: NORMALIZATION,
         },
+        // The softmax is two ordered reductions with per-point arithmetic between
+        // and after them, so it consumes the reduction row's dimensions and
+        // *not* contraction — see `SOFTMAX` for why the one adjacency it has is
+        // inert.
+        //
+        // The same two elementary dimensions the activation and the
+        // normalization withhold are withheld here, for the same reason and by
+        // the same constant: the softmax contains a division (one by the
+        // denominator) and an elementary function (the exponential), so both are
+        // real obligations rather than absent ones.
+        OperationNumericalCapability {
+            key: "tiler::softmax-f32@1",
+            consumes: SOFTMAX,
+        },
         OperationNumericalCapability {
             key: "tiler::strict-tensor-contraction-f32@1",
             consumes: TENSOR_CONTRACTION,
@@ -396,13 +435,19 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
 
 /// The dimensions the admitted elementary families can consume and this build withholds.
 ///
-/// **Both are real obligations for both families, and neither is a row.**
+/// **Both are real obligations for all three families, and neither is a row.**
 /// `tiler::silu-f32@1` contains a division and an exponential;
 /// `tiler::rms-norm-f32@1` contains a division by the extent and a reciprocal
-/// square root. A contract resolving `ReciprocalTransform` or
+/// square root; `tiler::softmax-f32@1` contains a division of one by the
+/// denominator and an exponential. A contract resolving `ReciprocalTransform` or
 /// `ApproximateIntrinsics` differently would admit a different observable result
-/// for either — which is exactly the condition [`operation_capabilities`] says a
-/// row exists for.
+/// for any of them — which is exactly the condition [`operation_capabilities`]
+/// says a row exists for.
+///
+/// The softmax's `ReciprocalTransform` obligation runs in the *opposite*
+/// direction from its siblings' and is a real obligation for that reason: the
+/// pinned formula already multiplies by the reciprocal, so what the permission
+/// would license here is the substitution *back* to a division.
 ///
 /// They are withheld because listing them enters each into [`is_consumable`]'s
 /// union, and that union decides which dimensions *every* contract places on a
@@ -744,7 +789,7 @@ mod tests {
     };
     use tiler_ir::semantic::{
         FrozenSemanticRegistry, OpKey, add_f32_op, constant_f32_op, multiply_f32_op,
-        rms_norm_f32_op, silu_f32_op,
+        rms_norm_f32_op, silu_f32_op, softmax_f32_op,
     };
 
     /// Every registered preset states a contract this build can actually realize.
@@ -961,9 +1006,9 @@ mod tests {
         for dimension in ELEMENTARY_UNCARRIED_DIMENSIONS {
             assert!(
                 !REALIZED_DIMENSIONS.contains(&dimension),
-                "{} is now carried by the region realization, so tiler::silu-f32@1 and \
-                 tiler::rms-norm-f32@1 must gain its capability row rather than continue to \
-                 withhold it",
+                "{} is now carried by the region realization, so tiler::silu-f32@1, \
+                 tiler::rms-norm-f32@1, and tiler::softmax-f32@1 must gain its capability row \
+                 rather than continue to withhold it",
                 dimension.key()
             );
             assert!(
@@ -1035,6 +1080,38 @@ mod tests {
         )
         .expect("the strict serial sum is admitted");
         assert!(!serial.can_consume(NumericalDimension::Contraction));
+    }
+
+    /// The softmax's row is the reduction dimensions without contraction.
+    ///
+    /// Named dimension by dimension rather than compared against another row, so
+    /// a change to any of them does not silently move this one. The *absent*
+    /// contraction entry is the load-bearing assertion, and it is asserted
+    /// against the normalization's presence of it in the same test: the two
+    /// families both embed an ordered sum, and only one of them has a
+    /// multiply-add adjacency whose fusion can change a result.
+    #[test]
+    fn the_softmax_consumes_the_reduction_dimensions_without_contraction() {
+        let capability = operation_capability(&softmax_f32_op()).expect("the softmax is admitted");
+        for dimension in [
+            NumericalDimension::InputSubnormals,
+            NumericalDimension::ResultSubnormals,
+            NumericalDimension::Reassociation,
+            NumericalDimension::Permutation,
+            NumericalDimension::SignedZero,
+            NumericalDimension::NanAssumptions,
+            NumericalDimension::InfinityAssumptions,
+        ] {
+            assert!(capability.can_consume(dimension), "{}", dimension.key());
+        }
+        assert!(!capability.can_consume(NumericalDimension::Contraction));
+        assert!(!capability.can_consume(NumericalDimension::MaterializationRounding));
+        assert_eq!(capability.consumes().len(), 7);
+        // The normalization *does* consume contraction, so the absence above is
+        // a property of this operation rather than of the dimension.
+        let normalization =
+            operation_capability(&rms_norm_f32_op()).expect("the normalization is admitted");
+        assert!(normalization.can_consume(NumericalDimension::Contraction));
     }
 
     /// Every realized dimension is one an admitted operation can consume.

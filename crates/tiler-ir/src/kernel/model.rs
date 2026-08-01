@@ -319,6 +319,29 @@ pub enum BinaryOp {
     /// permission, so a lowering that substituted one for the other would compute
     /// something the operation does not mean.
     F32Divide,
+    /// The IEEE 754-2019 `maximum` of two binary32 values.
+    ///
+    /// **The NaN-propagating extrema family, with `-0.0` ordered below `+0.0`.**
+    /// ADR 0023 makes that one of *two* families and forbids treating a backend
+    /// spelling as the semantic authority; this construct means the propagating
+    /// one, which is what `tiler::softmax-f32@1`'s row maximum pins, and there is
+    /// deliberately no number-preferring sibling beside it. One construct standing
+    /// for both would make operand swapping and reduction-tree selection
+    /// observable, which is the failure ADR 0023 exists to prevent.
+    ///
+    /// **It does not lower to `air.fmax.f32`, and the emitter is where that is
+    /// enforced.** Metal's `fmax` prefers numbers *and* leaves its signed-zero
+    /// result dependent on operand order, so it implements neither Tiler family;
+    /// `crates/tiler-metal/src/emit.rs` emits an exact fixup built from ordered
+    /// comparisons rather than selecting the intrinsic.
+    ///
+    /// **It performs no arithmetic**, which is why it carries no rounding
+    /// obligation and why the reduction it combines declares no accumulator
+    /// width: a maximum selects one of its operands' bit patterns rather than
+    /// computing a new value. It is still subject to the *input* subnormal
+    /// obligation, because a target that flushed a subnormal operand before
+    /// comparing would select a different one.
+    F32Maximum,
 }
 
 impl BinaryOp {
@@ -338,6 +361,12 @@ impl BinaryOp {
             // vocabulary could not express, never an earlier kernel under a new
             // interpretation.
             Self::F32Divide => 0x08,
+            // Appended for the same reason and with the same consequence: `0x01`
+            // through `0x08` keep their meanings and every field keeps its
+            // position, so no previously encodable kernel's bytes move and the
+            // kernel identity domain does not step. A reader that reaches `0x09`
+            // is reading a kernel the earlier vocabulary could not express.
+            Self::F32Maximum => 0x09,
         }
     }
 
@@ -348,7 +377,9 @@ impl BinaryOp {
             Self::IndexAdd | Self::IndexMultiply | Self::IndexDivide | Self::IndexModulo => {
                 KernelType::Index
             }
-            Self::F32Add | Self::F32Multiply | Self::F32Divide => KernelType::F32,
+            Self::F32Add | Self::F32Multiply | Self::F32Divide | Self::F32Maximum => {
+                KernelType::F32
+            }
             Self::I32Subtract => KernelType::I32,
         }
     }

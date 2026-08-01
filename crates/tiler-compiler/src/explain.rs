@@ -3958,7 +3958,22 @@ mod tests {
                 // not move — no operation family, contract, or dtype changed —
                 // and the trace's own two record lines are unchanged, because a
                 // program requiring no synchronization emits no record.
-                "tiler-explain-v7 request=1ac2bf9aeef5d035\n",
+                // Rebaselined from `1ac2bf9aeef5d035` when the standard semantic
+                // registry began registering `tiler::softmax-f32@1`. Only the
+                // *semantic* half of the subject moves, as it did for the
+                // normalization: the snapshot admits one further family whose
+                // facts carry a third resolved ADR 0042 contract — a ULP bound
+                // like the activation's, but over a domain closed at zero rather
+                // than in the exponential's overflow band, so the definition
+                // projection folds a clause no earlier snapshot contained.
+                // Nothing on the compiler side moved with it: the governed
+                // scalar registry gained no key, the governed lowering
+                // capabilities gained no row, and neither the softmax's fusion
+                // role nor its capability row nor the third installed elementary
+                // realization is part of this subject. The trace's own two
+                // record lines are unchanged; nothing about explain's content
+                // moved.
+                "tiler-explain-v7 request=a532d35f0cfdd29a\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

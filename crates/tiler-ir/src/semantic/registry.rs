@@ -25,6 +25,7 @@ use super::quantization::register_standard_quantization;
 use super::reindex::register_standard_reindex;
 use super::rms_norm::register_standard_rms_norm;
 use super::silu::register_standard_silu;
+use super::softmax::register_standard_softmax;
 use super::types::{
     AttributeFieldId, CanonicalField, CanonicalValue, CanonicalValueView, QuantSchemeKey,
     ResolvedValueType, TypeIdentityError, TypeKey, validate_canonical_value, validate_key,
@@ -2129,6 +2130,11 @@ impl SemanticRegistryProvider for StandardSemantics {
         // family to carry a resolved accuracy contract and the first to carry an
         // embedded reduction; registration order fixes nothing about semantics.
         register_standard_rms_norm(registrar)?;
+        // The softmax follows the normalization because it is the third family to
+        // carry a resolved accuracy contract and the first to embed *two*
+        // reductions with different order obligations; registration order fixes
+        // nothing about semantics.
+        register_standard_softmax(registrar)?;
         register_standard_reindex(registrar)?;
         register_standard_broadcast(registrar)?;
         register_standard_quantization(registrar)

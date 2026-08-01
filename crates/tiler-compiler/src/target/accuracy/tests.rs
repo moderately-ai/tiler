@@ -4,9 +4,10 @@ use tiler_ir::semantic::accuracy::{
     RegisteredImplicationRegistry, refines, ulp_reference_gap_metric_key,
 };
 use tiler_ir::semantic::{
-    F32, SILU_F32_EXPONENTIAL_ULP_TOLERANCE, rms_norm_f32_op, rms_norm_f32_rsqrt_accuracy_contract,
-    rms_norm_f32_rsqrt_exceptional_contract, rms_norm_f32_rsqrt_reference_semantics,
-    silu_f32_exponential_accuracy_contract, silu_f32_op,
+    F32, SILU_F32_EXPONENTIAL_ULP_TOLERANCE, SOFTMAX_F32_EXPONENTIAL_ULP_TOLERANCE,
+    rms_norm_f32_op, rms_norm_f32_rsqrt_accuracy_contract, rms_norm_f32_rsqrt_exceptional_contract,
+    rms_norm_f32_rsqrt_reference_semantics, silu_f32_exponential_accuracy_contract, silu_f32_op,
+    softmax_f32_exponential_accuracy_contract, softmax_f32_op,
 };
 
 use super::{
@@ -16,6 +17,7 @@ use super::{
     metal_f32_exponential_bound_evidence, metal_f32_exponential_contract,
     metal_f32_normalization_exceptional_value_evidence,
     metal_f32_reciprocal_square_root_bound_evidence, metal_f32_reciprocal_square_root_contract,
+    metal_f32_softmax_exceptional_value_evidence, metal_f32_softmax_exponential_contract,
 };
 
 fn required() -> AccuracyContract {
@@ -343,9 +345,13 @@ fn the_normalization_evidence_discharges_only_its_normative_half() {
     assert!(exceptional.discharge().is_err());
 }
 
-/// Both registered families have an installed realization, and only those two.
+/// Every registered family has an installed realization, and only those three.
+///
+/// The list is asserted in order rather than as a set, so an added row moves this
+/// test whichever position it takes — which is what makes "and only those" a
+/// checked claim rather than a lower bound.
 #[test]
-fn the_installed_realizations_are_exactly_the_two_registered_families() {
+fn the_installed_realizations_are_exactly_the_registered_families() {
     let installed = installed_elementary_realizations();
     let operations: Vec<String> = installed
         .iter()
@@ -353,7 +359,11 @@ fn the_installed_realizations_are_exactly_the_two_registered_families() {
         .collect();
     assert_eq!(
         operations,
-        vec!["tiler::silu-f32@1", "tiler::rms-norm-f32@1"]
+        vec![
+            "tiler::silu-f32@1",
+            "tiler::rms-norm-f32@1",
+            "tiler::softmax-f32@1"
+        ]
     );
 
     // A family with no installed row fails closed rather than borrowing another
@@ -373,4 +383,116 @@ fn the_installed_realizations_are_exactly_the_two_registered_families() {
         refusal.reason(),
         ElementaryRefusalReason::NoInstalledRealization
     ));
+}
+
+/// The softmax's exponential admits through the *same* registered implication.
+///
+/// **The reuse is the assertion.** The bound, the metric, and the derivation are
+/// the activation's; only the operation key and the admitted domain differ. If
+/// this vertical had installed a second cross-metric row, stripping the registry
+/// to the one row the activation registered would still admit — so the test
+/// below, which uses the installed registry unchanged and then perturbs it, is
+/// what shows one row serves both.
+#[test]
+fn the_softmax_exponential_refines_through_the_registered_implication() {
+    let admission = assess_elementary_accuracy(
+        &softmax_f32_exponential_accuracy_contract(),
+        &installed_elementary_realizations(),
+        &installed_implication_registry(),
+    )
+    .expect("the installed realization refines the softmax's requirement");
+    let RefinementBasis::RegisteredImplication { .. } = admission.basis() else {
+        panic!("the admission rests on a registered implication: {admission:?}");
+    };
+    // The bound half discharges a hard requirement and the exceptional half does
+    // not, exactly as the activation's does — the specification bounds `exp` and
+    // states no edge-case table for it.
+    assert!(admission.discharge().bound_is_discharged());
+    assert!(!admission.discharge().exceptional_is_discharged());
+    assert_eq!(
+        admission.discharge().exceptional_class(),
+        ConformanceEvidenceClass::EmpiricalQualification
+    );
+}
+
+/// This vertical registers no second cross-metric row, and one row serves both.
+///
+/// The registry is compared against the activation's own by count, so an added
+/// row would fail here whether or not it happened to be equivalent. The
+/// perturbation beside it is the same one the activation's test runs: stripped to
+/// the vocabulary's standard rows, the softmax's declaration stops refining, so
+/// the admission above genuinely rests on the one registered derivation rather
+/// than on an identical contract.
+#[test]
+fn the_softmax_needs_no_second_registered_implication() {
+    let refusal = assess_elementary_accuracy(
+        &softmax_f32_exponential_accuracy_contract(),
+        &installed_elementary_realizations(),
+        &RegisteredImplicationRegistry::standard().expect("the governed registry composes"),
+    )
+    .expect_err("a cross-metric bound implies nothing without a registered derivation");
+    assert_eq!(refusal.operation(), &softmax_f32_op());
+    let ElementaryRefusalReason::Unrefined { unknown, .. } = refusal.reason() else {
+        panic!("a declared-but-unrefined realization is not an absent one: {refusal:?}");
+    };
+    let RefinementUnknown::UnregisteredMetricImplication { from, to } = unknown else {
+        panic!("the refusal names the two metrics: {unknown:?}");
+    };
+    assert_eq!(*from, apple_msl_ulp_metric_key());
+    assert_eq!(*to, ulp_reference_gap_metric_key());
+}
+
+/// The two exponential requirements differ only in operation and domain.
+///
+/// The tolerance and the metric are identical because Table 8.1 bounds the
+/// *function*, not the operation calling it; the domain differs because the
+/// maximum subtraction confines the softmax's argument to the non-positive reals
+/// while the activation reaches the overflow band. Asserting both halves is what
+/// keeps the sharing honest in one direction and the narrowing honest in the
+/// other.
+#[test]
+fn the_two_exponential_requirements_share_a_bound_and_differ_in_domain() {
+    assert_eq!(
+        SOFTMAX_F32_EXPONENTIAL_ULP_TOLERANCE,
+        SILU_F32_EXPONENTIAL_ULP_TOLERANCE
+    );
+    let softmax = softmax_f32_exponential_accuracy_contract();
+    let activation = silu_f32_exponential_accuracy_contract();
+    assert_ne!(softmax.operation(), activation.operation());
+    assert_ne!(softmax, activation);
+    // And the two *declarations* differ the same way, so neither could be
+    // consulted for the other's requirement.
+    assert_ne!(
+        metal_f32_softmax_exponential_contract(),
+        metal_f32_exponential_contract()
+    );
+    assert_eq!(
+        metal_f32_softmax_exponential_contract().operation(),
+        &softmax_f32_op()
+    );
+}
+
+/// Each family's exceptional record names its own corpus, not a shared one.
+///
+/// A shared record would qualify a population neither family measured. The three
+/// corpus tags are asserted distinct rather than described, so a later change
+/// that pointed two families at one corpus has to move this test.
+#[test]
+fn each_family_carries_its_own_exceptional_value_corpus() {
+    let softmax =
+        metal_f32_softmax_exceptional_value_evidence().expect("the softmax record is well formed");
+    let activation =
+        metal_f32_exceptional_value_evidence().expect("the activation record is well formed");
+    let normalization = metal_f32_normalization_exceptional_value_evidence()
+        .expect("the normalization record is well formed");
+    assert_ne!(softmax, activation);
+    assert_ne!(softmax, normalization);
+    for record in [&softmax, &activation, &normalization] {
+        assert_eq!(
+            record.class(),
+            ConformanceEvidenceClass::EmpiricalQualification,
+            "the specification states no edge-case table for any of these functions"
+        );
+        assert!(record.discharge().is_err());
+    }
 }

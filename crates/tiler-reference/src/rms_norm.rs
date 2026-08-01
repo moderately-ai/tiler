@@ -81,7 +81,7 @@ use tiler_ir::shape::{Axis, Shape};
 use super::accuracy::{CertifiedEnclosure, EnclosurePrecision, rsqrt_enclosure};
 use super::canonicalize_arithmetic_f32;
 use super::error::ReferenceOperationError;
-use super::evaluate::{decode_f32, f32_element, f32_elements};
+use super::evaluate::{RowGeometry, decode_f32, f32_element, f32_elements};
 use super::registry::{ReferenceEvaluationRequest, ReferenceOperation, ReferenceOutputs};
 use super::tensor::{ReferenceElement, Tensor};
 
@@ -128,65 +128,7 @@ impl ReferenceOperation for RmsNormF32Reference {
     }
 }
 
-/// The row decomposition one normalized axis induces over a dense tensor.
-///
-/// Three counts rather than a coordinate walk, because the normalized axis is
-/// a single axis of a row-major layout: everything before it varies the row's
-/// outer position, everything after it varies the row's inner position, and the
-/// axis itself is the contributor sequence. Deriving them once per occurrence
-/// keeps the per-element index arithmetic exact and total.
-struct RowGeometry {
-    /// Contributors of one normalized row, the extent of the normalized axis.
-    extent: usize,
-    /// Product of the extents after the normalized axis.
-    inner: usize,
-    /// Number of normalized rows in the tensor.
-    rows: usize,
-}
-
 impl RowGeometry {
-    fn derive(shape: &Shape, axis: Axis) -> Result<Self, ReferenceOperationError> {
-        let position =
-            usize::try_from(axis.get()).map_err(|_| ReferenceOperationError::InvalidApplication)?;
-        let extents = shape.extents();
-        let Some(extent) = extents.get(position) else {
-            return Err(ReferenceOperationError::InvalidApplication);
-        };
-        let extent =
-            usize::try_from(extent.get()).map_err(|_| ReferenceOperationError::ShapeTooLarge)?;
-        let mut inner = 1_usize;
-        for later in &extents[position.saturating_add(1)..] {
-            let later =
-                usize::try_from(later.get()).map_err(|_| ReferenceOperationError::ShapeTooLarge)?;
-            inner = inner
-                .checked_mul(later)
-                .ok_or(ReferenceOperationError::ShapeTooLarge)?;
-        }
-        let mut outer = 1_usize;
-        for earlier in &extents[..position] {
-            let earlier = usize::try_from(earlier.get())
-                .map_err(|_| ReferenceOperationError::ShapeTooLarge)?;
-            outer = outer
-                .checked_mul(earlier)
-                .ok_or(ReferenceOperationError::ShapeTooLarge)?;
-        }
-        let rows = outer
-            .checked_mul(inner)
-            .ok_or(ReferenceOperationError::ShapeTooLarge)?;
-        Ok(Self {
-            extent,
-            inner,
-            rows,
-        })
-    }
-
-    /// Returns the dense element index of one contributor of one row.
-    const fn element_index(&self, row: usize, position: usize) -> usize {
-        let outer = row / self.inner;
-        let inner = row % self.inner;
-        (outer * self.extent + position) * self.inner + inner
-    }
-
     /// Returns `Rsqrt(mean-of-squares + eps)` for one normalized row.
     fn row_scale(
         &self,
