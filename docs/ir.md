@@ -575,7 +575,7 @@ operation list is illustrative rather than a closed Rust enum.
 
 In particular, an admitted `Gelu` key pins its exact formula or decomposition and every subordinate transcendental contract; erf-GELU and a tanh approximation are not interchangeable implementations of an unspecified node. The placeholder pins none of that, which is the difference the spelling rule above exists to keep visible.
 
-**This document states what an operation means, never which operations exist.** The registered inventory is whatever a compilation request's frozen operation registry resolves; per-family status, evidence, and remaining work belong to the [operation-family support matrix](roadmap.md#operation-family-support-matrix). A placeholder appearing here is not a support claim, not a reservation, and not a commitment to that spelling — the matrix records, for example, that no `Cast`, `Reindex`, or `Broadcast` key exists, which this list neither contradicts nor implies.
+**This document states what an operation means, never which operations exist.** The registered inventory is whatever a compilation request's frozen operation registry resolves; per-family status, evidence, and remaining work belong to the [operation-family support matrix](roadmap.md#operation-family-support-matrix). A placeholder appearing here is not a support claim, not a reservation, and not a commitment to that spelling — the matrix records, for example, that no `Cast` key exists, while `Reindex` and `Broadcast`, placeholders in this list exactly as `Cast` is, are now registered as `tiler::reindex-f32@1` and `tiler::broadcast-f32@1`. A name's presence in this list asserted neither state and asserts neither now.
 
 An operation
 invocation is a graph node; its axes, reduction kind, accumulator dtype, and
@@ -600,13 +600,11 @@ another contract-conforming physical implementation. Keeping named operations
 until physical exploration preserves sharing, operation-specific rewrites,
 extension identity, and explainability.
 
-`Reindex` represents a total output-to-input coordinate function plus its shape
-constraints. Initial reindexes are bijective permutations/split/merge mappings
-or legal removal/insertion of unit axes. Many-to-one broadcast/repeat behavior
-is represented separately by an explicit `Broadcast` with an axis mapping. It
-does not claim that storage was transposed or copied. Frontends may accept
-implicit broadcasting syntax, but the canonical semantic graph makes the
-mapping explicit before optimization.
+`Reindex` represents a total output-to-input coordinate function plus its shape constraints, and that function is one named form drawn from a closed vocabulary rather than an arbitrary map — which is what lets totality and bijectivity be *proved* per form against the operand's shape instead of asserted by a caller. `tiler::reindex-f32@1`'s registered normative definition states the complete set and says "and no others": `permute-axes`, a reordering of whole axes; `split-axis`, a row-major factorization of one axis with the major factor first; `merge-axes`, the row-major product of a strictly ascending adjacent axis run; `insert-unit-axis` and `remove-unit-axis`, over an extent-one axis alone; and `reverse-axis`, the within-axis coordinate map `i -> extent - 1 - i`. A form outside that set is refused by name at construction, under `reindex.form.unadmitted-kind`, rather than approximated by a nearest admitted one.
+
+`reverse-axis` is the whole of the within-axis admission, and it is one named form rather than a class for the reason the same definition records: "the affine within-axis bijections of an axis are exactly the identity and the reversal, while a general within-axis permutation is a tensor-data-derived index the accepted index vocabulary rejects" — which is exactly the rejection the bounded initial index-expression vocabulary states below. So naming the reversal admits every affine within-axis bijection that does anything, while admitting the general reading would admit at construction a permutation *table* that no lowering can produce. A within-axis rotation `i -> (i + k) mod n` is expressible in that vocabulary and deliberately unadmitted. This is where [the L4 attention design](research/program-planning/first-attention-program-vertical.md)'s decision D-10 is resolved: in the registered normative reference rather than in a research record.
+
+Many-to-one broadcast/repeat behavior is represented separately by an explicit `Broadcast` with an axis mapping, and a non-surjective mapping is a slice — a different family, refused rather than admitted as a narrow reindex. A `Reindex` does not claim that storage was transposed or copied. Frontends may accept implicit broadcasting syntax, but the canonical semantic graph makes the mapping explicit before optimization.
 
 One narrow admission is operation semantics rather than an implicit graph rule.
 A binary elementwise signature may declare that it accepts a rank-zero operand,
