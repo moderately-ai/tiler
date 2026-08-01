@@ -1,7 +1,7 @@
 ---
 id: produce-typed-strict-affine-assemble-semantic-precondition
 title: Produce the strict-affine Assemble scale precondition
-status: in-progress
+status: done
 priority: p2
 dependencies: [produce-typed-strict-affine-quantize-semantic-preconditions]
 related: [enforce-resolved-encoded-value-binding-conformance, own-the-dtype-support-maturity-matrix]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/reference, contracts/foundation, cont
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, semantic-ir, validation, quantization]
-claimed_from: todo
-assignee: worker-assemble-pre
-lease_expires_at: 1785567212
 ---
 
 ## User-visible outcome
