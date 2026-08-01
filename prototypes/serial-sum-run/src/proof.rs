@@ -179,8 +179,9 @@ use tiler_ir::semantic::{
 };
 use tiler_ir::shape::{Axis, Shape};
 use tiler_metal::applicability::{
-    MetalGpuFamily, MetalGpuFamilySupport, MetalHostApplicabilityPolicy,
+    AppleGpuFamilyConstant, MetalGpuFamily, MetalGpuFamilySupport, MetalHostApplicabilityPolicy,
     MetalHostApplicabilityRefusal, MetalHostObservation, evaluate_metal_host_applicability,
+    observe_highest_gpu_family,
 };
 use tiler_metal::emit::emit_translation_unit;
 use tiler_metal_aot::driver::Toolchain;
@@ -695,24 +696,182 @@ fn normalized_architecture(arch: &str) -> &str {
     if arch == "aarch64" { "arm64" } else { arch }
 }
 
-/// Reads the highest named Apple GPU family this device reports supporting.
+/// Every Apple `MTLGPUFamily` enumerator `metal` 0.33.0 names, ascending.
 ///
-/// Highest first: the families are cumulative, so the first supported one is the
-/// most specific true statement. A device claiming none of them is reported as
-/// such rather than guessed at.
-fn highest_apple_family(device: &Device) -> MetalGpuFamilySupport {
-    [
-        (MTLGPUFamily::Apple9, MetalGpuFamily::Apple9),
-        (MTLGPUFamily::Apple8, MetalGpuFamily::Apple8),
-        (MTLGPUFamily::Apple7, MetalGpuFamily::Apple7),
-        (MTLGPUFamily::Apple6, MetalGpuFamily::Apple6),
-        (MTLGPUFamily::Apple5, MetalGpuFamily::Apple5),
-    ]
-    .into_iter()
-    .find(|(queried, _)| device.supports_family(*queried))
-    .map_or(MetalGpuFamilySupport::NoneNamed, |(_, named)| {
-        MetalGpuFamilySupport::Highest(named)
-    })
+/// This is the *binding's* vocabulary and not Tiler's, and the two are joined by
+/// Apple's own enumerator value rather than by a pair table. `MTLGPUFamily` is
+/// `#[repr(i64)]` with each variant declared at the number `MTLDevice.h` gives
+/// it, and [`AppleGpuFamilyConstant`] carries that same number transcribed from
+/// the same header, so the correspondence is arithmetic that already exists
+/// rather than a second table someone has to keep in step.
+///
+/// The list is hand-written because it has to be: the binding's enum is
+/// `#[non_exhaustive]`, publishes no iteration, and offers no `TryFrom`, so
+/// nothing here can enumerate it or convert into it. What keeps the list honest
+/// is that it is not the *population* — the walk below is driven from
+/// [`MetalGpuFamily::ALL`] — and that the assertion below rejects a build in
+/// which it has fallen behind that vocabulary.
+const BINDING_APPLE_FAMILIES: [MTLGPUFamily; 9] = [
+    MTLGPUFamily::Apple1,
+    MTLGPUFamily::Apple2,
+    MTLGPUFamily::Apple3,
+    MTLGPUFamily::Apple4,
+    MTLGPUFamily::Apple5,
+    MTLGPUFamily::Apple6,
+    MTLGPUFamily::Apple7,
+    MTLGPUFamily::Apple8,
+    MTLGPUFamily::Apple9,
+];
+
+/// Names one governed Apple enumerator back into the type this binding's device
+/// call takes.
+///
+/// The residual step [`observe_highest_gpu_family`] cannot take for a caller:
+/// `tiler-metal` hands out the raw `NSInteger` because that is what crosses to
+/// every binding, and `metal` 0.33.0 wants its own enum. `objc2-metal` takes the
+/// raw value directly, which is why `prototypes/candle-metal-adapter` has no
+/// function like this one.
+///
+/// `None` is an enumerator this binding cannot name. It is reachable rather than
+/// theoretical: the macOS 26.5 SDK declares `MTLGPUFamilyApple10 = 1010` and this
+/// binding stops at `Apple9`, so widening [`MetalGpuFamily`] reaches it. Both
+/// callers turn it into a refusal, because answering `false` would report a
+/// question nobody asked as a device that answered no.
+const fn binding_apple_enumerator(constant: AppleGpuFamilyConstant) -> Option<MTLGPUFamily> {
+    let mut index = 0;
+    while index < BINDING_APPLE_FAMILIES.len() {
+        let candidate = BINDING_APPLE_FAMILIES[index];
+        if candidate as isize == constant.value() {
+            return Some(candidate);
+        }
+        index += 1;
+    }
+    None
+}
+
+/// Compiles only while this binding can name every family the vocabulary probes.
+///
+/// The counted half is the literal, and the literal is the point: nothing else in
+/// this file states how many families it expects to be able to ask about, so a
+/// vocabulary that grew would otherwise reach the runtime refusal below on every
+/// host with the tree green. Widening [`MetalGpuFamily`] is a build error here,
+/// which is where whoever widens it learns that this runner needs a newer `metal`
+/// binding before its applicability observation means anything again.
+///
+/// The sweep half is why bumping the literal is not the repair. It asks the same
+/// question the probe asks at runtime, of the same population, and keeps failing
+/// until the binding genuinely names the added family — so the two halves fail
+/// for different reasons and a build that passes both has actually gained the
+/// enumerator rather than been told to expect one more.
+///
+/// Neither half makes the runtime refusal redundant. An assertion is a claim
+/// about this build and can be relaxed in one line; what the probe *answers* when
+/// it cannot name an enumerator is the part that must stay fail-closed on its
+/// own.
+const _: () = {
+    assert!(
+        MetalGpuFamily::COUNT == 5,
+        "this runner expects the governed vocabulary to name five Apple families; \
+         `metal` 0.33.0 stops at Apple9, so a widened vocabulary needs a newer binding here \
+         before the count is raised",
+    );
+    let mut index = 0;
+    while index < MetalGpuFamily::ALL.len() {
+        assert!(
+            binding_apple_enumerator(MetalGpuFamily::ALL[index].apple_constant()).is_some(),
+            "`metal` 0.33.0 cannot name an Apple enumerator MetalGpuFamily::ALL declares, so \
+             this runner would leave the GPU-family predicate unobserved on every host",
+        );
+        index += 1;
+    }
+};
+
+/// What this binding could learn about the Apple families a device supports.
+///
+/// Two outcomes rather than a [`MetalGpuFamilySupport`], because "the device
+/// named no family this vocabulary knows" and "this binding could not ask" are
+/// different facts with different repairs — the first is a host to change and the
+/// second is a Metal binding to upgrade — and collapsing them is the defect this
+/// type exists to prevent.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProbedGpuFamily {
+    /// The governed vocabulary's own answer, from a walk this binding completed.
+    Answered(MetalGpuFamilySupport),
+    /// [`MetalGpuFamily`] named an enumerator this binding cannot, so the device
+    /// was never asked about it and there is no answer to report.
+    Unnameable(AppleGpuFamilyConstant),
+}
+
+impl fmt::Display for ProbedGpuFamily {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Answered(MetalGpuFamilySupport::Highest(family)) => {
+                formatter.write_str(family.as_str())
+            }
+            Self::Answered(MetalGpuFamilySupport::NoneNamed) => {
+                formatter.write_str("no named Apple family")
+            }
+            Self::Unnameable(constant) => write!(
+                formatter,
+                "unobserved: the governed vocabulary names MTLGPUFamily {constant}, which this \
+                 binding cannot name, so this device was never asked",
+            ),
+        }
+    }
+}
+
+/// Asks this device about exactly the families the governed vocabulary names.
+///
+/// The population, the order, and the name of the answer are all `tiler-metal`'s:
+/// this supplies the device call and the binding-specific step of turning a raw
+/// enumerator into the type that call takes. **It used to pair each variant with
+/// its Apple constant here, and that was the defect** — a pair table has no arm
+/// that can be missing, so a family added to [`MetalGpuFamily`] compiled cleanly,
+/// the device was never asked about it, and the applicability policy was then
+/// refused against a lower family reported as though it were the most specific
+/// true statement the device made.
+///
+/// One unnameable enumerator discards the whole walk rather than only its own
+/// query, and that is not caution — it is what the answer means.
+/// [`observe_highest_gpu_family`] walks highest first and stops at the first
+/// supported family, so a family above the one that answered leaves
+/// `Highest(lower)` an understatement wearing the shape of a most-specific claim.
+fn probe_apple_families(device: &Device) -> ProbedGpuFamily {
+    let mut unnameable = None;
+    let observed =
+        observe_highest_gpu_family(|constant| match binding_apple_enumerator(constant) {
+            Some(enumerator) => device.supports_family(enumerator),
+            None => {
+                unnameable = Some(constant);
+                // Not an answer, and nothing downstream treats it as one: the
+                // caller discards this walk entirely. Returning `false` here is
+                // only how this closure declines to end the walk on a family it
+                // never asked about.
+                false
+            }
+        });
+    unnameable.map_or(
+        ProbedGpuFamily::Answered(observed),
+        ProbedGpuFamily::Unnameable,
+    )
+}
+
+/// States the probed family on an observation, or deliberately states nothing.
+///
+/// Split from the device so the refusal it produces is exercised without one.
+/// Leaving the predicate unset is the adapter saying it did not ask, and
+/// `MetalHostApplicabilityRefusal::Unobserved { predicate: GpuFamily }` is the
+/// typed outcome that already exists for exactly that. Calling
+/// `observing_gpu_family` with anything at all would be the adapter claiming it
+/// asked.
+fn stating_probed_family(
+    observation: MetalHostObservation,
+    probed: ProbedGpuFamily,
+) -> MetalHostObservation {
+    match probed {
+        ProbedGpuFamily::Answered(support) => observation.observing_gpu_family(support),
+        ProbedGpuFamily::Unnameable(_) => observation,
+    }
 }
 
 /// Observes the four host predicates that need no device.
@@ -742,10 +901,15 @@ fn observe_host_environment() -> MetalHostObservation {
 /// the policy. In particular the registry ID does not: ADR 0086 excludes it by
 /// name, because the retained records report two different values for this same
 /// named Apple M4 Max.
-fn observe_metal_host(device: &Device) -> MetalHostObservation {
-    observe_host_environment()
-        .observing_device_name(device.name())
-        .observing_gpu_family(highest_apple_family(device))
+///
+/// The family is passed in rather than probed here so the caller can report the
+/// exact enumerator a refusal is about; a probe hidden in here could only leave
+/// the predicate unobserved without saying why.
+fn observe_metal_host(device: &Device, probed: ProbedGpuFamily) -> MetalHostObservation {
+    stating_probed_family(
+        observe_host_environment().observing_device_name(device.name()),
+        probed,
+    )
 }
 
 /// The production offer path: earn the right to offer the declared profile, or
@@ -777,19 +941,15 @@ fn observe_metal_host(device: &Device) -> MetalHostObservation {
 /// structural: [`tiler_metal::applicability::MetalHostEligibility`] holds an
 /// uninhabited authority, so no host can produce a receipt.
 fn offer_the_declared_profile(device: &Device) -> MetalHostApplicabilityRefusal {
-    let observation = observe_metal_host(device);
+    let probed = probe_apple_families(device);
+    let observation = observe_metal_host(device, probed);
     println!(
-        "host applicability observation: os {}/{}/{}, arch {}, device {}, family {}",
+        "host applicability observation: os {}/{}/{}, arch {}, device {}, family {probed}",
         observation.os_family().unwrap_or("unobserved"),
         observation.os_version().unwrap_or("unobserved"),
         observation.os_build().unwrap_or("unobserved"),
         observation.architecture().unwrap_or("unobserved"),
         observation.device_name().unwrap_or("unobserved"),
-        match observation.gpu_family() {
-            Some(MetalGpuFamilySupport::Highest(family)) => family.as_str(),
-            Some(MetalGpuFamilySupport::NoneNamed) => "no named Apple family",
-            None => "unobserved",
-        },
     );
     let policy = MetalHostApplicabilityPolicy::FIRST_MACOS_APPLE9;
     match evaluate_metal_host_applicability(policy, &observation) {
@@ -1683,7 +1843,7 @@ struct DeviceFacts {
     max_threads_per_threadgroup: u64,
     max_buffer_length: u64,
     recommended_working_set: u64,
-    highest_apple_family: MetalGpuFamilySupport,
+    apple_family: ProbedGpuFamily,
 }
 
 /// One entry of a route, with the device objects its dispatch needs.
@@ -1810,13 +1970,21 @@ fn decide_live_device_requirement(
                 return LiveDeviceObservation::Unrecognized;
             };
             // Cumulative families, which is the same property
-            // `highest_apple_family` already relies on: the highest supported
+            // `probe_apple_families` already relies on: the highest supported
             // family implies every lower one, so the ordering decides support
             // without a second device call. A device naming none of them
             // satisfies no family requirement.
-            let supported = match facts.highest_apple_family {
-                MetalGpuFamilySupport::Highest(highest) => highest >= required,
-                MetalGpuFamilySupport::NoneNamed => false,
+            let supported = match facts.apple_family {
+                ProbedGpuFamily::Answered(MetalGpuFamilySupport::Highest(highest)) => {
+                    highest >= required
+                }
+                ProbedGpuFamily::Answered(MetalGpuFamilySupport::NoneNamed) => false,
+                // This adapter owns the row and still has no observation to
+                // decide it from, which is what `Unrecognized` is for: it
+                // refuses the route. `Feature(false)` would be this adapter
+                // reporting a device that answered no to a question its binding
+                // could not put.
+                ProbedGpuFamily::Unnameable(_) => return LiveDeviceObservation::Unrecognized,
             };
             LiveDeviceObservation::Feature(supported)
         }
@@ -2057,7 +2225,7 @@ fn device_facts(device: &Device) -> DeviceFacts {
         max_threads_per_threadgroup: device.max_threads_per_threadgroup().width,
         max_buffer_length: device.max_buffer_length(),
         recommended_working_set: device.recommended_max_working_set_size(),
-        highest_apple_family: highest_apple_family(device),
+        apple_family: probe_apple_families(device),
     }
 }
 
@@ -2565,10 +2733,7 @@ fn run() -> Result<(), ProofError> {
         "device preflight: {} ({}), {} thread(s) per threadgroup, buffers to {} byte(s), \
          working set {} byte(s)",
         facts.name,
-        match facts.highest_apple_family {
-            MetalGpuFamilySupport::Highest(family) => family.as_str(),
-            MetalGpuFamilySupport::NoneNamed => "no Apple family reported",
-        },
+        facts.apple_family,
         facts.max_threads_per_threadgroup,
         facts.max_buffer_length,
         facts.recommended_working_set,
@@ -3039,17 +3204,18 @@ mod tests {
     //! hardware run is what would notice.
 
     use super::{
-        BACKEND_KEY, DeviceFacts, LiveDeviceObservation, LiveDeviceQualification, LoadRejection,
-        METAL_MINIMUM_GPU_FAMILY, METAL_MINIMUM_GPU_FAMILY_VERSION, MetalGpuFamily,
-        MetalGpuFamilySupport, MetalHostApplicabilityPolicy, PLAN_ROLES, Path, ProbeSubject,
+        BACKEND_KEY, BINDING_APPLE_FAMILIES, DeviceFacts, LiveDeviceObservation,
+        LiveDeviceQualification, LoadRejection, METAL_MINIMUM_GPU_FAMILY,
+        METAL_MINIMUM_GPU_FAMILY_VERSION, MetalGpuFamily, MetalGpuFamilySupport,
+        MetalHostApplicabilityPolicy, PLAN_ROLES, Path, ProbeSubject, ProbedGpuFamily,
         REDUCTION_CLASSES, REPRESENTATION_KEY, ROWS, RoutePreparation, RouteRequirement,
-        RouteResourceDimension, SOLE_DELIVERY, bind_interface, compile_under,
-        decide_live_device_requirement, declaration, declared_route_environment,
+        RouteResourceDimension, SOLE_DELIVERY, bind_interface, binding_apple_enumerator,
+        compile_under, decide_live_device_requirement, declaration, declared_route_environment,
         evaluate_metal_host_applicability, expected_shape, normalized_architecture,
         observe_host_environment, probe_accepted_baseline, probe_damaged_interior_byte,
         probe_damaged_section_content, probe_foreign_expected_identity, probe_other_backend_family,
         probe_other_profile_descriptor, probe_other_profile_key, probe_truncated_envelope,
-        proof_member, serial_sum_program,
+        proof_member, serial_sum_program, stating_probed_family,
     };
     use tiler_artifact::program::{
         AbiExprId, AbiFacts, ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey,
@@ -3072,7 +3238,9 @@ mod tests {
     };
     use tiler_ir::semantic::SemanticProgram;
     use tiler_ir::shape::Shape;
-    use tiler_metal::applicability::{MetalHostApplicabilityRefusal, MetalHostPredicate};
+    use tiler_metal::applicability::{
+        MetalHostApplicabilityRefusal, MetalHostObservation, MetalHostPredicate,
+    };
     use tiler_runtime::load::{DecodedProgram, ExecutionEnvironment};
 
     /// Columns of the **loader** fixtures' input; the reduced axis.
@@ -3469,13 +3637,13 @@ mod tests {
     }
 
     /// Synthesizes the device facts the adapter decides from, without a device.
-    fn observed_facts(highest: MetalGpuFamilySupport) -> DeviceFacts {
+    fn observed_facts(probed: ProbedGpuFamily) -> DeviceFacts {
         DeviceFacts {
             name: "tiler.probe.device".to_owned(),
             max_threads_per_threadgroup: 1_024,
             max_buffer_length: 1 << 30,
             recommended_working_set: 1 << 30,
-            highest_apple_family: highest,
+            apple_family: probed,
         }
     }
 
@@ -4848,7 +5016,7 @@ mod tests {
         ];
         for (observed, required, expected) in cases {
             let requirement = metal_family_requirement(required);
-            let facts = observed_facts(observed);
+            let facts = observed_facts(ProbedGpuFamily::Answered(observed));
             let fixture = requiring_fixture(std::slice::from_ref(&requirement));
             let mut decoded = DecodedProgram::decode(&fixture.bytes, SOLE_DELIVERY)
                 .expect("the envelope decodes");
@@ -4867,6 +5035,136 @@ mod tests {
         }
     }
 
+    /// This binding names every family the governed vocabulary probes, counted.
+    ///
+    /// The compile-time assertion beside `binding_apple_enumerator` is the check
+    /// that stops a build; this states the same population at runtime so the
+    /// numbers a reader would otherwise have to take on trust are written down —
+    /// how many families the vocabulary names, how many enumerators this binding
+    /// names, and that the join between them is Apple's own value rather than a
+    /// pairing.
+    #[test]
+    fn the_binding_names_every_family_the_governed_vocabulary_probes() {
+        assert_eq!(
+            MetalGpuFamily::COUNT,
+            5,
+            "the governed vocabulary's size is what this runner's probe population is",
+        );
+        assert_eq!(
+            BINDING_APPLE_FAMILIES.len(),
+            9,
+            "`metal` 0.33.0 names Apple1 through Apple9",
+        );
+        let nameable = MetalGpuFamily::ALL
+            .into_iter()
+            .filter(|family| binding_apple_enumerator(family.apple_constant()).is_some())
+            .count();
+        assert_eq!(
+            nameable,
+            MetalGpuFamily::COUNT,
+            "a family this binding cannot name leaves the GPU-family predicate unobserved",
+        );
+        for family in MetalGpuFamily::ALL {
+            let enumerator = binding_apple_enumerator(family.apple_constant())
+                .unwrap_or_else(|| panic!("this binding must name {family}"));
+            assert_eq!(
+                enumerator as isize,
+                family.apple_constant().value(),
+                "{family} must cross to the enumerator Apple declares at the same value",
+            );
+        }
+    }
+
+    /// The unnameable case is reachable rather than theoretical.
+    ///
+    /// Apple declares `MTLGPUFamilyApple10 = 1010` in the macOS 26.5 SDK and this
+    /// binding stops at Apple9, so the moment the governed vocabulary widens, the
+    /// probe meets an enumerator it cannot name. Pinned here because every
+    /// refusal above it is only worth writing while that is true — a binding that
+    /// gained the enumerator would make this fail and say so.
+    #[test]
+    fn this_binding_cannot_name_the_family_apple_declares_above_its_last() {
+        assert!(
+            !BINDING_APPLE_FAMILIES
+                .iter()
+                .any(|enumerator| *enumerator as isize == 1010),
+            "`metal` 0.33.0 gained MTLGPUFamilyApple10; the vocabulary can now widen to it and \
+             this runner's unnameable-enumerator refusal is no longer reachable through it",
+        );
+    }
+
+    /// An enumerator this binding cannot name leaves the predicate unobserved.
+    ///
+    /// The pair is the point. The same observation, differing only in what the
+    /// probe could learn, reaches ADR 0086's authority refusal when the device
+    /// answered and stops at `Unobserved { predicate: GpuFamily }` when it was
+    /// never asked — which is the policy's own word for an adapter that did not
+    /// ask, and not the `GpuFamilyMismatch` a `false` answer would have produced.
+    #[test]
+    fn an_unnameable_enumerator_leaves_the_family_predicate_unobserved() {
+        let policy = MetalHostApplicabilityPolicy::FIRST_MACOS_APPLE9;
+        let measured = MetalHostObservation::unobserved()
+            .observing_os_family(policy.os_family())
+            .observing_os_version(policy.os_version())
+            .observing_os_build(policy.os_build())
+            .observing_architecture(policy.architecture())
+            .observing_device_name(policy.device_name());
+
+        let answered = stating_probed_family(
+            measured.clone(),
+            ProbedGpuFamily::Answered(MetalGpuFamilySupport::Highest(policy.gpu_family())),
+        );
+        assert_eq!(
+            evaluate_metal_host_applicability(policy, &answered)
+                .expect_err("no host earns a receipt")
+                .predicate(),
+            MetalHostPredicate::NativeTranslationAuthority,
+            "an answered probe must carry the row past the GPU-family predicate",
+        );
+
+        let unnameable = stating_probed_family(
+            measured,
+            ProbedGpuFamily::Unnameable(MetalGpuFamily::Apple9.apple_constant()),
+        );
+        assert_eq!(
+            evaluate_metal_host_applicability(policy, &unnameable)
+                .expect_err("no host earns a receipt"),
+            MetalHostApplicabilityRefusal::Unobserved {
+                predicate: MetalHostPredicate::GpuFamily,
+            },
+            "a probe that could not ask must refuse as unobserved, not as a mismatch",
+        );
+    }
+
+    /// A family row this adapter owns is `Unrecognized` when it could not ask.
+    ///
+    /// The route-requirement half of the same distinction. `Feature(false)` would
+    /// refuse this route too, and would refuse it as a device that answered no —
+    /// so a reader, and any future explain output, would read a binding gap as a
+    /// hardware fact.
+    #[test]
+    fn a_family_row_is_unrecognized_when_the_binding_could_not_ask() {
+        let facts = observed_facts(ProbedGpuFamily::Unnameable(
+            MetalGpuFamily::Apple5.apple_constant(),
+        ));
+        let requirement = metal_family_requirement(MetalGpuFamily::Apple5);
+        let fixture = requiring_fixture(std::slice::from_ref(&requirement));
+        let mut decoded =
+            DecodedProgram::decode(&fixture.bytes, SOLE_DELIVERY).expect("the envelope decodes");
+        let qualification = decoded
+            .prepare(&fixture.environment, &fixture.expected, &fixture.abi)
+            .expect("the route prepares");
+        let answers: Vec<_> = qualification
+            .live_device_requirements()
+            .map(|request| decide_live_device_requirement(&facts, request))
+            .collect();
+        assert_eq!(
+            answers,
+            vec![LiveDeviceObservation::Unrecognized],
+            "the lowest family this vocabulary names is still unanswerable when nothing asked",
+        );
+    }
+
     /// Anything the Metal adapter does not own is `Unrecognized`, never a guess.
     ///
     /// The population is named: every row shape this adapter can be handed that
@@ -4874,7 +5172,9 @@ mod tests {
     /// no family — plus every neutral dimension it cannot observe.
     #[test]
     fn the_metal_adapter_refuses_every_row_it_does_not_own() {
-        let facts = observed_facts(MetalGpuFamilySupport::Highest(MetalGpuFamily::Apple9));
+        let facts = observed_facts(ProbedGpuFamily::Answered(MetalGpuFamilySupport::Highest(
+            MetalGpuFamily::Apple9,
+        )));
         let mut unowned: Vec<RouteRequirement> = vec![
             family_requirement(
                 BACKEND_KEY,
