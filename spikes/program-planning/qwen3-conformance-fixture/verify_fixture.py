@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify a retained C1 conformance fixture without owning a model.
+"""Verify a retained C1 conformance and attribution fixture without owning a model.
 
 `produce_fixture.py --compare` is the strong check: it regenerates everything
 and demands byte equality. It also needs the 1.19 GB checkpoint, the pinned
@@ -12,15 +12,21 @@ from a *regenerated* one:
     survive a re-hashed manifest -- a greedy token that no longer agrees with
     the top-32 table, a gap that no longer equals the difference of the two
     logits it is derived from, a generated token that no longer equals the
-    argmax of the position that produced it;
-  * `--logit-dir` additionally re-hashes the regenerable F32 logit bytes against
-    the per-position digests, when they happen to be present locally.
+    argmax of the position that produced it, an attribution head whose ordering
+    or extremum disagrees with the row it summarizes, a rotary table whose two
+    halves are no longer the duplication the pinned source builds, a mask entry
+    that is neither of L4's two admitted values or that is admitted at a
+    position causality forbids;
+  * `--logit-dir` and `--attribution-dir` additionally re-hash the regenerable
+    F32 bytes against the retained per-slice digests, when they happen to be
+    present locally.
 
 Every check names its population and counts it, so "nothing failed" is
 distinguishable from "nothing ran".
 
     uv run --locked python verify_fixture.py results/<slug>
-    uv run --locked python verify_fixture.py results/<slug> --logit-dir local-work/logits
+    uv run --locked python verify_fixture.py results/<slug> \\
+        --logit-dir local-work/logits --attribution-dir local-work/attribution
 """
 
 from __future__ import annotations
@@ -39,7 +45,35 @@ TOP_K = 32
 EXPECTED_POSITIONS = len(PROMPT_IDS) + DECODE_STEPS
 ENVELOPE_VARIANTS = {"f64_unmodified", "f64_promoted"}
 
-RESULT_FILES = ["environment.tsv", "sequence.tsv", "positions.tsv", "top32.tsv", "envelope.tsv"]
+# The attribution surface's shape, from L1's config facts and L6's arithmetic.
+NUM_LAYERS = 28
+HIDDEN_SIZE = 1024
+KV_HEADS = 8
+HEAD_DIM = 128
+ATTRIBUTION_TOP_K = 4
+CACHE_TENSORS = ("k_rope", "v_heads")
+HIDDEN_BYTES = NUM_LAYERS * EXPECTED_POSITIONS * HIDDEN_SIZE * 4
+CACHE_BYTES = NUM_LAYERS * len(CACHE_TENSORS) * KV_HEADS * EXPECTED_POSITIONS * HEAD_DIM * 4
+POSITION_SLICE_BYTES = HIDDEN_SIZE * 4
+MASK_MASKED_ENTRY = "0xff7fffff"
+MASK_ATTENDED_ENTRY = "0x80000000"
+WEIGHT_TENSOR_COUNT = 310
+WIDENED_WEIGHT_BYTES = 2_384_199_680
+
+RESULT_FILES = [
+    "environment.tsv",
+    "sequence.tsv",
+    "positions.tsv",
+    "top32.tsv",
+    "envelope.tsv",
+    "hidden.tsv",
+    "hidden_top.tsv",
+    "cache.tsv",
+    "cache_top.tsv",
+    "rotary.tsv",
+    "mask.tsv",
+    "host.tsv",
+]
 
 
 class Report:
@@ -71,7 +105,7 @@ def float_from_hex(text: str) -> float:
     return struct.unpack("<f", struct.pack("<I", int(text, 16)))[0]
 
 
-def verify(directory: Path, logit_dir: Path | None) -> int:
+def verify(directory: Path, logit_dir: Path | None, attribution_dir: Path | None) -> int:
     report = Report()
 
     for name in RESULT_FILES + ["manifest.tsv"]:
@@ -153,7 +187,21 @@ def verify(directory: Path, logit_dir: Path | None) -> int:
         == "cd2a512003e2f9f3cd3c32a9c3573f820bb28c940f73c57b1ddaa983d9223eba",
         "record does not carry the manifest checkpoint digest",
     )
-    report.note(f"environment: {len(environment)} keys, 8 asserted")
+    report.require(
+        environment.get("attribution.hidden_bytes") == str(HIDDEN_BYTES),
+        f"record claims {environment.get('attribution.hidden_bytes')} hidden-state bytes, "
+        f"L6's figure is {HIDDEN_BYTES}",
+    )
+    report.require(
+        environment.get("attribution.cache_bytes") == str(CACHE_BYTES),
+        f"record claims {environment.get('attribution.cache_bytes')} cache bytes, "
+        f"L6's figure is {CACHE_BYTES}",
+    )
+    report.require(
+        environment.get("attribution.top_k") == str(ATTRIBUTION_TOP_K),
+        f"record claims a top-k of {environment.get('attribution.top_k')}",
+    )
+    report.note(f"environment: {len(environment)} keys, 11 asserted")
 
     # --- sequence -----------------------------------------------------------
     sequence = read_tsv(directory / "sequence.tsv")
@@ -325,6 +373,355 @@ def verify(directory: Path, logit_dir: Path | None) -> int:
         )
     report.note(f"envelope: {len(envelope)} rows over {len(variants)} variants")
 
+    # --- attribution: per-layer hidden states -------------------------------
+    # The digest proves exact regeneration and the head carries the values a
+    # bounded comparison needs, so both are checked: the head must agree with
+    # the row it summarizes, and the ordering must be the one the record
+    # declares. Neither check asserts a magnitude -- no tolerance lives here.
+    stage_of = {row["position"]: row["stage"] for row in positions}
+
+    def check_head(rows, label, extent, coordinate):
+        """Check a top-k block: rank order, coordinate range, hex/decimal agreement.
+
+        The declared order is descending |value| with ties toward the lower flat
+        index, and a block that violates it is a record whose retained
+        coordinates no longer name the reference's largest components.
+        """
+        if not report.require(len(rows) == ATTRIBUTION_TOP_K, f"{label} has {len(rows)} top-k rows"):
+            return None
+        previous = None
+        for rank, row in enumerate(rows):
+            report.require(int(row["rank"]) == rank, f"{label} rank {rank} is out of order")
+            flat = coordinate(row)
+            report.require(0 <= flat < extent, f"{label} rank {rank} names flat index {flat}, out of range")
+            value = float_from_hex(row["value_hex"])
+            report.require(
+                repr(value) == row["value"],
+                f"{label} rank {rank}: value {row['value']} does not decode from {row['value_hex']}",
+            )
+            if previous is not None:
+                previous_value, previous_flat = previous
+                report.require(
+                    abs(value) < abs(previous_value)
+                    or (abs(value) == abs(previous_value) and flat > previous_flat),
+                    f"{label} rank {rank}: ordering violates descending magnitude with "
+                    "ties broken toward the lower index",
+                )
+            previous = (value, flat)
+        return rows[0]
+
+    hidden = read_tsv(directory / "hidden.tsv")
+    hidden_top = read_tsv(directory / "hidden_top.tsv")
+    report.require(
+        len(hidden) == NUM_LAYERS * EXPECTED_POSITIONS,
+        f"hidden has {len(hidden)} rows, expected {NUM_LAYERS * EXPECTED_POSITIONS}",
+    )
+    report.require(
+        len(hidden_top) == NUM_LAYERS * EXPECTED_POSITIONS * ATTRIBUTION_TOP_K,
+        f"hidden_top has {len(hidden_top)} rows, "
+        f"expected {NUM_LAYERS * EXPECTED_POSITIONS * ATTRIBUTION_TOP_K}",
+    )
+    hidden_heads = {}
+    for row in hidden_top:
+        hidden_heads.setdefault((int(row["layer"]), int(row["position"])), []).append(row)
+    for offset, row in enumerate(hidden):
+        layer, position = divmod(offset, EXPECTED_POSITIONS)
+        key = f"hidden layer {layer} position {position}"
+        report.require(
+            int(row["layer"]) == layer and int(row["position"]) == position,
+            f"hidden row {offset} carries layer {row['layer']} position {row['position']}",
+        )
+        report.require(
+            row["stage"] == stage_of.get(str(position)),
+            f"{key}: stage {row['stage']} disagrees with positions.tsv",
+        )
+        report.require(
+            len(row["sha256"]) == 64 and all(c in "0123456789abcdef" for c in row["sha256"]),
+            f"{key}: malformed digest",
+        )
+        extreme = float_from_hex(row["max_abs_hex"])
+        report.require(
+            repr(extreme) == row["max_abs"],
+            f"{key}: max_abs {row['max_abs']} does not decode from {row['max_abs_hex']}",
+        )
+        norm = float(row["l2_norm"])
+        # A vector's Euclidean norm is at least the magnitude of its largest
+        # component. This is exact rather than approximate, so it needs no
+        # tolerance and still fails on a fabricated norm or extremum.
+        report.require(
+            norm >= abs(extreme),
+            f"{key}: the recorded norm {norm} is below the largest component magnitude {abs(extreme)}",
+        )
+        head = check_head(
+            hidden_heads.get((layer, position), []), key, HIDDEN_SIZE, lambda entry: int(entry["lane"])
+        )
+        if head is not None:
+            report.require(
+                head["lane"] == row["max_abs_lane"] and head["value_hex"] == row["max_abs_hex"],
+                f"{key}: the rank 0 head entry disagrees with the recorded extremum",
+            )
+    report.note(
+        f"hidden: {len(hidden)} slices over {NUM_LAYERS} layers x {EXPECTED_POSITIONS} positions, "
+        f"{len(hidden_top)} head rows"
+    )
+
+    # --- attribution: per-layer post-RoPE K and V ---------------------------
+    cache = read_tsv(directory / "cache.tsv")
+    cache_top = read_tsv(directory / "cache_top.tsv")
+    expected_cache_rows = NUM_LAYERS * len(CACHE_TENSORS) * EXPECTED_POSITIONS
+    report.require(
+        len(cache) == expected_cache_rows, f"cache has {len(cache)} rows, expected {expected_cache_rows}"
+    )
+    report.require(
+        len(cache_top) == expected_cache_rows * ATTRIBUTION_TOP_K,
+        f"cache_top has {len(cache_top)} rows, expected {expected_cache_rows * ATTRIBUTION_TOP_K}",
+    )
+    cache_heads = {}
+    for row in cache_top:
+        cache_heads.setdefault(
+            (int(row["layer"]), row["tensor"], int(row["position"])), []
+        ).append(row)
+    seen_tensors = set()
+    for offset, row in enumerate(cache):
+        layer, remainder = divmod(offset, len(CACHE_TENSORS) * EXPECTED_POSITIONS)
+        index, position = divmod(remainder, EXPECTED_POSITIONS)
+        name = CACHE_TENSORS[index]
+        key = f"cache layer {layer} {name} position {position}"
+        seen_tensors.add(row["tensor"])
+        report.require(
+            int(row["layer"]) == layer and row["tensor"] == name and int(row["position"]) == position,
+            f"cache row {offset} carries layer {row['layer']} {row['tensor']} position {row['position']}",
+        )
+        report.require(
+            row["stage"] == stage_of.get(str(position)),
+            f"{key}: stage {row['stage']} disagrees with positions.tsv",
+        )
+        report.require(
+            len(row["sha256"]) == 64 and all(c in "0123456789abcdef" for c in row["sha256"]),
+            f"{key}: malformed digest",
+        )
+        extreme = float_from_hex(row["max_abs_hex"])
+        report.require(
+            repr(extreme) == row["max_abs"],
+            f"{key}: max_abs {row['max_abs']} does not decode from {row['max_abs_hex']}",
+        )
+        report.require(
+            float(row["l2_norm"]) >= abs(extreme),
+            f"{key}: the recorded norm is below the largest component magnitude",
+        )
+        head = check_head(
+            cache_heads.get((layer, name, position), []),
+            key,
+            KV_HEADS * HEAD_DIM,
+            lambda entry: int(entry["head"]) * HEAD_DIM + int(entry["lane"]),
+        )
+        if head is not None:
+            report.require(
+                head["head"] == row["max_abs_head"]
+                and head["lane"] == row["max_abs_lane"]
+                and head["value_hex"] == row["max_abs_hex"],
+                f"{key}: the rank 0 head entry disagrees with the recorded extremum",
+            )
+    report.require(
+        seen_tensors == set(CACHE_TENSORS),
+        f"cache carries tensors {sorted(seen_tensors)}, expected {sorted(CACHE_TENSORS)}",
+    )
+    report.note(
+        f"cache: {len(cache)} slices over {NUM_LAYERS} layers x {len(CACHE_TENSORS)} tensors x "
+        f"{EXPECTED_POSITIONS} positions, {len(cache_top)} head rows"
+    )
+
+    # --- attribution: the rotary rows ---------------------------------------
+    # Two exact structural properties of the pinned construction, so neither
+    # needs a threshold. `emb = cat((freqs, freqs))` duplicates the 64-wide
+    # frequency block across the 128-wide head, and position 0's angle is zero.
+    rotary = read_tsv(directory / "rotary.tsv")
+    report.require(
+        len(rotary) == EXPECTED_POSITIONS * HEAD_DIM,
+        f"rotary has {len(rotary)} rows, expected {EXPECTED_POSITIONS * HEAD_DIM}",
+    )
+    rotary_by_position = {}
+    for offset, row in enumerate(rotary):
+        position, lane = divmod(offset, HEAD_DIM)
+        report.require(
+            int(row["position"]) == position and int(row["lane"]) == lane,
+            f"rotary row {offset} carries position {row['position']} lane {row['lane']}",
+        )
+        for name in ("cos", "sin"):
+            value = float_from_hex(row[f"{name}_hex"])
+            report.require(
+                repr(value) == row[name],
+                f"rotary position {position} lane {lane}: {name} {row[name]} does not decode "
+                f"from {row[f'{name}_hex']}",
+            )
+        rotary_by_position.setdefault(position, []).append(row)
+    halves = 0
+    for position, rows in rotary_by_position.items():
+        if len(rows) != HEAD_DIM:
+            continue
+        for lane in range(HEAD_DIM // 2):
+            report.require(
+                rows[lane]["cos_hex"] == rows[lane + HEAD_DIM // 2]["cos_hex"]
+                and rows[lane]["sin_hex"] == rows[lane + HEAD_DIM // 2]["sin_hex"],
+                f"rotary position {position} lane {lane}: the two halves of the table disagree, "
+                "which the pinned `cat((freqs, freqs))` construction cannot produce",
+            )
+            halves += 1
+    zero = rotary_by_position.get(0, [])
+    report.require(
+        all(row["cos_hex"] == "0x3f800000" and row["sin_hex"] == "0x00000000" for row in zero),
+        "rotary position 0 is not exactly cos 1.0 and sin 0.0 on every lane",
+    )
+    report.note(
+        f"rotary: {len(rotary)} rows over {len(rotary_by_position)} positions, "
+        f"{halves} half-duplication pairs checked"
+    )
+
+    # --- attribution: the additive causal mask ------------------------------
+    mask = read_tsv(directory / "mask.tsv")
+    host = read_kv(directory / "host.tsv")
+    report.require(
+        host.get("host.mask.masked_entry") == MASK_MASKED_ENTRY
+        and host.get("host.mask.attended_entry") == MASK_ATTENDED_ENTRY,
+        "host.tsv does not carry L4's two mask values",
+    )
+    by_pass = {}
+    for row in mask:
+        report.require(
+            row["value_hex"] in (MASK_MASKED_ENTRY, MASK_ATTENDED_ENTRY),
+            f"mask {row['pass']} ({row['query_position']}, {row['key_position']}) carries "
+            f"{row['value_hex']}, which is neither of L4's two values",
+        )
+        # Causality is exact: a query attends to a key at or below its own
+        # position and to no other. A record that admitted one more would be a
+        # different computation, not a looser one.
+        attended = row["value_hex"] == MASK_ATTENDED_ENTRY
+        report.require(
+            attended == (int(row["key_position"]) <= int(row["query_position"])),
+            f"mask {row['pass']} ({row['query_position']}, {row['key_position']}) is "
+            f"{'attended' if attended else 'masked'}, which causality forbids",
+        )
+        by_pass.setdefault(row["pass"], []).append(row)
+    expected_passes = ["prefill"] + [f"decode-{step + 1}" for step in range(DECODE_STEPS)]
+    report.require(
+        sorted(by_pass) == sorted(expected_passes),
+        f"mask carries passes {sorted(by_pass)}, expected {sorted(expected_passes)}",
+    )
+    for label in expected_passes:
+        rows = by_pass.get(label, [])
+        shape = host.get(f"host.mask.{label}.shape")
+        if not report.require(shape is not None, f"host.tsv has no shape for the {label} mask"):
+            continue
+        queries, keys = (int(part) for part in shape.strip("[]").split(","))
+        report.require(
+            len(rows) == queries * keys,
+            f"mask {label} has {len(rows)} rows, its declared shape {shape} is {queries * keys}",
+        )
+        report.require(
+            int(host.get(f"host.mask.{label}.bytes", "-1")) == queries * keys * 4,
+            f"host.tsv's byte count for the {label} mask disagrees with its declared shape",
+        )
+        report.require(
+            int(host.get(f"host.mask.{label}.attended_entries", "-1"))
+            == sum(1 for row in rows if row["value_hex"] == MASK_ATTENDED_ENTRY),
+            f"host.tsv's attended count for the {label} mask disagrees with mask.tsv",
+        )
+    report.note(f"mask: {len(mask)} entries over {len(by_pass)} passes, all two-valued and causal")
+
+    # --- attribution: the remaining host computations -----------------------
+    report.require(
+        host.get("weights.widened.tensor_count") == str(WEIGHT_TENSOR_COUNT),
+        f"host.tsv claims {host.get('weights.widened.tensor_count')} widened tensors, "
+        f"L1's inventory records {WEIGHT_TENSOR_COUNT}",
+    )
+    report.require(
+        host.get("weights.widened.bytes") == str(WIDENED_WEIGHT_BYTES),
+        f"host.tsv claims {host.get('weights.widened.bytes')} widened bytes, "
+        f"L1's F32 weight budget is {WIDENED_WEIGHT_BYTES}",
+    )
+    report.require(
+        host.get("weights.widening_bit_exact_tensors") == str(WEIGHT_TENSOR_COUNT),
+        f"only {host.get('weights.widening_bit_exact_tensors')} of {WEIGHT_TENSOR_COUNT} widenings "
+        "are bit-exact; L1 records the BF16-to-F32 widening as exact for every finite value",
+    )
+    report.require(
+        host.get("host.tokens.count") == str(EXPECTED_POSITIONS)
+        and host.get("host.tokens.bytes") == str(EXPECTED_POSITIONS * 4),
+        "host.tsv's token-ID population disagrees with the row's 18 positions",
+    )
+    for key in (
+        "host.rotary.cos_sha256",
+        "host.rotary.sin_sha256",
+        "host.tokens.sha256",
+        "weights.widened.sha256",
+    ):
+        report.require(
+            len(host.get(key, "")) == 64,
+            f"host.tsv carries no well-formed digest at {key}",
+        )
+    report.note(f"host: {len(host)} keys covering the four host computations")
+
+    # --- optional: the regenerable attribution bytes ------------------------
+    if attribution_dir is not None:
+        present = 0
+        for layer in range(NUM_LAYERS):
+            path = attribution_dir / "hidden" / f"layer-{layer:02d}.f32le.bin"
+            if not path.exists():
+                continue
+            present += 1
+            raw = path.read_bytes()
+            if not report.require(
+                len(raw) == EXPECTED_POSITIONS * POSITION_SLICE_BYTES,
+                f"{path.name} is {len(raw)} bytes, expected {EXPECTED_POSITIONS * POSITION_SLICE_BYTES}",
+            ):
+                continue
+            for position in range(EXPECTED_POSITIONS):
+                start = position * POSITION_SLICE_BYTES
+                recorded = hidden[layer * EXPECTED_POSITIONS + position]["sha256"]
+                report.require(
+                    hashlib.sha256(raw[start : start + POSITION_SLICE_BYTES]).hexdigest() == recorded,
+                    f"{path.name} position {position} does not hash to its recorded digest",
+                )
+        report.note(f"hidden bytes: {present} of {NUM_LAYERS} layer files present and re-hashed")
+
+        cache_present = 0
+        for offset, row in enumerate(cache):
+            path = (
+                attribution_dir / "cache" / f"layer-{int(row['layer']):02d}-{row['tensor']}.f32le.bin"
+            )
+            if not path.exists():
+                continue
+            raw = path.read_bytes()
+            if not report.require(
+                len(raw) == KV_HEADS * EXPECTED_POSITIONS * HEAD_DIM * 4,
+                f"{path.name} is {len(raw)} bytes, expected {KV_HEADS * EXPECTED_POSITIONS * HEAD_DIM * 4}",
+            ):
+                continue
+            cache_present += 1
+            # The file keeps the head-major `[8, 18, 128]` layout, so a position
+            # is a strided gather rather than a byte range; this is that gather.
+            position = int(row["position"])
+            gathered = b"".join(
+                raw[
+                    (head * EXPECTED_POSITIONS + position) * HEAD_DIM * 4 : (
+                        head * EXPECTED_POSITIONS + position + 1
+                    )
+                    * HEAD_DIM
+                    * 4
+                ]
+                for head in range(KV_HEADS)
+            )
+            report.require(
+                hashlib.sha256(gathered).hexdigest() == row["sha256"],
+                f"{path.name} position {position} does not hash to its recorded digest",
+            )
+        report.note(f"cache bytes: {cache_present} of {len(cache)} slices re-hashed from present files")
+
+        if present == 0 and cache_present == 0:
+            report.require(
+                False, f"--attribution-dir {attribution_dir} was given but held no retained bytes"
+            )
+
     # --- optional: the regenerable logit bytes ------------------------------
     if logit_dir is not None:
         present = 0
@@ -358,7 +755,9 @@ def verify(directory: Path, logit_dir: Path | None) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Verify a retained C1 conformance fixture.")
+    parser = argparse.ArgumentParser(
+        description="Verify a retained C1 conformance and attribution fixture."
+    )
     parser.add_argument("directory", type=Path, help="a results/<slug> directory")
     parser.add_argument(
         "--logit-dir",
@@ -366,8 +765,14 @@ def main() -> int:
         default=None,
         help="also re-hash the regenerable F32 logit bytes in this directory",
     )
+    parser.add_argument(
+        "--attribution-dir",
+        type=Path,
+        default=None,
+        help="also re-hash the regenerable hidden-state and cache bytes in this directory",
+    )
     arguments = parser.parse_args()
-    return verify(arguments.directory, arguments.logit_dir)
+    return verify(arguments.directory, arguments.logit_dir, arguments.attribution_dir)
 
 
 if __name__ == "__main__":
