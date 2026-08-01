@@ -1,7 +1,7 @@
 ---
 id: dispatch-a-tiler-region-on-metal-hardware
 title: Complete one inline region's dispatch on Metal hardware
-status: in-progress
+status: done
 priority: p1
 dependencies: [route-an-embedded-artifact-through-a-consumer-storage-seam]
 related: [route-an-embedded-artifact-through-a-consumer-storage-seam, prototype-candle-metal-adapter]
@@ -9,9 +9,6 @@ scopes: [implementation/frontend, research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, inline-dx, runtime, metal, public-boundary]
-claimed_from: todo
-assignee: worker-hw-dispatch
-lease_expires_at: 1785574184
 ---
 ## Why this exists
 
