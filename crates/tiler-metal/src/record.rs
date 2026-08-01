@@ -88,6 +88,30 @@ pub enum MetalNumericalRequirement {
     /// under `-ffp-contract=fast`. The per-statement emission is therefore a
     /// measured defence against `on` and not against `fast`.
     NoFloatingPointContraction,
+    /// `-fmetal-math-fp32-functions=precise`.
+    ///
+    /// Required whenever an emitted operation is a single-precision elementary
+    /// function whose admitted result set is a resolved accuracy contract stated
+    /// against Metal's *precise* table. The `fast` selection is a different
+    /// contract, not a faster realization of the same one: Table 8.2 gives `exp`
+    /// the input-dependent bound `3 + floor(fabs(2 * x))` where Table 8.1 gives a
+    /// constant `4 ulp`, and ADR 0042 routes those to different contract forms.
+    ///
+    /// **This is defence in depth and not the primary control.** Emission writes
+    /// the `precise::` namespace explicitly, which selects `air.exp.f32`
+    /// regardless of the math mode, so a build that lost this flag still gets the
+    /// precise intrinsic. The requirement exists because the flag is what the
+    /// *specification's* applicability clause is stated against, and a target
+    /// profile that admitted the fast selection would be admitting Table 8.2.
+    ///
+    /// **Measurement.** The [Metal transcendental emission
+    /// probe](../../../spikes/numerics/metal_transcendental_emission/README.md)
+    /// records that under `-fmetal-math-mode=safe -fmetal-math-fp32-functions=precise`
+    /// both `exp(x)` and `precise::exp(x)` lower to `air.exp.f32`, while
+    /// `fast::exp(x)` lowers to `air.fast_exp.f32` and the unqualified spelling
+    /// selects the `fast_` family with no flags at all. The default is fast math,
+    /// so the hazard is one omitted flag wide.
+    PreciseFp32Functions,
 }
 
 impl MetalNumericalRequirement {
@@ -97,6 +121,7 @@ impl MetalNumericalRequirement {
         match self {
             Self::SafeMathMode => "-fmetal-math-mode=safe",
             Self::NoFloatingPointContraction => "-ffp-contract=off",
+            Self::PreciseFp32Functions => "-fmetal-math-fp32-functions=precise",
         }
     }
 
@@ -106,6 +131,7 @@ impl MetalNumericalRequirement {
         match self {
             Self::SafeMathMode => "safe-math-mode",
             Self::NoFloatingPointContraction => "no-floating-point-contraction",
+            Self::PreciseFp32Functions => "precise-fp32-functions",
         }
     }
 }

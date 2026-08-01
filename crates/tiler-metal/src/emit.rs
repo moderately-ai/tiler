@@ -63,7 +63,7 @@ use std::fmt::Write as _;
 use tiler_ir::kernel::{
     AddressSpace, BarrierOrdering, BarrierSpec, BinaryOp, BlockRef, BufferAccess, Builtin,
     CompareOp, ConvertOp, ExecutionScope, KernelConstant, KernelType, MemoryScope, OperationRef,
-    OperationView, PackedExtractOp, SerialLoopRef, VerifiedBufferId, VerifiedKernel,
+    OperationView, PackedExtractOp, SerialLoopRef, UnaryOp, VerifiedBufferId, VerifiedKernel,
     VerifiedValueId,
 };
 use tiler_ir::schedule::{
@@ -845,6 +845,7 @@ impl KernelEmitter<'_> {
             OperationView::Binary { op, lhs, rhs } => self.emit_binary(op, lhs, rhs, &results),
             OperationView::Compare { op, lhs, rhs } => self.emit_compare(op, lhs, rhs, &results),
             OperationView::Convert { op, source } => self.emit_convert(op, source, &results),
+            OperationView::Unary { op, source } => self.emit_unary(op, source, &results),
             OperationView::PackedExtract {
                 op,
                 carrier,
@@ -993,6 +994,13 @@ impl KernelEmitter<'_> {
             BinaryOp::I32Subtract => ("-", None),
             BinaryOp::F32Add => ("+", Some(MetalFloatArithmeticType::F32)),
             BinaryOp::F32Multiply => ("*", Some(MetalFloatArithmeticType::F32)),
+            // The `/` operator, deliberately, and not `metal::divide(x, y)`.
+            // MSL's Table 8.1 states its accuracy against the *operator*
+            // spelling; Table 6.4 defines `divide()` as "Compute x / y" and the
+            // table gives it no row of its own, so lowering through the function
+            // would rest the accuracy claim on a reading rather than on a
+            // quotation.
+            BinaryOp::F32Divide => ("/", Some(MetalFloatArithmeticType::F32)),
             _ => {
                 return Err(MetalEmitError::UnsupportedOperation {
                     family: MetalOperationFamily::Binary,
@@ -1096,6 +1104,49 @@ impl KernelEmitter<'_> {
         let value_type = self.value_type(*result)?;
         let name = self.bind(*result)?;
         self.line(&format!("{value_type} {name} = {lhs} {operator} {rhs};"));
+        Ok(())
+    }
+
+    /// Emits one pure unary elementary function.
+    ///
+    /// **The namespace is written explicitly, and that is the whole point.**
+    /// `exp(x)` unqualified selects `air.exp.f32` under the governed flag set and
+    /// `air.fast_exp.f32` under the compiler's own default, which is fast math;
+    /// `precise::exp(x)` selects `air.exp.f32` under both. Selecting the fast
+    /// intrinsic to satisfy a contract stated against the precise family is the
+    /// substitution ADR 0076 forbids, and the emission probe measured it to be one
+    /// omitted flag away. Writing the namespace makes the flag a second line of
+    /// defence rather than the only one.
+    ///
+    /// The match is exhaustive over a vocabulary that is deliberately not
+    /// `#[non_exhaustive]`, so a second elementary function is a build error here
+    /// until someone decides which intrinsic it selects.
+    fn emit_unary(
+        &mut self,
+        op: UnaryOp,
+        source: VerifiedValueId,
+        results: &[VerifiedValueId],
+    ) -> Result<(), MetalEmitError> {
+        let [result] = results else {
+            return Err(arity("unary-result"));
+        };
+        let (call, arithmetic_type) = match op {
+            UnaryOp::F32Exp => ("precise::exp", MetalFloatArithmeticType::F32),
+        };
+        self.record_subnormal_obligation(arithmetic_type);
+        // Both requirements, and they are separate obligations. The precise
+        // selection is what makes Table 8.1 the applicable accuracy table; the
+        // safe math mode is what keeps INF and NaN defined, which the `-88.73`
+        // band's exact negative zero rests on — under fast math §8.1 makes the
+        // handling of INF undefined and that value would have no basis at all.
+        self.numerical
+            .insert(MetalNumericalRequirement::PreciseFp32Functions);
+        self.numerical
+            .insert(MetalNumericalRequirement::SafeMathMode);
+        let source = self.name(source)?.to_owned();
+        let value_type = self.value_type(*result)?;
+        let name = self.bind(*result)?;
+        self.line(&format!("{value_type} {name} = {call}({source});"));
         Ok(())
     }
 

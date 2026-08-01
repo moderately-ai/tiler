@@ -192,16 +192,17 @@ impl OperationNumericalCapability {
 /// declines, and adding a row would widen `is_consumable`'s union for an
 /// operation no target profile can even state a numerical contract for.
 ///
-/// **Inference.** `ReciprocalTransform` needs a division to replace,
-/// `ApproximateIntrinsics` needs an elementary function to approximate, and
-/// `MaterializationRounding` is not the strict-affine encode rounding rule:
-/// that conversion is fixed to nearest-even by the scheme, while observable
-/// materialization of the compound value preserves its exact codes and
-/// associated parameters. The three generic dimensions therefore remain
-/// unconsumable and cannot change any result this build produces — which is what
-/// makes it safe for the realization not to carry them, and is checked rather
-/// than assumed by
-/// `every_registered_preset_is_representable_by_this_build`.
+/// **Inference — and this changed when the activation was admitted.**
+/// `MaterializationRounding` is still unconsumable: it is not the strict-affine
+/// encode rounding rule, which the scheme fixes to nearest-even, and observable
+/// materialization of a compound value preserves its exact codes and associated
+/// parameters. `ReciprocalTransform` and `ApproximateIntrinsics` are a different
+/// case now. Both were unconsumable because no admitted operation had a division
+/// to replace or an elementary function to approximate, and `tiler::silu-f32@1`
+/// has one of each — so their absence from every row below is no longer derived
+/// from the admitted set. [`SILU_UNCARRIED_DIMENSIONS`] states the omission
+/// explicitly and `the_uncarried_elementary_dimensions_are_outside_the_realization`
+/// checks the condition under which it stays honest.
 pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapability] {
     /// Dimensions any `f32` arithmetic operation can consume.
     const ARITHMETIC: &[NumericalDimension] = &[
@@ -255,6 +256,19 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
         NumericalDimension::NanAssumptions,
         NumericalDimension::InfinityAssumptions,
     ];
+    /// Dimensions the elementwise activation can consume and this build carries.
+    ///
+    /// The arithmetic row without contraction: the activation's composition puts
+    /// no multiply adjacent to an add, so there is no product for ADR 0015's
+    /// permission to fuse into.
+    const ELEMENTARY: &[NumericalDimension] = &[
+        NumericalDimension::InputSubnormals,
+        NumericalDimension::ResultSubnormals,
+        NumericalDimension::Reassociation,
+        NumericalDimension::SignedZero,
+        NumericalDimension::NanAssumptions,
+        NumericalDimension::InfinityAssumptions,
+    ];
     &[
         // A constant retains its declared bit pattern until an operation's
         // semantics produce a new value, so no arithmetic freedom acts on it.
@@ -273,6 +287,34 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
         OperationNumericalCapability {
             key: "tiler::strict-serial-sum-f32@1",
             consumes: REDUCTION,
+        },
+        // The activation is `f32` arithmetic, so it consumes the arithmetic row's
+        // dimensions minus contraction: its composition is a multiply by `-1.0`,
+        // an exponential, an add, and a divide, and no multiply is adjacent to an
+        // add, so ADR 0015's contraction has no product to fuse.
+        //
+        // **Two dimensions it can consume are deliberately absent, and the
+        // absence is a stated boundary rather than an oversight.** SiLU is the
+        // first admitted operation that could consume `ReciprocalTransform` (it
+        // contains a division) and the first that could consume
+        // `ApproximateIntrinsics` (it contains an elementary function). Listing
+        // either would enter it into `is_consumable`'s union, which decides which
+        // dimensions every contract must place on a target — and neither is
+        // carried by `tiler_ir::schedule::NumericalRealization`, so the
+        // `RelaxedF32` preset that authorizes both would become unrepresentable
+        // for every program. Widening the realization to carry them is ADR 0076
+        // item 1's shape and is filed as `carry-the-elementary-numerical-
+        // dimensions-in-the-region-realization`; until then the obligation is
+        // enforced where this build can actually enforce it, in the Metal
+        // emission, which writes `precise::exp` and the `/` operator and requires
+        // `-fmetal-math-fp32-functions=precise`.
+        //
+        // `SILU_UNCARRIED_DIMENSIONS` names the two so the omission is a checked
+        // claim rather than a gap, and its test fires the moment the realization
+        // grows to carry one.
+        OperationNumericalCapability {
+            key: "tiler::silu-f32@1",
+            consumes: ELEMENTARY,
         },
         OperationNumericalCapability {
             key: "tiler::strict-tensor-contraction-f32@1",
@@ -313,6 +355,33 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
         },
     ]
 }
+
+/// The dimensions the admitted activation can consume and this build withholds.
+///
+/// **Both are real obligations, and neither is a row.** `tiler::silu-f32@1`
+/// contains a division and an elementary function, so a contract resolving
+/// `ReciprocalTransform` or `ApproximateIntrinsics` differently would admit a
+/// different observable result — which is exactly the condition
+/// [`operation_capabilities`] says a row exists for.
+///
+/// They are withheld because listing them enters each into [`is_consumable`]'s
+/// union, and that union decides which dimensions *every* contract places on a
+/// target. Neither is carried by [`tiler_ir::schedule::NumericalRealization`], so
+/// [`unrepresentable_dimension`] would then refuse the public `RelaxedF32` preset
+/// — which authorizes both — for every program, whether or not it contains an
+/// activation. Making them representable means widening the region realization,
+/// which is ADR 0076 item 1's shape and a separate change.
+///
+/// **What holds the line meanwhile.** The obligation is enforced where this build
+/// can enforce it: `crates/tiler-metal/src/emit.rs` writes `precise::exp` and the
+/// `/` operator rather than a fast intrinsic or a reciprocal multiply, and
+/// records `MetalNumericalRequirement::PreciseFp32Functions`. That is a backend
+/// guarantee over the operations actually emitted, not a profile-level assessment,
+/// and the difference is the whole of what this constant defers.
+pub(crate) const SILU_UNCARRIED_DIMENSIONS: [NumericalDimension; 2] = [
+    NumericalDimension::ReciprocalTransform,
+    NumericalDimension::ApproximateIntrinsics,
+];
 
 /// Returns the numerical capabilities declared for one governed operation.
 ///
@@ -621,8 +690,9 @@ pub(crate) const fn strict_contract(
 #[cfg(test)]
 mod tests {
     use super::{
-        NumericalPolicyPreset, REALIZED_DIMENSIONS, dimension_requirements, is_consumable,
-        operation_capabilities, operation_capability, unrepresentable_dimension,
+        NumericalPolicyPreset, REALIZED_DIMENSIONS, SILU_UNCARRIED_DIMENSIONS,
+        dimension_requirements, is_consumable, operation_capabilities, operation_capability,
+        unrepresentable_dimension,
     };
     use crate::request::StrictF32NumericalContract;
     use crate::target::honourability::{
@@ -632,7 +702,7 @@ mod tests {
         ExceptionalValueAssumption, NumericalPermission, ValueDomainProvenance,
     };
     use tiler_ir::semantic::{
-        FrozenSemanticRegistry, OpKey, add_f32_op, constant_f32_op, multiply_f32_op,
+        FrozenSemanticRegistry, OpKey, add_f32_op, constant_f32_op, multiply_f32_op, silu_f32_op,
     };
 
     /// Every registered preset states a contract this build can actually realize.
@@ -835,6 +905,59 @@ mod tests {
             assert_eq!(requirement.arithmetic(), contract.arithmetic);
             assert_eq!(requirement.behaviour(), contract.behaviour(*dimension));
         }
+    }
+
+    /// The withheld elementary dimensions are exactly the ones outside the realization.
+    ///
+    /// **This is the check that fires when the deferral stops being honest.** The
+    /// moment `NumericalRealization` grows to carry either dimension, the
+    /// reason for withholding its row disappears and this assertion fails,
+    /// which is the only signal that would otherwise be missing: nothing else
+    /// relates the capability table to the realization's contents.
+    #[test]
+    fn the_uncarried_elementary_dimensions_are_outside_the_realization() {
+        for dimension in SILU_UNCARRIED_DIMENSIONS {
+            assert!(
+                !REALIZED_DIMENSIONS.contains(&dimension),
+                "{} is now carried by the region realization, so tiler::silu-f32@1 must gain its \
+                 capability row rather than continue to withhold it",
+                dimension.key()
+            );
+            assert!(
+                !is_consumable(dimension),
+                "{} is withheld from every row, so no contract may be asked to resolve it against \
+                 a target",
+                dimension.key()
+            );
+        }
+    }
+
+    /// The activation's row is the arithmetic row without contraction.
+    ///
+    /// Named dimension by dimension rather than compared against another row, so
+    /// that a change to the pointwise arithmetic row does not silently move this
+    /// one with it.
+    #[test]
+    fn the_activation_consumes_the_arithmetic_dimensions_except_contraction() {
+        let capability = operation_capability(&silu_f32_op()).expect("the activation is admitted");
+        for dimension in [
+            NumericalDimension::InputSubnormals,
+            NumericalDimension::ResultSubnormals,
+            NumericalDimension::Reassociation,
+            NumericalDimension::SignedZero,
+            NumericalDimension::NanAssumptions,
+            NumericalDimension::InfinityAssumptions,
+        ] {
+            assert!(capability.can_consume(dimension), "{}", dimension.key());
+        }
+        for dimension in [
+            NumericalDimension::Contraction,
+            NumericalDimension::Permutation,
+            NumericalDimension::MaterializationRounding,
+        ] {
+            assert!(!capability.can_consume(dimension), "{}", dimension.key());
+        }
+        assert_eq!(capability.consumes().len(), 6);
     }
 
     /// Every realized dimension is one an admitted operation can consume.

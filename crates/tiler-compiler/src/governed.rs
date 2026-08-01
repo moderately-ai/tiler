@@ -22,14 +22,15 @@ use std::sync::Arc;
 use tiler_ir::index::{
     DomainRole, FrozenScalarRegistry, IndexExprId, IndexInteger, ScalarAttributes, ScalarOpKey,
     ScalarRegistryError, ScalarValueId, SourcedExtent, add_f32_scalar_op,
-    canonicalize_nan_f32_scalar_op, constant_f32_scalar_op, multiply_f32_scalar_op,
+    canonicalize_nan_f32_scalar_op, constant_f32_scalar_op, divide_f32_scalar_op,
+    exp_f32_scalar_op, multiply_f32_scalar_op,
 };
 use tiler_ir::semantic::{
     BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, BroadcastAxisSource, CanonicalField,
     CanonicalIntegerWidth, CanonicalValue, CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE,
     OpKey, OperationAttributes, ProviderIdentity, REDUCTION_AXES_ATTRIBUTE,
     REINDEX_MAPPING_ATTRIBUTE, ReindexForm, ReindexFormKind, ResolvedValueType, TypeKey,
-    add_f32_op, broadcast_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op,
+    add_f32_op, broadcast_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op, silu_f32_op,
     strict_serial_sum_f32_op,
 };
 use tiler_ir::shape::{Axis, Extent, Shape};
@@ -196,14 +197,14 @@ impl GovernedIndexAccess {
     }
 }
 
-/// Returns the six shipped index-access capabilities in canonical family order.
+/// Returns the seven shipped index-access capabilities in canonical family order.
 ///
 /// # Errors
 ///
 /// Returns [`GovernedRegistryError`] when a governed signature exceeds its
 /// governed structural bound.
 pub(crate) fn governed_index_access_capabilities()
--> Result<[GovernedIndexAccess; 6], GovernedRegistryError> {
+-> Result<[GovernedIndexAccess; 7], GovernedRegistryError> {
     let f32_type = F32::resolved_type();
     let pointwise =
         || LoweringSignature::new([f32_type.clone(), f32_type.clone()], [f32_type.clone()]);
@@ -249,6 +250,26 @@ pub(crate) fn governed_index_access_capabilities()
                 canonicalize_nan_f32_scalar_op(),
             ],
             implementation: Arc::new(GovernedStrictSerialSumF32),
+        },
+        GovernedIndexAccess {
+            provider: governed_provider("silu-f32"),
+            operation: silu_f32_op(),
+            signature: LoweringSignature::new([f32_type.clone()], [f32_type.clone()])?,
+            // The complete set the lowering reaches, and the whole of it is a
+            // positive claim about what the region emits: the negation's
+            // multiply, the precise exponential, the addition of one, and the
+            // division. `divide-f32` in particular is here rather than a
+            // reciprocal and a second multiply, which is the substitution the
+            // pinned reference forbids and which refinement's containment check
+            // would otherwise have no way to see.
+            emitted: vec![
+                constant_f32_scalar_op(),
+                multiply_f32_scalar_op(),
+                exp_f32_scalar_op(),
+                add_f32_scalar_op(),
+                divide_f32_scalar_op(),
+            ],
+            implementation: Arc::new(GovernedSiluF32),
         },
         GovernedIndexAccess {
             provider: governed_provider("reindex-f32"),
@@ -377,6 +398,111 @@ impl IndexAccessLoweringProvider for GovernedPointwiseF32 {
         let write = context.write(output, &dimensions, &coordinates)?;
         context.output(write, value)
     }
+}
+
+/// Emits the region realizing one `tiler::silu-f32@1` occurrence.
+///
+/// The emitted chain is the pinned reference read left to right:
+/// `x * -1.0`, then the precise exponential, then `1.0 + e`, then `x / d`. Three
+/// properties of that chain are load-bearing rather than incidental.
+///
+/// **The negation is a multiplication by `-1.0`, and it is exact.** IEEE-754
+/// multiplication by negative one flips the sign of every operand — both zeros
+/// and both infinities included — with no rounding, so it delivers exactly what
+/// the reference's "exact sign manipulation" means. There is no negate scalar to
+/// reach for and this does not need one.
+///
+/// **The divisor is `1.0 + e`, in that order.** Binary32 addition is commutative,
+/// so the order is not observable here; it is written this way because the
+/// reference is, and a reader comparing the two should not have to reconcile a
+/// difference that has no consequence.
+///
+/// **The result is a division.** `x * (1.0 / d)` rounds twice and would be a
+/// different binary32 function — measurably so at `0xc2b00000`, where the two
+/// spellings differ by one ULP. The scalar vocabulary has no reciprocal key, so
+/// the substitution is unstatable here rather than merely forbidden.
+struct GovernedSiluF32;
+
+impl IndexAccessLoweringProvider for GovernedSiluF32 {
+    fn lower(&self, context: &mut IndexAccessLoweringContext<'_>) -> Result<(), LoweringEmitError> {
+        let occurrence = context.occurrence();
+        let [result] = occurrence.results() else {
+            return Err(occurrence_error("silu-result-arity"));
+        };
+        if occurrence.operands().len() != 1 || occurrence.inputs().len() != 1 {
+            return Err(occurrence_error("silu-operand-arity"));
+        }
+        let shape = result.shape().clone();
+        let result_type = result.value_type().clone();
+        let boundary = occurrence.inputs()[0].clone();
+        if boundary.shape() != &shape {
+            return Err(occurrence_error("silu-elementwise-shape"));
+        }
+
+        let dimensions = declare_parallel_domain(context, &shape)?;
+        let coordinates = dimension_expressions(context, &dimensions)?;
+        let tensor = context.input_tensor(boundary.value_type().clone(), shape.clone())?;
+        let argument = context.read(tensor, &dimensions, &coordinates)?;
+
+        let negative_one = apply_one(
+            context,
+            constant_f32_scalar_op(),
+            f32_constant_attributes(0xbf80_0000)?,
+            &[],
+            "silu-negative-one",
+        )?;
+        let negated = apply_one(
+            context,
+            multiply_f32_scalar_op(),
+            ScalarAttributes::empty(),
+            &[argument, negative_one],
+            "silu-negation",
+        )?;
+        let exponential = apply_one(
+            context,
+            exp_f32_scalar_op(),
+            ScalarAttributes::empty(),
+            &[negated],
+            "silu-exponential",
+        )?;
+        let one = apply_one(
+            context,
+            constant_f32_scalar_op(),
+            f32_constant_attributes(0x3f80_0000)?,
+            &[],
+            "silu-one",
+        )?;
+        let divisor = apply_one(
+            context,
+            add_f32_scalar_op(),
+            ScalarAttributes::empty(),
+            &[one, exponential],
+            "silu-divisor",
+        )?;
+        let value = apply_one(
+            context,
+            divide_f32_scalar_op(),
+            ScalarAttributes::empty(),
+            &[argument, divisor],
+            "silu-division",
+        )?;
+
+        let output = context.output_tensor(result_type, shape)?;
+        let write = context.write(output, &dimensions, &coordinates)?;
+        context.output(write, value)
+    }
+}
+
+/// Applies one scalar operation that produces exactly one result.
+fn apply_one(
+    context: &mut IndexAccessLoweringContext<'_>,
+    key: ScalarOpKey,
+    attributes: ScalarAttributes,
+    operands: &[ScalarValueId],
+    rule: &'static str,
+) -> Result<ScalarValueId, LoweringEmitError> {
+    let applied = context.apply(key, attributes, operands)?;
+    single_result(&applied, rule)
 }
 
 /// Emits the region realizing one `tiler.strict-serial-sum-f32` occurrence.

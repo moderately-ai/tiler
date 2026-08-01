@@ -25,7 +25,7 @@ use super::handles::{KernelBufferId, KernelBuilderId, KernelValueId, next_kernel
 use super::model::{
     BarrierSpec, BinaryOp, BlockData, BufferAccess, BufferParameter, Builtin, CompareOp, ConvertOp,
     KernelConstant, KernelData, KernelType, OperationData, OperationKind, PackedExtractOp,
-    SerialLoopSpec, ValueData, VerifiedKernel, encode_identity,
+    SerialLoopSpec, UnaryOp, ValueData, VerifiedKernel, encode_identity,
 };
 use super::{
     MAX_KERNEL_ADMITTED_BUILTINS, MAX_KERNEL_BLOCK_DEPTH, MAX_KERNEL_BLOCKS, MAX_KERNEL_BUFFERS,
@@ -346,6 +346,32 @@ impl KernelBuilder {
         expect_type(op.source_type(), self.resolve(source)?.value_type)?;
         self.emit_single(
             OperationKind::Convert {
+                op,
+                source: source.index,
+            },
+            op.result_type(),
+            None,
+        )
+    }
+
+    /// Applies one pure unary elementary function.
+    ///
+    /// The construct names the *precise* function. What it may deliver is the
+    /// registered accuracy contract of the semantic operation being realized, and
+    /// this builder states no accuracy of its own — a second spelling here would
+    /// be a second authority over the same obligation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a handle, scope, type, or structural-limit error.
+    pub fn unary(
+        &mut self,
+        op: UnaryOp,
+        source: KernelValueId,
+    ) -> Result<KernelValueId, KernelBuildError> {
+        expect_type(op.operand_type(), self.resolve(source)?.value_type)?;
+        self.emit_single(
+            OperationKind::Unary {
                 op,
                 source: source.index,
             },

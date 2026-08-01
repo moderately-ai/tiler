@@ -45,7 +45,7 @@ use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::schedule::NumericalPermission;
 use tiler_ir::semantic::{
     F32, FrozenSemanticRegistry, OpKey, OperationEffect, ProviderIdentity, SemanticProgram,
-    add_f32_op, broadcast_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op,
+    add_f32_op, broadcast_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op, silu_f32_op,
     strict_serial_sum_f32_op,
 };
 
@@ -217,6 +217,18 @@ impl FusionNumericalCapabilities {
             FusionOperationRole::ElementwiseArithmetic,
         );
         roles.insert(add_f32_op(), FusionOperationRole::ElementwiseArithmetic);
+        // The activation is elementwise arithmetic like the multiply and the add,
+        // and for the same reason: it applies its own separate roundings per point
+        // and introduces no reduction, no conversion boundary, and no order
+        // contract. Without a role it would carry no fusion legality at all, which
+        // would make every occurrence an optimization boundary in the middle of a
+        // program that evaluates it 28 times per forward pass.
+        //
+        // The role says nothing about its *accuracy*: fusing two regions neither
+        // adds nor removes a rounding, so the resolved accuracy contract of the
+        // subordinate exponential is unchanged by fusion and is not this
+        // authority's to assess.
+        roles.insert(silu_f32_op(), FusionOperationRole::ElementwiseArithmetic);
         roles.insert(
             strict_serial_sum_f32_op(),
             FusionOperationRole::OrderedReduction,

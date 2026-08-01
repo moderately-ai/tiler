@@ -325,6 +325,7 @@ fn visit_block(
             | OperationKind::Binary { .. }
             | OperationKind::Compare { .. }
             | OperationKind::Convert { .. }
+            | OperationKind::Unary { .. }
             | OperationKind::PackedExtract { .. } => {}
         }
     }

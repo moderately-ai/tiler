@@ -173,11 +173,66 @@ fn pointwise_region(id: RegionId, shape: &Shape, nan_bits: u32) -> VerifiedSched
     pointwise_region_under(id, shape, numerical(nan_bits))
 }
 
+/// The pinned `tiler::silu-f32@1` expression, `x / (1 + Exp(-x))`.
+///
+/// The negation is spelled as a multiplication by `-1.0`, which is exact in
+/// IEEE-754 for every operand including both zeros and both infinities, so it
+/// introduces no rounding the reference does not have. There is deliberately no
+/// negate node in the vocabulary to reach for and no reciprocal node to
+/// substitute for the division.
+fn silu_expression() -> PointwiseF32Expression {
+    let mut expression = PointwiseF32ExpressionBuilder::new();
+    let input = expression
+        .input(InputOrdinal::FIRST)
+        .expect("pointwise input");
+    let negative_one = expression.constant(0xbf80_0000).expect("negative one");
+    let negated = expression
+        .multiply(input.clone(), negative_one)
+        .expect("exact negation");
+    let exponential = expression
+        .exp(negated)
+        .expect("the subordinate exponential");
+    let one = expression.constant(0x3f80_0000).expect("one");
+    let divisor = expression.add(one, exponential).expect("1 + exp(-x)");
+    let root = expression
+        .divide(input, divisor)
+        .expect("x / (1 + exp(-x))");
+    expression
+        .build(root)
+        .expect("verified SiLU pointwise expression")
+}
+
+/// A `SiLU` region under the strict declared realization.
+pub(crate) fn silu_kernel() -> VerifiedKernel {
+    lower_scheduled_region(&pointwise_region_with(
+        RegionId::new(21),
+        &Shape::from_dims([4]),
+        numerical(NAN_BITS),
+        ScalarProgram::PointwiseF32(silu_expression()),
+    ))
+    .expect("the bounded SiLU fixture lowers")
+}
+
 /// A pointwise scale-then-bias region carrying one stated declared realization.
 fn pointwise_region_under(
     id: RegionId,
     shape: &Shape,
     realization: NumericalRealization,
+) -> VerifiedScheduledRegion {
+    pointwise_region_with(
+        id,
+        shape,
+        realization,
+        ScalarProgram::PointwiseF32(scale_then_bias_expression(SCALE_BITS, BIAS_BITS)),
+    )
+}
+
+/// A one-input, one-output pointwise region carrying one stated scalar program.
+fn pointwise_region_with(
+    id: RegionId,
+    shape: &Shape,
+    realization: NumericalRealization,
+    scalar: ScalarProgram,
 ) -> VerifiedScheduledRegion {
     let elements = element_count(shape).expect("bounded fixture shape");
     let mut builder = ScheduledRegionBuilder::new(id);
@@ -233,11 +288,7 @@ fn pointwise_region_under(
             },
         })
         .unwrap();
-    builder
-        .scalar_program(ScalarProgram::PointwiseF32(scale_then_bias_expression(
-            SCALE_BITS, BIAS_BITS,
-        )))
-        .unwrap();
+    builder.scalar_program(scalar).unwrap();
     builder.numerical(realization).unwrap();
     builder.schedule(linear_schedule(elements)).unwrap();
     builder.build().unwrap()
@@ -632,6 +683,88 @@ fn an_empty_portfolio_emits_a_declaration_free_translation_unit() {
         unit.source()
             .contains("// Declared numerical obligations this profile cannot realize: none.")
     );
+}
+
+/// The `SiLU` kernel selects the precise exponential intrinsic, by name.
+///
+/// **The negative half is the load-bearing one.** Under the compiler's own
+/// default — which is fast math — an unqualified `exp(x)` selects
+/// `air.fast_exp.f32`, whose accuracy is Metal's Table 8.2 input-dependent bound
+/// rather than the constant `4 ulp` the registered contract is derived from.
+/// Writing `precise::exp` selects `air.exp.f32` under both settings, so the flag
+/// requirement below is a second line of defence rather than the only one.
+#[test]
+fn the_silu_kernel_emits_the_precise_exponential_and_a_division() {
+    let kernel = silu_kernel();
+    let unit = emit_translation_unit(&[&kernel], &target()).expect("the SiLU fixture emits");
+    let source = unit.source();
+    assert_eq!(
+        source.matches("precise::exp(").count(),
+        1,
+        "the subordinate exponential is emitted once, in the precise namespace:\n{source}"
+    );
+    for forbidden in ["fast::exp", "fast_exp", "metal::divide(", "1.0f /"] {
+        assert!(
+            !source.contains(forbidden),
+            "{forbidden} must not appear; it is a different contract:\n{source}"
+        );
+    }
+    // The division is emitted as the operator, which is the spelling Table 8.1
+    // states an accuracy for, and it is one statement rather than a reciprocal
+    // followed by a multiply.
+    assert_eq!(
+        source.matches(" / ").count(),
+        1,
+        "exactly one division statement:\n{source}"
+    );
+}
+
+/// The `SiLU` emission requires both governed math flags, and says which.
+#[test]
+fn the_silu_kernel_requires_the_precise_and_safe_selections() {
+    let kernel = silu_kernel();
+    let unit = emit_translation_unit(&[&kernel], &target()).expect("the SiLU fixture emits");
+    let requirements = unit.numerical_requirements();
+    assert!(requirements.contains(&MetalNumericalRequirement::PreciseFp32Functions));
+    assert!(requirements.contains(&MetalNumericalRequirement::SafeMathMode));
+    assert_eq!(
+        MetalNumericalRequirement::PreciseFp32Functions.flag(),
+        "-fmetal-math-fp32-functions=precise",
+        "the requirement names the exact flag the applicability clause rests on"
+    );
+    assert_eq!(
+        MetalNumericalRequirement::PreciseFp32Functions.rule(),
+        "precise-fp32-functions"
+    );
+
+    // The scale-then-bias fixture emits no elementary function, so it requires
+    // no precise selection. Without this the assertion above would pass for a
+    // requirement that had simply been added to every unit.
+    let pointwise = pointwise_kernel();
+    let plain = emit_translation_unit(&[&pointwise], &target()).expect("emits");
+    assert!(
+        !plain
+            .numerical_requirements()
+            .contains(&MetalNumericalRequirement::PreciseFp32Functions),
+        "a kernel with no elementary function does not demand the precise selection"
+    );
+}
+
+/// The exponential is arithmetic, so it carries the subnormal obligation.
+///
+/// The measured Apple row flushes `f32` subnormals, and the fixture's declared
+/// realization preserves them, so a gap is recorded. A construct that had been
+/// wired without calling the obligation recorder would report none.
+#[test]
+fn the_silu_kernel_records_the_f32_subnormal_gap() {
+    let kernel = silu_kernel();
+    let unit = emit_translation_unit(&[&kernel], &target()).expect("the SiLU fixture emits");
+    assert!(
+        !unit.numerical_gaps().is_empty(),
+        "the emitted f32 arithmetic is compared against the target's declared behaviour"
+    );
+    unit.require_declared_realization()
+        .expect_err("a declared preservation on a flushing target fails closed");
 }
 
 #[test]

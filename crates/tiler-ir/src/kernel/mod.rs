@@ -175,7 +175,7 @@ pub use model::{
     AddressSpace, BarrierOrdering, BarrierSpec, BinaryOp, BlockRef, BufferAccess, BufferParameter,
     Builtin, CanonicalKernelIdentity, CompareOp, ConvertOp, ExecutionScope, KernelConstant,
     KernelType, MemoryScope, OperationRef, OperationView, PackedExtractOp, SerialLoopRef,
-    SerialLoopSpec, VerifiedKernel,
+    SerialLoopSpec, UnaryOp, VerifiedKernel,
 };
 
 /// Maximum buffer parameters admitted by one kernel signature.

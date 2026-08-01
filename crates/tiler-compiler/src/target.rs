@@ -125,6 +125,7 @@
 // crate-visible for free. `pub(crate)` restores exactly that reach and no more:
 // neither module is nameable outside this crate, so nothing here widens the
 // reviewed public `target` facade.
+pub(crate) mod accuracy;
 pub(crate) mod feasibility;
 pub(crate) mod honourability;
 
