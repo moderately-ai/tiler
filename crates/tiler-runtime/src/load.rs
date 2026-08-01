@@ -50,11 +50,51 @@
 //! # How a route is chosen
 //!
 //! Routing is driven by what the artifact declares rather than by a search over
-//! its tables. Variants are tried in declaration order — which is meaning under
-//! [`RoutingPolicy::StablePriority`] — and the first whose applicability guard
-//! evaluates true against the caller's facts is selected. That variant's entry
-//! names the payload descriptor realizing it, and that descriptor names its own
-//! object section. Neither association is inferred from a count.
+//! its tables, and it is two decisions taken in a fixed order.
+//!
+//! **Eligibility first.** A packaged variant this host cannot execute at all is
+//! removed from the candidate set before any guard is evaluated. Eligibility is
+//! decided from the loading host's stated [`ExecutionEnvironment`] and nothing
+//! else: the backend family and executable representation every entry's payload
+//! declares, compared *as a pair*, and the target profiles the variant and each
+//! of those payloads declare, classified. Those are exactly the comparisons
+//! [ADR 0090](../../../docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md)
+//! item 4 leaves to the loader, and none of them needs an ABI fact, an adapter,
+//! or a device — the host stated which machine it is.
+//!
+//! **Priority second.** Among the eligible variants, and only among those,
+//! declaration order is meaning under [`RoutingPolicy::StablePriority`], and the
+//! first whose applicability guard evaluates true against the caller's facts is
+//! selected. That variant's entry names the payload descriptor realizing it, and
+//! that descriptor names its own object section. Neither association is inferred
+//! from a count.
+//!
+//! # Why ineligibility filters rather than refuses
+//!
+//! It refused, and that made a multi-family artifact unroutable. The walk took
+//! the first variant whose guard held and *then* compared the host against what
+//! that variant's payload declared, so an artifact packaging a Metal plan ahead
+//! of a CPU one refused on the Metal payload — on a host that could have run the
+//! CPU plan packaged right behind it. The guard had already said "this plan
+//! applies"; the host was simply not the one that plan was for, which is not a
+//! reason to stop looking.
+//!
+//! So an ineligible variant is a **non-candidate**: it never reaches its guard,
+//! and its exclusion is reported as a filter rather than as the outcome. Three
+//! properties are preserved rather than traded away for that.
+//!
+//! - **Stable priority still holds among the eligible.** Filtering removes
+//!   candidates; it never reorders the ones that remain, so the selected variant
+//!   is still the producer's highest-ranked plan this host can run.
+//! - **An eligible variant whose guard holds is still selected.** Nothing became
+//!   more permissive: every comparison that refused before still refuses, and
+//!   the entry-by-entry granularity is unchanged because eligibility walks every
+//!   entry of a variant rather than the first.
+//! - **A guard that cannot be *evaluated* still aborts the walk** — for an
+//!   eligible variant. Skipping one would route to a plan the producer ranked
+//!   lower because the caller bound too little, which is a real plan
+//!   substitution. That argument does not reach an ineligible variant: it is not
+//!   a candidate, so its unanswerable guard cannot substitute anything.
 //!
 //! **Two refusals this module documented are retracted**, because both described
 //! gaps that `expose-the-dispatch-record-on-a-decoded-artifact` closed. It
@@ -88,11 +128,20 @@
 //!   is. An unknown key, version, or payload *within* that backend is the
 //!   adapter's own `Unrecognized`, and is equally a refusal: a requirement
 //!   nothing evaluated has not been met.
-//! - **Every guard false.** An artifact whose own guards exclude the bound facts
-//!   has nothing applicable to route to, and taking a variant anyway is how a
-//!   plan gets executed on a host it was proven not to fit.
+//! - **No eligible variant at all.** Every packaged variant names a backend,
+//!   representation, or target profile this host did not state, so there is
+//!   nothing here to run and the refusal names what excluded each one.
+//! - **Every eligible guard false.** An artifact whose own guards exclude the
+//!   bound facts has nothing applicable to route to, and taking a variant anyway
+//!   is how a plan gets executed on a host it was proven not to fit. Distinct
+//!   from the reason above: the host *can* execute these plans and the producer's
+//!   own guards say none of them applies.
 //! - **Any execution policy other than a native image.** Device translation is
-//!   by definition not device-free.
+//!   by definition not device-free. Deliberately terminal rather than an
+//!   eligibility filter: a host states a profile, a backend, and a
+//!   representation, and how a payload reaches an executable state is not among
+//!   them. A portfolio that offers a translated and a native member declares two
+//!   *representations*, which the pair comparison already filters on.
 
 mod host;
 mod route;
@@ -221,13 +270,11 @@ impl DecodedProgram {
     /// Discharges every obligation this loader can decide, before any commit.
     ///
     /// The order is chosen so that the first refusal is the most useful one,
-    /// and it is this, exactly: program identity; variant selection; the
-    /// profile the selected variant was assessed against; that variant's
-    /// deferred predicates and entry cardinality; the backend and
-    /// representation its payload declares; the profile that payload's own
-    /// bytes were built for; how that payload reaches an executable state;
-    /// whether the object is carried at all; and last the launch geometry and
-    /// the bindings.
+    /// and it is this, exactly: program identity; variant selection, which is
+    /// itself host eligibility and then the applicability guards; the selected
+    /// variant's deferred predicates and live-device requirements; per entry of
+    /// that variant, how its payload reaches an executable state and whether the
+    /// object is carried at all; and last the launch geometry and the bindings.
     ///
     /// Identity is first because if these are not the bytes of the artifact the
     /// caller expects, no later answer about them is worth reporting. The
@@ -235,6 +282,13 @@ impl DecodedProgram {
     /// that depend on the caller's facts, so every refusal that is a property of
     /// the artifact alone is reported before any that is a property of what the
     /// caller bound.
+    ///
+    /// The backend family, the executable representation, and both declared
+    /// target profiles are decided inside selection rather than after it. That
+    /// is the ordering change `select-executable-variants-across-registered-backend-families`
+    /// made: comparing them after a variant had been chosen let an artifact's
+    /// first plan refuse on this host's behalf while a plan it *could* run sat
+    /// behind it in the same portfolio.
     ///
     /// `expected` is the identity of the artifact the caller means to run,
     /// stated as a [`RecordedArtifactProgramIdentity`]. This is the
@@ -313,7 +367,7 @@ impl DecodedProgram {
         // table's canonical stage-key order, which is identity's and carries no
         // execution meaning.
         let ordered: Vec<_> = variant.execution_order().collect();
-        let candidate = self.route_candidate(identity, variant, &ordered, environment, facts)?;
+        let candidate = self.route_candidate(identity, variant, &ordered, facts)?;
         Ok(Preflight::from_candidate(candidate))
     }
 
@@ -358,7 +412,7 @@ impl DecodedProgram {
                 requirement: deferred.requirement(),
             });
         }
-        let candidate = self.route_candidate(identity, variant, &ordered, environment, facts)?;
+        let candidate = self.route_candidate(identity, variant, &ordered, facts)?;
         Ok(LiveDeviceQualification {
             candidate,
             requirements,
@@ -379,14 +433,7 @@ impl DecodedProgram {
                 loaded: identity,
             });
         }
-        let variant = self.select_variant(facts)?;
-        let classification = environment.classify(variant.target_profile());
-        if !classification.is_compatible() {
-            return Err(LoadRejection::IncompatibleTarget {
-                declaration: TargetDeclaration::Variant,
-                classification,
-            });
-        }
+        let variant = self.select_variant(environment, facts)?;
         Ok((identity, variant))
     }
 
@@ -395,12 +442,11 @@ impl DecodedProgram {
         identity: CanonicalArtifactProgramIdentity,
         variant: DecodedVariant<'a>,
         ordered: &[DecodedEntry<'a>],
-        environment: &ExecutionEnvironment,
         facts: &AbiFacts,
     ) -> Result<route::RouteCandidate<'a>, LoadRejection> {
         let mut entries = Vec::with_capacity(ordered.len());
         for (position, entry) in ordered.iter().copied().enumerate() {
-            entries.push(self.route_entry(position, entry, environment, facts)?);
+            entries.push(self.route_entry(position, entry, facts)?);
         }
 
         // Derived after every entry is routed, because it names slots of routed
@@ -415,20 +461,27 @@ impl DecodedProgram {
         })
     }
 
-    /// Discharges every obligation of one entry of a route.
+    /// Discharges every obligation of one entry of a selected route.
     ///
     /// **Per entry rather than once per route, and the difference is not
     /// cosmetic.** Nothing requires two entries of one variant to be realized by
     /// the same payload: `BackendPayloadDescriptor::compatibility` exists
-    /// precisely because the association is many-to-one. Checking the backend,
-    /// the representation, the payload's own compatibility contract, and the
-    /// execution policy once and then executing a different entry's object would
-    /// be routing on a fact that was never checked.
+    /// precisely because the association is many-to-one. Checking the execution
+    /// policy or the carried object once and then executing a different entry's
+    /// payload would be routing on a fact that was never checked.
+    ///
+    /// **Nothing host-relative is left here, and that is not a weakening.** The
+    /// backend family, the executable representation, and the payload's own
+    /// compatibility contract used to be compared at this point, one entry at a
+    /// time. They are now [`Self::variant_eligibility`]'s, which walks *every*
+    /// entry of a variant with the same per-entry granularity before the variant
+    /// is admitted as a candidate at all — so reaching this function means those
+    /// comparisons already held for this entry, and a variant for which they did
+    /// not was never selected.
     fn route_entry<'a>(
         &'a self,
         position: usize,
         entry: DecodedEntry<'a>,
-        environment: &ExecutionEnvironment,
         facts: &AbiFacts,
     ) -> Result<RoutedEntry<'a>, LoadRejection> {
         let descriptor = entry.payload();
@@ -437,29 +490,6 @@ impl DecodedProgram {
             .payloads()
             .get(descriptor)
             .expect("a decode proved every entry names a payload the artifact declares");
-        if payload.backend != environment.backend
-            || payload.representation != environment.representation
-        {
-            return Err(LoadRejection::UnexecutablePayload {
-                declared_backend: payload.backend.as_str().to_owned(),
-                declared_representation: payload.representation.as_str().to_owned(),
-                host_backend: environment.backend.as_str().to_owned(),
-                host_representation: environment.representation.as_str().to_owned(),
-            });
-        }
-
-        // The payload's own compatibility contract, classified separately from
-        // the variant's. `BackendPayloadDescriptor::compatibility` exists
-        // because two variants declaring different profiles may realize their
-        // entries through one payload, so deriving either from the other is the
-        // inference the artifact layer records that field to forbid.
-        let classification = environment.classify(&payload.compatibility);
-        if !classification.is_compatible() {
-            return Err(LoadRejection::IncompatibleTarget {
-                declaration: TargetDeclaration::Payload,
-                classification,
-            });
-        }
 
         // Exhaustive rather than a wildcard: `ArtifactExecutionPolicy` is
         // deliberately not `#[non_exhaustive]` (ADR 0074 convention 5b), so a
@@ -493,12 +523,22 @@ impl DecodedProgram {
         })
     }
 
-    /// Selects the first packaged variant whose applicability guard holds.
+    /// Selects the highest-priority **eligible** variant whose guard holds.
     ///
-    /// Declaration order *is* the priority order, so the walk stops at the first
-    /// guard that evaluates true rather than scoring the survivors. A variant is
-    /// never selected for being the only one: cardinality is not a guard, and an
-    /// artifact whose every guard is false is refused.
+    /// One walk, two decisions per variant, in this order: whether this host can
+    /// execute the variant at all, and whether the producer's own guard says it
+    /// applies. A variant that fails the first is a non-candidate and its guard
+    /// is never evaluated; a variant that fails the second is a candidate the
+    /// producer excluded. The two are separate outcomes because they send a
+    /// caller to different repairs — find a build for this machine, or bind
+    /// different facts.
+    ///
+    /// Declaration order *is* the priority order among the eligible, so the walk
+    /// stops at the first guard that evaluates true rather than scoring the
+    /// survivors. Filtering removes candidates and never reorders the ones that
+    /// remain, so what is selected is still the producer's highest-ranked plan
+    /// this host can run. A variant is never selected for being the only one:
+    /// neither cardinality nor being the sole eligible member is a guard.
     ///
     /// A guard that cannot be *evaluated* aborts the walk instead of being
     /// skipped, and the distinction is load-bearing. A guard evaluating false
@@ -508,8 +548,14 @@ impl DecodedProgram {
     /// silently route to a variant the producer ranked lower — a real plan
     /// substitution caused by an under-bound caller, reported as a successful
     /// route. The rejection names the guard's own variant rank so the caller can
-    /// see which formula went unanswered.
-    fn select_variant(&self, facts: &AbiFacts) -> Result<DecodedVariant<'_>, LoadRejection> {
+    /// see which formula went unanswered. **An ineligible variant's guard is
+    /// never evaluated**, so it cannot abort the walk either: it is not a
+    /// candidate, and a plan this host cannot execute substitutes nothing.
+    fn select_variant(
+        &self,
+        environment: &ExecutionEnvironment,
+        facts: &AbiFacts,
+    ) -> Result<DecodedVariant<'_>, LoadRejection> {
         // Exhaustive rather than a wildcard: `RoutingPolicy` is deliberately not
         // `#[non_exhaustive]` (ADR 0074 convention 5b), so a policy added to the
         // artifact layer is a build failure here instead of silently reusing
@@ -517,17 +563,95 @@ impl DecodedProgram {
         match self.decoded.routing() {
             RoutingPolicy::StablePriority => {}
         }
+        // Stays empty — and therefore unallocated — for a portfolio this host
+        // can execute whole, which is the ordinary case.
+        let mut filtered = Vec::new();
         for variant in self.decoded.variants() {
-            let subject = AbiSubject::ApplicabilityGuard {
-                variant: variant.routing_rank(),
-            };
+            let rank = variant.routing_rank();
+            if let Err(reason) = self.variant_eligibility(variant, environment) {
+                filtered.push(FilteredVariant {
+                    variant: rank,
+                    reason,
+                });
+                continue;
+            }
+            let subject = AbiSubject::ApplicabilityGuard { variant: rank };
             if boolean(variant.applicability_guard(), subject, facts)? {
                 return Ok(variant);
             }
         }
-        Err(LoadRejection::NoApplicableVariant {
-            packaged: self.decoded.variant_count(),
-        })
+        let packaged = self.decoded.variant_count();
+        if filtered.len() == packaged {
+            return Err(LoadRejection::NoEligibleVariant { packaged, filtered });
+        }
+        Err(LoadRejection::NoApplicableVariant { packaged, filtered })
+    }
+
+    /// Decides whether this host can execute one packaged variant at all.
+    ///
+    /// Every comparison is against the host's own stated
+    /// [`ExecutionEnvironment`] and against nothing else. No ABI fact is read,
+    /// no adapter is consulted, and no device is bound, which is what makes
+    /// eligibility decidable ahead of the guards and therefore usable as a
+    /// filter rather than as a refusal.
+    ///
+    /// **Every entry, not the first.** A variant may legitimately be realized by
+    /// several payloads, and one whose entries name two backend families is
+    /// executable by neither host — so walking the whole execution order is what
+    /// keeps "this variant is eligible" a statement about the variant rather
+    /// than about whichever entry happened to be looked at. It is the same
+    /// per-entry granularity [`Self::route_entry`] applied after selection
+    /// before this filter existed. Positions are reported in execution order, as
+    /// everything else this loader reports about an entry is.
+    ///
+    /// The three subjects stay separate classes rather than one boolean: a
+    /// backend and representation pair this host does not execute, a *plan*
+    /// assessed for another profile, and an *object* built for one are three
+    /// different things to go and fix.
+    fn variant_eligibility(
+        &self,
+        variant: DecodedVariant<'_>,
+        environment: &ExecutionEnvironment,
+    ) -> Result<(), VariantIneligibility> {
+        let classification = environment.classify(variant.target_profile());
+        if !classification.is_compatible() {
+            return Err(VariantIneligibility::AssessedProfile { classification });
+        }
+        for (entry, decoded) in variant.execution_order().enumerate() {
+            let payload = self
+                .decoded
+                .payloads()
+                .get(decoded.payload())
+                .expect("a decode proved every entry names a payload the artifact declares");
+            // As a pair. A backend family this host executes, under a
+            // representation it cannot consume, is not a payload it can run, and
+            // admitting either half alone would route on the one that matched.
+            if payload.backend != environment.backend
+                || payload.representation != environment.representation
+            {
+                return Err(VariantIneligibility::UnsupportedRepresentation {
+                    entry,
+                    declared_backend: payload.backend.as_str().to_owned(),
+                    declared_representation: payload.representation.as_str().to_owned(),
+                    host_backend: environment.backend.as_str().to_owned(),
+                    host_representation: environment.representation.as_str().to_owned(),
+                });
+            }
+            // The payload's own compatibility contract, classified separately
+            // from the variant's. `BackendPayloadDescriptor::compatibility`
+            // exists because two variants declaring different profiles may
+            // realize their entries through one payload, so deriving either from
+            // the other is the inference the artifact layer records that field
+            // to forbid.
+            let classification = environment.classify(&payload.compatibility);
+            if !classification.is_compatible() {
+                return Err(VariantIneligibility::PayloadProfile {
+                    entry,
+                    classification,
+                });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -902,30 +1026,118 @@ impl fmt::Display for AbiSubject {
     }
 }
 
-/// Which declaration of a target profile a compatibility refusal was about.
+/// Why one packaged variant was not a candidate on this host.
 ///
-/// Two are classified and they are separate declarations. Reporting only the
-/// classification would leave a host unable to tell a plan *assessed* for
-/// another profile from an object *compiled* for one, and those are different
-/// things to go and fix.
+/// Every class here is decided from the host's own stated
+/// [`ExecutionEnvironment`] before any guard is evaluated, so none of them is a
+/// statement about the caller's bound facts. They stay separate because the
+/// repairs differ: a backend and representation pair this build does not execute
+/// sends a reader to look for a different build, a *plan* assessed for another
+/// profile sends them to look for a different artifact or profile revision, and
+/// an *object* compiled for one says the plan was right and its emitted bytes
+/// were not — the distinction
+/// [`BackendPayloadDescriptor::compatibility`](tiler_artifact::program::BackendPayloadDescriptor)
+/// exists to record.
 ///
-/// `#[non_exhaustive]` under ADR 0074 convention 5a.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+/// `#[non_exhaustive]` under ADR 0074 convention 5a: this is a classification a
+/// caller consumes to decide what to do next, so a later eligibility subject
+/// must be able to land additively.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
-pub enum TargetDeclaration {
-    /// The profile the selected plan variant was assessed against.
-    Variant,
-    /// The profile the carried payload's own bytes were built for.
-    Payload,
+pub enum VariantIneligibility {
+    /// The profile this plan variant was assessed against is not this host's.
+    ///
+    /// A property of the variant rather than of any one entry, which is why this
+    /// is the only class here that names no entry.
+    AssessedProfile {
+        /// How the variant's declared profile relates to the host's own.
+        classification: TargetCompatibility,
+    },
+    /// One entry's payload names a backend family and executable representation
+    /// pair this host did not state.
+    ///
+    /// The pair is compared whole: each half alone failing is enough, and both
+    /// report here, because "this host cannot execute these bytes" is one
+    /// finding with one remedy.
+    UnsupportedRepresentation {
+        /// Position of the entry in the variant's own execution order.
+        entry: usize,
+        /// Governed backend family key that entry's payload declares.
+        declared_backend: String,
+        /// Governed executable representation key it declares.
+        declared_representation: String,
+        /// Governed backend family key this host stated.
+        host_backend: String,
+        /// Governed executable representation key this host stated.
+        host_representation: String,
+    },
+    /// One entry's payload was built for a profile this host does not offer.
+    PayloadProfile {
+        /// Position of the entry in the variant's own execution order.
+        entry: usize,
+        /// How that payload's declared profile relates to the host's own.
+        classification: TargetCompatibility,
+    },
 }
 
-impl fmt::Display for TargetDeclaration {
+impl fmt::Display for VariantIneligibility {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Variant => formatter.write_str("the selected variant"),
-            Self::Payload => formatter.write_str("the carried payload"),
+            Self::AssessedProfile { classification } => write!(
+                formatter,
+                "it was assessed against a profile this host does not offer: {classification:?}",
+            ),
+            Self::UnsupportedRepresentation {
+                entry,
+                declared_backend,
+                declared_representation,
+                host_backend,
+                host_representation,
+            } => write!(
+                formatter,
+                "entry {entry} is realized by a {declared_backend}/{declared_representation} \
+                 payload and this host states {host_backend}/{host_representation}",
+            ),
+            Self::PayloadProfile {
+                entry,
+                classification,
+            } => write!(
+                formatter,
+                "entry {entry}'s payload was built for a profile this host does not offer: \
+                 {classification:?}",
+            ),
         }
     }
+}
+
+/// One packaged variant this host excluded, and why.
+///
+/// Carried by both selection refusals so a reader can tell what was *filtered*
+/// from what *failed*. A refusal reporting only that nothing routed leaves a
+/// host unable to distinguish an artifact built for another machine from one
+/// whose own guards excluded the facts it bound, and those are opposite repairs.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct FilteredVariant {
+    /// Zero-based routing rank of the excluded variant.
+    pub variant: usize,
+    /// The host-relative subject that excluded it.
+    pub reason: VariantIneligibility,
+}
+
+impl fmt::Display for FilteredVariant {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { variant, reason } = self;
+        write!(formatter, "variant {variant}: {reason}")
+    }
+}
+
+/// Renders a filtered set as one line, in routing-rank order.
+fn render_filtered(filtered: &[FilteredVariant]) -> String {
+    filtered
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 /// Why one artifact was not accepted for execution on this host.
@@ -964,14 +1176,43 @@ pub enum LoadRejection {
         /// Identity re-derived from the bytes that were actually loaded.
         loaded: CanonicalArtifactProgramIdentity,
     },
-    /// Every packaged variant's applicability guard evaluated false.
+    /// No packaged variant is one this host can execute at all.
     ///
-    /// The artifact is well formed and nothing it packages applies to the facts
-    /// this host bound. Distinct from an incompatible target profile: what
-    /// excluded it is the producer's own guard rather than the host's profile.
+    /// Every variant was filtered before its guard was evaluated, so this says
+    /// nothing about the facts the caller bound: the artifact packages plans for
+    /// some other machine, or for a profile revision this host does not offer.
+    /// The per-variant reasons are carried because a portfolio can be excluded
+    /// for more than one subject at once, and "wrong backend" and "wrong profile
+    /// descriptor" are different repairs.
+    ///
+    /// Distinct from [`Self::NoApplicableVariant`], which is the opposite
+    /// finding: the host *can* execute what is packaged and the producer's own
+    /// guards exclude these facts.
+    NoEligibleVariant {
+        /// How many plan variants the artifact packages.
+        packaged: usize,
+        /// Every one of them, with the subject that excluded it.
+        ///
+        /// Has exactly `packaged` elements — that is what makes this class
+        /// rather than [`Self::NoApplicableVariant`] the one reported.
+        filtered: Vec<FilteredVariant>,
+    },
+    /// Every **eligible** packaged variant's applicability guard evaluated false.
+    ///
+    /// The artifact is well formed, this host can execute at least one of the
+    /// plans it packages, and none of those applies to the facts this host bound.
+    /// What excluded them is the producer's own guard rather than anything about
+    /// the host, which is what separates this from [`Self::NoEligibleVariant`].
     NoApplicableVariant {
         /// How many plan variants the artifact packages.
         packaged: usize,
+        /// The variants that never reached their guard, with the subject that
+        /// excluded each.
+        ///
+        /// Shorter than `packaged`, and empty when the host could execute every
+        /// packaged variant. `packaged - filtered.len()` is how many guards were
+        /// evaluated and answered false.
+        filtered: Vec<FilteredVariant>,
     },
     /// The selected variant defers feasibility predicates this loader cannot
     /// answer.
@@ -1063,28 +1304,6 @@ pub enum LoadRejection {
         /// The exact unmet subject.
         subject: RouteRequirementSubject,
     },
-    /// The routed entry's payload is not one this host stated it can execute.
-    UnexecutablePayload {
-        /// Governed backend family key the packaged payload declares.
-        declared_backend: String,
-        /// Governed executable representation key the packaged payload declares.
-        declared_representation: String,
-        /// Governed backend family key this host stated.
-        host_backend: String,
-        /// Governed executable representation key this host stated.
-        host_representation: String,
-    },
-    /// A declared target profile is not this host's.
-    ///
-    /// Carries which declaration refused and how it relates to the host's own,
-    /// so a caller can distinguish an artifact for another target family from
-    /// one for this family under a profile descriptor the host does not offer.
-    IncompatibleTarget {
-        /// Which of the two declarations was classified.
-        declaration: TargetDeclaration,
-        /// How the declared profile relates to the host's own.
-        classification: TargetCompatibility,
-    },
     /// The payload needs a delivery step this device-free loader cannot perform.
     UndeliverableExecutionPolicy {
         /// The policy the payload declares.
@@ -1147,10 +1366,22 @@ impl fmt::Display for LoadRejection {
                 expected.as_bytes().len(),
                 loaded.as_bytes().len(),
             ),
-            Self::NoApplicableVariant { packaged } => write!(
+            Self::NoEligibleVariant { packaged, filtered } => write!(
                 formatter,
-                "runtime.no-applicable-variant: none of the {packaged} packaged variant(s) has an \
-                 applicability guard that holds for the bound facts",
+                "runtime.no-eligible-variant: this host can execute none of the {packaged} \
+                 packaged variant(s), and no guard was evaluated: {}",
+                render_filtered(filtered),
+            ),
+            Self::NoApplicableVariant { packaged, filtered } => write!(
+                formatter,
+                "runtime.no-applicable-variant: none of the {} eligible variant(s) of {packaged} \
+                 packaged has an applicability guard that holds for the bound facts{}",
+                packaged - filtered.len(),
+                if filtered.is_empty() {
+                    String::new()
+                } else {
+                    format!("; this host filtered {}", render_filtered(filtered))
+                },
             ),
             Self::UnansweredDeferredPredicates { variant, deferred } => write!(
                 formatter,
@@ -1208,25 +1439,6 @@ impl fmt::Display for LoadRejection {
                 "runtime.unsatisfied-route-requirement: this device does not satisfy variant \
                  {variant}'s requirement {position}, {subject}",
             ),
-            Self::UnexecutablePayload {
-                declared_backend,
-                declared_representation,
-                host_backend,
-                host_representation,
-            } => write!(
-                formatter,
-                "runtime.unexecutable-payload: the routed entry is realized by a \
-                 {declared_backend}/{declared_representation} payload and this host states \
-                 {host_backend}/{host_representation}",
-            ),
-            Self::IncompatibleTarget {
-                declaration,
-                classification,
-            } => write!(
-                formatter,
-                "runtime.incompatible-target: {declaration} declares a profile this host does not \
-                 offer: {classification:?}",
-            ),
             Self::UndeliverableExecutionPolicy { policy } => write!(
                 formatter,
                 "runtime.undeliverable: a device-free loader cannot deliver {policy:?}",
@@ -1258,6 +1470,7 @@ impl Error for LoadRejection {
             Self::Artifact(failure) => Some(failure),
             Self::AbiEvaluation { error, .. } => Some(error),
             Self::ProgramMismatch { .. }
+            | Self::NoEligibleVariant { .. }
             | Self::NoApplicableVariant { .. }
             | Self::UnansweredDeferredPredicates { .. }
             | Self::UnsatisfiedDeferredPredicate { .. }
@@ -1266,8 +1479,6 @@ impl Error for LoadRejection {
             | Self::UnownedRouteRequirement { .. }
             | Self::MisansweredRouteRequirement { .. }
             | Self::UnsatisfiedRouteRequirement { .. }
-            | Self::UnexecutablePayload { .. }
-            | Self::IncompatibleTarget { .. }
             | Self::UndeliverableExecutionPolicy { .. }
             | Self::ObjectNotCarried
             | Self::LaunchPrecondition { .. }
@@ -1314,7 +1525,10 @@ impl From<ArtifactCodecFailure> for LoadRejection {
 
 #[cfg(test)]
 mod tests {
-    use super::{AbiSubject, DecodedProgram, LoadRejection, TargetDeclaration};
+    use super::{
+        AbiSubject, DecodedProgram, FilteredVariant, LoadRejection, TargetCompatibility,
+        VariantIneligibility,
+    };
     use std::error::Error;
     use tiler_artifact::program::ArtifactCodecFailure;
 
@@ -1395,17 +1609,121 @@ mod tests {
         }
     }
 
-    /// The two target declarations are distinguishable in a refusal.
+    /// Every eligibility subject reads distinguishably in a refusal.
     ///
-    /// A plan assessed for another profile and an object compiled for one are
-    /// different repairs, and `TargetCompatibility` alone cannot separate them:
-    /// a descriptor mismatch carries the key both sides agree on and nothing
-    /// about which declaration carried it.
+    /// A plan assessed for another profile, an object compiled for one, and a
+    /// representation this host cannot consume are three different repairs, and
+    /// `TargetCompatibility` alone cannot separate the first two: a descriptor
+    /// mismatch carries the key both sides agree on and nothing about which
+    /// declaration carried it. The entry position is varied as well, because a
+    /// multi-payload variant's filter that named no entry would leave a caller
+    /// unable to tell which of its payloads was the foreign one.
     #[test]
-    fn a_target_refusal_names_which_declaration_it_is_about() {
-        assert_ne!(
-            TargetDeclaration::Variant.to_string(),
-            TargetDeclaration::Payload.to_string(),
+    fn every_eligibility_subject_names_a_distinct_exclusion() {
+        let rendered: Vec<String> = [
+            VariantIneligibility::AssessedProfile {
+                classification: TargetCompatibility::DescriptorMismatch {
+                    key: "tiler.target.apple-m4".to_owned(),
+                },
+            },
+            VariantIneligibility::PayloadProfile {
+                entry: 0,
+                classification: TargetCompatibility::DescriptorMismatch {
+                    key: "tiler.target.apple-m4".to_owned(),
+                },
+            },
+            VariantIneligibility::PayloadProfile {
+                entry: 1,
+                classification: TargetCompatibility::DescriptorMismatch {
+                    key: "tiler.target.apple-m4".to_owned(),
+                },
+            },
+            VariantIneligibility::UnsupportedRepresentation {
+                entry: 0,
+                declared_backend: "tiler.metal".to_owned(),
+                declared_representation: "metallib".to_owned(),
+                host_backend: "tiler.test.scalar-host".to_owned(),
+                host_representation: "tiler.test.scalar-host-image-v1".to_owned(),
+            },
+            VariantIneligibility::UnsupportedRepresentation {
+                entry: 1,
+                declared_backend: "tiler.metal".to_owned(),
+                declared_representation: "metallib".to_owned(),
+                host_backend: "tiler.test.scalar-host".to_owned(),
+                host_representation: "tiler.test.scalar-host-image-v1".to_owned(),
+            },
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+        for (position, text) in rendered.iter().enumerate() {
+            assert!(
+                !rendered[..position].contains(text),
+                "{text:?} is not distinguishable from an earlier exclusion",
+            );
+        }
+    }
+
+    /// The two selection refusals are told apart by class, not by their payload.
+    ///
+    /// The distinction is the whole substance of the filter: "this host cannot
+    /// run anything here" sends a reader to find another build, and "the
+    /// producer's guards excluded your facts" sends them to bind different ones.
+    /// A caller that had to count `filtered` against `packaged` to work out
+    /// which it was holding would be re-deriving the decision this loader
+    /// already made.
+    #[test]
+    fn a_filtered_portfolio_and_an_unmatched_guard_are_separate_classes() {
+        let filtered = vec![FilteredVariant {
+            variant: 0,
+            reason: VariantIneligibility::UnsupportedRepresentation {
+                entry: 0,
+                declared_backend: "tiler.metal".to_owned(),
+                declared_representation: "metallib".to_owned(),
+                host_backend: "tiler.test.scalar-host".to_owned(),
+                host_representation: "tiler.test.scalar-host-image-v1".to_owned(),
+            },
+        }];
+        let ineligible = LoadRejection::NoEligibleVariant {
+            packaged: 1,
+            filtered: filtered.clone(),
+        };
+        let inapplicable = LoadRejection::NoApplicableVariant {
+            packaged: 2,
+            filtered,
+        };
+        assert_ne!(ineligible, inapplicable);
+        assert_ne!(ineligible.to_string(), inapplicable.to_string());
+        // Both render what was filtered rather than only how much: an excluded
+        // variant a reader cannot name is not an explanation.
+        for rejection in [&ineligible, &inapplicable] {
+            let text = rejection.to_string();
+            assert!(
+                text.contains("variant 0") && text.contains("tiler.metal"),
+                "{text:?} dropped the exclusion it carries",
+            );
+        }
+    }
+
+    /// A guard-only refusal reports no filtered variant at all.
+    ///
+    /// The state a portfolio this host can execute whole is in, asserted rather
+    /// than left implicit: an empty list here is what makes the count in the
+    /// message the artifact's own cardinality.
+    #[test]
+    fn an_unfiltered_portfolio_reports_every_variant_as_eligible() {
+        let rejection = LoadRejection::NoApplicableVariant {
+            packaged: 3,
+            filtered: Vec::new(),
+        };
+        let text = rejection.to_string();
+        assert!(
+            text.contains("none of the 3 eligible variant(s) of 3 packaged"),
+            "{text:?} must say that nothing was filtered",
+        );
+        assert!(
+            !text.contains("filtered"),
+            "{text:?} must not report an exclusion it does not carry",
         );
     }
 }

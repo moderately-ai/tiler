@@ -1,7 +1,7 @@
 ---
 id: select-executable-variants-across-registered-backend-families
 title: Select executable variants across registered backend families
-status: todo
+status: in-progress
 priority: p1
 dependencies: [produce-a-custom-backend-payload-through-the-build-orchestrator, route-a-custom-backend-through-an-independently-selected-adapter]
 related: [prototype-complete-physical-plan-selection, promote-artifact-family-selection-for-the-frontend]
@@ -9,6 +9,9 @@ scopes: [implementation/runtime, implementation/artifact, implementation/compile
 shared_scopes: [project/tickets]
 paths: []
 tags: [backend-providers, pluggability, implementation, selection, runtime]
+claimed_from: todo
+assignee: worker-variant-sel
+lease_expires_at: 1785565152
 ---
 ## User-visible outcome
 
@@ -16,13 +19,13 @@ A multi-backend artifact filters variants by installed executable backend/repres
 
 ## Implementation keys
 
-- Replace the current effective order—first true guard, then compatibility—with adapter/profile eligibility, applicability guards, policy comparison, and one-way commit.
+- **Corrected 2026-08-01 against accepted [ADR 0090](../docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md), which this ticket predates:** there is no adapter registry — eligibility derives from the loading host's *stated* `ExecutionEnvironment` (backend/representation compared as a pair, profile classified) exactly as the loader already does for one variant; this ticket widens that to filter a multi-family portfolio. Replace the current effective order — first true guard, then compatibility — with host-environment eligibility, applicability guards, policy comparison, and one-way commit.
 - Preserve artifact stable-priority semantics where requested while making ineligible variants non-candidates rather than terminal mismatches.
 - Keep compile-time plan cost selection separate from runtime routing policy; runtime must not invoke the optimizer or invent unrecorded costs.
-- Define typed outcomes for missing adapter, duplicate adapter authority, unsupported representation, profile mismatch, no guard match, and no eligible variant.
+- Define typed outcomes for unsupported representation, profile mismatch, no guard match, and no eligible variant. (The registry-era outcomes this key named — missing adapter, duplicate adapter authority — do not exist under the accepted no-registry model; a host that cannot execute a family simply declares an environment no variant of that family matches.)
 - Verify complete semantic/numerical equivalence or explicit fallback coverage before packaging alternatives.
 - Ensure one variant may legitimately use several payloads without treating that as multi-device execution.
-- Perturb provider registration, variant ordering, eligibility, guard results, and commit timing; prove the old algorithm fails the cross-backend fixture.
+- Perturb the host's stated environment, variant ordering, eligibility, guard results, and commit timing; prove the old algorithm fails the cross-backend fixture.
 - Present the exact routing-policy and public result boundary to Tom.
 
 ## Closes when
@@ -34,3 +37,23 @@ An artifact containing at least two backend families selects a later compatible 
 - Do not conflate backend-family selection with frontend artifact-family delivery; keep the existing frontend ticket independent.
 - Feed the accepted eligibility model into the public composition/policy facade.
 - Keep multi-device/sharding deferred: this ticket selects one executable route, not several devices.
+
+## Outcome
+
+Selection is now **eligibility, then priority**. `DecodedProgram::select_variant` walks the packaged variants once and takes two decisions per variant in that order: whether the loading host's stated `ExecutionEnvironment` can execute it at all, and whether the producer's own applicability guard says it applies. A variant failing the first is a non-candidate — its guard is never evaluated — and a variant failing the second is a candidate the producer excluded. The host-relative comparisons that used to run *after* a variant was chosen (`route_entry`'s backend/representation pair, the payload's own compatibility profile) and the one that ran after `select_variant` returned (the variant's assessed profile) all moved into `DecodedProgram::variant_eligibility`, which walks **every entry in execution order** — so the per-entry granularity `route_entry` had is preserved rather than traded for a per-variant approximation, and a variant realized by several payloads is eligible only if the host can execute all of them. `route_entry` consequently takes no `ExecutionEnvironment` at all and keeps only the two artifact-relative refusals that are not host declarations: `UndeliverableExecutionPolicy` and `ObjectNotCarried`.
+
+**Typed outcomes.** `VariantIneligibility` is the filter's own classification: `AssessedProfile { classification }` (the plan was assessed for another profile), `UnsupportedRepresentation { entry, declared_backend, declared_representation, host_backend, host_representation }` (the pair, compared whole, at a named entry), and `PayloadProfile { entry, classification }` (the object was built for another profile). `FilteredVariant { variant, reason }` pairs each with its routing rank. Both selection refusals carry the list: `NoEligibleVariant { packaged, filtered }` when `filtered.len() == packaged`, and `NoApplicableVariant { packaged, filtered }` when at least one variant reached its guard and none held. The two are distinct classes because they are opposite repairs — find a build for this machine, or bind different facts — and the filtered list is what says *what was filtered* against *what failed*.
+
+**What did not change.** Stable priority still decides among the eligible, in declaration order; filtering removes candidates and never reorders the survivors. An eligible variant whose guard cannot be *evaluated* still aborts the walk rather than falling through, because skipping it would substitute a plan the producer ranked lower on account of an under-bound caller. Runtime invokes no optimizer and invents no cost: eligibility is three equality/classification comparisons against a stated tuple, and priority is declaration order. Artifact identity is untouched — nothing in `crates/tiler-artifact` was modified and no pinned digest moved; `every_payload_defect_is_the_backends_refusal_and_the_artifact_layer_accepts_the_bytes` still asserts two artifacts with different object bytes share one canonical identity.
+
+**Fixture.** `assemble_portfolio` packages one variant and one carried payload per member, at the rank its position gives it; `assemble` is its one-member case and delegates, so every pre-existing case is built the same way. Two artifact-layer constraints shape it, and both are the artifact layer's rather than this fixture's: `push_variant` refuses two variants agreeing on program *and* guard, so members differ in plan; `check_subject` requires one *variant* target profile per artifact, so a member varies its **payload** profile, which is per-payload by design. `PackagedPlan` gained `FusedInapplicable` (a guard that never holds) and `FusedExtentGuarded` (`1 <= extent(input, 0)`, unanswerable when the caller binds nothing) — the three answers a guard can give. `FixtureSpec::metal` is the second family, spelled with Metal's real governed keys; its carried object is this fixture's own scalar image and never decoded, because a variant of another family is filtered before its guard and a route that selects it is asserted at the loader rather than dispatched.
+
+**Deliberately terminal rather than eligibility filters**, each recorded because each was considered: `UndeliverableExecutionPolicy` (how a payload reaches an executable state is not one of the three identities a host states, and a portfolio offering a translated and a native member declares two *representations*, which the pair comparison already filters on); `ObjectNotCarried` (a descriptor-only artifact is assembled to be identified rather than published, and `check_entry_mappings` cannot prove its entries reach a symbol, so a mixed portfolio is not a shape the builder produces); and `ForeignRouteRequirementOwner` (a variant whose payload is this host's family while its route requirement names another backend is an internally inconsistent producer output, and falling through would hide the defect). Each is a candidate for a follow-up if a real portfolio needs it.
+
+**Public boundary, for provisional acceptance — Tom's call.** Removed from `tiler_runtime::load`: `LoadRejection::UnexecutablePayload`, `LoadRejection::IncompatibleTarget`, and `TargetDeclaration` with its `Display`. Added: `VariantIneligibility` (`#[non_exhaustive]`, `Clone + Debug + Eq + Hash + PartialEq + Display`), `FilteredVariant` (public fields `variant`, `reason`; `Clone + Debug + Eq + Hash + PartialEq + Display`), and `LoadRejection::NoEligibleVariant { packaged, filtered }`. Changed: `LoadRejection::NoApplicableVariant` gained `filtered`. `TargetCompatibility`, `ExecutionEnvironment`, and every other loader type are unchanged. No signature on `preflight`, `prepare`, `route_with_adapter`, or the `RuntimeAdapter` trait moved.
+
+**Old-algorithm evidence.** The pre-change order was simulated in place (first true guard, then eligibility as a terminal refusal) and the suite re-run: 5 of 77 tests fail, and the failure is exactly the defect this ticket names. `a_later_variant_is_selected_when_the_earlier_family_is_not_this_host` reports `runtime.no-eligible-variant: … variant 0: entry 0 is realized by a tiler.metal/metallib payload and this host states tiler.test.scalar-host/tiler.test.scalar-host-image-v1` — the Metal member at rank 0 refused on behalf of a scalar host that could run rank 1. `a_portfolio_routes_its_selected_member_through_the_adapter_to_the_reference` fails for the same cause; `a_portfolio_this_host_cannot_execute_fails_closed` names one exclusion of two; `an_eligible_portfolio_with_no_applicable_guard_refuses_as_inapplicable` reports the ineligible class where the correct answer is the inapplicable one; and `an_ineligible_variants_unanswerable_guard_does_not_abort_the_walk` aborts on a guard belonging to a variant the host was never going to run. The three preserved-behaviour cases — stable priority in both declaration orders, guard-false fallthrough, and an *eligible* variant's unanswerable guard aborting — pass under both orders, which is the signal that they assert what did not change.
+
+**Verification.** `make full` green on the committed tree: `cargo fmt --all --check`, `cargo check --workspace --all-targets --locked`, workspace Clippy with `-D warnings`, `cargo nextest run --workspace --locked` (1873 passed, 5 skipped), `cargo test --workspace --doc --locked`, `RUSTDOCFLAGS="-D warnings" cargo doc`, the release-profile numerical tests (636 passed), `tkt lint`, and shellcheck. `git diff --check` clean; `tkt guard --base 6b14e6a` verdict ok.
+
+**Filed rather than absorbed.** `retire-the-removed-loader-compatibility-refusals-outside-the-runtime-scope` covers the four call sites in `spikes/target-profiles/scalar-cpu-vertical/src/vertical.rs`, that spike's README-recorded refusal classes, and the `runtime.unexecutable-payload` citation in `docs/research/extensions/backend-provider-composition.md` and ADR 0090 item 8. All four live outside this ticket's declared scopes; the spike is its own workspace that no `make` target reaches, so nothing in the gate catches it. The recorded outcomes of already-closed tickets are left as history.

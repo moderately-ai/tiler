@@ -41,6 +41,29 @@
 //! materialized one is what reaches the loader's multi-entry and
 //! shared-allocation paths, which a single-entry route can only exercise as the
 //! empty case.
+//!
+//! [`PackagedPlan::FusedInapplicable`] is the fused plan under a guard that is
+//! statically false. It exists so a portfolio can hold a variant this host *can*
+//! execute and the producer excludes anyway, which is the one state that
+//! separates "no eligible variant" from "no applicable variant" — two refusals
+//! with opposite repairs.
+//!
+//! # A portfolio, and why its members need distinct plans
+//!
+//! [`assemble_portfolio`] packages one variant per member, at the routing rank
+//! its position gives it, each with its own carried payload. That is what makes
+//! a multi-backend-family artifact expressible here: the members declare
+//! different backend families and representations, and the loader's eligibility
+//! filter is what decides which of them this host may route to.
+//!
+//! Two constraints of the artifact layer shape what a portfolio may contain, and
+//! neither is this file's invention. `push_variant` refuses a second variant
+//! that packages the same kernel program under the same applicability guard, so
+//! two members must differ in *plan* rather than only in backend — which is also
+//! the realistic case, since two backends do not produce one physical plan. And
+//! `check_subject` requires every variant of one artifact to declare the same
+//! *variant* target profile, so a member varies the profile its **payload** was
+//! built for, which is per-payload by design.
 
 use tiler_artifact::program::{
     ArtifactExecutionPolicy, ArtifactProgramBuilder, AvailabilityPhase, BackendEntryKey,
@@ -53,8 +76,8 @@ use tiler_artifact::program::{
 };
 use tiler_ir::kernel::{KernelType, VerifiedKernel, lower_scheduled_region};
 use tiler_ir::program::abi::{
-    AbiRoot, PreparedEntryTargetRequirement, TargetPropertyProviderIdentity, TargetPropertyQuery,
-    TargetPropertyRequirementRelation,
+    AbiBinaryOp, AbiRoot, PreparedEntryTargetRequirement, TargetPropertyProviderIdentity,
+    TargetPropertyQuery, TargetPropertyRequirementRelation,
 };
 use tiler_ir::program::{
     AllocationOwnership, AllocationSpec, KernelProgramBuilder, MaterializedOrigin,
@@ -74,6 +97,7 @@ use tiler_ir::semantic::{
     SemanticProgramBuilder, StrictSerialF32Sum,
 };
 use tiler_ir::shape::{Axis, Shape};
+use tiler_runtime::load::ExecutionEnvironment;
 
 use crate::image::{IDENTITY_BIAS_BITS, IDENTITY_SCALE_BITS, ScalarEntry, ScalarImage, encode};
 
@@ -83,6 +107,13 @@ pub const BACKEND_KEY: &str = "tiler.test.scalar-host";
 pub const REPRESENTATION_KEY: &str = "tiler.test.scalar-host-image-v1";
 /// Governed representation of the source the backend retained.
 pub const SOURCE_REPRESENTATION_KEY: &str = "tiler.test.scalar-host-source-v1";
+/// Governed backend family of the second family a portfolio declares.
+///
+/// Metal's real key. See [`FixtureSpec::metal`] for why a member of this family
+/// carries an object no Metal toolchain produced and why that is sound.
+pub const METAL_BACKEND_KEY: &str = "tiler.metal";
+/// Governed executable representation that family consumes.
+pub const METAL_REPRESENTATION_KEY: &str = "metallib";
 /// Governed target-profile key of the fixture's host.
 pub const PROFILE_KEY: &str = "tiler.test.scalar-host-profile";
 /// Exact descriptor identity of that profile.
@@ -143,6 +174,43 @@ pub fn backend() -> BackendKey {
 #[must_use]
 pub fn representation() -> RepresentationKey {
     RepresentationKey::new(REPRESENTATION_KEY).expect("a governed representation key")
+}
+
+/// Returns Metal's governed backend family key.
+#[must_use]
+pub fn metal_backend() -> BackendKey {
+    BackendKey::new(METAL_BACKEND_KEY).expect("a governed backend key")
+}
+
+/// Returns Metal's governed executable representation key.
+#[must_use]
+pub fn metal_representation() -> RepresentationKey {
+    RepresentationKey::new(METAL_REPRESENTATION_KEY).expect("a governed representation key")
+}
+
+/// Returns the execution environment a host of the fixture's own family states.
+#[must_use]
+pub fn scalar_host() -> ExecutionEnvironment {
+    ExecutionEnvironment {
+        target_profile: profile(),
+        backend: backend(),
+        representation: representation(),
+    }
+}
+
+/// Returns the execution environment a Metal host states, over the same profile.
+///
+/// Deliberately the *same* target profile as [`scalar_host`]. Every variant of
+/// one artifact declares one variant profile, so a Metal host that also differed
+/// in profile would be filtered on the profile and never reach the pair
+/// comparison this environment exists to exercise.
+#[must_use]
+pub fn metal_host() -> ExecutionEnvironment {
+    ExecutionEnvironment {
+        target_profile: profile(),
+        backend: metal_backend(),
+        representation: metal_representation(),
+    }
 }
 
 /// Returns the backend-scoped route requirement the fixture's adapter owns.
@@ -254,8 +322,60 @@ pub fn sound_materialized_image() -> ScalarImage {
 pub enum PackagedPlan {
     /// One stage computing the whole semantic graph.
     Fused,
+    /// The same one stage, under a guard that never holds.
+    ///
+    /// A separate plan rather than a flag on [`Self::Fused`] because it *is* a
+    /// separate kernel program: the applicability guard is part of what the
+    /// producer packages, and the artifact layer refuses two variants that agree
+    /// on both the program and the guard.
+    FusedInapplicable,
+    /// The same one stage, under a guard that reads a fact the caller binds.
+    ///
+    /// True whenever the input is bound at all, so it changes nothing about a
+    /// route in the ordinary case. What it makes reachable is the case where the
+    /// caller binds *nothing*: the guard is then unanswerable rather than false,
+    /// which is a different thing for the loader to do — and the distinction is
+    /// only observable against a guard that is not a constant.
+    FusedExtentGuarded,
     /// A pointwise stage and a reduction stage over an explicit intermediate.
     Materialized,
+}
+
+impl PackagedPlan {
+    /// Returns the compilation subject a payload for this plan describes.
+    ///
+    /// Deliberately independent of the emitted object, so a perturbation of the
+    /// carried bytes does not change artifact identity — and distinct per plan,
+    /// so two members of one portfolio declaring the same backend family still
+    /// declare two payloads rather than colliding on one descriptor.
+    fn source(self) -> Vec<u8> {
+        match self {
+            Self::Fused => b"fused-multiply-add-strict-serial-sum rows=2 columns=3".to_vec(),
+            Self::FusedInapplicable => {
+                b"fused-multiply-add-strict-serial-sum rows=2 columns=3 inapplicable".to_vec()
+            }
+            Self::FusedExtentGuarded => {
+                b"fused-multiply-add-strict-serial-sum rows=2 columns=3 extent-guarded".to_vec()
+            }
+            Self::Materialized => b"multiply-add then strict-serial-sum rows=2 columns=3".to_vec(),
+        }
+    }
+}
+
+/// Which applicability guard a fused plan packages.
+///
+/// The guard is part of the kernel program rather than something a variant
+/// restates, so varying it is how this fixture produces two fused members the
+/// artifact layer will accept side by side — and how it reaches the three
+/// answers a guard can give: yes, no, and "the caller did not bind that".
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FusedGuard {
+    /// A constant that always holds.
+    AlwaysHolds,
+    /// A constant that never holds.
+    NeverHolds,
+    /// `1 <= extent(input, 0)`, which needs the input's shape to be bound.
+    NeedsBoundInput,
 }
 
 /// What one packaged entry's payload declares about itself.
@@ -309,6 +429,57 @@ pub fn entry_key(name: &[u8]) -> BackendEntryKey {
 }
 
 impl FixtureSpec {
+    /// Returns a member of the **Metal** backend family, for selection only.
+    ///
+    /// The second backend family a portfolio needs, spelled with Metal's real
+    /// governed keys rather than a second invented one, because the case the
+    /// loader has to get right is a genuinely heterogeneous artifact rather than
+    /// two flavours of this fixture.
+    ///
+    /// **The carried object is not a metallib and does not claim to be.** It is
+    /// this fixture's own scalar image, and nothing ever decodes it: a variant of
+    /// another family is filtered before its guard, and a route that selects it
+    /// is asserted at the loader rather than dispatched. That is exactly the
+    /// division ADR 0090 item 8 draws — payload bytes are the backend's to
+    /// validate, and the loader is not permitted to interpret them — so a
+    /// selection fixture that needed a real Metal toolchain would be testing the
+    /// toolchain.
+    ///
+    /// It declares no route requirement, so a host that *does* state Metal
+    /// reaches selection rather than the foreign-owner refusal, which would
+    /// answer a different question first.
+    #[must_use]
+    pub fn metal(plan: PackagedPlan) -> Self {
+        Self {
+            plan,
+            backend: metal_backend(),
+            representation: metal_representation(),
+            payload_profile: profile(),
+            route_requirements: Vec::new(),
+            ..Self::for_plan(plan)
+        }
+    }
+
+    /// Returns the scalar-host member of one packaged plan.
+    ///
+    /// The entry keys, symbols, transports, deferred predicates, and carried
+    /// image a plan implies, in one place, so a portfolio member states only
+    /// what it varies.
+    #[must_use]
+    pub fn for_plan(plan: PackagedPlan) -> Self {
+        match plan {
+            PackagedPlan::Fused => Self::default(),
+            // The same entries and the same carried image as the fused member:
+            // only the packaged guard differs, which is what makes a portfolio
+            // holding both a test of selection rather than of two backends.
+            PackagedPlan::FusedInapplicable | PackagedPlan::FusedExtentGuarded => Self {
+                plan,
+                ..Self::default()
+            },
+            PackagedPlan::Materialized => Self::materialized(),
+        }
+    }
+
     /// Returns the materialized member: two entries over one shared scratch.
     ///
     /// The shape the Metal proof's materialized route runs on hardware, made
@@ -371,7 +542,12 @@ pub struct Fixture {
     pub expected: RecordedArtifactProgramIdentity,
 }
 
-/// Assembles, verifies, and encodes one fixture artifact.
+/// Assembles, verifies, and encodes one single-variant fixture artifact.
+///
+/// The one-member case of [`assemble_portfolio`], delegating rather than
+/// repeating it: a portfolio that assembled its members differently from the way
+/// this suite's other cases are built would make every comparison between them
+/// an argument about the fixture.
 ///
 /// # Panics
 ///
@@ -379,14 +555,33 @@ pub struct Fixture {
 /// cannot be built is a defect in this file rather than a case under test.
 #[must_use]
 pub fn assemble(spec: &FixtureSpec) -> Fixture {
+    assemble_portfolio(std::slice::from_ref(spec))
+}
+
+/// Assembles one artifact packaging every member as its own variant and payload.
+///
+/// Routing rank is position: `members[0]` is the producer's first choice under
+/// [`RoutingPolicy::StablePriority`](tiler_artifact::program::RoutingPolicy).
+/// Each member carries its own payload, so a portfolio can declare more than one
+/// backend family, more than one executable representation, and more than one
+/// payload compatibility profile.
+///
+/// # Panics
+///
+/// Panics when the artifact does not verify or does not encode, and when the
+/// member list is empty — a portfolio with no variants is refused by
+/// whole-artifact verification, and asserting it here names the fixture defect
+/// rather than the diagnostic it produces.
+#[must_use]
+pub fn assemble_portfolio(members: &[FixtureSpec]) -> Fixture {
+    assert!(
+        !members.is_empty(),
+        "a portfolio packages at least one variant",
+    );
     let semantic = semantic_program();
-    let program = match spec.plan {
-        PackagedPlan::Fused => fused_program(&semantic),
-        PackagedPlan::Materialized => materialized_program(&semantic),
-    };
-    // One provider offering one capability, realized by either packaged plan.
-    // The capability is what the semantic graph asks for; how many stages
-    // implement it is a physical choice below it.
+    // One provider offering one capability, realized by any packaged plan. The
+    // capability is what the semantic graph asks for; how many stages implement
+    // it, and which backend emits them, are physical choices below it.
     let provider =
         ProviderIdentity::new("tiler-test", "scalar-host-serial-sum", 1).expect("a provider");
     let environment = CompilationEnvironment::new([provider.clone()]).expect("an environment");
@@ -400,6 +595,26 @@ pub fn assemble(spec: &FixtureSpec) -> Fixture {
         })
         .expect("the selected provider was offered");
 
+    for spec in members {
+        push_member(&mut draft, &semantic, spec);
+    }
+
+    let artifact = draft.build().expect("the fixture artifact verifies");
+    let bytes = artifact.encode().expect("the fixture artifact encodes");
+    let expected =
+        RecordedArtifactProgramIdentity::from_bytes(artifact.canonical_identity().as_bytes())
+            .expect("the producing side records its own identity");
+    Fixture { bytes, expected }
+}
+
+/// Declares one member's payload and its variant on a portfolio draft.
+fn push_member(draft: &mut ArtifactProgramBuilder, semantic: &SemanticProgram, spec: &FixtureSpec) {
+    let program = match spec.plan {
+        PackagedPlan::Fused => fused_program(semantic, FusedGuard::AlwaysHolds),
+        PackagedPlan::FusedInapplicable => fused_program(semantic, FusedGuard::NeverHolds),
+        PackagedPlan::FusedExtentGuarded => fused_program(semantic, FusedGuard::NeedsBoundInput),
+        PackagedPlan::Materialized => materialized_program(semantic),
+    };
     let payload = draft
         .push_carried_payload(
             spec.backend.clone(),
@@ -418,18 +633,11 @@ pub fn assemble(spec: &FixtureSpec) -> Fixture {
                     // compilation subject, which is what makes two artifacts
                     // with different bytes share one canonical identity — the
                     // asymmetry ADR 0090 item 8 rests on.
-                    source: match spec.plan {
-                        PackagedPlan::Fused => {
-                            b"fused-multiply-add-strict-serial-sum rows=2 columns=3".to_vec()
-                        }
-                        PackagedPlan::Materialized => {
-                            b"multiply-add then strict-serial-sum rows=2 columns=3".to_vec()
-                        }
-                    },
+                    source: spec.plan.source(),
                     provenance: PayloadProvenance {
                         toolchain: "tiler.test.scalar-image-translator".to_owned(),
                         target: "aarch64-apple-darwin".to_owned(),
-                        family: BACKEND_KEY.to_owned(),
+                        family: spec.backend.as_str().to_owned(),
                         language: "tiler.kernel-ir.v4".to_owned(),
                         // Apple-shaped required fields with no meaning for this
                         // backend. ADR 0090 item 14 names that gap; stating this
@@ -510,13 +718,6 @@ pub fn assemble(spec: &FixtureSpec) -> Fixture {
             .require_route(variant, requirement.clone())
             .expect("the fixture route requirement was accepted");
     }
-
-    let artifact = draft.build().expect("the fixture artifact verifies");
-    let bytes = artifact.encode().expect("the fixture artifact encodes");
-    let expected =
-        RecordedArtifactProgramIdentity::from_bytes(artifact.canonical_identity().as_bytes())
-            .expect("the producing side records its own identity");
-    Fixture { bytes, expected }
 }
 
 // -------------------------------------------------------------------------
@@ -702,8 +903,13 @@ fn fused_kernel() -> VerifiedKernel {
 }
 
 /// Builds the single-stage kernel program the artifact packages.
+///
+/// `guard` is the applicability guard it packages. A guard that never holds is
+/// what a producer packages for a plan it wants ranked but not chosen under the
+/// bound facts, and it is the only way this fixture can put an *eligible*
+/// variant in a portfolio that selection must nevertheless pass over.
 #[must_use]
-pub fn fused_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
+pub fn fused_program(semantic: &SemanticProgram, guard: FusedGuard) -> VerifiedKernelProgram {
     let kernel = fused_kernel();
     let mut plan = KernelProgramBuilder::new(semantic).expect("a plan draft");
     let external = plan
@@ -763,9 +969,30 @@ pub fn fused_program(semantic: &SemanticProgram) -> VerifiedKernelProgram {
     let write_bytes = literal(ROWS * 4);
     let grid_threads = literal(ROWS);
     let threads_per_workgroup = literal(1);
-    let guard = plan
-        .push_abi_root(AbiRoot::BooleanLiteral(true))
-        .expect("the guard predicate");
+    let guard = match guard {
+        FusedGuard::AlwaysHolds => plan
+            .push_abi_root(AbiRoot::BooleanLiteral(true))
+            .expect("the guard predicate"),
+        FusedGuard::NeverHolds => plan
+            .push_abi_root(AbiRoot::BooleanLiteral(false))
+            .expect("the guard predicate"),
+        // `1 <= extent(input, 0)`. True for every shape this fixture declares,
+        // so it selects exactly as a constant `true` does — and *unanswerable*
+        // when the caller binds no input, which a constant can never be.
+        FusedGuard::NeedsBoundInput => {
+            let one = plan
+                .push_abi_root(AbiRoot::UnsignedLiteral(1))
+                .expect("an abi literal");
+            let rows = plan
+                .push_abi_root(AbiRoot::InputExtent {
+                    key: input_key(),
+                    axis: Axis::new(0),
+                })
+                .expect("the input extent");
+            plan.push_abi_binary(AbiBinaryOp::LessOrEqual, one, rows)
+                .expect("the guard predicate")
+        }
+    };
     plan.applicability_guard(guard)
         .expect("the applicability guard");
     declare_routing_commit(&mut plan);

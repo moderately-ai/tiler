@@ -191,7 +191,7 @@ use tiler_reference::{
 use tiler_runtime::load::{
     DecodedProgram, ExecutionEnvironment, LiveDeviceObservation, LiveDeviceQualification,
     LiveDeviceRequest, LoadRejection, Preflight, RoutePreparation, RoutedDispatch, RoutedEntry,
-    TargetCompatibility, TargetDeclaration,
+    TargetCompatibility, VariantIneligibility,
 };
 
 /// Rows of the direct path's input; each row reduces to one output element.
@@ -1145,15 +1145,48 @@ fn probe_foreign_expected_identity(subject: &ProbeSubject<'_>) -> Result<String,
     }
 }
 
-/// A host offering another profile descriptor is an **incompatible target**,
-/// named on the *variant's* declaration.
+/// Returns the sole exclusion of a one-variant artifact no eligible variant survived.
 ///
-/// Both halves of the class are pinned. Which declaration refused separates a
-/// plan assessed for another profile from an object compiled for one, and those
-/// are different repairs; the classification separates the same target family
-/// under a descriptor this host does not offer from an artifact built for
-/// another family entirely. Asserting only that something refused would erase
-/// both distinctions at the moment a caller needs them.
+/// The three probes below all perturb what the *host* states, and a host-relative
+/// exclusion is now a filter applied before any guard is evaluated rather than a
+/// terminal mismatch — the ordering
+/// `select-executable-variants-across-registered-backend-families` inverted, so
+/// that an artifact packaging plans for two backend families cannot have its
+/// first plan refuse on behalf of a host the second one fits. What each probe
+/// pins therefore moved from the rejection's class onto the exclusion it carries,
+/// and the class it pins in addition — that *every* packaged variant was filtered
+/// — is what says the artifact offers this host nothing at all.
+fn sole_exclusion<T>(
+    name: &'static str,
+    outcome: Result<T, LoadRejection>,
+) -> Result<(VariantIneligibility, String), ProofError> {
+    match outcome {
+        Err(
+            ref rejection @ LoadRejection::NoEligibleVariant {
+                packaged,
+                ref filtered,
+            },
+        ) if filtered.len() == packaged => match filtered.as_slice() {
+            [only] => Ok((only.reason.clone(), rejection.to_string())),
+            _ => Err(refused(
+                name,
+                format!("this artifact packages one variant, and {filtered:?} names another"),
+            )),
+        },
+        Err(other) => Err(refused(name, other.to_string())),
+        Ok(_) => Err(refused(name, "the route was accepted".to_owned())),
+    }
+}
+
+/// A host offering another profile descriptor **filters** the only variant, on
+/// the profile that variant was assessed against.
+///
+/// Both halves of the exclusion are pinned. Which declaration excluded it
+/// separates a plan assessed for another profile from an object compiled for
+/// one, and those are different repairs; the classification separates the same
+/// target family under a descriptor this host does not offer from an artifact
+/// built for another family entirely. Asserting only that something refused
+/// would erase both distinctions at the moment a caller needs them.
 fn probe_other_profile_descriptor(subject: &ProbeSubject<'_>) -> Result<String, ProofError> {
     let mut decoded = DecodedProgram::decode(subject.bytes).map_err(ProofError::ProbeBaseline)?;
     let mut descriptor = subject
@@ -1174,24 +1207,22 @@ fn probe_other_profile_descriptor(subject: &ProbeSubject<'_>) -> Result<String, 
         backend: subject.environment.backend.clone(),
         representation: subject.environment.representation.clone(),
     };
-    match decoded.preflight(&other_host, subject.expected, subject.abi) {
-        Err(
-            rejection @ LoadRejection::IncompatibleTarget {
-                declaration: TargetDeclaration::Variant,
-                classification: TargetCompatibility::DescriptorMismatch { .. },
-            },
-        ) => Ok(format!(
-            "a host offering another profile descriptor: {rejection}"
+    let name = "another profile descriptor";
+    let (reason, rendered) = sole_exclusion(
+        name,
+        decoded.preflight(&other_host, subject.expected, subject.abi),
+    )?;
+    match reason {
+        VariantIneligibility::AssessedProfile {
+            classification: TargetCompatibility::DescriptorMismatch { .. },
+        } => Ok(format!(
+            "a host offering another profile descriptor: {rendered}"
         )),
-        Err(other) => Err(refused("another profile descriptor", other.to_string())),
-        Ok(_) => Err(refused(
-            "another profile descriptor",
-            "the route was accepted".to_owned(),
-        )),
+        other => Err(refused(name, other.to_string())),
     }
 }
 
-/// A host offering another profile *key* is an **incompatible target**, and the
+/// A host offering another profile *key* filters the only variant too, and the
 /// classification names the family rather than the descriptor.
 ///
 /// The sibling of [`probe_other_profile_descriptor`], and separate from it
@@ -1215,27 +1246,28 @@ fn probe_other_profile_key(subject: &ProbeSubject<'_>) -> Result<String, ProofEr
         backend: subject.environment.backend.clone(),
         representation: subject.environment.representation.clone(),
     };
-    match decoded.preflight(&other_host, subject.expected, subject.abi) {
-        Err(
-            rejection @ LoadRejection::IncompatibleTarget {
-                declaration: TargetDeclaration::Variant,
-                classification: TargetCompatibility::ProfileKeyMismatch { .. },
-            },
-        ) => Ok(format!("a host offering another profile key: {rejection}")),
-        Err(other) => Err(refused("another profile key", other.to_string())),
-        Ok(_) => Err(refused(
-            "another profile key",
-            "the route was accepted".to_owned(),
-        )),
+    let name = "another profile key";
+    let (reason, rendered) = sole_exclusion(
+        name,
+        decoded.preflight(&other_host, subject.expected, subject.abi),
+    )?;
+    match reason {
+        VariantIneligibility::AssessedProfile {
+            classification: TargetCompatibility::ProfileKeyMismatch { .. },
+        } => Ok(format!("a host offering another profile key: {rendered}")),
+        other => Err(refused(name, other.to_string())),
     }
 }
 
-/// A host stating another backend family is an **unexecutable payload**.
+/// A host stating another backend family filters the variant on the
+/// **representation** it cannot execute.
 ///
-/// Refused on that ground rather than on the target profile it happens to
+/// Excluded on that ground rather than on the target profile it happens to
 /// share, which is why this probe changes only the backend key: the host still
-/// offers the exact profile the variant was assessed against, so the refusal
-/// cannot come from the compatibility classification.
+/// offers the exact profile the variant was assessed against, so the exclusion
+/// cannot come from the compatibility classification. The entry position is
+/// pinned as well, because a multi-entry route realized by two payloads must say
+/// which of them this host is not.
 fn probe_other_backend_family(subject: &ProbeSubject<'_>) -> Result<String, ProofError> {
     let mut decoded = DecodedProgram::decode(subject.bytes).map_err(ProofError::ProbeBaseline)?;
     let other_backend = ExecutionEnvironment {
@@ -1244,15 +1276,16 @@ fn probe_other_backend_family(subject: &ProbeSubject<'_>) -> Result<String, Proo
             .map_err(|_| ProofError::HostProfile)?,
         representation: subject.environment.representation.clone(),
     };
-    match decoded.prepare(&other_backend, subject.expected, subject.abi) {
-        Err(rejection @ LoadRejection::UnexecutablePayload { .. }) => Ok(format!(
-            "a host stating another backend family: {rejection}"
-        )),
-        Err(other) => Err(refused("another backend family", other.to_string())),
-        Ok(_) => Err(refused(
-            "another backend family",
-            "the route was accepted".to_owned(),
-        )),
+    let name = "another backend family";
+    let (reason, rendered) = sole_exclusion(
+        name,
+        decoded.prepare(&other_backend, subject.expected, subject.abi),
+    )?;
+    match reason {
+        VariantIneligibility::UnsupportedRepresentation { entry: 0, .. } => {
+            Ok(format!("a host stating another backend family: {rendered}"))
+        }
+        other => Err(refused(name, other.to_string())),
     }
 }
 
@@ -4467,51 +4500,66 @@ mod tests {
         );
     }
 
-    /// Another profile key is an incompatible target naming the *family*.
+    /// Another profile key filters the variant and names the *family*.
     ///
     /// The half a descriptor-only probe cannot reach: a loader comparing
     /// descriptors and ignoring keys would pass the case below and admit an
     /// artifact built for a different target family entirely.
     #[test]
-    fn another_profile_key_is_an_incompatible_target() {
+    fn another_profile_key_filters_every_variant() {
         let fixture = fixture();
         let outcome = probe_other_profile_key(&fixture.subject())
-            .expect("another profile key is refused as an incompatible target");
+            .expect("another profile key leaves no eligible variant");
         assert!(
-            outcome.contains("runtime.incompatible-target"),
-            "the refusal names the incompatible-target class: {outcome}",
+            outcome.contains("runtime.no-eligible-variant"),
+            "the refusal names the no-eligible-variant class: {outcome}",
         );
         assert!(
             outcome.contains("ProfileKeyMismatch"),
-            "the refusal names a wrong artifact rather than a rebuild: {outcome}",
+            "the exclusion names a wrong artifact rather than a rebuild: {outcome}",
         );
     }
 
-    /// Another profile descriptor is an incompatible target on the variant.
+    /// Another profile descriptor filters the variant on its assessed profile.
     #[test]
-    fn another_profile_descriptor_is_an_incompatible_target() {
+    fn another_profile_descriptor_filters_every_variant() {
         let fixture = fixture();
         let outcome = probe_other_profile_descriptor(&fixture.subject())
-            .expect("another profile descriptor is refused as an incompatible target");
+            .expect("another profile descriptor leaves no eligible variant");
         assert!(
-            outcome.contains("runtime.incompatible-target"),
-            "the refusal names the incompatible-target class: {outcome}",
+            outcome.contains("runtime.no-eligible-variant"),
+            "the refusal names the no-eligible-variant class: {outcome}",
         );
         assert!(
             outcome.contains("DescriptorMismatch"),
-            "the refusal separates a rebuild from a wrong artifact: {outcome}",
+            "the exclusion separates a rebuild from a wrong artifact: {outcome}",
         );
     }
 
-    /// Another backend family is an unexecutable payload, not a profile problem.
+    /// Another backend family filters on the representation, not the profile.
+    ///
+    /// The rendered exclusion has to name the declared pair, because the *class*
+    /// is now the same one the two profile probes above produce. What separates
+    /// "this host executes another family" from "this artifact is for another
+    /// target" is the reason the refusal carries, so a probe asserting the class
+    /// alone would no longer tell the three apart — which is exactly the failure
+    /// mode this whole probe set exists to catch.
     #[test]
-    fn another_backend_family_is_an_unexecutable_payload() {
+    fn another_backend_family_filters_on_the_representation() {
         let fixture = fixture();
         let outcome = probe_other_backend_family(&fixture.subject())
-            .expect("another backend family is refused as an unexecutable payload");
+            .expect("another backend family leaves no eligible variant");
         assert!(
-            outcome.contains("runtime.unexecutable-payload"),
-            "the refusal names the unexecutable-payload class: {outcome}",
+            outcome.contains("runtime.no-eligible-variant"),
+            "the refusal names the no-eligible-variant class: {outcome}",
+        );
+        assert!(
+            outcome.contains("is realized by a") && outcome.contains("this host states"),
+            "the exclusion names the declared pair and the host's own: {outcome}",
+        );
+        assert!(
+            !outcome.contains("Mismatch"),
+            "a backend-family exclusion must not report a profile classification: {outcome}",
         );
     }
 
