@@ -1,7 +1,7 @@
 ---
 id: register-opaque-calls-on-the-compile-path
 title: Register opaque calls on the compile path
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [accept-the-public-backend-provider-composition-boundary]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [physical-planning, extensions, implementation]
+claimed_from: todo
+assignee: worker-register-opa
+lease_expires_at: 1785567331
 ---
 ## User-visible outcome
 
