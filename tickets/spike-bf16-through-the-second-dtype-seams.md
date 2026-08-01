@@ -1,13 +1,13 @@
 ---
 id: spike-bf16-through-the-second-dtype-seams
 title: Spike BF16 through the second-dtype seams
-status: todo
+status: in-progress
 priority: p1
 dependencies: [register-the-accepted-built-in-dtype-catalog, construct-and-bind-the-first-authoritative-metal-compile-profile]
-related: [preserve-primary-dtype-standards-evidence, own-the-dtype-support-maturity-matrix, own-operation-family-support-matrix, measure-the-apple-subnormal-flush-for-the-remaining-mature-dtypes, widen-the-f16-operation-vocabulary-to-contraction-and-reassociation, admit-a-caller-declared-target-profile, decide-per-dtype-dispatchability-as-a-target-capability, redesign-the-delivered-realization-record-from-typed-evidence, measure-apple-numerics-on-physical-ios-device]
+related: [preserve-primary-dtype-standards-evidence, own-the-dtype-support-maturity-matrix, own-operation-family-support-matrix, measure-the-apple-subnormal-flush-for-the-remaining-mature-dtypes, widen-the-f16-operation-vocabulary-to-contraction-and-reassociation, admit-a-caller-declared-target-profile, decide-per-dtype-dispatchability-as-a-target-capability, redesign-the-delivered-realization-record-from-typed-evidence, measure-apple-numerics-on-physical-ios-device, admit-a-bf16-scalar-arithmetic-subject, register-the-bf16-semantic-operation-signatures, evaluate-bf16-reference-semantics, declare-the-bf16-rows-on-the-authoritative-metal-profile, derive-boundary-alignment-from-the-element-type, admit-bf16-into-the-schedule-and-kernel-vocabulary, establish-bf16-optimizer-legality, carry-bf16-through-the-artifact-encoding-and-identity, lower-bf16-to-metal, validate-bf16-at-the-runtime-routing-boundary, conform-the-bf16-vertical-end-to-end, design-the-bf16-computation-and-accumulator-contract]
 scopes: [research/numerics, research/apple-targets, contracts/navigation]
 shared_scopes: [project/tickets]
-paths: [spikes/dtypes/bf16-second-dtype/**, docs/dtype-support.md, docs/roadmap.md]
+paths: [spikes/numerics/bf16-second-dtype/**, docs/dtype-support.md, docs/roadmap.md, spikes/README.md]
 tags: [dtype, bf16, spike, vertical-slice, planning]
 ---
 ## User-visible outcome
@@ -58,3 +58,42 @@ The pure-BF16 workload, exact semantics, reference corpus, macOS success route, 
 - Relate every child to `own-the-dtype-support-maturity-matrix` and update only the cells its delivered evidence advances.
 - Connect target-profile, dispatchability, numerical-honourability, delivered-realization, artifact, runtime, and Metal children to their existing owners instead of creating parallel vocabularies.
 - Close this spike once its bounded evidence and child graph are complete; production implementation continues in those children rather than keeping the spike in review.
+
+## Outcome (2026-08-01)
+
+The bounded proof is at [`spikes/numerics/bf16-second-dtype/`](../spikes/numerics/bf16-second-dtype/README.md), which carries the complete seam audit, the run narrative, and the measurement boundary. It builds and runs against `crates/` **unmodified**: `cd spikes/numerics/bf16-second-dtype && CARGO_TARGET_DIR=./target cargo run`.
+
+**Fact — the spike is not at the path this ticket reserved, and the reserved path was unusable.** `paths` named `spikes/dtypes/bf16-second-dtype/**`, which matches **no scope** in `ticketsplease.toml`; `spikes/numerics/**` maps to `research/numerics` and `spikes/apple-targets/**` to `research/apple-targets`, both of which this ticket holds. A branch writing to the reserved path would have been a guard escape. The spike is under `spikes/numerics/` because its subject is the numerical contract and the reference oracle — the device halves are cited from `spikes/apple-targets/`, not re-measured — and `paths` was corrected in the same change.
+
+**Fact — what the run establishes.** Every stage agreed and every perturbation was detected. The exact-rational oracle round-tripped all 65,536 BF16 encodings and agreed with an independent binary32-widening route on all 65,536 (census: 2 zeros, 254 subnormals, 65,024 normals, 2 infinities, 254 NaNs); 24 hand-derived witnesses agreed across six named categories; the overflow boundary held on both sides. The routing matrix produced three distinct BF16 answers — `Dispatchable` on the measured macOS row, `Unsupported` on the measured iOS-Simulator row, `Unknown` on an unmeasured family — while `f32` stayed `Dispatchable` on all three.
+
+**Fact — the audit's shape.** Nine surfaces are already scalar-float-generic and admit BF16 with no production edit, because they are keyed by a full `ResolvedValueType` or read a registered descriptor. Seven are legitimately F32-specific, because operand type is part of an operation's identity and each carries a tag in the artifact encoding. Four are missing typed extension points. The boundary between the first two groups is not arbitrary: **the identity and evidence layers are keyed, the arithmetic layer is enumerated**, and a second dtype needs the second to adopt the keying the first already uses.
+
+**Fact — the single blocking seam.** `ScalarArithmetic::new` (`crates/tiler-compiler/src/target.rs:1286`) rejects every arithmetic/type pair but the governed `f32`, and `f32()` is its only public constructor, so a caller cannot name a BF16 numerical row at all and all twenty-four `declare_*` honourability methods are unreachable for BF16. The refusal is correct and must not be relaxed by widening the equality check; what is missing is a validated construction route. `admit-a-bf16-scalar-arithmetic-subject` owns it and is the root of the DAG below.
+
+**Fact — the reference oracle could not have been host arithmetic.** Finding 24 records that no single operation separates `f32`-precision evaluation from native `bfloat` arithmetic, so an oracle rounding through host `f32` would agree with a double-rounding implementation because it shares the defect. The oracle is exact rational, rounded once.
+
+**Ledger movement — one cell, deliberately.** `docs/dtype-support.md`'s BF16 `Target-family dispatchability` moved from `absent/unsupported` to `architectural seam`: the obligation is fixed by `decide-per-dtype-dispatchability-as-a-target-capability` and the retained record supplies the facts, but no production profile declares a BF16 row. **No other cell moved**, because that document's own rule is that evidence about a generic mechanism never promotes an unregistered family, and this spike is out-of-tree. Two new evidence paragraphs record the dispatchability move and name the blocking constructor. The operation-family matrix row in `docs/roadmap.md` keeps its rung and gains the named blocker.
+
+**Deliberately not done.** No `crates/` file is modified. No BF16 operation is registered, no reference evaluator is installed, no `bfloat` MSL is emitted, and no GPU work is submitted — those are the children. The Apple facts are transcribed from the retained record rather than re-measured, since `measure-the-apple-subnormal-flush-for-the-remaining-mature-dtypes` owns them and is `done`. The `IOsDevice` family stays `Unknown`. The semantic matrix's BF16 `Semantic operation signatures` cell reads `absent/unsupported` while the neighbouring `f16/f64/f128` row reads `architectural seam`; that asymmetry was noticed and **not** changed, because this spike produced no evidence that it is wrong rather than deliberate.
+
+**Recipe.** `docs/dtype-support.md` gains a durable thirteen-rung dtype-addition recipe beside the ledger, each rung naming its authority, typed unsupported state, evidence class, and identity consequence, plus a four-column dry-run table for an ordinary float after BF16, an integer or boolean dtype, a compound quantized or MX dtype, and an external vendor format. Only rung 11 (dispatchability) reuses unchanged across all four; rung 6 (numerical policy) fails outright for both non-float families, which `docs/numerical-semantics.md` already states; the compound column breaks the one-value-one-buffer assumption at rung 9; the vendor column is mostly `unknown` for want of a namespace and equivalence policy. The three assumptions that would make the recipe wrong are named in it.
+
+**Child DAG.** Identity and registration need no child — `register-the-accepted-built-in-dtype-catalog` already supplies BF16 recognition and is `done`.
+
+```
+admit-a-bf16-scalar-arithmetic-subject ─┐
+                                        ├─> declare-the-bf16-rows-on-the-authoritative-metal-profile ─┐
+register-the-bf16-semantic-operation-signatures ─┬─> evaluate-bf16-reference-semantics ─┐             │
+                                                 │                                      │             │
+derive-boundary-alignment-from-the-element-type ─┴──────────────────────────────────────┴─> admit-bf16-into-the-schedule-and-kernel-vocabulary
+                                                                                              ├─> establish-bf16-optimizer-legality
+                                                                                              ├─> carry-bf16-through-the-artifact-encoding-and-identity ─┐
+                                                                                              └─> lower-bf16-to-metal ───────────────────────────────────┴─> validate-bf16-at-the-runtime-routing-boundary ─> conform-the-bf16-vertical-end-to-end
+
+design-the-bf16-computation-and-accumulator-contract  (from register-the-bf16-semantic-operation-signatures; blocks nothing in the pure vertical)
+```
+
+Eleven children, each stating its maturity claim and fail-closed boundary. `carry-bf16-through-the-artifact-encoding-and-identity` additionally depends on `redesign-the-delivered-realization-record-from-typed-evidence`, because both change the artifact's numerical record and that one is already `todo` with the surface in scope. `measure-apple-numerics-on-physical-ios-device` is `deferred` and is `related` on the profile child rather than a dependency, since a parked state never satisfies a dependent.
+
+Two public boundaries in the children go to Tom rather than being self-accepted: the validated `ScalarArithmetic` construction route, and the artifact's numerical record if its canonical-NaN field changes shape.
