@@ -808,9 +808,10 @@ impl<'a> RoutedDispatch<'a> {
 
     /// Returns how each committed object reaches an executable state.
     ///
-    /// Always [`ArtifactExecutionPolicy::NativeImage`] in this build — preflight
-    /// refuses anything else, for *every* entry — and returned rather than
-    /// assumed, so a host does not hard-code the assumption at its own load site.
+    /// Always [`ArtifactExecutionPolicy::NativeImage`], because that is the only
+    /// policy the vocabulary defines — no longer because preflight refuses the
+    /// alternative. It is still returned rather than assumed, so a host does not
+    /// hard-code at its own load site a fact that a second policy would change.
     ///
     /// Per entry rather than per route, because nothing requires two entries to
     /// name one payload and a single answer would be a claim about one of them.

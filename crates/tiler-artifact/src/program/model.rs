@@ -408,31 +408,44 @@ impl RoutingPolicy {
 
 /// How a backend payload's bytes reach an executable state on a device.
 ///
-/// A payload must not claim [`ArtifactExecutionPolicy::NativeImage`] merely
-/// because no source is compiled at run time; ahead-of-time output that still
-/// needs device-specific pipeline creation is
-/// [`ArtifactExecutionPolicy::RequiresDeviceTranslation`].
+/// One value, and the vocabulary is an extension point rather than a claim
+/// about what exists: [`Self::NativeImage`] says the target's own API loads
+/// these bytes as they stand. A representation that is *not* loadable as it
+/// stands — source a runtime would have to compile, or target IR some
+/// translation step would have to turn into a loadable object — has no
+/// spelling here, because nothing in Tiler delivers one and a value naming it
+/// would assert a route that does not exist.
+///
+/// **This is not the question of whether a device does work of its own between
+/// a load and a dispatch.** A metallib is a [`Self::NativeImage`] and still
+/// undergoes native device translation during Metal pipeline creation. That
+/// translation is a typed capability fact carrying its own availability phase,
+/// authority, and provenance, and ADR 0086 disposes of it as `Unknown` on every
+/// currently observable macOS host — in the capability layer, which is why that
+/// decision adds no field to artifact identity. Delivery and authority are two
+/// questions, and this enum answers only the first.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ArtifactExecutionPolicy {
     /// The payload bytes are directly loadable on a compatible device.
     NativeImage,
-    /// The payload requires device-specific translation before execution.
-    RequiresDeviceTranslation,
 }
 
 impl ArtifactExecutionPolicy {
     pub(super) const fn tag(self) -> u8 {
         match self {
             Self::NativeImage => 0x01,
-            Self::RequiresDeviceTranslation => 0x02,
         }
     }
 
     /// Resolves a governed wire tag, or `None` for an unrecognized policy.
+    ///
+    /// Tag `0x02` named a retired `RequiresDeviceTranslation` and is **never
+    /// reassigned**. It resolves to `None` like any tag this vocabulary does
+    /// not define, so a stream carrying it is refused by subject and tag rather
+    /// than read as some other policy.
     pub(super) const fn from_tag(tag: u8) -> Option<Self> {
         match tag {
             0x01 => Some(Self::NativeImage),
-            0x02 => Some(Self::RequiresDeviceTranslation),
             _ => None,
         }
     }

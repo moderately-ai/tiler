@@ -19,6 +19,7 @@
 
 use std::time::Instant;
 
+use tiler_ir::identity::push_slice;
 use tiler_ir::kernel::{AddressSpace, BufferAccess, KernelType};
 use tiler_ir::program::abi::TargetPropertyRequirementRelation;
 use tiler_ir::program::{StorageEncoding, StorageScalar};
@@ -665,6 +666,73 @@ fn a_flipped_tag_byte_is_rejected_by_name() {
         Err(ArtifactCodecError::UnknownTag {
             subject: TagSubject::RoutingPolicy,
             tag: 0x7f,
+        }),
+    );
+}
+
+/// The retired execution-policy tag is refused by name, not reinterpreted.
+///
+/// `ArtifactExecutionPolicy::RequiresDeviceTranslation` held wire tag `0x02`
+/// until `route-or-refuse-the-device-translation-execution-policy` retired it.
+/// Removing a variant *narrows* what decodes — the converse of an appended tag
+/// — so the property that has to hold is that the withdrawn value refuses
+/// rather than resolving to the surviving policy: an artifact declaring a
+/// delivery step nothing performs must not silently become one declaring bytes
+/// this loader will hand straight to a device.
+///
+/// `NativeImage` keeps tag `0x01`, so no artifact this vocabulary can still
+/// express moves a byte, and `0x02` is never reassigned.
+#[test]
+fn the_retired_execution_policy_tag_is_refused_by_name() {
+    const RETIRED_DEVICE_TRANSLATION_TAG: u8 = 0x02;
+
+    // Tag `0x02` is unassigned at the vocabulary, which is what stops a decoder
+    // from resolving it to anything at all.
+    assert_eq!(
+        ArtifactExecutionPolicy::from_tag(RETIRED_DEVICE_TRANSLATION_TAG),
+        None,
+    );
+    assert_eq!(
+        ArtifactExecutionPolicy::from_tag(ArtifactExecutionPolicy::NativeImage.tag()),
+        Some(ArtifactExecutionPolicy::NativeImage),
+    );
+
+    let artifact = default_artifact();
+    let [payload] = artifact.payloads() else {
+        panic!("the fixture declares exactly one payload");
+    };
+    // The encoder writes the policy tag directly after the payload's digest,
+    // compatibility key, and compatibility descriptor, so the anchor is built
+    // from those fields' own bytes rather than guessed at. It is deliberately
+    // *not* asserted unique: the same canonical run recurs in the identity
+    // subjects the manifest also carries, and only the first is the payload
+    // table the decoder reads a field from. Flipping the wrong run would not
+    // produce this refusal, so the assertion below is what proves the position
+    // rather than a comment claiming it.
+    let mut anchor = Vec::new();
+    push_slice(&mut anchor, payload.digest.as_bytes());
+    push_slice(&mut anchor, payload.compatibility.key.as_str().as_bytes());
+    push_slice(&mut anchor, payload.compatibility.descriptor.as_bytes());
+
+    let mut bytes = encoded(&artifact);
+    let first_run = bytes
+        .windows(anchor.len())
+        .position(|window| window == anchor.as_slice())
+        .expect("the encoded manifest carries the payload descriptor");
+    let policy_at = first_run + anchor.len();
+    assert_eq!(
+        bytes[policy_at],
+        ArtifactExecutionPolicy::NativeImage.tag(),
+        "the located byte must be the execution-policy tag",
+    );
+    bytes[policy_at] = RETIRED_DEVICE_TRANSLATION_TAG;
+    // Resealed, so the manifest digest is not what rejects this.
+    reseal(&mut bytes);
+    assert_eq!(
+        decode(&bytes),
+        Err(ArtifactCodecError::UnknownTag {
+            subject: TagSubject::ExecutionPolicy,
+            tag: RETIRED_DEVICE_TRANSLATION_TAG,
         }),
     );
 }
@@ -1758,7 +1826,7 @@ fn carried_artifact(source: &[u8], code: &[u8]) -> VerifiedArtifactProgram {
             RepresentationKey::new("metallib").unwrap(),
             SchemaVersion::new(1, 0),
             profile(),
-            ArtifactExecutionPolicy::RequiresDeviceTranslation,
+            ArtifactExecutionPolicy::NativeImage,
             payload_content(source, code),
         )
     })
@@ -1772,7 +1840,7 @@ fn pending_artifact(source: &[u8]) -> VerifiedArtifactProgram {
             RepresentationKey::new("metallib").unwrap(),
             SchemaVersion::new(1, 0),
             profile(),
-            ArtifactExecutionPolicy::RequiresDeviceTranslation,
+            ArtifactExecutionPolicy::NativeImage,
             &payload_metadata(source),
         )
     })

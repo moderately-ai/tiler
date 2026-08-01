@@ -1,11 +1,11 @@
 ---
 id: route-or-refuse-the-device-translation-execution-policy
 title: Route or retire the device-translation execution policy
-status: in-progress
+status: review
 priority: p2
 dependencies: []
 related: [generalize-payload-provenance-beyond-the-apple-shape, specify-the-consumer-neutral-backend-provider-composition-contract]
-scopes: [implementation/artifact, implementation/runtime]
+scopes: [implementation/artifact, implementation/runtime, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [runtime, artifacts, backend-providers, routing]
@@ -31,6 +31,28 @@ lease_expires_at: 1785626991
 - **Retire it.** The variant is removed and the policy stops being a dichotomy. This moves an artifact-identity tag, so it is not free: state what happens to the `0x02` encoding, and whether the domain steps.
 
 Whichever survives, the elimination is written out so a reader can refute it. Do not close this by observing that the refusal is correct today — the refusal being correct is the premise, not the outcome.
+
+## Elimination run — Retire-it survives (2026-08-01)
+
+**Route-it is eliminated, and not on cost.** Its own stated obligation is to say which backend performs the translation and under what authority. The only device backend is Metal, and for Metal the translation in question is exactly native pipeline creation of an AOT metallib — the case [ADR 0043](../docs/decisions/0043-use-typed-phased-target-feasibility.md) named as legal without naming its authority, and the case [ADR 0086](../docs/decisions/0086-require-attributable-or-attested-native-translation.md) then decided. *Fact.* ADR 0086 (accepted 2026-07-31) holds that a positive host-applicability receipt requires an attributable identity for the private translating component or exact host attestation, that neither exists on current APIs, and that the predicate is therefore `Unknown` and the receipt refused; item 3 excludes the measured environment row as sufficient authority and item 4 excludes ten named substitutes. *Fact — verified in source, not inferred from the record.* `crates/tiler-metal/src/applicability.rs:661` declares `NativeTranslationAuthority` holding one field of the private empty enum `NoAdmissibleAuthority` at `:679`, so the type is uninhabited; `native_translation_authority()` at `:1061` returns `None` because nothing else is constructible; and `structural_unreachability::every_outcome_is_a_refusal` at `:1082` is an exhaustive `match` over `Result<MetalHostEligibility, _>` with no `Ok` arm, so inhabiting the authority stops that function compiling. *Inference.* A route for `RequiresDeviceTranslation` would have to consume a receipt that is unreachable by construction, or relabel one of ADR 0086's excluded substitutes as the authority. The first is impossible and the second is forbidden by name, so Route-it is not a more expensive design — it is unavailable until one of ADR 0086 item 7's reconsideration triggers fires, each of which is an external event (a new Apple API, a separately accepted attributing observer, or an adopted host-attestation mechanism) rather than work this ticket could do. Its ADR 0051 staging was never reached as a question; had it been, the pre-commit stage it would occupy is itself mid-split under [`reconcile-the-pre-commit-allocation-seam-with-adr-0051`](reconcile-the-pre-commit-allocation-seam-with-adr-0051.md) (direction decided 2026-08-01, unimplemented), so building on either side of that seam was excluded anyway.
+
+**The vocabulary's axis, corrected before retiring anything.** The enum's own doc comment claimed that "ahead-of-time output that still needs device-specific pipeline creation is `RequiresDeviceTranslation`". *Fact.* A metallib is exactly such output — [`docs/backends/metal.md`](../docs/backends/metal.md):19 and :22 state that "runtime pipeline creation remains necessary" and that native device translation of the embedded metallib happens during it. *Fact.* `crates/tiler-build/src/metal_assembly.rs:172` and `:239` nevertheless declare `ArtifactExecutionPolicy::NativeImage`, and the Metal route demonstrably works. *Inference.* Read literally, the doc comment would make Tiler's only production backend unroutable, so it is refuted by working code; per AGENTS.md's rule that the source wins when a comment disagrees with it, the comment was the defect. The axis the code actually draws is whether the target's own API loads the bytes as they stand — not whether the device does work of its own between load and dispatch. Delivery and authority are two questions in two layers, which is why ADR 0086 item 5 adds no field to artifact identity: the metallib's device translation is a typed capability fact owned by `tiler-metal`'s applicability predicate, and retiring the artifact-layer variant removes no ability to declare it. The corrected doc comment now says this.
+
+**Retire-it survives.** `ArtifactExecutionPolicy` becomes one-valued, matching `RoutingPolicy`'s existing shape in the same file — the enum remains the extension point and a second policy remains an explicit added variant with an explicit identity change.
+
+**Identity consequences, stated exactly.** The policy tag is folded into artifact identity at `crates/tiler-artifact/src/program/model.rs:598`, inside `BackendPayloadDescriptor::canonical_key`. `NativeImage` keeps tag `0x01`, so **no artifact the vocabulary can still express moves a byte**; only artifacts that declared `0x02` change, and those become unbuildable rather than re-keyed. This is a narrowing of the decodable input set, not an appends-only extension and not a domain step: no schema version moves, no ledger document moves, and no pinned identity is recomputed. *Measurement — the retained-artifact sweep.* The repository tracks 1909 files, of which 1904 are text and 5 are binary; all five are research-source PDFs and none is an artifact (`git ls-files` counted against `git grep -I --name-only -e ''`). `spikes/cache/build-tool-exercise` is the one place outside the crates that declares the retired variant, and it retains no golden or result fixture — its tracked files are eight manifests and sources. No `0x02` therefore survives anywhere to be re-read.
+
+**The refusal moved down a layer rather than disappearing.** `crates/tiler-runtime/src/load.rs`'s named refusal and `LoadRejection::UndeliverableExecutionPolicy` are removed because the case is now unrepresentable; the exhaustive `match` stays, so a future policy is still a build failure there rather than a silent pass. The obligation is discharged instead by `the_retired_execution_policy_tag_is_refused_by_name` in `crates/tiler-artifact/src/program/codec/tests.rs`, which flips an encoded artifact's policy byte to `0x02`, reseals the manifest so no digest catches the forgery, and pins `ArtifactCodecError::UnknownTag { subject: ExecutionPolicy, tag: 2 }`.
+
+**Verification that the new check can say no.** Perturbing `from_tag` to resolve `0x02` to `NativeImage` fails the test on its vocabulary assertion; neutralizing that assertion and re-running fails it on the decode assertion with `Err(NonCanonicalManifest)` instead of the named refusal — which also records a second, independent line of defence: a decoder that silently reinterpreted the retired tag would still be caught by canonical re-encoding, so the encoding is per-tag injective at this site.
+
+### Scope note — `contracts/decisions` added 2026-08-01
+
+Added to edit ADR 0090:125's sentence, which this ticket's `Closes when` requires. The lane was held at dispatch by `land-the-two-level-reduction-adr`; that ticket has since landed on `main` (`da41f07`, `96d45d3`, `536d76c`). Verified by the landed diff rather than a live branch, which is the stronger check: `git diff --name-only 2119b20..main -- docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md` is empty, and `git diff --stat 2119b20 main -- docs/decisions/` names only the new `0096` record and `README.md`. No live ticket declares `contracts/decisions` (checked against every open worktree's ticket frontmatter).
+
+### Filed rather than absorbed
+
+- [`retire-the-device-translation-policy-from-the-cache-spike-and-its-citing-records`](retire-the-device-translation-policy-from-the-cache-spike-and-its-citing-records.md) — the four out-of-scope consumers of the retired name.
 
 ## Closes when
 

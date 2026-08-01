@@ -278,7 +278,7 @@
 //!         key: TargetProfileKey::new("tiler.prototype-target-neutral-baseline.v1")?,
 //!         descriptor: TargetProfileDescriptorDigest::from_bytes([0x01, 0x02])?,
 //!     },
-//!     execution_policy: ArtifactExecutionPolicy::RequiresDeviceTranslation,
+//!     execution_policy: ArtifactExecutionPolicy::NativeImage,
 //! })?;
 //!
 //! // The ABI's accessible ranges are formulas over the bound interface, not

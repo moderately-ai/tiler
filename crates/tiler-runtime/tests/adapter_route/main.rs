@@ -35,8 +35,8 @@ use fixture::{FixtureSpec, PackagedPlan, assemble, assemble_portfolio};
 use image::{ScalarEntry, ScalarImage, ScalarPayloadRefusal, encode};
 
 use tiler_artifact::program::{
-    AbiFactBinder, AbiFacts, ArtifactExecutionPolicy, AvailabilityPhase, BackendKey,
-    RecordedArtifactProgramIdentity, RouteFeatureKey, RouteRequirementSubject,
+    AbiFactBinder, AbiFacts, AvailabilityPhase, BackendKey, RecordedArtifactProgramIdentity,
+    RouteFeatureKey, RouteRequirementSubject,
 };
 use tiler_reference::{
     FloatBitOrder, InputBinding, ReferenceElement, ReferenceEvaluator, Tensor, TensorPayloadView,
@@ -427,25 +427,13 @@ fn a_payload_built_for_another_profile_filters_on_the_payload_declaration() {
     assert_eq!(host.stages, [Stage::Bind]);
 }
 
-/// A payload needing device translation is undeliverable through this loader.
-#[test]
-fn a_payload_requiring_device_translation_is_undeliverable() {
-    let spec = FixtureSpec {
-        execution_policy: ArtifactExecutionPolicy::RequiresDeviceTranslation,
-        ..FixtureSpec::default()
-    };
-    let (outcome, host) = route(&spec, ScalarHostAdapter::new(&OPERANDS));
-    assert!(
-        matches!(
-            outcome,
-            Err(AdapterRouteFailure::Load(
-                LoadRejection::UndeliverableExecutionPolicy { .. }
-            )),
-        ),
-        "expected an undeliverable execution policy",
-    );
-    assert_eq!(host.stages, [Stage::Bind]);
-}
+// `a_payload_requiring_device_translation_is_undeliverable` stood here until
+// `route-or-refuse-the-device-translation-execution-policy` retired
+// `ArtifactExecutionPolicy::RequiresDeviceTranslation`. The case it covered is
+// unrepresentable now rather than refused, and the obligation moved down a
+// layer: `the_retired_execution_policy_tag_is_refused_by_name` in
+// `tiler-artifact`'s codec tests proves the withdrawn wire tag `0x02` is
+// refused by name instead of resolving to the surviving policy.
 
 /// A row owned by another backend is refused without consulting the adapter.
 ///
