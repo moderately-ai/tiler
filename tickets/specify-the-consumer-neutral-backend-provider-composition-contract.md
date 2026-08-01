@@ -1,7 +1,7 @@
 ---
 id: specify-the-consumer-neutral-backend-provider-composition-contract
 title: Specify the consumer-neutral backend-provider composition contract
-status: in-progress
+status: done
 priority: p1
 dependencies: [define-backend-device-and-execution-context-vocabulary, prototype-a-forkless-custom-metal-physical-provider, prototype-a-bounded-scalar-cpu-backend-vertical]
 related: [draft-public-extension-seam-ownership-adr, runtime-execution-contract, target-profile-feasibility-model]
@@ -9,9 +9,6 @@ scopes: [research/extensions, research/program-planning, research/artifacts, res
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [backend-providers, pluggability, design, research]
-claimed_from: todo
-assignee: worker-specify-the-co
-lease_expires_at: 1785550314
 ---
 ## User-visible outcome
 
