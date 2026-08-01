@@ -860,6 +860,8 @@ provenance, and semantic constraints but excludes derived solver caches. The
 solver algorithm and exact supported arithmetic fragment remain implementation
 choices.
 
+**Fact — a semantic value's shape is fixed-extent in the implemented profile, and the symbolic vocabulary reaches only the index layer.** `crates/tiler-ir/src/shape.rs` is the "fixed shape vocabulary", its `Extent` wraps a `u64`, and `SemanticProgramBuilder::input` takes a `Shape`; the sourced constant-or-symbol vocabulary that `ShapeEnv` backs is exported from `tiler_ir::index`. So an extent symbol reaches an iteration domain, a tensor boundary axis, and a division divisor at layer 2, and reaches no semantic value at layer 1. That is a gap in this contract's own symbolic profile rather than a decided restriction: the accepted rule above is that each axis extent "may be a static integer or a scoped symbolic expression evaluated later". [The symbolic-semantic-extents record](research/shapes/symbolic-semantic-extents.md) runs the eliminations for how it is spelled, where the environment's identity enters, and what a frontend does with an extent unknown until dispatch, and files the delivery chain that closes it.
+
 A **semantic input constraint** is required for the expression to be defined,
 such as a split-axis factorization. A **variant guard** is required only for a
 particular optimization, such as 16-byte alignment. They are not
