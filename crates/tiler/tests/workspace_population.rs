@@ -13,8 +13,8 @@
 //! parse handling only one silently drops the other — a member whose package
 //! name equals its directory renders as `…/crates/tiler#0.0.0`, while one
 //! whose name differs renders as
-//! `…/prototypes/serial-sum-compile#tiler-prototype-compile@0.0.0`. Both
-//! prototype members take the second form.
+//! `…/prototypes/serial-sum-compile#tiler-prototype-compile@0.0.0`. Every
+//! prototype member takes the second form.
 //!
 //! Hand-parsed for the same reason `dependency_direction.rs` hand-parses the
 //! lockfile: the grammar needed is narrow and stable, and a JSON dependency
@@ -25,10 +25,10 @@ use std::process::Command;
 
 /// Every workspace member, by package name.
 ///
-/// Eleven production crates plus the two prototype proof executables. A
+/// Eleven production crates plus the three prototype proof executables. A
 /// change to the workspace updates this list in the same commit — that is
 /// the intended failure, not an obstacle.
-const EXPECTED_MEMBERS: [&str; 13] = [
+const EXPECTED_MEMBERS: [&str; 14] = [
     "tiler",
     "tiler-artifact",
     "tiler-build",
@@ -38,6 +38,7 @@ const EXPECTED_MEMBERS: [&str; 13] = [
     "tiler-macros",
     "tiler-metal",
     "tiler-metal-aot",
+    "tiler-prototype-candle",
     "tiler-prototype-compile",
     "tiler-prototype-run",
     "tiler-reference",

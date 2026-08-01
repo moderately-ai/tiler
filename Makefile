@@ -25,7 +25,8 @@ build:
 # them, so a prototype that stops compiling or stops passing still fails.
 lint:
 	cargo clippy --workspace --all-targets --locked \
-		--exclude tiler-prototype-run --exclude tiler-prototype-compile -- -D warnings
+		--exclude tiler-prototype-run --exclude tiler-prototype-compile \
+		--exclude tiler-prototype-candle -- -D warnings
 
 # Two commands because nextest does not run doc-tests, at all. Dropping the
 # second would silently stop running the compile-fail doc-tests on

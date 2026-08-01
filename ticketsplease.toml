@@ -137,7 +137,7 @@ satisfies_dependents = false
 "implementation/build" = "tiler-build"
 "implementation/frontend" = "tiler-macros"
 
-# The Candle scope has no crate mapping until its owning crate is admitted. The Metal-AOT, runtime, cache, and build mappings now name their real owners, tiler-metal-aot, tiler-runtime, tiler-cache, and tiler-build. Each crate-admission ticket must atomically add the real workspace package and add or move its mapping here.
+# The Candle scope has no crate mapping until its owning crate is admitted, and that stays true now that a member occupies its globs: `prototypes/candle-metal-adapter` (`tiler-prototype-candle`) was admitted 2026-08-01 under `prototype-candle-metal-adapter`, and it is deliberately *not* mapped here. Nothing may depend on a prototype, so it has no reverse dependents to expand, and a mapping would have to be moved rather than added when `crates/tiler-candle` arrives -- which is exactly the "temporary prototype entry" that ticket forbids leaving behind. The Metal-AOT, runtime, cache, and build mappings now name their real owners, tiler-metal-aot, tiler-runtime, tiler-cache, and tiler-build. Each crate-admission ticket must atomically add the real workspace package and add or move its mapping here.
 #
 # The frontend scope owns two crates, `tiler` and `tiler-macros`, and both are
 # covered by its globs above. It maps to `tiler-macros` because that is the one
