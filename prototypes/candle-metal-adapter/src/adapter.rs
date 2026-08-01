@@ -77,7 +77,9 @@ use objc2_metal::{
 use tiler_artifact::program::{
     BindingTarget, BufferAccess, RouteRequirement, RouteResourceDimension,
 };
-use tiler_metal::applicability::{MetalGpuFamily, MetalGpuFamilySupport};
+use tiler_metal::applicability::{
+    MetalGpuFamily, MetalGpuFamilySupport, observe_highest_gpu_family,
+};
 use tiler_runtime::adapter::{LiveExecutionContext, RuntimeAdapter};
 use tiler_runtime::load::{
     ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest, Preflight, RoutedDispatch,
@@ -572,27 +574,27 @@ fn device_facts(device: &MetalDevice) -> DeviceFacts {
 
 /// Reads the highest named Apple GPU family this device reports supporting.
 ///
-/// Highest first: the families are cumulative, so the first supported one is the
-/// most specific true statement. A device claiming none of them is reported as
-/// such rather than guessed at.
+/// This adapter supplies the device call and nothing else. Which families are
+/// asked about, in what order, and what the answer is called are all
+/// `tiler-metal`'s, because they are facts about the governed vocabulary rather
+/// than about this binding.
+///
+/// **It used to pair each family with its Apple constant here, and that was the
+/// defect.** A pair table has no arm that can be missing, so a family added to
+/// `MetalGpuFamily` compiled cleanly at this site, the device was never asked
+/// about it, and `crate::proof` then reported a lower family — or none — as the
+/// observation an applicability policy was refused against. Driving the walk
+/// from `MetalGpuFamily::ALL` leaves no population here to fall behind.
+///
+/// `objc2-metal` models `MTLGPUFamily` as a newtype over `NSInteger`, so the
+/// enumerator crosses as the raw value with no correspondence written here.
 ///
 /// Public because `crate::proof` asks ADR 0086's separate applicability question
 /// from the *same* observation this adapter routes under; two spellings of "what
 /// family does this device claim" would let the two answers drift.
 pub fn observed_apple_family(device: &MetalDevice) -> MetalGpuFamilySupport {
     let raw = device.metal_device().as_ref();
-    [
-        (MTLGPUFamily::Apple9, MetalGpuFamily::Apple9),
-        (MTLGPUFamily::Apple8, MetalGpuFamily::Apple8),
-        (MTLGPUFamily::Apple7, MetalGpuFamily::Apple7),
-        (MTLGPUFamily::Apple6, MetalGpuFamily::Apple6),
-        (MTLGPUFamily::Apple5, MetalGpuFamily::Apple5),
-    ]
-    .into_iter()
-    .find(|(queried, _)| raw.supportsFamily(*queried))
-    .map_or(MetalGpuFamilySupport::NoneNamed, |(_, named)| {
-        MetalGpuFamilySupport::Highest(named)
-    })
+    observe_highest_gpu_family(|family| raw.supportsFamily(MTLGPUFamily(family.value())))
 }
 
 /// Reads a canonical family payload through the governed vocabulary's own spelling.

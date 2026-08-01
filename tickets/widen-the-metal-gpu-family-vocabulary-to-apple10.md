@@ -1,0 +1,46 @@
+---
+id: widen-the-metal-gpu-family-vocabulary-to-apple10
+title: Decide whether MetalGpuFamily names Apple10
+status: todo
+priority: p3
+dependencies: []
+related: [close-the-metal-gpu-family-out-of-crate-total-map, close-the-serial-sum-run-gpu-family-probe-table, correct-the-sdk-apple-family-range-in-the-runtime-answer-record]
+scopes: [implementation/metal]
+shared_scopes: []
+paths: []
+tags: [research, metal, apple-targets]
+---
+## The question
+
+Should `tiler_metal::applicability::MetalGpuFamily` name `Apple10`, and on what evidence?
+
+## What was found, and where the prior claim came from
+
+**Fact — Apple ships an `MTLGPUFamilyApple10`, in the SDK this project already reads.** `MTLDevice.h` in the installed macOS 26.5 SDK (build `25F70`, `/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk`) declares:
+
+```
+233:    MTLGPUFamilyApple1  = 1001,
+...
+241:    MTLGPUFamilyApple9  = 1009,
+242:    MTLGPUFamilyApple10 = 1010,
+```
+
+Reproduce in one line: `grep -n MTLGPUFamilyApple "$(xcrun --sdk macosx --show-sdk-path)/System/Library/Frameworks/Metal.framework/Headers/MTLDevice.h"`.
+
+**Fact — two records state the range as ending at `Apple9`, and both cite lines `233-241`.** `docs/research/runtime/backend-scoped-route-requirement-answers.md` says "`MTLDevice.h` in the installed macOS 26.5 SDK declares `MTLGPUFamilyApple1 = 1001` through `MTLGPUFamilyApple9 = 1009` (`...MTLDevice.h:233-241`)", and `tickets/close-the-metal-gpu-family-out-of-crate-total-map.md` repeats it. The citation is a bounded window that stops exactly one line before the constant that matters — the failure AGENTS.md names ("a bounded window ... can split the construct being searched for"). Nothing about the reasoning in either record depends on the omission, but the stated fact is wrong and a reader takes it as fact. `correct-the-sdk-apple-family-range-in-the-runtime-answer-record` owns the research-record half.
+
+**Fact — the bindings disagree, which is itself part of the decision.** `objc2-metal` 0.3.2 names `MTLGPUFamilyApple10` (`objc2-metal-0.3.2/src/generated/MTLDevice.rs:238`). `metal` 0.33.0 does **not**: its `#[repr(i64)]` enum stops at `Apple9 = 1009` (`metal-0.33.0/src/device.rs:70-89`). So `prototypes/candle-metal-adapter` could already ask a device about Apple10 and `prototypes/serial-sum-run` could not without naming the raw value itself.
+
+## Why this is not a transcription
+
+`MetalGpuFamily`'s own documentation states that the set "is bounded by what the retained measurements needed". Widening it is therefore a *measurement* question, not a header-reading one, and it has consequences that outlive the edit:
+
+- Every device this project has measured reports `supportsFamily:MTLGPUFamilyApple9` (Apple M4 Max, both retained 2026-07-31 records). Nothing here has observed an Apple10 device, so an `Apple10` variant would be a vocabulary member with no measurement behind it.
+- `MetalGpuFamily`'s derived `Ord` is its declaration order and is what the route-requirement comparison uses (`highest >= required`). The lexicographic hazard the runtime answer record already registers — `"Apple10" < "Apple9"` byte-for-byte, because `'1'` precedes `'9'` at the sixth byte — becomes live for any consumer that compares the canonical payload spelling rather than the ordering, so widening turns a recorded future hazard into a present one.
+- `MetalHostApplicabilityPolicy::FIRST_MACOS_APPLE9` compares the family for **exact** equality, deliberately. Widening the vocabulary does not widen the measured row and must not appear to.
+
+## What would close this
+
+Either an accepted decision to widen — with the ordering and payload-comparison consequences discharged, and `prototypes/serial-sum-run`'s binding gap from `close-the-serial-sum-run-gpu-family-probe-table` resolved first — or a recorded deferral with a stated trigger, the obvious one being the first device this project measures that reports `MTLGPUFamilyApple10`.
+
+Whichever way it goes, the `MetalGpuFamily` doc comment currently points here by name and must end up pointing at the answer.

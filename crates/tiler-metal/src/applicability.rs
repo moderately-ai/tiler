@@ -1,10 +1,19 @@
 //! Whether a live host is the exact macOS row the first Metal profile was measured on.
 //!
-//! This module is one pure function over one normalized observation. It touches
-//! no device, spawns no process, reads no environment variable, and consults no
-//! artifact: a platform adapter observes the host, and this decides. The split
-//! is what lets every policy case — including the ones no machine in this
-//! project can produce — run in the ordinary test gate without Metal hardware.
+//! This module is two pure functions over Apple's own vocabulary. Neither
+//! touches a device, spawns a process, reads an environment variable, or
+//! consults an artifact: a platform adapter observes the host, and
+//! [`evaluate_metal_host_applicability`](crate::applicability::evaluate_metal_host_applicability)
+//! decides. The split is what lets every policy case — including the ones no
+//! machine in this project can produce — run in the ordinary test gate without
+//! Metal hardware.
+//!
+//! The second function,
+//! [`observe_highest_gpu_family`](crate::applicability::observe_highest_gpu_family),
+//! is on the observing side of that split and is still device-free: it walks
+//! [`MetalGpuFamily::ALL`](crate::applicability::MetalGpuFamily::ALL) and asks
+//! the caller one yes-or-no question per family, so the *population* an adapter
+//! probes is this crate's rather than a table written beside each device call.
 //!
 //! # It refuses on every host, and that is the decision rather than a gap
 //!
@@ -104,6 +113,11 @@
 //!   (`27.0`, `26A5388g`).
 //! - **Device name** exactly as `MTLDevice.name` reports it (`Apple M4 Max`).
 //!
+//! The **GPU family** is the one field an adapter does not spell for itself.
+//! It calls [`observe_highest_gpu_family`](crate::applicability::observe_highest_gpu_family)
+//! and forwards each enumerator to its own `supportsFamily`, so the families
+//! probed and the family named are one authority rather than two.
+//!
 //! Every public item here is a reviewed *draft* boundary (ADR 0074 §7).
 
 use core::fmt;
@@ -111,12 +125,38 @@ use std::error::Error;
 
 /// One Apple GPU family a device may report supporting.
 ///
-/// The set is the one `prototypes/serial-sum-run` probes and is bounded by what
-/// the retained measurements needed; it is `#[non_exhaustive]` because a later
-/// Apple family lands additively and no consumer outside this crate classifies
-/// it by exhaustive match.
+/// The set is bounded by what the retained measurements needed, and it is
+/// narrower than Apple's: `MTLDevice.h` in the macOS 26.5 SDK (build `25F70`)
+/// declares `MTLGPUFamilyApple1 = 1001` through `MTLGPUFamilyApple10 = 1010`,
+/// and this vocabulary names five of those ten. A family Apple ships and this
+/// enum does not name is not observable through
+/// [`observe_highest_gpu_family`] and is reported as
+/// [`MetalGpuFamilySupport::NoneNamed`] or as a lower family, which is a
+/// deliberate consequence of scoping the vocabulary to measured rows rather
+/// than an oversight; `widen-the-metal-gpu-family-vocabulary-to-apple10` owns
+/// the question of whether to widen it.
+///
+/// **An ADR 0074 convention 5b type, deliberately exhaustive.** It carries no
+/// `#[non_exhaustive]`, and the reason is the opposite of the one this
+/// declaration used to state. It previously read "no consumer outside this
+/// crate classifies it by exhaustive match", which was false:
+/// `prototypes/serial-sum-run` pairs every variant with its Apple counterpart,
+/// and `prototypes/candle-metal-adapter` did the same until
+/// [`observe_highest_gpu_family`] gave it a probe that names no family at all.
+/// A pairing like that is 5b's total map — every variant must contribute the
+/// Apple constant it alone determines, and there is no constant a wildcard
+/// could return — so the attribute forced such a consumer to choose between an
+/// arm that cannot be written correctly and a hand-written table, and the table
+/// is what it chose. A table has no arm to be missing, so a family added here
+/// left the device unprobed with the tree green: convention 5c's
+/// "fail-closed but silently incomplete" reached without the attribute ever
+/// being consulted.
+///
+/// Growth is therefore announced by the compiler. Adding a family is a build
+/// error at [`Self::as_str`], at [`Self::apple_constant`], and — through
+/// [`Self::ALL`]'s completeness assertion — at the list every probe is driven
+/// from.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[non_exhaustive]
 pub enum MetalGpuFamily {
     /// `MTLGPUFamilyApple5`.
     Apple5,
@@ -132,7 +172,12 @@ pub enum MetalGpuFamily {
 
 impl MetalGpuFamily {
     /// Every Apple family this vocabulary names, lowest first.
-    pub const ALL: [Self; 5] = [
+    ///
+    /// Ascending order is load-bearing: [`observe_highest_gpu_family`] walks
+    /// this list in reverse so a cumulative device answers the most specific
+    /// true statement about itself on the first query, and the const assertion
+    /// below rejects a member inserted out of order.
+    pub const ALL: [Self; core::mem::variant_count::<Self>()] = [
         Self::Apple5,
         Self::Apple6,
         Self::Apple7,
@@ -154,12 +199,149 @@ impl MetalGpuFamily {
             Self::Apple9 => "Apple9",
         }
     }
+
+    /// Returns the `MTLGPUFamily` enumerator Apple declares for this family.
+    ///
+    /// This is the Apple-side authority for the whole workspace, and it lives
+    /// here because a total map from this vocabulary belongs in the crate that
+    /// defines it: written as this exhaustive wildcard-free match, a family
+    /// added to the enum is an `E0004` here, in a crate the lint gate and the
+    /// test gate both cover. Written in a consumer it was a hand-written table
+    /// outside both.
+    ///
+    /// The values are transcribed from `MTLDevice.h` in the macOS 26.5 SDK
+    /// (`$(xcrun --sdk macosx --show-sdk-path)/System/Library/Frameworks/Metal.framework/Headers/MTLDevice.h:237-241`),
+    /// and `crate::applicability_tests` pins each one so a silent edit is not
+    /// silent.
+    #[must_use]
+    pub const fn apple_constant(self) -> AppleGpuFamilyConstant {
+        AppleGpuFamilyConstant(match self {
+            Self::Apple5 => 1005,
+            Self::Apple6 => 1006,
+            Self::Apple7 => 1007,
+            Self::Apple8 => 1008,
+            Self::Apple9 => 1009,
+        })
+    }
 }
+
+/// Compiles only while [`MetalGpuFamily::ALL`] names every family, in order.
+///
+/// The length half is the check that can say no about a *population*: every
+/// other site that has to know about a family is an exhaustive match, which
+/// `rustc` closes on its own, but an array is a hand-written list and a family
+/// left out of it is a device silently never probed for that family. `ALL`'s
+/// declared length is `variant_count`, so the omission is an array-length
+/// mismatch at the declaration rather than a test nobody re-runs.
+///
+/// The order half compares Apple's own enumerators rather than this type's
+/// derived `Ord`, because `Ord` follows declaration order and would agree with
+/// a misordered `ALL` for exactly the reason that made it wrong.
+const _: () = {
+    assert!(
+        MetalGpuFamily::ALL.len() == core::mem::variant_count::<MetalGpuFamily>(),
+        "MetalGpuFamily::ALL must name every family this vocabulary declares",
+    );
+    let mut index = 1;
+    while index < MetalGpuFamily::ALL.len() {
+        assert!(
+            MetalGpuFamily::ALL[index - 1].apple_constant().value()
+                < MetalGpuFamily::ALL[index].apple_constant().value(),
+            "MetalGpuFamily::ALL must ascend, lowest Apple family first",
+        );
+        index += 1;
+    }
+};
 
 impl fmt::Display for MetalGpuFamily {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())
     }
+}
+
+/// One Apple `MTLGPUFamily` enumerator, as the raw value a caller passes to its
+/// own Metal binding.
+///
+/// Deliberately not an `MTLGPUFamily`: this crate is pure lowering and target
+/// metadata and names no Metal runtime type, and a raw enumerator crosses to
+/// either shape the ecosystem uses — `objc2-metal` 0.3.2 models `MTLGPUFamily`
+/// as `MTLGPUFamily(pub NSInteger)`, which takes this value directly, while
+/// `metal` 0.33.0 models it as a `#[repr(i64)]` Rust enum, which a caller names
+/// back itself.
+///
+/// `isize` because that is what `NSInteger` is: `MTLDevice.h` declares the
+/// enumeration as `NS_ENUM(NSInteger, MTLGPUFamily)`, and `NSInteger` is
+/// pointer-sized. Spelling it `i64` would have been correct on every target
+/// Tiler supports and would still have made the one binding that names the
+/// Apple type exactly insert a fallible conversion.
+///
+/// Opaque under ADR 0074 convention 2: the field is private, so a caller cannot
+/// mint an enumerator for a family [`MetalGpuFamily`] does not name and hand it
+/// back as though this vocabulary had produced it.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct AppleGpuFamilyConstant(isize);
+
+impl AppleGpuFamilyConstant {
+    /// Returns the raw `MTLGPUFamily` value, for the caller's own binding.
+    #[must_use]
+    pub const fn value(self) -> isize {
+        self.0
+    }
+}
+
+impl fmt::Display for AppleGpuFamilyConstant {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}", self.0)
+    }
+}
+
+/// Observes the highest Apple family a device reports supporting.
+///
+/// The caller supplies one thing — whether the bound device supports the
+/// enumerator it is handed — and this walks [`MetalGpuFamily::ALL`] in reverse,
+/// stopping at the first supported family. Highest first because Apple's
+/// families are cumulative, so the highest supported one is the most specific
+/// true statement a device makes about itself, and the walk costs one device
+/// query on a device that supports the newest family this vocabulary names.
+///
+/// # Why the walk is here and not at the call site
+///
+/// Every consumer that wrote this itself wrote it as a table pairing each
+/// variant with its Apple constant, and a table is not a match: a family added
+/// to [`MetalGpuFamily`] compiled cleanly at every such site, the device was
+/// never asked about it, and the applicability policy then refused a machine
+/// that satisfied it while naming the wrong observed family. Driving the walk
+/// from `ALL` removes the population from the call site entirely, so the only
+/// way to under-probe a device is to under-populate `ALL` — which the assertion
+/// beside it rejects at compile time.
+///
+/// ```
+/// use tiler_metal::applicability::{
+///     MetalGpuFamily, MetalGpuFamilySupport, observe_highest_gpu_family,
+/// };
+///
+/// // A device that claims Apple7 and everything below it.
+/// let observed = observe_highest_gpu_family(|family| family.value() <= 1007);
+/// assert_eq!(observed, MetalGpuFamilySupport::Highest(MetalGpuFamily::Apple7));
+///
+/// // A device that claims none of them is a different answer from a device
+/// // nobody asked, and this is the first of the two.
+/// assert_eq!(
+///     observe_highest_gpu_family(|_| false),
+///     MetalGpuFamilySupport::NoneNamed,
+/// );
+/// ```
+pub fn observe_highest_gpu_family(
+    mut supports_family: impl FnMut(AppleGpuFamilyConstant) -> bool,
+) -> MetalGpuFamilySupport {
+    MetalGpuFamily::ALL
+        .into_iter()
+        .rev()
+        .find(|family| supports_family(family.apple_constant()))
+        .map_or(
+            MetalGpuFamilySupport::NoneNamed,
+            MetalGpuFamilySupport::Highest,
+        )
 }
 
 /// What a device reported about the Apple GPU families it supports.
