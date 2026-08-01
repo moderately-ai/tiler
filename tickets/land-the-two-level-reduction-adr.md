@@ -1,7 +1,7 @@
 ---
 id: land-the-two-level-reduction-adr
 title: Land the two-level subgroup-then-workgroup reduction ADR
-status: review
+status: done
 priority: p2
 dependencies: [compose-the-two-level-subgroup-and-workgroup-reduction]
 related: [compose-the-two-level-subgroup-and-workgroup-reduction]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions, contracts/navigation, research/scheduling]
 shared_scopes: [project/tickets]
 paths: []
 tags: [contracts, adr, scheduling, subgroup, gpu]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785626991
 ---
 ## User-visible outcome
 
