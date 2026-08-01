@@ -1,7 +1,7 @@
 ---
 id: accept-the-inline-artifact-family-profile-syntax
 title: Decide how a consumer states an artifact-family delivery profile
-status: todo
+status: in-progress
 priority: p1
 dependencies: [generate-cfg-gated-artifact-family-delivery]
 related: [prototype-inline-aot-integration-proof, prototype-inline-proc-macro-frontend]
@@ -9,6 +9,9 @@ scopes: [implementation/frontend]
 shared_scopes: [contracts/navigation, contracts/integrations]
 paths: []
 tags: [decision, public-boundary, inline-dx, frontend, apple-targets]
+claimed_from: todo
+assignee: worker-deliver-syntax
+lease_expires_at: 1785554584
 ---
 ## Why this is a ticket and not a line of code
 
@@ -28,6 +31,10 @@ Which of these a consumer writes, and where in the region it goes:
 4. **An attribute rather than a statement**, e.g. `#[tiler::deliver(macos)]` above the invocation. Rejected here rather than offered: a `#[proc_macro]` cannot see attributes outside its own token stream, so this would require a second macro form and would break the accepted "each invocation is a self-contained AOT and embedding unit".
 
 The profile *names* are equally Tom's, and are today a crate-internal draft rather than an accepted vocabulary.
+
+## Decision — Tom, 2026-07-31
+
+**Accepted: option 3, with the draft profile names.** A consumer states a delivery profile as a named profile in the declaration block (`deliver macos-and-ios;`) with an explicit family list (`deliver macos 14.0, ios 17.0;`) as the escape hatch; the profile-name vocabulary is `fallback-only`, `macos`, `ios`, `macos-and-ios`. The grounds: it is the shape `docs/integration/frontends.md` already reserves — an ergonomic literal default whose resolved selection is still explicit compiler input — and it keeps the floor-override case expressible without publishing Apple vocabulary on the mandatory path. Option 4 stays eliminated on the proc-macro token-visibility constraint.
 
 ## Closes when
 
