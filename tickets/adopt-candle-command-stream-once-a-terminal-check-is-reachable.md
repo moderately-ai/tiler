@@ -1,7 +1,7 @@
 ---
 id: adopt-candle-command-stream-once-a-terminal-check-is-reachable
 title: Adopt Candle's own command stream once a terminal check is reachable
-status: todo
+status: deferred
 priority: p2
 dependencies: [prototype-candle-metal-adapter]
 related: []

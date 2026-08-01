@@ -1,7 +1,7 @@
 ---
 id: admit-a-normal-scale-precondition-for-target-honourable-strict-affine-decode
 title: Admit a normal-scale precondition so strict-affine decode is target honourable
-status: todo
+status: in-progress
 priority: p2
 dependencies: [prototype-quantized-value-vertical, scope-first-quantized-lm-profile]
 related: [implement-first-runtime-semantic-value-precondition-enforcement, produce-typed-strict-affine-quantize-semantic-preconditions, implement-first-quantized-backend-profile, admit-strict-affine-quantize-physical-candidate]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/reference, implementation/metal, cont
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, quantization, numerics, metal]
+claimed_from: todo
+assignee: worker-normal-scale
+lease_expires_at: 1785563375
 ---
 ## User-visible outcome
 
