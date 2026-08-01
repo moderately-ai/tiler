@@ -32,26 +32,77 @@
 //! returns `A::Value` rather than a wrapper, so the `let d = tiler::tensor! { … }`
 //! a consumer writes binds the consumer's own tensor type.
 //!
-//! # What is deliberately absent
+//! # Storage access is here now, and it is owed only where it is used
 //!
-//! **Storage access.** Nothing here yields a pointer, a buffer, a byte slice, or
-//! a device object. The bounded profile this ticket delivers checks a binding;
-//! it dispatches nothing, so a storage-access surface would be a public boundary
-//! with no caller to review it against. [`AdapterCapability::DenseRowMajorStorage`]
-//! is the reservation: an adapter states the storage property Tiler's first
-//! dispatch profile will require, and an adapter that cannot state it is refused
-//! now rather than read wrongly later.
+//! This module previously published none, and said why: "a storage-access
+//! surface would be a public boundary with no caller to review it against".
+//! `route-an-embedded-artifact-through-a-consumer-storage-seam` is that caller,
+//! so the surface exists — as [`DispatchAdapter`], a *second* trait rather than
+//! three more methods on [`TensorAdapter`].
 //!
-//! **Per-value storage properties.** A capability is a claim about the adapter,
-//! not about one value. An integration whose values may be strided views is
-//! expected to materialize before wrapping, or to decline the capability. Moving
-//! density onto [`ValueMetadata`] is the widening path, and it is not taken here
+//! The split is where the obligation actually falls. A region that states no
+//! `deliver` policy embeds nothing, routes nothing, and dispatches nothing; an
+//! adapter serving only such regions owes no byte run and no device authority,
+//! and making it write both would be charging every consumer for a path it never
+//! takes. Generated code names [`crate::__private::bind_and_build`] for those
+//! regions and [`crate::__private::bind_route_and_build`] for a delivering one,
+//! and only the second is bounded by [`DispatchAdapter`] — so the obligation is
+//! demanded by the compiler exactly where a kernel would read the bytes.
+//!
+//! [`AdapterCapability::DenseRowMajorStorage`] was the reservation this fills.
+//! It stays on [`TensorAdapter`] rather than moving, because it is a claim any
+//! adapter may state and a region may check without dispatching; what moved onto
+//! the new trait is the surface that *reads* the storage the claim describes.
+//!
+//! # Per-value storage properties are still absent
+//!
+//! A capability is a claim about the adapter, not about one value. An
+//! integration whose values may be strided views is expected to materialize
+//! before wrapping, or to decline the capability. Moving density onto
+//! [`ValueMetadata`] is the widening path, and it is still not taken here
 //! because nothing yet consumes the distinction.
+//!
+//! What *is* checked per value is length. An adapter claiming
+//! [`AdapterCapability::DenseRowMajorStorage`] is claiming that a value's byte
+//! run is exactly its element count times its stored scalar's width, and
+//! [`BindError::StorageLengthMismatch`] refuses a value whose reported extents
+//! and reported bytes disagree — before any of those bytes reach a kernel.
+//! Trusting the claim instead would let a short buffer be dispatched against a
+//! launch geometry derived from the long shape, which is a read past the end
+//! rather than a wrong answer.
 
 use std::error::Error;
 use std::fmt;
 
 pub use tiler_ir::program::StorageScalar;
+
+use crate::runtime::adapter::RuntimeAdapter;
+use crate::runtime::load::ExecutionEnvironment;
+
+/// Bytes one value of this scalar occupies per element.
+///
+/// Restated rather than imported: `tiler_ir::program::StorageScalar::byte_width`
+/// is private to its own crate. The restatement is safe because the match is
+/// exhaustive over a type that is deliberately not `#[non_exhaustive]` — a
+/// scalar added to the IR is a build error here rather than a silently wrong
+/// length.
+const fn byte_width(scalar: StorageScalar) -> u64 {
+    match scalar {
+        StorageScalar::U8 => 1,
+        StorageScalar::F32 => 4,
+    }
+}
+
+/// Returns the byte run one dense row-major value of this shape occupies.
+///
+/// `None` on overflow, which is a refusal rather than a wrap: a truncated
+/// product would compare a real buffer against a length nothing describes.
+pub(crate) fn dense_bytes(scalar: StorageScalar, extents: &[u64]) -> Option<u64> {
+    extents
+        .iter()
+        .try_fold(1_u64, |elements, extent| elements.checked_mul(*extent))?
+        .checked_mul(byte_width(scalar))
+}
 
 /// One capability a region may require of an adapter.
 ///
@@ -288,6 +339,261 @@ where
     }
 }
 
+/// One operand's storage, named by the interface key the region declared it under.
+///
+/// A leaf descriptor over a borrow, so it is `Copy` and its accessors are the
+/// whole of it. The key travels with the bytes because a device authority binds
+/// storage to the artifact's *named* program inputs — `RoutedBinding::binding`
+/// addresses a key, not a position — and matching by position would bind the
+/// right bytes to the wrong slot for any interface whose declaration order and
+/// canonical order differ.
+#[derive(Clone, Copy, Debug)]
+pub struct RegionOperand<'a> {
+    key: &'static str,
+    bytes: &'a [u8],
+}
+
+impl<'a> RegionOperand<'a> {
+    /// Pairs one checked byte run with the key it was declared under.
+    /// Crate-internal: the length check is what makes the run trustworthy, and a
+    /// publicly constructible one would let it be skipped.
+    pub(crate) const fn new(key: &'static str, bytes: &'a [u8]) -> Self {
+        Self { key, bytes }
+    }
+
+    /// Returns the stable interface key the region declared this operand under.
+    #[must_use]
+    pub const fn key(&self) -> &'static str {
+        self.key
+    }
+
+    /// Returns the operand's dense row-major storage.
+    ///
+    /// Exactly the run [`AdapterCapability::DenseRowMajorStorage`] describes:
+    /// elements innermost-axis-fastest, no offset, no stride, no padding, and a
+    /// length already checked against the extents the adapter reported.
+    #[must_use]
+    pub const fn bytes(&self) -> &'a [u8] {
+        self.bytes
+    }
+}
+
+/// Everything one delivering region asks its device authority to carry out.
+///
+/// # Why this is one value rather than several arguments
+///
+/// The three things an integration needs in order to build a runtime adapter for
+/// *this* invocation become true together and are meaningless apart: the operand
+/// bytes, the result's storage to write into, and the environment the producer
+/// declared for the embedded artifact. Handing them over as one value is also
+/// what lets the borrow be stated once — the adapter an integration builds from
+/// this holds the region's storage for exactly the route's duration, and nothing
+/// outlives it.
+///
+/// # The environment here is the *producer's*, and an adapter must say so
+///
+/// [`Self::declared_environment`] is the profile, backend family, and
+/// representation the expansion recorded off the artifact it produced. It is
+/// **not** an observation of this machine, and nothing in this crate can make
+/// one: [ADR 0086](https://github.com/moderately-ai/tiler/blob/main/docs/decisions/0086-require-attributable-or-attested-native-translation.md)
+/// decides that native device translation of a payload during pipeline creation
+/// is a capability fact whose authority is `Unknown` on every macOS row
+/// currently observable, so no host earns the right to offer the profile.
+///
+/// An adapter that returns this value from
+/// [`RuntimeAdapter::bind_execution_context`] is therefore routing on
+/// **producer-declared equality, not host-earned eligibility**, and
+/// [`crate::__private::PRODUCER_DECLARED_EQUALITY`] is the label it must report
+/// beside any result. `prototypes/serial-sum-run` prints the same distinction in
+/// the same words, and `crates/tiler/tests/labelled_diagnostic.rs` fails if the
+/// two ever stop agreeing.
+#[derive(Debug)]
+pub struct RegionRequest<'region> {
+    operands: Vec<RegionOperand<'region>>,
+    result_key: &'static str,
+    result: &'region mut [u8],
+    declared: ExecutionEnvironment,
+}
+
+impl<'region> RegionRequest<'region> {
+    /// Builds one request. Crate-internal: every field is derived from a region
+    /// whose operands were already checked, and a publicly constructible one
+    /// would be a second way to state what a region hands over.
+    pub(crate) fn new(
+        operands: Vec<RegionOperand<'region>>,
+        result_key: &'static str,
+        result: &'region mut [u8],
+        declared: ExecutionEnvironment,
+    ) -> Self {
+        Self {
+            operands,
+            result_key,
+            result,
+            declared,
+        }
+    }
+
+    /// Returns every operand's storage, in the order the region's interface
+    /// names them.
+    #[must_use]
+    pub fn operands(&self) -> &[RegionOperand<'region>] {
+        &self.operands
+    }
+
+    /// Returns one operand's storage by its interface key.
+    ///
+    /// The lookup a device authority actually needs: a routed binding names a
+    /// program input by key, and this is what answers it.
+    #[must_use]
+    pub fn operand(&self, key: &str) -> Option<&[u8]> {
+        self.operands
+            .iter()
+            .find(|operand| operand.key == key)
+            .map(|operand| operand.bytes)
+    }
+
+    /// Returns the interface key the region declared its result under.
+    #[must_use]
+    pub const fn result_key(&self) -> &'static str {
+        self.result_key
+    }
+
+    /// Returns how many bytes the result's storage holds.
+    ///
+    /// Readable without the exclusive borrow [`Self::result_mut`] takes, so an
+    /// adapter can size its allocations while still holding the request shared.
+    #[must_use]
+    pub const fn result_len(&self) -> usize {
+        self.result.len()
+    }
+
+    /// Returns the result's storage, for a dispatch to write into.
+    ///
+    /// Length-checked on the way in against the extents the region resolved, so
+    /// an adapter comparing a routed binding's `accessible_bytes` against this
+    /// slice is comparing against the value the caller will actually receive.
+    #[must_use]
+    pub fn result_mut(&mut self) -> &mut [u8] {
+        self.result
+    }
+
+    /// Returns the environment the artifact's *producer* declared.
+    ///
+    /// See the type documentation: this is a producer's declaration, never a
+    /// host observation.
+    #[must_use]
+    pub const fn declared_environment(&self) -> &ExecutionEnvironment {
+        &self.declared
+    }
+}
+
+/// The additional obligations a region that dispatches an embedded artifact places on an adapter.
+///
+/// Implemented by an integration alongside [`TensorAdapter`], and required only
+/// by [`crate::__private::bind_route_and_build`] — the entry point generated for
+/// a region whose `deliver` statement selected an artifact family. A consumer
+/// whose regions are all fallback-only never writes this trait.
+///
+/// # Why the device authority is `tiler_runtime`'s trait and not a new one
+///
+/// [`RuntimeAdapter`] already *is* the accepted vocabulary for "a consumer's
+/// statically linked executor for one backend and representation family", under
+/// [ADR 0090](https://github.com/moderately-ai/tiler/blob/main/docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md)
+/// row 12, and [`crate::runtime::adapter::route_with_adapter`] is the driver
+/// that sequences the loader's comparisons against it. Minting a second executor
+/// seam here would give the workspace two ways to say the same thing, and the
+/// two would drift at exactly the obligations — payload validation before the
+/// first device question, both device stages unconditional, the commit one-way —
+/// that the existing one exists to fix in place.
+///
+/// So this trait adds no execution method at all. It adds the two byte-run
+/// accessors the reservation named, and one factory that turns them into the
+/// integration's own [`RuntimeAdapter`].
+///
+/// # Why a factory rather than a stored adapter
+///
+/// A [`Tensor`] is borrowed shared at a call site, so nothing reachable from it
+/// can be borrowed mutably — and every [`RuntimeAdapter`] method takes
+/// `&mut self`. Storing the authority in [`TensorAdapter::Context`] and lending
+/// it out would therefore need interior mutability in every integration, for a
+/// value whose whole lifetime is one invocation.
+///
+/// Building it per invocation removes the problem instead of routing around it,
+/// and it is also what makes the region's storage reachable: the adapter is
+/// constructed *from* [`RegionRequest`], so it holds the operands and the result
+/// by borrow rather than receiving them through a channel the seam would
+/// otherwise have to grow. `crates/tiler-runtime/tests/adapter_route` already
+/// builds its adapter this way (`ScalarHostAdapter::new(&OPERANDS)`); this makes
+/// the idiom the contract.
+pub trait DispatchAdapter: TensorAdapter {
+    /// Why this integration's device authority refused a route before it committed.
+    ///
+    /// Named here rather than left on [`Self::Dispatch`] so an outcome can be
+    /// spelled without naming a lifetime: see [`Self::Dispatch`].
+    type Refusal;
+
+    /// Why a committed dispatch did not complete.
+    ///
+    /// Separate from [`Self::Refusal`] because ADR 0051 draws the line between
+    /// them: a refusal arrives while a fallback is still permitted, and a
+    /// failure arrives after the one-way commit and is reported rather than
+    /// retried.
+    type Failure;
+
+    /// The integration's own runtime adapter for one region invocation.
+    ///
+    /// Generic over the region's lifetime because it borrows the region's
+    /// storage. Its two error types are pinned to this trait's so that
+    /// [`crate::__private::RouteOutcome`] can be named without a lifetime — an
+    /// outcome outlives the borrow it reports on.
+    type Dispatch<'region>: RuntimeAdapter<Refusal = Self::Refusal, Failure = Self::Failure>;
+
+    /// Borrows one value's storage as the dense row-major byte run
+    /// [`AdapterCapability::DenseRowMajorStorage`] claims it is.
+    ///
+    /// Called only for a region that declares the capability, which
+    /// [`crate::__private::bind_region`] refuses an adapter for when it is not
+    /// offered — so an adapter over strided views is never asked.
+    ///
+    /// # Errors
+    ///
+    /// Returns the integration's own error when the storage cannot be borrowed.
+    /// Tiler carries it verbatim in [`BindError::Adapter`].
+    fn storage(value: &Self::Value) -> Result<&[u8], Self::Error>;
+
+    /// Borrows the same run of a value a dispatch writes into.
+    ///
+    /// Separate from [`Self::storage`] rather than one method returning a
+    /// mutable borrow, because the operands are read through shared references a
+    /// caller still holds and only the freshly built result is owned. One
+    /// mutable accessor would make every operand require exclusive access the
+    /// call site cannot give.
+    ///
+    /// # Errors
+    ///
+    /// Returns the integration's own error when the storage cannot be borrowed.
+    fn storage_mut(value: &mut Self::Value) -> Result<&mut [u8], Self::Error>;
+
+    /// Builds the device authority that will carry out one region invocation.
+    ///
+    /// Returning an error refuses the *region*, because a request whose storage
+    /// could not be handed over is a failure of this integration rather than a
+    /// route the loader declined. An integration that simply has no device on
+    /// this build returns an adapter whose
+    /// [`RuntimeAdapter::bind_execution_context`] refuses instead: that is a
+    /// pre-commit refusal, the semantic fallback runs, and the region still
+    /// produces its declared result.
+    ///
+    /// # Errors
+    ///
+    /// Returns the integration's own error, carried verbatim in
+    /// [`BindError::Adapter`].
+    fn dispatcher<'region>(
+        context: &Self::Context,
+        request: RegionRequest<'region>,
+    ) -> Result<Self::Dispatch<'region>, Self::Error>;
+}
+
 /// One operand axis, named the way a diagnostic must name it.
 ///
 /// A leaf value-data descriptor with no cross-field invariant, so its fields are
@@ -393,6 +699,43 @@ pub enum BindError<E> {
         /// What the facts asked for that they do not describe.
         detail: &'static str,
     },
+    /// A value's byte run is not the length its own reported extents describe.
+    ///
+    /// The per-value half of [`AdapterCapability::DenseRowMajorStorage`]. The
+    /// capability is a claim about the adapter, and this is the point at which
+    /// the claim meets one value: a dense row-major run of these extents is
+    /// exactly this many bytes, and a dispatch derives its launch geometry and
+    /// its accessible ranges from the extents. Believing the claim over the
+    /// length would hand a kernel a short buffer under a long shape, which is a
+    /// read past the end rather than a wrong answer.
+    ///
+    /// Reachable only from a region that dispatches; nothing reads storage
+    /// otherwise.
+    StorageLengthMismatch {
+        /// Stable interface key of the operand, or of the region's result.
+        input: &'static str,
+        /// Bytes the reported extents and stored scalar describe.
+        declared: u64,
+        /// Bytes the adapter's storage borrow actually holds.
+        actual: u64,
+    },
+    /// A committed dispatch did not complete, and no fallback follows it.
+    ///
+    /// The one refusal here that is **not** a region contract failure. ADR 0051
+    /// forbids selecting another plan after the routing commit, so a region
+    /// whose dispatch failed may not quietly return the semantic fallback's
+    /// value: the caller asked for a computation that was committed to and did
+    /// not finish, and saying so is the only answer that is not a fabrication.
+    ///
+    /// The detail is rendered rather than carried typed, because the adapter's
+    /// own failure type is [`DispatchAdapter::Failure`] and this enum is generic
+    /// over [`TensorAdapter::Error`] alone — two unrelated parameters, and
+    /// adding the second to every `BindError` a fallback-only consumer handles
+    /// would charge every region for a type only a dispatching one can produce.
+    DispatchFailed {
+        /// The adapter's own account of what did not complete.
+        detail: String,
+    },
     /// The adapter failed, carrying its own error unchanged.
     Adapter(E),
 }
@@ -453,6 +796,20 @@ impl<E: fmt::Display> fmt::Display for BindError<E> {
                 "tiler.bind.malformed-region-facts: {detail}; this is a defect in the expansion \
                  that produced this region, not in the invocation"
             ),
+            Self::StorageLengthMismatch {
+                input,
+                declared,
+                actual,
+            } => write!(
+                formatter,
+                "tiler.bind.storage-length-mismatch: `{input}` reports extents describing \
+                 {declared} dense byte(s) and its storage holds {actual}"
+            ),
+            Self::DispatchFailed { detail } => write!(
+                formatter,
+                "tiler.bind.dispatch-failed: the committed route did not complete, and ADR 0051 \
+                 permits no fallback after the commit: {detail}"
+            ),
             Self::Adapter(source) => write!(formatter, "tiler.bind.adapter: {source}"),
         }
     }
@@ -468,7 +825,9 @@ impl<E: Error + 'static> Error for BindError<E> {
             | Self::StorageScalarMismatch { .. }
             | Self::LiteralExtentMismatch { .. }
             | Self::InconsistentExtent { .. }
-            | Self::MalformedRegionFacts { .. } => None,
+            | Self::MalformedRegionFacts { .. }
+            | Self::StorageLengthMismatch { .. }
+            | Self::DispatchFailed { .. } => None,
         }
     }
 }

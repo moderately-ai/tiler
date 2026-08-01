@@ -22,12 +22,14 @@
 //! - no runtime source JIT — nothing here compiles anything at run time; the
 //!   Metal source was compiled while this file was.
 //!
-//! **What it does not do is dispatch.** `tiler::value` publishes no storage
-//! access and no device object by accepted design, so a `tiler`-only consumer
-//! has nothing to hand a kernel and the route below stops at the first question
-//! only a device can answer. That is the honest terminal state today, and it is
-//! recorded rather than hidden: the region still produces its declared result,
-//! through the semantic fallback, and `RouteOutcome` says why.
+//! **What it deliberately does not exercise is the storage seam.** The adapter
+//! below declines a device by refusing to bind an execution context, which keeps
+//! this file about the *producer* half — compilation, identity, caching, and
+//! embedding — and leaves the consumer half to
+//! `inline_region_dispatches.rs`, whose adapter is handed the region's own bytes
+//! and drives the loader's comparisons. Both are needed: this one would still
+//! pass if the seam handed over nothing, and that one would still pass if the
+//! artifact were a fixture rather than a compilation.
 //!
 //! # This costs a Metal compilation on a cold cache
 //!
@@ -35,8 +37,14 @@
 //! fixture. The second build of the same subject — this file's, or anyone
 //! else's, in any process — is a validated cache hit that compiles nothing.
 
+use tiler::runtime::adapter::{LiveExecutionContext, RuntimeAdapter};
+use tiler::runtime::load::{
+    ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest, Preflight, RoutedDispatch,
+    RoutedEntry, TargetPropertyRequest,
+};
 use tiler::value::{
-    AdapterCapability, ResultRequest, StorageScalar, Tensor, TensorAdapter, ValueMetadata,
+    AdapterCapability, DispatchAdapter, RegionRequest, ResultRequest, StorageScalar, Tensor,
+    TensorAdapter, ValueMetadata,
 };
 
 /// The consumer's own tensor value. Tiler never learns what it is.
@@ -44,6 +52,23 @@ use tiler::value::{
 struct Buffer {
     scalar: StorageScalar,
     extents: Vec<u64>,
+    bytes: Vec<u8>,
+}
+
+impl Buffer {
+    fn dense(scalar: StorageScalar, extents: Vec<u64>) -> Self {
+        let elements: u64 = extents.iter().product();
+        let width = match scalar {
+            StorageScalar::U8 => 1,
+            StorageScalar::F32 => 4,
+        };
+        let len = usize::try_from(elements * width).expect("a region extent fits a usize");
+        Self {
+            scalar,
+            extents,
+            bytes: vec![0; len],
+        }
+    }
 }
 
 /// The consumer's own error.
@@ -80,21 +105,95 @@ impl TensorAdapter for Toy {
     }
 
     fn build(_: &(), request: &ResultRequest<'_>) -> Result<Buffer, Refused> {
-        Ok(Buffer {
-            scalar: request.storage_scalar(),
-            extents: request.extents().to_vec(),
-        })
+        Ok(Buffer::dense(
+            request.storage_scalar(),
+            request.extents().to_vec(),
+        ))
+    }
+}
+
+/// A device authority that declines to bind one.
+///
+/// The correct answer for a consumer that links no backend, and the reason this
+/// file's route still ends on the semantic fallback: a refusal at the first
+/// stage arrives before the routing commit, so ADR 0051 permits the fallback and
+/// the region produces its declared result.
+struct NoBackend;
+
+impl RuntimeAdapter for NoBackend {
+    type Refusal = Refused;
+    type Failure = Refused;
+    type Completion = ();
+
+    fn bind_execution_context(&mut self) -> Result<ExecutionEnvironment, Refused> {
+        Err(Refused("this consumer links no backend"))
+    }
+
+    fn validate_payload(
+        &mut self,
+        _: &LiveExecutionContext,
+        _: &RoutedEntry<'_>,
+    ) -> Result<(), Refused> {
+        unreachable!("no context was bound")
+    }
+
+    fn observe_live_device(
+        &mut self,
+        _: &LiveExecutionContext,
+        _: LiveDeviceRequest<'_>,
+    ) -> LiveDeviceObservation {
+        unreachable!("no context was bound")
+    }
+
+    fn prepare_entries(
+        &mut self,
+        _: &LiveExecutionContext,
+        _: &[RoutedEntry<'_>],
+    ) -> Result<(), Refused> {
+        unreachable!("no context was bound")
+    }
+
+    fn observe_prepared_entry(
+        &mut self,
+        _: &LiveExecutionContext,
+        _: TargetPropertyRequest<'_>,
+    ) -> u64 {
+        unreachable!("no context was bound")
+    }
+
+    fn plan_dispatch(&mut self, _: &LiveExecutionContext, _: &Preflight<'_>) -> Result<(), Refused> {
+        unreachable!("no context was bound")
+    }
+
+    fn dispatch(
+        &mut self,
+        _: &LiveExecutionContext,
+        _: &RoutedDispatch<'_>,
+    ) -> Result<(), Refused> {
+        unreachable!("no route ever committed")
+    }
+}
+
+impl DispatchAdapter for Toy {
+    type Refusal = Refused;
+    type Failure = Refused;
+    type Dispatch<'region> = NoBackend;
+
+    fn storage(value: &Buffer) -> Result<&[u8], Refused> {
+        Ok(&value.bytes)
+    }
+
+    fn storage_mut(value: &mut Buffer) -> Result<&mut [u8], Refused> {
+        Ok(&mut value.bytes)
+    }
+
+    fn dispatcher(_: &(), _: RegionRequest<'_>) -> Result<NoBackend, Refused> {
+        Ok(NoBackend)
     }
 }
 
 fn operand() -> Tensor<Toy> {
-    Tensor::new(
-        Buffer {
-            scalar: StorageScalar::F32,
-            extents: vec![4],
-        },
-        (),
-    )
+    Tensor::new(Buffer::dense(StorageScalar::F32, vec![4]), ())
 }
 
 fn main() {
@@ -111,10 +210,7 @@ fn main() {
 
     assert_eq!(
         d.expect("the operands honour the region's declared interface"),
-        Buffer {
-            scalar: StorageScalar::F32,
-            extents: vec![4],
-        },
+        Buffer::dense(StorageScalar::F32, vec![4]),
     );
 
     // The same region without the statement is `fallback-only`, compiles no
@@ -128,9 +224,6 @@ fn main() {
     };
     assert_eq!(
         plain.expect("the fallback region binds"),
-        Buffer {
-            scalar: StorageScalar::F32,
-            extents: vec![4],
-        },
+        Buffer::dense(StorageScalar::F32, vec![4]),
     );
 }

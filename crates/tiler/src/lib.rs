@@ -141,6 +141,42 @@ pub use tiler_macros::tensor;
 mod expansion;
 mod route;
 
+/// The device-free loader and the runtime adapter seam, re-exported unchanged.
+///
+/// A consumer that dispatches an embedded artifact implements
+/// [`runtime::adapter::RuntimeAdapter`], and every one of that trait's signatures names a
+/// loader type. This crate is the only one a consumer declares, so those names
+/// have to be reachable through it or generated code and hand-written adapters
+/// would both have to spell `tiler_runtime::` — a crate the consumer never asked
+/// for and, by the facade's own contract, must not have to name.
+///
+/// # Re-exported whole rather than curated
+///
+/// A hand-picked subset would be a second vocabulary for one subject, and the
+/// two would drift the first time `tiler-runtime` published a type a signature
+/// already mentions. These are the same items under a second path, so there is
+/// nothing here to disagree with: `tiler::runtime::load::Preflight` *is*
+/// `tiler_runtime::load::Preflight`.
+///
+/// # Public boundary status
+///
+/// Both modules are **reviewed draft boundaries** (ADR 0074 §7, ADR 0075) in
+/// their own crate, and re-exporting does not promote them. What is new here is
+/// the *reachability*, which is the thing Tom accepts or refuses.
+pub mod runtime {
+    pub use tiler_runtime::{adapter, load};
+}
+
+/// The artifact vocabulary the runtime seam's signatures name, re-exported unchanged.
+///
+/// The same argument as [`runtime`], one crate further down: a
+/// [`runtime::load::RoutedBinding`] publishes a
+/// [`artifact::program::DecodedBinding`], and an adapter that must read one
+/// cannot be written without naming the type.
+pub mod artifact {
+    pub use tiler_artifact::program;
+}
+
 // Deliberately no outer doc comment here: the module documents itself with
 // `//!`, and adding a `///` on the item would move intra-doc link resolution for
 // the whole merged doc string up to the crate root, where the module's own item
@@ -162,5 +198,8 @@ pub mod __private {
         AxisRef, BoundExtents, OperandExtent, OperandFacts, RegionFacts, ResultAxis, ResultFacts,
         SymbolFacts, bind_and_build, bind_region, build_result,
     };
-    pub use crate::route::{RouteFacts, RouteOutcome, bind_route_and_build, select_embedded_route};
+    pub use crate::route::{
+        PRODUCER_DECLARED_EQUALITY, RouteFacts, RouteOutcome, bind_route_and_build,
+        dispatch_embedded_route, producer_declared_equality,
+    };
 }
