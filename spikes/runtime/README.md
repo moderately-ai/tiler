@@ -8,12 +8,27 @@ experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["executable-model", "bounded-measurement"]
 supports: ["tiler.research.runtime.execution-contract", "tiler.research.runtime.semantic-validation", "tiler.research.runtime.candle-post-wait"]
-entrypoints: ["spikes/runtime/runtime_execution_contract.rs", "spikes/runtime/semantic_validation_enforcement.rs", "spikes/runtime/measure_semantic_validation.py", "spikes/runtime/candle_metal_post_wait.rs", "spikes/runtime/check_candle_post_wait_source.py"]
-last_verified: "2026-07-21"
+entrypoints: ["spikes/runtime/runtime_execution_contract.rs", "spikes/runtime/semantic_validation_enforcement.rs", "spikes/runtime/measure_semantic_validation.py", "spikes/runtime/candle_metal_post_wait.rs", "spikes/runtime/check_candle_post_wait_source.py", "spikes/runtime/inline-dispatch/README.md"]
+last_verified: "2026-08-01"
 ticket: "runtime-execution-contract"
 ---
 
 # Runtime execution and validation spikes
+
+## Inline region dispatch on Metal hardware
+
+[`inline-dispatch/`](inline-dispatch/README.md) is the one experiment in this
+directory that binds a real device. An out-of-tree consumer crate writes one
+`tiler::tensor! { … deliver macos; … }` invocation, implements
+`tiler::value::DispatchAdapter` and `tiler::runtime::adapter::RuntimeAdapter`
+against the facade alone, and receives what a Metal kernel wrote — compared
+bit for bit against the consumer's own `f32` arithmetic. Its README carries the
+exact invocation, the host and toolchain, the transcript, the post-commit
+perturbation watched failing, and the ADR 0079 admission for its single
+`unsafe` site. It is a separate Cargo workspace and no `make` target reaches
+it; run it by hand from its own directory.
+
+## Dependency-free control and accounting models
 
 These dependency-free models test one-way routing authority, exact completion,
 resource retention, residual semantic validation, and Candle's post-wait error
