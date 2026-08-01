@@ -10,7 +10,10 @@
 
 use crate::tokens::{Delimiter, Tree};
 
-use super::{AxisSyntax, Expression, Operator, RegionSyntax, SyntaxError, parse};
+use super::{
+    AxisSyntax, DeploymentMinimumSyntax, Expression, FamilyMinimumSyntax, Operator, RegionSyntax,
+    StatedDelivery, SyntaxError, parse,
+};
 
 /// A span a test can construct and assert on.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -151,6 +154,11 @@ fn the_approved_region_parses_to_its_declarations_and_body() {
             text: "n".to_owned(),
             span: At(14),
         })],
+    );
+
+    assert!(
+        region.delivery.is_none(),
+        "the approved region states no `deliver`, which is what makes its absence the default",
     );
 
     assert_eq!(region.out, At(30));
@@ -743,6 +751,289 @@ fn declaration_statements_may_repeat() {
             .collect::<Vec<_>>(),
         ["a", "b"],
     );
+}
+
+/// The minimal region `in a: f32[]; out a`, with one `deliver` statement
+/// spliced into its declaration block.
+///
+/// The statement's own tokens are the caller's, so each case names the spans its
+/// refusal must land on; everything around them is fixed.
+fn delivering(statement: Vec<Tree<At>>) -> Vec<Tree<At>> {
+    let mut trees = vec![
+        ident("in", 1),
+        ident("a", 2),
+        punct(':', 3),
+        ident("f32", 4),
+        bracket(Vec::new(), 5),
+        punct(';', 6),
+    ];
+    trees.extend(statement);
+    trees.push(ident("out", 90));
+    trees.push(ident("a", 91));
+    trees
+}
+
+/// `deliver` at span 10, followed by the caller's tokens.
+fn deliver(rest: Vec<Tree<At>>) -> Vec<Tree<At>> {
+    let mut trees = vec![ident("deliver", 10)];
+    trees.extend(rest);
+    trees
+}
+
+fn delivery(trees: &[Tree<At>]) -> StatedDelivery<At> {
+    parsed(trees)
+        .delivery
+        .expect("the region states a delivery policy")
+        .stated
+}
+
+/// Both accepted productions parse to exactly what they state.
+///
+/// The hyphenated profile name is the case worth naming: Rust's lexer admits no
+/// hyphen inside an identifier, so `macos-and-ios` arrives as five tokens and a
+/// grammar that read one would refuse the spelling Tom accepted.
+#[test]
+fn the_two_delivery_productions_parse_to_what_they_state() {
+    let profile = delivering(deliver(vec![
+        ident("macos", 11),
+        punct('-', 12),
+        ident("and", 13),
+        punct('-', 14),
+        ident("ios", 15),
+        punct(';', 16),
+    ]));
+    assert_eq!(
+        delivery(&profile),
+        StatedDelivery::Profile(super::Name {
+            text: "macos-and-ios".to_owned(),
+            // The first identifier: joining spans needs the unstable
+            // `Span::join`, and this crate holds only stable proc-macro
+            // contracts.
+            span: At(11),
+        }),
+    );
+
+    let list = delivering(deliver(vec![
+        ident("macos", 11),
+        literal("14.0", 12),
+        punct(',', 13),
+        ident("ios", 14),
+        literal("17.0", 15),
+        punct(';', 16),
+    ]));
+    assert_eq!(
+        delivery(&list),
+        StatedDelivery::Families(vec![
+            FamilyMinimumSyntax {
+                name: super::Name {
+                    text: "macos".to_owned(),
+                    span: At(11),
+                },
+                minimum: DeploymentMinimumSyntax {
+                    major: 14,
+                    minor: 0,
+                    span: At(12),
+                },
+            },
+            FamilyMinimumSyntax {
+                name: super::Name {
+                    text: "ios".to_owned(),
+                    span: At(14),
+                },
+                minimum: DeploymentMinimumSyntax {
+                    major: 17,
+                    minor: 0,
+                    span: At(15),
+                },
+            },
+        ]),
+    );
+
+    // The keyword is retained, because a refusal about the statement as a whole
+    // — a stated family nothing compiles yet — is reported there.
+    assert_eq!(
+        parsed(&list).delivery.expect("stated").keyword,
+        At(10),
+        "the statement carries its own keyword",
+    );
+}
+
+/// A `deliver` statement may appear once, and a second is refused at the keyword
+/// that repeats.
+#[test]
+fn a_second_delivery_statement_is_refused_at_its_keyword() {
+    let mut statement = deliver(vec![ident("macos", 11), punct(';', 12)]);
+    statement.extend([ident("deliver", 20), ident("ios", 21), punct(';', 22)]);
+    assert_eq!(
+        refused(&delivering(statement)),
+        SyntaxError::RepeatedDeliveryStatement { span: At(20) },
+    );
+
+    // The accepting neighbour differs only in the second statement's absence.
+    assert!(matches!(
+        delivery(&delivering(deliver(vec![
+            ident("macos", 11),
+            punct(';', 12)
+        ]))),
+        StatedDelivery::Profile(_),
+    ));
+}
+
+/// A name followed by neither `;` nor a deployment minimum is neither
+/// production, and is refused at the token that is neither.
+#[test]
+fn a_delivery_statement_that_is_neither_production_is_refused() {
+    // `deliver macos, ios;` — a name list with no minimums, which is the
+    // plausible mistake between the two productions.
+    assert_eq!(
+        refused(&delivering(deliver(vec![
+            ident("macos", 11),
+            punct(',', 12),
+            ident("ios", 13),
+            punct(';', 14),
+        ]))),
+        SyntaxError::ExpectedDeliverySpecifier {
+            found: "`,`".to_owned(),
+            span: At(12),
+        },
+    );
+
+    // `deliver macos` at the end of the declaration block.
+    assert_eq!(
+        refused(&delivering(deliver(vec![ident("macos", 11)]))),
+        SyntaxError::ExpectedDeliverySpecifier {
+            found: "`out`".to_owned(),
+            span: At(90),
+        },
+    );
+
+    // A hyphen with no continuation ends at the missing name rather than
+    // quietly naming a profile the consumer did not write.
+    assert_eq!(
+        refused(&delivering(deliver(vec![
+            ident("macos", 11),
+            punct('-', 12),
+            punct(';', 13),
+        ]))),
+        SyntaxError::ExpectedName {
+            role: "a delivery profile or an artifact family",
+            found: "`;`".to_owned(),
+            span: At(13),
+        },
+    );
+
+    // And an empty statement is refused where the name would have gone.
+    assert_eq!(
+        refused(&delivering(deliver(vec![punct(';', 11)]))),
+        SyntaxError::ExpectedName {
+            role: "a delivery profile or an artifact family",
+            found: "`;`".to_owned(),
+            span: At(11),
+        },
+    );
+}
+
+/// A family list states one deployment minimum per family, and its entries are
+/// separated the way `sym` and `in` separate theirs.
+#[test]
+fn a_family_list_states_a_minimum_for_every_family() {
+    // `deliver macos 14.0, ios;` — the second family states none.
+    assert_eq!(
+        refused(&delivering(deliver(vec![
+            ident("macos", 11),
+            literal("14.0", 12),
+            punct(',', 13),
+            ident("ios", 14),
+            punct(';', 15),
+        ]))),
+        SyntaxError::ExpectedDeploymentMinimum {
+            found: "`;`".to_owned(),
+            span: At(15),
+        },
+    );
+
+    // `deliver macos 14.0 ios 17.0;` — the separator is missing.
+    assert_eq!(
+        refused(&delivering(deliver(vec![
+            ident("macos", 11),
+            literal("14.0", 12),
+            ident("ios", 13),
+            literal("17.0", 14),
+            punct(';', 15),
+        ]))),
+        SyntaxError::ExpectedPunct {
+            expected: ';',
+            role: "or `,` after an artifact family's deployment minimum",
+            found: "`ios`".to_owned(),
+            span: At(13),
+        },
+    );
+
+    // A trailing comma closes no `deliver` list, matching `sym` and `in` rather
+    // than an axis list: an entry here is a statement's declaration.
+    assert_eq!(
+        refused(&delivering(deliver(vec![
+            ident("macos", 11),
+            literal("14.0", 12),
+            punct(',', 13),
+            punct(';', 14),
+        ]))),
+        SyntaxError::ExpectedName {
+            role: "an artifact family",
+            found: "`;`".to_owned(),
+            span: At(14),
+        },
+    );
+}
+
+/// A deployment minimum is a plain `<major>.<minor>`, and a near miss is refused
+/// at the version rather than guessed at.
+#[test]
+fn a_deployment_minimum_must_be_a_plain_major_minor_version() {
+    let with_minimum = |text: &str| {
+        delivering(deliver(vec![
+            ident("macos", 11),
+            literal(text, 12),
+            punct(';', 13),
+        ]))
+    };
+
+    let rejected = [
+        "14", "14.", ".0", "14.0f32", "1_4.0", "14.0.1", "\"14.0\"", "0x14.0", "1e4.0", "-14.0",
+        "70000.0", "14.70000",
+    ];
+    assert_eq!(
+        rejected.len(),
+        12,
+        "the population this test covers is every near-miss shape, counted",
+    );
+    for text in rejected {
+        assert_eq!(
+            refused(&with_minimum(text)),
+            SyntaxError::MalformedDeploymentMinimum {
+                text: text.to_owned(),
+                span: At(12),
+            },
+            "`{text}` must be refused as a deployment minimum",
+        );
+    }
+
+    // The accepting neighbours differ only in the literal. `14.10` is here
+    // because it is a different minimum from `14.1` and the same `f64`, which is
+    // why the components are read from the source text.
+    for (text, major, minor) in [("14.0", 14_u16, 0_u16), ("14.1", 14, 1), ("14.10", 14, 10)] {
+        let StatedDelivery::Families(families) = delivery(&with_minimum(text)) else {
+            panic!("a literal minimum opens the family-list production");
+        };
+        assert_eq!(
+            families[0].minimum,
+            DeploymentMinimumSyntax {
+                major,
+                minor,
+                span: At(12),
+            },
+        );
+    }
 }
 
 /// Every refusal carries a span, and it is the one the fixture wrote.

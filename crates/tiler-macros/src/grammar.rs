@@ -13,11 +13,24 @@
 //! out (a * b) + c
 //! ```
 //!
+//! Tom accepted a fourth statement on 2026-07-31 under
+//! `accept-the-inline-artifact-family-profile-syntax`: `deliver` states the
+//! region's artifact-family delivery policy, in the declaration block beside
+//! `sym` and `in`, and in either of two spellings.
+//!
+//! ```text
+//! deliver macos-and-ios;        // a named profile
+//! deliver macos 14.0, ios 17.0; // a family list, when a floor must be stated
+//! ```
+//!
 //! This module owns exactly the shape of that text. It knows nothing about the
 //! semantic operation registry, the shape environment, artifact delivery, or
-//! what any name means — [`crate::region`] decides all of that. The split is
+//! what any name means — [`crate::region`] decides all of that, and
+//! [`crate::delivery`] decides which profiles and families exist. The split is
 //! what keeps a syntax error reported at the token that is wrong rather than at
-//! whatever later stage first noticed.
+//! whatever later stage first noticed: an unknown profile name is refused at the
+//! name by the module that owns the vocabulary, and a malformed deployment
+//! minimum is refused at the version by this one.
 //!
 //! # Every refusal names one token
 //!
@@ -28,13 +41,20 @@
 //! and the spans are the ones the consumer's own tokens carry — the dtype error
 //! lands on the dtype, not on the operand and not on the invocation.
 //!
-//! # Statements repeat; the body terminates
+//! # Statements repeat; `deliver` does not; the body terminates
 //!
 //! `sym` and `in` may each appear more than once, because nothing is gained by
 //! forcing one line and a region that grows an operand should not have to
-//! rewrite a list. `out` is terminal: it takes the rest of the invocation as
-//! one expression, so a second `out`, a stray `;`, or anything after the body
-//! is a refusal at that token rather than a silently ignored tail.
+//! rewrite a list. `deliver` may appear at most once, because two `deliver`
+//! statements would be two delivery policies for one invocation and nothing
+//! about the text says which wins. `out` is terminal: it takes the rest of the
+//! invocation as one expression, so a second `out`, a stray `;`, or anything
+//! after the body is a refusal at that token rather than a silently ignored
+//! tail.
+//!
+//! No `deliver` statement is not a missing one. Its absence resolves to
+//! `FallbackOnly`, the policy every region stated before this statement existed,
+//! so a region written without it expands to exactly the tokens it did before.
 
 use core::fmt;
 
@@ -44,6 +64,8 @@ use crate::tokens::{Delimiter, Tree};
 const SYM_KEYWORD: &str = "sym";
 /// The keyword introducing an operand declaration.
 const IN_KEYWORD: &str = "in";
+/// The keyword introducing the artifact-family delivery statement.
+const DELIVER_KEYWORD: &str = "deliver";
 /// The keyword introducing the region's result expression.
 const OUT_KEYWORD: &str = "out";
 
@@ -88,6 +110,53 @@ pub(crate) struct OperandSyntax<S> {
     pub(crate) dtype: Name<S>,
     /// The declared axes, outermost first.
     pub(crate) axes: Vec<AxisSyntax<S>>,
+}
+
+/// One artifact family's deployment minimum, as `<major>.<minor>`.
+///
+/// The components are read from the literal's *source text* rather than from a
+/// parsed float: `14.10` and `14.1` are different deployment minimums and the
+/// same `f64`, so a version that round-tripped through a float would silently
+/// become another one.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DeploymentMinimumSyntax<S> {
+    /// The major component.
+    pub(crate) major: u16,
+    /// The minor component.
+    pub(crate) minor: u16,
+    /// The literal it was written at.
+    pub(crate) span: S,
+}
+
+/// One entry of a `deliver` family list: a family and its deployment minimum.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct FamilyMinimumSyntax<S> {
+    /// The artifact family as written, resolved by [`crate::delivery`].
+    pub(crate) name: Name<S>,
+    /// The deployment minimum stated for it.
+    pub(crate) minimum: DeploymentMinimumSyntax<S>,
+}
+
+/// What one `deliver` statement states.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum StatedDelivery<S> {
+    /// `deliver macos-and-ios;` — one named profile, whose families and
+    /// governed floors [`crate::delivery`] fixes.
+    Profile(Name<S>),
+    /// `deliver macos 14.0, ios 17.0;` — a family list, in written order, which
+    /// [`crate::delivery`] canonicalizes. Never empty: the grammar admits no
+    /// `deliver ;`, so an empty selection cannot be spelled.
+    Families(Vec<FamilyMinimumSyntax<S>>),
+}
+
+/// One `deliver` statement as its tokens spell it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DeliverySyntax<S> {
+    /// The `deliver` keyword, which is the token a refusal about the statement
+    /// as a whole is reported at.
+    pub(crate) keyword: S,
+    /// What it states.
+    pub(crate) stated: StatedDelivery<S>,
 }
 
 /// One operator the region body spells.
@@ -136,6 +205,8 @@ pub(crate) struct RegionSyntax<S> {
     pub(crate) symbols: Vec<Name<S>>,
     /// Every `in` operand, in the order written, which is the interface order.
     pub(crate) operands: Vec<OperandSyntax<S>>,
+    /// The one `deliver` statement, or nothing when the region states none.
+    pub(crate) delivery: Option<DeliverySyntax<S>>,
     /// The `out` keyword, so a body-level refusal has a token.
     pub(crate) out: S,
     /// The result expression.
@@ -210,6 +281,33 @@ pub(crate) enum SyntaxError<S> {
         /// The token.
         span: S,
     },
+    /// A `deliver` statement's name is followed by neither its terminator nor a
+    /// deployment minimum, so neither production is what was written.
+    ExpectedDeliverySpecifier {
+        /// What was found.
+        found: String,
+        /// Where.
+        span: S,
+    },
+    /// A family list names a family and states no deployment minimum for it.
+    ExpectedDeploymentMinimum {
+        /// What was found.
+        found: String,
+        /// Where.
+        span: S,
+    },
+    /// A deployment minimum is not a plain `<major>.<minor>` version.
+    MalformedDeploymentMinimum {
+        /// The literal as written.
+        text: String,
+        /// The token.
+        span: S,
+    },
+    /// The region states more than one `deliver` statement.
+    RepeatedDeliveryStatement {
+        /// The second `deliver` keyword.
+        span: S,
+    },
     /// The region declares no `out` body.
     MissingBody {
         /// The invocation.
@@ -277,8 +375,9 @@ impl<S> fmt::Display for SyntaxError<S> {
             ),
             Self::ExpectedStatement { found, .. } => write!(
                 formatter,
-                "expected `{SYM_KEYWORD}`, `{IN_KEYWORD}`, or `{OUT_KEYWORD}` and found {found}; a \
-                 region is a declaration block followed by one `{OUT_KEYWORD}` expression"
+                "expected `{SYM_KEYWORD}`, `{IN_KEYWORD}`, `{DELIVER_KEYWORD}`, or \
+                 `{OUT_KEYWORD}` and found {found}; a region is a declaration block followed by \
+                 one `{OUT_KEYWORD}` expression"
             ),
             Self::RawIdentifier { name, .. } => write!(
                 formatter,
@@ -307,6 +406,31 @@ impl<S> fmt::Display for SyntaxError<S> {
                 formatter,
                 "`{text}` is not a literal extent; a fixed axis is written as a plain non-negative \
                  integer with no suffix, as in `f32[4]`"
+            ),
+            Self::ExpectedDeliverySpecifier { found, .. } => write!(
+                formatter,
+                "expected `;` after a delivery profile name, or a deployment minimum such as \
+                 `14.0` after an artifact family, and found {found}; a `{DELIVER_KEYWORD}` \
+                 statement names either one profile, as in `{DELIVER_KEYWORD} macos-and-ios;`, or \
+                 a family list stating each family's own floor, as in `{DELIVER_KEYWORD} macos \
+                 14.0, ios 17.0;`"
+            ),
+            Self::ExpectedDeploymentMinimum { found, .. } => write!(
+                formatter,
+                "expected an artifact family's deployment minimum, written as `<major>.<minor>`, \
+                 and found {found}; a family list states one for every family it names, as in \
+                 `{DELIVER_KEYWORD} macos 14.0, ios 17.0;`"
+            ),
+            Self::MalformedDeploymentMinimum { text, .. } => write!(
+                formatter,
+                "`{text}` is not a deployment minimum; it is written as `<major>.<minor>` with no \
+                 suffix and no digit separators, as in `{DELIVER_KEYWORD} ios 17.0;`"
+            ),
+            Self::RepeatedDeliveryStatement { .. } => write!(
+                formatter,
+                "this region already states a `{DELIVER_KEYWORD}` statement; a region states its \
+                 artifact-family delivery policy once, because two statements would be two \
+                 policies for one invocation and nothing here says which one delivers"
             ),
             Self::MissingBody { .. } => write!(
                 formatter,
@@ -357,6 +481,10 @@ impl<S> SyntaxError<S> {
             | Self::ExpectedShape { span, .. }
             | Self::ExpectedAxis { span, .. }
             | Self::MalformedExtent { span, .. }
+            | Self::ExpectedDeliverySpecifier { span, .. }
+            | Self::ExpectedDeploymentMinimum { span, .. }
+            | Self::MalformedDeploymentMinimum { span, .. }
+            | Self::RepeatedDeliveryStatement { span }
             | Self::MissingBody { span }
             | Self::EmptyBody { span }
             | Self::ExpectedOperandReference { span, .. }
@@ -389,6 +517,7 @@ pub(crate) fn parse<S: Copy>(
     let mut cursor = Cursor::new(trees);
     let mut symbols = Vec::new();
     let mut operands = Vec::new();
+    let mut delivery = None;
 
     loop {
         let Some(tree) = cursor.peek() else {
@@ -402,6 +531,17 @@ pub(crate) fn parse<S: Copy>(
             Tree::Ident { name, raw, span } if !raw && name == IN_KEYWORD => {
                 let _keyword = cursor.advance();
                 parse_operand_statement(&mut cursor, &mut operands, *span)?;
+            }
+            Tree::Ident { name, raw, span } if !raw && name == DELIVER_KEYWORD => {
+                let keyword = *span;
+                let _keyword = cursor.advance();
+                // Refused before the statement is read, so a second `deliver`
+                // is reported at the keyword that repeats rather than at
+                // whatever its own list turns out to disagree about.
+                if delivery.is_some() {
+                    return Err(SyntaxError::RepeatedDeliveryStatement { span: keyword });
+                }
+                delivery = Some(parse_delivery_statement(&mut cursor, keyword)?);
             }
             Tree::Ident { name, raw, span } if !raw && name == OUT_KEYWORD => {
                 let out = *span;
@@ -417,6 +557,7 @@ pub(crate) fn parse<S: Copy>(
                     region,
                     symbols,
                     operands,
+                    delivery,
                     out,
                     body,
                 });
@@ -439,7 +580,7 @@ fn parse_symbol_statement<S: Copy>(
 ) -> Result<(), SyntaxError<S>> {
     loop {
         symbols.push(cursor.name("a symbol name", keyword)?);
-        match cursor.take_separator(SYM_KEYWORD, keyword)? {
+        match cursor.take_separator("or `,` after a symbol declaration", keyword)? {
             Separator::Comma => {}
             Separator::Terminator => return Ok(()),
         }
@@ -454,11 +595,137 @@ fn parse_operand_statement<S: Copy>(
 ) -> Result<(), SyntaxError<S>> {
     loop {
         operands.push(parse_operand(cursor, keyword)?);
-        match cursor.take_separator(IN_KEYWORD, keyword)? {
+        match cursor.take_separator("or `,` after an operand declaration", keyword)? {
             Separator::Comma => {}
             Separator::Terminator => return Ok(()),
         }
     }
+}
+
+/// Reads `deliver macos-and-ios;` or `deliver macos 14.0, ios 17.0;` after its
+/// keyword.
+///
+/// The two productions are told apart by the token *after* the first name and
+/// by nothing else: `;` ends a profile, and a literal opens a family list. That
+/// is decidable with one token of lookahead and without knowing which names
+/// exist, which is what keeps the vocabulary in [`crate::delivery`] where a
+/// widened profile list changes no parsing rule.
+fn parse_delivery_statement<S: Copy>(
+    cursor: &mut Cursor<'_, S>,
+    keyword: S,
+) -> Result<DeliverySyntax<S>, SyntaxError<S>> {
+    let name = parse_hyphenated_name(cursor, "a delivery profile or an artifact family", keyword)?;
+    match cursor.peek() {
+        Some(Tree::Punct {
+            character: ';',
+            joint: false,
+            ..
+        }) => {
+            let _terminator = cursor.advance();
+            Ok(DeliverySyntax {
+                keyword,
+                stated: StatedDelivery::Profile(name),
+            })
+        }
+        Some(Tree::Literal { .. }) => {
+            let mut families = Vec::new();
+            let mut family = name;
+            loop {
+                let minimum = parse_deployment_minimum(cursor, family.span)?;
+                families.push(FamilyMinimumSyntax {
+                    name: family,
+                    minimum,
+                });
+                match cursor.take_separator(
+                    "or `,` after an artifact family's deployment minimum",
+                    minimum.span,
+                )? {
+                    Separator::Terminator => {
+                        return Ok(DeliverySyntax {
+                            keyword,
+                            stated: StatedDelivery::Families(families),
+                        });
+                    }
+                    // No trailing comma, matching `sym` and `in` rather than an
+                    // axis list: a `deliver` entry is a statement's declaration.
+                    Separator::Comma => {
+                        family = parse_hyphenated_name(cursor, "an artifact family", minimum.span)?;
+                    }
+                }
+            }
+        }
+        _ => {
+            let (found, span) = cursor.found_or(name.span);
+            Err(SyntaxError::ExpectedDeliverySpecifier { found, span })
+        }
+    }
+}
+
+/// Reads one name that may carry hyphens, as `fallback-only` does.
+///
+/// Rust's lexer admits no hyphen inside an identifier, so `macos-and-ios`
+/// arrives as five tokens. Joining them here is what lets the accepted profile
+/// vocabulary be spelled the way Tom accepted it rather than in a second
+/// underscored spelling invented to suit the lexer.
+///
+/// The name carries the span of its *first* identifier: joining several tokens'
+/// spans needs `Span::join`, which is unstable, and this crate holds only the
+/// accepted stable proc-macro contracts. A hyphen followed by anything but an
+/// identifier is refused at that token rather than ending the name, so
+/// `deliver macos-;` names the mistake instead of reporting an unknown profile
+/// called `macos`.
+fn parse_hyphenated_name<S: Copy>(
+    cursor: &mut Cursor<'_, S>,
+    role: &'static str,
+    previous: S,
+) -> Result<Name<S>, SyntaxError<S>> {
+    let mut name = cursor.name(role, previous)?;
+    while let Some(Tree::Punct {
+        character: '-',
+        joint: false,
+        ..
+    }) = cursor.peek()
+    {
+        let hyphen = cursor.advance().map_or(name.span, Tree::span);
+        let continued = cursor.name(role, hyphen)?;
+        name.text.push('-');
+        name.text.push_str(&continued.text);
+    }
+    Ok(name)
+}
+
+/// Reads one `<major>.<minor>` deployment minimum.
+fn parse_deployment_minimum<S: Copy>(
+    cursor: &mut Cursor<'_, S>,
+    previous: S,
+) -> Result<DeploymentMinimumSyntax<S>, SyntaxError<S>> {
+    let Some(Tree::Literal { text, span }) = cursor.peek() else {
+        let (found, span) = cursor.found_or(previous);
+        return Err(SyntaxError::ExpectedDeploymentMinimum { found, span });
+    };
+    let (text, span) = (text.clone(), *span);
+    let _consumed = cursor.advance();
+    let Some((major, minor)) = literal_deployment_minimum(&text) else {
+        return Err(SyntaxError::MalformedDeploymentMinimum { text, span });
+    };
+    Ok(DeploymentMinimumSyntax { major, minor, span })
+}
+
+/// Reads one deployment minimum from a literal's source text.
+///
+/// Both components are plain decimal digits fitting `u16`, which is the width
+/// the driver's `DeploymentMinimum` carries. A suffix, a sign, a third
+/// component, a missing component, and a digit separator are all refused: a
+/// version that is *nearly* a deployment minimum decides which OS versions a
+/// consumer's build excludes, so guessing at one is guessing at that.
+fn literal_deployment_minimum(text: &str) -> Option<(u16, u16)> {
+    let (major, minor) = text.split_once('.')?;
+    let decimal = |component: &str| {
+        (!component.is_empty() && component.bytes().all(|byte| byte.is_ascii_digit()))
+            .then(|| component.parse().ok())
+            .flatten()
+    };
+    Some((decimal(major)?, decimal(minor)?))
 }
 
 /// Reads one `name: dtype[axes]` operand.
@@ -799,9 +1066,13 @@ impl<'a, S: Copy> Cursor<'a, S> {
     }
 
     /// Consumes the `,` or `;` that ends one declaration in a statement.
+    ///
+    /// `role` completes "expected `;` …" for the statement being read, and is
+    /// passed rather than derived from the keyword so a statement's own
+    /// diagnostic lives beside its own parser.
     fn take_separator(
         &mut self,
-        statement: &'static str,
+        role: &'static str,
         previous: S,
     ) -> Result<Separator, SyntaxError<S>> {
         match self.peek() {
@@ -825,10 +1096,7 @@ impl<'a, S: Copy> Cursor<'a, S> {
                 let (found, span) = self.found_or(previous);
                 Err(SyntaxError::ExpectedPunct {
                     expected: ';',
-                    role: match statement {
-                        SYM_KEYWORD => "or `,` after a symbol declaration",
-                        _ => "or `,` after an operand declaration",
-                    },
+                    role,
                     found,
                     span,
                 })

@@ -6,7 +6,7 @@ priority: p1
 dependencies: [generate-cfg-gated-artifact-family-delivery]
 related: [prototype-inline-aot-integration-proof, prototype-inline-proc-macro-frontend]
 scopes: [implementation/frontend]
-shared_scopes: [contracts/navigation, contracts/integrations]
+shared_scopes: [contracts/navigation, contracts/integrations, project/tickets]
 paths: []
 tags: [decision, public-boundary, inline-dx, frontend, apple-targets]
 claimed_from: todo
@@ -43,3 +43,81 @@ Tom accepts a syntax and a profile-name vocabulary; the grammar admits it; `deli
 ## Graph maintenance
 
 Q-ART-008 in `docs/open-questions.md` names this ticket as the owner of its remaining half. Record the accepted spelling in the frontend contract and, if the choice is consequential enough to outlive a ticket, in an ADR.
+
+## Outcome
+
+**The accepted syntax is implemented, and one item of the closes-when could not be done for a stated reason.**
+
+### The grammar as implemented
+
+`crates/tiler-macros/src/grammar.rs` admits `deliver` as a fourth declaration-block statement beside `sym` and `in`, at most once, in two productions:
+
+```text
+deliver <name>;                                        // a named profile
+deliver <name> <major>.<minor>[, <name> <major>.<minor>]*;  // a family list
+```
+
+The productions are told apart by the token *after* the first name and by nothing else: `;` ends a profile and a literal opens a family list. That is decidable with one token of lookahead and without knowing which names exist, which is what keeps the vocabulary in `delivery.rs` — widening the profile list changes no parsing rule. A name may carry hyphens, because Rust's lexer admits none inside an identifier and `macos-and-ios` therefore arrives as five tokens; the joined name carries the span of its *first* identifier, since joining spans needs the unstable `Span::join` and this crate holds only accepted stable proc-macro contracts. A deployment minimum is read from the literal's **source text**, not from a parsed float: `14.10` and `14.1` are different minimums and the same `f64`. A trailing comma closes no `deliver` list, matching `sym` and `in` rather than an axis list.
+
+Absence is behaviour-identical. `stated_policy(None)` is `FallbackOnly`, and `the_production_expansion_plans_no_delivery_items` covers both spellings of it — writing nothing and writing `deliver fallback-only;` — against the same emptiness assertion. The compile-pass fixture asserts the same thing end to end, by evaluating a stated and an unstated region in one file and comparing the values.
+
+### What `deliver macos;` produces today
+
+A spanned `compile_error!` on the `deliver` keyword, verbatim from `crates/tiler/tests/facade/fail/deliver_selects_an_artifact_family.stderr`:
+
+> this `deliver` statement selects the macos artifact family, but no expansion runs the offline Metal driver yet, so there is no payload to deliver; a selected family must not silently become fallback on a matching target, so this is a refusal rather than a quiet downgrade. Remove the statement, or state `fallback-only`, to expand with the semantic fallback on every target
+
+It is the `DeliveryRefusal::BackendCompilationUnavailable` path that already existed, now reachable and now spanned on the statement rather than on the invocation. Nothing about it is defensive: `stated_policy` resolves `macos` to a real `SelectedFamilies` policy, `ArtifactFamilySelection::new` validates it, and `invokes_backend_compiler()` is what refuses. `deliver fallback-only;` and the statement's absence are consequently the only spellings an expansion completes.
+
+### The refusal table
+
+Every refusal names one token. Spans below are from the byte-compared goldens.
+
+| Written | Refused at | By |
+| --- | --- | --- |
+| `deliver macos-and-tvos;` | the first identifier of the name | `StatementRefusal::UnknownProfile` |
+| `deliver fallback_only;` | the name | `UnknownProfile` (the underscored near miss) |
+| `deliver ios-device 17.0;` | the name | `UnknownFamily` — a driver identifier is not a consumer spelling |
+| `deliver macos 13.0;` | the version | `UngovernedTarget`, carrying `MetalTarget::new`'s own `DeploymentMinimumTooLow` |
+| `deliver macos 14;` | the literal | `SyntaxError::MalformedDeploymentMinimum` |
+| `deliver macos 14.0, ios;` | the `;` | `SyntaxError::ExpectedDeploymentMinimum` |
+| `deliver macos 14.0, macos 15.0;` | the second `macos` | `StatementRefusal::RepeatedFamily` |
+| two `deliver` statements | the second keyword | `SyntaxError::RepeatedDeliveryStatement` |
+| `deliver macos, ios;` | the `,` | `SyntaxError::ExpectedDeliverySpecifier` — neither production |
+| `deliver macos-;` | the `;` | `SyntaxError::ExpectedName` |
+| `deliver macos 14.0 ios 17.0;` | the `ios` | `SyntaxError::ExpectedPunct` |
+| a stated selected family | the `deliver` keyword | `DeliveryRefusal::BackendCompilationUnavailable` |
+
+### Evidence
+
+Five new fixtures and one changed golden under `crates/tiler/tests/facade/`: `pass/deliver_states_fallback_only.rs` (the profile production, executing, and equal to the unstated region), `fail/deliver_selects_an_artifact_family.rs` (both productions reaching the honest refusal — a syntax error there would be a different diagnostic, which is what makes it evidence the family list is admitted), and `fail/deliver_statement_diagnostics.rs` with its byte-compared stderr. `fail/region_syntax_diagnostics.stderr` changed in exactly one line, because `ExpectedStatement` now offers `deliver`.
+
+Unit coverage is in `grammar/tests.rs` (both productions parsed to their exact spans, twelve counted near-miss versions, every statement-level refusal, each with an accepting neighbour differing in one token) and `delivery/tests.rs` (every accepted profile name resolving to its families, the list resolving at stated floors, the list on the governed floors proved *equal* to the profile naming the same families, and each `StatementRefusal`).
+
+Nine deliberate defects were applied and watched failing: an unknown profile resolving to `FallbackOnly`; the governed floor never checked; a repeated family accepted; a second `deliver` overwriting the first; a malformed minimum becoming `0.0`; a selected family downgraded to fallback instead of refused; the statement ignored entirely; an unknown family resolving to macOS; and `ios` dropping the simulator. Every one was caught by the test named for it, and the tree was restored and re-verified green afterwards.
+
+### One closes-when item is not done, and why
+
+**`FamilyDelivery`'s `#[allow(dead_code)]` could not come off.** It was removed and the compiler was asked: `variants Payload and Retained are never constructed`. Nothing constructs one because nothing *runs the driver* — `stated_delivery` refuses every selected family, so every plan an expansion builds is `FallbackOnly`'s, which names no family and carries no outcome. Removing the attribute fails `-D warnings`, and the only ways to satisfy it today are to fake a construction or to wire an emission with no compiled payload behind it, which is the lie this ticket's constraints forbid. The attribute is retained with a corrected reason naming the true cause and `admit-multi-input-elementwise-programs-at-the-compiler-boundary` as what makes it reachable. `NamedProfile`'s allow *did* come off, as did the one on its `impl` block; `MAP_VERSION`'s reason in `family_cfg.rs` was corrected for the same staleness.
+
+`NamedProfile::selection` was removed rather than allowed: with `stated_policy` on the production path, the profile now reaches `ArtifactFamilySelection::new` through `stated_delivery`, so the helper was test-only. Its tests call the canonical constructor directly.
+
+### Consolidation
+
+`NamedProfile`'s family lists and the `deliver` list's family names were one vocabulary in two places waiting to disagree about what `ios` means. `DeliveredFamily` is now the single owner: `NamedProfile::families` names its members, and `deliver ios 17.0;` resolves through the same `platforms()` and the same `governed_minimum()`. `a_family_list_on_the_governed_floors_equals_the_profile_that_names_them` asserts the two are one selection.
+
+### Q-ART-008
+
+Closed and removed from `docs/open-questions.md`, per the corpus's own convention for a closed question (the Q-PKG-005 precedent at `94ae3b9`): the section is deleted and a short prose paragraph at the head of its section records the closure and names the durable authority. Both halves of the close condition now hold — Tom accepted a syntax and a profile-name vocabulary, the grammar admits it, and `delivery::stated_policy` is a function of the parsed region.
+
+### `docs/integration/frontends.md`
+
+Three corrections plus the new material. **The accepted spelling** is stated as a new subsection under Target policy, with both productions, both vocabularies, why `ios` covers device and simulator, why the absence is `fallback-only`, why the attribute form stays eliminated, and what a stated selected family produces today. **The one-envelope staleness the delivery worker reported** is fixed: "expansion embeds its payload under the family's `#[cfg]`" described one artifact per family and is superseded by Tom's 2026-07-25 decision — one envelope embedded once and unconditionally, with the `#[cfg]` gating the payload's *position* — and the correction says so with the decision cited. Two further stale claims were corrected in the same file because they contradicted its own line 166 and the change being made: the status paragraph said "nothing constructs a region's declarations from real tokens, because there is still no grammar to parse them from", and the fusion-boundary section said "`tensor!` has no grammar". Both were false as of `prototype-inline-proc-macro-frontend`; the replacements state what the grammar does and does not admit rather than deleting the caveat.
+
+### Filed
+
+[`draft-an-adr-for-the-inline-delivery-statement`](draft-an-adr-for-the-inline-delivery-statement.md), `todo`, scope `contracts/decisions`. The graph-maintenance section asked for an ADR "if the choice is consequential enough to outlive a ticket", and the neighbouring accepted consumer-visible spelling — the expansion cache root — got ADR 0089 on the same day. `contracts/decisions` is outside this ticket's scopes, so the record is a ticket rather than absorbed.
+
+### Not done, deliberately
+
+No ADR (out of scope, filed above). No `acceleration required` policy — the surface leaves room for it as its own statement and nothing here claims it. No change to `DeliveryPlan`, `items_source`, `family_cfg`, or any emission path: the delivery machinery was wired, not rebuilt, and the three existing fixture-comparison tests still pass unchanged.
