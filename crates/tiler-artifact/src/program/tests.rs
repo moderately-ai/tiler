@@ -2361,6 +2361,65 @@ fn rejects_a_duplicate_plan_variant() {
     );
 }
 
+/// Every variant of one artifact declares one target profile.
+///
+/// The refusal that makes "share one compiled object across variants declaring
+/// different profiles" a shape no artifact can express — the sentence
+/// `docs/artifact-abi.md` withdrew for exactly that reason. It went unpinned
+/// through the delivery-position step, so nothing would have caught the check
+/// weakening and leaving the contract describing a build that no longer
+/// refused.
+///
+/// The accepting half is asserted first and is load-bearing: the two variants
+/// differ only in their declared profile between the halves, so a refusal alone
+/// could not distinguish this rule from the duplicate-variant and delivery
+/// rules beside it. Both fields of the profile are exercised, because a
+/// descriptor that moved under an unchanged key is a different target with the
+/// same name.
+#[test]
+fn refuses_a_second_variant_declaring_a_different_target_profile() {
+    let semantic = semantic_program();
+    let first = fused_program(&semantic, SCALE_BITS);
+    let second = fused_program(&semantic, OTHER_SCALE_BITS);
+    let provider = lowering_provider(1);
+
+    let assemble = |declared: TargetProfileRef| {
+        let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+        let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+        draft.select_provider(selection(provider.clone())).unwrap();
+        let primary = draft.push_payload(payload(0xa1)).unwrap();
+        let spare = draft.push_payload(payload(0xb1)).unwrap();
+        let formulas = formulas(&mut draft);
+        draft
+            .push_variant(&first, variant(&formulas, primary, b"fused"))
+            .unwrap();
+        let mut spec = variant(&formulas, spare, b"alternate");
+        spec.target_profile = declared;
+        draft.push_variant(&second, spec).map(|_| ())
+    };
+
+    assert_eq!(
+        assemble(profile()),
+        Ok(()),
+        "agreeing siblings are accepted"
+    );
+    assert_eq!(
+        assemble(TargetProfileRef {
+            key: TargetProfileKey::new("tiler.test.other").unwrap(),
+            descriptor: profile().descriptor,
+        }),
+        Err(ArtifactBuildError::TargetProfileMismatch),
+    );
+    assert_eq!(
+        assemble(TargetProfileRef {
+            key: profile().key,
+            descriptor: TargetProfileDescriptorDigest::from_bytes([0x09, 0x09]).unwrap(),
+        }),
+        Err(ArtifactBuildError::TargetProfileMismatch),
+        "the descriptor is half the profile, not decoration",
+    );
+}
+
 #[test]
 fn rejects_a_repeated_payload_descriptor() {
     let semantic = semantic_program();
