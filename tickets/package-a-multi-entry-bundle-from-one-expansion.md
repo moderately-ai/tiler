@@ -3,7 +3,7 @@ id: package-a-multi-entry-bundle-from-one-expansion
 title: Package and dispatch a multi-entry bundle from one expansion
 status: blocked
 priority: p2
-dependencies: [denote-a-reduction-region-in-the-inline-macro-grammar, register-a-flush-and-reassociate-numerical-contract]
+dependencies: [denote-a-reduction-region-in-the-inline-macro-grammar, compose-the-numerical-contract-from-its-decided-dimensions]
 related: [prototype-inline-aot-integration-proof, dispatch-a-tiler-region-on-metal-hardware, admit-multi-input-elementwise-programs-at-the-compiler-boundary, reach-a-reassociation-permitting-contract-from-a-bound-metal-declaration, calibrate-and-activate-parallel-reduction-selection]
 scopes: [implementation/frontend]
 shared_scopes: [project/tickets]

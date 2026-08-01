@@ -43,3 +43,9 @@ Whichever survives, the boundary is a public seam: `RuntimeAdapter` is a reviewe
 ## Closes when
 
 Either the seam and the decision agree in code, or an accepted superseding decision records why they do not; ADR 0051's `Implementation boundary` no longer names an unresolved divergence; and the runtime execution contract record's boundary paragraph is updated to match.
+
+## Direction decided — candidate 1, allocation moves after the commit (2026-08-01)
+
+**Tom chose candidate 1 at the live session on 2026-08-01, relayed here by the coordinator who witnessed it.** The elimination he was shown and endorsed: candidate 2 rests a compile-enforced invariant on a prose guarantee over every future adapter that nothing type-enforces; candidate 3 discards `allocation_holds`' observed-length evidence, and a predicted capacity is not an observed one. What survives: `plan_dispatch` splits into a pre-commit sizing-and-capacity check that allocates nothing, and a post-commit allocation step reached only from `RoutedDispatch`, whose failure is a `Failure` rather than a `Refusal`. The priced cost, accepted explicitly: a device that cannot hold the plan becomes terminal at that stage rather than recoverable, with pre-commit sizing against declared limits catching all but the allocator-rounding residue — and that residue failing loudly is a defect signal, not a routing input.
+
+**What remains Tom's despite the direction being decided:** `RuntimeAdapter` is a public boundary under ADR 0074 §7, so the exact split interface comes back as a concrete draft before acceptance. The Boundaries section above is unchanged — the resolution is a superseding-clause-free execution of the decision as written, so no new ADR is required; ADR 0051's `Implementation boundary` divergence entry is corrected to a directed-work entry when this lands.

@@ -1,14 +1,16 @@
 ---
 id: register-a-flush-and-reassociate-numerical-contract
 title: Register a flush-and-reassociate numerical contract
-status: todo
+status: closed
 priority: p1
 dependencies: []
-related: [realize-parallel-reduction-strategies-on-metal, calibrate-and-activate-parallel-reduction-selection]
+related: [realize-parallel-reduction-strategies-on-metal, calibrate-and-activate-parallel-reduction-selection, compose-the-numerical-contract-from-its-decided-dimensions]
 scopes: [implementation/compiler, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+closed_reason: superseded
+closed_note: superseded by compose-the-numerical-contract-from-its-decided-dimensions
 ---
 ## User-visible outcome
 

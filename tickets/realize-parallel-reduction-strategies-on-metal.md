@@ -3,7 +3,7 @@ id: realize-parallel-reduction-strategies-on-metal
 title: Realize parallel reduction strategies on Metal
 status: todo
 priority: p1
-dependencies: [implement-the-target-neutral-multi-pass-reduction-strategy, implement-the-single-workgroup-synchronized-reduction-strategy, declare-a-required-gpu-family-in-the-artifact, construct-and-bind-the-first-authoritative-metal-compile-profile, register-a-flush-and-reassociate-numerical-contract]
+dependencies: [implement-the-target-neutral-multi-pass-reduction-strategy, implement-the-single-workgroup-synchronized-reduction-strategy, declare-a-required-gpu-family-in-the-artifact, construct-and-bind-the-first-authoritative-metal-compile-profile, compose-the-numerical-contract-from-its-decided-dimensions]
 related: [implement-parallel-reduction-strategies]
 scopes: [implementation/metal, implementation/build, implementation/runtime, implementation/artifact, contracts/artifacts, research/target-profiles]
 shared_scopes: [project/tickets]
