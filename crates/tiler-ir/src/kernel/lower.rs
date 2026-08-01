@@ -263,6 +263,33 @@ fn cooperative_plan(
         return Ok(None);
     };
     let shape = KernelDiagnostic::CooperativeLoweringShape;
+    // A single pass over the phases. A loop-carried tile is *representable* —
+    // the schedule verifier admits its rewrite, derives its anti-dependencies,
+    // and requires a point for each — and it is not lowered here, because the
+    // body it needs carries an accumulator across the round loop and this
+    // vocabulary has no way to produce one: a predicated region yields no
+    // values, every boundary load must be dominated by the iteration guard, and
+    // a fold seeded at its first contributor peels a round the loop then cannot
+    // spell.
+    //
+    // **This branch is currently unreachable, and it is kept because the thing
+    // that makes it unreachable is not local.** The one-point destructuring
+    // below already refuses every multi-round tile, because no such tile can
+    // carry fewer than two points: a phase boundary between `p` and `p + 1`
+    // discharges a visibility edge only when its producer is at or before `p`
+    // and its consumer at or after `p + 1`, and discharges an anti-dependency
+    // only when the boundary is at or after the reading phase or at or before
+    // the rewriting one — conditions no single boundary satisfies together — and
+    // a round boundary discharges no visibility edge at all. So a multi-round
+    // tile always trips the shape check for the incidental reason that it has
+    // two points. Widening that destructuring to admit two would silently admit
+    // a multi-round tile into a body that ignores its rounds, and this is what
+    // stops that. A perturbation removing it leaves the refusal test green,
+    // which is the evidence for the paragraph above rather than an argument for
+    // deleting it.
+    if tile.rounds > 1 {
+        return Err(shape);
+    }
     // One allocation, two phases, one point: the bounded profile's tile stages
     // one partial per participant and reads the set back once.
     let ([staging], [produce, consume], [point]) = (

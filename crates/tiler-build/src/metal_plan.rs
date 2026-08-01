@@ -805,13 +805,28 @@ mod tests {
     /// against a profile that could not state the barrier must miss rather than
     /// match, because the profile it was assessed under no longer exists.
     ///
+    /// And both moved again at `tiler.schedule.v4`, which gave a cooperative
+    /// tile its round count. This program carries no tile at all, and its
+    /// identity moves anyway — that is what a domain separator costs and what
+    /// distinguishes the step from the appended tags the schedule encoder has
+    /// otherwise preferred. It reaches here through the fold: the artifact
+    /// identity frames each entry's kernel-program identity, which frames the
+    /// kernel identity, which frames the scheduled-region identity bytes whole,
+    /// separator included. Only the *content* moved; no domain between here and
+    /// the schedule needed a version of its own, because each folds the bytes
+    /// below it by reference rather than re-deriving a subset of them. The
+    /// recorded values below were recomputed on the tree carrying both this
+    /// step and the synchronization row, because each branch's own rebaseline
+    /// saw only its half.
+    ///
+    ///
     /// [`assemble_plan_artifact`]: crate::assemble_plan_artifact
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "1fe732f030c72ca7f46a79fb7a9131c77fbc6502b95089a196378c4d54fac33e";
+            "0455fcd09b85957a273f9ad8dc7d81d505a6703a39388e83ed83799027f45601";
         const CACHE_SUBJECT: &str =
-            "c8f9aee8ad51c6f373e539a4846a9a60aeab05ffb94c7a8cdc888288ccefcf84";
+            "f7569e32ea883b80c547798ff2dd9147dfec9f4bc3829020e14dc44d1a068ede";
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));
