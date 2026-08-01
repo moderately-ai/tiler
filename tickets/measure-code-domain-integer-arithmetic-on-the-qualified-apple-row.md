@@ -1,7 +1,7 @@
 ---
 id: measure-code-domain-integer-arithmetic-on-the-qualified-apple-row
 title: Measure code-domain integer arithmetic on the qualified Apple row
-status: todo
+status: in-progress
 priority: p2
 dependencies: [scope-first-quantized-lm-profile]
 related: [broaden-the-apple-numerical-probe-matrix, implement-first-quantized-backend-profile, admit-a-normal-scale-precondition-for-target-honourable-strict-affine-decode]
@@ -9,6 +9,9 @@ scopes: [research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, numerics, metal, quantization, measurement]
+claimed_from: todo
+assignee: worker-measure-code
+lease_expires_at: 1785553790
 ---
 ## User-visible outcome
 

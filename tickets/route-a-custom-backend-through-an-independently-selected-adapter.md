@@ -1,7 +1,7 @@
 ---
 id: route-a-custom-backend-through-an-independently-selected-adapter
 title: Route a custom backend through an independently selected runtime adapter
-status: todo
+status: in-progress
 priority: p1
 dependencies: [accept-the-public-backend-provider-composition-boundary, declare-a-required-gpu-family-in-the-artifact]
 related: [runtime-execution-contract, prototype-metal-runtime-execution, make-runtime-routing-commit-authority-one-shot]
@@ -9,6 +9,9 @@ scopes: [implementation/runtime, implementation/artifact, contracts/artifacts, c
 shared_scopes: [project/tickets]
 paths: []
 tags: [backend-providers, pluggability, implementation, runtime]
+claimed_from: todo
+assignee: worker-route-a-cust
+lease_expires_at: 1785553789
 ---
 ## User-visible outcome
 
