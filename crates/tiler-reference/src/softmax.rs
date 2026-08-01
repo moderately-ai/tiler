@@ -130,7 +130,7 @@ impl ReferenceOperation for SoftmaxF32Reference {
 /// would be equivalent here but would state the zero rule as a sign test rather
 /// than as the ordering it is.
 #[must_use]
-pub fn maximum_f32(left: f32, right: f32) -> f32 {
+pub(crate) fn maximum_f32(left: f32, right: f32) -> f32 {
     if left.is_nan() || right.is_nan() {
         return f32::NAN;
     }

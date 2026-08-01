@@ -85,7 +85,7 @@ pub use registry::{
 };
 pub use rms_norm::{certified_rsqrt_f32, rms_norm_f32};
 pub use silu::{certified_exp_f32, silu_f32};
-pub use softmax::{maximum_f32, softmax_f32};
+pub use softmax::softmax_f32;
 pub use tensor::{
     FloatBitOrder, InputBinding, ReferenceComponent, ReferenceComponentRole, ReferenceElement,
     Tensor, TensorPayloadView,
