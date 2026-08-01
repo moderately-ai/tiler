@@ -1,7 +1,7 @@
 ---
 id: correct-the-softmax-worked-example-and-its-recorded-divergence
 title: Correct the softmax worked example and attribute its recorded divergence
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [admit-the-softmax-family, scope-transformer-nonlinear-normalization-and-reductions, design-model-level-qualification-and-optimization, retain-the-c1-attention-block-conformance-evidence, correct-the-softmax-divergence-attribution-in-code]
@@ -9,9 +9,6 @@ scopes: [research/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, numerics, softmax, measurement, correction, transformer]
-claimed_from: todo
-assignee: worker-softmax-record
-lease_expires_at: 1785602431
 ---
 ## User-visible outcome
 

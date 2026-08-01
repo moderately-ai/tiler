@@ -1,7 +1,7 @@
 ---
 id: correct-the-subgroup-threads-route-dimension-meaning
 title: Correct what RouteResourceDimension::SubgroupThreads means
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [design-the-subgroup-execution-tier]
@@ -9,9 +9,6 @@ scopes: [implementation/artifact, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifact, subgroup, defect, public-boundary]
-claimed_from: todo
-assignee: worker-subthreads
-lease_expires_at: 1785603010
 ---
 ## User-visible outcome
 
