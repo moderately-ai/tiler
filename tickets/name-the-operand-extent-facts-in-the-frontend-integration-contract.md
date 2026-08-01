@@ -1,7 +1,7 @@
 ---
 id: name-the-operand-extent-facts-in-the-frontend-integration-contract
 title: Name the operand-extent facts in the frontend integration contract
-status: todo
+status: done
 priority: p3
 dependencies: []
 related: [check-a-literal-operand-extent-against-the-supplied-value]
@@ -21,3 +21,7 @@ tags: [docs, inline-dx]
 ## Closes when
 
 The vocabulary sentence names `OperandExtent`, and any sentence in that document implying an operand fact carries a rank rather than its declared extents is corrected. Verify by reading the emitted text in `crates/tiler-macros/src/binding.rs` `facts_source`, not by pattern match.
+
+## Outcome (2026-08-01)
+
+**Fact.** The frontend contract's region-facts enumeration now names `OperandExtent` and the `extents` field with the check it enables and its refusal code, replacing the stale bare-`rank` spelling in the same sentence that enumerates the vocabulary. One sentence, one site — verified the only enumeration is line 166's (`grep -n "OperandFacts" docs/integration/frontends.md` returns that line and the symbol-binding section, which describes behaviour rather than enumerating items and needed no edit).

@@ -1,7 +1,7 @@
 ---
 id: check-a-literal-operand-extent-against-the-supplied-value
 title: Check a literal operand extent against the value supplied for it
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, correctness, inline-dx]
-claimed_from: todo
-assignee: worker-check-a-lite
-lease_expires_at: 1785559830
 ---
 ## Why this exists
 
@@ -40,3 +37,5 @@ A symbolic axis is already covered, because a symbol's source extent and every o
 **Fact.** `route/tests.rs` now perturbs the operand's literal extent, the perturbation the ticket records as having been unavailable; its rank-perturbation workaround and the note pointing at this ticket are gone. `inline_region_executes` gained the end-to-end case through `tensor!` beside the rank one, and `region::tests` asserts that a declared `f32[4]` reaches the emitted operand facts. The three hand-written compile-pass `FACTS` fixtures were updated and are still byte-compared by the macro crate.
 
 **Fact.** `docs/integration/frontends.md` enumerates this vocabulary and is now incomplete; it is `contracts/integrations`, outside this ticket's scopes, so the correction is `name-the-operand-extent-facts-in-the-frontend-integration-contract`.
+
+**Provisional boundary acceptance (2026-08-01, overnight mode).** The coordinator provisionally accepted the small consumer-visible surface: `BindError::LiteralExtentMismatch` (additive on a `#[non_exhaustive]` enum, rendered `tiler.bind.literal-extent-mismatch: ...`) and the `__private` `OperandFacts.rank` → `extents` reshaping. Recorded for Tom's morning review.
