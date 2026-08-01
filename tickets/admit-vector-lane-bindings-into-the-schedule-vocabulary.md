@@ -1,9 +1,9 @@
 ---
 id: admit-vector-lane-bindings-into-the-schedule-vocabulary
 title: Admit vector-lane bindings and their tail policies into the schedule vocabulary
-status: blocked
+status: todo
 priority: p2
-dependencies: [accept-the-cpu-vector-lane-tier-adr]
+dependencies: [accept-adr-0093-cpu-vector-lane-tier]
 related: [design-the-cpu-vector-lane-tier, represent-cooperative-workgroup-reduction-dataflow]
 scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]

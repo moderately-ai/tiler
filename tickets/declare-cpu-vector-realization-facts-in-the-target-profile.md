@@ -1,9 +1,9 @@
 ---
 id: declare-cpu-vector-realization-facts-in-the-target-profile
 title: Declare CPU vector realization facts as atomic target facts
-status: blocked
+status: todo
 priority: p2
-dependencies: [accept-the-cpu-vector-lane-tier-adr]
+dependencies: [accept-adr-0093-cpu-vector-lane-tier]
 related: [design-the-cpu-vector-lane-tier, name-a-host-process-availability-phase]
 scopes: [implementation/compiler, implementation/ir]
 shared_scopes: [project/tickets]
