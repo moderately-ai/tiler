@@ -1,7 +1,7 @@
 ---
 id: compose-the-two-level-subgroup-and-workgroup-reduction
 title: Represent the two-level subgroup-then-workgroup reduction
-status: in-progress
+status: review
 priority: p2
 dependencies: [accept-adr-0094-subgroup-execution-tier]
 related: [design-the-subgroup-execution-tier, implement-the-single-workgroup-synchronized-reduction-strategy]
@@ -40,3 +40,26 @@ Implementation. Any Metal, CUDA, or WebGPU backend claim. Re-deciding anything t
 ## Closes when
 
 Each question is answered with its elimination or explicitly deferred with a trigger, the surviving representation is written with a worked example beside the two the subgroup tier record carries, and the outcome is an accepted design, a recorded deferral, or a bounded experiment.
+
+## Outcome (2026-08-01)
+
+[The two-level subgroup-then-workgroup reduction](../docs/research/scheduling/two-level-subgroup-workgroup-reduction.md) is the record. All five questions are answered with their eliminations; none left a second survivor, so no fork is recorded and nothing here is Tom's to choose beyond the seven public-boundary items the record enumerates and does not self-accept. Nothing was executed, emitted, compiled, or timed; every claim is inspected source at `2aa0824` or a primary vendor specification cited by section and page.
+
+**Two of this ticket's own premises were refuted, and both are corrected in the record rather than dropped.**
+
+1. **The composition needs no hierarchical partition.** The question above asserts one, following the subgroup tier's §1. A threadgroup of `T = G·W` invocations each folding `k` contributors is `ContributorPartition { partitions: T, contributors_per_partition: k }` — the type the vocabulary already has, satisfying the equality `verify_cooperative_semantics` already checks against the tile's participant count. **The split is flat; only the combine is two-level**, and correcting that is what made the remaining four questions tractable.
+2. **A handoff between subgroups needs *workgroup* visibility, not subgroup visibility.** The third question, ADR 0094's deferral, and the 2026-08-01 addendum on [`add-subgroup-memory-scope-when-collectives-land`](add-subgroup-memory-scope-when-collectives-land.md) all name this composition as the construct that would fire `MemoryScope::Subgroup`. It does not: the reader of a staged partial lies outside the writer's subgroup, so publication must reach across the boundary rather than stop at it. A second addendum on that ticket carries the correction with its MSL §6.16.2 and §6.10.1 evidence; the ticket stays `deferred` and its trigger line is left for a graph decision rather than rewritten here.
+
+**The five answers.**
+
+- **Representation:** a third `ReductionTopology` variant. The decisive ground is that the staging coverage rule inverts — a cooperative tile's staged writes are a bijection from *every* participant onto the slots, and the composition's are a bijection from `G` selected participants onto `G` slots, so one variant would carry two mutually exclusive rules keyed by an option. Two independent grounds follow: the composition derives a subgroup width equality and a prepared-pipeline preflight that `CooperativeWorkgroup` derives neither of, and a new topology tag is appends-only injective where extending the `0x35` arm needs a presence byte and a second offset argument.
+- **Outer participants:** neither candidate the question names. A strided `ParticipantRange` is *insufficient* — `addressed_slots` composes the participant coordinate with an affine span, so a strided writer set would need a fractional slot stride — and a declared per-access subset is the construct the cooperative module says is "absent rather than reserved". What survives is a two-component local coordinate from which the writer set is *derived*. **The uniform-participation rule is untouched**: arrival stays every invocation, so the point stays convergent, and what narrows is the write rather than the arrival.
+- **`MemoryScope::Subgroup`:** no, per the refutation above.
+- **Permissions:** reassociation alone, under three stated conditions — ascending inner masks, `AscendingParticipant` outer arrival, and a contributor-block index that is the `(subgroup index, lane index)` pair. **The third is the new result.** Metal states that "threads are divided into SIMD-groups in an implementation-defined fashion" and WGSL that there is "no defined relationship" with `local_invocation_index`, so partitioning by the linear index while combining by subgroup structure consumes a permutation whose shape the schedule cannot state. The record works the composed leaf order both ways at `W = 32`, `G = 4`.
+- **Identity:** inner level always, outer level never, for the admitted outer form. The inner width is imposed so a contributor-free lane is the general case; the outer participant count is chosen and equals the staged slot count, so outer coverage is exact by construction. A second width-`W` shuffle tree at the outer level would reintroduce the obligation and is deferred with a trigger.
+
+**Worked example C** is the subgroup and CPU tiers' own program at `W = 32`, `T = 128`, `G = 4`, priced beside examples A and B — 16 bytes of workgroup memory against B's 404, one barrier, 27 padding positions confined to one simdgroup — plus the `S = 8,192` attention row as derived operation counts, labelled as counts rather than timings.
+
+**A finding worth carrying out of the record.** The Metal specification's own example kernel, quoted verbatim at §6.10.2.1 pages 224–225, does not execute its staging loop for any threadgroup smaller than `W·(W+1)` threads (1,056 at `W = 32`), and the printed program then delivers at most one SIMD-group's partial to the atomic; in its multi-round form it also carries a write-after-read hazard on the staged allocation with only one barrier per round. Both are derivations over printed source rather than executions, and each maps onto a rule the implemented vocabulary already names — which is the concrete argument for this ticket's stated outcome that the composition be one schedule a verifier checks whole.
+
+**Filed:** [`land-the-two-level-reduction-adr`](land-the-two-level-reduction-adr.md), which carries the byte-identical ADR body drafted inside the record, the ADR's catalog row, and the research record's catalog row — three files this ticket's `research/scheduling` scope cannot reach. The drafted body says `0096` because `0095` was highest at `2aa0824`; the carrier re-reads the directory.
