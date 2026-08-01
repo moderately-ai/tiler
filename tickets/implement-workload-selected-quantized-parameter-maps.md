@@ -18,6 +18,13 @@ The first workload-selected per-axis or per-block quantized format carries an ex
 
 `scope-first-quantized-lm-profile` is the named first consumer and must select the exact scheme, parameter granularity, target operation, layout, and conformance corpus before this ticket becomes actionable. If that profile selects per-tensor parameters only, close this ticket as obsolete rather than inventing a map producer.
 
+**The selection landed on 2026-07-31 and it is not per-tensor, so this ticket is actionable rather than obsolete.** [The first quantized language-model profile record](../docs/research/numerics/first-quantized-lm-profile.md) selected **per-output-channel strict-affine U8 to F32**, so the exact map to implement is:
+
+- **Granularity:** per axis, over the weight's axis 0 — the free index `o` of the workload's contraction structure `td,od->to`. Scale is `tiler::f32@1` of shape `[D_out]`; zero point is `tiler::u8@1` of shape `[D_out]`. Both are rank 1, where every strict-affine parameter component is rank 0 today and `require_scalar_type` in `crates/tiler-ir/src/semantic/quantization.rs` enforces exactly that.
+- **Not selected, and each refused by name:** per-tensor beyond the two existing proof contracts, and every per-block or per-group map along the contracted axis. The block maps were eliminated on *legality*, not accuracy — a scale that varies inside the reduction makes the fused contraction partition the contracted axis into contiguous intervals merged in order, which consumes the reassociation permission no contract registered for this workload grants — so a later reassociating contract is what would reopen them, and this ticket must not implement one speculatively.
+- **Why the axis is load-bearing rather than incidental:** a per-axis map over axis 1 *is* a per-block map with block size `D_in`, which is the inadmissible family. The map must therefore carry which axis it projects onto, and two otherwise identical values whose maps project onto different axes must have different identities.
+- **First producer and consumer:** the pinned `Qwen/Qwen3-0.6B-Base` workload's 196 weighted projection weights, consumed through [`widen-the-physical-vocabulary-for-per-axis-quantized-component-access`](widen-the-physical-vocabulary-for-per-axis-quantized-component-access.md) and [`fuse-quantized-weight-decode-into-the-strict-contraction`](fuse-quantized-weight-decode-into-the-strict-contraction.md), both of which are dependents of this ticket rather than part of it.
+
 ## Implementation keys
 
 - Extend the typed `ParameterIndexMap` seam delivered by `prototype-quantized-value-vertical`; do not add a second map spelling or a raw `block_size` field.
