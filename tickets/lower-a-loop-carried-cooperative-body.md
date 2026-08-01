@@ -1,7 +1,7 @@
 ---
 id: lower-a-loop-carried-cooperative-body
 title: Lower a loop-carried cooperative body
-status: review
+status: done
 priority: p1
 dependencies: []
 related: [admit-loop-carried-cooperative-staging, realize-the-strict-contraction-on-metal, implement-the-single-workgroup-synchronized-reduction-strategy]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, physical-planning, contraction]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785626991
 ---
 ## Scope note — 2026-08-01
 

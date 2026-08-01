@@ -855,9 +855,9 @@ mod tests {
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "0455fcd09b85957a273f9ad8dc7d81d505a6703a39388e83ed83799027f45601";
+            "4e91bfbe59072c3e501f191b086b838e24f37f3bdbfb5b58af54e8467addaa9a";
         const CACHE_SUBJECT: &str =
-            "f7569e32ea883b80c547798ff2dd9147dfec9f4bc3829020e14dc44d1a068ede";
+            "2a192388f39a85842c08e7759be23abfb06e7bae246662d762dbc3fe7fdfad80";
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));

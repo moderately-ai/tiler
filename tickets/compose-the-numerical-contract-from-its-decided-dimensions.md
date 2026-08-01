@@ -1,7 +1,7 @@
 ---
 id: compose-the-numerical-contract-from-its-decided-dimensions
 title: Compose the numerical contract from its decided-independent dimensions
-status: review
+status: done
 priority: p1
 dependencies: []
 related: [realize-parallel-reduction-strategies-on-metal, calibrate-and-activate-parallel-reduction-selection, package-a-multi-entry-bundle-from-one-expansion, decide-the-inline-frontend-numerical-contract, restore-the-spikes-against-the-composed-numerical-contract]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, contracts/numerics, implementation/frontend, i
 shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, public-boundary, contracts]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785626991
 ---
 ## User-visible outcome
 
