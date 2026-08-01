@@ -6,7 +6,7 @@ title: "Define reduction identities and initial values"
 topics: ["numerics","reductions","semantics"]
 catalog_group: "numerical-operations"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 applies_to: ["tiler.contract.numerical-semantics"]
 evidence: ["tiler.research.numerics.reduction-semantics-and-legality"]
 ticket: "reduction-semantics-contract"
@@ -70,6 +70,22 @@ precise invalid-input error before dependent execution.
   accumulator dtype all participate in semantic and artifact identity.
 - Empty-only fallback remains expressible later as a separately named operation
   or explicit conditional without changing `initial` semantics.
+
+## Implementation boundary
+
+Added 2026-08-01 by [`re-audit-adr-implementation-status-after-the-runtime-and-metal-landings`](../../tickets/re-audit-adr-implementation-status-after-the-runtime-and-metal-landings.md), which moved `implementation_status` from `not-started` to `partial`. This section states which clauses that value rests on and which it does not, read at `2aa0824`. It is a status record and adds no decision.
+
+**Realized — a reduction family either states its empty-domain outcome or rejects an empty domain, and the rejection is enforced.** The contraction declares `refused-an-unseeded-fold-has-no-empty-result` as a definition fact entering durable identity (`crates/tiler-ir/src/semantic/contraction.rs:960`), and the schedule verifier refuses a contracted space with no points (`crates/tiler-ir/src/schedule/builder.rs:403`). The extrema fold carries no empty-domain field at all — `ScalarProgram::StrictSerialMaximum` states why at `crates/tiler-ir/src/schedule/model.rs:408`: no binary32 value is neutral for `Maximum`, so "a field carrying one would be a value that can never be correct" — and the verifier refuses a reduced domain with no contributors at `builder.rs:792`. This is the decision's "an identity-less reduction requires either an explicit initial value or a proven/runtime-validated non-empty domain", with the static violation failing verification.
+
+**Realized — a typed empty result where one exists, pinned rather than assumed.** The sum families carry `empty_identity_bits` (`crates/tiler-ir/src/schedule/model.rs:330`, `:345`, `:373`) and the verifier requires the value to be `+0.0` bits at every admission site (`builder.rs:674`, `:706`, `:741`, `:892`, `:1043`), including for each pass of a split, so a pass cannot inherit or invent an identity its sibling disagrees with.
+
+**Realized — the seed is a declared dimension, not an omission.** The contraction declares `none-the-accumulator-starts-at-the-first-product` (`crates/tiler-ir/src/semantic/contraction.rs:956`), so a consumer reads the seed from the contract instead of defaulting one.
+
+**Unrealized — no reduction admits an explicit `initial`.** Every admitted family is unseeded, so "an optional explicit `initial` is a true reduction seed contributing exactly once whether the domain is empty or non-empty" is declared-absent rather than supported, and `minimum([], initial=10)` is not expressible. The parallel-topology consequence that a seed is one logical contributor has nothing to track.
+
+**Unrealized — algebraic-identity and replicable-padding capabilities are not separately declared.** The families state an empty result or refuse one; none declares an algebraic-identity or padding capability under its conformance contract, and no schedule injects or replicates a padding value — `TailPolicy` admits only `Exact` and `ContributorPartition::covers` (`crates/tiler-ir/src/schedule/model.rs:755`) requires a split to cover its contributors exactly once each. ADR 0025 owns that half and reads `not-started`.
+
+**Unrealized — the empty-domain declaration is not uniform across families.** The strict serial sum's definition facts state its fold order, accumulation, and canonical NaN bits and no empty-domain outcome (`crates/tiler-ir/src/semantic/registry.rs:2093`); its `+0.0` identity is a schedule-layer field the verifier pins rather than a semantic declaration. The decision asks every reduction operation to declare one.
 
 ## Alternatives considered
 

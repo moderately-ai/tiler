@@ -6,7 +6,7 @@ title: "Require attributable or attested native translation"
 topics: ["apple-targets", "metal", "targets", "feasibility", "provenance", "runtime"]
 catalog_group: "physical-planning-lowering"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 applies_to: ["tiler.contract.metal-backend"]
 evidence: ["tiler.research.apple-targets.numerical-behaviour", "tiler.research.apple-targets.compatibility", "tiler.research.target-profiles.physical-feasibility-model"]
 refines: ["ADR-0043"]
@@ -54,7 +54,7 @@ Native device translation of a metallib during Metal pipeline creation is a type
 ## Consequences
 
 - `validate-macos-metal-profile-host-applicability` produces a typed refusal naming the unsatisfied translation predicate and cannot produce a positive eligibility receipt on current APIs. Its policy and observer halves remain worth building, because the refusal must be checked, explainable, and reached before `RoutingCommit`.
-- `construct-and-bind-the-first-authoritative-metal-compile-profile` remains blocked. Its quantitative, dispatchability, and F32 numerical rows are unaffected as measurements; what they lack is the applicability authority that would let a host offer the profile.
+- `construct-and-bind-the-first-authoritative-metal-compile-profile` is blocked in one of its parts and not as a whole. Its quantitative, dispatchability, and F32 numerical rows are unaffected as measurements; what they lack is the applicability authority that would let a host *offer* the profile. **Corrected 2026-08-01:** this bullet read "remains blocked" and the ticket closed `done` on 2026-07-31 under a resolution Tom recorded. `tiler_build::BoundMetalCompileDeclaration` binds the profile keyed `tiler.metal.macos-apple9.msl4-0.f32.v1`, and `accept_or_publish_metal_plan` verifies a compilation against it before emission; what this decision blocks — and still blocks — is the runtime offer, so the production path observes the host and returns this record's typed refusal instead. The ticket's own closing note states the same split.
 - The bounded F32 facts of the unified MSL 4 Apple9 replay stay valid evidence for their exact inputs and are not promoted into an applicability authority. Agreement between two compilation paths on one row is not the fact this decision needs.
 - ADR 0043 gains no new outcome class, phase, or field. What it gains is a worked case: a declared required device translation whose authority is unavailable is an `Unknown` capability fact, and the validity scope of the measurement that observed it is not a substitute for that authority.
 - A future host-attestation route, if adopted, is a security and platform mechanism with its own threat model. This decision names it as an admissible authority and does not specify, endorse, or assume any particular mechanism.
@@ -68,6 +68,24 @@ Native device translation of a metallib during Metal pipeline creation is a type
 **Name the component from loaded-image evidence.** Eliminated by the spike's own negative control, which put a plausibly named image carrying a readable `metalfe-*` build string into the process and still classified attribution as unavailable. Membership, deltas, and embedded strings are three evidence classes, and none of them associates a component with one preparation.
 
 **Widen the observer with unsafe foreign access until something attributes.** Eliminated because the observation that is missing is an association, not a byte. No amount of additional reading of images the process already loaded produces an API-established link between a component and a specific pipeline preparation, and admitting an unsafe site under ADR 0079 for a probe that returns the same `Unknown` fails that ADR's first condition.
+
+## Implementation boundary
+
+Added 2026-08-01 by [`re-audit-adr-implementation-status-after-the-runtime-and-metal-landings`](../../tickets/re-audit-adr-implementation-status-after-the-runtime-and-metal-landings.md), which moved `implementation_status` from `not-started` to `partial`. This section states which clauses that value rests on and which it does not, read at `2aa0824`. It is a status record and adds no decision.
+
+**Realized — the positive receipt is unreachable by construction, not by a test.** `NativeTranslationAuthority` at `crates/tiler-metal/src/applicability.rs:661` holds one private field of the empty enum `NoAdmissibleAuthority` at `:679`, so the type is uninhabited: not merely unconstructed, but impossible to construct anywhere including inside the crate. `MetalHostEligibility` at `:695` holds one, which makes a positive receipt unreachable; `native_translation_authority()` at `:1061` returns `None` because the comment at `:1056` states it can return nothing else. The proof is compile-enforced rather than asserted: `structural_unreachability::every_outcome_is_a_refusal` at `:1082` is an exhaustive `match` over `Result<MetalHostEligibility, _>` with no `Ok` arm, so inhabiting the authority stops that function compiling. Item 1's "neither exists on current APIs, so the predicate is `Unknown` and the receipt is refused" is therefore the code's shape rather than its current behaviour.
+
+**Realized — the refusal is typed, names the unsatisfied predicate, and is told apart from a disproof.** `MetalHostPredicate::NativeTranslationAuthority` at `:397` is the named predicate; `MetalHostApplicabilityRefusal::UnknownNativeTranslationAuthority` at `:800` carries the versioned policy id and no observed value, because there is none; `rule()` at `:830` returns `metal.host-applicability.unknown-translation-authority` for it and `metal.host-applicability.outside-measured-row` for every environment mismatch, which is item 2's requirement that explain output distinguish `Unknown` disposal from a disproved hard predicate. No new feasibility outcome, infinite cost, or penalty was introduced.
+
+**Realized — the measured row is evaluated as a necessary validity scope and refused as sufficient authority.** `evaluate_metal_host_applicability` at `:981` compares OS family, version, build, architecture, device name, and GPU family against `MetalHostApplicabilityPolicy::FIRST_MACOS_APPLE9` at `:570` first, then reaches the authority last, so a host matching the retained row in every public field still receives the ADR 0086 refusal — the doc-test at `:907` asserts exactly that, and asserts a different OS build is reported against `MetalHostPredicate::OsBuild` instead. The policy has no public constructor, so no caller can mint a row nobody measured.
+
+**Realized — no substitute can be relabelled as the authority.** Item 4's excluded candidates are unnameable at this boundary rather than merely unused: the function's two parameters are a closed policy and a `MetalHostObservation` whose fields are strings and this module's own enums, and `crate::applicability_tests` pins both argument positions against a `TargetProfileRef` and against artifact bytes. The device registry ID is not an input, and `tiler-metal`'s dependency set makes a `Compilation` or an offline compiler identity unnameable in the crate.
+
+**Realized — offline provenance is untouched.** Item 5 adds no artifact field, and none was added: this module reads no artifact and the compile-profile declaration continues to own compiler, linker, SDK, target, flags, and language.
+
+**Unrealized — the refusal is not yet reached on a production routing path inside `crates/`.** The Consequences require the check to be "reached before `RoutingCommit`", and the only callers of `evaluate_metal_host_applicability` outside this crate's own tests are `prototypes/serial-sum-run/src/proof.rs:955` and `prototypes/candle-metal-adapter/src/proof.rs:1016`. The policy half is production code; the observer half that binds it into a `tiler-runtime` route is a prototype, and its bounded proof is one host.
+
+**Unrealized — nothing consumes a receipt, because none can exist.** `MetalHostEligibility::policy` and `observation` are declared for the consumer that would read them, and item 6 is explicit that what remains is a newly named observable or authority rather than an implementation task. A superseding decision under one of item 7's triggers is what would make this clause reachable.
 
 ## Traceability
 

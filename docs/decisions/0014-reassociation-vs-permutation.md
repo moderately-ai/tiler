@@ -6,7 +6,7 @@ title: "Separate reassociation from operand permutation"
 topics: ["numerics","reductions","optimization"]
 catalog_group: "numerical-operations"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 applies_to: ["tiler.contract.numerical-semantics"]
 evidence: ["tiler.research.numerics.reduction-semantics-and-legality"]
 ticket: "numerical-policy-contract"
@@ -60,6 +60,22 @@ permutation behavior separately against the semantic contract.
 - Operation capability does not itself authorize a numerical relaxation; the
   program ceiling and resolved per-operation permissions still govern it.
 - Reduction legality has one additional explicit dimension.
+
+## Implementation boundary
+
+Added 2026-08-01 by [`re-audit-adr-implementation-status-after-the-runtime-and-metal-landings`](../../tickets/re-audit-adr-implementation-status-after-the-runtime-and-metal-landings.md), which moved `implementation_status` from `not-started` to `partial` and replaced the 2026-07 exclusion reason "physical reduction topology exists, but no typed semantic order-contract vocabulary". This section states which clauses that value rests on and which it does not, read at `2aa0824`. It is a status record and adds no decision.
+
+**Realized — the two dimensions are independent everywhere they appear.** `NumericalRealization` carries `reassociation` and `permutation` as separate `NumericalPermission` fields (`crates/tiler-ir/src/schedule/numerics.rs:219`, `:221`) with separate accessors at `:272` and `:278`; `FusionObligation::ReductionReassociation` and `::ReductionOperandPermutation` are separate obligations under separate rule keys (`crates/tiler-compiler/src/fusion_legality.rs:388`, `:390`, `:404`, `:405`), pushed independently by `push_reduction_obligations`, whose own comment at `:1216` names this decision; and both permissions are encoded independently into canonical schedule and kernel identity. Neither dimension is derived from the other at any site.
+
+**Realized — the operation declares an algebraic capability, separately from the permission that consumes it.** `OperationAlgebraicCapabilities` (`crates/tiler-ir/src/semantic/operation.rs:922`) is an operation-owned, identity-encoded declaration whose documentation states this decision's rule directly: "a missing declaration is unknown, never evidence that the inverse law holds", and "consuming one still requires the independently resolved numerical permission for the rewrite". The governed `f32` addition and multiplication declare ordered associativity (`crates/tiler-ir/src/semantic/registry.rs:2193`); the contraction family deliberately declares none, and says why (`crates/tiler-ir/src/semantic/contraction.rs:909`).
+
+**Realized — a rewrite requires both facts and reports which one failed.** `OrderedReassociationRule::evaluate` (`crates/tiler-compiler/src/normalize.rs:699`) declines with `semantic.ordered-associativity-undeclared` when the operation declares no capability (`:711`) and with `numerical.reassociation-forbidden` when the resolved contract does not permit the transform (`:749`), producing two separately classified assessments rather than one verdict. That is the decision's "two independent facts", on the compile path.
+
+**Realized — a physical topology proves its regrouping behaviour against the contract, separately from permutation.** The multi-dispatch split is admitted only when reassociation is permitted (`crates/tiler-ir/src/schedule/builder.rs:831`) and the cooperative workgroup tile likewise (`:967`), each checked on reassociation alone; both record the resolved permutation permission and neither consults it to admit the topology, so granting permutation cannot make an otherwise illegal split legal. `crates/tiler-compiler/src/physical.rs:1291` builds the split's topology reading both permissions from the resolved contract rather than hardcoding either.
+
+**Unrealized — commutativity has no capability to declare.** `OperationAlgebraicCapabilities` has exactly one law, `ordered_associativity`. The decision's "permutation requires a commutative operation capability as well as permission to reorder" therefore has only its permission half: no operation can declare commutativity, and where a family is in fact commutative the property is recorded as a definition fact string (`crates/tiler-ir/src/semantic/softmax.rs:543`) that no rule consults.
+
+**Unrealized — nothing consumes a permutation permission.** No rewrite rule and no admitted physical strategy reorders contributors: `push_reduction_obligations` discharges `ReductionOperandPermutation` unconditionally from the ordered-fold role rather than from a permission (`crates/tiler-compiler/src/fusion_legality.rs:1262`), and the cooperative tile's admitted `ContributorArrival::AscendingParticipant` fixes the combine order in the program. The permission is represented, resolved, recorded, and cross-checked; it authorizes nothing yet.
 
 ## Alternatives considered
 

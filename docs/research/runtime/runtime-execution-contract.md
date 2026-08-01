@@ -7,7 +7,7 @@ topics: ["runtime", "routing", "fallback", "resource-lifetime"]
 catalog_group: "runtime-integration-placement"
 research_status: "complete"
 disposition: "adopted"
-implementation_status: "spike-only"
+implementation_status: "partial"
 evidence_classes: ["primary-source-synthesis", "executable-model"]
 informs: ["tiler.contract.artifact-abi", "tiler.contract.candle-integration"]
 adopted_by: ["ADR-0051"]
@@ -202,6 +202,8 @@ device uses complete, but cleanup cannot change the returned failure into a
 fallback route.
 
 **Current implementation boundary.** The compiler consumes retained logical index-domain obligations in a named semantic-discharge stage before cover enumeration. Its production authority evaluates current index expressions over the complete finite logical coordinate domain with exact integer arithmetic and a separate resource budget; this is compiler validation of lowering-produced coordinates, not runtime inspection of tensor values. `Disproved` is invalid compiler output, while unsupported or over-budget `Unknown` refuses before any executable plan exists.
+
+**Implementation boundary — 2026-08-01, read at `2aa0824`.** `implementation_status` moved from `spike-only` to `partial` in [`re-audit-adr-implementation-status-after-the-runtime-and-metal-landings`](../../../tickets/re-audit-adr-implementation-status-after-the-runtime-and-metal-landings.md), because this contract's device-free half is now production code rather than only the model below: `crates/tiler-runtime` decodes and validates an artifact against a stated execution environment, filters ineligible variants before evaluating guards, selects by declared priority, and carries a route through two consuming device stages into a non-`Clone` `Preflight` whose `commit` is consuming and infallible, with the pre- and post-commit error types kept separate. What remains modelled rather than implemented is stated in [ADR 0051](../../decisions/0051-make-runtime-routing-commit-one-way.md)'s own implementation boundary: no validation record, submission receipt, terminal-status observation, `EnforcementCommit`, stale-selection revalidation, or resource-retention machinery exists in `crates/`, no adapter does either, and the landed `plan_dispatch` seam allocates program storage before the commit, which is the one place the code and this record's "preparation must not allocate a program output" rule disagree. That divergence is [`reconcile-the-pre-commit-allocation-seam-with-adr-0051`](../../../tickets/reconcile-the-pre-commit-allocation-seam-with-adr-0051.md)'s, and this record is left stating the contract it adopted rather than edited to match the code.
 
 The runtime host-validation transitions below instead govern residual tensor-value semantic preconditions such as strict quantization's NaN rejection. Governed strict-affine `Quantize` now produces typed residual obligations, but no physical candidate, enforcement-plan carrier, artifact representation, or runtime checker consumes them yet, so the transitions remain an adopted contract rather than evidence of runtime enforcement. `implement-first-runtime-semantic-value-precondition-enforcement` owns the first complete runtime vertical after its producer, physical-candidate, carrier, and resolved-value conformance prerequisites. Checker capability and preparation must finish before `RoutingCommit`; the actual value scan begins only after one-way route commitment at `EnforcementCommit`, and no semantic failure can trigger fallback.
 
