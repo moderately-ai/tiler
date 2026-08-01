@@ -102,6 +102,23 @@ pub enum Perturbation {
     UndersizedInput,
     /// The run halts after one invocation, after the routing commit.
     HaltAfterOneInvocation,
+    /// The run halts after one invocation of the **second** entry.
+    ///
+    /// Distinct from the perturbation above rather than a parameter of it: the
+    /// state it produces is a route whose earlier entries reached terminal
+    /// success and whose later one did not, and a single-entry route cannot be
+    /// in that state at all.
+    HaltSecondEntryAfterOneInvocation,
+    /// One shared allocation is made one element shorter than the route requires.
+    UndersizeSharedAllocation,
+    /// The committed entries are dispatched back to front.
+    ///
+    /// The one perturbation here that produces neither a refusal nor a panic.
+    /// See [`RuntimeAdapter::dispatch`]'s contract and the shared-allocation
+    /// pairing's own documentation: reading a scratch buffer before its producer
+    /// wrote it is a wrong answer, which is why the ordering has to be checked
+    /// against an oracle rather than trusted.
+    ReverseStageOrder,
 }
 
 /// Where a completed dispatch reads its result from.
@@ -126,6 +143,23 @@ pub struct ScalarCompletion {
     pub profile_key: String,
 }
 
+/// Where one shared-allocation pair ended up in this adapter's own storage.
+///
+/// Recorded so a test can assert that the two slots resolved to **one**
+/// allocation. The result agreeing with the reference is evidence that the
+/// consumer read what the producer wrote; this is the evidence that it did so
+/// through a single buffer rather than through two that happened to hold the
+/// same bytes, which is the failure a wrong planner actually produces.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SharedPlacement {
+    /// Entry and ABI slot writing the shared storage.
+    pub producer: (usize, usize),
+    /// Entry and ABI slot reading it.
+    pub consumer: (usize, usize),
+    /// Index of the one host allocation backing both.
+    pub allocation: usize,
+}
+
 /// One consumer-selected adapter for the `tiler.test.scalar-host` backend.
 ///
 /// Selected by naming it. Nothing registers it, nothing discovers it, and the
@@ -148,6 +182,10 @@ pub struct ScalarHostAdapter {
     allocations: Vec<Vec<u8>>,
     /// Per entry, per ABI slot, where the slot's storage lives.
     placements: Vec<Vec<Placement>>,
+    /// The pairs this planner backed with one allocation each, in route order.
+    ///
+    /// Empty for a single-entry route, which is a state rather than an absence.
+    shared: Vec<SharedPlacement>,
     /// The allocation, first addressed byte, and element count to read back.
     ///
     /// The offset is carried rather than assumed zero. A binding may address
@@ -178,6 +216,7 @@ impl ScalarHostAdapter {
             prepared: Vec::new(),
             allocations: Vec::new(),
             placements: Vec::new(),
+            shared: Vec::new(),
             readback: None,
             stages: Vec::new(),
         }
@@ -199,6 +238,43 @@ impl ScalarHostAdapter {
 
     fn perturbed_by(&self, perturbation: Perturbation) -> bool {
         self.perturbation == Some(perturbation)
+    }
+
+    /// Returns the shared-allocation pairs this planner backed, in route order.
+    #[must_use]
+    pub fn shared_placements(&self) -> &[SharedPlacement] {
+        &self.shared
+    }
+
+    /// Returns where one routed slot's storage was placed.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the route never planned that entry and slot. Planning runs
+    /// before the commit, so a caller asking about a slot of a route that
+    /// refused earlier is asking about something that does not exist.
+    #[must_use]
+    pub fn placement(&self, entry: usize, slot: usize) -> Placement {
+        self.placements[entry][slot]
+    }
+
+    /// Reads one host allocation back as `f32` bit patterns.
+    ///
+    /// Callable after the route returns, which is the point: an allocation this
+    /// answers for outlived every dispatch that used it. A backend releasing
+    /// storage between two entries would have nothing to answer with here.
+    ///
+    /// # Panics
+    ///
+    /// Panics when no such allocation was made.
+    #[must_use]
+    pub fn allocation_bits(&self, allocation: usize) -> Vec<u32> {
+        self.allocations[allocation]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|chunk| u32::from_le_bytes(*chunk))
+            .collect()
     }
 }
 
@@ -418,12 +494,22 @@ impl RuntimeAdapter for ScalarHostAdapter {
         self.stages.push(Stage::PlanDispatch);
         let mut allocations: Vec<Vec<u8>> = Vec::new();
         let mut placements: Vec<Vec<Placement>> = Vec::new();
+        let mut recorded: Vec<SharedPlacement> = Vec::new();
         let mut readback = None;
+
+        // The byte a slot must reach through, counted from the start of the
+        // allocation rather than from the start of the value: a binding may
+        // address a window at a nonzero offset, and an allocation sized to the
+        // extent alone would be short by exactly that offset.
+        let reach = |entry: usize, slot: usize| {
+            let binding = preflight.entries()[entry].bindings()[slot];
+            binding.accessible_offset() + binding.accessible_bytes()
+        };
 
         // Paired first, because a shared allocation belongs to two entries and
         // neither owns it. A planner that allocated per binding would hand the
         // consumer a fresh buffer and it would read uninitialised storage — a
-        // wrong answer rather than a refusal. Empty for this single-entry route,
+        // wrong answer rather than a refusal. Empty for a single-entry route,
         // which is a state rather than an absence.
         let mut shared: Vec<Option<usize>> = preflight
             .entries()
@@ -440,12 +526,13 @@ impl RuntimeAdapter for ScalarHostAdapter {
         };
         for pair in preflight.shared_allocations() {
             let (producer, consumer) = (pair.producer(), pair.consumer());
-            let needed = preflight.entries()[producer.entry()].bindings()[producer.slot()]
-                .accessible_bytes()
-                .max(
-                    preflight.entries()[consumer.entry()].bindings()[consumer.slot()]
-                        .accessible_bytes(),
-                );
+            let needed = reach(producer.entry(), producer.slot())
+                .max(reach(consumer.entry(), consumer.slot()));
+            let needed = if self.perturbed_by(Perturbation::UndersizeSharedAllocation) {
+                needed.saturating_sub(4)
+            } else {
+                needed
+            };
             allocations.push(vec![
                 0_u8;
                 usize::try_from(needed).expect("a small fixture range")
@@ -453,6 +540,11 @@ impl RuntimeAdapter for ScalarHostAdapter {
             let index = allocations.len() - 1;
             shared[slot_index(producer.entry(), producer.slot())] = Some(index);
             shared[slot_index(consumer.entry(), consumer.slot())] = Some(index);
+            recorded.push(SharedPlacement {
+                producer: (producer.entry(), producer.slot()),
+                consumer: (consumer.entry(), consumer.slot()),
+                allocation: index,
+            });
         }
 
         for (position, entry) in preflight.entries().iter().enumerate() {
@@ -464,17 +556,6 @@ impl RuntimeAdapter for ScalarHostAdapter {
                 let allocation = if let Some(index) = shared[slot_index(position, binding.slot())] {
                     index
                 } else if addresses_program_input(binding.binding().target()) {
-                    // Caller-supplied storage, checked against the route's own
-                    // published range while abandoning is still permitted.
-                    let supplied = u64::try_from(self.input.len()).expect("a small fixture buffer");
-                    if supplied < reach {
-                        return Err(ScalarRefusal::UndersizedStorage {
-                            entry: position,
-                            slot: binding.slot(),
-                            required: reach,
-                            supplied,
-                        });
-                    }
                     allocations.push(self.input.clone());
                     allocations.len() - 1
                 } else {
@@ -491,6 +572,23 @@ impl RuntimeAdapter for ScalarHostAdapter {
                     });
                     index
                 };
+                // Every slot's storage compared against the route's own
+                // published range, whoever produced it: the caller for a program
+                // input, the pairing above for a shared scratch, this planner
+                // for everything else. Checking only the caller's would trust
+                // this adapter's own arithmetic on the two it makes itself,
+                // and a shared allocation is the one it sizes from two
+                // statements rather than one.
+                let held =
+                    u64::try_from(allocations[allocation].len()).expect("a small fixture buffer");
+                if held < reach {
+                    return Err(ScalarRefusal::UndersizedStorage {
+                        entry: position,
+                        slot: binding.slot(),
+                        required: reach,
+                        supplied: held,
+                    });
+                }
                 slots.push(Placement {
                     allocation,
                     offset,
@@ -502,6 +600,7 @@ impl RuntimeAdapter for ScalarHostAdapter {
 
         self.allocations = allocations;
         self.placements = placements;
+        self.shared = recorded;
         self.readback = readback;
         Ok(())
     }
@@ -512,11 +611,26 @@ impl RuntimeAdapter for ScalarHostAdapter {
         routed: &RoutedDispatch<'_>,
     ) -> Result<Self::Completion, Self::Failure> {
         self.stages.push(Stage::Dispatch);
-        let halt = self
-            .perturbed_by(Perturbation::HaltAfterOneInvocation)
-            .then_some(1);
+        // The order the committed route published, front to back. Reversing it
+        // is a perturbation rather than a choice: the route's entries are
+        // ordered by the data dependencies the packaged program proved, so a
+        // backend encoding them in any other order dispatches a consumer before
+        // its producer.
+        let mut order: Vec<usize> = (0..routed.entries().len()).collect();
+        if self.perturbed_by(Perturbation::ReverseStageOrder) {
+            order.reverse();
+        }
         let mut executed = 0_u64;
-        for (position, entry) in routed.entries().iter().enumerate() {
+        for position in order {
+            let entry = &routed.entries()[position];
+            let halt = if self.perturbed_by(Perturbation::HaltAfterOneInvocation)
+                || (self.perturbed_by(Perturbation::HaltSecondEntryAfterOneInvocation)
+                    && position == 1)
+            {
+                Some(1)
+            } else {
+                None
+            };
             let launch = entry.launch();
             if launch.grid_threads() == 0 && launch.zero_work_skips_dispatch() {
                 continue;
@@ -536,6 +650,7 @@ impl RuntimeAdapter for ScalarHostAdapter {
                 .map(|(placement, _)| *placement)
                 .expect("payload validation proved the write transport is one of this entry's");
             let ran = crate::image::execute(
+                position,
                 prepared,
                 read,
                 write,
@@ -543,10 +658,14 @@ impl RuntimeAdapter for ScalarHostAdapter {
                 launch.grid_threads(),
                 halt,
             )?;
-            // Terminal success, observed rather than assumed. Past the commit,
-            // so this is reported and never resolved by routing somewhere else.
+            // Terminal success, observed rather than assumed, and per entry
+            // rather than once for the route: a later entry must not be
+            // dispatched over an earlier one that did not complete. Past the
+            // commit, so this is reported and never resolved by routing
+            // somewhere else.
             if ran != launch.grid_threads() {
                 return Err(ExecutionFault::Incomplete {
+                    entry: position,
                     executed: ran,
                     expected: launch.grid_threads(),
                 });
