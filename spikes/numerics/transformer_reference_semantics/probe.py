@@ -16,6 +16,7 @@ can be captured and byte-compared against the retained record beside it.
 
 from __future__ import annotations
 
+import itertools
 import math
 import struct
 
@@ -88,14 +89,69 @@ bit_row("softmax_one_live_score_finite_mask",
 row("softmax_empty_reduced_axis_shape",
     tuple(F.softmax(torch.zeros((1, 0), dtype=F32), dim=-1, dtype=F32).shape))
 
+# --- softmax: the L3' record's own worked example, and its intermediates -----
+# The derivation's worked example is the row every downstream document quotes,
+# and until now its bits lived only in that document: a reader could not check
+# them against this record, and the divergence between the reference and the
+# pinned formula had to be re-measured rather than read. Both sides are recorded
+# here, together with the intermediates that localize the difference to one step.
+worked = torch.tensor([[1.0, 2.0, 3.0, min_dtype]], dtype=F32)
+worked_e = torch.exp(worked - worked.max(-1, keepdim=True).values)
+worked_d = worked_e.sum(-1, keepdim=True)
+bit_row("softmax_worked_example_scores", worked)
+bit_row("softmax_worked_example_exponentials", worked_e)
+row("softmax_worked_example_denominator_torch_sum", bits(worked_d))
+row("softmax_worked_example_denominator_strict_left_fold",
+    bits(((worked_e[0, 0] + worked_e[0, 1]) + worked_e[0, 2]) + worked_e[0, 3]))
+bit_row("softmax_worked_example_reference", F.softmax(worked, dim=-1, dtype=F32))
+bit_row("softmax_worked_example_reciprocal_form", worked_e * (1.0 / worked_d))
+bit_row("softmax_worked_example_divide_form", worked_e / worked_d)
+# After the maximum subtraction the largest score's exponential is exactly 1.0,
+# so whatever constant the reference multiplies the row by is readable *exactly*
+# as its output at that position. This is the reference's implied normalization
+# constant, observed rather than inferred.
+row("softmax_worked_example_reference_implied_constant",
+    bits(F.softmax(worked, dim=-1, dtype=F32)[0, 2]))
+row("softmax_worked_example_correctly_rounded_reciprocal", bits(1.0 / worked_d))
+# The implied constant is *not* an approximation of the reciprocal: it is the
+# correctly rounded reciprocal of a denominator this row's own exponentials reach
+# under a different contributor order. The order is named so the claim is
+# checkable by hand rather than by trusting the search below.
+reordered = ((worked_e[0, 0] + worked_e[0, 2]) + worked_e[0, 1]) + worked_e[0, 3]
+row("softmax_worked_example_denominator_under_order_0_2_1_3", bits(reordered))
+row("softmax_worked_example_reciprocal_of_that_denominator", bits(1.0 / reordered))
+
+# --- softmax and the row maximum on a NaN score -----------------------------
+# The extrema family's NaN rule is a decision the softmax key had to make, and
+# this record carried no softmax row with a NaN score, so the evidence had to be
+# taken outside it. It is inside it now.
+nan_row = torch.tensor([[1.0, math.nan, 3.0]], dtype=F32)
+bit_row("softmax_row_with_a_nan_score", F.softmax(nan_row, dim=-1, dtype=F32))
+row("torch_max_of_row_with_a_nan_score", bits(nan_row.max()))
+
+# The signed-zero half of the same question, in *both* operand orders and in two
+# spellings, because a single order cannot tell an ordering rule apart from an
+# order dependence -- and the answer here is the order dependence. Neither
+# spelling implements the `-0.0 < +0.0` total ordering: each returns a fixed
+# position rather than a fixed value, and the two spellings disagree on which.
+for label, pair in (("plus_then_minus", [0.0, -0.0]), ("minus_then_plus", [-0.0, 0.0])):
+    zeros = torch.tensor(pair, dtype=F32)
+    row(f"torch_max_of_signed_zeros_{label}", bits(zeros.max()))
+    row(f"torch_amax_of_signed_zeros_{label}", bits(torch.amax(zeros)))
+
 # --- softmax: does it divide by the denominator or multiply by its reciprocal?
 # The two are different F32 computations, and which one the pinned reference
 # performs is a formula the Tiler contract must copy rather than choose. The
 # count is restricted to elements where the two forms disagree, because
-# elsewhere agreement carries no information; at two and three contributors the
-# denominator has no accumulation-order freedom left, so those rows isolate the
-# normalization form from reduction-order noise in the sum.
+# elsewhere agreement carries no information. Two and three contributors are the
+# widths that isolate the normalization form from reduction-order noise in the
+# sum -- observed rather than assumed: a two-term sum has no ordering freedom at
+# all, a three-term sum does have grouping freedom, and the `softmax_constant_*`
+# rows below record that the reference nonetheless lands on the naive sum's
+# reciprocal in all 20,000 rows at both widths. It is a measured property of
+# these rows, not a theorem about three contributors.
 torch.manual_seed(20260731)
+sweep: dict[int, tuple[torch.Tensor, ...]] = {}
 for width in (2, 3, 4, 8, 18):
     scores = (torch.rand(20000, width, dtype=F32) * 20.0) - 10.0
     shifted = scores - scores.max(-1, keepdim=True).values
@@ -111,6 +167,62 @@ for width in (2, 3, 4, 8, 18):
         f"matches_reciprocal={int((discriminating & (reference == as_reciprocal)).sum())}",
         f"matches_neither={int((discriminating & (reference != as_divide) & (reference != as_reciprocal)).sum())}",
     )))
+    sweep[width] = (scores, numer, denom)
+
+# --- what the `matches_neither` bucket actually is --------------------------
+# The counts above say the reference matches neither spelling above width three;
+# they do not say why, and two hypotheses fit them equally at that resolution: a
+# denominator whose accumulation order differs from the naive sum, or a
+# normalization constant that is not the correctly rounded reciprocal of *any*
+# denominator. The rows below separate them, because a count that named one
+# cause without eliminating the other would be an attribution rather than a
+# measurement.
+#
+# The lever is the maximum subtraction: it makes the largest score's exponential
+# exactly 1.0, so the reference's output at that position IS the constant it
+# multiplied the row by, read off exactly rather than solved for.
+for width, (scores, numer, denom) in sweep.items():
+    reference = F.softmax(scores, dim=-1, dtype=F32)
+    argmax = scores.argmax(-1, keepdim=True)
+    assert bool(torch.all(numer.gather(1, argmax) == 1.0)), "the shifted maximum exponentiates to one"
+    implied = reference.gather(1, argmax)
+    # First: is the whole row one scalar multiple of the exponentials? If it is,
+    # the reference's exponentials agree with these bit for bit and the entire
+    # divergence is that one scalar -- which is also the strongest available
+    # evidence for the *reciprocal-multiply form*, since a division by a
+    # denominator is not a single-constant multiply.
+    explained = torch.all(
+        (numer * implied).view(torch.int32) == reference.view(torch.int32), dim=-1
+    )
+    gap = (implied.view(torch.int32) - (1.0 / denom).view(torch.int32)).flatten()
+    row(f"softmax_constant_width_{width}", " ".join((
+        f"rows={scores.shape[0]}",
+        f"explained_by_one_constant={int(explained.sum())}",
+        f"constant_is_correctly_rounded_reciprocal_of_the_naive_sum={int((gap == 0).sum())}",
+        f"max_abs_constant_ulp_gap={int(gap.abs().max())}",
+    )))
+
+# Second, and only where it can be exhaustive: is the reference's constant the
+# correctly rounded reciprocal of a denominator the same exponentials reach under
+# *some* summation order? Four contributors admit 24 strict left folds and the
+# balanced tree, which is enumerable; eight and eighteen are not, so the question
+# is answered where it can be answered and left open where it cannot. The count
+# is a lower bound on reachability, because the enumeration is not every legal
+# grouping -- so a high count eliminates the second hypothesis and a shortfall
+# does not establish it.
+scores, numer, _ = sweep[4]
+reference4 = F.softmax(scores, dim=-1, dtype=F32)
+implied4 = reference4.gather(1, scores.argmax(-1, keepdim=True))
+reachable = torch.zeros_like(implied4, dtype=torch.bool)
+for order in itertools.permutations(range(4)):
+    fold = numer[:, order[0]:order[0] + 1].clone()
+    for index in order[1:]:
+        fold = fold + numer[:, index:index + 1]
+    reachable |= (1.0 / fold).view(torch.int32) == implied4.view(torch.int32)
+balanced = (numer[:, 0:1] + numer[:, 1:2]) + (numer[:, 2:3] + numer[:, 3:4])
+reachable |= (1.0 / balanced).view(torch.int32) == implied4.view(torch.int32)
+row("softmax_constant_reachable_by_some_summation_order_width_4",
+    f"rows={scores.shape[0]} reachable={int(reachable.sum())}")
 
 # --- softmax exponent range after max subtraction ---------------------------
 # Every argument is <= 0 once the maximum is subtracted, so overflow is
