@@ -1,7 +1,7 @@
 ---
 id: admit-the-contraction-semantic-profile
 title: Admit the contraction semantic profile for the workload's projection structure
-status: in-progress
+status: done
 priority: p1
 dependencies: [spike-first-metal-contraction-vertical]
 related: [decide-whether-a-contraction-is-one-keyed-family-or-fixed-arity-keys, scope-einsum-contraction-support, admit-the-reindex-and-broadcast-operation-families, own-operation-family-support-matrix]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, semantics, contraction, matmul, language-model, identity]
-claimed_from: todo
-assignee: worker-contraction
-lease_expires_at: 1785544167
 ---
 ## User-visible outcome
 
@@ -65,3 +62,5 @@ The structure is statable, all five refusals fire under their own names with a t
 **Fact — the support matrix.** The contraction row moved R1 to R3, and four further roadmap assertions that this change made false were corrected in the same edit: that no admitted operation expresses operands required to disagree, that no admitted operation produces two operand maps projecting away different iteration coordinates, that no contraction operation exists, and the registered-operation counts. The stale bullet claiming L3 cannot be specified until the keyed-family question is settled was also corrected — ADR 0087 settled it before this ticket started.
 
 **Deliberately not done.** No reference evaluator, fusion role, lowering capability, schedule, or backend. Index structures 2 and 3 are untouched. Rule five remains a refusal rather than a multi-operand answer. `docs/decisions/0087-...md`'s traceability sentence still reads that the support-matrix contraction row "stays at R1", and the L3 realization record's D-8 still reads as open; both files are outside this ticket's scopes, and correcting them is filed as [`correct-the-contraction-records-after-admission`](correct-the-contraction-records-after-admission.md).
+
+**Boundary acceptance (2026-07-31).** Tom accepted the public surface as reviewed: the governed key, `ContractionIndex`/`ContractionIndexStructure`, the typed error and subject vocabularies, the fourteen fact fields, and the three flagged judgment calls (empty-domain refusal, both-boundary NaN canonicalization, subnormal flushing excluded from the signature).
