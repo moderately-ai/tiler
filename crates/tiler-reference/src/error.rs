@@ -9,7 +9,9 @@ use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
-use tiler_ir::semantic::{InputKey, OpKey, ProviderIdentity, RegistryError, ResolvedValueType};
+use tiler_ir::semantic::{
+    AttributeFieldId, InputKey, OpKey, ProviderIdentity, RegistryError, ResolvedValueType,
+};
 use tiler_ir::shape::Shape;
 
 use super::{ReferenceCapabilityRevision, ReferenceComponentRole, ReferenceSignature};
@@ -27,6 +29,65 @@ pub enum ReferenceRegistryResource {
     /// Canonical registry identity bytes.
     CanonicalIdentityBytes,
 }
+
+/// Why a declared contraction numerical signature cannot be realized here.
+///
+/// The reference reads `tiler::strict-tensor-contraction-f32@1`'s fourteen-field
+/// signature instead of restating it, so a declaration naming a contract this
+/// evaluator does not compute has to be refusable. Refusing *by field* is what
+/// makes the refusal usable: a reader learns which declared term moved, and the
+/// public [`tiler_ir::semantic`] field-ID constants name it.
+///
+/// A declaration this evaluator would over-satisfy is refused on the same
+/// footing as one it would under-satisfy. Evaluating a weaker contract strictly
+/// and reporting bit equality would assert a guarantee the contract never made.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum UnsupportedContractionDeclaration {
+    /// The facts were not a record of the governed field set.
+    MalformedRecord,
+    /// One field declared a value this reference does not realize.
+    UnrealizableFact {
+        /// The contraction fact field, by its stable schema-local ID.
+        field: AttributeFieldId,
+    },
+}
+
+impl UnsupportedContractionDeclaration {
+    /// Names one field's declared value as unrealizable.
+    #[must_use]
+    pub const fn unrealizable(field: AttributeFieldId) -> Self {
+        Self::UnrealizableFact { field }
+    }
+
+    /// The stable diagnostic rule this refusal reports under.
+    #[must_use]
+    pub const fn rule(self) -> &'static str {
+        match self {
+            Self::MalformedRecord => "reference.contraction.malformed-signature",
+            Self::UnrealizableFact { .. } => "reference.contraction.unrealizable-fact",
+        }
+    }
+}
+
+impl fmt::Display for UnsupportedContractionDeclaration {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MalformedRecord => write!(
+                formatter,
+                "{}: the declared contraction signature is not the governed fact record",
+                self.rule()
+            ),
+            Self::UnrealizableFact { field } => write!(
+                formatter,
+                "{}: contraction fact field {field} declares a contract this reference does not compute",
+                self.rule()
+            ),
+        }
+    }
+}
+
+impl Error for UnsupportedContractionDeclaration {}
 
 /// Failure to construct or extend a reference registry.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -78,6 +139,18 @@ pub enum ReferenceRegistryError {
         /// First rejected size.
         actual: usize,
     },
+    /// An operation's declared normative signature is one this reference cannot
+    /// compute, so no capability was registered for it.
+    ///
+    /// The registry is the right place to fail: a reference that registered a
+    /// capability anyway would answer for a contract it does not implement, and
+    /// every later bit comparison would inherit that.
+    UnsupportedContraction {
+        /// Operation whose declared signature was refused.
+        operation: OpKey,
+        /// The declared term this reference does not realize.
+        source: UnsupportedContractionDeclaration,
+    },
 }
 
 impl fmt::Display for ReferenceRegistryError {
@@ -121,6 +194,10 @@ impl fmt::Display for ReferenceRegistryError {
                 formatter,
                 "reference registry resource {resource:?} has size {actual}, exceeding {limit}"
             ),
+            Self::UnsupportedContraction { operation, source } => write!(
+                formatter,
+                "reference operation {operation} declares an unrealizable signature: {source}"
+            ),
         }
     }
 }
@@ -131,6 +208,7 @@ impl Error for ReferenceRegistryError {
             Self::SemanticRegistry(source)
             | Self::SemanticAuthority { source, .. }
             | Self::SemanticValueAuthority { source, .. } => Some(source.as_ref()),
+            Self::UnsupportedContraction { source, .. } => Some(source),
             _ => None,
         }
     }

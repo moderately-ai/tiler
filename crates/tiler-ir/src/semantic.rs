@@ -47,7 +47,8 @@ pub use contraction::{
     CONTRACTION_STRUCTURE_OPERAND_INDICES, CONTRACTION_STRUCTURE_OUTPUT_INDICES,
     CanonicalContractionIndexStructure, ContractionAttributeSubject, ContractionIndex,
     ContractionIndexStructure, ContractionStructureError, MAX_CONTRACTION_OPERANDS,
-    MAX_CONTRACTION_TUPLE_INDICES, strict_tensor_contraction_f32_op,
+    MAX_CONTRACTION_TUPLE_INDICES, strict_tensor_contraction_f32_facts,
+    strict_tensor_contraction_f32_op,
 };
 pub use error::{
     BuildError, BuilderCreateError, EntityKind, HandleError, ProgramBuildError,

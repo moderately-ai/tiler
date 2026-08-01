@@ -912,6 +912,25 @@ pub(super) fn register_standard_contraction(
     // associativity here would hand a rewrite the numerical facts below forbid.
 }
 
+/// Returns the exact numerical-signature record this family's definition carries.
+///
+/// The value this module's registration installs on the definition, from the
+/// same constructor rather than a restatement of it, so a consumer that parameterizes
+/// itself on the declared signature and the registered definition cannot
+/// disagree about what was declared. The fourteen fields documented above are
+/// the record's complete content.
+///
+/// This exists because a normative *reference* has to read the contract instead
+/// of reimplementing it: the accumulator type, the seed, the contributor order,
+/// the empty-domain declaration, and the canonicalization site are declared
+/// here, and an evaluator that hardcoded them would keep computing its old
+/// answer after this record changed. A consumer reads them from this value and
+/// refuses a value it does not realize rather than defaulting one.
+#[must_use]
+pub fn strict_tensor_contraction_f32_facts() -> CanonicalValue {
+    contraction_f32_facts()
+}
+
 fn contraction_f32_facts() -> CanonicalValue {
     CanonicalValue::record([
         CanonicalField::new(

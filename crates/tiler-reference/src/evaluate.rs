@@ -531,7 +531,7 @@ pub fn strict_partitioned_sum(
     strict_sum(&partials, &[Axis::new(partition_axis)])
 }
 
-fn preflight_f32_output(output_count: usize) -> Result<(), ReferenceOperationError> {
+pub(crate) fn preflight_f32_output(output_count: usize) -> Result<(), ReferenceOperationError> {
     if output_count > MAX_REFERENCE_TENSOR_ELEMENTS {
         return Err(ReferenceOperationError::OutputElementsExceeded {
             limit: MAX_REFERENCE_TENSOR_ELEMENTS,

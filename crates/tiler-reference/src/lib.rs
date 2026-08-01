@@ -22,6 +22,7 @@
 //! | `evaluate` | executing a semantic program against that registry |
 //! | `standard` | the one provider this crate ships, a consumer of the registry |
 //! | `structural` | reference semantics for the element-moving families |
+//! | `contraction` | reference semantics for the governed tensor contraction |
 //! | `identity` | canonical identity encoding for a frozen registry |
 //! | `oracle` | the *other* oracle: scalar dispatch and index-region evaluation |
 //! | `arithmetic` | exact scalar arithmetic shared by both |
@@ -34,6 +35,7 @@
 
 mod arithmetic;
 mod conformance;
+mod contraction;
 mod error;
 mod evaluate;
 mod identity;
@@ -47,7 +49,7 @@ mod tensor;
 pub use conformance::{ReferenceNumericalConformance, UnsupportedReferenceContract};
 pub use error::{
     EvaluationError, ReferenceOperationError, ReferenceRegistryError, ReferenceRegistryResource,
-    ReferenceResource, ReferenceValueError,
+    ReferenceResource, ReferenceValueError, UnsupportedContractionDeclaration,
 };
 pub use evaluate::{ReferenceEvaluator, strict_partial_sums, strict_partitioned_sum};
 pub use oracle::{
