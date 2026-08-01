@@ -6,7 +6,7 @@ priority: p2
 dependencies: []
 related: [route-or-refuse-the-device-translation-execution-policy]
 scopes: [research/cache, research/extensions, research/target-profiles]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [artifacts, spikes, documentation]
 ---
