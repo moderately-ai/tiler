@@ -170,7 +170,7 @@ def main() -> int:
         / "program-planning"
         / "qwen3-conformance-fixture"
         / "results"
-        / "2026-07-31-c1-conformance-qwen3-0.6b-base-da87bfb6-f32-eager-cpu-torch2.6.0-transformers4.51.0",
+        / "2026-08-01-c1-conformance-attribution-qwen3-0.6b-base-da87bfb6-f32-eager-cpu-torch2.6.0-transformers4.51.0",
         help="retained C1 fixture record used to anchor the F32 baseline",
     )
     args = parser.parse_args()
