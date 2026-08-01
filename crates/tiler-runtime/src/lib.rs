@@ -28,11 +28,26 @@
 //! which carried object realizes it, and the one-way commitment that separates
 //! "still deciding" from "executing".
 //!
+//! # The device half is a seam, not a dependency
+//!
+//! [`adapter`] names the other half without linking it. A consumer implements
+//! [`adapter::RuntimeAdapter`] for the one backend and representation family it
+//! executes, selects it itself — there is no registry, no discovery, and no
+//! adapter identity that travels in an artifact — and hands it to
+//! [`adapter::route_with_adapter`], which sequences the loader's comparisons and
+//! the adapter's reports in the order their facts become decidable. Every
+//! comparison stays here; the adapter reports and never adjudicates.
+//!
+//! That seam does not weaken the boundary above it. The trait names no device,
+//! queue, pipeline, or buffer type, this crate still depends on
+//! [`tiler_artifact`] alone, and every device object lives in the implementor.
+//!
 //! # Public boundary status
 //!
-//! [`load`] is a **reviewed draft boundary** (ADR 0074 §7, ADR 0075), on the
-//! same footing as [`tiler_artifact::program`]: it is `pub` so its shape can be
-//! reviewed as a whole, and it is not an accepted public facade until Tom
-//! accepts the exact interface.
+//! [`load`] and [`adapter`] are **reviewed draft boundaries** (ADR 0074 §7,
+//! ADR 0075), on the same footing as [`tiler_artifact::program`]: they are `pub`
+//! so their shape can be reviewed as a whole, and neither is an accepted public
+//! facade until Tom accepts the exact interface.
 
+pub mod adapter;
 pub mod load;
