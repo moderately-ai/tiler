@@ -57,7 +57,7 @@ Delivered. The cross-invocation dataflow of one bounded workgroup reduction is r
 
 ### Domain step: none required, appends only, with per-tag reasoning
 
-Both identity domains hold. `tiler.schedule.v3` and `tiler.kernel.v5` are unchanged, and the workspace's pinned identities are the evidence: `STRICT_F32_REGION_IDENTITY_HEX` (`crates/tiler-ir/src/schedule/builder.rs`) and `ARTIFACT_IDENTITY` (`crates/tiler-build/src/metal_plan.rs:790`) both still match, and all 2126 workspace tests pass unmodified except for one match arm in a test-local name table.
+Both identity domains hold. `tiler.schedule.v3` and `tiler.kernel.v5` are unchanged, and the workspace's pinned identities are the evidence: `STRICT_F32_REGION_IDENTITY_HEX` (`crates/tiler-ir/src/schedule/builder.rs`) and `ARTIFACT_IDENTITY` (`crates/tiler-build/src/metal_plan.rs:790`) both still match, and all workspace tests pass unmodified except for one match arm in a test-local name table.
 
 | Construct | Encoding | Why no earlier subject's bytes move |
 | --- | --- | --- |
@@ -83,7 +83,7 @@ Every fixture below is the same well-formed `[2, 6] -> [2]` tile; each test chan
 | insufficient storage | `slots: 3 -> 2` | `cooperative-staging-capacity` |
 | staged read with no producing phase | read moved from phase 1 into phase 0 | `cooperative-staged-producer` |
 
-Four further rules, each likewise perturbed: `cooperative-no-visibility-edge` (reads cleared — a tile that stages values nobody reads performs no cooperation), `cooperative-participant-convergence` (`threads_per_workgroup: 3 -> 6`), `cooperative-commit-ownership` (`commit.count: 1 -> 3`), and `cooperative-contributor-split` (`contributors_per_partition: 2 -> 3`). A separate test drives the ownership derivation directly: declaring `output_count: 6` instead of `2` fails `proof-reference`, which is the check that stops a cooperative region claiming one owned position per invocation and sizing its output three times too large.
+Five further rules, each likewise perturbed: `cooperative-structural-limit` (a 65-phase tile, and an allocation one slot past `MAX_COOPERATIVE_STAGING_SLOTS` — driven because a bound nothing has been seen to trip is a bound that might not be reached at all), `cooperative-no-visibility-edge` (reads cleared — a tile that stages values nobody reads performs no cooperation), `cooperative-participant-convergence` (`threads_per_workgroup: 3 -> 6`), `cooperative-commit-ownership` (`commit.count: 1 -> 3`), and `cooperative-contributor-split` (`contributors_per_partition: 2 -> 3`). A separate test drives the ownership derivation directly: declaring `output_count: 6` instead of `2` fails `proof-reference`, which is the check that stops a cooperative region claiming one owned position per invocation and sizing its output three times too large.
 
 ### Zero-extent input
 
@@ -137,4 +137,4 @@ A cooperative region's nonzero `local_memory_bytes` is already fail-closed again
 
 ### Verification
 
-`cargo fmt --all`; `cargo clippy -p tiler-ir -p tiler-compiler -p tiler-reference --all-targets -- -D warnings`; `cargo nextest run --workspace` (2126 passed, 5 skipped); `make full` green end to end, including `cargo test --workspace --doc`, `RUSTDOCFLAGS="-D warnings" cargo doc`, the release-profile reference and compiler runs (728 passed), `ticketsplease lint` (`ok: no problems found`), and shellcheck. `git diff --check` clean.
+`cargo fmt --all`; `cargo clippy -p tiler-ir -p tiler-compiler -p tiler-reference --all-targets -- -D warnings`; `cargo nextest run --workspace` (2127 passed, 5 skipped); `make full` green end to end, including `cargo test --workspace --doc`, `RUSTDOCFLAGS="-D warnings" cargo doc`, the release-profile reference and compiler runs (728 passed), `ticketsplease lint` (`ok: no problems found`), and shellcheck. `git diff --check` clean.

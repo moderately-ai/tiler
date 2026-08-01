@@ -3323,6 +3323,41 @@ mod tests {
         }
     }
 
+    /// The enumeration bounds refuse a tile they could not decide.
+    ///
+    /// Coverage and disjointness are decided by walking every addressed slot, so
+    /// the bounds are what keep that decision finite. Driven here rather than
+    /// assumed, because a limit nothing has been seen to trip is a limit that
+    /// might not be reached at all.
+    #[test]
+    fn a_tile_beyond_a_governed_enumeration_bound_is_rejected() {
+        let overlong_phases = perturbed(|tile| {
+            let template = tile.phases[1].clone();
+            for ordinal in 2..=u32::try_from(MAX_COOPERATIVE_PHASES).unwrap() {
+                tile.phases.push(CooperativePhase {
+                    id: PhaseId::new(ordinal),
+                    ..template.clone()
+                });
+            }
+        });
+        assert_eq!(
+            cooperative_rejection(overlong_phases),
+            ScheduledRegionDiagnostic::CooperativeTile {
+                rule: CooperativeTileRule::StructuralLimit,
+            }
+        );
+
+        let oversized_storage = perturbed(|tile| {
+            tile.staging[0].slots = MAX_COOPERATIVE_STAGING_SLOTS.saturating_add(1);
+        });
+        assert_eq!(
+            cooperative_rejection(oversized_storage),
+            ScheduledRegionDiagnostic::CooperativeTile {
+                rule: CooperativeTileRule::StructuralLimit,
+            }
+        );
+    }
+
     fn perturb_tile(edit: impl FnOnce(&mut CooperativeTile)) -> CooperativeTile {
         let mut tile = cooperative_tile_fixture();
         edit(&mut tile);
