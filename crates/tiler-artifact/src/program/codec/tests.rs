@@ -2565,10 +2565,15 @@ fn every_section_purpose_declares_its_disposition_and_schema() {
 ///
 /// Two payloads that agree on backend, representation, schema, digest, and
 /// execution policy but were built against different target profiles are two
-/// distinct payloads with two distinct canonical keys — so a program that
-/// shares one compiled object across variants declaring different profiles has
-/// an honest encoding, and a loader reads the payload's own contract rather
-/// than inferring it from whichever variant it routed to.
+/// distinct payloads with two distinct canonical keys — so an artifact carrying
+/// one object per delivery position encodes each object's own contract rather
+/// than one the loader would have to infer from whichever variant it routed to.
+///
+/// Sharing one object across variants declaring *different* profiles is not the
+/// case this serves, and never was: `ArtifactProgramBuilder::check_subject`
+/// refuses a second variant declaring a different profile, which
+/// `super::super::tests::refuses_a_second_variant_declaring_a_different_target_profile`
+/// pins.
 #[test]
 fn the_payload_compatibility_contract_participates_in_its_canonical_key() {
     let baseline = payload(0xa1);
