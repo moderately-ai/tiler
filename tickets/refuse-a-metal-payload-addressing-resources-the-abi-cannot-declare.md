@@ -6,7 +6,7 @@ priority: p3
 dependencies: [validate-metal-payload-argument-slots-against-declared-bindings]
 related: []
 scopes: [implementation/candle]
-shared_scopes: [project/tickets]
+shared_scopes: [project/tickets, implementation/cargo-lock]
 paths: []
 tags: [candle, runtime, artifacts]
 claimed_from: todo
@@ -35,3 +35,27 @@ It has not bitten because every object this profile routes comes from Tiler's ow
 - The refusal names the resource kind and index it found, so a reader can tell a texture from a threadgroup allocation.
 - It is watched failing against a real object that addresses such a resource — which needs a hand-written MSL kernel compiled to a `metallib` outside the emitter, since the emitter cannot produce one. If building that object on the qualified row proves impractical, that is recorded as a measurement with its exact procedure and the check is landed with its evidence boundary stated.
 - Threadgroup rows are decided explicitly rather than by omission: either they are refused with the rest, or the reason a compiled kernel may legitimately carry one is recorded.
+
+## Outcome
+
+Every closing condition is met. `prepare_pipeline_with_reflection` now classifies every reflected row before it derives the buffer table, and refuses under `RouteRefusal::UndeclarableBindings` — a class distinct from `ArgumentSlotsDisagree` — naming each offending row's resource class *and* index.
+
+**Fact — the classes are enumerated, with no wildcard acceptance.** `reflected_binding_class` maps all twelve constants `objc2-metal` 0.3.2 declares on `MTLBindingType` (`Buffer` 0, `ThreadgroupMemory` 1, `Texture` 2, `Sampler` 3, `ImageblockData` 16, `Imageblock` 17, `VisibleFunctionTable` 24, `PrimitiveAccelerationStructure` 25, `InstanceAccelerationStructure` 26, `IntersectionFunctionTable` 27, `ObjectPayload` 34, `Tensor` 37) onto a typed `ReflectedBindingClass`, and binds the raw code of anything else as `Unnamed(code)`. The binding models `MTLBindingType` as a `#[repr(transparent)]` newtype over `NSInteger` with associated constants rather than as a Rust enum, so an exhaustive wildcard-free match is not expressible — the same shape `submission_outcome` records for `MTLCommandBufferStatus` — and the final arm is therefore fail-closed rather than accepting. `ReflectedBindingClass::is_declarable` is the single authority that only `Buffer` is declarable, and both derivations from a reflection read it.
+
+**Fact — threadgroup rows are refused with the rest, and the reason a kernel may carry workgroup memory is recorded.** `tiler-metal`'s `address_space_declaration` refuses `AddressSpace::Workgroup` outright, so the emitter cannot produce a `[[threadgroup(N)]]` parameter; a reflected one would need `setThreadgroupMemoryLength:atIndex:`, which the artifact ABI cannot state and this adapter never calls, so the kernel would address a zero-length allocation. **Measurement** (Apple M4 Max, macOS 27.0 build 26A5388g, `air64-apple-macos26.0` / `metal4.0`, Xcode `metal`/`metallib` as resolved by `xcrun --sdk macosx`): a `threadgroup float scratch[4]` declared *inside* a kernel body produces **no** binding row — the pipeline prepared addressing buffer argument(s) `[0]` — so refusing threadgroup rows refuses the dynamically sized argument form only, not workgroup memory as such.
+
+**Measurement — watched failing against real objects.** `probe_undeclarable_resources` compiles three hand-written MSL kernels through the same `tiler-metal-aot` driver and the same authoritative target the producer compiles with, then loads and prepares each through the exact `load_library` / `prepare_pipeline_with_reflection` a route takes. On the row above:
+
+- `an object declaring a threadgroup allocation inside the kernel body`: prepared, addressing buffer argument(s) `[0]` — the accepted neighbour, without which the two refusals would be indistinguishable from a check that refuses every compiled object.
+- `an object addressing a texture and a sampler`: `candle-metal.prepare: entry 0's "tiler_probe_kernel" addresses texture at index 0, sampler at index 0, and the artifact ABI declares buffer arguments and nothing else, so this consumer would bind nothing for it`. Its buffer half (`[[buffer(0)]]`) agrees exactly, which is the shape of the gap this ticket names.
+- `an object taking a threadgroup memory argument`: refused likewise, naming `threadgroup memory at index 0`.
+
+A refusal must arrive under `UndeclarableBindings` specifically; anything else is `ProofError::ProbeMisclassified` rather than counted as evidence. A toolchain that will not compile a probe prints `NOT MEASURED` with the exact `xcrun` procedure and flags rather than failing the run.
+
+**Perturbation.** With `ReflectedBindingClass::is_declarable` forced to `true`, the proof failed at the texture object (`the probe accepted an object addressing a texture and a sampler, and it must be refused; the check that was supposed to say no did not`, exit 1); reverted, the run is green. The hardware-free half is `only_a_buffer_binding_is_a_class_the_abi_declares` (every named constant plus an unnamed one, distinct renderings, only `Buffer` declarable) and `a_reflected_table_is_declarable_or_names_every_row_that_is_not` (empty and buffer-only tables admitted; a texture, sampler, threadgroup, and unnamed row each named beside buffer rows that are not).
+
+**Hardware re-run**: 20 case(s) agreed across 4 of 6 published members, unchanged.
+
+`implementation/cargo-lock` was added to this ticket's shared scopes: the probe compiles through `tiler-metal-aot`, and placing that dependency edge on `prototypes/candle-metal-adapter` necessarily edits `Cargo.lock`. The edge is used by `src/proof.rs` alone — nothing on the route compiles MSL, and a probe object is never carried in an artifact or dispatched.
+
+**Boundary.** The refusal is a fact about what `MTLComputePipelineReflection` reports on the measured row; no other class than texture, sampler, and threadgroup memory has been exhibited by a real object, and the remaining nine are covered by the classification test alone.

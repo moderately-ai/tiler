@@ -55,10 +55,16 @@ use tiler_metal::applicability::{
     MetalGpuFamilySupport, MetalHostApplicabilityPolicy, MetalHostApplicabilityRefusal,
     MetalHostObservation, evaluate_metal_host_applicability,
 };
+use tiler_metal_aot::driver::Toolchain;
+use tiler_metal_aot::input::{CompileRequest, OptimizationLevel};
 use tiler_runtime::load::ExecutionEnvironment;
 
-use crate::adapter::{SubmissionOutcome, argument_slots_agree, load_library, submission_outcome};
-use crate::refusal::{Realization, TensorRefusal};
+use crate::adapter::{
+    SubmissionOutcome, argument_slots_agree, load_library, prepare_pipeline_with_reflection,
+    submission_outcome,
+};
+use crate::cache::PreparedPipeline;
+use crate::refusal::{Realization, RouteRefusal, TensorRefusal};
 use crate::wrapper::{TilerPlan, WrapperError, candle_expression};
 
 /// Governed backend family key this host executes.
@@ -91,6 +97,85 @@ const MEMBERS: [(&str, &str); 6] = [
     ("nontrivial", "materialized"),
     ("singleton", "selected"),
     ("singleton", "materialized"),
+];
+
+/// The symbol every hand-written probe object publishes.
+const PROBE_SYMBOL: &str = "tiler_probe_kernel";
+
+/// The objects this proof compiles outside the emitter, and what each must do.
+///
+/// Hand-written MSL rather than a carried payload, because the object is the
+/// side that cannot be perturbed: the envelope proves an integrity digest over
+/// the bytes, so an edited object is refused as a damaged envelope long before a
+/// pipeline exists. `tiler-metal`'s emitter cannot produce any of these either —
+/// it emits `[[buffer(N)]]` parameters plus launch builtins and refuses the
+/// workgroup address space outright — which is exactly why an object addressing
+/// one of these resources needs writing by hand to be watched refused.
+///
+/// The tuple is `(the object, whether preparing it must be refused, its
+/// source)`. Every kernel publishes [`PROBE_SYMBOL`] and takes the same
+/// `[[buffer(0)]]` output, so the only thing that varies between rows is the
+/// resource class under test.
+const PROBE_OBJECTS: [(&str, bool, &str); 3] = [
+    // The accepted neighbour, and it carries a measurement of its own: a
+    // threadgroup allocation declared *inside* the kernel body is not an
+    // argument, so it is not a reflected binding row, and refusing threadgroup
+    // rows below therefore refuses the dynamically sized ones an encoder must
+    // set a length for — not workgroup memory as such. Without this row, the
+    // refusals below would be indistinguishable from a check that refuses every
+    // object this proof compiles.
+    (
+        "an object declaring a threadgroup allocation inside the kernel body",
+        false,
+        "#include <metal_stdlib>\n\
+         using namespace metal;\n\
+         kernel void tiler_probe_kernel(\n\
+             device float *out [[buffer(0)]],\n\
+             uint gid [[thread_position_in_grid]]\n\
+         ) {\n\
+             threadgroup float scratch[4];\n\
+             scratch[gid % 4] = float(gid);\n\
+             threadgroup_barrier(mem_flags::mem_threadgroup);\n\
+             out[gid] = scratch[0];\n\
+         }\n",
+    ),
+    // The ticket's own case. Two undeclarable classes at index 0 beside a buffer
+    // at index 0, because that is the shape the gap has: the buffer half can
+    // agree exactly, and the encoder would bind it, dispatch, and leave the
+    // texture and the sampler unbound.
+    (
+        "an object addressing a texture and a sampler",
+        true,
+        "#include <metal_stdlib>\n\
+         using namespace metal;\n\
+         kernel void tiler_probe_kernel(\n\
+             device float *out [[buffer(0)]],\n\
+             texture2d<float, access::sample> image [[texture(0)]],\n\
+             sampler taps [[sampler(0)]],\n\
+             uint gid [[thread_position_in_grid]]\n\
+         ) {\n\
+             out[gid] = image.sample(taps, float2(0.0f, 0.0f)).x;\n\
+         }\n",
+    ),
+    // The threadgroup half, decided rather than omitted: this length is set by
+    // `setThreadgroupMemoryLength:atIndex:` at encode time, the artifact ABI has
+    // no way to state it, and this adapter never calls it — so the kernel would
+    // address a zero-length allocation.
+    (
+        "an object taking a threadgroup memory argument",
+        true,
+        "#include <metal_stdlib>\n\
+         using namespace metal;\n\
+         kernel void tiler_probe_kernel(\n\
+             device float *out [[buffer(0)]],\n\
+             threadgroup float *scratch [[threadgroup(0)]],\n\
+             uint gid [[thread_position_in_grid]]\n\
+         ) {\n\
+             scratch[0] = float(gid);\n\
+             threadgroup_barrier(mem_flags::mem_threadgroup);\n\
+             out[gid] = scratch[0];\n\
+         }\n",
+    ),
 ];
 
 /// The reduction class this proof runs its Tensor-level probes against.
@@ -151,7 +236,7 @@ fn run() -> Result<(), ProofError> {
     );
 
     // The device-level fail-closed probes, before the positive route is claimed.
-    probe_device_refusals(metal)?;
+    probe_device_refusals(metal, &declaration)?;
 
     let mut proved = 0_usize;
     let mut unsupported = 0_usize;
@@ -309,9 +394,15 @@ fn prove_member(
 
 /// Proves each device-side refusal arrives under the class it must.
 ///
-/// Every probe perturbs one input and leaves the rest alone, and each is paired
-/// with the unperturbed neighbour that routed moments earlier in [`run`].
-fn probe_device_refusals(metal: &candle_core::MetalDevice) -> Result<(), ProofError> {
+/// Every probe changes one fact and leaves the rest alone, and each is paired
+/// with a neighbour that is accepted: the two payload probes against the real
+/// object [`run`] routes moments later, and each object in
+/// [`probe_undeclarable_resources`] against the one compiled beside it that
+/// prepares.
+fn probe_device_refusals(
+    metal: &candle_core::MetalDevice,
+    declaration: &BoundMetalCompileDeclaration,
+) -> Result<(), ProofError> {
     // Bytes that are not a metallib. The envelope digest matched for the real
     // object, so this is content that will not execute rather than an integrity
     // failure — the distinction the payload refusal exists to carry.
@@ -343,7 +434,91 @@ fn probe_device_refusals(metal: &candle_core::MetalDevice) -> Result<(), ProofEr
             ));
         }
     }
+
+    probe_undeclarable_resources(metal, declaration)
+}
+
+/// Proves an object addressing a resource the ABI cannot declare is refused.
+///
+/// The half of ADR 0090 item 8's third obligation that no artifact can exhibit.
+/// Each object is compiled from the source [`PROBE_OBJECTS`] carries, through the
+/// same offline driver and the same authoritative target the producer compiles
+/// with, and then loaded and prepared through the exact functions a route takes —
+/// so a refusal here is about the resource class and not about a second code path
+/// written to resemble the first.
+///
+/// A refusal is required to arrive under the undeclarable-resource class
+/// specifically. An object refused because its pipeline would not build is not
+/// evidence about this check, and reporting it as one is how a check that never
+/// ran reads as a check that said no.
+fn probe_undeclarable_resources(
+    metal: &candle_core::MetalDevice,
+    declaration: &BoundMetalCompileDeclaration,
+) -> Result<(), ProofError> {
+    for (object, must_refuse, source) in PROBE_OBJECTS {
+        let request = CompileRequest::new(
+            source,
+            declaration.aot_target(),
+            OptimizationLevel::Default,
+            declaration.numerical_realization(),
+        );
+        // A toolchain that will not compile the probe leaves the *measurement*
+        // unmade rather than the run failed, and says exactly what would make it:
+        // the refusal itself is unit-tested against a classified table, and what
+        // is missing without this is the evidence that Metal's reflection on this
+        // row reports the class at all.
+        let compiled = match Toolchain::system().compile(&request) {
+            Ok(compiled) => compiled,
+            Err(cause) => {
+                println!(
+                    "  probe {object}: NOT MEASURED — the offline Metal toolchain did not \
+                     produce it ({cause}). The exact procedure is `xcrun --sdk {} metal {} \
+                     <probe>.metal -o <probe>.air` then `xcrun --sdk {} metallib <probe>.air -o \
+                     <probe>.metallib`, over the source this proof carries for that row.",
+                    request.target.sdk().selector(),
+                    request.compile_flags().join(" "),
+                    request.target.sdk().selector(),
+                );
+                continue;
+            }
+        };
+
+        match prepared_probe_pipeline(metal, &compiled.metallib) {
+            Ok(_) if must_refuse => return Err(ProofError::ProbeAccepted(object)),
+            Ok(prepared) => println!(
+                "  probe {object}: prepared, addressing buffer argument(s) {:?} and no row the \
+                 artifact ABI cannot declare",
+                prepared.addressed_slots,
+            ),
+            Err(refusal) if must_refuse => {
+                if !matches!(refusal, RouteRefusal::UndeclarableBindings { .. }) {
+                    return Err(ProofError::ProbeMisclassified {
+                        probe: object,
+                        refusal: refusal.to_string(),
+                    });
+                }
+                println!("  probe {object}: {refusal}");
+            }
+            Err(refusal) => return Err(ProofError::BaselineRefused(refusal.to_string())),
+        }
+    }
     Ok(())
+}
+
+/// Loads and prepares one hand-written probe object exactly as a route would.
+fn prepared_probe_pipeline(
+    device: &candle_core::MetalDevice,
+    object: &[u8],
+) -> Result<PreparedPipeline, RouteRefusal> {
+    let library = load_library(device, 0, object)?;
+    let function = library.get_function(PROBE_SYMBOL, None).map_err(|cause| {
+        RouteRefusal::EntrySymbolAbsent {
+            entry: 0,
+            symbol: PROBE_SYMBOL.to_owned(),
+            detail: cause.to_string(),
+        }
+    })?;
+    prepare_pipeline_with_reflection(device, 0, PROBE_SYMBOL, &function)
 }
 
 /// Proves each Tensor-level refusal arrives by name, and that the fallback fails closed.
@@ -889,6 +1064,19 @@ pub enum ProofError {
     Wrapper(WrapperError),
     /// A probe's perturbation was accepted where it had to be refused.
     ProbeAccepted(&'static str),
+    /// A probe was refused by a check other than the one it exercises.
+    ///
+    /// Separate from [`Self::ProbeAccepted`] because the remedy differs and the
+    /// claim does too: the object *was* refused, so a run reporting this is not
+    /// reporting a route that would have run — it is reporting that the refusal
+    /// arrived from somewhere else, and therefore says nothing about the check
+    /// the probe was built for.
+    ProbeMisclassified {
+        /// What the probe object addresses.
+        probe: &'static str,
+        /// The refusal that arrived instead.
+        refusal: String,
+    },
     /// The unperturbed baseline was refused, so no probe is evidence.
     BaselineRefused(String),
     /// The fallback ran where the artifact path had to.
@@ -949,6 +1137,12 @@ impl fmt::Display for ProofError {
                 formatter,
                 "the probe accepted {probe}, and it must be refused; the check that was supposed \
                  to say no did not",
+            ),
+            Self::ProbeMisclassified { probe, refusal } => write!(
+                formatter,
+                "the probe refused {probe} as {refusal}, which is not the \
+                 undeclarable-resource class the probe exists to exercise, so it is not evidence \
+                 about that check",
             ),
             Self::BaselineRefused(detail) => write!(
                 formatter,
