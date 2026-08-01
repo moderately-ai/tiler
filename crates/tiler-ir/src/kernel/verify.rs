@@ -154,6 +154,13 @@ fn verify_signature(
         | crate::schedule::ScalarProgram::FusedMultiplyAddSerialSum { .. } => {
             vec![KernelType::F32]
         }
+        // Two, stated as two rather than as `reads.len()`: the count is the
+        // contraction family's own arity, so a region declaring some other
+        // number of reads must fail this comparison instead of agreeing with
+        // itself.
+        crate::schedule::ScalarProgram::StrictTensorContraction { .. } => {
+            vec![KernelType::F32, KernelType::F32]
+        }
     };
     let expected_elements = reads
         .iter()
@@ -415,6 +422,26 @@ fn verify_reduction(
             partition,
             ..
         } => verify_contributor_loop(walk, partition.contributors_per_partition),
+        // The two-read case. A contraction's contributor count is the size of
+        // its contracted index space, which no single read's map determines:
+        // each operand names only the contracted coordinates its own tuple
+        // mentions. The topology states it, and the schedule verifier already
+        // proved both operand maps agree with that statement — so the fold
+        // obligation itself is the shared one, including the `start == 1` seed
+        // at the first product.
+        ReductionTopology::Contraction {
+            contracted_shape, ..
+        } => {
+            if reads.len() != 2 {
+                return Err(KernelDiagnostic::ReductionContract);
+            }
+            let contributors = element_count(contracted_shape)
+                .map_err(|_| KernelDiagnostic::ElementCountOverflow)?;
+            if contributors == 0 {
+                return Err(KernelDiagnostic::ContributorDomain);
+            }
+            verify_contributor_loop(walk, contributors)
+        }
     }
 }
 

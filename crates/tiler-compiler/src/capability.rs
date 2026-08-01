@@ -2237,26 +2237,28 @@ mod tests {
         ));
     }
 
-    /// A contraction occurrence fails closed at lowering-capability resolution.
+    /// A contraction resolves at its own binary signature and nowhere else.
     ///
-    /// `tiler::strict-tensor-contraction-f32@1` is a registered semantic
-    /// operation family: a program can state it and it verifies. That is
-    /// deliberately all it is. ADR 0087 item 4 requires a structure no installed
-    /// capability covers to be a typed resolution refusal, and this is the
-    /// check: the *governed* registry — the four index-access capabilities this
-    /// build ships — is asked for the exact signature a contraction occurrence
-    /// presents, and answers that it has none.
-    ///
-    /// Against the governed registry rather than an empty one, because the claim
-    /// under test is "nothing installed covers a contraction", and an empty
-    /// registry covers nothing at all.
+    /// ADR 0087 item 4 requires a contraction no installed capability covers to
+    /// be a typed resolution refusal rather than a silent approximation. The
+    /// governed registry now ships one — `[f32, f32] -> [f32]`, the family's own
+    /// arity — so the refusal this test asserts moved from "no contraction at
+    /// all" to "not at a signature the family does not have". Both halves are
+    /// checked, because the resolution alone would also be satisfied by a
+    /// registry that answered for every signature it was asked about.
     #[test]
-    fn a_contraction_occurrence_resolves_to_no_installed_index_access_capability() {
+    fn a_contraction_resolves_only_at_its_registered_binary_signature() {
         let installed = crate::request::CompilerCapabilitySnapshot::governed();
         let contraction = OpKey::new("tiler", "strict-tensor-contraction-f32", 1).unwrap();
+        assert!(
+            installed
+                .lowering()
+                .resolve_index_access(&contraction, &binary_signature())
+                .is_ok()
+        );
         let error = installed
             .lowering()
-            .resolve_index_access(&contraction, &binary_signature())
+            .resolve_index_access(&contraction, &unary_signature())
             .unwrap_err();
         assert!(matches!(
             error,
@@ -2269,14 +2271,15 @@ mod tests {
             error.to_string(),
             "no index-access lowering capability for operation tiler::strict-tensor-contraction-f32@1"
         );
-        // The same registry does cover a governed occurrence, so the refusal
-        // above is a decision about the contraction rather than a registry that
-        // resolves nothing.
+        // A family the build registers no capability for at all still refuses,
+        // so the resolution above is a decision about what is installed rather
+        // than a registry that answers for anything it is handed.
+        let unregistered = OpKey::new("tiler", "rms-norm-f32", 1).unwrap();
         assert!(
             installed
                 .lowering()
-                .resolve_index_access(&multiply_f32_op(), &binary_signature())
-                .is_ok()
+                .resolve_index_access(&unregistered, &unary_signature())
+                .is_err()
         );
     }
 

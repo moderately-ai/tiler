@@ -26,12 +26,13 @@ use tiler_ir::index::{
     exp_f32_scalar_op, multiply_f32_scalar_op,
 };
 use tiler_ir::semantic::{
-    BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, BroadcastAxisSource, CanonicalField,
-    CanonicalIntegerWidth, CanonicalValue, CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE,
-    OpKey, OperationAttributes, ProviderIdentity, REDUCTION_AXES_ATTRIBUTE,
-    REINDEX_MAPPING_ATTRIBUTE, ReindexForm, ReindexFormKind, ResolvedValueType, TypeKey,
-    add_f32_op, broadcast_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op, silu_f32_op,
-    strict_serial_sum_f32_op,
+    BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, BroadcastAxisSource,
+    CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField, CanonicalIntegerWidth, CanonicalValue,
+    CanonicalValueView, ContractionIndex, ContractionIndexStructure, F32,
+    F32_CONSTANT_BITS_ATTRIBUTE, OpKey, OperationAttributes, ProviderIdentity,
+    REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, ReindexForm, ReindexFormKind,
+    ResolvedValueType, TypeKey, add_f32_op, broadcast_f32_op, constant_f32_op, multiply_f32_op,
+    reindex_f32_op, silu_f32_op, strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
 };
 use tiler_ir::shape::{Axis, Extent, Shape};
 
@@ -197,14 +198,14 @@ impl GovernedIndexAccess {
     }
 }
 
-/// Returns the seven shipped index-access capabilities in canonical family order.
+/// Returns the eight shipped index-access capabilities in canonical family order.
 ///
 /// # Errors
 ///
 /// Returns [`GovernedRegistryError`] when a governed signature exceeds its
 /// governed structural bound.
 pub(crate) fn governed_index_access_capabilities()
--> Result<[GovernedIndexAccess; 7], GovernedRegistryError> {
+-> Result<[GovernedIndexAccess; 8], GovernedRegistryError> {
     let f32_type = F32::resolved_type();
     let pointwise =
         || LoweringSignature::new([f32_type.clone(), f32_type.clone()], [f32_type.clone()]);
@@ -287,9 +288,25 @@ pub(crate) fn governed_index_access_capabilities()
         GovernedIndexAccess {
             provider: governed_provider("broadcast-f32"),
             operation: broadcast_f32_op(),
-            signature: LoweringSignature::new([f32_type.clone()], [f32_type])?,
+            signature: LoweringSignature::new([f32_type.clone()], [f32_type.clone()])?,
             emitted: Vec::new(),
             implementation: Arc::new(GovernedBroadcastF32),
+        },
+        GovernedIndexAccess {
+            provider: governed_provider("strict-tensor-contraction-f32"),
+            operation: strict_tensor_contraction_f32_op(),
+            signature: LoweringSignature::new([f32_type.clone(), f32_type.clone()], [f32_type])?,
+            // The union over shapes, like the serial sum's: a contracted space
+            // with one point reaches only the product, and a longer one reaches
+            // the add as well. There is deliberately no
+            // `canonicalize-nan-f32` — unlike the serial sum, whose singleton
+            // case commits a *raw load*, every value this lowering can commit is
+            // the result of a governed arithmetic operation, and those
+            // canonicalize their own results. Declaring one anyway would make
+            // refinement's containment check pass over an operation the region
+            // never emits.
+            emitted: vec![multiply_f32_scalar_op(), add_f32_scalar_op()],
+            implementation: Arc::new(GovernedStrictTensorContractionF32),
         },
     ])
 }
@@ -770,6 +787,302 @@ impl SumPlan {
             body.yield_values(&[accumulated])
         })?;
         single_result(&folded, "reduction")
+    }
+}
+
+/// Emits the region realizing one `tiler::strict-tensor-contraction-f32@1`
+/// occurrence.
+///
+/// The `direct` realization: one iteration point per output element, folding its
+/// own contracted sequence in ascending canonical order. Three properties are
+/// load-bearing.
+///
+/// **The accumulator seeds at the first product, never at `+0.0`.** The two
+/// differ observably on a vector whose every product is `-0.0`, where the seeded
+/// fold returns `+0.0`; the registered family declares no seed, so seeding would
+/// compute a contraction carrying an explicit `initial` — a different operation.
+///
+/// **The product and the sum round separately.** Each is its own governed scalar
+/// application, so the single-rounding fused form the family declares forbidden
+/// is not merely unselected here, it is unstatable: no scalar key in this
+/// vocabulary fuses a multiply into an add.
+///
+/// **No result-boundary canonicalization is emitted, and its absence is
+/// derived.** The serial sum needs one because its singleton case commits a raw
+/// load. Every value this region can commit is a governed multiply's or add's
+/// result, and those canonicalize their own results, so a conversion here would
+/// be provably redundant — and would put an operation in the emitted set that
+/// refinement's containment check could then never see fail.
+struct GovernedStrictTensorContractionF32;
+
+impl IndexAccessLoweringProvider for GovernedStrictTensorContractionF32 {
+    fn lower(&self, context: &mut IndexAccessLoweringContext<'_>) -> Result<(), LoweringEmitError> {
+        let plan = ContractionPlan::derive(context.occurrence())?;
+        let output = declare_parallel_domain(context, &plan.output_shape)?;
+        let output_coordinates = dimension_expressions(context, &output)?;
+        let mut tensors = Vec::with_capacity(plan.operand_shapes.len());
+        for shape in &plan.operand_shapes {
+            tensors.push(context.input_tensor(plan.value_type.clone(), shape.clone())?);
+        }
+        let result = context.output_tensor(plan.value_type.clone(), plan.output_shape.clone())?;
+
+        let seed = plan.product(context, &tensors, &output, &output_coordinates, None)?;
+        let total = if plan.contracted_points == 1 {
+            seed
+        } else {
+            let tail = context.dimension(
+                DomainRole::Reduction,
+                Extent::new(plan.contracted_points.saturating_sub(1)),
+            )?;
+            let contributor =
+                plan.product(context, &tensors, &output, &output_coordinates, Some(tail))?;
+            let folded = context.reduce(&[tail], &[seed], &[contributor], |body| {
+                let state = body
+                    .state(0)
+                    .expect("the reduction declares one state parameter");
+                let contributor = body
+                    .contributor(0)
+                    .expect("the reduction declares one contributor parameter");
+                let accumulated = body.apply(
+                    add_f32_scalar_op(),
+                    ScalarAttributes::empty(),
+                    &[state, contributor],
+                )?;
+                let accumulated = accumulated
+                    .get(0)
+                    .expect("the governed add contract produces one result");
+                body.yield_values(&[accumulated])
+            })?;
+            single_result(&folded, "contraction")?
+        };
+        let write = context.write(result, &output, &output_coordinates)?;
+        context.output(write, total)
+    }
+}
+
+/// The exact contraction geometry one occurrence describes.
+///
+/// Every extent is re-derived from the structure and the operand shapes rather
+/// than taken from the occurrence's declared result, and the derived output
+/// shape is then required to equal that declaration: the semantic registry
+/// already refused a malformed occurrence at construction, so a disagreement is
+/// invalid state and this region must realize the occurrence it was handed
+/// rather than its own derivation of one.
+struct ContractionPlan {
+    value_type: ResolvedValueType,
+    operand_shapes: Vec<Shape>,
+    output_shape: Shape,
+    /// Per operand, per axis: whether the axis reads an output or a contracted
+    /// coordinate, and at which position.
+    sources: Vec<Vec<AxisSource>>,
+    /// Row-major strides of the contracted space, per contracted position.
+    contracted_strides: Vec<u64>,
+    /// Extents of the contracted space, per contracted position.
+    contracted_extents: Vec<u64>,
+    /// Points of the contracted space; the fold length per output element.
+    contracted_points: u64,
+}
+
+/// Which coordinate one operand axis reads.
+#[derive(Clone, Copy)]
+enum AxisSource {
+    Output(usize),
+    Contracted(usize),
+}
+
+impl ContractionPlan {
+    fn derive(occurrence: &LoweredOccurrence) -> Result<Self, LoweringEmitError> {
+        let ([left, right], [result]) = (occurrence.inputs(), occurrence.results()) else {
+            return Err(occurrence_error("contraction-arity"));
+        };
+        if occurrence.operands() != [0, 1] {
+            return Err(occurrence_error("contraction-operand-binding"));
+        }
+        let [field] = occurrence.attributes().fields() else {
+            return Err(occurrence_error("contraction-attributes"));
+        };
+        if field.id() != CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE {
+            return Err(occurrence_error("contraction-attributes"));
+        }
+        let structure = ContractionIndexStructure::from_canonical_value(field.value())
+            .map_err(|_| occurrence_error("contraction-structure"))?;
+        let boundaries = [left, right];
+        if structure.operand_count() != boundaries.len() {
+            return Err(occurrence_error("contraction-operand-count"));
+        }
+
+        let mut extents: Vec<(ContractionIndex, Extent)> = Vec::new();
+        let mut operand_shapes = Vec::with_capacity(boundaries.len());
+        for (tuple, boundary) in structure.operands().zip(boundaries) {
+            let shape = boundary.shape().clone();
+            if shape.rank() != tuple.len() {
+                return Err(occurrence_error("contraction-rank"));
+            }
+            for (axis, index) in tuple.iter().enumerate() {
+                let extent = shape.extents()[axis];
+                match extents.iter().find(|(bound, _)| bound == index) {
+                    Some((_, bound)) if *bound != extent => {
+                        return Err(occurrence_error("contraction-extent"));
+                    }
+                    Some(_) => {}
+                    None => extents.push((*index, extent)),
+                }
+            }
+            operand_shapes.push(shape);
+        }
+        let shape_over = |indices: &[ContractionIndex]| -> Result<Shape, LoweringEmitError> {
+            Shape::try_new(
+                indices
+                    .iter()
+                    .map(|index| {
+                        extents
+                            .iter()
+                            .find(|(bound, _)| bound == index)
+                            .map(|(_, extent)| *extent)
+                            .ok_or_else(|| occurrence_error("contraction-extent"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            )
+            .map_err(|_| occurrence_error("contraction-shape"))
+        };
+        let output_shape = shape_over(structure.output())?;
+        if &output_shape != result.shape() {
+            return Err(occurrence_error("contraction-result-shape"));
+        }
+        let contracted_shape = shape_over(structure.contracted())?;
+
+        let mut sources = Vec::with_capacity(structure.operand_count());
+        for tuple in structure.operands() {
+            let mut operand = Vec::with_capacity(tuple.len());
+            for index in tuple {
+                let source = if let Some(position) =
+                    structure.output().iter().position(|free| free == index)
+                {
+                    AxisSource::Output(position)
+                } else if let Some(position) = structure
+                    .contracted()
+                    .iter()
+                    .position(|summed| summed == index)
+                {
+                    AxisSource::Contracted(position)
+                } else {
+                    // Every operand index is free or contracted by the
+                    // structure's own derivation, so this is invalid state
+                    // rather than a caller error. Refused rather than assumed
+                    // away.
+                    return Err(occurrence_error("contraction-index"));
+                };
+                operand.push(source);
+            }
+            sources.push(operand);
+        }
+
+        let contracted_extents: Vec<u64> = contracted_shape
+            .extents()
+            .iter()
+            .map(|extent| extent.get())
+            .collect();
+        let mut contracted_strides = vec![0_u64; contracted_extents.len()];
+        let mut stride = 1_u64;
+        for (position, extent) in contracted_extents.iter().enumerate().rev() {
+            contracted_strides[position] = stride;
+            stride = stride
+                .checked_mul(*extent)
+                .ok_or_else(|| occurrence_error("contraction-extent-overflow"))?;
+        }
+        // The one precondition. The registered family declares an empty
+        // contracted domain refused rather than identity-valued, so there is no
+        // value this region could commit for one.
+        if stride == 0 {
+            return Err(occurrence_error("contraction-empty-domain"));
+        }
+        Ok(Self {
+            value_type: result.value_type().clone(),
+            operand_shapes,
+            output_shape,
+            sources,
+            contracted_strides,
+            contracted_extents,
+            contracted_points: stride,
+        })
+    }
+
+    /// Emits the separately rounded product at contracted offset `tail + 1`, or
+    /// at zero.
+    fn product(
+        &self,
+        context: &mut IndexAccessLoweringContext<'_>,
+        tensors: &[tiler_ir::index::TensorId],
+        output: &[tiler_ir::index::DimensionId],
+        output_coordinates: &[IndexExprId],
+        tail: Option<tiler_ir::index::DimensionId>,
+    ) -> Result<ScalarValueId, LoweringEmitError> {
+        let offset = match tail {
+            Some(tail) => {
+                let induction = context.dimension_expr(tail)?;
+                let one = IndexInteger::from_u64(1);
+                Some(context.linear_combination(one.clone(), &[(one, induction)])?)
+            }
+            None => None,
+        };
+        let zero = context.constant(IndexInteger::from_u64(0))?;
+        let mut domain = output.to_vec();
+        domain.extend(tail);
+        let mut values = Vec::with_capacity(tensors.len());
+        for (position, tensor) in tensors.iter().enumerate() {
+            let mut coordinates = Vec::with_capacity(self.sources[position].len());
+            for source in &self.sources[position] {
+                coordinates.push(match source {
+                    AxisSource::Output(axis) => *output_coordinates
+                        .get(*axis)
+                        .ok_or_else(|| occurrence_error("contraction-coordinate"))?,
+                    AxisSource::Contracted(axis) => match offset {
+                        Some(offset) => self.decode_contracted(context, offset, *axis)?,
+                        None => zero,
+                    },
+                });
+            }
+            values.push(context.read(*tensor, &domain, &coordinates)?);
+        }
+        // One rounding for the product, which the governed multiply also
+        // canonicalizes. The fused single-rounding form is the permission this
+        // family declares forbidden, and no scalar key here can express it.
+        //
+        // The evaluation scope is implicit rather than declared: ADR 0087's
+        // second structural rule puts every contracted index in *both* operands,
+        // so both reads already range over the contracted dimension and the
+        // product inherits it. Naming it again would be the duplicate
+        // `apply_in` refuses.
+        let applied =
+            context.apply(multiply_f32_scalar_op(), ScalarAttributes::empty(), &values)?;
+        single_result(&applied, "contraction-product")
+    }
+
+    /// Decodes one contracted coordinate from a linearized contracted offset.
+    fn decode_contracted(
+        &self,
+        context: &mut IndexAccessLoweringContext<'_>,
+        offset: IndexExprId,
+        position: usize,
+    ) -> Result<IndexExprId, LoweringEmitError> {
+        let stride = self.contracted_strides[position];
+        let extent = self.contracted_extents[position];
+        // The leading contracted axis needs no wrap: the offset is already below
+        // the product of every contracted extent. The same wrap-then-divide
+        // convention the serial sum's reduced-offset decode uses.
+        let wrapped = if position == 0 {
+            offset
+        } else {
+            let modulus = stride
+                .checked_mul(extent)
+                .ok_or_else(|| occurrence_error("contraction-extent-overflow"))?;
+            context.modulo(offset, SourcedExtent::Static(Extent::new(modulus)))?
+        };
+        if stride == 1 {
+            Ok(wrapped)
+        } else {
+            Ok(context.floor_div(wrapped, SourcedExtent::Static(Extent::new(stride)))?)
+        }
     }
 }
 
@@ -1254,6 +1567,9 @@ fn occurrence_error(rule: &'static str) -> LoweringEmitError {
 }
 
 #[cfg(test)]
+mod contraction_conformance;
+
+#[cfg(test)]
 mod tests {
     use super::{governed_lowering_capabilities, governed_scalars};
     use crate::capability::LoweringSignature;
@@ -1264,10 +1580,11 @@ mod tests {
     use tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS;
     use tiler_ir::semantic::{
         BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, BroadcastAxisSource,
-        CanonicalField, CanonicalValue, F32, F32_CONSTANT_BITS_ATTRIBUTE, OpKey,
-        OperationAttributes, OperationEffect, REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE,
-        ReindexForm, ResolvedValueType, TypeKey, add_f32_op, broadcast_f32_op, constant_f32_op,
-        multiply_f32_op, reindex_f32_op, strict_serial_sum_f32_op,
+        CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField, CanonicalValue, ContractionIndex,
+        ContractionIndexStructure, F32, F32_CONSTANT_BITS_ATTRIBUTE, OpKey, OperationAttributes,
+        OperationEffect, REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, ReindexForm,
+        ResolvedValueType, TypeKey, add_f32_op, broadcast_f32_op, constant_f32_op, multiply_f32_op,
+        reindex_f32_op, strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
     };
     use tiler_ir::shape::{Axis, Extent, Shape};
     use tiler_reference::{
@@ -1907,6 +2224,62 @@ mod tests {
         assert!(
             refine_index_region(&resolved, &mismatched, &scalars).is_err(),
             "a reindex whose declared result the form does not derive is refused",
+        );
+    }
+
+    /// Builds the attribute record carrying one contraction index structure.
+    fn contraction_attributes(structure: &ContractionIndexStructure) -> OperationAttributes {
+        OperationAttributes::new([CanonicalField::new(
+            CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE,
+            structure.canonical_value().clone(),
+        )])
+        .unwrap()
+    }
+
+    /// Refines one contraction occurrence through the governed registry.
+    fn refine_contraction(
+        structure: &ContractionIndexStructure,
+        left: Shape,
+        right: Shape,
+        result: Shape,
+    ) -> IndexRefinement {
+        refine(
+            strict_tensor_contraction_f32_op(),
+            vec![
+                OccurrenceOperand::new(OccurrenceValueId(0), f32_type(), left),
+                OccurrenceOperand::new(OccurrenceValueId(1), f32_type(), right),
+            ],
+            vec![OccurrenceResult::new(f32_type(), result)],
+            contraction_attributes(structure),
+        )
+    }
+
+    /// The profile's own index structure, `td,od->to`, spelled with arbitrary
+    /// frontend labels so the canonicalization is exercised rather than assumed.
+    fn projection_structure() -> ContractionIndexStructure {
+        ContractionIndexStructure::new(
+            [
+                [ContractionIndex::new(19), ContractionIndex::new(3)],
+                [ContractionIndex::new(14), ContractionIndex::new(3)],
+            ],
+            [ContractionIndex::new(19), ContractionIndex::new(14)],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn the_governed_contraction_lowering_refines_its_occurrence() {
+        let refinement = refine_contraction(
+            &projection_structure(),
+            Shape::from_dims([2, 3]),
+            Shape::from_dims([4, 3]),
+            Shape::from_dims([2, 4]),
+        );
+        assert_eq!(refinement.operand_bindings().len(), 2);
+        assert_eq!(refinement.result_bindings().len(), 1);
+        assert_ne!(
+            refinement.operand_bindings()[0].input_tensor(),
+            refinement.operand_bindings()[1].input_tensor()
         );
     }
 

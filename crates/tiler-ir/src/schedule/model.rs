@@ -86,6 +86,35 @@ pub enum ContributorOrder {
     OriginalAxisLexicographic,
 }
 
+/// Which coordinate one contraction operand axis reads.
+///
+/// A contraction's iteration space is the product of its output shape and its
+/// contracted shape, and each operand axis binds to exactly one coordinate of
+/// one of the two. Stating that per axis is what makes a general binary index
+/// structure addressable without an index-arithmetic vocabulary: `td,od->to`
+/// gives operand 0 the sources `[Output { 0 }, Contracted { 0 }]` and operand 1
+/// `[Output { 1 }, Contracted { 0 }]`, and a structure whose contracted index
+/// sits at a different axis of each operand is expressed the same way.
+///
+/// **Do not add `#[non_exhaustive]`.** This is an ADR 0074 convention 5b type
+/// for the reason [`AccessMode`] is: the identity encoder in this crate and
+/// `tiler-compiler`'s region construction and subject binding map it *totally*,
+/// with no wildcard arm, and a wildcard would have to invent an identity tag the
+/// variant alone determines.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ContractionAxisSource {
+    /// The coordinate at this position of the contraction's output shape.
+    Output {
+        /// Position within the output shape, in axis order.
+        position: u32,
+    },
+    /// The coordinate at this position of the contracted iteration shape.
+    Contracted {
+        /// Position within the contracted shape, in axis order.
+        position: u32,
+    },
+}
+
 /// The logical coordinate map a scheduled access realizes.
 ///
 /// `#[non_exhaustive]` under ADR 0074 convention 5a: every out-of-crate
@@ -117,6 +146,29 @@ pub enum LogicalAccess {
         output_shape: Shape,
         /// Reduced axes in canonical ascending order.
         axes: Vec<Axis>,
+        /// Contributor combination order.
+        order: ContributorOrder,
+    },
+    /// One operand of a tensor contraction, addressed by the output and
+    /// contracted coordinates its index tuple names.
+    ///
+    /// Deliberately not a [`Self::ReductionContributor`] with a wider shape. A
+    /// reduction's contributor family is a sub-shape of *one* input, so its
+    /// output shape is that input's shape with the reduced axes removed. A
+    /// contraction's two operands each name a different subset of the free
+    /// indices, so neither operand's shape stands in that relation to the
+    /// output, and `input_shape.without_axes(axes)` — the equality the reduction
+    /// bounds proof checks — has no contraction analogue.
+    ContractionOperand {
+        /// Shape of this operand.
+        operand_shape: Shape,
+        /// Shape of the contraction's output.
+        output_shape: Shape,
+        /// Row-major shape of the contracted iteration space, in ascending
+        /// canonical contracted-index order.
+        contracted_shape: Shape,
+        /// Per operand axis, in axis order, which coordinate that axis reads.
+        sources: Vec<ContractionAxisSource>,
         /// Contributor combination order.
         order: ContributorOrder,
     },
@@ -229,7 +281,8 @@ pub struct OwnershipProof {
 ///         ScalarProgram::StrictAffineU4Dequantize { .. } => false,
 ///         ScalarProgram::StrictSerialSum { .. }
 ///         | ScalarProgram::SquaredSerialSum { .. }
-///         | ScalarProgram::FusedMultiplyAddSerialSum { .. } => true,
+///         | ScalarProgram::FusedMultiplyAddSerialSum { .. }
+///         | ScalarProgram::StrictTensorContraction { .. } => true,
 ///     }
 /// }
 /// let program = ScalarProgram::StrictSerialSum {
@@ -312,6 +365,31 @@ pub enum ScalarProgram {
         canonical_nan_bits: u32,
         /// Empty-reduction identity bit pattern.
         empty_identity_bits: u32,
+    },
+    /// A strict tensor contraction of two operands over a shared index space.
+    ///
+    /// One product per contracted point, each rounded once, folded in ascending
+    /// contracted order from the *first product*. It is not a
+    /// [`Self::FusedMultiplyAddSerialSum`] with a tensor scale: that program
+    /// applies two constants to one contributor, and this one multiplies two
+    /// loaded values whose coordinates differ. It is not a
+    /// [`Self::StrictSerialSum`] over a materialized product either — that
+    /// materialization would round the product at an observable boundary and
+    /// cost a full temporary of the iteration space's size.
+    ///
+    /// **There is deliberately no empty-domain identity.** The registered
+    /// contraction declares `refused-an-unseeded-fold-has-no-empty-result`, so
+    /// there is no value an empty contracted domain could commit; the schedule
+    /// verifier refuses a contracted shape with no points instead. A field
+    /// carrying an identity here would be a value that can never be correct.
+    StrictTensorContraction {
+        /// Row-major shape of the contracted iteration space, in ascending
+        /// canonical contracted-index order.
+        contracted_shape: Shape,
+        /// Contributor combination order.
+        order: ContributorOrder,
+        /// Canonical arithmetic NaN bit pattern.
+        canonical_nan_bits: u32,
     },
 }
 
@@ -468,6 +546,35 @@ pub enum ReductionTopology {
         /// whole, and deliberately *not* consulted to admit the split: this
         /// strategy preserves contributor order, so granting permutation never
         /// makes an otherwise illegal split legal.
+        permits_permutation: bool,
+    },
+    /// The region folds one contraction's contracted index space per output.
+    ///
+    /// A topology of its own rather than a [`Self::Serial`] carrying the
+    /// contracted axes, because `Serial`'s `axes` name axes of *one* read
+    /// tensor and a contraction's contracted index generally sits at a
+    /// different axis of each operand — `abc,b->ac` binds its summed index to
+    /// axis 1 of operand 0 and axis 0 of operand 1. One `Vec<Axis>` cannot say
+    /// that, so reusing `Serial` would give one field two meanings and leave
+    /// the general structure unstatable.
+    ///
+    /// The fold itself is serial and preserves order exactly as `Serial` does,
+    /// which is why both permissions appear here with the same meaning and why
+    /// the contributor-loop obligation is the shared one.
+    Contraction {
+        /// Row-major shape of the contracted iteration space, in ascending
+        /// canonical contracted-index order.
+        contracted_shape: Shape,
+        /// Contributor combination order within the contracted space.
+        order: ContributorOrder,
+        /// Whether the contract permits reassociation.
+        ///
+        /// Recorded and cross-checked against the region's declared
+        /// realization, and deliberately not consulted to admit the topology:
+        /// this fold is the declared contributor sequence itself, so it
+        /// consumes no reassociation.
+        permits_reassociation: bool,
+        /// Whether the contract permits contributor permutation.
         permits_permutation: bool,
     },
 }
@@ -736,7 +843,8 @@ pub(crate) const fn subnormal_freedom_of(program: &ScalarProgram) -> SubnormalFr
         ScalarProgram::PointwiseF32(_)
         | ScalarProgram::StrictSerialSum { .. }
         | ScalarProgram::SquaredSerialSum { .. }
-        | ScalarProgram::FusedMultiplyAddSerialSum { .. } => SubnormalFreedom::Unproven,
+        | ScalarProgram::FusedMultiplyAddSerialSum { .. }
+        | ScalarProgram::StrictTensorContraction { .. } => SubnormalFreedom::Unproven,
     }
 }
 
@@ -869,6 +977,14 @@ const TAG_LINEAR_IDENTITY: u8 = 0x01;
 const TAG_REDUCTION_CONTRIBUTOR: u8 = 0x02;
 const TAG_SCALAR_BROADCAST: u8 = 0x03;
 const TAG_PACKED_U4_LSB_ZERO_TAIL: u8 = 0x04;
+/// Logical-access tag of one contraction operand's coordinate map.
+///
+/// Appended rather than inserted, for the reason `TAG_SCALAR_SQUARED_SUM`
+/// records: `0x01` through `0x04` keep their tags and their field layouts, so no
+/// previously encodable region's bytes move and the schedule identity domain
+/// deliberately does not step. A reader that reaches `0x05` is reading an access
+/// the earlier vocabulary could not express.
+const TAG_CONTRACTION_OPERAND: u8 = 0x05;
 const TAG_LINEAR_RANGE: u8 = 0x11;
 const TAG_REDUCTION_DOMAIN: u8 = 0x12;
 const TAG_SCALAR_SERIAL_SUM: u8 = 0x22;
@@ -882,6 +998,12 @@ const TAG_SCALAR_STRICT_AFFINE_U4_DEQUANTIZE: u8 = 0x25;
 /// so a reader that reaches `0x26` is reading a region the earlier vocabulary
 /// could not express, never an earlier region under a new interpretation.
 const TAG_SCALAR_SQUARED_SUM: u8 = 0x26;
+/// Scalar-program tag of the strict tensor contraction.
+///
+/// Appended for the same reason and with the same consequence as `0x26`: `0x22`
+/// through `0x26` keep their meanings and their field positions, so the schedule
+/// identity domain does not step.
+const TAG_SCALAR_TENSOR_CONTRACTION: u8 = 0x27;
 const TAG_REDUCTION_NONE: u8 = 0x31;
 const TAG_REDUCTION_SERIAL: u8 = 0x32;
 /// Reduction-topology tag of a split, multi-dispatch reduction pass.
@@ -894,6 +1016,11 @@ const TAG_REDUCTION_SERIAL: u8 = 0x32;
 /// region the earlier vocabulary could not express, never an earlier region
 /// under a new interpretation.
 const TAG_REDUCTION_MULTI_PASS: u8 = 0x33;
+/// Reduction-topology tag of a contraction's fold over its contracted space.
+///
+/// Appended exactly as `0x33` was, and with the same injectivity argument:
+/// `None`, `Serial`, and `MultiPass` keep their tags and their field positions.
+const TAG_REDUCTION_CONTRACTION: u8 = 0x34;
 
 fn push_shape(bytes: &mut Vec<u8>, shape: &Shape) {
     push_len(bytes, shape.rank());
@@ -951,6 +1078,42 @@ fn push_logical_access(bytes: &mut Vec<u8>, access: &LogicalAccess) {
             push_shape(bytes, output_shape);
             push_axes(bytes, axes);
             push_order(bytes, *order);
+        }
+        LogicalAccess::ContractionOperand {
+            operand_shape,
+            output_shape,
+            contracted_shape,
+            sources,
+            order,
+        } => {
+            bytes.push(TAG_CONTRACTION_OPERAND);
+            push_shape(bytes, operand_shape);
+            push_shape(bytes, output_shape);
+            push_shape(bytes, contracted_shape);
+            push_len(bytes, sources.len());
+            for source in sources {
+                push_contraction_axis_source(bytes, *source);
+            }
+            push_order(bytes, *order);
+        }
+    }
+}
+
+/// Encodes one contraction operand axis's coordinate source.
+///
+/// The position follows its tag rather than being folded into it, so the two
+/// spaces keep a two-value tag table and the position keeps its own fixed width.
+/// An operand reading output position 0 and one reading contracted position 0
+/// are different access relations and must not share identity.
+fn push_contraction_axis_source(bytes: &mut Vec<u8>, source: ContractionAxisSource) {
+    match source {
+        ContractionAxisSource::Output { position } => {
+            bytes.push(0x01);
+            bytes.extend_from_slice(&position.to_be_bytes());
+        }
+        ContractionAxisSource::Contracted { position } => {
+            bytes.push(0x02);
+            bytes.extend_from_slice(&position.to_be_bytes());
         }
     }
 }
@@ -1091,6 +1254,19 @@ fn push_scalar_program(bytes: &mut Vec<u8>, program: &ScalarProgram) {
             push_order(bytes, *order);
             bytes.extend_from_slice(&canonical_nan_bits.to_be_bytes());
             bytes.extend_from_slice(&empty_identity_bits.to_be_bytes());
+        }
+        // Appended for the same reason as `0x26`, and with no empty-domain
+        // identity to encode: the family refuses an empty contracted domain
+        // rather than committing a value there.
+        ScalarProgram::StrictTensorContraction {
+            contracted_shape,
+            order,
+            canonical_nan_bits,
+        } => {
+            bytes.push(TAG_SCALAR_TENSOR_CONTRACTION);
+            push_shape(bytes, contracted_shape);
+            push_order(bytes, *order);
+            bytes.extend_from_slice(&canonical_nan_bits.to_be_bytes());
         }
     }
 }
@@ -1249,6 +1425,18 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
             push_axes(bytes, axes);
             push_order(bytes, *order);
             bytes.push(accumulation.tag());
+            bytes.push(u8::from(*permits_reassociation));
+            bytes.push(u8::from(*permits_permutation));
+        }
+        ReductionTopology::Contraction {
+            contracted_shape,
+            order,
+            permits_reassociation,
+            permits_permutation,
+        } => {
+            bytes.push(TAG_REDUCTION_CONTRACTION);
+            push_shape(bytes, contracted_shape);
+            push_order(bytes, *order);
             bytes.push(u8::from(*permits_reassociation));
             bytes.push(u8::from(*permits_permutation));
         }

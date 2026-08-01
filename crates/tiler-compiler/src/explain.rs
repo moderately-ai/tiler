@@ -3788,7 +3788,18 @@ mod tests {
                 // normalization's fusion role and capability row are not part of
                 // this subject. The trace's own two record lines are unchanged;
                 // nothing about explain's content moved.
-                "tiler-explain-v7 request=b8ffa37f3d2dc86b\n",
+                // Rebaselined from `b8ffa37f3d2dc86b` when the governed lowering
+                // capabilities gained an eighth row, for
+                // `tiler::strict-tensor-contraction-f32@1`. Only the *compiler*
+                // half of the subject moves, which is the exact inverse of the
+                // step that first registered that family: the semantic snapshot
+                // already admitted the contraction and did not move again, and
+                // the lowering-registry identity the subject binds now covers one
+                // further index-access capability. The governed scalar registry
+                // gained no key — the emission reaches `multiply-f32` and
+                // `add-f32`, both already registered. The trace's own two record
+                // lines are unchanged; nothing about explain's content moved.
+                "tiler-explain-v7 request=4d9f4773575b6679\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

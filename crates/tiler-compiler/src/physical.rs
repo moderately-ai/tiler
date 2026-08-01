@@ -14,11 +14,12 @@ use tiler_ir::shape::Shape;
 use tiler_ir::kernel::KernelType;
 pub(crate) use tiler_ir::kernel::VerifiedKernel;
 pub(crate) use tiler_ir::schedule::{
-    Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
-    ContributorPartition, ExecutionBinding, IndexRegion, InputOrdinal, KernelSchedule, LaunchPlan,
-    LogicalAccess, NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
-    PointwiseF32Expression, PointwiseF32ExpressionBuilder, PointwiseF32Node, ReductionTopology,
-    RegionId, ResourceRequirements, ScalarProgram, ScheduledRegion, TailPolicy, TensorRole,
+    Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContractionAxisSource,
+    ContributorOrder, ContributorPartition, ExecutionBinding, IndexRegion, InputOrdinal,
+    KernelSchedule, LaunchPlan, LogicalAccess, NumericalRealization, OwnershipProof,
+    OwnershipProofKind, OwnershipWitnessId, PointwiseF32Expression, PointwiseF32ExpressionBuilder,
+    PointwiseF32Node, ReductionTopology, RegionId, ResourceRequirements, ScalarProgram,
+    ScheduledRegion, TailPolicy, TensorRole,
 };
 use tiler_ir::schedule::{
     ArithmeticType, ScheduledRegionBuildError, ScheduledRegionBuilder, ScheduledRegionDiagnostic,
@@ -26,9 +27,10 @@ use tiler_ir::schedule::{
 
 use crate::region::SemanticMemberId;
 use crate::request::{
-    NormalizedPointwise, NormalizedPointwiseAssociation, NormalizedPointwiseLeaf,
-    NormalizedPointwiseOperation, NormalizedProgramSubject, NumericalPermission,
-    StrictF32NumericalContract, TargetProfile, VerifiedRequestSubject, VerifiedTargetRequest,
+    NormalizedContraction, NormalizedPointwise, NormalizedPointwiseAssociation,
+    NormalizedPointwiseLeaf, NormalizedPointwiseOperation, NormalizedProgramSubject,
+    NumericalPermission, StrictF32NumericalContract, TargetProfile, VerifiedRequestSubject,
+    VerifiedTargetRequest,
 };
 use crate::target::feasibility::{
     AvailabilityPhase, AxisRequirement, CapabilityAxis, DeferredSet, FeasibilityError,
@@ -321,6 +323,158 @@ pub(crate) fn pointwise_region(
         schedule: linear_schedule(elements, OwnershipWitnessId::new(0)),
     };
     (region, members)
+}
+
+/// Derives one contraction operand's coordinate map from the index structure.
+///
+/// `declaration` is the *declared input ordinal*, which is what binds the
+/// region's buffers, and the structure operand it reads is the one the
+/// recognizer bound to it. Each operand axis takes the position of its index in
+/// the output tuple, or — when the index is contracted rather than free — in the
+/// ascending contracted set. Those are the two spaces a `direct` realization
+/// walks, and the structure's own derivation guarantees every operand index is
+/// in exactly one of them.
+///
+/// # Panics
+///
+/// Panics only if the normalized contraction and its own structure disagree
+/// about the operand count or about which indices are free, which the recognizer
+/// proved they do not.
+fn contraction_operand_sources(
+    normalized: &NormalizedContraction,
+    declaration: usize,
+) -> Vec<ContractionAxisSource> {
+    let structure = &normalized.structure;
+    let tuple = structure
+        .operand(normalized.operand_positions[declaration])
+        .expect("the recognizer bound every declared input to a structure operand");
+    tuple
+        .iter()
+        .map(|index| {
+            if let Some(position) = structure.output().iter().position(|free| free == index) {
+                ContractionAxisSource::Output {
+                    position: u32::try_from(position).expect("an output tuple is bounded"),
+                }
+            } else {
+                let position = structure
+                    .contracted()
+                    .iter()
+                    .position(|summed| summed == index)
+                    .expect("an operand index is free or contracted by the structure's derivation");
+                ContractionAxisSource::Contracted {
+                    position: u32::try_from(position).expect("a contracted set is bounded"),
+                }
+            }
+        })
+        .collect()
+}
+
+/// Builds the canonical single-region contraction for one request.
+///
+/// The `direct` realization the L3 elimination retains: one invocation per
+/// output element, each folding its own contracted sequence in ascending order
+/// from the first product. Its only precondition is a nonempty contracted space,
+/// which the recognizer already established — there is deliberately no tile or
+/// split width to refuse against here, and a check that could never fire would
+/// be worse than its absence.
+///
+/// Like [`pointwise_region`], this is the raw region and its recognized members;
+/// every gate is applied when the frontier resubmits it through the ordinary
+/// checked verification path.
+pub(crate) fn contraction_region(
+    request: &VerifiedTargetRequest,
+) -> (ScheduledRegion, Vec<SemanticMemberId>) {
+    let normalized = request
+        .contraction()
+        .expect("a contraction region is built only for a contraction request");
+    // Two reads then the owning write, with witness numbering equal to access
+    // numbering so two accesses cannot prove against one witness.
+    let mut accesses = Vec::with_capacity(3);
+    let mut bounds_proofs = Vec::with_capacity(3);
+    for declaration in 0..normalized.input_keys.len() {
+        let witness = u32::try_from(declaration).unwrap_or(u32::MAX);
+        let tensor = TensorRole::Input {
+            ordinal: InputOrdinal::new(witness),
+        };
+        accesses.push(Access {
+            tensor,
+            component_role: None,
+            mode: AccessMode::Read,
+            map: LogicalAccess::ContractionOperand {
+                operand_shape: normalized.input_shapes[declaration].clone(),
+                output_shape: normalized.output_shape.clone(),
+                contracted_shape: normalized.contracted_shape.clone(),
+                sources: contraction_operand_sources(normalized, declaration),
+                order: ContributorOrder::OriginalAxisLexicographic,
+            },
+            bounds: BoundsWitnessId::new(witness),
+            ownership: None,
+        });
+        bounds_proofs.push(BoundsProof {
+            id: BoundsWitnessId::new(witness),
+            tensor,
+            component_role: None,
+            kind: BoundsProofKind::LinearRange {
+                element_count: normalized.input_elements[declaration],
+            },
+        });
+    }
+    let write_witness = u32::try_from(accesses.len()).unwrap_or(u32::MAX);
+    accesses.push(Access {
+        tensor: TensorRole::Output,
+        component_role: None,
+        mode: AccessMode::Write,
+        map: LogicalAccess::LinearIdentity,
+        bounds: BoundsWitnessId::new(write_witness),
+        ownership: Some(OwnershipWitnessId::new(0)),
+    });
+    bounds_proofs.push(BoundsProof {
+        id: BoundsWitnessId::new(write_witness),
+        tensor: TensorRole::Output,
+        component_role: None,
+        kind: BoundsProofKind::LinearRange {
+            element_count: normalized.output_elements,
+        },
+    });
+    let region = ScheduledRegion {
+        index: IndexRegion {
+            id: RegionId::new(0),
+            iteration_shape: normalized.output_shape.clone(),
+            accesses,
+            bounds_proofs,
+            ownership_proof: OwnershipProof {
+                id: OwnershipWitnessId::new(0),
+                tensor: TensorRole::Output,
+                kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                    output_count: normalized.output_elements,
+                },
+            },
+            scalar_program: ScalarProgram::StrictTensorContraction {
+                contracted_shape: normalized.contracted_shape.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
+            },
+            numerical: request.numerical_contract().realization(),
+        },
+        schedule: KernelSchedule {
+            reduction: ReductionTopology::Contraction {
+                contracted_shape: normalized.contracted_shape.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                // Derived from the contract rather than hard-coded, exactly as
+                // every other region here derives them: the schedule verifier
+                // cross-checks both against the region's declared realization,
+                // and a constant would lose this candidate under a contract that
+                // permits either freedom — silently rather than wrongly, but for
+                // a reason no diagnostic would name.
+                permits_reassociation: request.numerical_contract().reassociation
+                    != NumericalPermission::Forbidden,
+                permits_permutation: request.numerical_contract().permutation
+                    != NumericalPermission::Forbidden,
+            },
+            ..linear_schedule(normalized.output_elements, OwnershipWitnessId::new(0))
+        },
+    };
+    (region, normalized.members.clone())
 }
 
 /// Builds the canonical materialized reduction scheduled region for one request.
@@ -1121,7 +1275,37 @@ fn verify_region_subject_binding(
                 && region.index.iteration_shape == normalized.shape
                 && expression == &normalized_pointwise_expression(normalized)
         }
-        (NormalizedProgramSubject::Pointwise(_), _) => false,
+        (
+            NormalizedProgramSubject::Contraction(normalized),
+            ScalarProgram::StrictTensorContraction {
+                contracted_shape,
+                canonical_nan_bits,
+                ..
+            },
+        ) => {
+            // Every quantity the region carries is re-derived from the subject
+            // and compared, including both operands' coordinate maps: a region
+            // whose access relation differs from the recognized structure's
+            // would compute a different contraction over the same buffers, and
+            // the intrinsic verifier — which sees only the region — cannot
+            // notice that.
+            element_count(&normalized.output_shape, region.index.id)? == normalized.output_elements
+                && element_count(&normalized.contracted_shape, region.index.id)?
+                    == normalized.contracted_elements
+                && semantic_members == normalized.members
+                && region.index.id == RegionId::new(0)
+                && region.index.iteration_shape == normalized.output_shape
+                && contracted_shape == &normalized.contracted_shape
+                && *canonical_nan_bits == subject.numerical_contract().canonical_arithmetic_nan_bits
+                && contraction_accesses_match(&region.index.accesses, normalized)
+        }
+        // Either whole-program subject paired with any other scalar program is a
+        // forged pairing: each is bound above against the one program its
+        // recognizer produces, so answering `false` here is the fail-closed
+        // answer rather than a deferral.
+        (NormalizedProgramSubject::Pointwise(_) | NormalizedProgramSubject::Contraction(_), _) => {
+            false
+        }
         (NormalizedProgramSubject::SerialSum(normalized), scalar) => {
             if !tiler_ir::schedule::axes_are_canonical(
                 normalized.reduction_axes(),
@@ -1194,14 +1378,16 @@ fn verify_region_subject_binding(
                         && *canonical_nan_bits
                             == subject.numerical_contract().canonical_arithmetic_nan_bits
                 }
-                // Neither program is produced by the two recognized whole-program
-                // shapes this binding verifies. The strict-affine one is refused
+                // None of these is produced by the recognized whole-program
+                // shapes this arm verifies. The strict-affine one is refused
                 // upstream; the squaring-prologue sum belongs to
-                // `tiler::rms-norm-f32@1`, which the recognizer does not admit,
-                // so no normalized subject can bind one and answering `false` is
-                // the fail-closed answer rather than a deferral.
+                // `tiler::rms-norm-f32@1`, which the recognizer does not admit;
+                // and a contraction binds to its own subject variant above, so a
+                // serial-sum subject claiming one is a forged pairing. Answering
+                // `false` is the fail-closed answer rather than a deferral.
                 ScalarProgram::StrictAffineU4Dequantize { .. }
-                | ScalarProgram::SquaredSerialSum { .. } => false,
+                | ScalarProgram::SquaredSerialSum { .. }
+                | ScalarProgram::StrictTensorContraction { .. } => false,
             }
         }
     };
@@ -1267,6 +1453,35 @@ fn verify_multi_pass_subject_binding(
         return intrinsic("request-binding", region.index.id);
     }
     Ok(())
+}
+
+/// Requires both operand reads to realize the recognized structure exactly.
+///
+/// Checked per declared input ordinal rather than as a set: the ordinal is the
+/// buffer position, so two accesses carrying the right pair of maps in the wrong
+/// order would bind each operand to the other's tensor and still look complete.
+fn contraction_accesses_match(accesses: &[Access], normalized: &NormalizedContraction) -> bool {
+    let Some((_, reads)) = accesses.split_last() else {
+        return false;
+    };
+    if reads.len() != normalized.input_shapes.len() {
+        return false;
+    }
+    reads.iter().enumerate().all(|(declaration, read)| {
+        u32::try_from(declaration).is_ok_and(|ordinal| {
+            read.tensor
+                == TensorRole::Input {
+                    ordinal: InputOrdinal::new(ordinal),
+                }
+        }) && read.map
+            == LogicalAccess::ContractionOperand {
+                operand_shape: normalized.input_shapes[declaration].clone(),
+                output_shape: normalized.output_shape.clone(),
+                contracted_shape: normalized.contracted_shape.clone(),
+                sources: contraction_operand_sources(normalized, declaration),
+                order: ContributorOrder::OriginalAxisLexicographic,
+            }
+    })
 }
 
 fn reduction_access_matches(

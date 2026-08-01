@@ -867,6 +867,7 @@ fn body_shaping_vocabulary_is_closed(
             LogicalAccess::ScalarBroadcast => "scalar-broadcast",
             LogicalAccess::PackedU4LsbZeroTail { .. } => "packed-u4-lsb-zero-tail",
             LogicalAccess::ReductionContributor { .. } => "reduction-contributor",
+            LogicalAccess::ContractionOperand { .. } => "contraction-operand",
         },
         match topology {
             ReductionTopology::None => "none",
@@ -879,6 +880,7 @@ fn body_shaping_vocabulary_is_closed(
                 pass: ReductionPass::Final,
                 ..
             } => "multi-pass-final",
+            ReductionTopology::Contraction { .. } => "contraction",
         },
         match program {
             ScalarProgram::PointwiseF32(_) => "pointwise-f32",
@@ -886,6 +888,7 @@ fn body_shaping_vocabulary_is_closed(
             ScalarProgram::StrictSerialSum { .. } => "strict-serial-sum",
             ScalarProgram::FusedMultiplyAddSerialSum { .. } => "fused-multiply-add-serial-sum",
             ScalarProgram::SquaredSerialSum { .. } => "squared-serial-sum",
+            ScalarProgram::StrictTensorContraction { .. } => "strict-tensor-contraction",
         },
     )
 }

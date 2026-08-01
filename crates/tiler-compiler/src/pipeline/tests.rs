@@ -1128,22 +1128,23 @@ fn valid_but_unsupported_program_has_a_capability_failure() {
     );
 }
 
-/// A contraction is statable and still compiles nothing, and the refusal that
-/// fires is named honestly.
+/// The workload's own projection shape is refused by the *target*, not by
+/// recognition.
 ///
-/// Two claims, and they are different. The registered family means a program
-/// carrying the pinned workload's projection now *builds*, which it could not do
-/// at all before. What it does not mean is that `compile()` reaches
-/// lowering-capability resolution: both installed recognizers demand exactly one
-/// input over a fixed producer chain, so a two-operand contraction is refused at
-/// the request boundary, before any explain trace exists. Asserting a lowering
-/// refusal here would be fiction about which check said no.
+/// Two claims, and they are different. A program carrying the pinned workload's
+/// `[128, 1024] x [3072, 1024]` projection is now recognized, lowered, scheduled,
+/// and assembled — the request boundary and the lowering registry both admit it.
+/// What refuses is the governed baseline target profile, whose `GridAxisThreads`
+/// bound is four: 393,216 output elements is a hard-feasibility refusal naming
+/// that axis, and it is the same refusal the four-element pointwise fixtures in
+/// this file would get at this size.
 ///
-/// The capability-resolution refusal ADR 0087 item 4 requires is proved
-/// separately and directly, against the governed registry, by
-/// `capability::tests::a_contraction_occurrence_resolves_to_no_installed_index_access_capability`.
+/// Asserting a recognition refusal here would now be fiction about which check
+/// said no, which is exactly what this test guarded against in the other
+/// direction before the direct path landed. The compiling case is
+/// `tests/contraction_direct_path.rs`, at a shape the baseline admits.
 #[test]
-fn a_contraction_program_is_statable_and_refused_before_capability_resolution() {
+fn a_contraction_of_the_workload_shape_is_refused_by_the_target_not_by_recognition() {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let activations = builder
         .input::<F32>(
@@ -1174,15 +1175,20 @@ fn a_contraction_program_is_statable_and_refused_before_capability_resolution() 
     let semantic = builder.build().unwrap();
     assert_eq!(semantic.operation_count(), 1);
 
-    let error = compile(CompilationRequest::governed(&semantic)).unwrap_err();
+    let product = compile(CompilationRequest::governed(&semantic))
+        .expect("recognition, lowering, and assembly all admit the projection");
+    let Some(CompileError::Explained { source, .. }) = product.targets[0].failure() else {
+        panic!("the baseline profile launches at most four threads");
+    };
     assert_eq!(
-        error,
-        CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
-            phase: "strategy",
-            rule: "operation-set",
-        }),
-        "the request boundary refuses a contraction program first; nothing here \
-         reaches the lowering registry"
+        source.as_ref(),
+        &CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(PhysicalError::Target {
+            rule: "grid-axis",
+            region: tiler_ir::schedule::RegionId::new(0),
+            required: 393_216,
+            available: 4,
+        })),
+        "the refusal is the target's launch bound, named as such",
     );
 }
 

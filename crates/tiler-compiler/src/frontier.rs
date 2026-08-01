@@ -841,7 +841,8 @@ const fn boundary_carrier(program: &ScalarProgram) -> Option<StorageScalar> {
         ScalarProgram::PointwiseF32(_)
         | ScalarProgram::StrictSerialSum { .. }
         | ScalarProgram::SquaredSerialSum { .. }
-        | ScalarProgram::FusedMultiplyAddSerialSum { .. } => Some(StorageScalar::F32),
+        | ScalarProgram::FusedMultiplyAddSerialSum { .. }
+        | ScalarProgram::StrictTensorContraction { .. } => Some(StorageScalar::F32),
         // The one program in the vocabulary whose boundary values disagree:
         // `tiler-ir`'s `verify_signature` fixes its reads at `[U8, F32, U8]`,
         // and its code component is bit-packed rather than unpacked. The
@@ -2402,13 +2403,16 @@ fn resolve_work_items(
                 .find(|(bound, _)| *bound == name)
                 .ok_or(WorkResolutionError::UnknownParameter(name))?;
             match role {
-                // Every input of a recognized request shares one shape — the
-                // pointwise recognizer refuses a program whose inputs disagree,
-                // and the serial-sum one admits a single input — so the ordinal
-                // does not change the answer here. A strategy admitting inputs
-                // of different extents must resolve this per ordinal rather
-                // than inherit this arm.
-                TensorRole::Input { .. } => Ok(request.normalized().input_elements()),
+                // Resolved per ordinal, because the contraction strategy admits
+                // two inputs of different extents: `td,od->to` binds `[M, K]` to
+                // ordinal 0 and `[N, K]` to ordinal 1, and answering with either
+                // one for both would size a call against the wrong tensor. An
+                // ordinal no declared input occupies is a refusal rather than
+                // another tensor's size.
+                TensorRole::Input { ordinal } => request
+                    .normalized()
+                    .input_elements_at(*ordinal)
+                    .ok_or(WorkResolutionError::UnknownParameter(name)),
                 TensorRole::Output => Ok(request.normalized().output_elements()),
                 TensorRole::Intermediate => {
                     Err(WorkResolutionError::IntermediateShapeUnavailable { parameter: name })
@@ -2730,7 +2734,7 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
     fn propose(&self, context: &ImplementationContext<'_>) -> ProviderOffer {
         let request = context.request();
         let members = context.subject().semantic_members();
-        let input_elements = request.normalized().input_elements();
+        let input_elements = request.normalized().max_input_elements();
         let output_elements = request.normalized().output_elements();
         // A materialized f32 intermediate costs four bytes per element. The
         // estimate is structural and is never a feasibility input.
@@ -2744,6 +2748,22 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
             }
             (
                 crate::physical::pointwise_region(request).0,
+                PhysicalCostEstimate::structural(1, output_elements, 0),
+            )
+        } else if let Some(contraction) = request.contraction() {
+            // A whole-program strategy like the pointwise one above: one region,
+            // one dispatch, no intermediate, and no split — a contraction's fold
+            // is the declared contributor sequence, and splitting it would
+            // consume the reassociation this family declares forbidden.
+            //
+            // The early return matters structurally as well: every branch below
+            // calls `request.serial_sum()`, which panics for a request this
+            // recognizer produced.
+            if members != contraction.members {
+                return ProviderOffer::default();
+            }
+            (
+                crate::physical::contraction_region(request).0,
                 PhysicalCostEstimate::structural(1, output_elements, 0),
             )
         } else if members == request.serial_sum().members.pointwise() {
