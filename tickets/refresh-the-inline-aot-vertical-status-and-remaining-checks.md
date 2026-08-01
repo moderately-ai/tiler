@@ -1,7 +1,7 @@
 ---
 id: refresh-the-inline-aot-vertical-status-and-remaining-checks
 title: Refresh the inline AOT vertical's status line and remaining-checks list
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [avoid-toolchain-resolution-on-a-warm-expansion-cache-hit, correct-the-warm-expansion-xcrun-requirement-in-the-testing-contract, deliver-an-artifact-family-from-a-symbolic-region]
@@ -9,9 +9,6 @@ scopes: [contracts/integrations]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, macro-aot, status-drift]
-claimed_from: todo
-assignee: worker-aot-status
-lease_expires_at: 1785609794
 ---
 ## User-visible outcome
 

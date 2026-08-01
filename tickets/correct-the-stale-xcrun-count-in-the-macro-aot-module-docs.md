@@ -1,7 +1,7 @@
 ---
 id: correct-the-stale-xcrun-count-in-the-macro-aot-module-docs
 title: Correct the stale xcrun count in the macro AOT module docs
-status: todo
+status: closed
 priority: p3
 dependencies: []
 related: [avoid-toolchain-resolution-on-a-warm-expansion-cache-hit, drop-the-unread-sdk-path-from-the-resolved-toolchain]
@@ -9,6 +9,8 @@ scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, macro-aot, status-drift]
+closed_reason: duplicate
+closed_note: Same defect as correct-the-stale-xcrun-call-count-in-the-macro-aot-module-doc, filed concurrently by two workers; fixed at integration
 ---
 ## User-visible outcome
 

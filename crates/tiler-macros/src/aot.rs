@@ -38,7 +38,7 @@
 //! - **A cache hit compiles nothing, and resolves the toolchain anyway.** The
 //!   compiler fingerprint is an input to the compilation identity, so it must be
 //!   read *before* the identity that decides hit or miss exists:
-//!   `Toolchain::prepare` runs five `xcrun` queries — two `--find` and three
+//!   `Toolchain::prepare` runs four `xcrun` queries — two `--find` and two
 //!   `--show-sdk-*` — and then executes the two located binaries to read their
 //!   reported versions, on every expansion; only the `metal` and `metallib`
 //!   compilation runs are inside the miss closure. `docs/integration/frontends.md`
@@ -49,7 +49,7 @@
 //!   The `--version` executions are the load-bearing half and are deliberately
 //!   *not* `xcrun` invocations: they run the binaries `prepare` already located,
 //!   so the folded version describes the compiler that will produce the bytes.
-//!   The five `xcrun` answers are themselves served from Apple's own
+//!   The four `xcrun` answers are themselves served from Apple's own
 //!   `$TMPDIR/xcrun_db` cache, which is why re-running them buys less than it
 //!   appears to — and why the invariant is that identity folds a fingerprint read
 //!   by executing the binaries this same prepared token will execute, rather than

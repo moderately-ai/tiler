@@ -1,7 +1,7 @@
 ---
 id: correct-the-stale-xcrun-call-count-in-the-macro-aot-module-doc
 title: Correct the stale xcrun call count in the macro AOT module documentation
-status: todo
+status: done
 priority: p3
 dependencies: []
 related: [drop-the-unread-sdk-path-from-the-resolved-toolchain, correct-the-warm-expansion-xcrun-requirement-in-the-testing-contract]
