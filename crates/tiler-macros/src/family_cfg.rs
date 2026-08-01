@@ -54,6 +54,15 @@
 //! what a second ABI on an existing `target_os` looks like, and a family whose
 //! predicate ignores `target_abi` silently acquires the next one.
 //!
+//! `--print cfg` needs no standard library for the target it is asked about,
+//! which is why the table above reaches eleven targets this host cannot compile
+//! for. For the five `docs/correctness-and-testing.md` names normatively, the
+//! derivation no longer stops at the `cfg` set:
+//! `crate::delivery::tests::every_emitted_shape_compiles_as_the_five_target_matrix_says`
+//! compiles the delivery emitter's gated output *for* each of them and records
+//! the resulting matrix, so "a nonmatching target compiles the semantic
+//! fallback" rests on a build that ran.
+//!
 //! # What "versioned" obliges
 //!
 //! [`MAP_VERSION`] names this exact table. Widening the map — a new family, a
