@@ -16,6 +16,35 @@ const A: ContractionIndex = ContractionIndex::new(0);
 const B: ContractionIndex = ContractionIndex::new(1);
 const C: ContractionIndex = ContractionIndex::new(2);
 
+/// Frontend labels for the two attention structures, again not dense.
+///
+/// `G` is the key/value group, `R` the grouped-query repetition, `TQ` the query
+/// position, `SK` the key position, and `DH` the head lane. Structure 2 is
+/// `grtd,gsd->grts` and structure 3 is `grts,gsd->grtd`.
+const G: ContractionIndex = ContractionIndex::new(70);
+const R: ContractionIndex = ContractionIndex::new(71);
+const TQ: ContractionIndex = ContractionIndex::new(72);
+const SK: ContractionIndex = ContractionIndex::new(73);
+const DH: ContractionIndex = ContractionIndex::new(74);
+
+/// The C1 prefill row's extents, from the retained attention-block probe.
+const C1_GROUPS: u64 = 8;
+const C1_REPEATS: u64 = 2;
+const C1_QUERY_POSITIONS: u64 = 10;
+const C1_HEAD_DIM: u64 = 128;
+
+/// The score structure, `grtd,gsd->grts`.
+fn score_structure() -> ContractionIndexStructure {
+    ContractionIndexStructure::new([vec![G, R, TQ, DH], vec![G, SK, DH]], [G, R, TQ, SK])
+        .expect("grtd,gsd->grts is admitted")
+}
+
+/// The value structure, `grts,gsd->grtd`.
+fn value_structure() -> ContractionIndexStructure {
+    ContractionIndexStructure::new([vec![G, R, TQ, SK], vec![G, SK, DH]], [G, R, TQ, DH])
+        .expect("grts,gsd->grtd is admitted")
+}
+
 fn index(label: u32) -> ContractionIndex {
     ContractionIndex::new(label)
 }
@@ -634,6 +663,626 @@ fn the_numerical_signature_is_complete_against_the_realization_record() {
         "the signature has exactly the fourteen published fields, so a new one \
          cannot be added without moving this count and the identity behind it"
     );
+}
+
+// --- The two attention structures, at four-wide tuples and five indices ------
+
+/// Both attention structures canonicalize exactly as first-appearance numbering
+/// derives them, and they differ in one operand tuple's *order*.
+///
+/// The derivation is worth stating, because the pair is the sharpest one in the
+/// workload: `grtd,gsd->grts` and `grts,gsd->grtd` agree on operand 0, on the
+/// output, and on the contracted set, and disagree only on whether operand 1
+/// reads `(g, s, d)` as `(0, 4, 3)` or `(0, 3, 4)`. An encoder insensitive to
+/// position within an operand tuple would give the workload's two attention
+/// contractions one identity.
+#[test]
+fn both_attention_structures_canonicalize_by_first_appearance() {
+    let score = score_structure();
+    assert_eq!(
+        score.operand(0),
+        Some([index(0), index(1), index(2), index(3)].as_slice()),
+        "operand 0 of grtd,gsd->grts is (g, r, t, d)"
+    );
+    assert_eq!(
+        score.operand(1),
+        Some([index(0), index(4), index(3)].as_slice()),
+        "operand 1 is (g, s, d): `s` is new at its first appearance and `d` is not"
+    );
+    assert_eq!(
+        score.output(),
+        [index(0), index(1), index(2), index(4)].as_slice()
+    );
+    assert_eq!(score.contracted(), [index(3)].as_slice(), "`d` is summed");
+
+    let value = value_structure();
+    assert_eq!(
+        value.operand(0),
+        Some([index(0), index(1), index(2), index(3)].as_slice()),
+        "operand 0 of grts,gsd->grtd is (g, r, t, s)"
+    );
+    assert_eq!(
+        value.operand(1),
+        Some([index(0), index(3), index(4)].as_slice()),
+        "operand 1 is (g, s, d): here `s` is the already-numbered one"
+    );
+    assert_eq!(
+        value.output(),
+        [index(0), index(1), index(2), index(4)].as_slice()
+    );
+    assert_eq!(value.contracted(), [index(3)].as_slice(), "`s` is summed");
+
+    // Five distinct indices each, with a four-wide operand tuple and a four-wide
+    // output tuple — against structure 1's three indices and two-wide tuples.
+    assert_eq!(score.operand(0).expect("operand 0").len(), 4);
+    assert_eq!(score.output().len(), 4);
+    assert_eq!(value.operand(0).expect("operand 0").len(), 4);
+    assert_eq!(value.output().len(), 4);
+    for structure in [&score, &value] {
+        let distinct: BTreeSet<ContractionIndex> = structure
+            .operands()
+            .flatten()
+            .chain(structure.output())
+            .copied()
+            .collect();
+        assert_eq!(distinct.len(), 5, "five distinct indices");
+    }
+
+    // Everything but operand 1 agrees, which is what makes the collision
+    // perturbation below a real hazard rather than a contrived one.
+    assert_eq!(score.operand(0), value.operand(0));
+    assert_eq!(score.output(), value.output());
+    assert_eq!(score.contracted(), value.contracted());
+    assert_ne!(
+        score.canonical_encoding(),
+        value.canonical_encoding(),
+        "the shipped encoder separates the score and value structures"
+    );
+}
+
+#[test]
+fn renaming_invariance_holds_at_five_indices() {
+    // The score structure spelled with dense ascending labels, and with a third
+    // disjoint set: three spellings, one structure, one identity.
+    let dense = ContractionIndexStructure::new(
+        [
+            vec![index(0), index(1), index(2), index(3)],
+            vec![index(0), index(4), index(3)],
+        ],
+        [index(0), index(1), index(2), index(4)],
+    )
+    .expect("the dense spelling of grtd,gsd->grts");
+    let shifted = ContractionIndexStructure::new(
+        [
+            vec![index(900), index(901), index(902), index(903)],
+            vec![index(900), index(904), index(903)],
+        ],
+        [index(900), index(901), index(902), index(904)],
+    )
+    .expect("a shifted spelling of grtd,gsd->grts");
+    assert_eq!(
+        score_structure().canonical_encoding(),
+        dense.canonical_encoding()
+    );
+    assert_eq!(
+        score_structure().canonical_encoding(),
+        shifted.canonical_encoding()
+    );
+}
+
+/// The mutation proof at four-wide tuples and five indices.
+///
+/// Three perturbations, each demonstrated producing the exact defect it would
+/// introduce. As in the width-two proof above, no assertion here is a property
+/// of the shipped encoder: each is a property of a deliberately broken twin.
+#[test]
+fn the_canonical_encoder_is_mutation_proved_at_four_and_five_indices() {
+    let score = score_structure();
+    let value = value_structure();
+
+    // Perturbation one, and the one this width introduces: sort each operand
+    // tuple before encoding. The score and value structures differ *only* in the
+    // order of operand 1's last two indices, so an order-insensitive encoder
+    // gives the workload's two attention contractions one identity — while the
+    // shipped encoder separates them.
+    assert_eq!(
+        sorted_operand_encoding(&score),
+        sorted_operand_encoding(&value),
+        "with operand tuples sorted, grtd,gsd->grts and grts,gsd->grtd collide"
+    );
+    assert_ne!(score.canonical_encoding(), value.canonical_encoding());
+
+    // Perturbation two: remove the per-operand framing. The width-two proof
+    // above shows this collides `ab,cb->ac` with `abc,b->ac`; it still collides
+    // at this width, over two admitted five-index structures whose flattened
+    // index runs, outputs, and contracted sets are all identical and whose
+    // operand framing is not.
+    let split_after_three = ContractionIndexStructure::new(
+        [
+            vec![index(0), index(1), index(2)],
+            vec![index(3), index(4), index(0), index(2)],
+        ],
+        [index(0), index(1), index(3), index(4)],
+    )
+    .expect("abc,dea c->abde is admitted");
+    let split_after_four = ContractionIndexStructure::new(
+        [
+            vec![index(0), index(1), index(2), index(3)],
+            vec![index(4), index(0), index(2)],
+        ],
+        [index(0), index(1), index(3), index(4)],
+    )
+    .expect("abcd,eac->abde is admitted");
+    let flat: Vec<ContractionIndex> = split_after_three.operands().flatten().copied().collect();
+    assert_eq!(
+        flat,
+        split_after_four
+            .operands()
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>(),
+        "the two structures flatten to one index run, so only the framing separates them"
+    );
+    assert_eq!(
+        flattened_operand_encoding(&split_after_three),
+        flattened_operand_encoding(&split_after_four),
+        "without operand framing two distinct five-index structures collide"
+    );
+    assert_ne!(
+        split_after_three.canonical_encoding(),
+        split_after_four.canonical_encoding(),
+        "the shipped encoder separates them"
+    );
+
+    // Perturbation three: remove the canonical renumbering, so a structure is
+    // encoded under whatever labels a frontend chose. The score structure then
+    // encodes two ways.
+    assert_ne!(
+        unrenumbered_encoding(
+            &[
+                &[G.get(), R.get(), TQ.get(), DH.get()],
+                &[G.get(), SK.get(), DH.get()]
+            ],
+            &[G.get(), R.get(), TQ.get(), SK.get()]
+        ),
+        unrenumbered_encoding(&[&[0, 1, 2, 3], &[0, 4, 3]], &[0, 1, 2, 4]),
+        "without canonical renumbering one five-index structure encodes two ways"
+    );
+}
+
+/// The shipped encoder with each operand tuple sorted before encoding.
+///
+/// The perturbation this width introduces: at two-wide tuples the workload's
+/// structures do not collide under it, and at four-wide tuples they do.
+fn sorted_operand_encoding(structure: &ContractionIndexStructure) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    push_slice(&mut bytes, CONTRACTION_INDEX_STRUCTURE_DOMAIN);
+    let tuples: Vec<CanonicalValue> = structure
+        .operands()
+        .map(|tuple| {
+            let mut sorted = tuple.to_vec();
+            sorted.sort_unstable();
+            index_sequence(&sorted).expect("a test sequence is bounded")
+        })
+        .collect();
+    CanonicalValue::record([
+        CanonicalField::new(
+            CONTRACTION_STRUCTURE_OPERAND_INDICES,
+            CanonicalValue::sequence(tuples).expect("a test sequence is bounded"),
+        ),
+        CanonicalField::new(
+            CONTRACTION_STRUCTURE_OUTPUT_INDICES,
+            index_sequence(structure.output()).expect("a test sequence is bounded"),
+        ),
+        CanonicalField::new(
+            CONTRACTION_STRUCTURE_CONTRACTED_INDICES,
+            index_sequence(structure.contracted()).expect("a test sequence is bounded"),
+        ),
+    ])
+    .expect("a test record is canonical")
+    .encode(&mut bytes);
+    bytes
+}
+
+/// The repetition index is free, in one operand and the output and nowhere else.
+///
+/// This is the first index in the workload whose access map drops it from an
+/// operand, and it is the whole of what makes the eight-to-sixteen grouped-query
+/// repetition free: the key operand has no `r` axis, so nothing materializes a
+/// `[16, S, 128]` repeated key. Asserted rather than left to a reader of the
+/// tuples, because the alternative spelling produces a correctly shaped result.
+#[test]
+fn the_grouped_query_repetition_index_is_free_in_one_operand_and_the_output() {
+    let score = score_structure();
+    let repetition = index(1);
+    assert!(
+        score.operand(0).expect("operand 0").contains(&repetition),
+        "`r` is a query-operand index"
+    );
+    assert!(
+        !score.operand(1).expect("operand 1").contains(&repetition),
+        "`r` is absent from the key operand, which is what makes the repetition free"
+    );
+    assert!(
+        score.output().contains(&repetition),
+        "`r` is an output index"
+    );
+    assert!(
+        !score.contracted().contains(&repetition),
+        "`r` is free, not summed"
+    );
+    // The same index in the value structure, which drops it from the same operand.
+    assert!(
+        !value_structure()
+            .operand(1)
+            .expect("operand 1")
+            .contains(&repetition)
+    );
+
+    // The result carries the repetition and the key operand does not, so the
+    // occurrence verifies against a key that was never repeated.
+    let results = infer(
+        &[
+            f32_operand(&[C1_GROUPS, C1_REPEATS, C1_QUERY_POSITIONS, C1_HEAD_DIM]),
+            f32_operand(&[C1_GROUPS, C1_QUERY_POSITIONS, C1_HEAD_DIM]),
+        ],
+        score.canonical_value().clone(),
+    )
+    .expect("the C1 prefill score contraction is admitted");
+    assert_eq!(
+        results[0].shape(),
+        &Shape::from_dims([
+            C1_GROUPS,
+            C1_REPEATS,
+            C1_QUERY_POSITIONS,
+            C1_QUERY_POSITIONS
+        ])
+    );
+
+    // The broadcast spelling is what `r` avoids: a key operand carrying the
+    // repetition holds twice the elements, and that materialization is exactly
+    // the cost the free index removes.
+    let repeated = Shape::from_dims([C1_GROUPS, C1_REPEATS, C1_QUERY_POSITIONS, C1_HEAD_DIM]);
+    let unrepeated = Shape::from_dims([C1_GROUPS, C1_QUERY_POSITIONS, C1_HEAD_DIM]);
+    assert_eq!(unrepeated.element_count(), Some(10_240));
+    assert_eq!(repeated.element_count(), Some(20_480));
+}
+
+#[test]
+fn both_attention_structures_infer_their_c1_result_shapes() {
+    // Structure 3 at the C1 prefill row, where `S` equals `T`.
+    let results = infer(
+        &[
+            f32_operand(&[
+                C1_GROUPS,
+                C1_REPEATS,
+                C1_QUERY_POSITIONS,
+                C1_QUERY_POSITIONS,
+            ]),
+            f32_operand(&[C1_GROUPS, C1_QUERY_POSITIONS, C1_HEAD_DIM]),
+        ],
+        value_structure().canonical_value().clone(),
+    )
+    .expect("the C1 prefill value contraction is admitted");
+    assert_eq!(
+        results[0].shape(),
+        &Shape::from_dims([C1_GROUPS, C1_REPEATS, C1_QUERY_POSITIONS, C1_HEAD_DIM])
+    );
+
+    // Both structures reach the same admission through the authoring facade a
+    // frontend actually calls, rather than only through a raw attribute.
+    for (structure, left, right) in [
+        (
+            score_structure(),
+            Shape::from_dims([C1_GROUPS, C1_REPEATS, C1_QUERY_POSITIONS, C1_HEAD_DIM]),
+            Shape::from_dims([C1_GROUPS, C1_QUERY_POSITIONS, C1_HEAD_DIM]),
+        ),
+        (
+            value_structure(),
+            Shape::from_dims([
+                C1_GROUPS,
+                C1_REPEATS,
+                C1_QUERY_POSITIONS,
+                C1_QUERY_POSITIONS,
+            ]),
+            Shape::from_dims([C1_GROUPS, C1_QUERY_POSITIONS, C1_HEAD_DIM]),
+        ),
+    ] {
+        let mut builder =
+            SemanticProgramBuilder::try_standard().expect("the standard builder opens");
+        let left = builder
+            .input::<F32>(InputKey::new("left").expect("a valid key"), left)
+            .expect("an F32 input");
+        let right = builder
+            .input::<F32>(InputKey::new("right").expect("a valid key"), right)
+            .expect("an F32 input");
+        let result = F32TensorContraction::apply(&mut builder, &structure, left, right)
+            .expect("an attention structure is admitted through the facade");
+        builder
+            .output(OutputKey::new("result").expect("a valid key"), result)
+            .expect("an output");
+        assert_eq!(
+            builder
+                .build()
+                .expect("the program is complete")
+                .operation_count(),
+            1
+        );
+    }
+}
+
+// --- The five structural refusals at this width -----------------------------
+
+#[test]
+fn every_structural_rule_refuses_at_four_wide_tuples_too() {
+    let score_operands = [
+        f32_operand(&[C1_GROUPS, C1_REPEATS, C1_QUERY_POSITIONS, C1_HEAD_DIM]),
+        f32_operand(&[C1_GROUPS, C1_QUERY_POSITIONS, C1_HEAD_DIM]),
+    ];
+
+    // Rule one: `grtd,gsd->grtx`, whose output names an index no operand does.
+    assert_eq!(
+        refusal(
+            &score_operands,
+            raw_structure(&[&[0, 1, 2, 3], &[0, 4, 3]], &[0, 1, 2, 5], &[3])
+        ),
+        "contraction.rule.output-index-in-no-operand"
+    );
+
+    // Rule two: `grtd,gs->grts` drops the head lane from the key operand, so `d`
+    // is summed in one operand — a reduction of the query rather than a
+    // contraction against the key.
+    assert_eq!(
+        refusal(
+            &[
+                f32_operand(&[C1_GROUPS, C1_REPEATS, C1_QUERY_POSITIONS, C1_HEAD_DIM]),
+                f32_operand(&[C1_GROUPS, C1_QUERY_POSITIONS]),
+            ],
+            raw_structure(&[&[0, 1, 2, 3], &[0, 4]], &[0, 1, 2, 4], &[3])
+        ),
+        "contraction.rule.summed-index-in-one-operand"
+    );
+
+    // Rule three: `grtt,gsd->grts` repeats the query position inside operand 0,
+    // which is a diagonal rather than a contraction operand.
+    assert_eq!(
+        refusal(
+            &[
+                f32_operand(&[
+                    C1_GROUPS,
+                    C1_REPEATS,
+                    C1_QUERY_POSITIONS,
+                    C1_QUERY_POSITIONS
+                ]),
+                f32_operand(&[C1_GROUPS, C1_QUERY_POSITIONS, C1_HEAD_DIM]),
+            ],
+            raw_structure(&[&[0, 1, 2, 2], &[0, 4, 3]], &[0, 1, 2, 4], &[3])
+        ),
+        "contraction.rule.index-repeated-within-operand"
+    );
+
+    // Rule four: `grtd,gsd->grtt` names the query position twice in the output.
+    assert_eq!(
+        refusal(
+            &score_operands,
+            raw_structure(&[&[0, 1, 2, 3], &[0, 4, 3]], &[0, 1, 2, 2], &[3])
+        ),
+        "contraction.rule.duplicate-output-index"
+    );
+
+    // Rule five: a third `gsd` operand shares the group and the head lane across
+    // three operands. This is where the reserved multi-operand answer lands, and
+    // it is decided on the structure's own operand count — before the exact-arity
+    // schema would otherwise refuse it first.
+    assert_eq!(
+        refusal(
+            &score_operands,
+            raw_structure(
+                &[&[0, 1, 2, 3], &[0, 4, 3], &[0, 4, 3]],
+                &[0, 1, 2, 4],
+                &[3]
+            )
+        ),
+        "contraction.rule.index-in-more-than-two-operands"
+    );
+
+    // The same five, from the typed constructor a frontend actually calls.
+    assert!(matches!(
+        ContractionIndexStructure::new(
+            [vec![G, R, TQ, DH], vec![G, SK, DH]],
+            [G, R, TQ, ContractionIndex::new(99)]
+        ),
+        Err(ContractionStructureError::OutputIndexInNoOperand { .. })
+    ));
+    assert!(matches!(
+        ContractionIndexStructure::new([vec![G, R, TQ, DH], vec![G, SK]], [G, R, TQ, SK]),
+        Err(ContractionStructureError::SummedIndexInOneOperand { .. })
+    ));
+    assert!(matches!(
+        ContractionIndexStructure::new([vec![G, R, TQ, TQ], vec![G, SK, DH]], [G, R, TQ, SK]),
+        Err(ContractionStructureError::IndexRepeatedWithinOperand { .. })
+    ));
+    assert!(matches!(
+        ContractionIndexStructure::new([vec![G, R, TQ, DH], vec![G, SK, DH]], [G, R, TQ, TQ]),
+        Err(ContractionStructureError::DuplicateOutputIndex { .. })
+    ));
+    assert!(matches!(
+        ContractionIndexStructure::new(
+            [vec![G, R, TQ, DH], vec![G, SK, DH], vec![G, SK, DH]],
+            [G, R, TQ, SK]
+        ),
+        Err(ContractionStructureError::IndexInMoreThanTwoOperands { .. })
+    ));
+}
+
+// --- Extent agreement at this width ----------------------------------------
+
+/// Both attention structures resolve their shared extents through the accepted
+/// three-outcome path, and a disproof names both observed operand axes.
+///
+/// **The unresolved outcome remains unreachable, exactly as the projection
+/// profile's landing recorded.** A semantic [`ValueFact`] carries a static
+/// [`Extent`], so every equality an occurrence can state is proved or disproved
+/// here; a symbolic `S` would be the case that produces a typed host-side
+/// pre-dispatch requirement, and no semantic value fact can carry one. Structure
+/// 3's contracted extent is therefore exercised at the static `S` values the C1
+/// row actually takes — ten at prefill and up to eighteen across its decode —
+/// rather than as a symbol.
+#[test]
+fn both_attention_structures_agree_their_shared_extents_or_name_both_sources() {
+    // Structure 2 shares the static head dimension 128 between operand 0 axis 3
+    // and operand 1 axis 2.
+    let message = refusal_message(
+        &[
+            f32_operand(&[C1_GROUPS, C1_REPEATS, C1_QUERY_POSITIONS, C1_HEAD_DIM]),
+            f32_operand(&[C1_GROUPS, C1_QUERY_POSITIONS, 64]),
+        ],
+        score_structure().canonical_value().clone(),
+    );
+    assert!(
+        message.contains("operand 0 axis 3") && message.contains("operand 1 axis 2"),
+        "a disproved head-dimension equality names both observed sources: {message}"
+    );
+    assert!(
+        message.contains("128") && message.contains("64"),
+        "the pinned checkpoint declares head dimension 128, and the divided \
+         hidden_size / num_attention_heads reading is 64: {message}"
+    );
+
+    // The group extent is shared too, and disagreeing on it is a different pair
+    // of sources than disagreeing on the head lane.
+    let message = refusal_message(
+        &[
+            f32_operand(&[C1_GROUPS, C1_REPEATS, C1_QUERY_POSITIONS, C1_HEAD_DIM]),
+            f32_operand(&[16, C1_QUERY_POSITIONS, C1_HEAD_DIM]),
+        ],
+        score_structure().canonical_value().clone(),
+    );
+    assert!(
+        message.contains("operand 0 axis 0") && message.contains("operand 1 axis 0"),
+        "{message}"
+    );
+
+    // Structure 3 shares the key position between operand 0 axis 3 and operand 1
+    // axis 1, at every static `S` the C1 row takes.
+    for context in [10_u64, 16, 18] {
+        let results = infer(
+            &[
+                f32_operand(&[C1_GROUPS, C1_REPEATS, C1_QUERY_POSITIONS, context]),
+                f32_operand(&[C1_GROUPS, context, C1_HEAD_DIM]),
+            ],
+            value_structure().canonical_value().clone(),
+        )
+        .unwrap_or_else(|error| panic!("S = {context} is admitted: {error}"));
+        assert_eq!(
+            results[0].shape(),
+            &Shape::from_dims([C1_GROUPS, C1_REPEATS, C1_QUERY_POSITIONS, C1_HEAD_DIM]),
+            "the contracted extent leaves the result shape, whatever S is"
+        );
+    }
+    let message = refusal_message(
+        &[
+            f32_operand(&[C1_GROUPS, C1_REPEATS, C1_QUERY_POSITIONS, 18]),
+            f32_operand(&[C1_GROUPS, 16, C1_HEAD_DIM]),
+        ],
+        value_structure().canonical_value().clone(),
+    );
+    assert!(
+        message.contains("operand 0 axis 3") && message.contains("operand 1 axis 1"),
+        "a stale context length is disproved against both sources: {message}"
+    );
+    assert!(
+        message.contains("18") && message.contains("16"),
+        "{message}"
+    );
+}
+
+/// The declared empty-contracted-domain behaviour, for the growing extent.
+///
+/// `S = 0` is statically unreachable in this workload — the C1 row's shortest
+/// context is ten positions — and the family still owes a declared behaviour,
+/// because the extent is an attribute and not a proof. An unseeded strict fold
+/// has no empty result, so the occurrence is refused rather than given one.
+#[test]
+fn the_value_structure_refuses_a_zero_context_length() {
+    assert_eq!(
+        refusal(
+            &[
+                f32_operand(&[C1_GROUPS, C1_REPEATS, C1_QUERY_POSITIONS, 0]),
+                f32_operand(&[C1_GROUPS, 0, C1_HEAD_DIM]),
+            ],
+            value_structure().canonical_value().clone()
+        ),
+        "contraction.extent.empty-contracted-domain"
+    );
+    // A zero *free* extent is the other case, and it is admitted: no reduction is
+    // performed and the result is an empty tensor. Decoding zero new positions is
+    // the occurrence that reaches it.
+    let results = infer(
+        &[
+            f32_operand(&[C1_GROUPS, C1_REPEATS, 0, C1_QUERY_POSITIONS]),
+            f32_operand(&[C1_GROUPS, C1_QUERY_POSITIONS, C1_HEAD_DIM]),
+        ],
+        value_structure().canonical_value().clone(),
+    )
+    .expect("an empty free extent produces an empty result");
+    assert_eq!(
+        results[0].shape(),
+        &Shape::from_dims([C1_GROUPS, C1_REPEATS, 0, C1_HEAD_DIM])
+    );
+    // And the score structure refuses a zero head dimension for the same reason,
+    // so the refusal is the family's rather than one structure's.
+    assert_eq!(
+        refusal(
+            &[
+                f32_operand(&[C1_GROUPS, C1_REPEATS, C1_QUERY_POSITIONS, 0]),
+                f32_operand(&[C1_GROUPS, C1_QUERY_POSITIONS, 0]),
+            ],
+            score_structure().canonical_value().clone()
+        ),
+        "contraction.extent.empty-contracted-domain"
+    );
+}
+
+/// Neither attention structure moves the family's identity.
+///
+/// They are structure *values* under the one key ADR 0087 accepts, so the
+/// registered definition, its schema, and its fourteen-field signature are
+/// unchanged by admitting them. A second key would be the collision that ADR
+/// rejects, and this is the check that would notice one appearing.
+#[test]
+fn admitting_the_attention_structures_registers_no_second_key() {
+    let registry = FrozenSemanticRegistry::standard().expect("the standard registry builds");
+    let contraction_keys = registry
+        .operation_definitions()
+        .filter(|definition| definition.key().name().contains("contraction"))
+        .count();
+    assert_eq!(
+        contraction_keys, 1,
+        "a frontend never chooses among contraction keys, because there is only one"
+    );
+    for structure in [score_structure(), value_structure(), workload_structure()] {
+        assert!(
+            registry
+                .infer_operation(
+                    &strict_tensor_contraction_f32_op(),
+                    &operands_for(&structure),
+                    &attributes(structure.canonical_value().clone()),
+                )
+                .is_ok(),
+            "all three workload structures are admitted under the one key"
+        );
+    }
+}
+
+/// Operands whose extents satisfy one structure, for the identity check above.
+fn operands_for(structure: &ContractionIndexStructure) -> Vec<ValueFact> {
+    // Every index gets extent four, so agreement holds by construction and the
+    // check above is about the key rather than about a shape.
+    structure
+        .operands()
+        .map(|tuple| f32_operand(&vec![4_u64; tuple.len()]))
+        .collect()
 }
 
 #[test]
