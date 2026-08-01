@@ -1,7 +1,7 @@
 ---
 id: spike-bf16-through-the-second-dtype-seams
 title: Spike BF16 through the second-dtype seams
-status: todo
+status: in-progress
 priority: p1
 dependencies: [register-the-accepted-built-in-dtype-catalog, construct-and-bind-the-first-authoritative-metal-compile-profile]
 related: [preserve-primary-dtype-standards-evidence, own-the-dtype-support-maturity-matrix, own-operation-family-support-matrix, measure-the-apple-subnormal-flush-for-the-remaining-mature-dtypes, widen-the-f16-operation-vocabulary-to-contraction-and-reassociation, admit-a-caller-declared-target-profile, decide-per-dtype-dispatchability-as-a-target-capability, redesign-the-delivered-realization-record-from-typed-evidence, measure-apple-numerics-on-physical-ios-device]
@@ -9,6 +9,9 @@ scopes: [research/numerics, research/apple-targets, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: [spikes/dtypes/bf16-second-dtype/**, docs/dtype-support.md, docs/roadmap.md]
 tags: [dtype, bf16, spike, vertical-slice, planning]
+claimed_from: todo
+assignee: worker-spike-bf16-t
+lease_expires_at: 1785565712
 ---
 ## User-visible outcome
 
