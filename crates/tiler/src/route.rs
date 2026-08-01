@@ -267,9 +267,9 @@ pub fn dispatch_embedded_route<A: DispatchAdapter>(
     operands: &[&Tensor<A>],
     result: &mut A::Value,
 ) -> Result<RegionOutcome<A>, BindError<A::Error>> {
-    if route.payload.is_none() {
+    let Some(delivery) = route.payload else {
         return Ok(RouteOutcome::NoEmbeddedPayload);
-    }
+    };
 
     let Some(first) = operands.first() else {
         return Err(BindError::MalformedRegionFacts {
@@ -297,7 +297,12 @@ pub fn dispatch_embedded_route<A: DispatchAdapter>(
             detail: "the recorded artifact identity is not a well-formed identity",
         });
     };
-    let mut program = match DecodedProgram::decode(route.artifact) {
+    // The `#[cfg]`-resolved position, carried into the decode rather than used
+    // to slice the bytes: one envelope carries one payload per built family, so
+    // what this consumer target selects is a *position within* the artifact it
+    // already holds. A position the artifact does not declare is the loader's
+    // own refusal rather than something this crate decides.
+    let mut program = match DecodedProgram::decode(route.artifact, delivery) {
         Ok(program) => program,
         Err(rejection) => return Ok(RouteOutcome::Refused(rejection)),
     };

@@ -96,6 +96,21 @@ pub(super) const FEATURE_MULTI_STAGE_PROGRAM: &str = "tiler.artifact.feature.mul
 /// than load an artifact whose executable half it silently dropped.
 pub(super) const FEATURE_EMBEDDED_PAYLOAD_CODE: &str =
     "tiler.artifact.feature.embedded-payload-code";
+/// Governed feature key required when the artifact declares several delivery positions.
+///
+/// A reader that resolves no delivery position takes the sole payload realizing
+/// an entry, which is correct for the one-position artifact and silently wrong
+/// for any other: it would hand a consumer whichever object happened to be
+/// first, and `docs/research/apple-targets/artifact-compatibility.md` records
+/// that a wrong-family object can load and dispatch without error. Refusing is
+/// the fail-closed form of not knowing which position a reader is.
+///
+/// A one-position artifact emits no key, so the ordinary single-target artifact
+/// stays readable by a reader that predates the family. The asymmetry is the
+/// same one [`FEATURE_ROUTE_REQUIREMENTS`] draws, and for the same reason: one
+/// position is a state such a reader can honour, and two is not.
+pub(super) const FEATURE_MULTI_PAYLOAD_DELIVERY: &str =
+    "tiler.artifact.feature.multi-payload-delivery";
 /// Governed feature key required when any variant declares a route requirement.
 ///
 /// Required rather than optional, and for the reason the mechanism exists: a
@@ -119,6 +134,7 @@ pub(super) const SUPPORTED_FEATURES: &[&str] = &[
     FEATURE_DEFERRED_PREDICATES,
     FEATURE_EMBEDDED_PAYLOAD_CODE,
     FEATURE_LAUNCH_PRECONDITIONS,
+    FEATURE_MULTI_PAYLOAD_DELIVERY,
     FEATURE_MULTI_STAGE_PROGRAM,
     FEATURE_MULTI_VARIANT_ROUTING,
     FEATURE_ROUTE_REQUIREMENTS,
@@ -396,7 +412,12 @@ pub(crate) struct EntryRow {
     pub(crate) numerical: NumericalFacts,
     pub(crate) bindings: Vec<BindingData>,
     pub(crate) launch: LaunchData,
-    pub(crate) payload: u32,
+    /// Canonical payload positions realizing this entry, one per delivery position.
+    ///
+    /// Order is meaning — position `p` is what a consumer's build target
+    /// resolves to — so this run is retained as stated rather than canonicalized
+    /// like the payload table it indexes.
+    pub(crate) payloads: Vec<u32>,
     pub(crate) entry_key: BackendEntryKey,
 }
 
@@ -667,6 +688,20 @@ impl ArtifactEnvelope {
         &self.variants
     }
 
+    /// Returns how many delivery positions this envelope carries a payload for.
+    ///
+    /// Read from the first entry, which answers for all of them: `validate`
+    /// re-proves that every entry declares the same non-zero count before a
+    /// decoded envelope is returned. Zero means the portfolio is empty or a
+    /// variant has no entry, both of which `validate` refuses on their own
+    /// terms.
+    pub(crate) fn delivery_positions(&self) -> usize {
+        self.variants
+            .first()
+            .and_then(|variant| variant.entries.first())
+            .map_or(0, |entry| entry.payloads.len())
+    }
+
     /// Returns the framed sections in canonical content order.
     pub(crate) fn sections(&self) -> &[Section] {
         &self.sections
@@ -725,6 +760,9 @@ impl ArtifactEnvelope {
         }
         if self.payload_content.iter().any(Option::is_some) {
             features.push(FEATURE_EMBEDDED_PAYLOAD_CODE.to_owned());
+        }
+        if self.delivery_positions() > 1 {
+            features.push(FEATURE_MULTI_PAYLOAD_DELIVERY.to_owned());
         }
         features.sort_unstable();
         features
@@ -1037,7 +1075,12 @@ fn project_entries(
                 zero_work_skips_dispatch: source.launch.zero_work_skips_dispatch,
                 preconditions,
             },
-            payload: payload_of[position(source.implementation.payload)],
+            payloads: source
+                .implementation
+                .payloads
+                .iter()
+                .map(|payload| payload_of[position(*payload)])
+                .collect(),
             entry_key: source.implementation.entry_key.clone(),
         });
     }

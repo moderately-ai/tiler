@@ -41,7 +41,7 @@ use crate::value::{
 /// restatement cannot produce, so a domain bump turns each of them into a
 /// `MalformedRouteFacts` failure naming the identity rather than into a silent
 /// pass.
-const IDENTITY_DOMAIN: &[u8] = b"tiler.artifact-program.v12\0";
+const IDENTITY_DOMAIN: &[u8] = b"tiler.artifact-program.v13\0";
 
 /// A consumer-shaped value, so a region has something to bind and build.
 ///
@@ -598,7 +598,7 @@ fn the_fallback_answer_is_no_longer_a_constant() {
         RouteOutcome::NoEmbeddedPayload,
         RouteOutcome::MalformedRouteFacts { detail: "any" },
         RouteOutcome::Refused(
-            crate::runtime::load::DecodedProgram::decode(b"short")
+            crate::runtime::load::DecodedProgram::decode(b"short", 0)
                 .expect_err("five bytes are not an artifact"),
         ),
         RouteOutcome::Adapter(AdapterRouteFailure::Context("no device")),
@@ -609,7 +609,7 @@ fn the_fallback_answer_is_no_longer_a_constant() {
         RouteOutcome::Adapter(AdapterRouteFailure::Preparation("no pipeline")),
         RouteOutcome::Adapter(AdapterRouteFailure::Plan("storage too small")),
         RouteOutcome::Adapter(AdapterRouteFailure::Load(
-            crate::runtime::load::DecodedProgram::decode(b"")
+            crate::runtime::load::DecodedProgram::decode(b"", 0)
                 .expect_err("no bytes are not an artifact"),
         )),
     ];

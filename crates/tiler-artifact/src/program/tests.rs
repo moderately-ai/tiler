@@ -1298,7 +1298,7 @@ pub(crate) fn strict_affine_u4_dequantize_artifact() -> VerifiedArtifactProgram 
                         preconditions: Vec::new(),
                     },
                     implementation: BackendEntryRef {
-                        payload,
+                        payloads: vec![payload],
                         entry_key: BackendEntryKey::from_bytes(b"strict-affine-u4-dequantize")
                             .expect("entry key"),
                     },
@@ -1343,7 +1343,7 @@ pub(super) fn entry(_formulas: &Formulas, payload: PayloadId, key: &[u8]) -> Ent
             preconditions: Vec::new(),
         },
         implementation: BackendEntryRef {
-            payload,
+            payloads: vec![payload],
             entry_key: BackendEntryKey::from_bytes(key).unwrap(),
         },
     }
@@ -1397,7 +1397,7 @@ fn partial_window_variant(payload: PayloadId) -> VariantSpec {
             preconditions: Vec::new(),
         },
         implementation: BackendEntryRef {
-            payload,
+            payloads: vec![payload],
             entry_key: BackendEntryKey::from_bytes(key).unwrap(),
         },
     };
@@ -1568,7 +1568,15 @@ fn an_entry_reads_its_plan_through_the_shared_ir_alone() {
     assert_eq!(entry.numerical(), strict());
     assert!(entry.zero_work_skips_dispatch());
     assert_eq!(entry.backend_entry_key().as_bytes(), b"fused");
-    assert_eq!(entry.payload().representation.as_str(), "metallib");
+    assert_eq!(
+        entry
+            .payload(0)
+            .expect("the sole delivery position")
+            .representation
+            .as_str(),
+        "metallib",
+    );
+    assert_eq!(entry.payloads().len(), 1);
     let bindings: Vec<_> = entry.bindings().collect();
     assert_eq!(bindings.len(), 2);
     assert_eq!(bindings[0].slot(), 0);
@@ -2474,6 +2482,204 @@ fn rejects_a_payload_no_entry_realizes() {
             .expect_err("an unreferenced payload is rejected")
             .diagnostics(),
         [ArtifactDiagnostic::UnusedPayload],
+    );
+}
+
+/// Two delivery positions carry two objects realizing the same entries.
+///
+/// The positive case the whole delivery-position record exists for: a selection
+/// built for two consumer targets is one plan, one kernel program, and two
+/// compiled objects, so the entry names one backend entry key at two payloads
+/// and both are referenced. Identity folds the run *as stated*, which the
+/// sibling case below turns into a measurement.
+#[test]
+fn packages_one_payload_per_delivery_position() {
+    let semantic = semantic_program();
+    let program = fused_program(&semantic, SCALE_BITS);
+    let provider = lowering_provider(1);
+    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+    draft.select_provider(selection(provider)).unwrap();
+    let first = draft.push_payload(payload(0xa1)).unwrap();
+    let second = draft.push_payload(payload(0xb1)).unwrap();
+    let formulas = formulas(&mut draft);
+    let mut spec = variant(&formulas, first, b"fused");
+    spec.entries[0].implementation.payloads = vec![first, second];
+    draft.push_variant(&program, spec).unwrap();
+    let artifact = draft.build().expect("both positions are realized");
+
+    assert_eq!(artifact.delivery_positions(), 2);
+    assert_eq!(artifact.payloads().len(), 2);
+    let entry = artifact
+        .variants()
+        .next()
+        .expect("one variant")
+        .entries()
+        .next()
+        .expect("one entry");
+    assert_eq!(entry.payloads().len(), 2);
+    assert_ne!(
+        entry.payload(0).expect("position 0").digest,
+        entry.payload(1).expect("position 1").digest,
+        "one payload per built family means two objects, not one under two names",
+    );
+    assert!(entry.payload(2).is_none());
+}
+
+/// A one-position artifact and a two-position one are never one artifact.
+///
+/// The identity consequence the `tiler.artifact-program.v13` step exists for.
+/// The one-position artifact below carries the *first* of the two-position
+/// artifact's payloads, so the two differ only in whether a second family was
+/// built — and an identity that folded only the sorted payload table would
+/// still distinguish them. What this pins is stronger and is the property a
+/// cache needs: the *order* is folded too, so the same two payloads delivered
+/// the other way round is a third artifact.
+#[test]
+fn delivery_order_and_count_are_both_artifact_identity() {
+    let semantic = semantic_program();
+    let program = fused_program(&semantic, SCALE_BITS);
+    let provider = lowering_provider(1);
+
+    let build = |positions: &[u8]| {
+        let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+        let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+        draft.select_provider(selection(provider.clone())).unwrap();
+        let declared: Vec<_> = positions
+            .iter()
+            .map(|tag| draft.push_payload(payload(*tag)).unwrap())
+            .collect();
+        let formulas = formulas(&mut draft);
+        let mut spec = variant(&formulas, declared[0], b"fused");
+        spec.entries[0].implementation.payloads = declared;
+        draft.push_variant(&program, spec).unwrap();
+        draft
+            .build()
+            .expect("every declared payload is realized")
+            .canonical_identity()
+            .as_bytes()
+            .to_vec()
+    };
+
+    let one = build(&[0xa1]);
+    let two = build(&[0xa1, 0xb1]);
+    let reversed = build(&[0xb1, 0xa1]);
+    assert_ne!(one, two, "a second family is a second artifact");
+    assert_ne!(two, reversed, "delivery order is meaning");
+}
+
+/// An entry naming no payload has no consumer target that could dispatch it.
+#[test]
+fn rejects_an_entry_realized_at_no_delivery_position() {
+    let semantic = semantic_program();
+    let program = fused_program(&semantic, SCALE_BITS);
+    let provider = lowering_provider(1);
+    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+    draft.select_provider(selection(provider)).unwrap();
+    let descriptor = draft.push_payload(payload(0xa1)).unwrap();
+    let formulas = formulas(&mut draft);
+    let mut spec = variant(&formulas, descriptor, b"fused");
+    spec.entries[0].implementation.payloads = Vec::new();
+    assert_eq!(
+        draft.push_variant(&program, spec),
+        Err(ArtifactBuildError::EmptyDelivery { entry: 0 }),
+    );
+}
+
+/// Every entry of an artifact is realized at the same delivery positions.
+///
+/// A consumer resolves one position for the whole artifact, so an entry short of
+/// it would leave that consumer with no object for a stage its route must
+/// dispatch. The two-stage program makes the disagreement expressible: entry 0
+/// establishes two positions and entry 1 declares one.
+#[test]
+fn rejects_an_entry_disagreeing_about_delivery_positions() {
+    let semantic = semantic_program();
+    let program = partial_window_program(&semantic);
+    let provider = lowering_provider(1);
+    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+    draft.select_provider(selection(provider)).unwrap();
+    let first = draft.push_payload(payload(0xa1)).unwrap();
+    let second = draft.push_payload(payload(0xb1)).unwrap();
+    let mut spec = partial_window_variant(first);
+    spec.entries[0].implementation.payloads = vec![first, second];
+    assert_eq!(
+        draft.push_variant(&program, spec),
+        Err(ArtifactBuildError::DeliveryCardinality {
+            entry: 1,
+            expected: 2,
+            actual: 1,
+        }),
+    );
+}
+
+/// One payload may not stand in for two consumer build targets.
+///
+/// Two entries, two objects, and each object reached from a different delivery
+/// position by one entry and the other position by the other. Every payload is
+/// referenced and no `(payload, entry key)` pair repeats, so neither existing
+/// obligation notices; what is wrong is that the artifact declares two consumer
+/// targets and carries one object for each *position*, mixed. The neutral layer
+/// cannot decide which target a shared object was built for, so it refuses the
+/// shape.
+#[test]
+fn rejects_a_payload_reached_from_two_delivery_positions() {
+    let semantic = semantic_program();
+    let program = partial_window_program(&semantic);
+    let provider = lowering_provider(1);
+    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+    draft.select_provider(selection(provider)).unwrap();
+    let first = draft.push_payload(payload(0xa1)).unwrap();
+    let second = draft.push_payload(payload(0xb1)).unwrap();
+    let mut spec = partial_window_variant(first);
+    spec.entries[0].implementation.payloads = vec![first, second];
+    spec.entries[1].implementation.payloads = vec![second, first];
+    draft.push_variant(&program, spec).unwrap();
+    let diagnostics = draft
+        .build()
+        .expect_err("one object cannot serve two delivery positions")
+        .diagnostics()
+        .to_vec();
+    assert_eq!(
+        diagnostics,
+        [ArtifactDiagnostic::AmbiguousPayloadDelivery { payload: 1 }],
+    );
+}
+
+/// One entry naming one payload at two positions is refused twice over.
+///
+/// Kept separate from the case above because it is decided by *both*
+/// obligations, and observing that is what says the older one still does work
+/// here: repeating a payload within one entry repeats a `(payload, entry key)`
+/// pair, which the backend-entry injectivity rule that predates delivery
+/// positions catches on its own, and it also puts one object at two positions.
+/// Whole-artifact verification reports every diagnostic, so both are asserted
+/// rather than only whichever happens to be first.
+#[test]
+fn rejects_one_payload_at_two_positions_of_one_entry() {
+    let semantic = semantic_program();
+    let program = fused_program(&semantic, SCALE_BITS);
+    let provider = lowering_provider(1);
+    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+    draft.select_provider(selection(provider)).unwrap();
+    let descriptor = draft.push_payload(payload(0xa1)).unwrap();
+    let formulas = formulas(&mut draft);
+    let mut spec = variant(&formulas, descriptor, b"fused");
+    spec.entries[0].implementation.payloads = vec![descriptor, descriptor];
+    draft.push_variant(&program, spec).unwrap();
+    assert_eq!(
+        draft
+            .build()
+            .expect_err("one object cannot realize one entry twice")
+            .diagnostics(),
+        [
+            ArtifactDiagnostic::DuplicateBackendEntry,
+            ArtifactDiagnostic::AmbiguousPayloadDelivery { payload: 0 },
+        ],
     );
 }
 

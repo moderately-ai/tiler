@@ -61,7 +61,7 @@ use tiler_artifact::program::{
     VerifiedArtifactProgram,
 };
 use tiler_build::{
-    BackendEntryDeclaration, DeclaredPayload, accept_or_publish_single_payload_artifact,
+    BackendEntryDeclaration, DeclaredPayload, accept_or_publish_delivered_payload_artifact,
     assemble_plan_artifact,
 };
 use tiler_cache::expansion::{ExpansionCache, Resolution};
@@ -776,18 +776,30 @@ fn assemble_pending(
         plan,
         |builder, profile| {
             let compatibility = payload_compatibility(variant, &profile)?;
-            builder.push_payload(BackendPayloadDescriptor {
-                backend: variant.backend(),
-                representation: variant.representation(),
-                payload_schema: PAYLOAD_SCHEMA,
-                compatibility,
-                execution_policy: ArtifactExecutionPolicy::NativeImage,
-                digest: digest.clone(),
-            })
+            builder
+                .push_payload(BackendPayloadDescriptor {
+                    backend: variant.backend(),
+                    representation: variant.representation(),
+                    payload_schema: PAYLOAD_SCHEMA,
+                    compatibility,
+                    execution_policy: ArtifactExecutionPolicy::NativeImage,
+                    digest: digest.clone(),
+                })
+                .map(|payload| vec![payload])
         },
         |_, stage| Ok(entry_declaration(stage)),
     )
     .map_err(|error| ProducerFailure::Artifact(error.to_string()))
+}
+
+/// Takes the sole compiled payload of a one-position delivery run.
+///
+/// This producer declares one delivery position, so a run of any other length is
+/// a defect here rather than something to handle.
+fn sole(contents: Vec<PayloadContent>) -> PayloadContent {
+    let [content] = <[PayloadContent; 1]>::try_from(contents)
+        .expect("this producer declares exactly one delivery position");
+    content
 }
 
 /// Assembles the carried artifact this producer publishes.
@@ -803,14 +815,16 @@ fn assemble_carried(
         plan,
         |builder, profile| {
             let compatibility = payload_compatibility(variant, &profile)?;
-            builder.push_carried_payload(
-                variant.backend(),
-                variant.representation(),
-                PAYLOAD_SCHEMA,
-                compatibility,
-                ArtifactExecutionPolicy::NativeImage,
-                content.take().expect("the payload is declared once"),
-            )
+            builder
+                .push_carried_payload(
+                    variant.backend(),
+                    variant.representation(),
+                    PAYLOAD_SCHEMA,
+                    compatibility,
+                    ArtifactExecutionPolicy::NativeImage,
+                    content.take().expect("the payload is declared once"),
+                )
+                .map(|payload| vec![payload])
         },
         |_, stage| Ok(entry_declaration(stage)),
     )
@@ -867,13 +881,13 @@ fn produce(cache: &ExpansionCache, variant: Variant) -> Result<Produced, Produce
         // cache orchestration refuses to publish this envelope" is half the
         // evidence; the consumer refusing the same bytes from its own decode is
         // the other half, and neither substitutes for the other.
-        let refusal = accept_or_publish_single_payload_artifact(
+        let refusal = accept_or_publish_delivered_payload_artifact(
             cache,
             &pending,
-            &declared,
-            |actual: &PayloadMetadata| correspondence(&expected, actual),
-            || Ok::<PayloadContent, String>(content.clone()),
-            |content| assemble_carried(&semantic, plan, variant, content),
+            std::slice::from_ref(&declared),
+            |_, actual: &PayloadMetadata| correspondence(&expected, actual),
+            || Ok::<Vec<PayloadContent>, String>(vec![content.clone()]),
+            |contents| assemble_carried(&semantic, plan, variant, sole(contents)),
         )
         .expect_err("an envelope that does not decode cannot reach the cache");
         let note = bypass.as_mut().expect("this variant bypasses the cache");
@@ -898,13 +912,13 @@ fn produce(cache: &ExpansionCache, variant: Variant) -> Result<Produced, Produce
         return Ok(Produced { envelope, sidecar });
     }
 
-    let accepted = accept_or_publish_single_payload_artifact(
+    let accepted = accept_or_publish_delivered_payload_artifact(
         cache,
         &pending,
-        &declared,
-        |actual: &PayloadMetadata| correspondence(&expected, actual),
-        || Ok::<PayloadContent, String>(content.clone()),
-        |content| assemble_carried(&semantic, plan, variant, content),
+        std::slice::from_ref(&declared),
+        |_, actual: &PayloadMetadata| correspondence(&expected, actual),
+        || Ok::<Vec<PayloadContent>, String>(vec![content.clone()]),
+        |contents| assemble_carried(&semantic, plan, variant, sole(contents)),
     )
     .map_err(|failure| ProducerFailure::Cache(failure.to_string()))?;
 

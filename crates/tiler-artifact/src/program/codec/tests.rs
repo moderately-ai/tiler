@@ -256,7 +256,7 @@ fn an_encoded_envelope_round_trips_to_an_equal_model() {
         artifact
             .canonical_identity()
             .as_bytes()
-            .starts_with(b"tiler.artifact-program.v12\0")
+            .starts_with(b"tiler.artifact-program.v13\0")
     );
 }
 
@@ -290,7 +290,7 @@ fn the_framing_header_is_the_fixed_width_it_declares() {
         &bytes[HEADER_BYTES..HEADER_BYTES + MANIFEST_DOMAIN.len()],
         MANIFEST_DOMAIN,
     );
-    assert_eq!(MANIFEST_SCHEMA, (10, 0));
+    assert_eq!(MANIFEST_SCHEMA, (11, 0));
 }
 
 #[test]
@@ -1209,15 +1209,105 @@ fn two_entries_claiming_one_backend_entry_are_rejected() {
     let artifact = two_variant_artifact(true);
     let mut envelope = envelope_of(&artifact);
     let shared = envelope.variants[0].entries[0].entry_key.clone();
-    let payload = envelope.variants[0].entries[0].payload;
+    let payloads = envelope.variants[0].entries[0].payloads.clone();
     envelope.variants[1].entries[0].entry_key = shared;
-    envelope.variants[1].entries[0].payload = payload;
+    envelope.variants[1].entries[0].payloads = payloads;
     let bytes = encode(&envelope).expect("a forged envelope still encodes");
     assert_eq!(
         decode(&bytes),
         Err(ArtifactCodecError::ModelObligation {
             cause: ArtifactDiagnostic::DuplicateBackendEntry,
         }),
+    );
+}
+
+/// An envelope whose entries disagree about delivery positions is refused.
+///
+/// Re-proven from bytes rather than inherited from construction: the builder
+/// refuses this at insertion, and an envelope a decoder is handed may have been
+/// written by no builder at all. The forgery drops one entry's second
+/// realization, leaving a consumer resolving position 1 with no object for a
+/// stage the route must dispatch.
+#[test]
+fn an_entry_realized_at_fewer_delivery_positions_is_rejected() {
+    let artifact = two_variant_artifact(true);
+    let mut envelope = envelope_of(&artifact);
+    // Every entry gains a second position, then one loses it again.
+    let payloads: Vec<u32> = (0..envelope.payloads.len())
+        .map(|payload| u32::try_from(payload).expect("a bounded payload table fits u32"))
+        .collect();
+    assert_eq!(payloads.len(), 2, "the fixture carries two payloads");
+    for variant in &mut envelope.variants {
+        for entry in &mut variant.entries {
+            entry.payloads = payloads.clone();
+        }
+    }
+    envelope.variants[1].entries[0].payloads.pop();
+    envelope.features = envelope.derived_features();
+    let bytes = encode(&envelope).expect("a forged envelope still encodes");
+    assert_eq!(
+        decode(&bytes),
+        Err(ArtifactCodecError::ModelRule {
+            cause: Box::new(super::super::ArtifactBuildError::DeliveryCardinality {
+                entry: 1,
+                expected: 2,
+                actual: 1,
+            }),
+        }),
+    );
+}
+
+/// An envelope reaching one payload from two delivery positions is refused.
+///
+/// The cross-entry case no existing obligation sees: every payload is
+/// referenced and no `(payload, entry key)` pair repeats. What is wrong is that
+/// the envelope declares two consumer build targets and mixes one object
+/// between their positions.
+#[test]
+fn a_payload_reached_from_two_delivery_positions_is_rejected() {
+    let artifact = two_variant_artifact(true);
+    let mut envelope = envelope_of(&artifact);
+    envelope.variants[0].entries[0].payloads = vec![0, 1];
+    envelope.variants[1].entries[0].payloads = vec![1, 0];
+    envelope.features = envelope.derived_features();
+    let bytes = encode(&envelope).expect("a forged envelope still encodes");
+    assert_eq!(
+        decode(&bytes),
+        Err(ArtifactCodecError::ModelObligation {
+            cause: ArtifactDiagnostic::AmbiguousPayloadDelivery { payload: 1 },
+        }),
+    );
+}
+
+/// A multi-position envelope declares the governed feature that says so.
+///
+/// A reader that resolves no delivery position would take whichever object came
+/// first, which is correct for a one-position artifact and silently wrong for
+/// any other, so the requirement is content-derived and stated rather than
+/// implied. A one-position artifact emits no key.
+#[test]
+fn several_delivery_positions_require_their_governed_feature() {
+    let artifact = default_artifact();
+    let envelope = envelope_of(&artifact);
+    assert_eq!(envelope.delivery_positions(), 1);
+    assert!(
+        !envelope
+            .features()
+            .iter()
+            .any(|feature| feature == super::model::FEATURE_MULTI_PAYLOAD_DELIVERY),
+    );
+
+    let artifact = two_variant_artifact(true);
+    let mut envelope = envelope_of(&artifact);
+    envelope.variants[0].entries[0].payloads = vec![0, 1];
+    envelope.variants[1].entries[0].payloads = vec![0, 1];
+    envelope.features = envelope.derived_features();
+    assert_eq!(envelope.delivery_positions(), 2);
+    assert!(
+        envelope
+            .features()
+            .iter()
+            .any(|feature| feature == super::model::FEATURE_MULTI_PAYLOAD_DELIVERY),
     );
 }
 
@@ -1873,21 +1963,29 @@ fn a_decoded_artifact_carries_everything_one_dispatch_needs() {
     assert_eq!(entry.launch_threads().value_type(), AbiType::Unsigned);
 
     // The backend half: which symbol to look up and where each slot goes.
-    assert_eq!(entry.backend_symbol(), Some("tiler_fused_0"));
-    assert_eq!(entry.transport_slots(), Some([0, 1].as_slice()));
+    assert_eq!(decoded.delivery_positions(), 1);
+    assert_eq!(entry.delivery_positions(), 1);
+    let payload = entry.payload(0).expect("the sole delivery position");
+    assert_eq!(entry.backend_symbol(0), Some("tiler_fused_0"));
+    assert_eq!(entry.transport_slots(0), Some([0, 1].as_slice()));
     assert_eq!(entry.backend_entry_key().as_bytes(), b"fused");
+    // A position this artifact does not declare is `None` rather than the sole
+    // payload under another name.
+    assert_eq!(entry.payload(1), None);
+    assert_eq!(entry.backend_symbol(1), None);
+    assert_eq!(entry.transport_slots(1), None);
     assert_eq!(
-        decoded.payload_object(entry.payload()),
+        decoded.payload_object(payload),
         Some(b"\x00metallib\xff".as_slice()),
         "the committed object is the exact bytes the producer packaged",
     );
     assert_eq!(
-        decoded.payloads()[entry.payload()].representation.as_str(),
+        decoded.payloads()[payload].representation.as_str(),
         "metallib",
     );
     assert_eq!(
         decoded
-            .payload_metadata(entry.payload())
+            .payload_metadata(payload)
             .expect("the payload is carried")
             .provenance
             .target,
@@ -2026,7 +2124,9 @@ fn strict_affine_components_round_trip_as_target_neutral_structural_abi() {
         BindingTarget::ProgramOutput(std::slice::from_ref(&result))
     );
     assert_eq!(
-        decoded.payloads()[entry.payload()].backend.as_str(),
+        decoded.payloads()[entry.payload(0).expect("the sole delivery position")]
+            .backend
+            .as_str(),
         "tiler.test.target-neutral"
     );
 }
@@ -2088,10 +2188,11 @@ fn an_uncarried_payload_publishes_no_backend_mapping() {
         .entries()
         .next()
         .expect("one entry");
-    assert_eq!(entry.backend_symbol(), None);
-    assert_eq!(entry.transport_slots(), None);
-    assert_eq!(decoded.payload_object(entry.payload()), None);
-    assert!(decoded.payload_metadata(entry.payload()).is_none());
+    let payload = entry.payload(0).expect("the sole delivery position");
+    assert_eq!(entry.backend_symbol(0), None);
+    assert_eq!(entry.transport_slots(0), None);
+    assert_eq!(decoded.payload_object(payload), None);
+    assert!(decoded.payload_metadata(payload).is_none());
     // A position past the descriptor table is the same answer and not a panic.
     assert!(decoded.payload_metadata(decoded.payloads().len()).is_none());
     assert_eq!(decoded.payload_object(decoded.payloads().len()), None);

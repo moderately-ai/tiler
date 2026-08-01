@@ -603,7 +603,7 @@ mod tests {
     #[test]
     fn only_a_post_commit_dispatch_failure_forecloses_a_fallback() {
         let load: AdapterRouteFailure<&str, &str> = AdapterRouteFailure::Load(
-            LoadRejection::Artifact(match DecodedProgram::decode(b"short") {
+            LoadRejection::Artifact(match DecodedProgram::decode(b"short", 0) {
                 Err(LoadRejection::Artifact(failure)) => failure,
                 other => panic!("five bytes are not an artifact: {other:?}"),
             }),
@@ -663,7 +663,7 @@ mod tests {
     /// A codec failure stays reachable through the whole failure chain.
     #[test]
     fn a_load_rejection_survives_the_adapter_classification() {
-        let rejection = DecodedProgram::decode(&[]).expect_err("no bytes, no artifact");
+        let rejection = DecodedProgram::decode(&[], 0).expect_err("no bytes, no artifact");
         let failure: AdapterRouteFailure<std::io::Error, std::io::Error> = rejection.into();
         assert!(
             matches!(

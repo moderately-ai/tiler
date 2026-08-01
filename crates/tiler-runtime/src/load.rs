@@ -188,19 +188,66 @@ use std::fmt;
 #[derive(Debug, Eq, PartialEq)]
 pub struct DecodedProgram {
     decoded: DecodedArtifact,
+    delivery: usize,
 }
 
 impl DecodedProgram {
-    /// Decodes and validates one encoded artifact envelope.
+    /// Decodes and validates one encoded artifact envelope for one delivery position.
+    ///
+    /// # Why the position is stated here and not at each route
+    ///
+    /// An artifact may carry one backend object **per delivery position** — the
+    /// ordered slot a consumer's build target resolves to — and every payload
+    /// lookup below has to resolve through it. Taking it once, at the point the
+    /// bytes become a program, is what makes "this program is being loaded as
+    /// position `p`" a property of the value rather than an argument three call
+    /// sites could disagree about, and it is what lets an out-of-range position
+    /// refuse before any route exists.
+    ///
+    /// It is deliberately **not** part of [`ExecutionEnvironment`]. That record
+    /// is what a *device* reports — `RuntimeAdapter::bind_execution_context`
+    /// mints one by observing the machine — and the delivery position is a
+    /// `#[cfg]` fact of the consumer's own compilation that no adapter can
+    /// observe. Putting it there would require an adapter to report a fact it
+    /// cannot know.
+    ///
+    /// There is no default. An artifact carrying several objects has no "the"
+    /// payload, and taking the first would hand a consumer the object built for
+    /// somebody else's target — which
+    /// `docs/research/apple-targets/artifact-compatibility.md` records as
+    /// loading and dispatching without error.
+    ///
+    /// [`ExecutionEnvironment`]: crate::load::ExecutionEnvironment
+    /// [`RuntimeAdapter::bind_execution_context`]: crate::adapter::RuntimeAdapter::bind_execution_context
     ///
     /// # Errors
     ///
     /// Returns [`LoadRejection::Artifact`] carrying the codec's own
-    /// classification of the first boundary that refused.
-    pub fn decode(bytes: &[u8]) -> Result<Self, LoadRejection> {
-        decode_artifact(bytes)
-            .map(|decoded| Self { decoded })
-            .map_err(LoadRejection::Artifact)
+    /// classification of the first boundary that refused, or
+    /// [`LoadRejection::UnknownDeliveryPosition`] when the artifact declares no
+    /// payload at the requested position.
+    pub fn decode(bytes: &[u8], delivery: usize) -> Result<Self, LoadRejection> {
+        let decoded = decode_artifact(bytes).map_err(LoadRejection::Artifact)?;
+        let positions = decoded.delivery_positions();
+        if delivery >= positions {
+            return Err(LoadRejection::UnknownDeliveryPosition {
+                requested: delivery,
+                positions,
+            });
+        }
+        Ok(Self { decoded, delivery })
+    }
+
+    /// Returns the delivery position this program was loaded as.
+    #[must_use]
+    pub const fn delivery_position(&self) -> usize {
+        self.delivery
+    }
+
+    /// Returns how many delivery positions the artifact carries a payload for.
+    #[must_use]
+    pub fn delivery_positions(&self) -> usize {
+        self.decoded.delivery_positions()
     }
 
     /// Returns the identity re-derived from this artifact's decoded content.
@@ -484,7 +531,9 @@ impl DecodedProgram {
         entry: DecodedEntry<'a>,
         facts: &AbiFacts,
     ) -> Result<RoutedEntry<'a>, LoadRejection> {
-        let descriptor = entry.payload();
+        let descriptor = entry
+            .payload(self.delivery)
+            .expect("a decode proved every entry is realized at this program's delivery position");
         let payload = self
             .decoded
             .payloads()
@@ -507,8 +556,8 @@ impl DecodedProgram {
         // All three are answered from the descriptor position the entry named.
         let (Some(object), Some(symbol), Some(transports)) = (
             self.decoded.payload_object(descriptor),
-            entry.backend_symbol(),
-            entry.transport_slots(),
+            entry.backend_symbol(self.delivery),
+            entry.transport_slots(self.delivery),
         ) else {
             return Err(LoadRejection::ObjectNotCarried);
         };
@@ -618,10 +667,16 @@ impl DecodedProgram {
             return Err(VariantIneligibility::AssessedProfile { classification });
         }
         for (entry, decoded) in variant.execution_order().enumerate() {
+            // This program's delivery position, so eligibility is decided about
+            // the objects this consumer would actually load rather than about a
+            // sibling position's, which may name another backend entirely.
+            let descriptor = decoded.payload(self.delivery).expect(
+                "a decode proved every entry is realized at this program's delivery position",
+            );
             let payload = self
                 .decoded
                 .payloads()
-                .get(decoded.payload())
+                .get(descriptor)
                 .expect("a decode proved every entry names a payload the artifact declares");
             // As a pair. A backend family this host executes, under a
             // representation it cannot consume, is not a payload it can run, and
@@ -1304,6 +1359,21 @@ pub enum LoadRejection {
         /// The exact unmet subject.
         subject: RouteRequirementSubject,
     },
+    /// The artifact carries no payload at the delivery position the caller stated.
+    ///
+    /// The bytes are a valid artifact and the caller is asking to be a consumer
+    /// target it was not built for. Refusing is the only fail-closed answer: an
+    /// artifact carrying two objects has no way to say which of them a third
+    /// build target should take, and taking the first would load the object
+    /// built for somebody else — which loads and dispatches without error on the
+    /// Apple targets `docs/research/apple-targets/artifact-compatibility.md`
+    /// measures.
+    UnknownDeliveryPosition {
+        /// The delivery position the caller stated.
+        requested: usize,
+        /// How many the artifact declares.
+        positions: usize,
+    },
     /// The payload needs a delivery step this device-free loader cannot perform.
     UndeliverableExecutionPolicy {
         /// The policy the payload declares.
@@ -1439,6 +1509,14 @@ impl fmt::Display for LoadRejection {
                 "runtime.unsatisfied-route-requirement: this device does not satisfy variant \
                  {variant}'s requirement {position}, {subject}",
             ),
+            Self::UnknownDeliveryPosition {
+                requested,
+                positions,
+            } => write!(
+                formatter,
+                "runtime.unknown-delivery-position: this artifact carries a payload for \
+                 {positions} delivery position(s) and was asked for position {requested}",
+            ),
             Self::UndeliverableExecutionPolicy { policy } => write!(
                 formatter,
                 "runtime.undeliverable: a device-free loader cannot deliver {policy:?}",
@@ -1479,6 +1557,7 @@ impl Error for LoadRejection {
             | Self::UnownedRouteRequirement { .. }
             | Self::MisansweredRouteRequirement { .. }
             | Self::UnsatisfiedRouteRequirement { .. }
+            | Self::UnknownDeliveryPosition { .. }
             | Self::UndeliverableExecutionPolicy { .. }
             | Self::ObjectNotCarried
             | Self::LaunchPrecondition { .. }
@@ -1539,7 +1618,7 @@ mod tests {
     /// whether to look for a different file or to re-fetch this one.
     #[test]
     fn foreign_bytes_are_malformed_rather_than_damaged() {
-        let rejection = DecodedProgram::decode(b"not a Tiler artifact at all")
+        let rejection = DecodedProgram::decode(b"not a Tiler artifact at all", 0)
             .expect_err("foreign bytes are not an artifact");
         assert!(
             matches!(
@@ -1553,7 +1632,7 @@ mod tests {
     /// An empty input is refused rather than treated as an empty artifact.
     #[test]
     fn empty_bytes_are_refused() {
-        assert!(DecodedProgram::decode(&[]).is_err());
+        assert!(DecodedProgram::decode(&[], 0).is_err());
     }
 
     /// The rejection keeps the codec's own failure reachable as its source.
@@ -1564,7 +1643,7 @@ mod tests {
     #[test]
     fn a_rejection_preserves_the_codec_failure_it_classifies() {
         let rejection =
-            DecodedProgram::decode(b"short").expect_err("five bytes are not an artifact");
+            DecodedProgram::decode(b"short", 0).expect_err("five bytes are not an artifact");
         let LoadRejection::Artifact(failure) = &rejection else {
             panic!("bytes that are not an artifact are an artifact-layer rejection: {rejection}");
         };

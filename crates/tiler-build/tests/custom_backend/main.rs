@@ -48,8 +48,8 @@ use tiler_artifact::program::{
     VerifiedArtifactProgram, decode_artifact,
 };
 use tiler_build::{
-    AcceptedArtifact, SinglePayloadCacheError, SinglePayloadProtocolError,
-    accept_or_publish_single_payload_artifact,
+    AcceptedArtifact, DeliveredPayloadCacheError, DeliveredPayloadProtocolError,
+    accept_or_publish_delivered_payload_artifact,
 };
 use tiler_cache::expansion::{ExpansionCache, Resolution, SubjectFacet, SubjectRefusal};
 use tiler_compiler::session::{
@@ -67,7 +67,7 @@ use tiler_ir::shape::{Axis, Shape};
 ///
 /// Three authorities and three type arguments: which compilation fact this
 /// backend compared, why its own compile step failed, and why its assembly did.
-type SeamRefusal = SinglePayloadCacheError<ScalarHostFact, ScalarHostRefusal, ScalarHostRefusal>;
+type SeamRefusal = DeliveredPayloadCacheError<ScalarHostFact, ScalarHostRefusal, ScalarHostRefusal>;
 
 /// Builds the verified semantic graph every case here packages a plan for.
 fn semantic_program() -> SemanticProgram {
@@ -198,13 +198,13 @@ fn a_custom_backend_publishes_a_self_validating_payload() {
     let variant = decoded.variants().next().expect("one packaged variant");
     let entry = variant.entries().next().expect("one packaged entry");
     assert_eq!(
-        entry.transport_slots(),
+        entry.transport_slots(0),
         Some([1, 0].as_slice()),
         "the payload's transport map is the emitter's, not the binding slot order",
     );
     assert!(
         entry
-            .backend_symbol()
+            .backend_symbol(0)
             .is_some_and(|symbol| symbol.starts_with("scalar_host_")),
         "every entry must reach this backend's own identity-derived symbol",
     );
@@ -349,7 +349,17 @@ fn two_assemblies_of_one_plan_are_byte_identical() {
 // The promoted cache seam: one arrangement, and every operand a case moves
 // -------------------------------------------------------------------------
 
-/// One complete arrangement of what `accept_or_publish_single_payload_artifact` takes.
+/// Takes the sole compiled payload of a one-position delivery run.
+///
+/// Every case here declares one delivery position, so a run of any other length
+/// is a defect in the case rather than something to handle.
+fn sole(contents: Vec<PayloadContent>) -> PayloadContent {
+    let [content] = <[PayloadContent; 1]>::try_from(contents)
+        .expect("this backend declares exactly one delivery position");
+    content
+}
+
+/// One complete arrangement of what `accept_or_publish_delivered_payload_artifact` takes.
 ///
 /// A record rather than eight positional arguments per case, because every
 /// perturbation below is one field of it and naming the field is what says which
@@ -383,16 +393,16 @@ fn resolve(cache: &ExpansionCache, run: SeamRun<'_>) -> Result<AcceptedArtifact,
         perturbation,
         compilations,
     } = run;
-    accept_or_publish_single_payload_artifact(
+    accept_or_publish_delivered_payload_artifact(
         cache,
         pending,
-        &declaration.declared(),
-        |actual| backend::correspondence(expected, actual),
+        std::slice::from_ref(&declaration.declared()),
+        |_, actual| backend::correspondence(expected, actual),
         || {
             compilations.set(compilations.get() + 1);
-            Ok::<PayloadContent, ScalarHostRefusal>(compiled)
+            Ok::<Vec<PayloadContent>, ScalarHostRefusal>(vec![compiled])
         },
-        |content| backend::assemble(semantic, plan, content, perturbation),
+        |contents| backend::assemble(semantic, plan, sole(contents), perturbation),
     )
 }
 
@@ -603,7 +613,7 @@ fn a_declared_payload_the_pending_artifact_does_not_carry_is_refused() {
     assert!(
         matches!(
             refusal,
-            SeamRefusal::Protocol(SinglePayloadProtocolError::PayloadDescriptor),
+            SeamRefusal::Protocol(DeliveredPayloadProtocolError::PayloadDescriptor { delivery: 0 }),
         ),
         "unexpected refusal: {refusal:?}",
     );
@@ -649,7 +659,7 @@ fn a_declared_digest_other_than_the_pending_payloads_is_refused() {
     assert!(
         matches!(
             refusal,
-            SeamRefusal::Protocol(SinglePayloadProtocolError::PayloadSubject),
+            SeamRefusal::Protocol(DeliveredPayloadProtocolError::PayloadSubject { delivery: 0 }),
         ),
         "unexpected refusal: {refusal:?}",
     );
@@ -712,13 +722,20 @@ fn a_failing_compile_step_is_not_a_protocol_defect() {
     let plan = compilation.selected().expect("one selected plan");
     let fixture = CacheFixture::new(&semantic, plan);
 
-    let refusal: SeamRefusal = accept_or_publish_single_payload_artifact(
+    let refusal: SeamRefusal = accept_or_publish_delivered_payload_artifact(
         &cache,
         &fixture.pending,
-        &fixture.prepared.declaration.declared(),
-        |actual| backend::correspondence(&fixture.prepared.metadata, actual),
-        || Err(ScalarHostRefusal::UnsupportedAccessPattern { entry: 0 }),
-        |content| backend::assemble(&semantic, plan, content, EntryPerturbation::default()),
+        std::slice::from_ref(&fixture.prepared.declaration.declared()),
+        |_, actual| backend::correspondence(&fixture.prepared.metadata, actual),
+        || Err::<Vec<PayloadContent>, _>(ScalarHostRefusal::UnsupportedAccessPattern { entry: 0 }),
+        |contents| {
+            backend::assemble(
+                &semantic,
+                plan,
+                sole(contents),
+                EntryPerturbation::default(),
+            )
+        },
     )
     .expect_err("a compile step that refuses cannot publish");
 
@@ -813,7 +830,7 @@ fn a_produced_artifact_whose_identity_moved_is_refused_before_publication() {
     assert!(
         matches!(
             refusal,
-            SeamRefusal::Protocol(SinglePayloadProtocolError::ArtifactIdentity),
+            SeamRefusal::Protocol(DeliveredPayloadProtocolError::ArtifactIdentity),
         ),
         "unexpected refusal: {refusal:?}",
     );
@@ -864,9 +881,10 @@ fn a_compilation_other_than_the_one_expected_is_named_fact_by_fact() {
     assert!(
         matches!(
             refusal,
-            SeamRefusal::Protocol(SinglePayloadProtocolError::Correspondence(
-                ScalarHostFact::Source
-            )),
+            SeamRefusal::Protocol(DeliveredPayloadProtocolError::Correspondence {
+                delivery: 0,
+                cause: ScalarHostFact::Source,
+            }),
         ),
         "unexpected refusal: {refusal:?}",
     );
@@ -889,14 +907,14 @@ fn an_artifact_carrying_other_object_bytes_is_refused_before_publication() {
     let plan = compilation.selected().expect("one selected plan");
     let fixture = CacheFixture::new(&semantic, plan);
 
-    let refusal: SeamRefusal = accept_or_publish_single_payload_artifact(
+    let refusal: SeamRefusal = accept_or_publish_delivered_payload_artifact(
         &cache,
         &fixture.pending,
-        &fixture.prepared.declaration.declared(),
-        |actual| backend::correspondence(&fixture.prepared.metadata, actual),
-        || Ok::<PayloadContent, ScalarHostRefusal>(fixture.compiled()),
-        |content| {
-            let mut substituted = content;
+        std::slice::from_ref(&fixture.prepared.declaration.declared()),
+        |_, actual| backend::correspondence(&fixture.prepared.metadata, actual),
+        || Ok::<Vec<PayloadContent>, ScalarHostRefusal>(vec![fixture.compiled()]),
+        |contents| {
+            let mut substituted = sole(contents);
             substituted.code.push(0);
             backend::assemble(&semantic, plan, substituted, EntryPerturbation::default())
         },
@@ -906,7 +924,7 @@ fn an_artifact_carrying_other_object_bytes_is_refused_before_publication() {
     assert!(
         matches!(
             refusal,
-            SeamRefusal::Protocol(SinglePayloadProtocolError::PayloadObject),
+            SeamRefusal::Protocol(DeliveredPayloadProtocolError::PayloadObject { delivery: 0 }),
         ),
         "unexpected refusal: {refusal:?}",
     );
@@ -928,12 +946,12 @@ fn an_artifact_carrying_no_payload_content_is_refused_before_publication() {
     let plan = compilation.selected().expect("one selected plan");
     let fixture = CacheFixture::new(&semantic, plan);
 
-    let refusal: SeamRefusal = accept_or_publish_single_payload_artifact(
+    let refusal: SeamRefusal = accept_or_publish_delivered_payload_artifact(
         &cache,
         &fixture.pending,
-        &fixture.prepared.declaration.declared(),
-        |actual| backend::correspondence(&fixture.prepared.metadata, actual),
-        || Ok::<PayloadContent, ScalarHostRefusal>(fixture.compiled()),
+        std::slice::from_ref(&fixture.prepared.declaration.declared()),
+        |_, actual| backend::correspondence(&fixture.prepared.metadata, actual),
+        || Ok::<Vec<PayloadContent>, ScalarHostRefusal>(vec![fixture.compiled()]),
         |_| {
             backend::assemble_pending(
                 &semantic,
@@ -948,7 +966,9 @@ fn an_artifact_carrying_no_payload_content_is_refused_before_publication() {
     assert!(
         matches!(
             refusal,
-            SeamRefusal::Protocol(SinglePayloadProtocolError::MissingPayloadMetadata),
+            SeamRefusal::Protocol(DeliveredPayloadProtocolError::MissingPayloadMetadata {
+                delivery: 0
+            }),
         ),
         "unexpected refusal: {refusal:?}",
     );
@@ -998,7 +1018,7 @@ fn a_cache_entry_naming_another_artifact_is_refused_rather_than_accepted() {
     assert!(
         matches!(
             refusal,
-            SeamRefusal::Protocol(SinglePayloadProtocolError::ArtifactIdentity),
+            SeamRefusal::Protocol(DeliveredPayloadProtocolError::ArtifactIdentity),
         ),
         "unexpected refusal: {refusal:?}",
     );
@@ -1066,13 +1086,14 @@ fn a_cache_entry_whose_payload_moved_is_refused_after_resolution() {
             .expect_err("a cache entry carrying another payload cannot be accepted");
         let expected_by_the_backend = matches!(
             refusal,
-            SeamRefusal::Protocol(SinglePayloadProtocolError::Correspondence(
-                ScalarHostFact::Target
-            )),
+            SeamRefusal::Protocol(DeliveredPayloadProtocolError::Correspondence {
+                delivery: 0,
+                cause: ScalarHostFact::Target,
+            }),
         );
         let expected_by_the_seam = matches!(
             refusal,
-            SeamRefusal::Protocol(SinglePayloadProtocolError::PayloadSubject),
+            SeamRefusal::Protocol(DeliveredPayloadProtocolError::PayloadSubject { delivery: 0 }),
         );
         assert!(
             if index == 0 {
@@ -1202,7 +1223,10 @@ fn declaring_one_payload_twice_is_refused() {
         &semantic,
         plan,
         |builder, profile| {
-            builder.push_carried_payload(
+            // Two payloads and one delivery position: the second is declared
+            // and never realized, which is the unreferenced-payload refusal
+            // rather than a second artifact family.
+            let first = builder.push_carried_payload(
                 backend::backend(),
                 backend::representation(),
                 backend::PAYLOAD_SCHEMA,
@@ -1217,7 +1241,8 @@ fn declaring_one_payload_twice_is_refused() {
                 profile,
                 ArtifactExecutionPolicy::NativeImage,
                 content,
-            )
+            )?;
+            Ok(vec![first])
         },
         |_, stage| {
             Ok(tiler_build::BackendEntryDeclaration {
@@ -1359,7 +1384,7 @@ fn a_partial_metal_provider_reuses_stock_emission_and_varies_only_orchestration(
         &toolchain,
         &semantic,
         plan,
-        &declaration,
+        std::slice::from_ref(&declaration),
         tiler_metal_aot::input::OptimizationLevel::Default,
     )
     .expect("the standard Metal path resolves");

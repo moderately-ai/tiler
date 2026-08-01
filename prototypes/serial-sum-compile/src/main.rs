@@ -425,7 +425,7 @@ fn publish_member(
         publication.toolchain,
         program,
         plan,
-        publication.declaration,
+        std::slice::from_ref(publication.declaration),
         OPTIMIZATION,
     )
     .map_err(ProducerError::Plan)?;
@@ -964,7 +964,7 @@ mod tests {
             &Toolchain::system(),
             &program,
             selected,
-            &declaration,
+            std::slice::from_ref(&declaration),
             OPTIMIZATION,
         )
         .expect("the checked plan resolves");

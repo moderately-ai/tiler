@@ -102,7 +102,11 @@ pub fn assemble(
     assemble_plan_artifact(
         semantic,
         plan,
-        |builder, profile| compiled.push_carried(builder, profile),
+        |builder, profile| {
+            compiled
+                .push_carried(builder, profile)
+                .map(|payload| vec![payload])
+        },
         |builder, stage| {
             Ok(BackendEntryDeclaration {
                 bindings: stage.accesses().map(|_| BindingKind::Buffer).collect(),

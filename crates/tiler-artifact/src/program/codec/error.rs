@@ -209,6 +209,8 @@ pub(crate) enum CodecLimitKind {
     Expressions,
     /// Backend payload descriptor count.
     Payloads,
+    /// Delivery-position count of one executable entry's realization run.
+    DeliveryPositions,
     /// Selected capability-provider count.
     SelectedProviders,
     /// Deferred feasibility predicate count of one plan variant.

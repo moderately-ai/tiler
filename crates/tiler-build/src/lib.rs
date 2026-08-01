@@ -17,24 +17,26 @@
 //! [`assemble_plan_artifact`] is the backend-neutral build-time *assembly* seam
 //! [ADR 0090](../../docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md)
 //! item 11 promotes. It names no backend and takes no Metal type; a producer
-//! supplies its payload and, per stage, the binding transports, the zero-work
-//! dispatch policy, and the launch preconditions, while every fact the checked
-//! plan already decided is derived from the plan.
+//! supplies its delivery-ordered payload run and, per stage, the binding
+//! transports, the zero-work dispatch policy, and the launch preconditions,
+//! while every fact the checked plan already decided is derived from the plan.
 //!
-//! [`accept_or_publish_single_payload_artifact`] is the *cache* half of the same
-//! boundary: complete subject composition, miss-only external compilation,
+//! [`accept_or_publish_delivered_payload_artifact`] is the *cache* half of the
+//! same boundary: complete subject composition, miss-only external compilation,
 //! identity agreement before publication, and re-validation of every result. A
 //! backend states two things and no more — the governed payload descriptor it
-//! declares, as data in a [`DeclaredPayload`], and how a carried payload's
-//! metadata is compared against the compilation it performed, as one closure.
-//! Its own module documentation states why that split is the shape and what the
-//! alternatives lose.
+//! declares at each delivery position, as data in a [`DeclaredPayload`], and how
+//! a carried payload's metadata is compared against the compilation it performed
+//! there, as one closure. Its own module documentation states why that split is
+//! the shape and what the alternatives lose.
 //!
 //! The Metal path above is one caller of both, and
 //! `crates/tiler-build/tests/custom_backend` is another that shares no code with
 //! it. What remains bounded rather than neutral is stated rather than implied:
-//! the cache seam admits exactly one payload per artifact, and ordered
-//! multi-payload orchestration is a broader slice it does not infer.
+//! the cache seam admits one payload per delivery position, shared by every
+//! executable entry, and an artifact whose entries are realized by different
+//! objects at one position is expressible in the artifact model and is not
+//! orchestrated there.
 //!
 //! This crate is also where one authoritative macOS Metal compile-time declaration is
 //! assembled and bound. [`BoundMetalCompileDeclaration`] is the only place in
@@ -57,7 +59,7 @@ pub use metal_assembly::{
     prepare_metal_payload,
 };
 pub use metal_cache::{
-    MetalArtifactProtocolError, MetalCacheError, accept_or_publish_single_payload_metal_artifact,
+    MetalArtifactProtocolError, MetalCacheError, accept_or_publish_delivered_metal_artifact,
 };
 pub use metal_declaration::{
     BoundMetalCompileDeclaration, BoundMetalDeclarationError, MetalPlanProfileMismatch,
@@ -68,7 +70,7 @@ pub use metal_plan::{
 };
 pub use metal_profile::{MetalF32TargetProfileError, declare_metal_f32_subnormal_behaviour};
 pub use payload_cache::{
-    AcceptedArtifact, DeclaredPayload, SinglePayloadCacheError, SinglePayloadProtocolError,
-    accept_or_publish_single_payload_artifact,
+    AcceptedArtifact, DeclaredPayload, DeliveredPayloadCacheError, DeliveredPayloadProtocolError,
+    accept_or_publish_delivered_payload_artifact,
 };
 pub use plan_artifact::{BackendEntryDeclaration, PlanArtifactError, assemble_plan_artifact};
