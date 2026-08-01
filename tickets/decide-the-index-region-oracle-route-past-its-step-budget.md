@@ -1,7 +1,7 @@
 ---
 id: decide-the-index-region-oracle-route-past-its-step-budget
 title: Decide the index-region oracle's route past its evaluation-step budget
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [bound-the-reference-contraction-comparison-for-the-profile-cells, route-the-contraction-conformance-through-the-staged-oracle]
@@ -9,9 +9,6 @@ scopes: [implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, reference, contraction, language-model]
-claimed_from: todo
-assignee: worker-idx-oracle
-lease_expires_at: 1785603010
 ---
 ## User-visible outcome
 
