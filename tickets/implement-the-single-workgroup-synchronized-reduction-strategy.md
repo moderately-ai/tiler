@@ -1,7 +1,7 @@
 ---
 id: implement-the-single-workgroup-synchronized-reduction-strategy
 title: Implement the single-workgroup synchronized reduction strategy
-status: in-progress
+status: done
 priority: p1
 dependencies: [admit-the-first-typed-synchronization-point-and-atomic-target-authority]
 related: [implement-parallel-reduction-strategies]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, implementation/reference, c
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: worker-wg-strategy
-lease_expires_at: 1785595402
 ---
 ## User-visible outcome
 
