@@ -1,10 +1,12 @@
 use tiler_ir::semantic::accuracy::{
-    AccuracyContract, ConformanceEvidenceClass, ConformanceEvidenceError, ExactTolerance,
-    RefinementBasis, RefinementOutcome, RefinementUnknown, RegisteredImplicationRegistry, refines,
-    ulp_reference_gap_metric_key,
+    AccuracyContract, AccuracyContractForm, ConformanceEvidenceClass, ConformanceEvidenceError,
+    ExactTolerance, ReferenceRoundingRule, RefinementBasis, RefinementOutcome, RefinementUnknown,
+    RegisteredImplicationRegistry, refines, ulp_reference_gap_metric_key,
 };
 use tiler_ir::semantic::{
-    SILU_F32_EXPONENTIAL_ULP_TOLERANCE, silu_f32_exponential_accuracy_contract, silu_f32_op,
+    F32, SILU_F32_EXPONENTIAL_ULP_TOLERANCE, rms_norm_f32_op, rms_norm_f32_rsqrt_accuracy_contract,
+    rms_norm_f32_rsqrt_exceptional_contract, rms_norm_f32_rsqrt_reference_semantics,
+    silu_f32_exponential_accuracy_contract, silu_f32_op,
 };
 
 use super::{
@@ -12,6 +14,8 @@ use super::{
     apple_msl_ulp_metric_key, assess_elementary_accuracy, installed_elementary_realizations,
     installed_implication_registry, metal_f32_exceptional_value_evidence,
     metal_f32_exponential_bound_evidence, metal_f32_exponential_contract,
+    metal_f32_normalization_exceptional_value_evidence,
+    metal_f32_reciprocal_square_root_bound_evidence, metal_f32_reciprocal_square_root_contract,
 };
 
 fn required() -> AccuracyContract {
@@ -224,4 +228,149 @@ fn the_normative_record_cites_the_retained_specification_digest() {
     // of one.
     assert!(record.device().is_none());
     assert!(record.corpus().is_none());
+}
+
+// ---------------------------------------------------------------------------
+// The normalization's reciprocal square root, whose contract needs no metric
+// ---------------------------------------------------------------------------
+
+/// The installed Metal realization refines the normalization's requirement.
+///
+/// The admission rests on an *identical normalized contract* rather than on a
+/// registered implication, and that difference is the finding: what Metal
+/// promises for `rsqrt` and what `tiler::rms-norm-f32@1` requires are the same
+/// result set, so there is no translation to perform.
+#[test]
+fn the_metal_normalization_realization_refines_by_identity_rather_than_implication() {
+    let admission = assess_elementary_accuracy(
+        &rms_norm_f32_rsqrt_accuracy_contract(),
+        &installed_elementary_realizations(),
+        &installed_implication_registry(),
+    )
+    .expect("the installed realization refines the requirement");
+    assert_eq!(
+        admission.basis(),
+        &RefinementBasis::IdenticalNormalizedContract
+    );
+}
+
+/// It refines even under an empty implication registry, which the exponential does not.
+///
+/// **The perturbation that separates the two families.** Stripping every
+/// registered implication leaves the reciprocal square root's admission
+/// untouched, because a faithful contract states its result set outright, while
+/// the exponential's becomes an unregistered-metric refusal. A change that
+/// quietly restated the normalization's contract as a ULP bound would fail here.
+#[test]
+fn the_normalization_needs_no_registered_implication_at_all() {
+    let admission = assess_elementary_accuracy(
+        &rms_norm_f32_rsqrt_accuracy_contract(),
+        &installed_elementary_realizations(),
+        &RegisteredImplicationRegistry::empty(),
+    )
+    .expect("a faithful requirement needs no implication");
+    assert_eq!(
+        admission.basis(),
+        &RefinementBasis::IdenticalNormalizedContract
+    );
+
+    let refusal = assess_elementary_accuracy(
+        &required(),
+        &installed_elementary_realizations(),
+        &RegisteredImplicationRegistry::empty(),
+    )
+    .expect_err("the exponential's requirement does need one");
+    assert!(matches!(
+        refusal.reason(),
+        ElementaryRefusalReason::Unrefined {
+            unknown: RefinementUnknown::UnregisteredMetricImplication { .. },
+            ..
+        }
+    ));
+}
+
+/// The declaration is not stronger than the specification supports.
+///
+/// **This is the check that catches the over-claim, and the over-claim is the one
+/// that would otherwise pass.** Declaring `CorrectlyRounded { NearestTiesToEven }`
+/// would still refine the faithful requirement — the vocabulary registers
+/// correctly-rounded-satisfies-faithful — so a wrong declaration would be
+/// *admitted* rather than rejected. Nothing but this assertion stands between the
+/// build and a claim §8.2 explicitly declines to make.
+#[test]
+fn the_metal_normalization_declaration_is_not_stronger_than_the_specification() {
+    let declared = metal_f32_reciprocal_square_root_contract();
+    assert!(matches!(declared.form(), AccuracyContractForm::Faithful));
+    assert_eq!(declared, rms_norm_f32_rsqrt_accuracy_contract());
+
+    // The over-claim, constructed and shown to be admitted, which is why the
+    // assertion above is the control rather than a restatement of it.
+    let overclaimed = AccuracyContract::new(
+        rms_norm_f32_op(),
+        vec![F32::resolved_type()],
+        F32::resolved_type(),
+        rms_norm_f32_rsqrt_reference_semantics(),
+        AccuracyContractForm::CorrectlyRounded {
+            rounding: ReferenceRoundingRule::NearestTiesToEven,
+        },
+        rms_norm_f32_rsqrt_exceptional_contract(),
+    );
+    assert!(
+        refines(
+            &overclaimed,
+            &rms_norm_f32_rsqrt_accuracy_contract(),
+            &installed_implication_registry(),
+        )
+        .is_physically_feasible(),
+        "the over-claim refines, which is exactly why the declaration must not make it"
+    );
+}
+
+/// The two halves of the normalization's evidence answer differently, on purpose.
+#[test]
+fn the_normalization_evidence_discharges_only_its_normative_half() {
+    let bound = metal_f32_reciprocal_square_root_bound_evidence()
+        .expect("the normative record is well formed");
+    assert_eq!(bound.class(), ConformanceEvidenceClass::NormativeGuarantee);
+    assert!(bound.discharge().is_ok());
+
+    let exceptional = metal_f32_normalization_exceptional_value_evidence()
+        .expect("the empirical record is well formed");
+    assert_eq!(
+        exceptional.class(),
+        ConformanceEvidenceClass::EmpiricalQualification
+    );
+    assert!(exceptional.discharge().is_err());
+}
+
+/// Both registered families have an installed realization, and only those two.
+#[test]
+fn the_installed_realizations_are_exactly_the_two_registered_families() {
+    let installed = installed_elementary_realizations();
+    let operations: Vec<String> = installed
+        .iter()
+        .map(|realization| realization.operation().to_string())
+        .collect();
+    assert_eq!(
+        operations,
+        vec!["tiler::silu-f32@1", "tiler::rms-norm-f32@1"]
+    );
+
+    // A family with no installed row fails closed rather than borrowing another
+    // row's evidence.
+    let absent = AccuracyContract::new(
+        tiler_ir::semantic::add_f32_op(),
+        vec![F32::resolved_type()],
+        F32::resolved_type(),
+        rms_norm_f32_rsqrt_reference_semantics(),
+        AccuracyContractForm::Faithful,
+        rms_norm_f32_rsqrt_exceptional_contract(),
+    );
+    let refusal =
+        assess_elementary_accuracy(&absent, &installed, &installed_implication_registry())
+            .expect_err("no realization speaks about the addition");
+    assert!(matches!(
+        refusal.reason(),
+        ElementaryRefusalReason::NoInstalledRealization
+    ));
 }

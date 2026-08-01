@@ -22,6 +22,7 @@
 //! | `registry` | the semantic capability registry and its dispatch vocabulary |
 //! | `evaluate` | executing a semantic program against that registry |
 //! | `silu` | the certified binary32 `SiLU` reference and its exponential |
+//! | `rms_norm` | the certified binary32 RMS normalization and its reciprocal square root |
 //! | `standard` | the one provider this crate ships, a consumer of the registry |
 //! | `structural` | reference semantics for the element-moving families |
 //! | `contraction` | reference semantics for the governed tensor contraction |
@@ -45,6 +46,7 @@ mod identity;
 mod oracle;
 mod quantization;
 mod registry;
+mod rms_norm;
 mod silu;
 mod standard;
 mod structural;
@@ -75,6 +77,7 @@ pub use registry::{
     ReferenceRegistryProvider, ReferenceRegistryRegistrar, ReferenceSignature,
     ReferenceValueValidator,
 };
+pub use rms_norm::{certified_rsqrt_f32, rms_norm_f32};
 pub use silu::{certified_exp_f32, silu_f32};
 pub use tensor::{
     FloatBitOrder, InputBinding, ReferenceComponent, ReferenceComponentRole, ReferenceElement,

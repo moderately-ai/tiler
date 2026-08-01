@@ -324,7 +324,9 @@ fn verify_intrinsic(region: &ScheduledRegion) -> Result<(), ScheduledRegionDiagn
             };
             verify_pointwise_f32(region, expression, reads, write)
         }
-        ScalarProgram::StrictSerialSum { .. } | ScalarProgram::FusedMultiplyAddSerialSum { .. } => {
+        ScalarProgram::StrictSerialSum { .. }
+        | ScalarProgram::SquaredSerialSum { .. }
+        | ScalarProgram::FusedMultiplyAddSerialSum { .. } => {
             let [read, write] = region.index.accesses.as_slice() else {
                 return Err(ScheduledRegionDiagnostic::AccessCount);
             };
@@ -532,6 +534,41 @@ fn verify_access_and_semantics(
             && input_shape.without_axes(axes) == *output_shape
             && read.tensor == FIRST_INPUT
             && write.tensor == TensorRole::Output => {}
+        // The squaring prologue reads the *original* input, exactly as the
+        // scale-bias one does, so its read binds the first input tensor rather
+        // than an intermediate. Its obligations are otherwise the strict serial
+        // sum's, because it is that reduction over an elementwise prologue and
+        // not a second reducer.
+        (
+            ScalarProgram::SquaredSerialSum {
+                axes,
+                order,
+                empty_identity_bits,
+                ..
+            },
+            ReductionTopology::Serial {
+                axes: scheduled_axes,
+                order: scheduled_order,
+                permits_reassociation,
+                permits_permutation,
+            },
+            LogicalAccess::ReductionContributor {
+                input_shape,
+                output_shape,
+                axes: access_axes,
+                order: access_order,
+            },
+        ) if axes == scheduled_axes
+            && axes == access_axes
+            && order == scheduled_order
+            && order == access_order
+            && *permits_reassociation == numerical.permits_reassociation()
+            && *permits_permutation == numerical.permits_permutation()
+            && *empty_identity_bits == 0.0_f32.to_bits()
+            && output_shape == &region.index.iteration_shape
+            && input_shape.without_axes(axes) == *output_shape
+            && read.tensor == FIRST_INPUT
+            && write.tensor == TensorRole::Output => {}
         _ => return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement),
     }
     Ok(())
@@ -602,6 +639,18 @@ fn verify_multi_pass_semantics(
             },
             ReductionPass::Partial,
         ) if !contraction => (axes, order, *empty_identity_bits, FIRST_INPUT),
+        // The squaring prologue likewise belongs to the pass that reads the
+        // original inputs: squaring a partial sum in the final pass would square
+        // an already-folded value.
+        (
+            ScalarProgram::SquaredSerialSum {
+                axes,
+                order,
+                empty_identity_bits,
+                ..
+            },
+            ReductionPass::Partial,
+        ) => (axes, order, *empty_identity_bits, FIRST_INPUT),
         _ => return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement),
     };
 
@@ -1189,6 +1238,31 @@ mod tests {
             .canonical_identity()
             .as_bytes()
             .to_vec()
+    }
+
+    /// The reciprocal square root is a distinct node from the exponential.
+    ///
+    /// Both are one-argument elementary functions over one input, so nothing but
+    /// the node tag distinguishes their expressions. An appended tag that had
+    /// collided with `Exp`'s would make these two identities equal, which is the
+    /// concrete form of "the schedule domain did not step": the new tag
+    /// separates, and every tag below it keeps its meaning.
+    #[test]
+    fn the_reciprocal_square_root_node_separates_identity_from_the_exponential() {
+        fn elementary(reciprocal_square_root: bool) -> super::super::PointwiseF32Expression {
+            let mut builder = PointwiseF32ExpressionBuilder::new();
+            let input = builder.input(InputOrdinal::FIRST).unwrap();
+            let root = if reciprocal_square_root {
+                builder.rsqrt(input).unwrap()
+            } else {
+                builder.exp(input).unwrap()
+            };
+            builder.build(root).unwrap()
+        }
+        assert_ne!(
+            identity_with_pointwise_expression(elementary(true)),
+            identity_with_pointwise_expression(elementary(false))
+        );
     }
 
     #[test]
@@ -1942,6 +2016,120 @@ mod tests {
             builder.build().unwrap_err().diagnostics(),
             [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
         );
+    }
+
+    /// Turns a split partial pass into the squaring-prologue reduction.
+    ///
+    /// The prologue reads the original input, exactly as the scale-bias one
+    /// does, so the read access and its proof move from the intermediate to the
+    /// first input tensor along with the scalar program.
+    fn squared_partial_pass_builder(partition: ContributorPartition) -> ScheduledRegionBuilder {
+        let mut builder = partial_pass_builder(partition);
+        builder.accesses[0].tensor = TensorRole::Input {
+            ordinal: InputOrdinal::FIRST,
+        };
+        builder.bounds_proofs[0].tensor = TensorRole::Input {
+            ordinal: InputOrdinal::FIRST,
+        };
+        builder.scalar_program = Some(ScalarProgram::SquaredSerialSum {
+            axes: vec![Axis::new(1)],
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: 0x7fc0_0000,
+            empty_identity_bits: 0.0_f32.to_bits(),
+        });
+        builder
+    }
+
+    /// The squaring-prologue reduction verifies, reading the original input.
+    #[test]
+    fn the_squaring_prologue_reduction_verifies_as_a_partial_pass() {
+        let region = squared_partial_pass_builder(SPLIT)
+            .build()
+            .expect("a squaring-prologue partial pass verifies");
+        assert!(matches!(
+            region.region().index.scalar_program,
+            ScalarProgram::SquaredSerialSum { .. }
+        ));
+    }
+
+    /// An accumulation narrower than the declared width is rejected here too.
+    ///
+    /// **This is `tiler::rms-norm-f32@1`'s accumulator refusal, fired.** The
+    /// operation declares `tiler::f32@1` in its definition facts and criterion 3
+    /// of `implement-parallel-reduction-strategies` requires a narrower strategy
+    /// to be rejected with a typed reason. The check is the schedule verifier's
+    /// single accumulation authority rather than a second copy beside it, and
+    /// this exercises it on the program the normalization actually schedules —
+    /// so a change that admitted a narrower accumulator for the squaring
+    /// prologue alone would fail here even while the bare sum's own test passed.
+    #[test]
+    fn a_narrowed_accumulation_width_is_rejected_for_the_squaring_prologue() {
+        for narrower in [ArithmeticType::F16, ArithmeticType::Bf16] {
+            let mut builder = squared_partial_pass_builder(SPLIT);
+            let ReductionTopology::MultiPass { accumulation, .. } =
+                &mut builder.schedule.as_mut().unwrap().reduction
+            else {
+                panic!("expected a split topology")
+            };
+            *accumulation = narrower;
+            assert_eq!(
+                builder.build().unwrap_err().diagnostics(),
+                [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+                "{narrower:?} is narrower than the width tiler::rms-norm-f32@1 declares"
+            );
+        }
+        // The control: the same region at the declared width verifies, so the
+        // refusals above are about the accumulator rather than about the
+        // program.
+        assert!(squared_partial_pass_builder(SPLIT).build().is_ok());
+    }
+
+    /// The squaring prologue may not be applied in the final pass.
+    ///
+    /// Squaring a partial sum would square an already-folded value, so the
+    /// prologue belongs to the pass that reads the original inputs. The refusal
+    /// is what stops a split from applying it twice.
+    #[test]
+    fn the_squaring_prologue_may_not_carry_the_final_pass() {
+        let mut builder = final_pass_builder(SPLIT);
+        builder.scalar_program = Some(ScalarProgram::SquaredSerialSum {
+            axes: match &builder.scalar_program {
+                Some(ScalarProgram::StrictSerialSum { axes, .. }) => axes.clone(),
+                other => panic!("expected the final pass's serial sum, not {other:?}"),
+            },
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: 0x7fc0_0000,
+            empty_identity_bits: 0.0_f32.to_bits(),
+        });
+        assert_eq!(
+            builder.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
+        );
+    }
+
+    /// The squaring prologue does not share identity with the bare serial sum.
+    ///
+    /// The two regions differ in nothing but their scalar program — same access
+    /// relation, same contributor order, same numerical realization — so an
+    /// appended scalar-program tag that had collided with an existing one would
+    /// make these equal. It is the check behind "the schedule domain did not
+    /// step": the new tag separates, and every earlier tag keeps its meaning.
+    #[test]
+    fn the_squaring_prologue_reduction_has_its_own_canonical_identity() {
+        let squared = squared_partial_pass_builder(SPLIT)
+            .build()
+            .expect("the squaring-prologue pass verifies");
+        let mut bare = squared_partial_pass_builder(SPLIT);
+        bare.accesses[0].tensor = TensorRole::Intermediate;
+        bare.bounds_proofs[0].tensor = TensorRole::Intermediate;
+        bare.scalar_program = Some(ScalarProgram::StrictSerialSum {
+            axes: vec![Axis::new(1)],
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: 0x7fc0_0000,
+            empty_identity_bits: 0.0_f32.to_bits(),
+        });
+        let bare = bare.build().expect("the bare pass verifies");
+        assert_ne!(squared.canonical_identity(), bare.canonical_identity());
     }
 
     /// Every field of a split separates canonical scheduled-region identity.

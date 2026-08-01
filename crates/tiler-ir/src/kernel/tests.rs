@@ -885,6 +885,7 @@ fn body_shaping_vocabulary_is_closed(
             ScalarProgram::StrictAffineU4Dequantize { .. } => "strict-affine-u4-dequantize",
             ScalarProgram::StrictSerialSum { .. } => "strict-serial-sum",
             ScalarProgram::FusedMultiplyAddSerialSum { .. } => "fused-multiply-add-serial-sum",
+            ScalarProgram::SquaredSerialSum { .. } => "squared-serial-sum",
         },
     )
 }

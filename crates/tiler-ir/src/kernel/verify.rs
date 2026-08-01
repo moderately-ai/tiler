@@ -150,6 +150,7 @@ fn verify_signature(
         }
         crate::schedule::ScalarProgram::PointwiseF32(_) => vec![KernelType::F32; reads.len()],
         crate::schedule::ScalarProgram::StrictSerialSum { .. }
+        | crate::schedule::ScalarProgram::SquaredSerialSum { .. }
         | crate::schedule::ScalarProgram::FusedMultiplyAddSerialSum { .. } => {
             vec![KernelType::F32]
         }

@@ -368,12 +368,32 @@ pub enum UnaryOp {
     /// Realizes the subordinate exponential of `tiler::silu-f32@1` and nothing
     /// else. Its admitted result set is that key's registered accuracy contract.
     F32Exp,
+    /// The reciprocal square root over IEEE-754 binary32.
+    ///
+    /// Realizes the subordinate reciprocal square root of
+    /// `tiler::rms-norm-f32@1` and nothing else. Its admitted result set is that
+    /// key's registered accuracy contract, which is `Faithful` — a *different*
+    /// contract form from the exponential's ULP bound, because the two rest on
+    /// different halves of Metal's accuracy table.
+    ///
+    /// **Deliberately not a reciprocal followed by a square root.** `1 / sqrt(t)`
+    /// rounds twice and is a different binary32 function; the pinned reference
+    /// measures a one-step disagreement at the `eps` argument the workload's zero
+    /// and subnormal rows both reach. This vocabulary has no `sqrt` construct at
+    /// all, so the substitution is unstatable here rather than merely forbidden.
+    F32Rsqrt,
 }
 
 impl UnaryOp {
     const fn tag(self) -> u8 {
         match self {
             Self::F32Exp => 0x01,
+            // Appended rather than inserted, like `BinaryOp::F32Divide`: the
+            // exponential keeps `0x01` and every field keeps its position, so no
+            // previously encodable kernel's bytes move and the kernel identity
+            // domain does not step. A reader that reaches `0x02` is reading a
+            // kernel the earlier vocabulary could not express.
+            Self::F32Rsqrt => 0x02,
         }
     }
 
@@ -381,7 +401,7 @@ impl UnaryOp {
     #[must_use]
     pub const fn operand_type(self) -> KernelType {
         match self {
-            Self::F32Exp => KernelType::F32,
+            Self::F32Exp | Self::F32Rsqrt => KernelType::F32,
         }
     }
 

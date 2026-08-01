@@ -23,6 +23,7 @@ use super::operation::{
 };
 use super::quantization::register_standard_quantization;
 use super::reindex::register_standard_reindex;
+use super::rms_norm::register_standard_rms_norm;
 use super::silu::register_standard_silu;
 use super::types::{
     AttributeFieldId, CanonicalField, CanonicalValue, CanonicalValueView, QuantSchemeKey,
@@ -2124,6 +2125,10 @@ impl SemanticRegistryProvider for StandardSemantics {
         // structural ones for a reader's benefit alone; registration order fixes
         // nothing about semantics.
         register_standard_silu(registrar)?;
+        // The normalization follows the activation because it is the second
+        // family to carry a resolved accuracy contract and the first to carry an
+        // embedded reduction; registration order fixes nothing about semantics.
+        register_standard_rms_norm(registrar)?;
         register_standard_reindex(registrar)?;
         register_standard_broadcast(registrar)?;
         register_standard_quantization(registrar)

@@ -436,12 +436,15 @@ pub enum ApproximationEnvelope {
     /// Approximate intrinsics are forbidden; every elementary function follows
     /// its own resolved accuracy contract.
     ///
-    /// That contract has both a carrier and, since `tiler::silu-f32@1`, an
-    /// operation carrying one: [`crate::semantic::accuracy::AccuracyContract`] is
-    /// the ADR 0042 vocabulary this resolution defers to, and the activation's
+    /// That contract has both a carrier and, since `tiler::silu-f32@1`,
+    /// operations carrying one: [`crate::semantic::accuracy::AccuracyContract`]
+    /// is the ADR 0042 vocabulary this resolution defers to, and the activation's
     /// definition facts carry a resolved instance of it for the subordinate
-    /// exponential. So this variant is no longer forbidding a relaxation nothing
-    /// could state — it now names a real obligation on a real operation.
+    /// exponential while `tiler::rms-norm-f32@1`'s carry one for the subordinate
+    /// reciprocal square root. So this variant is no longer forbidding a
+    /// relaxation nothing could state — it names real obligations on real
+    /// operations, and the two are stated in *different contract forms*, which is
+    /// why neither may be read off the other.
     Forbidden,
     /// Permitted up to the backend-elementary envelope.
     ///
@@ -451,9 +454,10 @@ pub enum ApproximationEnvelope {
     /// accuracy rather than by a Tiler-side numeric tolerance, so a backend that
     /// states none cannot honour it.
     ///
-    /// **Not reachable for the one operation that could consume it.** The
-    /// admitted activation withholds this dimension from its compiler capability
-    /// row — see `SILU_UNCARRIED_DIMENSIONS` in `crates/tiler-compiler/src/policy.rs`
+    /// **Not reachable for either operation that could consume it.** The admitted
+    /// activation and the admitted RMS normalization both withhold this dimension
+    /// from their compiler capability rows — see
+    /// `ELEMENTARY_UNCARRIED_DIMENSIONS` in `crates/tiler-compiler/src/policy.rs`
     /// — because [`NumericalRealization`] cannot record which resolution a region
     /// chose, so two contracts differing here would share one identity. Widening
     /// the realization is what makes this variant consumable rather than merely
