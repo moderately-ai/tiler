@@ -239,13 +239,36 @@ pub enum KernelDiagnostic {
     SynchronizationContract,
     /// A barrier is not reached by every invocation that must arrive at it.
     ///
-    /// A control barrier inside a predicated region or a loop body is reached by
-    /// a dynamic subset of the participants, which is undefined execution on
-    /// every target rather than an unsupported one. The rule is structural — the
-    /// barrier must sit at the kernel's top level — because a predicate that is
-    /// *provably* uniform today would stop being one the moment the launch
-    /// geometry admitted a tail.
+    /// A control barrier inside a predicated region is reached by a dynamic
+    /// subset of the participants, which is undefined execution on every target
+    /// rather than an unsupported one. The rule is structural — no predicate may
+    /// enclose a barrier — because a predicate that is *provably* uniform today
+    /// would stop being one the moment the launch geometry admitted a tail.
+    ///
+    /// A loop is different, and the same diagnostic covers the loop rule for the
+    /// reason the two are one question: a bounded loop's trip count is a literal,
+    /// so every invocation reaches the same dynamic instance, and what a loop
+    /// level still needs is a *reason*. The only repetition a tile declares is
+    /// its round loop, so this also refuses a barrier enclosed by more than one
+    /// loop, by a loop that is not at the kernel's top level, or by a loop whose
+    /// range is not the round loop's `1..rounds`.
     SynchronizationConvergence,
+    /// A declared point is realized a different number of times than its
+    /// placement requires.
+    ///
+    /// Reaching a barrier is not the same as reaching it as often as the tile's
+    /// rounds demand. A phase boundary happens once per round and a round
+    /// boundary once per *transition* between consecutive rounds, so a tile of
+    /// `rounds` rounds requires `rounds` realizations of the first and
+    /// `rounds - 1` of the second. A barrier at the kernel's top level realizes
+    /// its point once; one inside the round loop realizes it once per iteration.
+    ///
+    /// This is what makes the peeled round checkable. A fold seeds at its first
+    /// contributor, so round zero is emitted ahead of the loop and the phase
+    /// boundary is realized once there and `rounds - 1` times inside — and a body
+    /// that dropped the peel, or that put the round boundary in it, has the wrong
+    /// count rather than a wrong-looking shape.
+    SynchronizationRealization,
     /// A staged load or store names a phase and allocation its tile does not
     /// declare, or addresses a slot outside the declared span.
     StagedAccessEvidence,
@@ -257,6 +280,21 @@ pub enum KernelDiagnostic {
     /// could carry a correct point, a correct barrier, and still read staged
     /// values before the fence that publishes them.
     UnorderedStagedHandoff,
+    /// A staged rewrite is not separated from the reads it destroys by the
+    /// barrier realizing the point that discharges their anti-dependency.
+    ///
+    /// Separate from [`Self::UnorderedStagedHandoff`] for the reason the schedule
+    /// layer keeps the two evidence classes apart: an unordered handoff means a
+    /// reader observes a value that was never published, and an unordered rewrite
+    /// means a writer destroys a value that has not finished being read. The
+    /// fixes are opposite — one moves the fence earlier, the other later.
+    ///
+    /// The condition is *cyclic*, because the rewrite is in the following round:
+    /// a barrier at position `b` of the round body separates round `r`'s read at
+    /// `c` from round `r + 1`'s write at `w` exactly when `b > c` or `b < w`.
+    /// Only the second of those also orders the peeled round's reads against the
+    /// loop's first write, which is the extra obligation a peel creates.
+    UnorderedStagedRewrite,
     /// The declared staging allocations do not realize the region's tile.
     StagingContract,
     /// The region's cooperative dataflow carries a visibility dependency that
@@ -271,6 +309,16 @@ pub enum KernelDiagnostic {
     /// well-authorized region lowered into a race. Admitting it would deliver
     /// staged reads that observe unordered writes.
     UndischargedVisibility,
+    /// The region's cooperative tile carries a cross-round anti-dependency whose
+    /// discharging point the body never realizes.
+    ///
+    /// The anti-dependency counterpart of [`Self::UndischargedVisibility`], and
+    /// separate for the same reason the schedule layer separates them: a rewrite
+    /// that overtakes an unfinished read destroys a value rather than reading an
+    /// unpublished one. A point discharges at most one of the two classes — the
+    /// conditions contradict — so a point realized nowhere falls into exactly one
+    /// of these two diagnostics.
+    UndischargedAntiDependency,
     /// The region's cooperative tile is outside the lowered dataflow profile.
     ///
     /// The tile is well formed and its synchronization authority is complete —
@@ -318,10 +366,13 @@ impl KernelDiagnostic {
             Self::UnexpectedSynchronization => "unexpected-synchronization",
             Self::SynchronizationContract => "synchronization-contract",
             Self::SynchronizationConvergence => "synchronization-convergence",
+            Self::SynchronizationRealization => "synchronization-realization",
             Self::StagedAccessEvidence => "staged-access-evidence",
             Self::UnorderedStagedHandoff => "unordered-staged-handoff",
+            Self::UnorderedStagedRewrite => "unordered-staged-rewrite",
             Self::StagingContract => "staging-contract",
             Self::UndischargedVisibility => "undischarged-visibility",
+            Self::UndischargedAntiDependency => "undischarged-anti-dependency",
             Self::CooperativeLoweringShape => "cooperative-lowering-shape",
             Self::ReductionContract => "reduction-contract",
             Self::ContributorDomain => "contributor-domain",

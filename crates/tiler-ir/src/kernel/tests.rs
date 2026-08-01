@@ -7,6 +7,7 @@
 //! diagnostic, so a rejected kernel names the obligation it violated.
 
 use std::cell::Cell;
+use std::collections::BTreeMap;
 
 use super::*;
 use crate::schedule::{
@@ -2355,45 +2356,91 @@ fn multi_round_cooperative_region() -> VerifiedScheduledRegion {
         .expect("the loop-carried region verifies")
 }
 
-/// A loop-carried tile is representable and deliberately not lowered.
+/// A loop-carried tile lowers to a peeled round zero and a round loop.
 ///
-/// The maturity claim, stated as a test rather than as a comment. The schedule
-/// admits the rewrite and derives its anti-dependency; this lowering has no
-/// canonical body for it, because the body needs an accumulator that survives
-/// both the iteration guard and the round loop's back edge, and a predicated
-/// region in this vocabulary produces no values. Refusing by name is what keeps
-/// "representable" and "lowered" apart instead of emitting the nearest thing.
-///
-/// The refusal is over-determined, deliberately: `cooperative_plan`'s explicit
-/// round check and its one-point destructuring both reject this tile, and
-/// `lower.rs` records why the second is what currently fires and why the first
-/// is kept anyway.
+/// Every structural claim is asserted rather than described, because the shape
+/// *is* the correctness argument: round zero is emitted ahead of the loop because
+/// the fold seeds at its first contributor; the accumulator that carries the
+/// round totals is defined at the kernel's top level because a predicated region
+/// produces no value that could cross the back edge; and the round boundary sits
+/// at the head of the loop body because that is the only position that also
+/// orders the peeled round's reads against the loop's first rewrite.
 #[test]
-fn a_loop_carried_tile_is_representable_and_not_yet_lowered() {
+fn a_loop_carried_tile_lowers_to_a_peeled_round_body() {
     let scheduled = multi_round_cooperative_region();
+    let tile = crate::schedule::cooperative_tile(&scheduled.region().schedule.reduction)
+        .expect("the region carries a tile");
+    assert_eq!(tile.anti_dependency_edges().len(), 1);
+    let kernel = lower_scheduled_region(&scheduled).expect("the loop-carried region lowers");
+
+    let top: Vec<_> = kernel.body().operations().map(OperationRef::view).collect();
+    // One barrier at the top level: the peeled round's phase boundary. The round
+    // boundary has no top-level realization at all, because `rounds` rounds have
+    // `rounds - 1` transitions between them.
+    let top_barriers: Vec<_> = top
+        .iter()
+        .filter_map(|view| match view {
+            OperationView::Barrier { spec } => Some(*spec),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(top_barriers.len(), 1);
+    assert_eq!(top_barriers[0].point, SyncPointId::FIRST);
+
+    // The round loop runs `1..rounds` and carries exactly one `f32`, which is
+    // the accumulator the peel seeded.
+    let rounds: Vec<_> = top
+        .iter()
+        .filter_map(|view| match view {
+            OperationView::SerialLoop(loops) if loops.end() == 2 => Some(*loops),
+            _ => None,
+        })
+        .collect();
+    let [round] = rounds.as_slice() else {
+        panic!("expected exactly one round loop at the top level")
+    };
+    assert_eq!(round.start(), 1);
+    assert_eq!(round.accumulators().len(), 1);
     assert_eq!(
-        crate::schedule::cooperative_tile(&scheduled.region().schedule.reduction)
-            .expect("the region carries a tile")
-            .anti_dependency_edges()
-            .len(),
-        1
+        kernel
+            .value_type(round.accumulators().next().expect("one accumulator"))
+            .expect("the accumulator resolves"),
+        KernelType::F32
     );
+
+    // The round boundary is the round body's first operation, ahead of the
+    // guarded rewrite; the phase boundary follows it.
+    let body: Vec<_> = round.body().operations().map(OperationRef::view).collect();
+    let barriers: Vec<(usize, SyncPointId)> = body
+        .iter()
+        .enumerate()
+        .filter_map(|(position, view)| match view {
+            OperationView::Barrier { spec } => Some((position, spec.point)),
+            _ => None,
+        })
+        .collect();
     assert_eq!(
-        lower_scheduled_region(&scheduled),
-        Err(KernelLoweringError::Verification(
-            KernelDiagnostic::CooperativeLoweringShape
-        ))
+        barriers,
+        [(0, SyncPointId::new(1)), (2, SyncPointId::FIRST)]
     );
+    assert!(matches!(body[1], OperationView::Predicated { .. }));
+
+    // Both rounds stage and consume: two writes and four reads, the reads being
+    // a seed and a folded slot in each of the peel and the loop body.
+    let (writes, reads) = staged_accesses(&kernel);
+    assert_eq!(writes, [PhaseId::FIRST; 2]);
+    assert_eq!(reads, [PhaseId::new(1); 4]);
 }
 
 /// The barrier-convergence rule admits exactly the nesting a tile authorizes.
 ///
-/// Driven over the predicate directly, because the acceptance rows have no
-/// producer yet: no lowering emits a round loop, so a body could not exercise
-/// them and a rule with only its refusals driven would be half-evidenced. The
-/// refusals are additionally driven end to end through a real body by
+/// Driven over the predicate directly, because a body cannot reach every row:
+/// the depths a canonical body emits are a subset of the admitted ones, and a
+/// rule with only its refusals driven would be half-evidenced. The refusals are
+/// additionally driven end to end through real bodies by
 /// `each_kernel_synchronization_rule_refuses_its_own_defect`'s
-/// `FenceInsideTheGuard` row.
+/// `FenceInsideTheGuard` row and by
+/// `each_loop_carried_synchronization_rule_refuses_its_own_defect`.
 #[test]
 fn the_barrier_convergence_rule_admits_only_the_nesting_a_tile_authorizes() {
     for (block_depth, loop_depth, rounds, admitted) in [
@@ -2402,9 +2449,12 @@ fn the_barrier_convergence_rule_admits_only_the_nesting_a_tile_authorizes() {
         (1, 0, 1, false),
         (1, 1, 1, false),
         (2, 1, 1, false),
-        // A loop-carried tile authorizes exactly one enclosing loop.
+        // A loop-carried tile authorizes the round loop *and* the top level,
+        // because the fold's seed peels round zero out of the loop and its
+        // barrier is realized there. What stops a stray top-level barrier from
+        // riding on that is the realization count, not this predicate.
         (1, 1, 2, true),
-        (0, 0, 2, false),
+        (0, 0, 2, true),
         (2, 2, 2, false),
         // A predicate on the path is refused whatever the round count: the
         // difference between the two depths counts the predicates, and any of
@@ -2419,6 +2469,676 @@ fn the_barrier_convergence_rule_admits_only_the_nesting_a_tile_authorizes() {
             "block {block_depth}, loop {loop_depth}, rounds {rounds}"
         );
     }
+}
+
+/// The barrier realizing the loop-carried fixture's round boundary.
+fn cooperative_round_barrier() -> BarrierSpec {
+    BarrierSpec {
+        point: SyncPointId::new(1),
+        ..cooperative_barrier()
+    }
+}
+
+/// One deliberate deviation from a loop-carried cooperative body.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LoopCarriedChange {
+    /// The body the rules below are measured against.
+    None,
+    /// The round boundary moves to the end of the round body.
+    RoundBoundaryAtTheTail,
+    /// The round boundary is omitted.
+    NoRoundBoundary,
+    /// The round boundary is additionally realized in the peeled round.
+    RoundBoundaryInThePeel,
+    /// The round loop runs `0..rounds`, as a body with no peel would.
+    UnpeeledRoundLoop,
+    /// The peel's fence sits inside a loop that is not the round loop.
+    FenceInAnotherLoop,
+    /// The round body reads staging ahead of its own phase boundary.
+    ReadBeforeTheFence,
+}
+
+/// Hand-builds a loop-carried cooperative body carrying exactly one deviation.
+///
+/// The body is deliberately *not* the canonical one — it folds nothing, so both
+/// its per-round contributor fold and its staged folds are missing — which makes
+/// the unchanged case fail at the reduction contract. That is the control: each
+/// change below moves the diagnostic to its own rule, which is what proves the
+/// rule fired rather than something upstream of it.
+fn loop_carried_body(change: LoopCarriedChange) -> KernelDiagnostic {
+    let scheduled = multi_round_cooperative_region();
+    let mut builder = KernelBuilder::new(&scheduled).unwrap();
+    let (read, write) = cooperative_signature(&mut builder, &scheduled);
+    let staging = builder.declare_staging(COOPERATIVE_STAGING).unwrap();
+
+    let gid = builder.builtin(Builtin::GlobalInvocationIndex).unwrap();
+    let lid = builder.builtin(Builtin::LocalInvocationIndex).unwrap();
+    let participants = builder.constant(KernelConstant::Index(3)).unwrap();
+    let output = builder
+        .binary(BinaryOp::IndexDivide, gid, participants)
+        .unwrap();
+    let extent = builder.constant(KernelConstant::Index(6)).unwrap();
+    let active = builder
+        .compare(CompareOp::IndexLessThan, gid, extent)
+        .unwrap();
+    let zero = builder.constant(KernelConstant::Index(0)).unwrap();
+
+    // The producing phase, emitted identically in the peel and in the loop.
+    let produce = move |builder: &mut KernelBuilder| {
+        builder.predicated(active, move |builder| {
+            let value = builder.load(read, gid, BoundsWitnessId::new(0))?;
+            builder.staged_store(staging, lid, value, PhaseId::FIRST)
+        })
+    };
+
+    produce(&mut builder).unwrap();
+    if change == LoopCarriedChange::FenceInAnotherLoop {
+        // A loop at the kernel's top level that is not the round loop, standing
+        // in for a contributor fold. Its accumulator is a constant rather than a
+        // staged read, so the only rule this row can trip is the round-loop one.
+        let accumulator = builder.constant(KernelConstant::F32Bits(0)).unwrap();
+        builder
+            .serial_loop(
+                SerialLoopSpec { start: 1, end: 3 },
+                &[accumulator],
+                |builder, parameters| {
+                    builder.barrier(cooperative_barrier())?;
+                    Ok(vec![
+                        parameters
+                            .accumulator(0)
+                            .ok_or(KernelBuildError::EmptyLoopAccumulators)?,
+                    ])
+                },
+            )
+            .unwrap();
+    } else {
+        builder.barrier(cooperative_barrier()).unwrap();
+    }
+    if change == LoopCarriedChange::RoundBoundaryInThePeel {
+        builder.barrier(cooperative_round_barrier()).unwrap();
+    }
+    let seed = builder.staged_load(staging, zero, PhaseId::new(1)).unwrap();
+    let start = u64::from(change != LoopCarriedChange::UnpeeledRoundLoop);
+    let results = builder
+        .serial_loop(
+            SerialLoopSpec { start, end: 2 },
+            &[seed],
+            move |builder, parameters| {
+                let accumulator = parameters
+                    .accumulator(0)
+                    .ok_or(KernelBuildError::EmptyLoopAccumulators)?;
+                if !matches!(
+                    change,
+                    LoopCarriedChange::NoRoundBoundary | LoopCarriedChange::RoundBoundaryAtTheTail
+                ) {
+                    builder.barrier(cooperative_round_barrier())?;
+                }
+                produce(builder)?;
+                if change == LoopCarriedChange::ReadBeforeTheFence {
+                    builder.staged_load(staging, zero, PhaseId::new(1))?;
+                }
+                builder.barrier(cooperative_barrier())?;
+                let staged = builder.staged_load(staging, zero, PhaseId::new(1))?;
+                let sum = builder.binary(BinaryOp::F32Add, accumulator, staged)?;
+                if change == LoopCarriedChange::RoundBoundaryAtTheTail {
+                    builder.barrier(cooperative_round_barrier())?;
+                }
+                Ok(vec![sum])
+            },
+        )
+        .unwrap();
+    let total = results.get(0).unwrap();
+    builder
+        .predicated(active, |builder| {
+            let one = builder.constant(KernelConstant::Index(1))?;
+            let commits = builder.compare(CompareOp::IndexLessThan, lid, one)?;
+            builder.predicated(commits, |builder| {
+                builder.store(
+                    write,
+                    output,
+                    total,
+                    BoundsWitnessId::new(1),
+                    OwnershipWitnessId::new(0),
+                )
+            })
+        })
+        .unwrap();
+    cooperative_diagnostic(builder)
+}
+
+/// Every rule the round structure adds, driven once against its own defect.
+#[test]
+fn each_loop_carried_synchronization_rule_refuses_its_own_defect() {
+    // The control. An unchanged body reaches the reduction contract, so every
+    // row below is evidence that its own rule fired first.
+    assert_eq!(
+        loop_carried_body(LoopCarriedChange::None),
+        KernelDiagnostic::ReductionContract
+    );
+    for (change, expected) in [
+        // The cyclic rule's `b < w` arm is the only one that also orders the
+        // peeled round's reads against the loop's first rewrite, so a boundary
+        // at the tail satisfies the back edge and still leaves a race.
+        (
+            LoopCarriedChange::RoundBoundaryAtTheTail,
+            KernelDiagnostic::UnorderedStagedRewrite,
+        ),
+        (
+            LoopCarriedChange::NoRoundBoundary,
+            KernelDiagnostic::UndischargedAntiDependency,
+        ),
+        // `rounds` rounds have `rounds - 1` transitions, so a round boundary
+        // realized in the peel as well is realized once too often.
+        (
+            LoopCarriedChange::RoundBoundaryInThePeel,
+            KernelDiagnostic::SynchronizationRealization,
+        ),
+        // The trip-count obligation: the enclosing loop must be the round loop,
+        // and a `0..rounds` loop is the shape a body with no peel would emit.
+        (
+            LoopCarriedChange::UnpeeledRoundLoop,
+            KernelDiagnostic::SynchronizationConvergence,
+        ),
+        (
+            LoopCarriedChange::FenceInAnotherLoop,
+            KernelDiagnostic::SynchronizationConvergence,
+        ),
+        (
+            LoopCarriedChange::ReadBeforeTheFence,
+            KernelDiagnostic::UnorderedStagedHandoff,
+        ),
+    ] {
+        assert_eq!(loop_carried_body(change), expected, "{change:?}");
+    }
+}
+
+// ---- Executing a cooperative body ------------------------------------------
+//
+// A verifier proves the body is the canonical refinement of its schedule; it
+// does not prove the canonical body computes the declared order. Running it is
+// what does, and the machine below reads *only* the structured kernel IR — no
+// schedule, no semantic graph — so agreeing with the reference is also the
+// evidence that a backend needs nothing else.
+
+/// One typed value produced while interpreting a structured kernel.
+#[derive(Clone, Copy, Debug)]
+enum KirValue {
+    Bool(bool),
+    Index(u64),
+    F32(f32),
+}
+
+impl KirValue {
+    fn index(self) -> u64 {
+        match self {
+            Self::Index(value) => value,
+            other => panic!("expected an index-typed value, found {other:?}"),
+        }
+    }
+    fn float(self) -> f32 {
+        match self {
+            Self::F32(value) => value,
+            other => panic!("expected an f32-typed value, found {other:?}"),
+        }
+    }
+    fn boolean(self) -> bool {
+        match self {
+            Self::Bool(flag) => flag,
+            other => panic!("expected a predicate value, found {other:?}"),
+        }
+    }
+}
+
+/// One step of a workgroup's execution, flattened past every rendezvous.
+///
+/// A barrier separates the lanes' execution, so every construct that *contains*
+/// one has to be unrolled into this stream: a lane cannot be advanced through
+/// half a round loop by an interpreter that recurses into it. Loops that contain
+/// no barrier stay a single [`Self::Operation`] and are interpreted recursively,
+/// which is why the staged and contributor folds cost nothing here.
+#[derive(Clone, Copy, Debug)]
+enum Step<'a> {
+    /// An operation one lane executes in place.
+    Operation(OperationRef<'a>),
+    /// Every lane reaches this point before any lane passes it.
+    Rendezvous,
+    /// Carry a barrier-containing loop's initial values into its state.
+    Seed(SerialLoopRef<'a>),
+    /// Bind one iteration's induction variable and accumulator parameters.
+    Iterate(SerialLoopRef<'a>, u64),
+    /// Read one iteration's yields back into the carried state.
+    Yield(SerialLoopRef<'a>),
+    /// Publish the carried state as the loop's results.
+    Exit(SerialLoopRef<'a>),
+}
+
+/// Returns whether a block, or anything nested inside it, contains a barrier.
+fn contains_barrier(block: BlockRef<'_>) -> bool {
+    block.operations().any(|operation| match operation.view() {
+        OperationView::Barrier { .. } => true,
+        OperationView::Predicated { body, .. } => contains_barrier(body),
+        OperationView::SerialLoop(loops) => contains_barrier(loops.body()),
+        _ => false,
+    })
+}
+
+/// Flattens one block into the step stream a workgroup executes.
+fn flatten<'a>(block: BlockRef<'a>, steps: &mut Vec<Step<'a>>) {
+    for operation in block.operations() {
+        match operation.view() {
+            OperationView::Barrier { .. } => steps.push(Step::Rendezvous),
+            OperationView::SerialLoop(loops) if contains_barrier(loops.body()) => {
+                steps.push(Step::Seed(loops));
+                for iteration in loops.start()..loops.end() {
+                    steps.push(Step::Iterate(loops, iteration));
+                    flatten(loops.body(), steps);
+                    steps.push(Step::Yield(loops));
+                }
+                steps.push(Step::Exit(loops));
+            }
+            _ => steps.push(Step::Operation(operation)),
+        }
+    }
+}
+
+/// One lane's private interpreter state, carried across every rendezvous.
+#[derive(Clone, Debug, Default)]
+struct Lane {
+    values: BTreeMap<VerifiedValueId, KirValue>,
+    /// Each barrier-containing loop's carried accumulators, keyed by its own
+    /// induction variable — the one value that names a loop uniquely.
+    carried: BTreeMap<VerifiedValueId, Vec<KirValue>>,
+}
+
+/// A backend-shaped interpreter that reads only the structured kernel IR.
+///
+/// **Lanes advance one segment at a time, and each lane runs a whole segment
+/// before the next lane starts it.** That is the faithful model of a control
+/// barrier and it is deliberately unforgiving: a body that read a staged slot in
+/// the same segment as another lane's write to it reads whatever that lane had
+/// not yet stored, and a body that rewrote a slot in the same segment as another
+/// lane's read of it destroys the value the reader was about to take. Both are
+/// exactly the races the two synchronization evidence classes exist to prevent,
+/// and both surface here as a wrong result rather than as a passing test.
+struct KirMachine<'a> {
+    kernel: &'a VerifiedKernel,
+    input: &'a [f32],
+    output: Vec<f32>,
+    lane: Lane,
+    local: u64,
+    staged: Vec<f32>,
+}
+
+impl<'a> KirMachine<'a> {
+    fn run(kernel: &'a VerifiedKernel, input: &'a [f32]) -> Vec<f32> {
+        let mut buffers = kernel.buffers();
+        let read = buffers.next().expect("a read buffer parameter");
+        let write = buffers.next().expect("a write buffer parameter");
+        assert_eq!(input.len(), usize::try_from(read.element_count).unwrap());
+        let outputs = usize::try_from(write.element_count).unwrap();
+        // Read from the kernel's own staging declaration, so the machine still
+        // resolves nothing from the schedule or the graph.
+        let slots = kernel
+            .staging()
+            .next()
+            .map_or(1, |staging| staging.element_count.max(1));
+        let participants = usize::try_from(slots).unwrap();
+        let mut steps = Vec::new();
+        flatten(kernel.body(), &mut steps);
+        let mut machine = KirMachine {
+            kernel,
+            input,
+            output: vec![f32::NAN; outputs],
+            lane: Lane::default(),
+            local: 0,
+            staged: vec![f32::NAN; participants],
+        };
+        for workgroup in 0..outputs {
+            let mut lanes = vec![Lane::default(); participants];
+            machine.staged.fill(f32::NAN);
+            for segment in steps.split(|step| matches!(step, Step::Rendezvous)) {
+                for (lane, state) in lanes.iter_mut().enumerate() {
+                    let lane = u64::try_from(lane).unwrap();
+                    machine.lane = std::mem::take(state);
+                    machine.local = lane;
+                    let invocation = u64::try_from(workgroup).unwrap() * slots + lane;
+                    for step in segment {
+                        machine.run_step(*step, invocation);
+                    }
+                    *state = std::mem::take(&mut machine.lane);
+                }
+            }
+        }
+        machine.output
+    }
+
+    fn run_step(&mut self, step: Step<'a>, invocation: u64) {
+        match step {
+            Step::Operation(operation) => self.run_operation(operation, invocation),
+            // Consumed by the segment split above; a lane never executes one.
+            Step::Rendezvous => unreachable!("a rendezvous is a segment boundary"),
+            Step::Seed(loops) => {
+                let initial: Vec<KirValue> = loops.initial().map(|value| self.get(value)).collect();
+                self.lane.carried.insert(Self::loop_key(loops), initial);
+            }
+            Step::Iterate(loops, iteration) => {
+                let key = Self::loop_key(loops);
+                let carried = self.lane.carried.get(&key).cloned().expect("a seeded loop");
+                self.lane.values.insert(key, KirValue::Index(iteration));
+                for (parameter, value) in loops.accumulators().zip(carried) {
+                    self.lane.values.insert(parameter, value);
+                }
+            }
+            Step::Yield(loops) => {
+                let yielded: Vec<KirValue> = loops.yields().map(|value| self.get(value)).collect();
+                self.lane.carried.insert(Self::loop_key(loops), yielded);
+            }
+            Step::Exit(loops) => {
+                let key = Self::loop_key(loops);
+                let carried = self.lane.carried.get(&key).cloned().expect("a seeded loop");
+                let results: Vec<VerifiedValueId> = self.loop_results(loops);
+                for (result, value) in results.into_iter().zip(carried) {
+                    self.lane.values.insert(result, value);
+                }
+            }
+        }
+    }
+
+    /// Names one barrier-containing loop by its own induction variable.
+    fn loop_key(loops: SerialLoopRef<'a>) -> VerifiedValueId {
+        loops.induction().expect("an induction variable")
+    }
+
+    /// Returns the values a flattened loop defines in its enclosing block.
+    ///
+    /// Recovered by searching the top-level operations for the loop whose
+    /// induction variable matches, because a [`SerialLoopRef`] views the loop's
+    /// inputs and body and not the operation that owns it.
+    fn loop_results(&self, loops: SerialLoopRef<'a>) -> Vec<VerifiedValueId> {
+        let key = Self::loop_key(loops);
+        self.kernel
+            .body()
+            .operations()
+            .find(|operation| match operation.view() {
+                OperationView::SerialLoop(candidate) => candidate.induction() == Some(key),
+                _ => false,
+            })
+            .expect("a flattened loop is a top-level operation")
+            .results()
+            .collect()
+    }
+
+    fn run_block(&mut self, block: BlockRef<'a>, invocation: u64) {
+        for operation in block.operations() {
+            self.run_operation(operation, invocation);
+        }
+    }
+
+    fn run_operation(&mut self, operation: OperationRef<'a>, invocation: u64) {
+        let mut results = operation.results();
+        match operation.view() {
+            OperationView::Builtin { builtin } => {
+                let value = match builtin {
+                    Builtin::GlobalInvocationIndex => invocation,
+                    Builtin::LocalInvocationIndex => self.local,
+                };
+                self.define(&mut results, KirValue::Index(value));
+            }
+            OperationView::Constant { value } => {
+                let value = match value {
+                    KernelConstant::Bool(flag) => KirValue::Bool(flag),
+                    KernelConstant::Index(index) => KirValue::Index(index),
+                    KernelConstant::F32Bits(bits) => KirValue::F32(f32::from_bits(bits)),
+                };
+                self.define(&mut results, value);
+            }
+            OperationView::Binary { op, lhs, rhs } => {
+                let value = match op {
+                    BinaryOp::IndexAdd => {
+                        KirValue::Index(self.get(lhs).index() + self.get(rhs).index())
+                    }
+                    BinaryOp::IndexMultiply => {
+                        KirValue::Index(self.get(lhs).index() * self.get(rhs).index())
+                    }
+                    BinaryOp::IndexDivide => {
+                        KirValue::Index(self.get(lhs).index() / self.get(rhs).index())
+                    }
+                    BinaryOp::IndexModulo => {
+                        KirValue::Index(self.get(lhs).index() % self.get(rhs).index())
+                    }
+                    BinaryOp::F32Add => {
+                        KirValue::F32(self.get(lhs).float() + self.get(rhs).float())
+                    }
+                    BinaryOp::F32Multiply => {
+                        KirValue::F32(self.get(lhs).float() * self.get(rhs).float())
+                    }
+                    other => panic!("unsupported binary operation {other:?}"),
+                };
+                self.define(&mut results, value);
+            }
+            OperationView::Compare { op, lhs, rhs } => {
+                let value = match op {
+                    CompareOp::IndexLessThan => {
+                        KirValue::Bool(self.get(lhs).index() < self.get(rhs).index())
+                    }
+                };
+                self.define(&mut results, value);
+            }
+            OperationView::Convert { op, source } => {
+                let value = self.get(source).float();
+                let value = match op {
+                    ConvertOp::CanonicalizeF32Nan => {
+                        if value.is_nan() {
+                            f32::from_bits(self.kernel.numerical().canonical_arithmetic_nan_bits)
+                        } else {
+                            value
+                        }
+                    }
+                    other => panic!("unsupported conversion {other:?}"),
+                };
+                self.define(&mut results, KirValue::F32(value));
+            }
+            OperationView::Load { offset, .. } => {
+                let offset = usize::try_from(self.get(offset).index()).unwrap();
+                let value = KirValue::F32(self.input[offset]);
+                self.define(&mut results, value);
+            }
+            OperationView::Store { offset, value, .. } => {
+                let offset = usize::try_from(self.get(offset).index()).unwrap();
+                self.output[offset] = self.get(value).float();
+            }
+            OperationView::Predicated { predicate, body } => {
+                if self.get(predicate).boolean() {
+                    self.run_block(body, invocation);
+                }
+            }
+            OperationView::SerialLoop(loops) => {
+                let mut carried: Vec<KirValue> =
+                    loops.initial().map(|value| self.get(value)).collect();
+                let induction = loops.induction().expect("an induction variable");
+                let parameters: Vec<_> = loops.accumulators().collect();
+                for iteration in loops.start()..loops.end() {
+                    self.lane
+                        .values
+                        .insert(induction, KirValue::Index(iteration));
+                    for (parameter, value) in parameters.iter().zip(&carried) {
+                        self.lane.values.insert(*parameter, *value);
+                    }
+                    self.run_block(loops.body(), invocation);
+                    carried = loops.yields().map(|value| self.get(value)).collect();
+                }
+                for (result, value) in results.zip(carried) {
+                    self.lane.values.insert(result, value);
+                }
+            }
+            // Flattened into a segment boundary before any lane runs, so a
+            // barrier reaching here is one nested below a construct this machine
+            // descends into — which the verifier refuses.
+            OperationView::Barrier { .. } => panic!("a nested barrier reached the machine"),
+            OperationView::StagedStore { offset, value, .. } => {
+                let offset = usize::try_from(self.get(offset).index()).unwrap();
+                self.staged[offset] = self.get(value).float();
+            }
+            OperationView::StagedLoad { offset, .. } => {
+                let offset = usize::try_from(self.get(offset).index()).unwrap();
+                let value = KirValue::F32(self.staged[offset]);
+                self.define(&mut results, value);
+            }
+            other => panic!("unsupported structured operation {other:?}"),
+        }
+    }
+
+    fn define(&mut self, results: &mut impl Iterator<Item = VerifiedValueId>, value: KirValue) {
+        let result = results.next().expect("one defined result");
+        self.lane.values.insert(result, value);
+    }
+
+    fn get(&self, id: VerifiedValueId) -> KirValue {
+        *self
+            .lane
+            .values
+            .get(&id)
+            .expect("a value defined before its use")
+    }
+}
+
+/// Two rows whose sum depends on where the round boundaries fall.
+///
+/// `5e19` is far enough above the unit ulp that adding one to it is the
+/// identity, so a grouping that puts the cancelling pair in one round absorbs
+/// the small value beside it and a grouping that splits them does not. The two
+/// rows are sensitive in opposite directions, so neither the round-major nor the
+/// participant-major grouping can agree with the other by luck on both.
+/// Each row also carries a small value in a round the other's cancellation does
+/// not reach, so a body that folded round zero's range twice — the shape a
+/// dropped round term produces — disagrees on both rows rather than on one.
+const REGROUPING_SENSITIVE_ROWS: [[f32; 6]; 2] = [
+    [5.0e19, 1.0, -5.0e19, 3.0, 0.0, 0.0],
+    [0.0, 5.0e19, 0.0, -5.0e19, 2.0, 0.0],
+];
+
+/// The exact value a cooperative tile's declared order computes for one row.
+///
+/// Written from the declared arithmetic rather than from the emitted body:
+/// participant `p` of round `r` folds the contiguous range at index
+/// `r * participants + p` seeded at its own first contributor, the staged set is
+/// folded in ascending participant order, and the round totals accumulate in
+/// ascending round order. Every fold seeds at its first contributor, which is
+/// what makes this a reassociation of the declared sequence rather than a sum
+/// against an identity element.
+fn cooperative_reference(
+    row: &[f32],
+    participants: usize,
+    contributors: usize,
+    rounds: usize,
+) -> f32 {
+    let mut total: Option<f32> = None;
+    for round in 0..rounds {
+        let mut staged: Option<f32> = None;
+        for participant in 0..participants {
+            let base = (round * participants + participant) * contributors;
+            let mut range = row[base];
+            for step in 1..contributors {
+                range += row[base + step];
+            }
+            staged = Some(staged.map_or(range, |value| value + range));
+        }
+        let round_total = staged.expect("a tile has at least one participant");
+        total = Some(total.map_or(round_total, |value| value + round_total));
+    }
+    total.expect("a tile runs at least one round")
+}
+
+/// The same fold with the rounds and participants exchanged.
+///
+/// Participant `p` of round `r` owning the range at `p * rounds + r` is the
+/// other natural reading of a two-dimensional split, and it is the one the
+/// contributor arithmetic must *not* compute.
+fn participant_major_reference(
+    row: &[f32],
+    participants: usize,
+    contributors: usize,
+    rounds: usize,
+) -> f32 {
+    let mut total: Option<f32> = None;
+    for round in 0..rounds {
+        let mut staged: Option<f32> = None;
+        for participant in 0..participants {
+            let base = (participant * rounds + round) * contributors;
+            let mut range = row[base];
+            for step in 1..contributors {
+                range += row[base + step];
+            }
+            staged = Some(staged.map_or(range, |value| value + range));
+        }
+        let round_total = staged.expect("a tile has at least one participant");
+        total = Some(total.map_or(round_total, |value| value + round_total));
+    }
+    total.expect("a tile runs at least one round")
+}
+
+fn bit_patterns(values: &[f32]) -> Vec<u32> {
+    values.iter().map(|value| value.to_bits()).collect()
+}
+
+/// The neighbouring round grouping really does compute something else.
+///
+/// The guard on the conformance test below: an executed kernel agreeing with its
+/// declared order is only evidence if some *other* order would have disagreed.
+/// This pins that, so an input that made the comparison vacuous fails here rather
+/// than silently weakening the claim next door.
+#[test]
+fn the_declared_round_grouping_is_what_the_agreement_is_evidence_about() {
+    for row in &REGROUPING_SENSITIVE_ROWS {
+        assert_ne!(
+            cooperative_reference(row, 3, 1, 2).to_bits(),
+            participant_major_reference(row, 3, 1, 2).to_bits(),
+            "the conformance input cannot tell two round groupings apart"
+        );
+    }
+}
+
+/// The single-round body executes to the reference's bits at its declared order.
+///
+/// Run first and reported separately, because it is what anchors the machine:
+/// the single-round shape is already verified, already has a checked-in Metal
+/// golden, and its order is not in question — so a disagreement here is a defect
+/// in the interpreter rather than in the body under test.
+#[test]
+fn the_cooperative_body_matches_the_reference_at_its_declared_order() {
+    let scheduled = cooperative_region();
+    let kernel = lower_scheduled_region(&scheduled).expect("the cooperative region lowers");
+    let input: Vec<f32> = REGROUPING_SENSITIVE_ROWS.concat();
+    let expected: Vec<f32> = REGROUPING_SENSITIVE_ROWS
+        .iter()
+        .map(|row| cooperative_reference(row, 3, 2, 1))
+        .collect();
+    assert_eq!(
+        bit_patterns(&KirMachine::run(&kernel, &input)),
+        bit_patterns(&expected)
+    );
+}
+
+/// The loop-carried body executes to the reference's bits at its declared order.
+///
+/// The ticket's closing evidence. The kernel is *run* rather than inspected:
+/// every lane is advanced to each barrier before any lane crosses it, so a body
+/// that read a staged slot before its writer produced it, or rewrote one before
+/// its readers were finished, would carry a `NaN` or a next-round partial into
+/// the fold and fail here rather than pass by accident.
+#[test]
+fn the_loop_carried_body_matches_the_reference_at_its_declared_order() {
+    let scheduled = multi_round_cooperative_region();
+    let kernel = lower_scheduled_region(&scheduled).expect("the loop-carried region lowers");
+    let input: Vec<f32> = REGROUPING_SENSITIVE_ROWS.concat();
+    let expected: Vec<f32> = REGROUPING_SENSITIVE_ROWS
+        .iter()
+        .map(|row| cooperative_reference(row, 3, 1, 2))
+        .collect();
+    assert_eq!(
+        bit_patterns(&KirMachine::run(&kernel, &input)),
+        bit_patterns(&expected)
+    );
 }
 
 /// A kernel that stages without a cooperative region is refused by name.

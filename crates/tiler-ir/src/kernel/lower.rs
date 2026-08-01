@@ -85,8 +85,22 @@ enum ReadAddressing {
 struct CooperativePlan {
     /// Invocations of the workgroup that cooperate on one output.
     participants: u64,
-    /// Contributors each participant folds in the producing phase.
+    /// Times the whole phase sequence executes.
+    ///
+    /// `1` is the single-pass tile. A larger count is the loop-carried tile,
+    /// whose body peels round zero — a fold seeds at its first contributor —
+    /// and carries the accumulator through a `1..rounds` loop.
+    rounds: u64,
+    /// Contributors each participant folds in the producing phase, on one round.
     contributors_per_partition: u64,
+    /// Contributors one whole round covers, which is the round ordinal's stride.
+    ///
+    /// `participants * contributors_per_partition`. Participant `p` of round `r`
+    /// owns the contiguous range at index `r * participants + p`, so its first
+    /// contributor is `r * contributors_per_round + p * contributors_per_partition`
+    /// — the reassociation the schedule verifier proved covers the declared
+    /// sequence once, never a permutation of it.
+    contributors_per_round: u64,
     /// Participants that perform the owning store; always the first `n`.
     commit_count: u64,
     /// Scheduled staging allocation the partials are staged in.
@@ -103,10 +117,17 @@ struct CooperativePlan {
     produce_offset: u64,
     /// First slot the consuming fold reads.
     consume_offset: u64,
-    /// The synchronization point separating the two phases.
-    point: crate::schedule::SyncPointId,
-    /// The realization that point requires, restated in KIR spelling.
+    /// The realization the phase-boundary point requires, in KIR spelling.
+    ///
+    /// The point discharging the tile's one visibility edge, resolved through the
+    /// discharge relation rather than by position, so the barrier the body emits
+    /// is the one the schedule proved orders the handoff.
     barrier: BarrierSpec,
+    /// The realization the round-boundary point requires, when there is one.
+    ///
+    /// `None` for a single-round tile, which derives no anti-dependency and
+    /// therefore declares no point to discharge one.
+    round_barrier: Option<BarrierSpec>,
 }
 
 /// Everything the canonical emission needs, resolved before any operation.
@@ -263,40 +284,13 @@ fn cooperative_plan(
         return Ok(None);
     };
     let shape = KernelDiagnostic::CooperativeLoweringShape;
-    // A single pass over the phases. A loop-carried tile is *representable* —
-    // the schedule verifier admits its rewrite, derives its anti-dependencies,
-    // and requires a point for each — and it is not lowered here, because the
-    // body it needs carries an accumulator across the round loop and this
-    // vocabulary has no way to produce one: a predicated region yields no
-    // values, every boundary load must be dominated by the iteration guard, and
-    // a fold seeded at its first contributor peels a round the loop then cannot
-    // spell.
-    //
-    // **This branch is currently unreachable, and it is kept because the thing
-    // that makes it unreachable is not local.** The one-point destructuring
-    // below already refuses every multi-round tile, because no such tile can
-    // carry fewer than two points: a phase boundary between `p` and `p + 1`
-    // discharges a visibility edge only when its producer is at or before `p`
-    // and its consumer at or after `p + 1`, and discharges an anti-dependency
-    // only when the boundary is at or after the reading phase or at or before
-    // the rewriting one — conditions no single boundary satisfies together — and
-    // a round boundary discharges no visibility edge at all. So a multi-round
-    // tile always trips the shape check for the incidental reason that it has
-    // two points. Widening that destructuring to admit two would silently admit
-    // a multi-round tile into a body that ignores its rounds, and this is what
-    // stops that. A perturbation removing it leaves the refusal test green,
-    // which is the evidence for the paragraph above rather than an argument for
-    // deleting it.
-    if tile.rounds > 1 {
-        return Err(shape);
-    }
-    // One allocation, two phases, one point: the bounded profile's tile stages
-    // one partial per participant and reads the set back once.
-    let ([staging], [produce, consume], [point]) = (
-        tile.staging.as_slice(),
-        tile.phases.as_slice(),
-        tile.synchronization.as_slice(),
-    ) else {
+    // One allocation and two phases: the bounded profile's tile stages one
+    // partial per participant and reads the set back once, however many rounds
+    // it runs. The points are resolved below from the edges they discharge
+    // rather than destructured positionally, because *which* point orders which
+    // obligation is what the body has to get right and the schedule already
+    // proved exactly one point answers each.
+    let ([staging], [produce, consume]) = (tile.staging.as_slice(), tile.phases.as_slice()) else {
         return Err(shape);
     };
     let ([write], [], [], [read]) = (
@@ -327,9 +321,38 @@ fn cooperative_plan(
     if tile.commit.first != 0 {
         return Err(shape);
     }
+    // The two obligations, each resolved to the one point that discharges it.
+    // A tile of this shape derives exactly one visibility edge and — when its
+    // phases repeat — exactly one anti-dependency, so anything else is a tile
+    // this emission has no body for rather than a defect the schedule missed.
+    let edges = tile.visibility_edges();
+    let [edge] = edges.as_slice() else {
+        return Err(shape);
+    };
+    let barrier = sole_discharging_barrier(&tile.discharging_points(*edge)).ok_or(shape)?;
+    let anti = tile.anti_dependency_edges();
+    let round_barrier = match anti.as_slice() {
+        [] => None,
+        [edge] => {
+            Some(sole_discharging_barrier(&tile.anti_discharging_points(*edge)).ok_or(shape)?)
+        }
+        _ => return Err(shape),
+    };
+    // A tile whose phases repeat has a rewrite, and a tile whose phases run once
+    // has none. The equality is checked rather than assumed so a tile that
+    // somehow carried one without the other is refused instead of lowering a
+    // round loop with no boundary or a boundary with no round.
+    if (tile.rounds > 1) != round_barrier.is_some() {
+        return Err(shape);
+    }
+    let contributors_per_round = participants
+        .checked_mul(partition.contributors_per_partition)
+        .ok_or(shape)?;
     Ok(Some(CooperativePlan {
         participants,
+        rounds: tile.rounds,
         contributors_per_partition: partition.contributors_per_partition,
+        contributors_per_round,
         commit_count: tile.commit.count,
         staging: staging.id,
         slots: staging.slots,
@@ -338,9 +361,25 @@ fn cooperative_plan(
         produce_stride: write.span.stride,
         produce_offset: write.span.offset,
         consume_offset: read.span.offset,
-        point: point.id,
-        barrier: barrier_spelling(point).ok_or(shape)?,
+        barrier,
+        round_barrier,
     }))
+}
+
+/// Restates the one point discharging an obligation in the KIR barrier spelling.
+///
+/// `None` when the obligation has any number of discharging points other than
+/// one, which a verified region cannot have — the check is here because this
+/// function turns a schedule fact into an emitted operation, and taking the first
+/// of an unexpected set would emit a barrier for an obligation the schedule never
+/// proved this point orders.
+fn sole_discharging_barrier(
+    points: &[&crate::schedule::SynchronizationPoint],
+) -> Option<BarrierSpec> {
+    let [point] = points else {
+        return None;
+    };
+    barrier_spelling(point)
 }
 
 /// Restates one schedule synchronization point in the KIR barrier spelling.
@@ -850,6 +889,10 @@ fn emit_contraction_product(
 /// if (%act) { if (%lid < commit) { fold staged[0..participants] ; store[%out] } }
 /// ```
 ///
+/// A tile with several rounds is [`emit_loop_carried_cooperative`]; the two
+/// shapes are deliberately distinct rather than one generalized emission, and
+/// that function states why.
+///
 /// **The barrier is at the top level, and that is a correctness rule rather than
 /// a layout preference.** A control barrier inside a predicated region is reached
 /// by whichever invocations the predicate admits, and one not reached by every
@@ -924,19 +967,21 @@ fn emit_cooperative(
         split_partitioned_invocation(builder, invocation, cooperative.participants)?;
     let extent = builder.constant(KernelConstant::Index(plan.work_items))?;
     let active = builder.compare(CompareOp::IndexLessThan, invocation, extent)?;
+    let emission = CooperativeEmission {
+        plan: cooperative,
+        addressing,
+        read: (read_buffer, read.bounds),
+        staging,
+        split: SplitInvocation { output, partition },
+        local,
+        active,
+        prologue,
+    };
 
-    builder.predicated(active, |builder| {
-        let partial = emit_partition_fold(
-            builder,
-            cooperative,
-            addressing,
-            (read_buffer, read.bounds),
-            SplitInvocation { output, partition },
-            prologue,
-        )?;
-        let slot = emit_staged_slot(builder, cooperative, local)?;
-        builder.staged_store(staging, slot, partial, cooperative.produce_phase)
-    })?;
+    if cooperative.round_barrier.is_some() {
+        return emit_loop_carried_cooperative(builder, plan, &emission, write_buffer);
+    }
+    emit_round_production(builder, &emission, None)?;
     builder.barrier(cooperative.barrier.clone())?;
     builder.predicated(active, |builder| {
         let commit = builder.constant(KernelConstant::Index(cooperative.commit_count))?;
@@ -946,6 +991,114 @@ fn emit_cooperative(
             builder.store(
                 write_buffer,
                 output,
+                total,
+                plan.write_bounds,
+                plan.ownership,
+            )
+        })
+    })?;
+    Ok(())
+}
+
+/// Emits the canonical body of a cooperative tile whose phases repeat.
+///
+/// ```text
+/// %gid, %lid, %out, %par, %act                    (as above)
+/// if (%act) { fold round 0's range ; staged_store[%lid] }
+/// barrier(phase point)
+/// %seed = fold staged[0..participants]
+/// %total = loop r in 1..rounds carrying %seed {
+///     barrier(round point)
+///     if (%act) { fold round r's range ; staged_store[%lid] }
+///     barrier(phase point)
+///     %t = fold staged[0..participants]
+///     yield canonicalize(%acc + %t)
+/// }
+/// if (%act) { if (%lid < commit) { store[%out] = %total } }
+/// ```
+///
+/// **Round zero is peeled because the fold seeds at its first contributor.** A
+/// sum seeded at `+0.0` is a different function — `+0.0 + x` is not `x` at
+/// `x = -0.0` — and the registered family declares no seed, so the accumulator's
+/// initial value has to be round zero's own staged total. That makes the loop
+/// `1..rounds` and realizes the phase boundary once ahead of the loop and
+/// `rounds - 1` times inside it, which is exactly `rounds` dynamic realizations;
+/// the round boundary, which separates *consecutive* rounds, is realized
+/// `rounds - 1` times and therefore belongs at the head of the loop body rather
+/// than the tail. At the tail it would leave the peeled round's reads unordered
+/// against the loop's first rewrite, and
+/// [`KernelDiagnostic::UnorderedStagedRewrite`](super::error::KernelDiagnostic::UnorderedStagedRewrite)
+/// is what refuses that.
+///
+/// **The staged fold is outside every predicate, and that is what makes the
+/// accumulator expressible at all.** A predicated region produces no values, so a
+/// total computed inside one cannot cross the loop's back edge. Staged accesses
+/// are deliberately not boundary effects — `verify_effects` requires predicate
+/// dominance of loads and stores, not of staging — so the fold needs no guard,
+/// and it is sound for the same reason the top-level barrier is: the launch is
+/// exact, so every launched invocation satisfies the iteration guard and every
+/// slot it reads was written.
+///
+/// **Every participant therefore folds the staged set, and only one commits.**
+/// That is redundant work the single-round shape does not pay, which is why the
+/// two emissions are separate: hoisting the single-round fold out of its commit
+/// guard would buy nothing and cost `participants - 1` redundant folds per
+/// workgroup. Removing the redundancy here needs a predicated region that yields
+/// values, which this vocabulary does not have.
+fn emit_loop_carried_cooperative(
+    builder: &mut KernelBuilder,
+    plan: &CanonicalPlan<'_>,
+    emission: &CooperativeEmission<'_>,
+    write_buffer: KernelBufferId,
+) -> Result<(), KernelLoweringError> {
+    let cooperative = emission.plan;
+    let round_barrier =
+        cooperative
+            .round_barrier
+            .clone()
+            .ok_or(KernelLoweringError::UnsupportedRegion {
+                rule: "cooperative-round-boundary",
+            })?;
+    emit_round_production(builder, emission, None)?;
+    builder.barrier(cooperative.barrier.clone())?;
+    let seed = emit_staged_fold(builder, cooperative, emission.staging)?;
+    let results = builder.serial_loop(
+        SerialLoopSpec {
+            start: 1,
+            end: cooperative.rounds,
+        },
+        &[seed],
+        |builder, parameters| {
+            let round = parameters.induction();
+            let accumulator = parameters
+                .accumulator(0)
+                .ok_or(KernelBuildError::EmptyLoopAccumulators)?;
+            builder.barrier(round_barrier.clone())?;
+            emit_round_production(
+                builder,
+                emission,
+                Some(RoundOrdinal {
+                    value: round,
+                    contributors_per_round: cooperative.contributors_per_round,
+                }),
+            )?;
+            builder.barrier(cooperative.barrier.clone())?;
+            let staged = emit_staged_fold(builder, cooperative, emission.staging)?;
+            let sum = builder.binary(BinaryOp::F32Add, accumulator, staged)?;
+            let sum = builder.convert(ConvertOp::CanonicalizeF32Nan, sum)?;
+            Ok(vec![sum])
+        },
+    )?;
+    let total = results
+        .get(0)
+        .ok_or(KernelBuildError::EmptyLoopAccumulators)?;
+    builder.predicated(emission.active, |builder| {
+        let commit = builder.constant(KernelConstant::Index(cooperative.commit_count))?;
+        let commits = builder.compare(CompareOp::IndexLessThan, emission.local, commit)?;
+        builder.predicated(commits, |builder| {
+            builder.store(
+                write_buffer,
+                emission.split.output,
                 total,
                 plan.write_bounds,
                 plan.ownership,
@@ -968,19 +1121,63 @@ struct SplitInvocation {
     partition: Option<KernelValueId>,
 }
 
-/// Folds one participant's own contiguous share of the contributor sequence.
+/// The round ordinal one cooperative fold addresses through, and its stride.
+///
+/// `None` at the call sites that have no round to name — the peeled round zero,
+/// whose ordinal is constantly zero, and the multi-pass partial, which has no
+/// round dimension at all — so every round term vanishes exactly rather than
+/// being emitted as a multiplication by a zero the reader has to trust.
+#[derive(Clone, Copy, Debug)]
+struct RoundOrdinal {
+    value: KernelValueId,
+    contributors_per_round: u64,
+}
+
+/// Everything one cooperative round body is emitted against, resolved once.
+///
+/// A struct rather than eight arguments threaded through three functions: they
+/// are all top-level values or plan fields, they are all needed by both the
+/// peeled round and the loop body, and passing them separately made the round
+/// ordinal — the one thing that actually differs between the two — the ninth
+/// positional argument rather than the visible difference.
+#[derive(Clone, Copy, Debug)]
+struct CooperativeEmission<'a> {
+    plan: &'a CooperativePlan,
+    addressing: &'a ReadAddressing,
+    read: (KernelBufferId, BoundsWitnessId),
+    staging: KernelStagingId,
+    split: SplitInvocation,
+    local: KernelValueId,
+    active: KernelValueId,
+    prologue: ReductionPrologue,
+}
+
+/// Emits one round's guarded fold and the staged write that publishes it.
+fn emit_round_production(
+    builder: &mut KernelBuilder,
+    emission: &CooperativeEmission<'_>,
+    round: Option<RoundOrdinal>,
+) -> Result<(), KernelBuildError> {
+    builder.predicated(emission.active, |builder| {
+        let partial = emit_partition_fold(builder, emission, round)?;
+        let slot = emit_staged_slot(builder, emission.plan, emission.local)?;
+        builder.staged_store(emission.staging, slot, partial, emission.plan.produce_phase)
+    })
+}
+
+/// Folds one participant's own contiguous share of one round's contributors.
 fn emit_partition_fold(
     builder: &mut KernelBuilder,
-    cooperative: &CooperativePlan,
-    addressing: &ReadAddressing,
-    read: (KernelBufferId, BoundsWitnessId),
-    split: SplitInvocation,
-    prologue: ReductionPrologue,
+    emission: &CooperativeEmission<'_>,
+    round: Option<RoundOrdinal>,
 ) -> Result<KernelValueId, KernelBuildError> {
-    let (read_buffer, read_bounds) = read;
-    let SplitInvocation { output, partition } = split;
-    let contributors = cooperative.contributors_per_partition;
-    let seed_contributor = emit_partition_contributor(builder, partition, None, contributors)?;
+    let (read_buffer, read_bounds) = emission.read;
+    let SplitInvocation { output, partition } = emission.split;
+    let addressing = emission.addressing;
+    let prologue = emission.prologue;
+    let contributors = emission.plan.contributors_per_partition;
+    let seed_contributor =
+        emit_partition_contributor(builder, round, partition, None, contributors)?;
     let first_offset = emit_offset(builder, addressing, output, seed_contributor)?;
     let first = builder.load(read_buffer, first_offset, read_bounds)?;
     let seed = emit_prologue(builder, first, prologue)?;
@@ -998,8 +1195,13 @@ fn emit_partition_fold(
             let accumulator = parameters
                 .accumulator(0)
                 .ok_or(KernelBuildError::EmptyLoopAccumulators)?;
-            let contributor =
-                emit_partition_contributor(builder, partition, Some(induction), contributors)?;
+            let contributor = emit_partition_contributor(
+                builder,
+                round,
+                partition,
+                Some(induction),
+                contributors,
+            )?;
             let offset = emit_offset(builder, addressing, output, contributor)?;
             let loaded = builder.load(read_buffer, offset, read_bounds)?;
             let value = emit_prologue(builder, loaded, prologue)?;
@@ -1505,16 +1707,21 @@ fn split_partitioned_invocation(
 
 /// Emits the contributor ordinal one partitioned load addresses.
 ///
-/// The ordinal is `partition * contributors_per_partition + within`, which is
-/// the contiguous range this partition owns in the region's declared
-/// contributor order. `within` is `None` for the seed load, whose position
-/// inside the partition is zero.
+/// The ordinal is
+/// `round * contributors_per_round + partition * contributors_per_partition +
+/// within`, which is the contiguous range participant `partition` owns on round
+/// `round` in the region's declared contributor order — the range at index
+/// `round * participants + partition`. `within` is `None` for the seed load,
+/// whose position inside the range is zero, and `round` is `None` wherever the
+/// ordinal is constantly zero: the peeled round zero, and the multi-pass partial
+/// pass, which has no round dimension.
 ///
-/// `None` comes back only when the whole ordinal is provably zero — a single
-/// partition seeding at its first contributor — so the caller drops every
-/// contributor term exactly as the unsplit lowering does.
+/// `None` comes back only when the whole ordinal is provably zero — round zero of
+/// a single partition seeding at its first contributor — so the caller drops
+/// every contributor term exactly as the unsplit lowering does.
 fn emit_partition_contributor(
     builder: &mut KernelBuilder,
+    round: Option<RoundOrdinal>,
     partition: Option<KernelValueId>,
     within: Option<KernelValueId>,
     contributors_per_partition: u64,
@@ -1528,6 +1735,22 @@ fn emit_partition_contributor(
                 let stride = builder.constant(KernelConstant::Index(contributors_per_partition))?;
                 Some(builder.binary(BinaryOp::IndexMultiply, partition, stride)?)
             }
+        }
+    };
+    let base = match round {
+        None => base,
+        Some(round) => {
+            let scaled = if round.contributors_per_round <= 1 {
+                round.value
+            } else {
+                let stride =
+                    builder.constant(KernelConstant::Index(round.contributors_per_round))?;
+                builder.binary(BinaryOp::IndexMultiply, round.value, stride)?
+            };
+            Some(match base {
+                None => scaled,
+                Some(base) => builder.binary(BinaryOp::IndexAdd, scaled, base)?,
+            })
         }
     };
     Ok(match (base, within) {
@@ -1558,6 +1781,7 @@ fn emit_offset(
             let (output, base) = split_partitioned_invocation(builder, invocation, *partitions)?;
             let contributor = emit_partition_contributor(
                 builder,
+                None,
                 base,
                 contributor,
                 *contributors_per_partition,
