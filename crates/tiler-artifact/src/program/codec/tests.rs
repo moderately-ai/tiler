@@ -3044,13 +3044,13 @@ fn an_unrecognized_route_requirement_tag_is_rejected() {
     }
 }
 
-/// A vacuous floor is refused on decode as the model rule it breaks.
+/// A zero required quantity is refused on decode as the model rule it breaks.
 ///
 /// The constructor refuses it, so an envelope carrying one can only have been
 /// written by something other than this builder — which is exactly the case a
 /// decoder exists to refuse rather than trust.
 #[test]
-fn a_vacuous_floor_is_rejected_on_decode() {
+fn a_zero_required_quantity_is_rejected_on_decode() {
     let bytes = encoded(&requiring_artifact(&[route_floor(PROBE_FLOOR)]));
     let at = floor_row_offset(&bytes);
     let mut forged = bytes;
@@ -3060,7 +3060,7 @@ fn a_vacuous_floor_is_rejected_on_decode() {
         decode(&forged),
         Err(ArtifactCodecError::ModelRule {
             cause: Box::new(ArtifactBuildError::InvalidRouteRequirement {
-                cause: RouteRequirementError::VacuousFloor {
+                cause: RouteRequirementError::ZeroResourceQuantity {
                     dimension: RouteResourceDimension::SubgroupThreads,
                 },
             }),

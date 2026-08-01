@@ -31,9 +31,20 @@
 //! because it has no subgroup concept — `ExecutionBinding::GlobalLinearInvocation`
 //! is the only execution binding it admits.
 //!
+//! # The relation belongs to the dimension, not to the producer
+//!
+//! A required quantity and the comparison that decides it are separate facts,
+//! and only the first is on the wire. [`RouteResourceFloor`] carries a dimension
+//! and a `u64`; which relation satisfies them is [`RouteResourceDimension`]'s and
+//! is written as an exhaustive match, so a dimension added to the vocabulary has
+//! to state its own relation rather than inherit whichever one the first
+//! dimension happened to need. What does not change is that a *producer* never
+//! chooses it: a row states the quantity the route requires, and the vocabulary
+//! decides what satisfying it means.
+//!
 //! # Why a backend-scoped half exists beside it
 //!
-//! Equal floors cannot distinguish two devices that differ qualitatively. The
+//! Equal numbers cannot distinguish two devices that differ qualitatively. The
 //! two hosts this workspace reaches are the evidence: an Apple M4 Max and an
 //! Apple M3 Pro report the *same* highest GPU family and identical threadgroup
 //! limits, differing only in buffer and working-set size — quantities that track
@@ -78,7 +89,7 @@ pub const MAX_ROUTE_FEATURE_PAYLOAD_BYTES: usize = 1_024;
 
 const ROUTE_REQUIREMENT_DOMAIN: &[u8] = b"tiler.artifact.route-requirement.v1\0";
 
-/// Which live-device quantity one core route floor bounds.
+/// Which live-device quantity one core route requirement constrains.
 ///
 /// Deliberately **not** `#[non_exhaustive]` (ADR 0074 convention 5b). A runtime
 /// adapter must observe every dimension a route can require, so a dimension
@@ -86,13 +97,52 @@ const ROUTE_REQUIREMENT_DOMAIN: &[u8] = b"tiler.artifact.route-requirement.v1\0"
 /// of them silently fails to answer.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum RouteResourceDimension {
-    /// Threads one subgroup must execute in lockstep for the route to be correct.
+    /// Threads the device executes one subgroup at, compared by **equality**.
     ///
     /// A route whose emitted code uses subgroup-cooperative operations states
     /// this nowhere else: the neutral kernel IR admits only whole-grid
     /// invocation binding and so has no subgroup to describe. It is a property
     /// of what the backend emitted, which is exactly the class this family
     /// exists to carry.
+    ///
+    /// # Why the relation is an equality and not a floor
+    ///
+    /// A width-`W` combine tree's steps are its content rather than a
+    /// consequence of it: a butterfly at width 32 has five steps at masks
+    /// `1, 2, 4, 8, 16`, and at width 64 it has six. A device executing more
+    /// threads per subgroup than the route was verified at satisfies a floor and
+    /// still runs lane arithmetic nothing checked, so a floor admits exactly the
+    /// case that is wrong; a narrower device fails under either relation. An
+    /// equality is therefore the only comparison under which satisfying this row
+    /// implies the route is correct.
+    ///
+    /// # What this row does not claim
+    ///
+    /// It is **not** a claim that a subgroup executes in lockstep. Current GPU
+    /// families withdraw that guarantee explicitly — from compute capability
+    /// 7.0, CUDA's independent thread scheduling "allows full concurrency
+    /// between threads, regardless of warp", and the same guide records that the
+    /// ability to diverge and reconverge at sub-warp granularity makes
+    /// warp-synchronous assumptions invalid. A row over a quantity no device
+    /// provides is one no adapter could soundly observe under any relation.
+    ///
+    /// Nor is it the whole obligation of a subgroup route. A tree at width `W`
+    /// additionally requires every lane of `0..W` to be active at each combine
+    /// step, and that is a property of the *program*: no target declares it, and
+    /// a schedule discharges it intrinsically by deriving a launch geometry that
+    /// leaves no partially populated trailing subgroup. Only the width crosses
+    /// this boundary, because only the width is a fact about the device.
+    ///
+    /// # What an adapter is asked to observe
+    ///
+    /// The device-scoped subgroup width, on the platforms that publish one:
+    /// Vulkan reports `subgroupSize` as a physical-device property and CUDA
+    /// reports `warpSize` as a device property. Metal publishes no device-scoped
+    /// equivalent — `threadExecutionWidth` belongs to a prepared
+    /// `MTLComputePipelineState` — so a Metal adapter answers `Unrecognized` and
+    /// the route is refused, rather than reporting a documentation constant as a
+    /// device observation. A Metal route that genuinely needs the width states it
+    /// against the prepared pipeline, which is the authority that has it.
     SubgroupThreads,
 }
 
@@ -139,52 +189,72 @@ impl fmt::Display for RouteResourceDimension {
     }
 }
 
-/// One core quantitative floor the selected route places on a live device.
+/// One core quantitative requirement the selected route places on a live device.
 ///
-/// A floor and not a general relation. The direction is fixed by the type
-/// because a capacity comparison has exactly one correct direction, and
-/// admitting the others would let a producer state an equality or an implication
-/// where a minimum was meant — the reversal
-/// [`tiler_ir::program::abi::TargetPropertyRequirementRelation`] exists to make
-/// impossible for a prepared-entry requirement.
+/// A dimension and a required quantity, and deliberately not a relation: which
+/// comparison decides them belongs to [`RouteResourceDimension`] and is fixed by
+/// the vocabulary. That keeps what the original floor-only shape bought — a
+/// producer cannot state an equality where a minimum was meant, or the reverse,
+/// which [`tiler_ir::program::abi::TargetPropertyRequirementRelation`] exists to
+/// make impossible for a prepared-entry requirement — without also forcing every
+/// later dimension to accept the first one's relation.
+///
+/// **This type's name is stale, and its rename is filed rather than performed.**
+/// The relation correction was made where it decides behaviour; `RouteResourceFloor`
+/// and [`RouteRequirement::ResourceFloor`] are additionally named by the runtime
+/// loader, two prototype adapters, a spike adapter, and accepted ADR 0092's text,
+/// so renaming them crosses four scopes this crate does not hold. Carried by
+/// `rename-the-route-resource-floor-vocabulary-for-its-corrected-relation`.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct RouteResourceFloor {
     dimension: RouteResourceDimension,
-    minimum: u64,
+    required: u64,
 }
 
 impl RouteResourceFloor {
-    /// Creates one validated quantitative floor.
+    /// Creates one validated quantitative requirement.
     ///
     /// # Errors
     ///
-    /// Returns [`RouteRequirementError::VacuousFloor`] for a minimum of zero.
+    /// Returns [`RouteRequirementError::ZeroResourceQuantity`] for a required
+    /// quantity of zero.
     pub const fn new(
         dimension: RouteResourceDimension,
-        minimum: u64,
+        required: u64,
     ) -> Result<Self, RouteRequirementError> {
-        if minimum == 0 {
-            return Err(RouteRequirementError::VacuousFloor { dimension });
+        if required == 0 {
+            return Err(RouteRequirementError::ZeroResourceQuantity { dimension });
         }
-        Ok(Self { dimension, minimum })
+        Ok(Self {
+            dimension,
+            required,
+        })
     }
 
-    /// Returns the live-device dimension this floor bounds.
+    /// Returns the live-device dimension this row constrains.
     #[must_use]
     pub const fn dimension(self) -> RouteResourceDimension {
         self.dimension
     }
 
-    /// Returns the smallest observation that satisfies this floor.
+    /// Returns the quantity this row requires of the live device.
     #[must_use]
-    pub const fn minimum(self) -> u64 {
-        self.minimum
+    pub const fn required(self) -> u64 {
+        self.required
     }
 
-    /// Returns whether one observed quantity satisfies this floor.
+    /// Returns whether one observed quantity satisfies this requirement.
+    ///
+    /// Exhaustive on the dimension rather than applying one relation to all of
+    /// them, so a dimension added to the vocabulary has to choose its relation
+    /// here and the omission is a build error rather than an inherited default.
     #[must_use]
     pub const fn is_satisfied_by(self, observed: u64) -> bool {
-        self.minimum <= observed
+        match self.dimension {
+            // A wider device runs lane arithmetic the route never verified, so it
+            // fails this row exactly as a narrower device does.
+            RouteResourceDimension::SubgroupThreads => self.required == observed,
+        }
     }
 }
 
@@ -281,7 +351,8 @@ impl BackendFeatureRequirement {
 /// each consumer's build rather than reach a wildcard arm that skips it.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum RouteRequirement {
-    /// A neutral quantitative floor the runtime compares itself.
+    /// A neutral quantitative row the runtime compares itself, by the relation
+    /// the row's dimension fixes.
     ResourceFloor(RouteResourceFloor),
     /// A backend-scoped qualitative row the owning adapter decides.
     BackendFeature(BackendFeatureRequirement),
@@ -328,7 +399,7 @@ impl RouteRequirement {
         match self {
             Self::ResourceFloor(floor) => {
                 bytes.push(floor.dimension().tag());
-                bytes.extend_from_slice(&floor.minimum().to_be_bytes());
+                bytes.extend_from_slice(&floor.required().to_be_bytes());
             }
             Self::BackendFeature(feature) => {
                 push_slice(&mut bytes, feature.owner().as_str().as_bytes());
@@ -350,7 +421,7 @@ impl RouteRequirement {
 pub enum RouteRequirementSubject {
     /// One neutral live-device dimension.
     Resource {
-        /// The bounded dimension.
+        /// The constrained dimension.
         dimension: RouteResourceDimension,
     },
     /// One governed key in one backend's namespace, at one version.
@@ -384,13 +455,17 @@ impl fmt::Display for RouteRequirementSubject {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub enum RouteRequirementError {
-    /// A floor of zero asserts no capability.
+    /// A required quantity of zero names no device.
     ///
-    /// Every observation satisfies it, so carrying it would put a row in the
-    /// artifact that no device can fail — the same vacuity that removed the
-    /// invented barrier count from the entry resource record.
-    VacuousFloor {
-        /// The dimension the vacuous floor named.
+    /// No dimension this vocabulary carries is ever observed as zero, so a zero
+    /// row is a producer defect under either relation — vacuous under a floor,
+    /// which every observation satisfies, and unsatisfiable under an equality,
+    /// which none does. Refusing it at construction is what keeps a row whose
+    /// verdict was settled before any device was consulted out of the artifact,
+    /// the same vacuity that removed the invented barrier count from the entry
+    /// resource record.
+    ZeroResourceQuantity {
+        /// The dimension the zero quantity named.
         dimension: RouteResourceDimension,
     },
     /// A backend feature requirement declared a zero version.
@@ -409,10 +484,9 @@ pub enum RouteRequirementError {
 impl fmt::Display for RouteRequirementError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::VacuousFloor { dimension } => write!(
-                formatter,
-                "a floor of zero on {dimension} asserts no capability",
-            ),
+            Self::ZeroResourceQuantity { dimension } => {
+                write!(formatter, "a required {dimension} of zero names no device")
+            }
             Self::ZeroFeatureVersion => {
                 formatter.write_str("a backend feature requirement's version must be nonzero")
             }

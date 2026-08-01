@@ -834,8 +834,8 @@ fn parse_variants(
 /// Every field is decided here rather than deferred to a consumer: an
 /// unrecognized kind or dimension tag rejects by name with the tag byte, a
 /// governed key that does not satisfy its grammar rejects as an invalid key, and
-/// a floor, version, or payload the vocabulary refuses rejects as the model rule
-/// it broke. A reader that admitted any of them would carry a requirement no
+/// a quantity, version, or payload the vocabulary refuses rejects as the model
+/// rule it broke. A reader that admitted any of them would carry a requirement no
 /// adapter could decide, and the fail-closed reading of "cannot decide" is
 /// "cannot route".
 fn parse_route_requirements(
@@ -853,8 +853,8 @@ fn parse_route_requirements(
                         tag,
                     },
                 )?;
-                let minimum = cursor.u64()?;
-                let floor = RouteResourceFloor::new(dimension, minimum).map_err(invalid_route)?;
+                let required = cursor.u64()?;
+                let floor = RouteResourceFloor::new(dimension, required).map_err(invalid_route)?;
                 Ok(RouteRequirement::ResourceFloor(floor))
             }
             0x02 => {
