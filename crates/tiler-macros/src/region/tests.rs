@@ -165,6 +165,19 @@ fn a_static_region_is_constructed_as_a_public_logical_program() {
         expansion.facts,
     );
 
+    // The operand's literal extent reaches the facts too, and it has to: no
+    // symbol names this axis, so a runtime check has nothing else to compare the
+    // supplied value against.
+    assert!(
+        expansion.facts.contains(
+            "::tiler::__private::OperandFacts { key: \"a\", storage_scalar: \
+             ::tiler::value::StorageScalar::F32, extents: \
+             &[::tiler::__private::OperandExtent::Literal(4u64)] }"
+        ),
+        "{}",
+        expansion.facts,
+    );
+
     // The paired neighbour: one symbolic axis is enough to defer it, so
     // `Verified` is a claim about representability rather than about this
     // fixture happening to be simple.
@@ -283,7 +296,7 @@ fn a_scalar_operand_broadcasts_and_the_result_takes_the_shaped_side() {
     assert!(
         expansion.facts.contains(
             "::tiler::__private::OperandFacts { key: \"b\", storage_scalar: \
-                      ::tiler::value::StorageScalar::F32, rank: 0usize }"
+                      ::tiler::value::StorageScalar::F32, extents: &[] }"
         ),
         "{}",
         expansion.facts,

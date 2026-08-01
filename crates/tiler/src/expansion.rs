@@ -15,9 +15,10 @@
 //! hot path to re-derive a conclusion already reached.
 //!
 //! What survives into tokens is therefore the *residue* of that decision — a
-//! flat table of operands, symbol sources, equality obligations, and result
-//! axes. The environment remains the authority; this is its lowered form, and
-//! `tiler_macros::binding` is the one place that lowers it.
+//! flat table of operands and their declared extents, symbol sources, equality
+//! obligations, and result axes. The environment remains the authority; this is
+//! its lowered form, and `tiler_macros::binding` is the one place that lowers
+//! it.
 //!
 //! # Why a symbol source is an index here and a key in the environment
 //!
@@ -41,8 +42,31 @@ pub struct OperandFacts {
     pub key: &'static str,
     /// Scalar the supplied value's storage must hold.
     pub storage_scalar: StorageScalar,
-    /// Rank the supplied value must have.
-    pub rank: usize,
+    /// The operand's declared extents, outermost first.
+    ///
+    /// The rank the supplied value must have is this slice's length. A separate
+    /// `rank` field beside it would be a second authority for one fact, and two
+    /// authorities can disagree.
+    pub extents: &'static [OperandExtent],
+}
+
+/// Where one axis of a declared operand gets the extent it must report.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum OperandExtent {
+    /// An extent the region fixed literally, which the supplied value must
+    /// report.
+    ///
+    /// Unlike a symbolic axis, nothing else in the region can source this: it is
+    /// a claim the region already made, so [`bind_region`] compares the supplied
+    /// value against it rather than reading a value out of it.
+    Literal(u64),
+    /// An extent the region named with a symbol.
+    ///
+    /// Deliberately payload-free. [`RegionFacts::symbols`] is the single
+    /// authority for which axis sources a symbol and which axes owe it an
+    /// equality; repeating a symbol index here would be a second table that
+    /// could come to disagree with it.
+    Symbolic,
 }
 
 /// One axis of one operand, by position in [`RegionFacts::operands`].
@@ -127,16 +151,25 @@ impl BoundExtents {
 ///
 /// The order is what makes the diagnostics usable rather than incidental:
 /// capabilities first, because a region an adapter cannot serve at all should
-/// not report a shape mismatch; then per-operand shape and scalar checks, so a
-/// symbol is never bound from a value whose rank was already wrong; then
-/// unification, whose only remaining failure is two axes disagreeing.
+/// not report a shape mismatch; then per-operand rank, scalar, and literal
+/// extents, so a symbol is never bound from a value whose own declaration was
+/// already not met; then unification, whose only remaining failure is two axes
+/// disagreeing.
+///
+/// The two extent checks answer different questions and neither subsumes the
+/// other. A literal extent is a claim the region made, so the supplied value is
+/// what must agree with it; a symbolic extent is read *from* the values, so what
+/// must agree is every other axis naming that symbol. An operand whose every
+/// axis is literal owes no obligation to any symbol, which is exactly why the
+/// literal check cannot be left to unification.
 ///
 /// # Errors
 ///
 /// Returns [`BindError::UnsupportedCapability`], [`BindError::OperandCountMismatch`],
 /// [`BindError::RankMismatch`], [`BindError::StorageScalarMismatch`],
-/// [`BindError::InconsistentExtent`], [`BindError::MalformedRegionFacts`], or
-/// [`BindError::Adapter`] carrying the adapter's own failure.
+/// [`BindError::LiteralExtentMismatch`], [`BindError::InconsistentExtent`],
+/// [`BindError::MalformedRegionFacts`], or [`BindError::Adapter`] carrying the
+/// adapter's own failure.
 pub fn bind_region<A: TensorAdapter>(
     facts: &RegionFacts,
     operands: &[&Tensor<A>],
@@ -159,10 +192,10 @@ pub fn bind_region<A: TensorAdapter>(
     let mut metadata: Vec<ValueMetadata> = Vec::with_capacity(operands.len());
     for (declared, supplied) in facts.operands.iter().zip(operands) {
         let reported = A::metadata(supplied.value()).map_err(BindError::Adapter)?;
-        if reported.rank() != declared.rank {
+        if reported.rank() != declared.extents.len() {
             return Err(BindError::RankMismatch {
                 input: declared.key,
-                declared: declared.rank,
+                declared: declared.extents.len(),
                 actual: reported.rank(),
             });
         }
@@ -172,6 +205,26 @@ pub fn bind_region<A: TensorAdapter>(
                 declared: declared.storage_scalar,
                 actual: reported.storage_scalar(),
             });
+        }
+        // The rank check above proved the two sequences have one length, so the
+        // zip drops nothing: every declared axis meets the extent reported for
+        // it, and every reported extent meets its declaration.
+        for (axis, (declared_extent, reported_extent)) in
+            declared.extents.iter().zip(reported.extents()).enumerate()
+        {
+            let OperandExtent::Literal(fixed) = *declared_extent else {
+                continue;
+            };
+            if *reported_extent != fixed {
+                return Err(BindError::LiteralExtentMismatch {
+                    axis: OperandAxis {
+                        input: declared.key,
+                        axis,
+                    },
+                    declared: fixed,
+                    actual: *reported_extent,
+                });
+            }
         }
         metadata.push(reported);
     }

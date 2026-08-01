@@ -347,6 +347,25 @@ pub enum BindError<E> {
         /// Scalar the adapter reported.
         actual: StorageScalar,
     },
+    /// The supplied value does not report an extent the region fixed literally.
+    ///
+    /// The literal counterpart of [`Self::InconsistentExtent`], and not a case
+    /// of it: a symbolic extent is read from the operands and only has to agree
+    /// with the other axes naming it, while a literal extent is a claim the
+    /// region already made, so the supplied value is the side that must agree.
+    /// An operand whose axes are all literal names no symbol and would
+    /// therefore owe no obligation at all.
+    ///
+    /// Carries the axis rather than the operand alone, because one operand may
+    /// fix several and naming only the operand would not say which to change.
+    LiteralExtentMismatch {
+        /// The axis whose extent the region fixed.
+        axis: OperandAxis,
+        /// The extent the region declared for it.
+        declared: u64,
+        /// The extent the adapter reported.
+        actual: u64,
+    },
     /// Two operand axes naming one symbol reported different extents.
     ///
     /// This is what operand unification means at runtime: `sym n` takes its
@@ -409,6 +428,15 @@ impl<E: fmt::Display> fmt::Display for BindError<E> {
                 "tiler.bind.storage-scalar-mismatch: operand `{input}` is declared as \
                  {declared:?} and the supplied value stores {actual:?}"
             ),
+            Self::LiteralExtentMismatch {
+                axis,
+                declared,
+                actual,
+            } => write!(
+                formatter,
+                "tiler.bind.literal-extent-mismatch: {axis} is declared with extent {declared} and \
+                 the supplied value reports {actual}"
+            ),
             Self::InconsistentExtent {
                 symbol,
                 source,
@@ -438,6 +466,7 @@ impl<E: Error + 'static> Error for BindError<E> {
             | Self::UnsupportedCapability { .. }
             | Self::RankMismatch { .. }
             | Self::StorageScalarMismatch { .. }
+            | Self::LiteralExtentMismatch { .. }
             | Self::InconsistentExtent { .. }
             | Self::MalformedRegionFacts { .. } => None,
         }

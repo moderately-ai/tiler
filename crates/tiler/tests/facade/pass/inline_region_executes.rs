@@ -167,9 +167,31 @@ fn main() {
         vec![4],
     );
 
-    // A literal extent the supplied value does not have is still refused at run
-    // time: a fixed region declares a rank and a scalar, and the rank is what a
-    // supplied value must match.
+    // A literal extent the supplied value does not report is refused at run
+    // time, naming the axis. The region's shape claim is checked rather than
+    // assumed: without this the result would be constructed at the *declared*
+    // `[4]` from a value holding seven elements.
+    let wrong_extent = {
+        let (a, b, c) = (f32_tensor(&[7]), f32_tensor(&[4]), f32_tensor(&[4]));
+        tiler::tensor! {
+            in a: f32[4], b: f32[4], c: f32[4];
+            out (a * b) + c
+        }
+    };
+    assert_eq!(
+        wrong_extent.expect_err("`a` is declared `f32[4]`"),
+        BindError::LiteralExtentMismatch {
+            axis: OperandAxis {
+                input: "a",
+                axis: 0,
+            },
+            declared: 4,
+            actual: 7,
+        },
+    );
+
+    // Its neighbour perturbs the rank instead, which is a different check and a
+    // different refusal.
     let wrong_rank = {
         let (a, b, c) = (f32_tensor(&[4, 1]), f32_tensor(&[4]), f32_tensor(&[4]));
         tiler::tensor! {

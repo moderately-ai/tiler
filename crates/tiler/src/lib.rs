@@ -159,8 +159,8 @@ pub mod value;
 #[doc(hidden)]
 pub mod __private {
     pub use crate::expansion::{
-        AxisRef, BoundExtents, OperandFacts, RegionFacts, ResultAxis, ResultFacts, SymbolFacts,
-        bind_and_build, bind_region, build_result,
+        AxisRef, BoundExtents, OperandExtent, OperandFacts, RegionFacts, ResultAxis, ResultFacts,
+        SymbolFacts, bind_and_build, bind_region, build_result,
     };
     pub use crate::route::{RouteFacts, RouteOutcome, bind_route_and_build, select_embedded_route};
 }

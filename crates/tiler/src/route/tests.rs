@@ -12,9 +12,9 @@
 //! [`RouteOutcome::is_fallback`] reading as a constant.
 
 use super::{RouteFacts, RouteOutcome, bind_route_and_build, select_embedded_route};
-use crate::expansion::{OperandFacts, RegionFacts, ResultAxis, ResultFacts};
+use crate::expansion::{OperandExtent, OperandFacts, RegionFacts, ResultAxis, ResultFacts};
 use crate::value::{
-    AdapterCapability, BindError, ResultRequest, StorageScalar, Tensor, TensorAdapter,
+    AdapterCapability, BindError, OperandAxis, ResultRequest, StorageScalar, Tensor, TensorAdapter,
     ValueMetadata,
 };
 
@@ -92,12 +92,12 @@ const REGION: RegionFacts = RegionFacts {
         OperandFacts {
             key: "a",
             storage_scalar: StorageScalar::F32,
-            rank: 1,
+            extents: &[OperandExtent::Literal(4)],
         },
         OperandFacts {
             key: "b",
             storage_scalar: StorageScalar::F32,
-            rank: 1,
+            extents: &[OperandExtent::Literal(4)],
         },
     ],
     symbols: &[],
@@ -245,33 +245,29 @@ fn a_foreign_recorded_identity_is_an_expansion_defect() {
 ///
 /// Without this ordering a mismatched operand under a damaged artifact would
 /// report the artifact, which is not the thing the consumer can fix. The
-/// perturbation is the operand's *rank*, because that is an obligation
-/// `bind_region` actually carries; a literal extent is not one, which is the
-/// separate gap `check-a-literal-operand-extent-against-the-supplied-value`
-/// records.
+/// perturbation is the operand's declared literal *extent*, which is the whole
+/// of the region's shape claim here — `REGION` declares `f32[4]` twice and names
+/// no symbol, so an extent this artifact was never compiled for is precisely
+/// what a routed dispatch would launch against.
 #[test]
 fn the_region_contract_is_checked_before_the_artifact() {
-    let a = operand(4);
-    let b = Tensor::new(
-        Buffer {
-            scalar: StorageScalar::F32,
-            extents: vec![2, 2],
-        },
-        (),
-    );
+    let (a, b) = (operand(4), operand(7));
     let refusal = bind_route_and_build(
         &REGION,
         &well_formed_facts(b"not an artifact", Some(0)),
         &[&a, &b],
     )
-    .expect_err("the second operand does not have the declared rank");
+    .expect_err("the second operand does not report the declared extent");
     assert!(
         matches!(
             refusal,
-            BindError::RankMismatch {
-                input: "b",
-                declared: 1,
-                actual: 2,
+            BindError::LiteralExtentMismatch {
+                axis: OperandAxis {
+                    input: "b",
+                    axis: 0,
+                },
+                declared: 4,
+                actual: 7,
             },
         ),
         "unexpected refusal: {refusal}",

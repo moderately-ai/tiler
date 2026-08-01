@@ -70,7 +70,7 @@ impl TensorAdapter for Toy {
     }
 }
 
-const FACTS: ::tiler::__private::RegionFacts = ::tiler::__private::RegionFacts { operands: &[::tiler::__private::OperandFacts { key: "a", storage_scalar: ::tiler::value::StorageScalar::F32, rank: 1usize }], symbols: &[::tiler::__private::SymbolFacts { name: "n", source: ::tiler::__private::AxisRef { operand: 0usize, axis: 0usize }, obligations: &[] }], capabilities: &[::tiler::value::AdapterCapability::DenseRowMajorStorage, ::tiler::value::AdapterCapability::ResultConstruction], result: ::tiler::__private::ResultFacts { key: "d", storage_scalar: ::tiler::value::StorageScalar::F32, axes: &[::tiler::__private::ResultAxis::Symbol(0usize), ::tiler::__private::ResultAxis::Literal(2u64)] } };
+const FACTS: ::tiler::__private::RegionFacts = ::tiler::__private::RegionFacts { operands: &[::tiler::__private::OperandFacts { key: "a", storage_scalar: ::tiler::value::StorageScalar::F32, extents: &[::tiler::__private::OperandExtent::Symbolic] }], symbols: &[::tiler::__private::SymbolFacts { name: "n", source: ::tiler::__private::AxisRef { operand: 0usize, axis: 0usize }, obligations: &[] }], capabilities: &[::tiler::value::AdapterCapability::DenseRowMajorStorage, ::tiler::value::AdapterCapability::ResultConstruction], result: ::tiler::__private::ResultFacts { key: "d", storage_scalar: ::tiler::value::StorageScalar::F32, axes: &[::tiler::__private::ResultAxis::Symbol(0usize), ::tiler::__private::ResultAxis::Literal(2u64)] } };
 
 fn main() {
     let a = Tensor::<Toy>::new(
