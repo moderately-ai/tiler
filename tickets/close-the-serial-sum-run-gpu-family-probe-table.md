@@ -1,7 +1,7 @@
 ---
 id: close-the-serial-sum-run-gpu-family-probe-table
 title: Close the serial-sum-run GPU family probe table
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [close-the-metal-gpu-family-out-of-crate-total-map, widen-the-metal-gpu-family-vocabulary-to-apple10]
@@ -9,9 +9,6 @@ scopes: [implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [correctness, api-conventions, metal, adr-0074]
-claimed_from: todo
-assignee: worker-sum-probe
-lease_expires_at: 1785598277
 ---
 ## User-visible outcome
 
