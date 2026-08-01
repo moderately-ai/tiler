@@ -1,7 +1,7 @@
 ---
 id: design-model-ingestion-and-complete-execution
 title: Design model ingestion and complete supported-model execution
-status: in-progress
+status: done
 priority: p1
 dependencies: [derive-transformer-operation-and-shape-surface, design-autoregressive-state-and-kv-cache]
 related: [prototype-public-compiler-api, prototype-candle-metal-adapter, prototype-inline-proc-macro-frontend, route-an-embedded-artifact-through-a-consumer-storage-seam, admit-an-indirect-gather-family-for-tied-embedding-lookup, scope-first-quantized-lm-profile, admit-a-storage-carrier-for-integer-program-inputs, assemble-the-decoder-layer-program, assemble-the-embedding-and-vocabulary-projection-programs, widen-the-deterministic-budgets-to-the-decoder-layer-program, define-the-model-weight-binding-manifest, ingest-the-checkpoint-as-f32-program-inputs, define-the-model-execution-state-boundary, drive-the-complete-forward-pass-over-three-artifacts, retain-the-c1-model-attribution-fixture, name-the-execution-ordinal-in-model-level-failures, prove-the-c1-complete-model-execution, project-only-the-final-position-logits]
@@ -9,9 +9,6 @@ scopes: [contracts/integrations, contracts/navigation, research/program-planning
 shared_scopes: [project/tickets]
 paths: []
 tags: [design, frontend, model, weights, integration, language-model]
-claimed_from: todo
-assignee: worker-design-model
-lease_expires_at: 1785568846
 ---
 ## User-visible outcome
 
