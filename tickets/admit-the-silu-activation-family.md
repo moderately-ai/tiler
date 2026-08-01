@@ -1,7 +1,7 @@
 ---
 id: admit-the-silu-activation-family
 title: Admit the SiLU activation family
-status: todo
+status: in-progress
 priority: p1
 dependencies: [scope-transformer-nonlinear-normalization-and-reductions, implement-the-typed-accuracy-contract-vocabulary, record-the-metal-elementary-function-accuracy-guarantee]
 related: [admit-the-rms-normalization-family, admit-the-softmax-family, own-operation-family-support-matrix, design-attention-program-vertical, numerical-policy-contract]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/reference, implementation/compiler, i
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, semantics, transcendental, activation, language-model, breadth]
+claimed_from: todo
+assignee: worker-silu
+lease_expires_at: 1785573073
 ---
 ## User-visible outcome
 
