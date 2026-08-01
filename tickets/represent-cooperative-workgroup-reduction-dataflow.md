@@ -1,7 +1,7 @@
 ---
 id: represent-cooperative-workgroup-reduction-dataflow
 title: Represent cooperative workgroup reduction dataflow
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [admit-the-first-typed-synchronization-point-and-atomic-target-authority]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, implementation/reference, c
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: worker-workgroup
-lease_expires_at: 1785586663
 ---
 ## User-visible outcome
 
