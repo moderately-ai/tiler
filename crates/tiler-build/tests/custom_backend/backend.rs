@@ -17,8 +17,21 @@
 //!    the payload digest from. This backend runs no external compiler, so its
 //!    provenance names an in-process translator and no SDK; that honesty is what
 //!    makes the digest mean something.
-//! 4. [`assemble`] — orchestration through `tiler_build::assemble_plan_artifact`,
-//!    which is where this backend stops making statements the plan already made.
+//! 4. [`assemble`] — orchestration through `tiler_build::assemble_plan_artifact`
+//!    and `tiler_build::accept_or_publish_single_payload_artifact`, which is
+//!    where this backend stops making statements the plan already made.
+//!
+//! # What this backend states to the promoted cache seam, and what it does not
+//!
+//! Two statements, and they are of two kinds. [`PayloadDeclaration`] is *data*:
+//! the governed keys, schema, and policy its sole payload declares, its derived
+//! compilation digest, and the canonical compilation bytes the cache subject
+//! names. [`correspondence`] is *behaviour*: which compilation facts this
+//! backend authored, in which order they are compared, and what each is called
+//! when it disagrees. Everything else — subject composition, miss-only
+//! compilation, identity agreement before publication, re-validation of every
+//! result — is the seam's, and there is no parameter to supply any of it
+//! through.
 //!
 //! # What this producer deliberately cannot do
 //!
@@ -28,19 +41,25 @@
 //! parameter to supply them through, which is the property the suite's mutation
 //! cases are written against.
 
+use std::error::Error;
+use std::fmt;
+
 use tiler_artifact::program::{
     AbiBinaryOp, AbiExprId, AbiRoot, ArtifactBuildError, ArtifactExecutionPolicy,
-    ArtifactProgramBuilder, AvailabilityPhase, BackendEntryKey, BackendKey, BindingKind,
-    DecodedArtifact, DigestAlgorithm, PayloadContent, PayloadEntryMapping, PayloadMetadata,
-    PayloadProvenance, PayloadSdkIdentity, RepresentationKey, SchemaVersion, TargetPropertyKey,
-    ToolComponent, VerifiedArtifactProgram,
+    ArtifactProgramBuilder, AvailabilityPhase, BackendEntryKey, BackendKey,
+    BackendPayloadDescriptor, BindingKind, DecodedArtifact, DigestAlgorithm, PayloadContent,
+    PayloadDigest, PayloadEntryMapping, PayloadMetadata, PayloadProvenance, PayloadSdkIdentity,
+    RepresentationKey, SchemaVersion, TargetPropertyKey, ToolComponent, VerifiedArtifactProgram,
 };
-use tiler_build::{BackendEntryDeclaration, PlanArtifactError, assemble_plan_artifact};
+use tiler_build::{
+    BackendEntryDeclaration, DeclaredPayload, PlanArtifactError, assemble_plan_artifact,
+};
 use tiler_cache::expansion::{
-    ComposedSubject, ExpansionCache, PublishFailure, Resolution, SubjectFacets, SubjectRefusal,
+    ComposedSubject, ExpansionCache, PublishFailure, SubjectFacets, SubjectRefusal,
 };
 use tiler_compiler::session::{Compilation, PlanAlternative};
 use tiler_ir::kernel::{BufferAccess, VerifiedKernel};
+use tiler_ir::program::StageRef;
 use tiler_ir::semantic::SemanticProgram;
 
 use crate::image::{ScalarEntry, ScalarImage, ScalarImageRefusal, decode};
@@ -105,9 +124,101 @@ pub enum ScalarHostRefusal {
     CacheEncoding(String),
     /// The cache's governed validator rejected the produced envelope.
     CacheArtifact(String),
-    /// A cache result carries an artifact other than the one published.
-    CacheIdentity,
 }
+
+impl fmt::Display for ScalarHostRefusal {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ForeignProfileKey { declared, compiled } => write!(
+                formatter,
+                "this backend declares `{declared}` and the plan was compiled under `{compiled}`",
+            ),
+            Self::ForeignProfileDescriptor => {
+                formatter.write_str("the plan was compiled under another revision of this profile")
+            }
+            Self::UnsupportedBufferCount { entry, buffers } => write!(
+                formatter,
+                "kernel {entry} binds {buffers} buffers and this backend places two",
+            ),
+            Self::UnsupportedAccessPattern { entry } => {
+                write!(formatter, "kernel {entry} is not one read and one write")
+            }
+            Self::Artifact(message) => write!(formatter, "artifact layer refusal: {message}"),
+            Self::Assembly(message) => write!(formatter, "plan assembly refusal: {message}"),
+            Self::Payload(refusal) => refusal.fmt(formatter),
+            Self::MissingPayloadObject => {
+                formatter.write_str("the artifact declares a payload it does not carry")
+            }
+            Self::UnmappedBackendEntry => {
+                formatter.write_str("an entry reaches no mapping in the carried payload")
+            }
+            Self::UnmappedSymbol => {
+                formatter.write_str("the mapped symbol names no entry of the carried image")
+            }
+            Self::TransportDisagreement => formatter
+                .write_str("the image places bindings on transports the artifact does not state"),
+            Self::CacheSubject(refusal) => refusal.fmt(formatter),
+            Self::CacheEncoding(message) => write!(formatter, "artifact encoding: {message}"),
+            Self::CacheArtifact(message) => {
+                write!(formatter, "cache artifact validator: {message}")
+            }
+        }
+    }
+}
+
+impl Error for ScalarHostRefusal {}
+
+/// One compilation fact this backend authored and compares on every payload.
+///
+/// The naming half the promoted seam delegates: only this backend knows which
+/// facts its metadata asserts, so only it can say which one disagreed. The
+/// Apple-shaped provenance fields
+/// [ADR 0090](../../../../docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md)
+/// item 14 names as meaningless here — the platform family, the language, the
+/// deployment minimum, the SDK, and both flag lists — are deliberately outside
+/// this check, as are the entry mappings and target obligations, which are
+/// translation facts rather than compilation ones. The seam's descriptor
+/// comparison subsumes every one of them, because the payload digest is derived
+/// from the canonical metadata bytes; what this enum adds is the *name*.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScalarHostFact {
+    /// Governed representation key of the retained source.
+    SourceRepresentation,
+    /// The exact kernel-identity list this image was translated from.
+    Source,
+    /// Governed identity of the in-process translator.
+    Toolchain,
+    /// Declared target triple.
+    Target,
+    /// Ordered translator components.
+    Components,
+}
+
+impl ScalarHostFact {
+    /// Returns the stable diagnostic spelling of this fact.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SourceRepresentation => "source-representation",
+            Self::Source => "source",
+            Self::Toolchain => "toolchain",
+            Self::Target => "target",
+            Self::Components => "components",
+        }
+    }
+}
+
+impl fmt::Display for ScalarHostFact {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "carried scalar-host payload disagrees with compilation fact `{}`",
+            self.as_str(),
+        )
+    }
+}
+
+impl Error for ScalarHostFact {}
 
 impl From<ArtifactBuildError> for ScalarHostRefusal {
     fn from(error: ArtifactBuildError) -> Self {
@@ -273,6 +384,120 @@ pub fn payload_metadata(
     })
 }
 
+/// What this backend states to the promoted cache seam, as data.
+///
+/// The fields are owned and public so a case can perturb exactly one of them
+/// before handing the declaration over. Nothing here is derived by the seam: a
+/// producer that declared another representation, schema, policy, or digest is
+/// declaring a payload it did not prepare, and the seam says so.
+#[derive(Clone, Debug)]
+pub struct PayloadDeclaration {
+    /// Governed backend family the sole payload must declare.
+    pub backend: BackendKey,
+    /// Governed executable representation it must declare.
+    pub representation: RepresentationKey,
+    /// Schema version of this backend's payload metadata.
+    pub payload_schema: SchemaVersion,
+    /// How this backend's payload reaches an executable state.
+    pub execution_policy: ArtifactExecutionPolicy,
+    /// Digest the artifact layer derived from the metadata's canonical bytes.
+    pub digest: PayloadDigest,
+    /// Canonical bytes of the compilation the cache subject names.
+    pub compilation: Vec<u8>,
+}
+
+impl PayloadDeclaration {
+    /// Borrows this declaration in the shape the promoted seam reads.
+    #[must_use]
+    pub fn declared(&self) -> DeclaredPayload<'_> {
+        DeclaredPayload {
+            backend: &self.backend,
+            representation: &self.representation,
+            payload_schema: self.payload_schema,
+            execution_policy: self.execution_policy,
+            digest: &self.digest,
+            compilation: &self.compilation,
+        }
+    }
+}
+
+/// One translated image, its compilation subject, and what it declares.
+pub struct PreparedScalarPayload {
+    /// The image this backend translated the kernels into.
+    pub image: ScalarImage,
+    /// The compilation subject the artifact layer digests this payload under.
+    pub metadata: PayloadMetadata,
+    /// What the promoted cache seam compares every result against.
+    pub declaration: PayloadDeclaration,
+}
+
+/// Translates one plan's kernels and derives everything the cache seam needs.
+///
+/// # Errors
+///
+/// Returns this backend's translation refusal or the artifact layer's typed key
+/// or digest failure.
+pub fn prepare(kernels: &[&VerifiedKernel]) -> Result<PreparedScalarPayload, ScalarHostRefusal> {
+    let image = emit(kernels)?;
+    let metadata = payload_metadata(kernels, &image)?;
+    let digest = metadata.identity()?;
+    Ok(PreparedScalarPayload {
+        declaration: PayloadDeclaration {
+            backend: backend(),
+            representation: representation(),
+            payload_schema: PAYLOAD_SCHEMA,
+            execution_policy: ArtifactExecutionPolicy::NativeImage,
+            // This backend runs no external compiler, so the compilation the
+            // cache subject names is the payload's own derived digest. Naming a
+            // toolchain resolution it never performed would be a facet nobody
+            // could check, and the seam wraps this run rather than parsing it.
+            compilation: digest.as_bytes().to_vec(),
+            digest,
+        },
+        image,
+        metadata,
+    })
+}
+
+/// Compares one carried payload's metadata against the compilation performed.
+///
+/// The order is the contract, exactly as it is for the Metal path: a producer
+/// reading two refusals in sequence is reading them in this order.
+///
+/// # Errors
+///
+/// Returns the first fact that disagreed.
+pub fn correspondence(
+    expected: &PayloadMetadata,
+    actual: &PayloadMetadata,
+) -> Result<(), ScalarHostFact> {
+    let facts = [
+        (
+            actual.source_representation == expected.source_representation,
+            ScalarHostFact::SourceRepresentation,
+        ),
+        (actual.source == expected.source, ScalarHostFact::Source),
+        (
+            actual.provenance.toolchain == expected.provenance.toolchain,
+            ScalarHostFact::Toolchain,
+        ),
+        (
+            actual.provenance.target == expected.provenance.target,
+            ScalarHostFact::Target,
+        ),
+        (
+            actual.provenance.components == expected.provenance.components,
+            ScalarHostFact::Components,
+        ),
+    ];
+    for (agrees, fact) in facts {
+        if !agrees {
+            return Err(fact);
+        }
+    }
+    Ok(())
+}
+
 /// What this backend declares per entry, and the one knob a perturbation moves.
 ///
 /// `bindings` exists so a case can declare a binding count other than the
@@ -317,17 +542,57 @@ pub fn assemble(
                 content,
             )
         },
-        |builder, stage| {
-            let declared = perturbation
-                .bindings
-                .unwrap_or_else(|| stage.accesses().len());
-            Ok(BackendEntryDeclaration {
-                bindings: vec![BindingKind::Buffer; declared],
-                zero_work_skips_dispatch: !perturbation.forbid_zero_work_skip,
-                preconditions: vec![scratch_precondition(builder)?],
+        |builder, stage| entry_declaration(builder, stage, perturbation),
+    )?)
+}
+
+/// Assembles the descriptor-only artifact whose identity the cache subject names.
+///
+/// The pending and carried assemblies share [`entry_declaration`] rather than
+/// each spelling the three launch statements, because the promoted seam requires
+/// their canonical identities to agree and two copies that could drift apart
+/// would fail that agreement rather than the statement they disagreed about.
+///
+/// # Errors
+///
+/// Returns the neutral facade's typed refusal.
+pub fn assemble_pending(
+    semantic: &SemanticProgram,
+    plan: PlanAlternative<'_>,
+    declaration: &PayloadDeclaration,
+    perturbation: EntryPerturbation,
+) -> Result<VerifiedArtifactProgram, ScalarHostRefusal> {
+    Ok(assemble_plan_artifact(
+        semantic,
+        plan,
+        |builder, profile| {
+            builder.push_payload(BackendPayloadDescriptor {
+                backend: declaration.backend.clone(),
+                representation: declaration.representation.clone(),
+                payload_schema: declaration.payload_schema,
+                compatibility: profile,
+                execution_policy: declaration.execution_policy,
+                digest: declaration.digest.clone(),
             })
         },
+        |builder, stage| entry_declaration(builder, stage, perturbation),
     )?)
+}
+
+/// The three launch statements this backend makes, for either assembly.
+fn entry_declaration(
+    builder: &mut ArtifactProgramBuilder,
+    stage: StageRef<'_>,
+    perturbation: EntryPerturbation,
+) -> Result<BackendEntryDeclaration, ArtifactBuildError> {
+    let declared = perturbation
+        .bindings
+        .unwrap_or_else(|| stage.accesses().len());
+    Ok(BackendEntryDeclaration {
+        bindings: vec![BindingKind::Buffer; declared],
+        zero_work_skips_dispatch: !perturbation.forbid_zero_work_skip,
+        preconditions: vec![scratch_precondition(builder)?],
+    })
 }
 
 /// Mints this backend's launch-time scratch floor on the facade's own builder.
@@ -382,49 +647,6 @@ pub fn validate_from_bytes(artifact: &DecodedArtifact) -> Result<(), ScalarHostR
         }
     }
     Ok(())
-}
-
-/// Publishes or accepts one artifact under its complete composed cache subject.
-///
-/// The subject is composed by `tiler_cache`'s own constructor from two facets:
-/// the payload's derived compilation digest and the artifact's canonical
-/// identity. Neither is this backend's to state — the first is derived by the
-/// artifact builder from the metadata's canonical bytes and the second by
-/// whole-artifact verification — so a producer cannot file bytes under a subject
-/// naming a compilation it did not perform.
-///
-/// # Errors
-///
-/// Returns the typed subject, codec, or protocol refusal. A cache result whose
-/// artifact identity differs from the published one is hard: it is never
-/// translated into a miss or an automatic rebuild.
-pub fn accept_or_publish(
-    cache: &ExpansionCache,
-    artifact: &VerifiedArtifactProgram,
-    compilation: &[u8],
-) -> Result<Resolution, ScalarHostRefusal> {
-    let expected = artifact.canonical_identity().clone();
-    let compilations = [compilation];
-    let subject = ComposedSubject::compose(&SubjectFacets {
-        backend_compilations: &compilations,
-        artifact_program: expected.as_bytes(),
-    })
-    .map_err(ScalarHostRefusal::CacheSubject)?;
-    let resolution = cache
-        .get_or_publish(&subject, || artifact.encode())
-        .map_err(|failure| match failure {
-            PublishFailure::Build(error) => ScalarHostRefusal::CacheEncoding(error.to_string()),
-            PublishFailure::Artifact(error) => ScalarHostRefusal::CacheArtifact(error.to_string()),
-        })?;
-    let decoded = match &resolution {
-        Resolution::Hit { entry, .. } | Resolution::Published { entry, .. } => entry.artifact(),
-        Resolution::Uncached { artifact, .. } => artifact,
-    };
-    if decoded.identity().as_bytes() != expected.as_bytes() {
-        return Err(ScalarHostRefusal::CacheIdentity);
-    }
-    validate_from_bytes(decoded)?;
-    Ok(resolution)
 }
 
 /// Files one artifact's envelope under a *different* artifact's cache subject.

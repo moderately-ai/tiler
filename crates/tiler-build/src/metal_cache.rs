@@ -1,51 +1,38 @@
-//! Expansion-cache orchestration for one prepared Metal artifact.
+//! Metal's specialization of the neutral expansion-cache seam.
+//!
+//! Everything structural — subject composition, miss-only compilation, identity
+//! agreement before publication, re-validation of every result — belongs to
+//! [`crate::payload_cache`] and is shared with every other backend. What is
+//! Metal's and stays here is exactly two statements: the governed
+//! `tiler.metal`/`metallib`/`NativeImage` payload descriptor this backend
+//! declares, and the fact-level correspondence between a carried payload's
+//! metadata and the Apple compilation that was prepared for it. The first is
+//! data and travels in a [`DeclaredPayload`]; the second is a closure, because
+//! naming *which* compilation fact disagreed is a judgement only this backend
+//! can make.
+//!
+//! The refusal vocabulary below is Metal's own and is preserved exactly: the
+//! neutral seam's protocol refusals map one-to-one onto it, so a caller reading
+//! [`MetalArtifactProtocolError`] sees the same kinds in the same order it saw
+//! before the seam was promoted.
 
 use std::error::Error;
 use std::fmt;
 
 use tiler_artifact::program::{
-    ArtifactCodecFailure, ArtifactExecutionPolicy, BackendPayloadDescriptor, DecodedArtifact,
-    Digest, DigestAlgorithm, PayloadMetadata, VerifiedArtifactProgram, decode_artifact,
+    ArtifactCodecFailure, ArtifactExecutionPolicy, VerifiedArtifactProgram,
 };
-use tiler_cache::expansion::{
-    ComposedSubject, ExpansionCache, PublishFailure, Resolution, SubjectFacets, SubjectRefusal,
-};
+use tiler_cache::expansion::{ExpansionCache, SubjectRefusal};
 
 use crate::MetalPayloadMismatch;
 use crate::metal_assembly::{
-    BACKEND, CompiledMetalPayload, MetalAssemblyError, PAYLOAD_SCHEMA, PreparedMetalPayload,
-    REPRESENTATION,
+    CompiledMetalPayload, MetalAssemblyError, PAYLOAD_SCHEMA, PreparedMetalPayload,
 };
 use crate::metal_payload::validate_metal_payload_metadata;
-
-const OBJECT_VALIDATION_DOMAIN: &[u8] = b"tiler.build.metal-object-validation.v1\0";
-
-/// One cache resolution whose artifact was accepted against the current Metal preparation.
-#[derive(Debug)]
-pub struct AcceptedMetalArtifact {
-    subject: ComposedSubject,
-    resolution: Resolution,
-}
-
-impl AcceptedMetalArtifact {
-    /// Returns the cache resolution, including its validated artifact and report.
-    #[must_use]
-    pub const fn resolution(&self) -> &Resolution {
-        &self.resolution
-    }
-
-    /// Returns the exact composed subject this accepted artifact resolved under.
-    #[must_use]
-    pub const fn cache_subject(&self) -> &ComposedSubject {
-        &self.subject
-    }
-
-    /// Consumes the acceptance proof and returns the underlying cache resolution.
-    #[must_use]
-    pub fn into_resolution(self) -> Resolution {
-        self.resolution
-    }
-}
+use crate::payload_cache::{
+    AcceptedArtifact, DeclaredPayload, SinglePayloadCacheError, SinglePayloadProtocolError,
+    accept_or_publish_single_payload_artifact,
+};
 
 /// A decoded or assembled artifact contradicts the singular prepared Metal subject.
 #[derive(Debug)]
@@ -110,6 +97,28 @@ impl Error for MetalArtifactProtocolError {
     }
 }
 
+impl From<SinglePayloadProtocolError<MetalPayloadMismatch>> for MetalArtifactProtocolError {
+    /// Renames the neutral protocol refusals into Metal's own vocabulary.
+    ///
+    /// Exhaustive by arm rather than by wildcard, so a refusal added to the
+    /// neutral seam is a build error here instead of a Metal diagnostic that
+    /// silently loses a case.
+    fn from(error: SinglePayloadProtocolError<MetalPayloadMismatch>) -> Self {
+        match error {
+            SinglePayloadProtocolError::PayloadPortfolio { actual } => {
+                Self::PayloadPortfolio { actual }
+            }
+            SinglePayloadProtocolError::PayloadDescriptor => Self::PayloadDescriptor,
+            SinglePayloadProtocolError::MissingPayloadMetadata => Self::MissingPayloadMetadata,
+            SinglePayloadProtocolError::Correspondence(mismatch) => Self::Correspondence(mismatch),
+            SinglePayloadProtocolError::PayloadSubject => Self::PayloadSubject,
+            SinglePayloadProtocolError::MissingPayloadObject => Self::MissingPayloadObject,
+            SinglePayloadProtocolError::PayloadObject => Self::PayloadObject,
+            SinglePayloadProtocolError::ArtifactIdentity => Self::ArtifactIdentity,
+        }
+    }
+}
+
 /// Why cache orchestration could not return an accepted Metal artifact.
 #[derive(Debug)]
 #[non_exhaustive]
@@ -158,11 +167,19 @@ impl<E: Error + 'static> Error for MetalCacheError<E> {
     }
 }
 
-enum PublicationError<E> {
-    Compile(MetalAssemblyError),
-    Assemble(E),
-    Encode(ArtifactCodecFailure),
-    Protocol(MetalArtifactProtocolError),
+impl<E> From<SinglePayloadCacheError<MetalPayloadMismatch, MetalAssemblyError, E>>
+    for MetalCacheError<E>
+{
+    fn from(error: SinglePayloadCacheError<MetalPayloadMismatch, MetalAssemblyError, E>) -> Self {
+        match error {
+            SinglePayloadCacheError::Subject(error) => Self::Subject(error),
+            SinglePayloadCacheError::Compile(error) => Self::Compile(error),
+            SinglePayloadCacheError::Assemble(error) => Self::Assemble(error),
+            SinglePayloadCacheError::Encode(error) => Self::Encode(error),
+            SinglePayloadCacheError::CacheArtifact(error) => Self::CacheArtifact(error),
+            SinglePayloadCacheError::Protocol(error) => Self::Protocol(error.into()),
+        }
+    }
 }
 
 /// Resolves one singular prepared Metal artifact through the expansion cache.
@@ -172,6 +189,14 @@ enum PublicationError<E> {
 /// must assemble the supplied compiled payload into the corresponding carried
 /// artifact. The carried identity and payload are checked before publication;
 /// every cache result is checked again before this function returns.
+///
+/// This binds [`accept_or_publish_single_payload_artifact`] to Metal's two
+/// statements and nothing else: the prepared payload already holds its governed
+/// descriptor keys and its derived compilation digest, and this crate's own
+/// `validate_metal_payload_metadata` is the correspondence closure. The
+/// compilation facet the cache subject names is the AOT driver's own prepared
+/// identity, which has no public constructor, so it cannot be minted from
+/// invented toolchain facts.
 ///
 /// # Errors
 ///
@@ -183,141 +208,35 @@ pub fn accept_or_publish_single_payload_metal_artifact<E>(
     pending: &VerifiedArtifactProgram,
     prepared: PreparedMetalPayload<'_>,
     assemble: impl FnOnce(CompiledMetalPayload) -> Result<VerifiedArtifactProgram, E>,
-) -> Result<AcceptedMetalArtifact, MetalCacheError<E>> {
-    let expected_descriptor =
-        validate_pending_payload(pending, prepared.digest()).map_err(MetalCacheError::Protocol)?;
-    let expected_artifact = pending.canonical_identity().clone();
-    let compilation = [prepared.compilation_identity_bytes()];
-    let subject = ComposedSubject::compose(&SubjectFacets {
-        backend_compilations: &compilation,
-        artifact_program: expected_artifact.as_bytes(),
-    })
-    .map_err(MetalCacheError::Subject)?;
-    let (prepared, expected_metadata, _expected_digest) = prepared.into_parts();
-
-    let resolution = cache
-        .get_or_publish(&subject, || {
-            let compiled =
-                CompiledMetalPayload::compile_prepared(prepared, expected_metadata.clone())
-                    .map_err(PublicationError::Compile)?;
-            let expected_object = object_digest(&compiled.content().code);
-            let artifact = assemble(compiled).map_err(PublicationError::Assemble)?;
-            if artifact.canonical_identity() != &expected_artifact {
-                return Err(PublicationError::Protocol(
-                    MetalArtifactProtocolError::ArtifactIdentity,
-                ));
-            }
-            let envelope = artifact.encode().map_err(PublicationError::Encode)?;
-            // Deliberately before `get_or_publish` performs its governed decode:
-            // the cache can validate an envelope but cannot prove this
-            // backend-specific correspondence. Deferring this check until the
-            // returned resolution would publish first and diagnose afterward.
-            let decoded = decode_artifact(&envelope).map_err(PublicationError::Encode)?;
-            validate_decoded_payload(
-                &decoded,
-                &expected_descriptor,
-                &expected_metadata,
-                Some(&expected_object),
-            )
-            .map_err(PublicationError::Protocol)?;
-            Ok(envelope)
-        })
-        .map_err(map_publish_failure)?;
-
-    let decoded = resolution_artifact(&resolution);
-    validate_decoded_payload(decoded, &expected_descriptor, &expected_metadata, None)
-        .map_err(MetalCacheError::Protocol)?;
-    if decoded.identity().as_bytes() != expected_artifact.as_bytes() {
-        return Err(MetalCacheError::Protocol(
-            MetalArtifactProtocolError::ArtifactIdentity,
-        ));
-    }
-    Ok(AcceptedMetalArtifact {
-        subject,
-        resolution,
-    })
-}
-
-fn validate_pending_payload(
-    pending: &VerifiedArtifactProgram,
-    expected_digest: &tiler_artifact::program::PayloadDigest,
-) -> Result<BackendPayloadDescriptor, MetalArtifactProtocolError> {
-    let [descriptor] = pending.payloads() else {
-        return Err(MetalArtifactProtocolError::PayloadPortfolio {
-            actual: pending.payloads().len(),
-        });
+) -> Result<AcceptedArtifact, MetalCacheError<E>> {
+    let backend = prepared.backend().clone();
+    let representation = prepared.representation().clone();
+    let digest = prepared.digest().clone();
+    let expected_metadata = prepared.metadata().clone();
+    // Owned because the declaration outlives the prepared token: the compile
+    // closure consumes the token, and the same declaration is compared again
+    // after resolution.
+    let compilation = prepared.compilation_identity_bytes().to_vec();
+    let declared = DeclaredPayload {
+        backend: &backend,
+        representation: &representation,
+        payload_schema: PAYLOAD_SCHEMA,
+        execution_policy: ArtifactExecutionPolicy::NativeImage,
+        digest: &digest,
+        compilation: &compilation,
     };
-    validate_descriptor(descriptor)?;
-    if descriptor.digest != *expected_digest {
-        return Err(MetalArtifactProtocolError::PayloadSubject);
-    }
-    Ok(descriptor.clone())
-}
+    let (prepared, compiled_metadata, _digest) = prepared.into_parts();
 
-fn validate_decoded_payload(
-    artifact: &DecodedArtifact,
-    expected_descriptor: &BackendPayloadDescriptor,
-    expected_metadata: &PayloadMetadata,
-    expected_object: Option<&Digest>,
-) -> Result<(), MetalArtifactProtocolError> {
-    let [descriptor] = artifact.payloads() else {
-        return Err(MetalArtifactProtocolError::PayloadPortfolio {
-            actual: artifact.payloads().len(),
-        });
-    };
-    validate_descriptor(descriptor)?;
-    let metadata = artifact
-        .payload_metadata(0)
-        .ok_or(MetalArtifactProtocolError::MissingPayloadMetadata)?;
-    validate_metal_payload_metadata(expected_metadata, metadata)
-        .map_err(MetalArtifactProtocolError::Correspondence)?;
-    if descriptor != expected_descriptor {
-        return Err(MetalArtifactProtocolError::PayloadSubject);
-    }
-    let object = artifact
-        .payload_object(0)
-        .ok_or(MetalArtifactProtocolError::MissingPayloadObject)?;
-    if expected_object.is_some_and(|expected| object_digest(object) != *expected) {
-        return Err(MetalArtifactProtocolError::PayloadObject);
-    }
-    Ok(())
-}
-
-fn validate_descriptor(
-    descriptor: &BackendPayloadDescriptor,
-) -> Result<(), MetalArtifactProtocolError> {
-    if descriptor.backend.as_str() == BACKEND
-        && descriptor.representation.as_str() == REPRESENTATION
-        && descriptor.payload_schema == PAYLOAD_SCHEMA
-        && descriptor.execution_policy == ArtifactExecutionPolicy::NativeImage
-    {
-        Ok(())
-    } else {
-        Err(MetalArtifactProtocolError::PayloadDescriptor)
-    }
-}
-
-fn object_digest(object: &[u8]) -> Digest {
-    DigestAlgorithm::GOVERNED.digest(OBJECT_VALIDATION_DOMAIN, object)
-}
-
-const fn resolution_artifact(resolution: &Resolution) -> &DecodedArtifact {
-    match resolution {
-        Resolution::Hit { entry, .. } | Resolution::Published { entry, .. } => entry.artifact(),
-        Resolution::Uncached { artifact, .. } => artifact,
-    }
-}
-
-fn map_publish_failure<E>(failure: PublishFailure<PublicationError<E>>) -> MetalCacheError<E> {
-    match failure {
-        PublishFailure::Build(PublicationError::Compile(error)) => MetalCacheError::Compile(error),
-        PublishFailure::Build(PublicationError::Assemble(error)) => {
-            MetalCacheError::Assemble(error)
-        }
-        PublishFailure::Build(PublicationError::Encode(error)) => MetalCacheError::Encode(error),
-        PublishFailure::Build(PublicationError::Protocol(error)) => {
-            MetalCacheError::Protocol(error)
-        }
-        PublishFailure::Artifact(error) => MetalCacheError::CacheArtifact(error),
-    }
+    accept_or_publish_single_payload_artifact(
+        cache,
+        pending,
+        &declared,
+        |actual| validate_metal_payload_metadata(&expected_metadata, actual),
+        || {
+            CompiledMetalPayload::compile_prepared(prepared, compiled_metadata)
+                .map(CompiledMetalPayload::into_content)
+        },
+        |content| assemble(CompiledMetalPayload::from_content(content)),
+    )
+    .map_err(MetalCacheError::from)
 }
