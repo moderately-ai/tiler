@@ -1,7 +1,7 @@
 ---
 id: bound-the-reference-contraction-comparison-for-the-profile-cells
 title: Bound the reference contraction comparison for the profile cells
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [realize-the-strict-contraction-on-metal, realize-the-contraction-through-the-appendable-direct-path, bound-the-reference-contraction-iteration-space]
@@ -9,6 +9,9 @@ scopes: [implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, reference, contraction, language-model]
+claimed_from: todo
+assignee: worker-oracle-bound
+lease_expires_at: 1785589250
 ---
 ## User-visible outcome
 
