@@ -1,7 +1,7 @@
 ---
 id: compose-rotary-position-embedding-from-reindex-and-broadcast
 title: Compose rotary position embedding from Reindex and Broadcast
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-the-reindex-and-broadcast-operation-families]
 related: [design-attention-program-vertical, admit-the-grouped-query-head-layout-reindex-profile, assemble-the-causal-self-attention-block-program, derive-transformer-operation-and-shape-surface]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/reference, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, semantics, structural, rope, attention, language-model]
+claimed_from: todo
+assignee: worker-rotary
+lease_expires_at: 1785571737
 ---
 ## User-visible outcome
 
