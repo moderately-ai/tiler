@@ -15,8 +15,8 @@ use tiler_ir::kernel::KernelType;
 pub(crate) use tiler_ir::kernel::VerifiedKernel;
 pub(crate) use tiler_ir::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
-    ContributorPartition, ExecutionBinding, IndexRegion, KernelSchedule, LaunchPlan, LogicalAccess,
-    NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
+    ContributorPartition, ExecutionBinding, IndexRegion, InputOrdinal, KernelSchedule, LaunchPlan,
+    LogicalAccess, NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
     PointwiseF32Expression, PointwiseF32ExpressionBuilder, PointwiseF32Node, ReductionTopology,
     RegionId, ResourceRequirements, ScalarProgram, ScheduledRegion, TailPolicy, TensorRole,
 };
@@ -36,6 +36,15 @@ use crate::target::feasibility::{
 };
 use crate::target::honourability::{
     DimensionBehaviour, NumericalDimension, NumericalRequirement, UnhonouredDimension,
+};
+
+/// The boundary role of a region reading exactly one program input tensor.
+///
+/// The serial-sum strategy is defined by reading one tensor: its contributor
+/// domain names one access, and a second input tensor would be a different
+/// scalar program rather than a wider spelling of this one.
+const FIRST_INPUT: TensorRole = TensorRole::Input {
+    ordinal: InputOrdinal::FIRST,
 };
 
 /// Stable candidate identity used when assessing one scheduled region.
@@ -227,11 +236,12 @@ pub(crate) fn build_fused_scheduled_region(
 pub(crate) fn pointwise_region(
     request: &VerifiedTargetRequest,
 ) -> (ScheduledRegion, Vec<SemanticMemberId>) {
-    let (shape, elements, write_tensor, expression, members) =
+    let (shape, elements, inputs, write_tensor, expression, members) =
         if let Some(pointwise) = request.pointwise() {
             (
                 pointwise.shape.clone(),
                 pointwise.elements,
+                pointwise.input_keys.len(),
                 TensorRole::Output,
                 normalized_pointwise_expression(pointwise),
                 pointwise.members.clone(),
@@ -241,51 +251,63 @@ pub(crate) fn pointwise_region(
             (
                 serial.input_shape.clone(),
                 serial.input_elements,
+                1,
                 TensorRole::Intermediate,
                 scale_bias_expression(serial.scale_bits, serial.bias_bits),
                 serial.members.pointwise().to_vec(),
             )
         };
+    // One read per input tensor, its ordinal fixed by its position, then the
+    // owning write. The write's bounds witness follows the reads rather than
+    // sitting at a constant, so witness numbering is access numbering and two
+    // accesses cannot end up proving against one witness.
+    let write_witness = u32::try_from(inputs).unwrap_or(u32::MAX);
+    let mut accesses: Vec<Access> = (0..write_witness)
+        .map(|ordinal| Access {
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::new(ordinal),
+            },
+            component_role: None,
+            mode: AccessMode::Read,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(ordinal),
+            ownership: None,
+        })
+        .collect();
+    let mut bounds_proofs: Vec<BoundsProof> = (0..write_witness)
+        .map(|ordinal| BoundsProof {
+            id: BoundsWitnessId::new(ordinal),
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::new(ordinal),
+            },
+            component_role: None,
+            kind: BoundsProofKind::LinearRange {
+                element_count: elements,
+            },
+        })
+        .collect();
+    accesses.push(Access {
+        tensor: write_tensor,
+        component_role: None,
+        mode: AccessMode::Write,
+        map: LogicalAccess::LinearIdentity,
+        bounds: BoundsWitnessId::new(write_witness),
+        ownership: Some(OwnershipWitnessId::new(0)),
+    });
+    bounds_proofs.push(BoundsProof {
+        id: BoundsWitnessId::new(write_witness),
+        tensor: write_tensor,
+        component_role: None,
+        kind: BoundsProofKind::LinearRange {
+            element_count: elements,
+        },
+    });
     let region = ScheduledRegion {
         index: IndexRegion {
             id: RegionId::new(0),
             iteration_shape: shape,
-            accesses: vec![
-                Access {
-                    tensor: TensorRole::Input,
-                    component_role: None,
-                    mode: AccessMode::Read,
-                    map: LogicalAccess::LinearIdentity,
-                    bounds: BoundsWitnessId::new(0),
-                    ownership: None,
-                },
-                Access {
-                    tensor: write_tensor,
-                    component_role: None,
-                    mode: AccessMode::Write,
-                    map: LogicalAccess::LinearIdentity,
-                    bounds: BoundsWitnessId::new(1),
-                    ownership: Some(OwnershipWitnessId::new(0)),
-                },
-            ],
-            bounds_proofs: vec![
-                BoundsProof {
-                    id: BoundsWitnessId::new(0),
-                    tensor: TensorRole::Input,
-                    component_role: None,
-                    kind: BoundsProofKind::LinearRange {
-                        element_count: elements,
-                    },
-                },
-                BoundsProof {
-                    id: BoundsWitnessId::new(1),
-                    tensor: write_tensor,
-                    component_role: None,
-                    kind: BoundsProofKind::LinearRange {
-                        element_count: elements,
-                    },
-                },
-            ],
+            accesses,
+            bounds_proofs,
             ownership_proof: OwnershipProof {
                 id: OwnershipWitnessId::new(0),
                 tensor: write_tensor,
@@ -403,7 +425,7 @@ pub(crate) fn fused_region(
             iteration_shape: request.serial_sum().output_shape.clone(),
             accesses: vec![
                 Access {
-                    tensor: TensorRole::Input,
+                    tensor: FIRST_INPUT,
                     component_role: None,
                     mode: AccessMode::Read,
                     map: LogicalAccess::ReductionContributor {
@@ -427,7 +449,7 @@ pub(crate) fn fused_region(
             bounds_proofs: vec![
                 BoundsProof {
                     id: BoundsWitnessId::new(0),
-                    tensor: TensorRole::Input,
+                    tensor: FIRST_INPUT,
                     component_role: None,
                     kind: BoundsProofKind::ReductionDomain {
                         input_shape: request.serial_sum().input_shape.clone(),
@@ -891,8 +913,8 @@ fn linear_schedule(work_items: u64, owner: OwnershipWitnessId) -> KernelSchedule
 fn scale_bias_expression(scale_bits: u32, bias_bits: u32) -> PointwiseF32Expression {
     let mut expression = PointwiseF32ExpressionBuilder::new();
     let input = expression
-        .input()
-        .expect("the fixed expression has exactly one input");
+        .input(InputOrdinal::FIRST)
+        .expect("the fixed expression is within the node limit");
     let scale = expression
         .constant(scale_bits)
         .expect("the fixed expression is within the node limit");
@@ -913,29 +935,39 @@ fn scale_bias_expression(scale_bits: u32, bias_bits: u32) -> PointwiseF32Express
 fn normalized_pointwise_expression(normalized: &NormalizedPointwise) -> PointwiseF32Expression {
     let mut expression = PointwiseF32ExpressionBuilder::new();
     let mut lower_leaf = |leaf| match leaf {
-        NormalizedPointwiseLeaf::Input => expression
-            .input()
-            .expect("the normalized expression has exactly one input"),
+        // Two leaves naming one ordinal share the leaf the builder already
+        // minted, which is what makes `(a * a) + b` one read of `a` rather than
+        // two reads the region would have to bind separately.
+        NormalizedPointwiseLeaf::Input(ordinal) => expression
+            .input(ordinal)
+            .expect("the normalized expression is within the node limit"),
         NormalizedPointwiseLeaf::Constant(bits) => expression
             .constant(bits)
             .expect("the normalized expression is within the node limit"),
     };
     let [first, second, third] = normalized.leaves.map(&mut lower_leaf);
-    let combine = |builder: &mut PointwiseF32ExpressionBuilder, lhs, rhs| {
-        match normalized.operation {
+    // The two operations are independent: the child is whichever family
+    // produced the root's non-leaf operand, and `(a * b) + c` mixes them.
+    let combine = |builder: &mut PointwiseF32ExpressionBuilder,
+                   operation: NormalizedPointwiseOperation,
+                   lhs,
+                   rhs| {
+        match operation {
             NormalizedPointwiseOperation::Add => builder.add(lhs, rhs),
             NormalizedPointwiseOperation::Multiply => builder.multiply(lhs, rhs),
         }
         .expect("normalized operands belong to this builder")
     };
+    let child = normalized.child_operation;
+    let root_operation = normalized.root_operation;
     let root = match normalized.association {
         NormalizedPointwiseAssociation::Left => {
-            let inner = combine(&mut expression, first, second);
-            combine(&mut expression, inner, third)
+            let inner = combine(&mut expression, child, first, second);
+            combine(&mut expression, root_operation, inner, third)
         }
         NormalizedPointwiseAssociation::Right => {
-            let inner = combine(&mut expression, second, third);
-            combine(&mut expression, first, inner)
+            let inner = combine(&mut expression, child, second, third);
+            combine(&mut expression, root_operation, first, inner)
         }
     };
     expression
@@ -956,7 +988,9 @@ fn scale_bias_expression_matches(
     bias_bits: u32,
 ) -> bool {
     let [
-        PointwiseF32Node::Input,
+        PointwiseF32Node::Input {
+            ordinal: InputOrdinal::FIRST,
+        },
         PointwiseF32Node::Constant { bits: actual_scale },
         PointwiseF32Node::Multiply {
             lhs: multiply_lhs,
@@ -1551,13 +1585,21 @@ mod tests {
     /// and step whatever domain tag the change requires in the same commit.
     #[test]
     fn the_governed_descriptor_bytes_do_not_move() {
-        // Rebaselined to the complete v10 declaration after separating a
-        // future prepared-entry workgroup query from compile-profile facts and
-        // replacing the grid placeholder with the API-backed bound four.
-        // Device-address width remains absent because no current KIR operation
-        // consumes it and the governed authority does not establish it.
+        // Rebaselined when the governed profile raised its declared
+        // buffer-binding bound from two to four — the widest signature the
+        // bounded profile can assemble now that a region may read several input
+        // tensors. Exactly one byte of the `buffer-bindings` row moves; the
+        // declaration's shape and its domain tag are unchanged, so no domain
+        // steps with it.
+        //
+        // An earlier rebaseline recorded the complete v10 declaration after
+        // separating a future prepared-entry workgroup query from
+        // compile-profile facts and replacing the grid placeholder with the
+        // API-backed bound four. Device-address width remains absent because no
+        // current KIR operation consumes it and the governed authority does not
+        // establish it.
         // Every artifact identity and cache entry derived from it moves with it. Regenerate with `cargo nextest run -p tiler-compiler -E 'test(the_governed_descriptor_bytes_do_not_move)'` and take `left`.
-        const GOVERNED: &str = "000000000000002574696c65722e7461726765742d70726f66696c652e6465636c61726174696f6e2e76313000000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e7631000000000000002574696c65722e7461726765742d70726f66696c652e666163742d736f75726365732e7634000000000000000001000000000000007400000003010101000000000000002a74696c65722e676f7665726e65642d7461726765742d70726f66696c652d617574686f726974792e76310000000101000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e76310000000100000000000000050000000000000009677269642d61786973040000000000000000000000000000000f6275666665722d62696e64696e6773020000000000000000000000000000000d6465766963652d6d656d6f727901000000000000000000000000000000126c6f63616c2d6d656d6f72792d62797465730000000000000000000000000000000014696e6465782d61726974686d657469632d75363401000000000000000000000000000000010000000000000015746872656164732d7065722d776f726b67726f7570000000000000009274696c65722e7461726765742d70726f70657274792d71756572792e763100000000000000003874696c65722e7461726765742e70726570617265642d656e7472792e6d61782d746872656164732d7065722d776f726b67726f75702e763104000000000000000574696c6572000000000000001970726570617265642d656e7472792d70726f70657274696573000000010000000000000001000000000000004303000000000000003a74696c65722e7265736f6c7665642d76616c75652d747970652e76330001000000000000000574696c6572000000000000000366333200000001000000000000000c000101010100000101020100000201010100000201020100000302010100000302020100000402010100000402020100000502010100000602010100000904010100000a04010100000000000000002e74696c65722e7461726765742d70726f66696c652e64747970652d64697370617463686162696c6974792e7632000000000000000001000000000000003a74696c65722e7265736f6c7665642d76616c75652d747970652e76330001000000000000000574696c65720000000000000003663332000000010100";
+        const GOVERNED: &str = "000000000000002574696c65722e7461726765742d70726f66696c652e6465636c61726174696f6e2e76313000000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e7631000000000000002574696c65722e7461726765742d70726f66696c652e666163742d736f75726365732e7634000000000000000001000000000000007400000003010101000000000000002a74696c65722e676f7665726e65642d7461726765742d70726f66696c652d617574686f726974792e76310000000101000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e76310000000100000000000000050000000000000009677269642d61786973040000000000000000000000000000000f6275666665722d62696e64696e6773040000000000000000000000000000000d6465766963652d6d656d6f727901000000000000000000000000000000126c6f63616c2d6d656d6f72792d62797465730000000000000000000000000000000014696e6465782d61726974686d657469632d75363401000000000000000000000000000000010000000000000015746872656164732d7065722d776f726b67726f7570000000000000009274696c65722e7461726765742d70726f70657274792d71756572792e763100000000000000003874696c65722e7461726765742e70726570617265642d656e7472792e6d61782d746872656164732d7065722d776f726b67726f75702e763104000000000000000574696c6572000000000000001970726570617265642d656e7472792d70726f70657274696573000000010000000000000001000000000000004303000000000000003a74696c65722e7265736f6c7665642d76616c75652d747970652e76330001000000000000000574696c6572000000000000000366333200000001000000000000000c000101010100000101020100000201010100000201020100000302010100000302020100000402010100000402020100000502010100000602010100000904010100000a04010100000000000000002e74696c65722e7461726765742d70726f66696c652e64747970652d64697370617463686162696c6974792e7632000000000000000001000000000000003a74696c65722e7265736f6c7665642d76616c75652d747970652e76330001000000000000000574696c65720000000000000003663332000000010100";
 
         let profile = crate::request::TargetProfile::governed();
         let descriptor = target_profile_descriptor(&profile);

@@ -423,9 +423,9 @@ mod tests {
     use tiler_ir::kernel::lower_scheduled_region;
     use tiler_ir::schedule::{
         Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId,
-        ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
-        NumericalPermission, NumericalRealization as DeclaredNumericalRealization, OwnershipProof,
-        OwnershipProofKind, OwnershipWitnessId, PointwiseF32Expression,
+        ExceptionalValueAssumption, ExecutionBinding, InputOrdinal, KernelSchedule, LaunchPlan,
+        LogicalAccess, NumericalPermission, NumericalRealization as DeclaredNumericalRealization,
+        OwnershipProof, OwnershipProofKind, OwnershipWitnessId, PointwiseF32Expression,
         PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
         ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
     };
@@ -477,7 +477,14 @@ mod tests {
             .iteration_shape(Shape::from_dims([1]))
             .expect("the shape binds");
         for (tensor, mode, bounds, ownership) in [
-            (TensorRole::Input, AccessMode::Read, 0, None),
+            (
+                TensorRole::Input {
+                    ordinal: InputOrdinal::FIRST,
+                },
+                AccessMode::Read,
+                0,
+                None,
+            ),
             (
                 TensorRole::Intermediate,
                 AccessMode::Write,
@@ -557,7 +564,9 @@ mod tests {
 
     fn scale_then_bias_expression(scale_bits: u32, bias_bits: u32) -> PointwiseF32Expression {
         let mut expression = PointwiseF32ExpressionBuilder::new();
-        let input = expression.input().expect("pointwise input");
+        let input = expression
+            .input(InputOrdinal::FIRST)
+            .expect("pointwise input");
         let scale = expression.constant(scale_bits).expect("scale constant");
         let product = expression
             .multiply(input, scale)

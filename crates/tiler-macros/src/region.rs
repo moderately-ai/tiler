@@ -43,26 +43,32 @@
 //! the emitted facts check every operand's rank and stored scalar, unify every
 //! symbol, and construct the declared result, symbolic or not.
 //!
-//! # The compiler is not invoked here, and that is measured rather than chosen
+//! # The compiler is not invoked here
 //!
 //! Construction stops at a verified [`SemanticProgram`]. It does not continue
 //! into `tiler_compiler::session`, and this crate holds no edge to that crate.
 //!
-//! **Measurement — worktree at `b623670`, 2026-07-31, `nightly-2026-07-19`.**
-//! The approved region built as a semantic program over three `f32[4]` inputs
-//! was refused by `compile_governed` under all four `NumericalContract` values,
-//! and by `compile` under the governed target profile, with
-//! `UnsupportedCapability { rule: "signature" }` before any target-qualified
-//! trace. `tiler_compiler`'s strategy selection recognizes two program shapes
-//! and both open with `program.input_count() != 1`; the approved region has
-//! three tensor inputs and matches neither.
+//! The reason it could not was measured at `b623670`: the approved region over
+//! three `f32[4]` inputs was refused by `compile_governed` under all four
+//! `NumericalContract` values with `UnsupportedCapability { rule: "signature" }`
+//! before any target-qualified trace, because both recognized program shapes
+//! opened with `program.input_count() != 1`. `docs/integration/frontends.md`
+//! requires target-neutral optimizer and verifier failures to become
+//! *unconditional* `compile_error!` diagnostics, so wiring the compiler in then
+//! would have made the region Tom approved a compile error at every call site.
 //!
-//! `docs/integration/frontends.md` requires target-neutral optimizer and
-//! verifier failures to become *unconditional* `compile_error!` diagnostics, so
-//! wiring the compiler in today would make the region Tom approved a compile
-//! error at every call site — the opposite of what invoking it is for.
-//! `admit-multi-input-elementwise-programs-at-the-compiler-boundary` is what
-//! makes that edge worth adding.
+//! That refusal is gone. The scheduled-region vocabulary names which input
+//! tensor each access and each scalar leaf reads, the combined `signature` rule
+//! is split so each gate names its own refusal, and the approved region now
+//! reaches a complete verified plan on the governed profile. It still refuses
+//! under `RelaxedF32` alone — the contract that permits arithmetic contraction
+//! declines any fused multiply-then-add body, at any input count — so the
+//! diagnostic a wired-in compiler would raise is now contract-dependent rather
+//! than unconditional. Whether that is a `compile_error!`, a narrowed contract,
+//! or a deferred edge is what
+//! `admit-multi-input-elementwise-programs-at-the-compiler-boundary` decides;
+//! `crates/tiler-compiler/tests/multi_input_elementwise_boundary.rs` carries the
+//! executable statement of both halves.
 //!
 //! [`AvailabilityPhase::LiveDevicePreflight`]: tiler_ir::program::abi::AvailabilityPhase::LiveDevicePreflight
 //! [`multiply_f32_op`]: tiler_ir::semantic::multiply_f32_op

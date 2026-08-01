@@ -1,37 +1,62 @@
-//! Where the multi-input elementwise boundary is, and what actually holds it.
+//! Where the multi-input elementwise boundary was, and what moved it.
 //!
-//! The approved `tensor!` region `sym n; in a, b, c; out (a * b) + c` does not
-//! compile. That fact has now been derived by hand three times — at `b623670`,
-//! at `e6a47d9`, and again here — because it lived only in ticket prose, so
-//! every reader who needed it paid to rediscover it. This file is that
-//! measurement made executable, and it exists to answer two different
-//! questions that a bare "it refuses" answer conflates.
+//! The approved `tensor!` region `sym n; in a, b, c; out (a * b) + c` now
+//! compiles. It did not at `b623670`, at `e6a47d9`, or when this file first
+//! recorded the refusal, and the reason was never the recognizer that observed
+//! it: the scheduled-region vocabulary below `tiler-compiler` had no way to say
+//! "a second input tensor", so `TensorRole::Input` named a class of boundary
+//! tensor without saying which, and `ScalarProgram::PointwiseF32` carried a
+//! single nullary `PointwiseF32Node::Input` leaf. A recognizer widened on its
+//! own could only have produced a program the physical layer cannot express —
+//! admitted at the boundary and failing mid-pipeline, which is strictly worse
+//! than refusing.
 //!
-//! The first is *what the public boundary does today*: refuse, under every
-//! stated numerical contract, before any target-qualified trace opens — and
-//! refuse this program specifically rather than refusing everything, which the
-//! compiling one-input control proves.
+//! Both halves moved together, and this file is what makes that transition
+//! demonstrated rather than asserted. The first test was the refusal and is now
+//! the compilation, reaching a complete verified plan rather than merely
+//! passing strategy selection. The second was the obstruction — a second
+//! `input()` returning `DuplicateInput` — and is now the indexed leaf that
+//! replaced it.
 //!
-//! The second is *what would have to change to stop refusing*, and this is the
-//! part prose kept getting wrong by naming the recognizer. Widening
-//! `normalize_pointwise` in `tiler-compiler` cannot admit the region, because
-//! the layer below has no way to say "a second input tensor". A region's
-//! `ScalarProgram::PointwiseF32` carries a single `PointwiseF32Node::Input`
-//! leaf; `PointwiseF32ExpressionBuilder::build` is its only constructor and it
-//! refuses a second input outright. So a widened recognizer could only produce
-//! a program the physical layer cannot express — admitted at the boundary and
-//! failing mid-pipeline, which is strictly worse than the refusal.
+//! The one-input control stays, and its job is unchanged: without a program
+//! that compiles under the identical request, an assertion about the
+//! three-input region would be consistent with a broken target profile rather
+//! than with anything about input cardinality.
 //!
-//! The obstruction test below is therefore not incidental colour: it is the
-//! evidence that this ticket's work belongs in `tiler-ir`, not here. When that
-//! widening lands, both tests must change together — the refusal becomes a
-//! compilation, and the `DuplicateInput` expectation becomes an indexed input
-//! leaf. Their edit is what makes the transition demonstrated rather than
-//! asserted.
+//! # The one contract that still refuses, and why it is not this boundary
+//!
+//! `RelaxedF32` is the contract that *permits* arithmetic contraction, and
+//! under it the approved region has no feasible plan. That refusal is neither a
+//! defect nor a residue of the widening: `fusion_legality`'s
+//! `ArithmeticContraction` obligation returns `unrealized-contraction` for any
+//! region holding a multiply adjacent to an add when the contract permits
+//! contraction, because fusing them exposes an FMA the materialized form cannot
+//! perform. `a_reassociating_contract_discharges_the_mixed_region_by_forbidding_contraction`
+//! records that this was *eliminated rather than deferred*, with a measurement:
+//! a permitting realization carries no `NoFloatingPointContraction` obligation
+//! into the artifact, and the measured Apple row fuses a written multiply/add
+//! pair under `-ffp-contract=fast`.
+//!
+//! The pinned pair below is the evidence that it is orthogonal to input
+//! cardinality. A one-input `(a * 2.0) + 3.0` refuses under exactly the same
+//! contract, and the same-family one-input control compiles under all four — so
+//! what `RelaxedF32` declines is the mixed multiply/add body, at any input
+//! count. Admitting it needs either a physical form that declares its
+//! contraction or an implementation for the materialized cover's single-operation
+//! regions; both are separate work, and neither is a vocabulary question.
+//!
+//! What still refuses for *recognition* is recorded here too. Widening the
+//! vocabulary is not licence to accept an unrecognized program, so a body
+//! outside the recognized two-operation shape must still refuse with a typed
+//! reason naming what was not recognized.
 
-use tiler_compiler::session::{CompileFailureClass, CompileRequest, NumericalContract, compile};
+use tiler_compiler::session::{
+    CompileFailureClass, CompileRequest, NumericalContract, TargetCompileFailure, compile,
+};
 use tiler_compiler::target::{TargetProfile, TargetRequest};
-use tiler_ir::schedule::{PointwiseF32ExpressionAdmissionError, PointwiseF32ExpressionBuilder};
+use tiler_ir::schedule::{
+    InputOrdinal, PointwiseF32ExpressionBuilder, PointwiseF32ExpressionDiagnostic, PointwiseF32Node,
+};
 use tiler_ir::semantic::{
     F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
     SemanticProgramBuilder,
@@ -40,15 +65,22 @@ use tiler_ir::shape::Shape;
 
 /// Every numerical contract a caller can state.
 ///
-/// Stated exhaustively rather than sampled: the refusal is structural, so a
-/// contract that admitted the program would mean the boundary moved for a
-/// reason this file does not model, and sampling one preset would hide it.
+/// Stated exhaustively rather than sampled: the outcome is structural, so a
+/// contract that behaved differently would mean the boundary moved for a reason
+/// this file does not model, and sampling one preset would hide it.
 const CONTRACTS: [NumericalContract; 4] = [
     NumericalContract::StrictF32,
     NumericalContract::FlushSubnormalsToZeroF32,
     NumericalContract::RelaxedF32,
     NumericalContract::ReassociateF32,
 ];
+
+/// The one contract that permits arithmetic contraction.
+///
+/// Named rather than matched inline so the reason a mixed multiply/add body
+/// behaves differently under it is the *contraction permission* and not the
+/// preset's name.
+const CONTRACTION_PERMITTED: NumericalContract = NumericalContract::RelaxedF32;
 
 /// The approved inline region: `sym n; in a, b, c; out (a * b) + c`.
 ///
@@ -94,6 +126,26 @@ fn one_input_control() -> SemanticProgram {
     builder.build().unwrap()
 }
 
+/// `(a * 2.0f32) + 3.0f32`: one input, two constants, mixed families.
+///
+/// Differs from [`one_input_control`] in exactly one place — the root operation
+/// — which is what makes the pair evidence about the multiply/add adjacency
+/// rather than about anything else the two programs share.
+fn one_input_mixed_control() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let a = builder
+        .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([4]))
+        .unwrap();
+    let two = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+    let three = F32Constant::apply(&mut builder, 3.0_f32.to_bits()).unwrap();
+    let scaled = F32Multiply::apply(&mut builder, a, two).unwrap();
+    let root = F32Add::apply(&mut builder, scaled, three).unwrap();
+    builder
+        .output(OutputKey::new("out").unwrap(), root)
+        .unwrap();
+    builder.build().unwrap()
+}
+
 /// Compiles one program under one contract against the governed profile.
 fn compile_under(
     program: &SemanticProgram,
@@ -103,9 +155,10 @@ fn compile_under(
     match compile(CompileRequest::new(program, contract, targets)) {
         Ok(batch) => {
             let outcome = batch.targets().next().expect("one requested profile");
-            outcome.outcome().map(|_| ()).map_err(|failure| {
-                panic!("the governed profile refused per-target: {failure:?}");
-            })
+            outcome
+                .outcome()
+                .map(|_| ())
+                .map_err(TargetCompileFailure::class)
         }
         Err(failure) => {
             assert!(
@@ -117,9 +170,40 @@ fn compile_under(
     }
 }
 
-/// The approved three-input region refuses, and a one-input program does not.
+/// A region the widened vocabulary still cannot express: `(a * b) + (c * c)`.
+///
+/// Three inputs, so it stays inside every governed budget, but three operations
+/// where the recognized body has two — the root's second operand is produced
+/// rather than being a leaf. This is the program that keeps the widening honest:
+/// what landed is "N inputs across the recognized body", not "anything with
+/// several inputs".
+fn unrecognized_three_input_region() -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let mut inputs = Vec::new();
+    for key in ["a", "b", "c"] {
+        inputs.push(
+            builder
+                .input::<F32>(InputKey::new(key).unwrap(), Shape::from_dims([4]))
+                .unwrap(),
+        );
+    }
+    let product = F32Multiply::apply(&mut builder, inputs[0], inputs[1]).unwrap();
+    let square = F32Multiply::apply(&mut builder, inputs[2], inputs[2]).unwrap();
+    let root = F32Add::apply(&mut builder, product, square).unwrap();
+    builder
+        .output(OutputKey::new("out").unwrap(), root)
+        .unwrap();
+    builder.build().unwrap()
+}
+
+/// The approved three-input region compiles under every contract that admits a
+/// mixed multiply/add body.
+///
+/// `compile_under` returns only after the per-target outcome resolves, so each
+/// pass is a complete verified plan and not merely successful strategy
+/// selection.
 #[test]
-fn the_three_input_region_refuses_under_every_contract() {
+fn the_three_input_region_compiles_wherever_a_mixed_body_is_admitted() {
     let region = three_input_region();
     assert_eq!(region.input_count(), 3);
     assert_eq!(region.operation_count(), 2);
@@ -129,39 +213,108 @@ fn the_three_input_region_refuses_under_every_contract() {
 
     for contract in CONTRACTS {
         assert_eq!(
-            compile_under(&region, contract),
-            Err(CompileFailureClass::UnsupportedCapability { rule: "signature" }),
-            "{contract:?} admitted the three-input region",
-        );
-        assert_eq!(
             compile_under(&control, contract),
             Ok(()),
-            "{contract:?} refused the recognized one-input control, so the \
-             refusal above is not specific to input cardinality",
+            "{contract:?} refused the recognized one-input control, so nothing \
+             this file asserts about the three-input region would be evidence \
+             about input cardinality",
+        );
+        if contract == CONTRACTION_PERMITTED {
+            continue;
+        }
+        assert_eq!(
+            compile_under(&region, contract),
+            Ok(()),
+            "{contract:?} refused the approved three-input region",
         );
     }
 }
 
-/// The physical `f32` expression cannot name a second input tensor.
+/// The contraction-permitting contract declines a mixed body at any input count.
 ///
-/// This is the obstruction, and it sits below `tiler-compiler` entirely. The
-/// expression's fields are private and `build` is its only constructor, so no
-/// recognizer this crate could write is able to route around the refusal —
-/// which is why admitting the region is `tiler-ir` work.
+/// Both halves are asserted together because the pair is the claim: the
+/// three-input region and a one-input `(a * 2.0) + 3.0` refuse identically, so
+/// the refusal reads the multiply/add adjacency and not the number of tensors.
+/// Without the one-input half this would be indistinguishable from a
+/// multi-input defect, which is exactly the misreading the ticket this file
+/// belongs to spent three measurements correcting.
 #[test]
-fn the_physical_pointwise_expression_admits_exactly_one_input() {
-    let mut expression = PointwiseF32ExpressionBuilder::new();
-    let input = expression.input().expect("the first input is admitted");
+fn the_contraction_permitting_contract_declines_a_mixed_body_at_any_input_count() {
+    for program in [three_input_region(), one_input_mixed_control()] {
+        assert_eq!(
+            compile_under(&program, CONTRACTION_PERMITTED),
+            Err(CompileFailureClass::NoFeasiblePlan),
+        );
+    }
+    // The same one input and the same two constants, multiplied twice instead
+    // of multiplied and added, compiles — so what is declined is the adjacency.
     assert_eq!(
-        expression.input().unwrap_err(),
-        PointwiseF32ExpressionAdmissionError::DuplicateInput,
-        "a second input tensor must be refused by the physical vocabulary",
+        compile_under(&one_input_control(), CONTRACTION_PERMITTED),
+        Ok(()),
     );
-    // A constant is still admitted after the refusal, so the rejection is of
-    // the second *input* and not of any further node.
-    let constant = expression
-        .constant(2.0_f32.to_bits())
-        .expect("constants remain admissible");
-    let root = expression.multiply(input, constant).unwrap();
-    assert!(expression.build(root).is_ok());
+}
+
+/// A program outside the recognized body still refuses, with a named rule.
+///
+/// The refusal names the operation family the leaf walk expected and did not
+/// find, rather than the combined `signature` this file used to assert: each
+/// gate now names its own refusal, so a reader learns which of input arity,
+/// output arity, the operation set, or the dtype was not recognized instead of
+/// having to re-derive it.
+#[test]
+fn an_unrecognized_multi_input_region_still_refuses_with_a_typed_reason() {
+    let region = unrecognized_three_input_region();
+    assert_eq!(region.input_count(), 3);
+    assert_eq!(region.operation_count(), 3);
+
+    for contract in CONTRACTS {
+        assert_eq!(
+            compile_under(&region, contract),
+            Err(CompileFailureClass::UnsupportedCapability {
+                rule: "operation-family"
+            }),
+            "{contract:?} admitted a body the recognizer does not cover",
+        );
+    }
+}
+
+/// The physical `f32` expression names which input tensor each leaf reads.
+///
+/// This is the obstruction that used to sit below `tiler-compiler`: the builder
+/// refused a second input outright, so no recognizer this crate could write was
+/// able to route around it. It now takes an ordinal, and two ordinals are two
+/// distinct leaves.
+#[test]
+fn the_physical_pointwise_expression_names_each_input_tensor() {
+    let mut expression = PointwiseF32ExpressionBuilder::new();
+    let a = expression
+        .input(InputOrdinal::new(0))
+        .expect("the first input is admitted");
+    let b = expression
+        .input(InputOrdinal::new(1))
+        .expect("a second input tensor is now nameable");
+    let c = expression.input(InputOrdinal::new(2)).expect("and a third");
+    let product = expression.multiply(a, b).unwrap();
+    let root = expression.add(product, c).unwrap();
+    let built = expression
+        .build(root)
+        .expect("the dense ordinal set builds");
+    assert_eq!(built.input_count(), 3);
+    assert_eq!(
+        built.nodes()[0],
+        PointwiseF32Node::Input {
+            ordinal: InputOrdinal::new(0)
+        },
+    );
+
+    // The vocabulary is still bounded: an ordinal set with a gap names a
+    // binding no read access would supply, and is refused by build.
+    let mut sparse = PointwiseF32ExpressionBuilder::new();
+    let first = sparse.input(InputOrdinal::new(0)).unwrap();
+    let third = sparse.input(InputOrdinal::new(2)).unwrap();
+    let root = sparse.add(first, third).unwrap();
+    assert_eq!(
+        sparse.build(root).unwrap_err().diagnostic(),
+        PointwiseF32ExpressionDiagnostic::SparseInputOrdinals { missing: 1 },
+    );
 }

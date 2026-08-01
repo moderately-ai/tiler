@@ -560,13 +560,13 @@ impl BoundaryContract {
     fn encode(&self, output: &mut Vec<u8>) {
         push_len(output, self.requirements.len());
         for requirement in &self.requirements {
-            output.push(tensor_role_tag(requirement.tensor));
+            push_tensor_role(output, requirement.tensor);
             output.push(access_mode_tag(requirement.access));
             requirement.properties.encode(output);
         }
         push_len(output, self.guarantees.len());
         for guarantee in &self.guarantees {
-            output.push(tensor_role_tag(guarantee.tensor));
+            push_tensor_role(output, guarantee.tensor);
             output.push(guarantee.ownership.tag());
             guarantee.properties.encode(output);
         }
@@ -2199,14 +2199,7 @@ fn encode_call_subject(proposed: &OpaqueCallProposal) -> Vec<u8> {
     bytes.extend_from_slice(&call.revision().to_be_bytes());
     for (name, role) in proposed.bindings() {
         push_slice(&mut bytes, name.as_bytes());
-        // Written as an exhaustive match rather than read from the discriminant,
-        // so adding or reordering a role is a build error here instead of a
-        // silent change to every opaque proposal identity ever encoded.
-        bytes.push(match role {
-            TensorRole::Input => 0x01,
-            TensorRole::Intermediate => 0x02,
-            TensorRole::Output => 0x03,
-        });
+        push_tensor_role(&mut bytes, *role);
     }
     bytes
 }
@@ -2219,7 +2212,7 @@ fn encode_opaque_call_proposal(output: &mut Vec<u8>, proposal: &OpaqueCallPropos
     push_len(output, proposal.bindings().len());
     for (name, role) in proposal.bindings() {
         push_slice(output, name.as_bytes());
-        output.push(tensor_role_tag(*role));
+        push_tensor_role(output, *role);
     }
 }
 
@@ -2343,7 +2336,13 @@ fn resolve_work_items(
                 .find(|(bound, _)| *bound == name)
                 .ok_or(WorkResolutionError::UnknownParameter(name))?;
             match role {
-                TensorRole::Input => Ok(request.normalized().input_elements()),
+                // Every input of a recognized request shares one shape — the
+                // pointwise recognizer refuses a program whose inputs disagree,
+                // and the serial-sum one admits a single input — so the ordinal
+                // does not change the answer here. A strategy admitting inputs
+                // of different extents must resolve this per ordinal rather
+                // than inherit this arm.
+                TensorRole::Input { .. } => Ok(request.normalized().input_elements()),
                 TensorRole::Output => Ok(request.normalized().output_elements()),
                 TensorRole::Intermediate => {
                     Err(WorkResolutionError::IntermediateShapeUnavailable { parameter: name })
@@ -2748,11 +2747,24 @@ fn encode_rejection(rejection: &FrontierRejection) -> Vec<u8> {
     bytes
 }
 
-const fn tensor_role_tag(role: TensorRole) -> u8 {
+/// Appends one boundary tensor role to a canonical encoding.
+///
+/// An input writes its ordinal after its tag. Two boundary facets over two
+/// different input tensors are different facets, and a one-byte role would give
+/// them one encoding — so a plan reading `a * b` and one reading `a * a` would
+/// share a receipt identity.
+///
+/// Written as an exhaustive match rather than read from the discriminant, so
+/// adding or reordering a role is a build error here instead of a silent change
+/// to every identity ever encoded (ADR 0074 convention 5b).
+fn push_tensor_role(output: &mut Vec<u8>, role: TensorRole) {
     match role {
-        TensorRole::Input => 1,
-        TensorRole::Intermediate => 2,
-        TensorRole::Output => 3,
+        TensorRole::Input { ordinal } => {
+            output.push(1);
+            output.extend_from_slice(&ordinal.get().to_be_bytes());
+        }
+        TensorRole::Intermediate => output.push(2),
+        TensorRole::Output => output.push(3),
     }
 }
 
@@ -2796,7 +2808,7 @@ mod tests {
         CompilationRequest, TargetProfileKey, VerifiedTargetRequest, verify_request,
     };
     use tiler_ir::schedule::{
-        AccessMode, ExceptionalValueAssumption, NumericalPermission, ScheduledRegion,
+        AccessMode, ExceptionalValueAssumption, InputOrdinal, NumericalPermission, ScheduledRegion,
         SubnormalMode, TensorRole,
     };
     use tiler_ir::semantic::{
@@ -2980,7 +2992,12 @@ mod tests {
         // The fused region reads an Input boundary and produces the Output boundary.
         let requirements = admitted.boundary().requirements();
         assert_eq!(requirements.len(), 1);
-        assert_eq!(requirements[0].tensor(), TensorRole::Input);
+        assert_eq!(
+            requirements[0].tensor(),
+            TensorRole::Input {
+                ordinal: InputOrdinal::FIRST
+            }
+        );
         assert_eq!(requirements[0].access(), AccessMode::Read);
         let guarantees = admitted.boundary().guarantees();
         assert_eq!(guarantees.len(), 1);
@@ -3481,12 +3498,25 @@ mod tests {
 
         let contract = derive_call_boundary_contract(
             &declaration,
-            &[("x", TensorRole::Input), ("y", TensorRole::Output)],
+            &[
+                (
+                    "x",
+                    TensorRole::Input {
+                        ordinal: InputOrdinal::FIRST,
+                    },
+                ),
+                ("y", TensorRole::Output),
+            ],
         )
         .expect("a single admitted domain gives a guarantee");
 
         assert_eq!(contract.requirements.len(), 1);
-        assert_eq!(contract.requirements[0].tensor(), TensorRole::Input);
+        assert_eq!(
+            contract.requirements[0].tensor(),
+            TensorRole::Input {
+                ordinal: InputOrdinal::FIRST
+            }
+        );
         assert_eq!(contract.guarantees.len(), 1);
         assert_eq!(contract.guarantees[0].tensor(), TensorRole::Output);
 
@@ -3494,11 +3524,24 @@ mod tests {
         // them: the derivation reads the binding, not the parameter order.
         let swapped = derive_call_boundary_contract(
             &declaration,
-            &[("x", TensorRole::Output), ("y", TensorRole::Input)],
+            &[
+                ("x", TensorRole::Output),
+                (
+                    "y",
+                    TensorRole::Input {
+                        ordinal: InputOrdinal::FIRST,
+                    },
+                ),
+            ],
         )
         .expect("still one domain");
         assert_eq!(swapped.requirements[0].tensor(), TensorRole::Output);
-        assert_eq!(swapped.guarantees[0].tensor(), TensorRole::Input);
+        assert_eq!(
+            swapped.guarantees[0].tensor(),
+            TensorRole::Input {
+                ordinal: InputOrdinal::FIRST
+            }
+        );
     }
 
     /// A declared scaling resolves through the role its parameter is bound to.
@@ -3517,7 +3560,15 @@ mod tests {
             "the fixture cannot distinguish the two roles"
         );
 
-        let bindings = [("x", TensorRole::Input), ("y", TensorRole::Output)];
+        let bindings = [
+            (
+                "x",
+                TensorRole::Input {
+                    ordinal: InputOrdinal::FIRST,
+                },
+            ),
+            ("y", TensorRole::Output),
+        ];
         assert_eq!(
             resolve_work_items(WorkScaling::PerElementOf("x"), &bindings, &request),
             Ok(normalized.input_elements)
@@ -3542,7 +3593,15 @@ mod tests {
         use super::{WorkResolutionError, WorkScaling, resolve_work_items};
 
         let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
-        let bindings = [("x", TensorRole::Input), ("z", TensorRole::Intermediate)];
+        let bindings = [
+            (
+                "x",
+                TensorRole::Input {
+                    ordinal: InputOrdinal::FIRST,
+                },
+            ),
+            ("z", TensorRole::Intermediate),
+        ];
 
         assert_eq!(
             resolve_work_items(WorkScaling::PerElementOf("absent"), &bindings, &request),
@@ -3655,7 +3714,15 @@ mod tests {
         let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let subject = fused_subject(&request);
         let identity = OpaqueCallIdentity::new("test", "both", 1).expect("named");
-        let bindings = vec![("x", TensorRole::Input), ("y", TensorRole::Output)];
+        let bindings = vec![
+            (
+                "x",
+                TensorRole::Input {
+                    ordinal: InputOrdinal::FIRST,
+                },
+            ),
+            ("y", TensorRole::Output),
+        ];
 
         let mut registry = OpaqueCallRegistry::new();
         registry
@@ -3756,22 +3823,39 @@ mod tests {
         )
         .expect("coherent");
 
-        let contract =
-            super::derive_call_boundary_contract(&declaration, &[("buffer", TensorRole::Input)])
-                .expect("one admitted domain");
+        let contract = super::derive_call_boundary_contract(
+            &declaration,
+            &[(
+                "buffer",
+                TensorRole::Input {
+                    ordinal: InputOrdinal::FIRST,
+                },
+            )],
+        )
+        .expect("one admitted domain");
 
         assert_eq!(
             contract.requirements.len(),
             1,
             "the in-out parameter's read requirement was dropped"
         );
-        assert_eq!(contract.requirements[0].tensor(), TensorRole::Input);
+        assert_eq!(
+            contract.requirements[0].tensor(),
+            TensorRole::Input {
+                ordinal: InputOrdinal::FIRST
+            }
+        );
         assert_eq!(
             contract.guarantees.len(),
             1,
             "the in-out parameter's write guarantee was dropped"
         );
-        assert_eq!(contract.guarantees[0].tensor(), TensorRole::Input);
+        assert_eq!(
+            contract.guarantees[0].tensor(),
+            TensorRole::Input {
+                ordinal: InputOrdinal::FIRST
+            }
+        );
     }
 
     /// The opaque derivation can produce a guarantee the bounded profile's own
@@ -3886,7 +3970,15 @@ mod tests {
         let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let subject = fused_subject(&request);
         let identity = OpaqueCallIdentity::new("test", "loose", 1).expect("named");
-        let bindings = vec![("x", TensorRole::Input), ("y", TensorRole::Output)];
+        let bindings = vec![
+            (
+                "x",
+                TensorRole::Input {
+                    ordinal: InputOrdinal::FIRST,
+                },
+            ),
+            ("y", TensorRole::Output),
+        ];
 
         // Permitting contraction where the governed contract forbids it.
         let mut resources = strict_call_resources();
@@ -3972,7 +4064,15 @@ mod tests {
         .expect("coherent");
 
         let identity = OpaqueCallIdentity::new("test", "sum", 1).expect("named");
-        let bindings = vec![("x", TensorRole::Input), ("y", TensorRole::Output)];
+        let bindings = vec![
+            (
+                "x",
+                TensorRole::Input {
+                    ordinal: InputOrdinal::FIRST,
+                },
+            ),
+            ("y", TensorRole::Output),
+        ];
         let mut registry = OpaqueCallRegistry::new();
         registry
             .register(identity, declaration.clone())
@@ -4037,7 +4137,15 @@ mod tests {
         let call = OpaqueCallIdentity::new("owner", "call", 9).expect("canonical");
         let proposal = OpaqueCallProposal::new(
             call,
-            vec![("x", TensorRole::Input), ("y", TensorRole::Output)],
+            vec![
+                (
+                    "x",
+                    TensorRole::Input {
+                        ordinal: InputOrdinal::FIRST,
+                    },
+                ),
+                ("y", TensorRole::Output),
+            ],
         )
         .expect("fixture proposal is exactly reportable");
 
@@ -4123,12 +4231,28 @@ mod tests {
             .expect("fixture proposal is exactly reportable"),
             OpaqueCallProposal::new(
                 call,
-                vec![("y", TensorRole::Output), ("x", TensorRole::Input)],
+                vec![
+                    ("y", TensorRole::Output),
+                    (
+                        "x",
+                        TensorRole::Input {
+                            ordinal: InputOrdinal::FIRST,
+                        },
+                    ),
+                ],
             )
             .expect("fixture proposal is exactly reportable"),
             OpaqueCallProposal::new(
                 call,
-                vec![("x", TensorRole::Output), ("y", TensorRole::Input)],
+                vec![
+                    ("x", TensorRole::Output),
+                    (
+                        "y",
+                        TensorRole::Input {
+                            ordinal: InputOrdinal::FIRST,
+                        },
+                    ),
+                ],
             )
             .expect("fixture proposal is exactly reportable"),
         ];
@@ -4292,8 +4416,16 @@ mod tests {
         let provider = PhysicalProviderProvenance::new(provider_identity("refusal-carry", 3))
             .expect("fixture provider is exactly reportable");
         let call = OpaqueCallIdentity::new("owner", "call", 9).expect("canonical");
-        let proposal = OpaqueCallProposal::new(call, vec![("x", TensorRole::Input)])
-            .expect("fixture proposal is exactly reportable");
+        let proposal = OpaqueCallProposal::new(
+            call,
+            vec![(
+                "x",
+                TensorRole::Input {
+                    ordinal: InputOrdinal::FIRST,
+                },
+            )],
+        )
+        .expect("fixture proposal is exactly reportable");
 
         let cause = refusal(
             "test.refusal-carry.v1",

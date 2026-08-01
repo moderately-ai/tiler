@@ -270,7 +270,7 @@ impl SatisfiedHandoff {
         for consumer in &self.consumers {
             push_slice(output, consumer.as_bytes());
         }
-        output.push(tensor_role_tag(self.role));
+        push_tensor_role(output, self.role);
         output.push(ownership_tag(self.ownership));
         output.push(access_mode_tag(self.access));
     }
@@ -1650,11 +1650,24 @@ fn member_key(members: &[crate::region::SemanticMemberId]) -> Vec<u32> {
     ordinals
 }
 
-const fn tensor_role_tag(role: TensorRole) -> u8 {
+/// Appends one boundary tensor role to a canonical encoding.
+///
+/// An input writes its ordinal after its tag. Two boundary facets over two
+/// different input tensors are different facets, and a one-byte role would give
+/// them one encoding — so a plan reading `a * b` and one reading `a * a` would
+/// share a receipt identity.
+///
+/// Written as an exhaustive match rather than read from the discriminant, so
+/// adding or reordering a role is a build error here instead of a silent change
+/// to every identity ever encoded (ADR 0074 convention 5b).
+fn push_tensor_role(output: &mut Vec<u8>, role: TensorRole) {
     match role {
-        TensorRole::Input => 1,
-        TensorRole::Intermediate => 2,
-        TensorRole::Output => 3,
+        TensorRole::Input { ordinal } => {
+            output.push(1);
+            output.extend_from_slice(&ordinal.get().to_be_bytes());
+        }
+        TensorRole::Intermediate => output.push(2),
+        TensorRole::Output => output.push(3),
     }
 }
 
@@ -1728,6 +1741,7 @@ mod tests {
         VerifiedTargetRequest, verify_request,
     };
     use std::collections::BTreeMap;
+    use tiler_ir::schedule::InputOrdinal;
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, ProviderIdentity,
         SemanticProgram, SemanticProgramBuilder, StrictSerialF32Sum,
@@ -1873,7 +1887,15 @@ mod tests {
             .expect("one call");
         let opaque = FixedCallProvider {
             identity,
-            bindings: vec![("x", TensorRole::Input), ("y", output)],
+            bindings: vec![
+                (
+                    "x",
+                    TensorRole::Input {
+                        ordinal: InputOrdinal::FIRST,
+                    },
+                ),
+                ("y", output),
+            ],
             cost: PhysicalCostEstimate::structural(1, 2, 0),
         };
         let scheduled = scheduled.map(|region| FixedRegionProvider {
@@ -2463,7 +2485,12 @@ mod tests {
             producer,
             RegionBoundary {
                 guarantees: vec![guarantee_facet(TensorRole::Output, profile_guarantees())],
-                requirements: vec![requirement_facet(TensorRole::Input, profile_requirements())],
+                requirements: vec![requirement_facet(
+                    TensorRole::Input {
+                        ordinal: InputOrdinal::FIRST,
+                    },
+                    profile_requirements(),
+                )],
             },
         );
         boundaries.insert(
@@ -2530,7 +2557,12 @@ mod tests {
                     TensorRole::Intermediate,
                     profile_guarantees(),
                 )],
-                requirements: vec![requirement_facet(TensorRole::Input, profile_requirements())],
+                requirements: vec![requirement_facet(
+                    TensorRole::Input {
+                        ordinal: InputOrdinal::FIRST,
+                    },
+                    profile_requirements(),
+                )],
             },
         );
         boundaries.insert(

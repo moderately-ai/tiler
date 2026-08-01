@@ -543,8 +543,13 @@ fn build_fused_core(
     request: &VerifiedTargetRequest,
     scheduled: &VerifiedScheduledRegion,
 ) -> Result<VerifiedKernelProgram, ProgramError> {
+    // A pointwise region reads every program input; a fused serial sum reads
+    // the one its reduction contracts over. The keys travel as a list in
+    // declaration order because that order is what the region's input ordinals
+    // index — a stage's accesses bind to its kernel's buffers positionally, so
+    // reordering here would silently bind each buffer to the wrong tensor.
     let (
-        input_key,
+        input_keys,
         output_key,
         input_shape,
         output_shape,
@@ -553,7 +558,7 @@ fn build_fused_core(
         members,
     ) = if let Some(pointwise) = request.pointwise() {
         (
-            pointwise.input_key.clone(),
+            pointwise.input_keys.clone(),
             pointwise.output_key.clone(),
             pointwise.shape.clone(),
             pointwise.shape.clone(),
@@ -564,7 +569,7 @@ fn build_fused_core(
     } else {
         let subject = request.serial_sum();
         (
-            subject.input_key.clone(),
+            vec![subject.input_key.clone()],
             subject.output_key.clone(),
             subject.input_shape.clone(),
             subject.output_shape.clone(),
@@ -577,20 +582,29 @@ fn build_fused_core(
     let output_bytes = byte_count(output_elements)?;
     let mut builder = open_core_builder(semantic, request)?;
     let abi = declare_host_abi(&mut builder, input_elements, output_elements)?;
-    let external = builder.push_allocation(storage(input_bytes, AllocationOwnership::External))?;
+    // Every input shares the region's one shape, so they share one byte count
+    // and one ABI expression; a strategy admitting inputs of different extents
+    // would need one expression each.
+    let mut input_views = Vec::with_capacity(input_keys.len());
+    for key in input_keys {
+        let external =
+            builder.push_allocation(storage(input_bytes, AllocationOwnership::External))?;
+        let input = builder.push_value(program_input(key, input_shape.clone()), external)?;
+        input_views.push(builder.push_whole_view(input)?);
+    }
     let output_storage =
         builder.push_allocation(storage(output_bytes, AllocationOwnership::Program))?;
-    let input = builder.push_value(program_input(input_key, input_shape), external)?;
     let output = builder.push_value(internal(ValueRole::Output, output_shape), output_storage)?;
-    let input_view = builder.push_whole_view(input)?;
     let output_view = builder.push_whole_view(output)?;
+    let mut accesses: Vec<StageAccess> = input_views
+        .into_iter()
+        .map(|view| read(view, abi.input_bytes))
+        .collect();
+    accesses.push(write(output_view, abi.output_bytes));
     builder.push_stage(
         &lower(scheduled)?,
         &covered(&members),
-        &[
-            read(input_view, abi.input_bytes),
-            write(output_view, abi.output_bytes),
-        ],
+        &accesses,
         abi.launch(abi.output_elements),
     )?;
     builder.push_output(output_key, output)?;

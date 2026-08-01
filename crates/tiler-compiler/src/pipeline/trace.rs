@@ -1603,7 +1603,7 @@ mod tests {
                 required: Quantity::Bindings(required),
                 available: Quantity::Bindings(available),
                 ..
-            } if *required == u64::from(u32::MAX) && *available == 2
+            } if *required == u64::from(u32::MAX) && *available == 4
         ));
 
         let required = DimensionBehaviour::Transform(NumericalPermission::Permitted);

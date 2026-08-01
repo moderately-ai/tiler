@@ -26,11 +26,11 @@ use tiler_ir::kernel::{
 };
 use tiler_ir::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
-    ExceptionalValueAssumption, ExecutionBinding, FlushedZeroSign, KernelSchedule, LaunchPlan,
-    LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
-    OwnershipWitnessId, PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionTopology,
-    RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy, TensorRole,
-    ValueDomainProvenance, VerifiedScheduledRegion, element_count,
+    ExceptionalValueAssumption, ExecutionBinding, FlushedZeroSign, InputOrdinal, KernelSchedule,
+    LaunchPlan, LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof,
+    OwnershipProofKind, OwnershipWitnessId, PointwiseF32Expression, PointwiseF32ExpressionBuilder,
+    ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy,
+    TensorRole, ValueDomainProvenance, VerifiedScheduledRegion, element_count,
 };
 use tiler_ir::semantic::{
     STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
@@ -55,7 +55,9 @@ const BIAS_BITS: u32 = 0x3f80_0000;
 
 fn scale_then_bias_expression(scale_bits: u32, bias_bits: u32) -> PointwiseF32Expression {
     let mut expression = PointwiseF32ExpressionBuilder::new();
-    let input = expression.input().expect("pointwise input");
+    let input = expression
+        .input(InputOrdinal::FIRST)
+        .expect("pointwise input");
     let scale = expression.constant(scale_bits).expect("scale constant");
     let product = expression
         .multiply(input, scale)
@@ -181,7 +183,9 @@ fn pointwise_region_under(
     builder.iteration_shape(shape.clone()).unwrap();
     builder
         .push_access(Access {
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::LinearIdentity,
@@ -199,7 +203,15 @@ fn pointwise_region_under(
             ownership: Some(OwnershipWitnessId::new(0)),
         })
         .unwrap();
-    for (witness, tensor) in [(0, TensorRole::Input), (1, TensorRole::Intermediate)] {
+    for (witness, tensor) in [
+        (
+            0,
+            TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+        ),
+        (1, TensorRole::Intermediate),
+    ] {
         builder
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(witness),
@@ -239,7 +251,9 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
         .unwrap();
     for access in [
         Access {
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: Some(STRICT_AFFINE_CODES_ROLE),
             mode: AccessMode::Read,
             map: LogicalAccess::PackedU4LsbZeroTail { logical_elements },
@@ -247,7 +261,9 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
             ownership: None,
         },
         Access {
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: Some(STRICT_AFFINE_SCALE_ROLE),
             mode: AccessMode::Read,
             map: LogicalAccess::ScalarBroadcast,
@@ -255,7 +271,9 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
             ownership: None,
         },
         Access {
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: Some(STRICT_AFFINE_ZERO_POINT_ROLE),
             mode: AccessMode::Read,
             map: LogicalAccess::ScalarBroadcast,
@@ -276,12 +294,28 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
     for (id, tensor, component_role, element_count) in [
         (
             0,
-            TensorRole::Input,
+            TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             Some(STRICT_AFFINE_CODES_ROLE),
             logical_elements.div_ceil(2),
         ),
-        (1, TensorRole::Input, Some(STRICT_AFFINE_SCALE_ROLE), 1),
-        (2, TensorRole::Input, Some(STRICT_AFFINE_ZERO_POINT_ROLE), 1),
+        (
+            1,
+            TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+            Some(STRICT_AFFINE_SCALE_ROLE),
+            1,
+        ),
+        (
+            2,
+            TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+            Some(STRICT_AFFINE_ZERO_POINT_ROLE),
+            1,
+        ),
         (3, TensorRole::Output, None, logical_elements),
     ] {
         builder
@@ -325,7 +359,9 @@ fn reduction_region(
     let output = input.without_axes(axes);
     let output_elements = element_count(&output).expect("bounded fixture shape");
     let read_tensor = if fused {
-        TensorRole::Input
+        TensorRole::Input {
+            ordinal: InputOrdinal::FIRST,
+        }
     } else {
         TensorRole::Intermediate
     };
@@ -667,7 +703,12 @@ fn the_binding_table_matches_the_emitted_subscripts() {
     let bindings = entry.buffers();
     assert_eq!(bindings.len(), 2);
     assert_eq!(bindings[0].index(), 0);
-    assert_eq!(bindings[0].parameter().tensor, TensorRole::Input);
+    assert_eq!(
+        bindings[0].parameter().tensor,
+        TensorRole::Input {
+            ordinal: InputOrdinal::FIRST
+        }
+    );
     assert_eq!(bindings[0].parameter().access, BufferAccess::Read);
     assert_eq!(bindings[1].index(), 1);
     assert_eq!(bindings[1].parameter().tensor, TensorRole::Intermediate);

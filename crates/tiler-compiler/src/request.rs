@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 use std::sync::OnceLock;
@@ -5,6 +6,7 @@ use std::sync::OnceLock;
 use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::index::FrozenScalarRegistry;
 use tiler_ir::program::abi::AvailabilityPhase;
+use tiler_ir::schedule::InputOrdinal;
 use tiler_ir::semantic::{
     CanonicalIntegerWidth, CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey,
     OutputKey, ProviderIdentity, REDUCTION_AXES_ATTRIBUTE, ResolvedValueType, SemanticIdentity,
@@ -789,17 +791,34 @@ pub(crate) struct NormalizedSerialSum {
 /// One ordered leaf of the bounded standalone pointwise expression.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NormalizedPointwiseLeaf {
-    /// The program's single tensor input.
-    Input,
+    /// One of the program's tensor inputs, by declaration order.
+    Input(InputOrdinal),
     /// One exact binary32 scalar constant.
     Constant(u32),
 }
 
-/// The one operation family used by a bounded standalone pointwise chain.
+/// One recognized operation family of a bounded standalone pointwise chain.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NormalizedPointwiseOperation {
     Add,
     Multiply,
+}
+
+/// Classifies one operation as a recognized pointwise family, or declines.
+///
+/// The two families are named here rather than compared at each site so the
+/// root and the child are recognized by one rule; they are independent, and a
+/// chain mixing them is the approved region's own shape.
+fn pointwise_family(
+    operation: &tiler_ir::semantic::OperationRef<'_>,
+) -> Option<NormalizedPointwiseOperation> {
+    if operation.key() == &add_f32_op() {
+        Some(NormalizedPointwiseOperation::Add)
+    } else if operation.key() == &multiply_f32_op() {
+        Some(NormalizedPointwiseOperation::Multiply)
+    } else {
+        None
+    }
 }
 
 /// The exact ordered association of a three-leaf pointwise chain.
@@ -809,17 +828,24 @@ pub(crate) enum NormalizedPointwiseAssociation {
     Right,
 }
 
-/// A verified one-input, one-output, three-leaf pointwise `f32` program.
+/// A verified N-input, one-output, three-leaf pointwise `f32` program.
+///
+/// `input_keys` and `inputs` are parallel and in the program's declaration
+/// order, which is the order a [`NormalizedPointwiseLeaf::Input`] ordinal
+/// indexes and the order the assembled program binds its buffers in. One
+/// `shape` governs every input and the output, so a single element count sizes
+/// the whole region.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NormalizedPointwise {
-    pub(crate) input_key: InputKey,
+    pub(crate) input_keys: Vec<InputKey>,
     pub(crate) output_key: OutputKey,
     pub(crate) shape: Shape,
-    pub(crate) operation: NormalizedPointwiseOperation,
+    pub(crate) root_operation: NormalizedPointwiseOperation,
+    pub(crate) child_operation: NormalizedPointwiseOperation,
     pub(crate) association: NormalizedPointwiseAssociation,
     pub(crate) leaves: [NormalizedPointwiseLeaf; 3],
     pub(crate) members: Vec<SemanticMemberId>,
-    pub(crate) input: ValueId,
+    pub(crate) inputs: Vec<ValueId>,
     pub(crate) output: ValueId,
     pub(crate) elements: u64,
 }
@@ -1114,21 +1140,35 @@ impl VerifiedRequestSubject {
                 bytes.extend_from_slice(&normalized.output_elements.to_be_bytes());
             }
             NormalizedProgramSubject::Pointwise(normalized) => {
-                push_slice(&mut bytes, b"pointwise-f32.v1");
-                push_slice(&mut bytes, normalized.input_key.as_str().as_bytes());
+                // The sub-tag steps to `v2` because this arm's shape changed:
+                // one input key became a counted run of them, and an input leaf
+                // grew its ordinal. Stepping it rather than the enclosing
+                // `request-subject.v2` domain is what the tag table is for — the
+                // serial-sum arm's bytes do not move, and a `v1` pointwise
+                // subject can never be read as a `v2` one.
+                push_slice(&mut bytes, b"pointwise-f32.v2");
+                push_len(&mut bytes, normalized.input_keys.len());
+                for key in &normalized.input_keys {
+                    push_slice(&mut bytes, key.as_str().as_bytes());
+                }
                 push_slice(&mut bytes, normalized.output_key.as_str().as_bytes());
                 encode_explain_shape(&mut bytes, &normalized.shape);
-                bytes.push(match normalized.operation {
-                    NormalizedPointwiseOperation::Add => 0x01,
-                    NormalizedPointwiseOperation::Multiply => 0x02,
-                });
+                for operation in [normalized.root_operation, normalized.child_operation] {
+                    bytes.push(match operation {
+                        NormalizedPointwiseOperation::Add => 0x01,
+                        NormalizedPointwiseOperation::Multiply => 0x02,
+                    });
+                }
                 bytes.push(match normalized.association {
                     NormalizedPointwiseAssociation::Left => 0x01,
                     NormalizedPointwiseAssociation::Right => 0x02,
                 });
                 for leaf in normalized.leaves {
                     match leaf {
-                        NormalizedPointwiseLeaf::Input => bytes.push(0x01),
+                        NormalizedPointwiseLeaf::Input(ordinal) => {
+                            bytes.push(0x01);
+                            bytes.extend_from_slice(&ordinal.get().to_be_bytes());
+                        }
                         NormalizedPointwiseLeaf::Constant(bits) => {
                             bytes.push(0x02);
                             bytes.extend_from_slice(&bits.to_be_bytes());
@@ -1866,7 +1906,15 @@ fn verify_program(
     // partial, and output values.
     check_budget("regions", budgets.regions, 3)?;
     check_budget("host-expression-nodes", budgets.host_expression_nodes, 9)?;
-    check_budget("buffers", budgets.buffers, 4)?;
+    // A standalone pointwise program binds one buffer per declared input plus
+    // its output, which can exceed the split program's four. Taking the larger
+    // keeps this an upper bound over every plan the request could reach, which
+    // is what lets it be checked before a strategy has been chosen.
+    check_budget(
+        "buffers",
+        budgets.buffers,
+        4.max(program.input_count().saturating_add(1)),
+    )?;
     Ok((
         select_supported_strategy(program)?,
         program.semantic_identity().clone(),
@@ -1956,23 +2004,33 @@ fn select_supported_strategy(program: &SemanticProgram) -> Result<NormalizedProg
     }
 }
 
+/// Recognized operation counts of the bounded standalone pointwise strategy.
+///
+/// The body is two binary operations over three leaves, and each leaf is either
+/// a program input or a constant — a constant being an operation, an input not.
+/// Three inputs is therefore two operations and three constants is five, and any
+/// count between them is one of the mixed programs. The exact count is pinned to
+/// the distinct recognized set once the structural walk has identified it, by
+/// the member cover below.
+const POINTWISE_OPERATIONS_MIN: usize = 2;
+const POINTWISE_OPERATIONS_MAX: usize = 5;
+
 fn normalize_pointwise(program: &SemanticProgram) -> Result<NormalizedPointwise, RequestError> {
-    if program.input_count() != 1
-        || program.output_count() != 1
-        || program.operation_count() != 4
-        || program
-            .values()
-            .any(|value| value.resolved_type() != &F32::resolved_type())
-    {
-        return mismatch("signature");
+    if program.input_count() == 0 {
+        return mismatch("input-arity");
     }
-    let input = program
-        .inputs()
-        .next()
-        .ok_or(RequestError::UnsupportedCapability {
-            phase: "strategy",
-            rule: "missing-input",
-        })?;
+    if program.output_count() != 1 {
+        return mismatch("output-arity");
+    }
+    if !(POINTWISE_OPERATIONS_MIN..=POINTWISE_OPERATIONS_MAX).contains(&program.operation_count()) {
+        return mismatch("operation-set");
+    }
+    if program
+        .values()
+        .any(|value| value.resolved_type() != &F32::resolved_type())
+    {
+        return mismatch("dtype-f32");
+    }
     let output = program
         .outputs()
         .next()
@@ -1981,11 +2039,7 @@ fn normalize_pointwise(program: &SemanticProgram) -> Result<NormalizedPointwise,
             rule: "missing-output",
         })?;
     let (root_ordinal, root) = producer_for_value(program, output.value())?;
-    let operation = if root.key() == &add_f32_op() {
-        NormalizedPointwiseOperation::Add
-    } else if root.key() == &multiply_f32_op() {
-        NormalizedPointwiseOperation::Multiply
-    } else {
+    let Some(root_operation) = pointwise_family(&root) else {
         return mismatch("operation-family");
     };
     let mut root_operands = root.operands();
@@ -1996,23 +2050,35 @@ fn normalize_pointwise(program: &SemanticProgram) -> Result<NormalizedPointwise,
     ) else {
         return mismatch("pointwise-arity");
     };
-    let (association, child_ordinal, child, leaf_values) =
-        if let Ok((ordinal, child)) = producer(program, root_left, root.key()) {
+    // The two operations may be different families. `(a * b) + c` is the driving
+    // shape of the approved region, and requiring the child to repeat the root's
+    // key admitted only homogeneous chains like `(a * 2.0) * 3.0`.
+    let child_at = |value: ValueId| {
+        producer_for_value(program, value)
+            .ok()
+            .and_then(|(ordinal, operation)| {
+                pointwise_family(&operation).map(|family| (ordinal, operation, family))
+            })
+    };
+    let (association, child_ordinal, child, child_operation, leaf_values) =
+        if let Some((ordinal, child, family)) = child_at(root_left) {
             (
                 NormalizedPointwiseAssociation::Left,
                 ordinal,
                 child,
+                family,
                 [
                     child.operands().next(),
                     child.operands().nth(1),
                     Some(root_right),
                 ],
             )
-        } else if let Ok((ordinal, child)) = producer(program, root_right, root.key()) {
+        } else if let Some((ordinal, child, family)) = child_at(root_right) {
             (
                 NormalizedPointwiseAssociation::Right,
                 ordinal,
                 child,
+                family,
                 [
                     Some(root_left),
                     child.operands().next(),
@@ -2022,7 +2088,14 @@ fn normalize_pointwise(program: &SemanticProgram) -> Result<NormalizedPointwise,
         } else {
             return mismatch("pointwise-association");
         };
-    if child.attributes() != root.attributes() || child.results().len() != 1 {
+    // The families may now differ, but neither may carry an attribute the other
+    // does not: a recognized elementwise operation of this profile is
+    // attribute-free, and an attribute is a semantic fact this normalization
+    // does not carry forward and therefore must not silently drop.
+    if !child.attributes().fields().is_empty()
+        || !root.attributes().fields().is_empty()
+        || child.results().len() != 1
+    {
         return mismatch("pointwise-operation");
     }
     let [Some(first), Some(second), Some(third)] = leaf_values else {
@@ -2032,11 +2105,20 @@ fn normalize_pointwise(program: &SemanticProgram) -> Result<NormalizedPointwise,
         SemanticMemberId(root_ordinal),
         SemanticMemberId(child_ordinal),
     ];
-    let mut input_count = 0_usize;
-    let mut normalize_leaf = |value| {
-        if value == input.value() {
-            input_count += 1;
-            Ok(NormalizedPointwiseLeaf::Input)
+    // Input ordinals follow the program's own declaration order, not the order
+    // the leaves happen to mention them. Declaration order is what the ABI binds
+    // in, and it is stable under any restructuring of the expression, so two
+    // spellings of one program normalize to one region rather than to two that
+    // differ only in which buffer holds which tensor.
+    let declared: Vec<ValueId> = program.inputs().map(|input| input.value()).collect();
+    let mut normalize_leaf = |value: ValueId| {
+        if let Some(position) = declared.iter().position(|declared| *declared == value) {
+            let ordinal =
+                u32::try_from(position).map_err(|_| RequestError::UnsupportedCapability {
+                    phase: "strategy",
+                    rule: "input-ordinal",
+                })?;
+            Ok(NormalizedPointwiseLeaf::Input(InputOrdinal::new(ordinal)))
         } else {
             let (bits, ordinal) = constant_bits(program, value)?;
             members.push(SemanticMemberId(ordinal));
@@ -2050,29 +2132,73 @@ fn normalize_pointwise(program: &SemanticProgram) -> Result<NormalizedPointwise,
     ];
     members.sort_unstable();
     members.dedup();
-    if input_count != 1 || members.len() != program.operation_count() {
+    // Every declared input must be read and every recognized operation covered.
+    // A declared input no leaf mentions would bind a buffer the kernel never
+    // loads, and an uncovered operation would be work this region silently
+    // drops.
+    //
+    // Both arms are **reservations, not tested guarantees**, and this profile
+    // cannot reach either. A frozen program retains only output-reachable
+    // declarations and operations; every reachable operation is the root, the
+    // child, or a constant feeding one of the three leaves; and every reachable
+    // input is an operand of the root or the child, hence a leaf. They are kept
+    // because the first widening that admits a deeper body or a non-leaf
+    // operand makes them reachable, and both failures they name are silent
+    // rather than loud.
+    let read: BTreeSet<InputOrdinal> = leaves
+        .iter()
+        .filter_map(|leaf| match leaf {
+            NormalizedPointwiseLeaf::Input(ordinal) => Some(*ordinal),
+            NormalizedPointwiseLeaf::Constant(_) => None,
+        })
+        .collect();
+    if read.len() != declared.len() || members.len() != program.operation_count() {
         return mismatch("pointwise-leaves");
     }
     let shape = program
-        .shape(input.value())
+        .shape(
+            *declared
+                .first()
+                .ok_or(RequestError::UnsupportedCapability {
+                    phase: "strategy",
+                    rule: "missing-input",
+                })?,
+        )
         .map_err(|_| RequestError::UnsupportedCapability {
             phase: "strategy",
             rule: "input-handle",
         })?
         .clone();
-    if shape.rank() == 0 || program.shape(output.value()).ok() != Some(&shape) {
+    // One shape governs the whole region: the iteration domain, every read's
+    // element count, and the write's.
+    //
+    // The per-input arm is a **reservation, not a tested guarantee.** Today it
+    // cannot fail: every declared input is a leaf (the cover above proves the
+    // read set is the declared set), every leaf is an operand of one of the two
+    // operations, and the semantic schema requires those operands to agree in
+    // shape — so no constructible program reaches it with a disagreeing input.
+    // It is kept because the first widening that admits a broadcast or reindex
+    // operand makes it reachable, and the failure it would then prevent is
+    // sizing the whole region by whichever input happened to be declared first.
+    if shape.rank() == 0
+        || program.shape(output.value()).ok() != Some(&shape)
+        || declared
+            .iter()
+            .any(|input| program.shape(*input).ok() != Some(&shape))
+    {
         return mismatch("pointwise-shape");
     }
     let elements = element_count_u64(&shape, "input")?;
     Ok(NormalizedPointwise {
-        input_key: input.key().clone(),
+        input_keys: program.inputs().map(|input| input.key().clone()).collect(),
         output_key: output.key().clone(),
         shape,
-        operation,
+        root_operation,
+        child_operation,
         association,
         leaves,
         members,
-        input: input.value(),
+        inputs: declared,
         output: output.value(),
         elements,
     })
@@ -2094,12 +2220,15 @@ fn normalize_serial_sum(program: &SemanticProgram) -> Result<NormalizedSerialSum
     // operations, and one or two constants; a shared constant is the normalized
     // spelling of the same program. The exact count is pinned against the
     // distinct recognized set once the structural walk has identified it.
-    if program.input_count() != 1
-        || program.output_count() != 1
-        || !(RECOGNIZED_OPERATIONS_MIN..=RECOGNIZED_OPERATIONS_MAX)
-            .contains(&program.operation_count())
+    if program.input_count() != 1 {
+        return mismatch("input-arity");
+    }
+    if program.output_count() != 1 {
+        return mismatch("output-arity");
+    }
+    if !(RECOGNIZED_OPERATIONS_MIN..=RECOGNIZED_OPERATIONS_MAX).contains(&program.operation_count())
     {
-        return mismatch("signature");
+        return mismatch("operation-set");
     }
     if program
         .values()
@@ -2222,7 +2351,7 @@ fn check_recognized_operation_cover(
     recognized: &RecognizedSerialSumMembers,
 ) -> Result<(), RequestError> {
     if program.operation_count() != recognized.all().len() {
-        return mismatch("signature");
+        return mismatch("operation-set");
     }
     Ok(())
 }
@@ -2420,7 +2549,7 @@ mod tests {
             0 => (
                 [input, first, second],
                 [
-                    NormalizedPointwiseLeaf::Input,
+                    NormalizedPointwiseLeaf::Input(InputOrdinal::FIRST),
                     NormalizedPointwiseLeaf::Constant(first_bits),
                     NormalizedPointwiseLeaf::Constant(second_bits),
                 ],
@@ -2429,7 +2558,7 @@ mod tests {
                 [first, input, second],
                 [
                     NormalizedPointwiseLeaf::Constant(first_bits),
-                    NormalizedPointwiseLeaf::Input,
+                    NormalizedPointwiseLeaf::Input(InputOrdinal::FIRST),
                     NormalizedPointwiseLeaf::Constant(second_bits),
                 ],
             ),
@@ -2438,7 +2567,7 @@ mod tests {
                 [
                     NormalizedPointwiseLeaf::Constant(first_bits),
                     NormalizedPointwiseLeaf::Constant(second_bits),
-                    NormalizedPointwiseLeaf::Input,
+                    NormalizedPointwiseLeaf::Input(InputOrdinal::FIRST),
                 ],
             ),
             _ => panic!("the three-leaf fixture has positions 0, 1, and 2"),
@@ -2689,7 +2818,8 @@ mod tests {
                 for input_position in 0..3 {
                     let (program, leaves) = pointwise_program(family, association, input_position);
                     let normalized = normalize_pointwise(&program).unwrap();
-                    assert_eq!(normalized.operation, family);
+                    assert_eq!(normalized.root_operation, family);
+                    assert_eq!(normalized.child_operation, family);
                     assert_eq!(normalized.association, association);
                     assert_eq!(normalized.leaves, leaves);
                     assert_eq!(
@@ -2708,50 +2838,24 @@ mod tests {
         }
     }
 
+    /// Graph shapes the widened recognizer now admits, and what each proves.
+    ///
+    /// Each of these was refused before the widening, and each was refused for
+    /// the *combined* signature gate rather than for anything about its shape:
+    /// the old rule demanded exactly one input and exactly four operations, so
+    /// a repeated input, a shared constant, and a second input tensor all
+    /// failed the same undifferentiated check. Recording their admission here
+    /// is what keeps the widening from being asserted only at the compiler
+    /// boundary test.
     #[test]
-    fn pointwise_recognition_rejects_adversarial_graph_shapes() {
-        // Mixed arithmetic family.
-        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
-        let input = builder
-            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
-            .unwrap();
-        let first = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
-        let second = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
-        let child = F32Add::apply(&mut builder, input, first).unwrap();
-        let root = F32Multiply::apply(&mut builder, child, second).unwrap();
-        builder
-            .output(OutputKey::new("result").unwrap(), root)
-            .unwrap();
-        assert_pointwise_rejection(&builder.build().unwrap(), "pointwise-association");
-
-        // An all-constant graph has no output-reachable input: the frozen
-        // program drops the unused declaration, so this is also the exact
-        // constructible no-input case and fails at the signature boundary.
-        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
-        let _input = builder
-            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
-            .unwrap();
-        let first = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
-        let second = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
-        let child = F32Add::apply(&mut builder, first, second).unwrap();
-        let root = F32Add::apply(&mut builder, child, first).unwrap();
-        builder
-            .output(OutputKey::new("result").unwrap(), root)
-            .unwrap();
-        let all_constant = builder.build().unwrap();
-        assert_eq!(all_constant.input_count(), 0);
-        assert_pointwise_rejection(&all_constant, "signature");
-
-        // Repeated input plus an authored but unreachable constant. The frozen
-        // program excludes dead operations, so the exact admission-boundary
-        // observation is three output-reachable operations and a signature
-        // refusal rather than an invisible fifth member.
+    fn pointwise_recognition_admits_repeated_shared_and_multiple_inputs() {
+        // `(a + a) + 1.0`: one input read at two leaves. The physical builder
+        // shares one leaf per ordinal, so this binds one read access.
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder
             .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
             .unwrap();
         let constant = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
-        let _dead = F32Constant::apply(&mut builder, 7.0_f32.to_bits()).unwrap();
         let child = F32Add::apply(&mut builder, input, input).unwrap();
         let root = F32Add::apply(&mut builder, child, constant).unwrap();
         builder
@@ -2759,10 +2863,19 @@ mod tests {
             .unwrap();
         let repeated = builder.build().unwrap();
         assert_eq!(repeated.operation_count(), 3);
-        assert_pointwise_rejection(&repeated, "signature");
+        let normalized = normalize_pointwise(&repeated).unwrap();
+        assert_eq!(normalized.input_keys.len(), 1);
+        assert_eq!(
+            normalized.leaves,
+            [
+                NormalizedPointwiseLeaf::Input(InputOrdinal::new(0)),
+                NormalizedPointwiseLeaf::Input(InputOrdinal::new(0)),
+                NormalizedPointwiseLeaf::Constant(1.0_f32.to_bits()),
+            ],
+        );
 
-        // One constant occurrence shared by two leaves likewise has only three
-        // output-reachable operations and cannot masquerade as two constants.
+        // One constant occurrence shared by two leaves: three operations cover
+        // the program exactly, and the two leaves keep their own positions.
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder
             .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
@@ -2775,12 +2888,10 @@ mod tests {
             .unwrap();
         let shared = builder.build().unwrap();
         assert_eq!(shared.operation_count(), 3);
-        assert_pointwise_rejection(&shared, "signature");
+        assert_eq!(normalize_pointwise(&shared).unwrap().input_keys.len(), 1);
 
-        // A second output-reachable input is observable even though the
-        // arithmetic shape otherwise has exactly two operations and one
-        // constant. Strategy admission therefore refuses the input cardinality
-        // before leaf classification can mistake either input for a constant.
+        // Two input tensors, ordinal-ordered by declaration and not by the
+        // order the leaves mention them.
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let first_input = builder
             .input::<F32>(
@@ -2795,18 +2906,81 @@ mod tests {
             )
             .unwrap();
         let constant = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
-        let child = F32Add::apply(&mut builder, first_input, second_input).unwrap();
+        let child = F32Add::apply(&mut builder, second_input, first_input).unwrap();
         let root = F32Add::apply(&mut builder, child, constant).unwrap();
         builder
             .output(OutputKey::new("result").unwrap(), root)
             .unwrap();
         let multiple_inputs = builder.build().unwrap();
         assert_eq!(multiple_inputs.input_count(), 2);
-        assert_eq!(multiple_inputs.operation_count(), 3);
-        assert_pointwise_rejection(&multiple_inputs, "signature");
+        let normalized = normalize_pointwise(&multiple_inputs).unwrap();
+        assert_eq!(
+            normalized.input_keys,
+            [
+                InputKey::new("first-input").unwrap(),
+                InputKey::new("second-input").unwrap(),
+            ],
+        );
+        assert_eq!(
+            normalized.leaves,
+            [
+                NormalizedPointwiseLeaf::Input(InputOrdinal::new(1)),
+                NormalizedPointwiseLeaf::Input(InputOrdinal::new(0)),
+                NormalizedPointwiseLeaf::Constant(1.0_f32.to_bits()),
+            ],
+            "the ordinal is the declaration position, not the leaf position",
+        );
+
+        // A mixed multiply-then-add chain, which is the approved region's own
+        // shape and the one the homogeneous-chain rule used to refuse.
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let first = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+        let second = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
+        let child = F32Multiply::apply(&mut builder, input, first).unwrap();
+        let root = F32Add::apply(&mut builder, child, second).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
+            .unwrap();
+        let mixed = normalize_pointwise(&builder.build().unwrap()).unwrap();
+        assert_eq!(mixed.root_operation, NormalizedPointwiseOperation::Add);
+        assert_eq!(
+            mixed.child_operation,
+            NormalizedPointwiseOperation::Multiply
+        );
+    }
+
+    /// Graph shapes the widened recognizer still refuses, each by its own rule.
+    ///
+    /// The rules are what changed: the combined `signature` gate is split, so a
+    /// reader of a refusal learns which of input arity, output arity, the
+    /// operation set, or the dtype was not recognized instead of having to
+    /// re-derive it from the program.
+    #[test]
+    fn pointwise_recognition_rejects_adversarial_graph_shapes() {
+        // An all-constant graph has no output-reachable input: the frozen
+        // program drops the unused declaration, so this is also the exact
+        // constructible no-input case.
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let _input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let first = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+        let second = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
+        let child = F32Add::apply(&mut builder, first, second).unwrap();
+        let root = F32Add::apply(&mut builder, child, first).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
+            .unwrap();
+        let all_constant = builder.build().unwrap();
+        assert_eq!(all_constant.input_count(), 0);
+        assert_pointwise_rejection(&all_constant, "input-arity");
 
         // An extra output-reachable operation cannot be hidden behind either
-        // association, including the shape with two same-family child roots.
+        // association: the root's second operand is produced rather than being
+        // a leaf, so leaf classification asks for a constant and finds an add.
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder
             .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
@@ -2821,11 +2995,11 @@ mod tests {
             .unwrap();
         let two_children = builder.build().unwrap();
         assert_eq!(two_children.operation_count(), 5);
-        assert_pointwise_rejection(&two_children, "signature");
+        assert_pointwise_rejection(&two_children, "operation-family");
 
-        // Naming a non-root output makes the later operation unreachable in
-        // the frozen program, so it is refused at the exact operation-count
-        // boundary rather than trusted from the mutable draft.
+        // Naming a non-root output makes the later operation unreachable in the
+        // frozen program, so what remains is a single operation over two leaves
+        // and neither operand names a recognized child.
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder
             .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
@@ -2839,7 +3013,30 @@ mod tests {
             .unwrap();
         let wrong_output = builder.build().unwrap();
         assert_eq!(wrong_output.operation_count(), 2);
-        assert_pointwise_rejection(&wrong_output, "signature");
+        assert_pointwise_rejection(&wrong_output, "pointwise-association");
+
+        // A declared input no leaf reads is *not constructible*: the frozen
+        // program retains only output-reachable declarations, so a fourth input
+        // no operation consumes is dropped and what remains is the approved
+        // three-input region. `pointwise-leaves` therefore guards a case this
+        // profile cannot reach — see the reservation recorded at that check.
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let mut inputs = Vec::new();
+        for key in ["a", "b", "c", "d"] {
+            inputs.push(
+                builder
+                    .input::<F32>(InputKey::new(key).unwrap(), Shape::from_dims([2, 3]))
+                    .unwrap(),
+            );
+        }
+        let child = F32Multiply::apply(&mut builder, inputs[0], inputs[1]).unwrap();
+        let root = F32Add::apply(&mut builder, child, inputs[2]).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
+            .unwrap();
+        let pruned = builder.build().unwrap();
+        assert_eq!(pruned.input_count(), 3);
+        assert_eq!(normalize_pointwise(&pruned).unwrap().input_keys.len(), 3);
     }
 
     #[test]
@@ -2960,7 +3157,7 @@ mod tests {
             verify_request(CompilationRequest::governed(&invalid)),
             Err(RequestError::UnsupportedCapability {
                 phase: "strategy",
-                rule: "signature",
+                rule: "operation-set",
             })
         );
     }

@@ -1561,8 +1561,23 @@ impl TargetProfileBuilder {
                 .expect("the governed workgroup query is deferred"),
             )
             .expect("the governed workgroup query declaration is valid");
+        // Four is the widest signature the bounded profile can now assemble: a
+        // recognized pointwise body has three leaves, so at most three input
+        // tensors plus one output, which is also exactly what the strict-affine
+        // dequantize region binds. It is stated as the governed budget's own
+        // `buffers` bound rather than derived per strategy, so a plan the
+        // request already admitted cannot then be refused for a binding count
+        // the same build considered legal.
+        //
+        // It remains a compiler-governed prototype guarantee, **not** a device
+        // measurement: `declare_measured_max_buffer_bindings_per_entry` is the
+        // separate constructor a measured profile uses. Metal's own
+        // documented per-stage buffer argument table bounds this far above —
+        // the production profile ticket declares that figure with its per-row
+        // authority ledger — so a conservative four claims nothing this
+        // prototype authority cannot support.
         builder
-            .declare_max_buffer_bindings_per_entry(2, source.clone())
+            .declare_max_buffer_bindings_per_entry(4, source.clone())
             .expect("the governed binding declaration is valid");
         builder
             .declare_index_arithmetic(IndexArithmeticSupport::CompleteU64, source.clone())
