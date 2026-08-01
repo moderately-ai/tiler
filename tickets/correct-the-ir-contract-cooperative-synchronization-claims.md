@@ -1,7 +1,7 @@
 ---
 id: correct-the-ir-contract-cooperative-synchronization-claims
 title: Correct the IR contract's expired cooperative-synchronization claims
-status: in-progress
+status: review
 priority: p2
 dependencies: []
 related: [implement-the-single-workgroup-synchronized-reduction-strategy, admit-loop-carried-cooperative-staging]
