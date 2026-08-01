@@ -1,7 +1,7 @@
 ---
 id: correct-the-bf16-reference-evaluation-status-outside-the-dtype-ledger
 title: Correct the BF16 reference-evaluation status outside the dtype ledger
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [evaluate-bf16-reference-semantics, register-the-bf16-semantic-operation-signatures]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation, research/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, bf16, documentation]
-claimed_from: todo
-assignee: worker-bf16-status
-lease_expires_at: 1785586663
 ---
 ## User-visible outcome
 
