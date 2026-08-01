@@ -63,12 +63,12 @@ use std::fmt::Write as _;
 use tiler_ir::kernel::{
     AddressSpace, BarrierOrdering, BarrierSpec, BinaryOp, BlockRef, BufferAccess, Builtin,
     CompareOp, ConvertOp, ExecutionScope, KernelConstant, KernelType, MemoryScope, OperationRef,
-    OperationView, PackedExtractOp, SerialLoopRef, UnaryOp, VerifiedBufferId, VerifiedKernel,
-    VerifiedValueId,
+    OperationView, PackedExtractOp, SerialLoopRef, StagingParameter, UnaryOp, VerifiedBufferId,
+    VerifiedKernel, VerifiedStagingId, VerifiedValueId,
 };
 use tiler_ir::schedule::{
     ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
-    NumericalRealization, SubnormalMode, TensorRole, ValueDomainProvenance,
+    NumericalRealization, StagingId, SubnormalMode, TensorRole, ValueDomainProvenance,
 };
 
 use crate::diagnostic::{BarrierRejection, MetalEmitError, MetalOperationFamily};
@@ -86,6 +86,32 @@ const ENTRY_PREFIX: &str = "tiler_kernel_";
 
 /// Prefix of every emitted NaN-canonicalization helper symbol.
 const CANONICALIZE_PREFIX: &str = "tiler_canonicalize_nan_f32_";
+
+/// Prefix of every emitted workgroup staging allocation.
+const STAGING_PREFIX: &str = "tg";
+
+/// The MSL attribute delivering one invocation's index within its workgroup.
+///
+/// The governed [`Builtin::LocalInvocationIndex`] is the *linear* coordinate a
+/// cooperative tile names its participants by, so the linear
+/// `[[thread_index_in_threadgroup]]` is the delivery that matches it.
+/// `[[thread_position_in_threadgroup]]` is the three-component position and
+/// would need a layout rule to linearize — a second, unchecked copy of the
+/// workgroup geometry, which is the duplication the governed key exists to
+/// avoid.
+const LOCAL_INDEX_ATTRIBUTE: &str = "thread_index_in_threadgroup";
+
+/// The MSL type the local-index parameter is declared with.
+///
+/// One admitted spelling rather than a caller-visible selection, which is the
+/// difference from the launch index: MSL admits `ushort` and `uint` here, and
+/// this backend fixes `uint` because the structured value is widened to the
+/// governed 64-bit index role either way, so the narrower form buys nothing a
+/// caller could act on. A second admitted spelling would become a
+/// [`MetalEmissionRealization`] field at that point, exactly as the launch
+/// index's did — the record exists to carry choices a caller makes, and there is
+/// no choice here yet.
+const LOCAL_INDEX_TYPE: &str = "uint";
 
 /// The IEEE-754 binary32 biased-exponent field.
 ///
@@ -577,6 +603,16 @@ fn emit_entry_point(
             parameter.element_count,
         );
     }
+    for parameter in kernel.staging() {
+        emit!(
+            text,
+            "//   {}: {:?}, {:?} space, {} slot(s)\n",
+            staging_name(parameter.staging),
+            parameter.element_type,
+            parameter.address_space,
+            parameter.element_count,
+        );
+    }
 
     let mut parameters = Vec::with_capacity(bindings.len().saturating_add(1));
     for binding in &bindings {
@@ -598,6 +634,17 @@ fn emit_entry_point(
             };
             emit!(text, "{INDENT}{INDENT}{parameter}{suffix}\n");
         }
+    }
+    // Workgroup staging is declared inside the entry point, never as a
+    // parameter. A parameter's position is its argument-table ordinal, and
+    // threadgroup storage of a statically known extent has no argument-table
+    // position at all — declaring one would re-base every later `[[buffer(N)]]`
+    // ordinal and change what an existing signature position means. The extents
+    // come from the kernel's own declarations, which the structured-kernel
+    // verifier already proved equal to the region's cooperative tile, so nothing
+    // here re-derives a slot count from a producer's word.
+    for parameter in kernel.staging() {
+        text.push_str(&staging_declaration(parameter)?);
     }
     text.push_str(&body);
     text.push_str("}\n");
@@ -628,6 +675,42 @@ fn parameter_declaration(binding: &MetalBufferBinding) -> Result<String, MetalEm
     let space = address_space_declaration(parameter.address_space, parameter.access)?;
     let index = binding.index();
     Ok(format!("{space} {element} *b{index} [[buffer({index})]]"))
+}
+
+/// Returns the deterministic emitted name of one workgroup staging allocation.
+///
+/// Keyed by the scheduled [`StagingId`] rather than by declaration position, so
+/// the name a staged access emits and the name the entry point declares come
+/// from one fact. The structured-kernel verifier proves the declared list equals
+/// the tile's, in order, so the two can never disagree — but deriving both from
+/// the same identifier means a future divergence would be a build error rather
+/// than a body referencing an allocation that was declared under another name.
+fn staging_name(staging: StagingId) -> String {
+    format!("{STAGING_PREFIX}{}", staging.get())
+}
+
+/// Returns the MSL declaration of one workgroup staging allocation.
+///
+/// The address space is matched by name and every space but `Workgroup` is
+/// refused, rather than assumed from the fact that the IR calls this "staging".
+/// The structured-kernel verifier does require `AddressSpace::Workgroup` here,
+/// so this refusal is unreachable through a verified kernel — which is exactly
+/// why it is written as a refusal and not an `expect`: a widened `AddressSpace`
+/// must stop at this backend, the one that has to decide the new space's MSL
+/// storage qualifier.
+fn staging_declaration(parameter: StagingParameter) -> Result<String, MetalEmitError> {
+    let qualifier = match parameter.address_space {
+        AddressSpace::Workgroup => "threadgroup",
+        space @ (AddressSpace::Device
+        | AddressSpace::Constant
+        | AddressSpace::InvocationPrivate) => {
+            return Err(MetalEmitError::UnsupportedAddressSpace { space });
+        }
+    };
+    let element = msl_type(parameter.element_type);
+    let name = staging_name(parameter.staging);
+    let slots = parameter.element_count;
+    Ok(format!("{INDENT}{qualifier} {element} {name}[{slots}];\n"))
 }
 
 /// Returns the MSL address-space and mutability qualifiers of one parameter.
@@ -668,17 +751,51 @@ fn builtin_declaration(
     emission: MetalEmissionRealization,
 ) -> Result<String, MetalEmitError> {
     let name = builtin_parameter(builtin)?;
-    Ok(format!(
-        "{} {name} [[{}]]",
-        emission.launch_index.declared_type(),
-        emission.launch_index.attribute()
-    ))
+    let declared_type = builtin_declared_type(builtin, emission)?;
+    let attribute = match builtin {
+        Builtin::GlobalInvocationIndex => emission.launch_index.attribute(),
+        Builtin::LocalInvocationIndex => LOCAL_INDEX_ATTRIBUTE,
+        _ => {
+            return Err(MetalEmitError::UnsupportedOperation {
+                family: MetalOperationFamily::Builtin,
+            });
+        }
+    };
+    Ok(format!("{declared_type} {name} [[{attribute}]]"))
+}
+
+/// Returns the MSL type one admitted builtin's attributed parameter carries.
+///
+/// The global index reads its declared type from the selected
+/// [`LaunchIndexRealization`](crate::target::LaunchIndexRealization), because
+/// that spelling is a backend *choice* among several MSL admits and a caller
+/// records which one it made. The local index has one admitted spelling in this
+/// backend and therefore no selection to read.
+///
+/// **The asymmetry is stated rather than smoothed over.** Reading the launch
+/// index's realization for both — which is what this function replaced — would
+/// have declared `[[thread_index_in_threadgroup]]` under the launch attribute's
+/// type and, worse, under the launch attribute itself. That was unreachable only
+/// because [`builtin_parameter`] refused the local index outright, so admitting
+/// the local index is exactly what makes the shared read wrong.
+fn builtin_declared_type(
+    builtin: Builtin,
+    emission: MetalEmissionRealization,
+) -> Result<&'static str, MetalEmitError> {
+    match builtin {
+        Builtin::GlobalInvocationIndex => Ok(emission.launch_index.declared_type()),
+        Builtin::LocalInvocationIndex => Ok(LOCAL_INDEX_TYPE),
+        _ => Err(MetalEmitError::UnsupportedOperation {
+            family: MetalOperationFamily::Builtin,
+        }),
+    }
 }
 
 /// Returns the deterministic parameter name of one governed launch builtin.
 fn builtin_parameter(builtin: Builtin) -> Result<&'static str, MetalEmitError> {
     match builtin {
         Builtin::GlobalInvocationIndex => Ok("tiler_global_invocation_index"),
+        Builtin::LocalInvocationIndex => Ok("tiler_local_invocation_index"),
         _ => Err(MetalEmitError::UnsupportedOperation {
             family: MetalOperationFamily::Builtin,
         }),
@@ -935,6 +1052,17 @@ impl KernelEmitter<'_> {
             })
     }
 
+    /// Returns the emitted name of one verified staging allocation.
+    ///
+    /// Resolved through the kernel's own handle check, so an allocation handle
+    /// belonging to another kernel or naming no retained allocation is refused
+    /// by the IR rather than silently formatted into a name.
+    fn staging_name(&self, staging: VerifiedStagingId) -> Result<String, MetalEmitError> {
+        Ok(staging_name(
+            self.kernel.staging_parameter(staging)?.staging,
+        ))
+    }
+
     /// Emits every operation of one structured block in order.
     fn emit_block(&mut self, block: BlockRef<'_>) -> Result<(), MetalEmitError> {
         for operation in block.operations() {
@@ -1010,6 +1138,48 @@ impl KernelEmitter<'_> {
                 Ok(())
             }
             OperationView::SerialLoop(loop_ref) => self.emit_serial_loop(loop_ref, &results),
+            // The phase is emitted as a comment and never as a guard. It is the
+            // schedule-side *evidence* that authorizes the effect — the verifier
+            // resolved it against the tile's declared staged access before this
+            // kernel existed — so turning it into emitted control flow would add
+            // a run-time test for a fact already proven, and one whose failure
+            // would silently skip a staged write the consuming phase depends on.
+            OperationView::StagedStore {
+                staging,
+                offset,
+                value,
+                phase,
+            } => {
+                if !results.is_empty() {
+                    return Err(arity("staged-store-result"));
+                }
+                let allocation = self.staging_name(staging)?;
+                let offset = self.name(offset)?.to_owned();
+                let value = self.name(value)?.to_owned();
+                let phase = phase.get();
+                self.line(&format!(
+                    "{allocation}[{offset}] = {value};  // tile phase {phase}"
+                ));
+                Ok(())
+            }
+            OperationView::StagedLoad {
+                staging,
+                offset,
+                phase,
+            } => {
+                let [result] = results.as_slice() else {
+                    return Err(arity("staged-load-result"));
+                };
+                let allocation = self.staging_name(staging)?;
+                let offset = self.name(offset)?.to_owned();
+                let phase = phase.get();
+                let value_type = self.value_type(*result)?;
+                let name = self.bind(*result)?;
+                self.line(&format!(
+                    "{value_type} {name} = {allocation}[{offset}];  // tile phase {phase}"
+                ));
+                Ok(())
+            }
             OperationView::Barrier { spec } => {
                 if !results.is_empty() {
                     return Err(arity("barrier-result"));
@@ -1032,7 +1202,7 @@ impl KernelEmitter<'_> {
             return Err(arity("builtin-result"));
         };
         let parameter = builtin_parameter(builtin)?;
-        let declared = self.emission.launch_index.declared_type();
+        let declared = builtin_declared_type(builtin, self.emission)?;
         let value_type = self.value_type(*result)?;
         let name = self.bind(*result)?;
         // This translation unit selected the launch attribute's declared type

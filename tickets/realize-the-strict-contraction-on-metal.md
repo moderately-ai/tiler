@@ -110,3 +110,68 @@ Ordered; the first is independently deliverable and is what unblocks the board.
 ### Verification run
 
 No source file was modified, so the package gates have nothing new to check. `tkt lint` reports `ok: no problems found`; `git diff --check` is clean; `git status` shows only this ticket file. The two blocking claims are each reproducible in one command: `sed -n '341,343p' crates/tiler-ir/src/kernel/verify.rs` for the unconditional synchronization refusal, and `sed -n '450,456p' crates/tiler-reference/src/contraction.rs` with `sed -n '90p' crates/tiler-reference/src/lib.rs` for the work bound.
+
+## Outcome — 2026-08-01, resumed with both blockers landed
+
+**Stopped again, on a strictly narrower blocker, after landing the emission half.** The first stop record above is preserved and its central claim has expired: the synchronization authority it waited on exists, and a staged, fenced Metal kernel now compiles and links. What still blocks `tiled` is one modelling gap the cooperative module already names as unmodelled — a staging allocation reused across rounds. That is filed as [`admit-loop-carried-cooperative-staging`](admit-loop-carried-cooperative-staging.md); this ticket resumes on it.
+
+### What landed
+
+**Metal emission of cooperative kernels.** The synchronization landing added the KIR constructs; nothing emitted them. Before this change `crates/tiler-metal/src/emit.rs` refused `Builtin::LocalInvocationIndex` (`builtin_parameter`'s wildcard), refused `AddressSpace::Workgroup` (`address_space_declaration`), and had no `StagedStore`/`StagedLoad` arm, so every one fell to `UnrecognizedOperation` — **no cooperative kernel could reach MSL at all**, including the tree strategy's. Now:
+
+- `LocalInvocationIndex` declares as `uint … [[thread_index_in_threadgroup]]`. `builtin_declaration` previously read the *launch* index's selected type and attribute for whatever builtin it was given; that was unreachable only because the local index was refused outright, so admitting it is exactly what made the shared read wrong. It is now `builtin_declared_type` plus a per-builtin attribute, with the asymmetry stated: the global index reads a `LaunchIndexRealization` because MSL admits several spellings and a caller records its choice; the local index has one admitted spelling here and therefore no selection. **No public boundary moved** — `MetalEmissionRealization` is unchanged, deliberately, because adding a field would force edits in `tiler-build` and a spike, both outside this ticket's scopes.
+- Workgroup staging declares *inside* the entry point (`threadgroup float tg0[3];`), never as a parameter. A `[[buffer(N)]]` position would re-base every later ordinal and change what an existing signature position means; `workgroup_staging_takes_no_argument_table_position` pins that the boundary tensors keep buffers 0 and 1 and that no `[[threadgroup(` binding is emitted.
+- `StagedStore`/`StagedLoad` emit subscripted assignments and loads carrying their tile phase **as a comment, never as a guard** — the phase is schedule-side evidence the verifier already resolved, so emitting it as control flow would add a run-time test for a proven fact whose failure would silently skip a staged write.
+
+**Two new goldens, both compiler-validated.** `cooperative_workgroup_reduction.metal` (the tree realization of a `[2, 6] -> [2]` strict sum, three participants) and `contraction_strict_tensor.metal` (the `direct` path, which had a fixture kernel and an FMA test but no golden and therefore no compile evidence). `every_checked_in_golden_is_compiled_by_this_module` forces both into the offline-driver list.
+
+### Why `tiled` is still not expressible — the derivation, with reproducible checks
+
+The measured kernel (`spikes/scheduling/metal_contraction_vertical/kernels.metal:96-145`) reuses two 16×16 `f32` allocations across `K/16` rounds, with two barriers per round.
+
+| What it needs | What refuses it | Where |
+| --- | --- | --- |
+| Rewrite a slot in a later round | one writer per slot across the whole tile | `crates/tiler-ir/src/schedule/builder.rs:1192-1204`, `cooperative-staging-conflict` |
+| Order round `r+1`'s write after round `r`'s read | only producer-to-consumer edges are derived; a point discharging nothing is `RedundantPoint` | `cooperative.rs:371-402`, `builder.rs:1323-1327` |
+| A barrier inside the round loop | barrier refused at nonzero block depth | `crates/tiler-ir/src/kernel/verify.rs:400-405`, `SynchronizationConvergence` |
+
+The span question the brief flagged is *not* the blocker and resolves cleanly: reassigning which thread loads which element makes both writes `stride = 1, offset = 0, count = 1`, and both reads are the documented whole-set `stride = 0` shape. **Fact — `cooperative.rs:41-47` already states the real gap** and calls it unmodelled, as the same reason `workgroup_tree_tile` is depth two rather than log-depth: one missing capability, two blocked consumers.
+
+**Measurement — unrolling is not a way around it.** Per-round allocations at the profile's own extents:
+
+| `K` | Rounds | Phases | Slots | Threadgroup bytes |
+| --- | --- | --- | --- | --- |
+| 1024 | 64 | 128 | 32,768 | 131,072 |
+| 2048 | 128 | 256 | 65,536 | 262,144 |
+| 3072 | 192 | 384 | 98,304 | 393,216 |
+
+against `MAX_COOPERATIVE_PHASES = 64` and `MAX_COOPERATIVE_STAGING_SLOTS = 65,536` (`schedule/mod.rs:207`, `:205`) and the 32,768-byte row the widened test profile declares (`target.rs:3575`). Every cell breaks the phase bound; `K = 3072` breaks the slot bound; all break memory by 4×–12×. And the L3 record's 2.6×–4.3× advantage was measured on a 2 KB-resident kernel, so a 128 KB variant's performance would be a fabricated claim.
+
+**Inference — item 3 above may be a narrowing rather than new vocabulary.** `SerialLoopSpec` carries `start`/`end` as `u64` *literals* (`kernel/model.rs:685-692`), so every invocation runs an identical trip count and a barrier in that body *is* convergent; the walk already tracks `loop_depth` apart from `block_depth`. Recorded in the new ticket rather than acted on: it is a synchronization soundness rule, and items 1 and 2 still stand.
+
+### Why the stop rather than the widening
+
+Item 2 is a new evidence class — the vocabulary can state no write-after-read obligation at all — which is a validation authority and touches `VisibilityEdge`, `WorkgroupStaging`, `SynchronizationRule`, and `CooperativeTileRule`, all public. Item 1's natural spelling is a per-round lifetime field on `WorkgroupStaging`, and `push_workgroup_staging` (`schedule/model.rs:1605-1611`) writes a fixed unframed field sequence, so that **inserts** and steps `tiler.schedule.v3`. `push_cooperative_tile`'s own comment justifies its earlier extension on the premise that no cooperative region was ever encodable into a retained identity — **a premise the tree-strategy landing expired**, since a cooperative region now reaches a verified kernel, executes, and has a checked-in Metal golden. Under this ticket's standing rule an insertion is a stop, and under [AGENTS.md](../AGENTS.md) the boundary is Tom's.
+
+### Deliverables from the ticket's own list
+
+| Required | Status |
+| --- | --- |
+| Tiled schedule as a retained alternative | **Not delivered.** Blocked above; no `ReductionTopology` variant added, no `0x36` tag consumed. |
+| `K ≡ 0 (mod 16)` typed refusal | **Not delivered.** It is `tiled`'s own precondition and has nothing to attach to. Deliberately not shipped as a check that could never fire — the discipline `no_k_multiple_refusal_exists_on_the_direct_path` already records for `direct`. |
+| No FMA on the accumulation path | **Already held**, by `the_contraction_kernel_emits_no_fused_multiply_add_on_its_accumulation_path` from the direct-path landing; now additionally under a compiled golden. |
+| Bit-identity at all six cells | **Not delivered.** It is a property of the tiled schedule's results, and there is no tiled schedule. The staged oracle is ready for whoever resumes. |
+| Emission through KIR barrier/staged constructs | **Delivered**, with goldens and toolchain evidence. |
+| Roadmap row | **Delivered**, minimally. |
+
+### Verification
+
+`cargo nextest run --workspace`: 2,232 passed, 6 skipped. `cargo clippy -p tiler-metal --all-targets -- -D warnings`: clean. `tkt lint`: ok. Golden compilation resolved a real toolchain — metal 32023.883 / metallib 32023.883, macOS SDK 26.5 build 25F70 — and linked all six fixtures, `cooperative_workgroup_reduction.metal` at 4,131 bytes and `contraction_strict_tensor.metal` at 3,923.
+
+**Watched failing.** Perturbing `LOCAL_INDEX_ATTRIBUTE` to `thread_position_in_threadgroup` failed `cooperative_workgroup_reduction_matches_its_golden_source` and `the_cooperative_kernel_emits_storage_a_local_index_a_handoff_and_a_fence`, then was reverted and the suite re-run green. `a_cooperative_golden_without_its_staging_is_rejected_when_a_toolchain_resolves` is a *permanent* teeth-test rather than a transient perturbation: it deletes the `threadgroup float tg0[3];` declaration from the checked-in fixture and requires a metal-stage `ToolFailure`, which is what makes that fixture's compile evidence non-vacuous — without it, an emitter that declared no storage would stay green once the golden was rebaselined. The barrier-omission and fence-inside-the-guard paths were already driven and are cited rather than duplicated: `BodyChange::NoFence` → `UndischargedVisibility` and `BodyChange::FenceInsideTheGuard` → `SynchronizationConvergence` (`crates/tiler-ir/src/kernel/tests.rs:2298-2306`); the second is the rule that blocks a loop-carried barrier.
+
+### Coordination
+
+The roadmap edit is confined to the two sentences my landing falsifies — the `tiled` blocker sentence and the closing pointer. **It deliberately does not touch** the row's "four cells uncompared" claim or its `bound-the-reference-contraction-comparison-for-the-profile-cells` pointer, which the audit found stale and which `correct-the-roadmap-rows-falsified-by-the-contraction-and-accuracy-landings` (B1) owns in full. If B1 lands first, expect a textual conflict in exactly that cell and resolve toward B1's rewrite while preserving the `admit-loop-carried-cooperative-staging` pointer.
+
+**Public drafts for review, both in `tiler-metal` (ADR 0074 §7 draft boundaries, no new public item):** the emitted MSL spelling of workgroup staging (a function-scope `threadgroup` array named `tg{StagingId}`, not a `[[threadgroup(N)]]` binding) and of the local index (`uint … [[thread_index_in_threadgroup]]`, fixed rather than a `MetalEmissionRealization` selection). Both are emission-surface choices a consumer reads; neither adds a public type or changes a signature.
