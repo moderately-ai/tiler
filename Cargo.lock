@@ -1792,6 +1792,7 @@ dependencies = [
  "tiler-build",
  "tiler-ir",
  "tiler-metal",
+ "tiler-metal-aot",
  "tiler-runtime",
 ]
 

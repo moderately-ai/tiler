@@ -85,7 +85,7 @@ use tiler_runtime::load::{
 };
 
 use crate::cache::{DeviceScope, PipelineCache, PreparedPipeline};
-use crate::refusal::{DispatchFailure, RouteRefusal};
+use crate::refusal::{DispatchFailure, ReflectedBinding, ReflectedBindingClass, RouteRefusal};
 
 /// Governed key of the Metal requirement naming a minimum Apple GPU family.
 ///
@@ -426,36 +426,39 @@ pub fn load_library(
 /// the compute function, so the safe one is taken and this crate keeps the
 /// workspace's `unsafe_code = "forbid"`.
 ///
-/// # What is counted, and what is deliberately not
+/// # Two questions from one reflection, in this order
 ///
-/// Only [`MTLBindingType::Buffer`] rows, because a transport slot *is* a
-/// `[[buffer(N)]]` index. Threadgroup bindings appear in the same reflection
-/// array and are numbered in the disjoint `[[threadgroup(N)]]` namespace, so
-/// counting them would compare two numberings against one and refuse a correct
-/// object.
+/// **Every row's class must be one the artifact ABI can declare**, which today
+/// means [`MTLBindingType::Buffer`] and nothing else. A texture, sampler, or
+/// `[[threadgroup(N)]]` row has no declared counterpart to disagree with, so it
+/// is refused as [`RouteRefusal::UndeclarableBindings`] rather than compared
+/// against a transport slot. That is deliberately not a comparison against the
+/// entry's declaration: the ABI's vocabulary is a property of the artifact
+/// layer, not of one route, and an object that fails it is refused whatever it
+/// was declared beside.
 ///
-/// **The bound that leaves, stated rather than implied.** The artifact ABI models
-/// buffer bindings and nothing else — `tiler-metal`'s emitter produces
-/// `[[buffer(N)]]` parameters plus launch builtins, and a routed binding carries
-/// only a transport slot — so a reflected texture, sampler, or threadgroup row
-/// has no declared counterpart to disagree with, and an object addressing one is
-/// not refused here. That sits *inside* this check's threat model rather than
-/// outside it, since the objects it exists to catch are exactly the ones the
-/// emitter did not produce;
-/// `refuse-a-metal-payload-addressing-resources-the-abi-cannot-declare` carries
-/// the remainder.
+/// **Then the buffer rows' indices are the addressed argument table**, because a
+/// transport slot *is* a `[[buffer(N)]]` index. The other namespaces number from
+/// zero independently, so a threadgroup row counted as a slot would compare two
+/// numberings against one — which is why they are refused above rather than
+/// folded into the table here.
 ///
-/// A row is counted whether or not it reports `isUsed`. What the comparison is
+/// A row is read whether or not it reports `isUsed`. What the comparison is
 /// about is the *argument table the object addresses* — a declared-but-unread
 /// parameter still occupies its index, and an entry that declares it is correct
 /// to bind it. Filtering by use would refuse an object the compiler merely
-/// optimized well.
+/// optimized well, and would let an unbindable texture through whenever the
+/// compiler decided the kernel did not need it.
+///
+/// An object refused here never becomes a [`PreparedPipeline`], so it never
+/// enters the cache and no later hit can skip the refusal.
 ///
 /// # Errors
 ///
 /// Returns [`RouteRefusal::PipelineRejected`] when the device refuses the
-/// pipeline, and [`RouteRefusal::ArgumentTableUnavailable`] when it builds one
-/// and returns no reflection.
+/// pipeline, [`RouteRefusal::ArgumentTableUnavailable`] when it builds one and
+/// returns no reflection, and [`RouteRefusal::UndeclarableBindings`] when the
+/// reflection reports a resource class the ABI cannot declare.
 pub fn prepare_pipeline_with_reflection(
     device: &MetalDevice,
     entry: usize,
@@ -489,13 +492,24 @@ pub fn prepare_pipeline_with_reflection(
     })?;
 
     let bindings = reflection.bindings();
-    let mut addressed_slots = Vec::with_capacity(bindings.count());
+    let mut reflected = Vec::with_capacity(bindings.count());
     for position in 0..bindings.count() {
         let binding = bindings.objectAtIndex(position);
-        if binding.r#type() == MTLBindingType::Buffer {
-            addressed_slots.push(u64::try_from(binding.index()).unwrap_or(u64::MAX));
-        }
+        reflected.push(ReflectedBinding {
+            class: reflected_binding_class(binding.r#type()),
+            index: u64::try_from(binding.index()).unwrap_or(u64::MAX),
+        });
     }
+    // Before the buffer table is derived, so an object addressing an
+    // undeclarable resource is refused as one rather than reaching a slot
+    // comparison over the half of its table that happens to agree.
+    bindings_are_declarable(entry, symbol, &reflected)?;
+
+    let mut addressed_slots: Vec<u64> = reflected
+        .iter()
+        .filter(|row| row.class.is_declarable())
+        .map(|row| row.index)
+        .collect();
     // Sorted so the comparison is against the table's content rather than the
     // order the runtime happened to enumerate it in.
     addressed_slots.sort_unstable();
@@ -504,6 +518,46 @@ pub fn prepare_pipeline_with_reflection(
         pipeline: ComputePipeline::new(raw),
         addressed_slots,
     })
+}
+
+/// Classifies one reflected binding row's resource class.
+///
+/// Exhaustive over every class `objc2-metal` 0.3.2 names, written out rather
+/// than reduced to "is it a buffer": a reader of the refusal has to be able to
+/// tell a texture from a threadgroup allocation, and a boolean cannot say which
+/// one arrived.
+///
+/// The final arm binds the raw code instead of discarding it. `MTLBindingType`
+/// is a `#[repr(transparent)]` newtype over `NSInteger` with associated
+/// constants rather than a Rust enum — the same shape as
+/// [`MTLCommandBufferStatus`], for the reason [`submission_outcome`] records —
+/// so a class Apple adds arrives as an unrecognised number rather than as a
+/// build error, and it must reach [`ReflectedBindingClass::Unnamed`], which is
+/// not declarable and is therefore refused.
+///
+/// [`MTLCommandBufferStatus`]: objc2_metal::MTLCommandBufferStatus
+pub fn reflected_binding_class(kind: MTLBindingType) -> ReflectedBindingClass {
+    match kind {
+        MTLBindingType::Buffer => ReflectedBindingClass::Buffer,
+        MTLBindingType::ThreadgroupMemory => ReflectedBindingClass::ThreadgroupMemory,
+        MTLBindingType::Texture => ReflectedBindingClass::Texture,
+        MTLBindingType::Sampler => ReflectedBindingClass::Sampler,
+        MTLBindingType::ImageblockData => ReflectedBindingClass::ImageblockData,
+        MTLBindingType::Imageblock => ReflectedBindingClass::Imageblock,
+        MTLBindingType::VisibleFunctionTable => ReflectedBindingClass::VisibleFunctionTable,
+        MTLBindingType::PrimitiveAccelerationStructure => {
+            ReflectedBindingClass::PrimitiveAccelerationStructure
+        }
+        MTLBindingType::InstanceAccelerationStructure => {
+            ReflectedBindingClass::InstanceAccelerationStructure
+        }
+        MTLBindingType::IntersectionFunctionTable => {
+            ReflectedBindingClass::IntersectionFunctionTable
+        }
+        MTLBindingType::ObjectPayload => ReflectedBindingClass::ObjectPayload,
+        MTLBindingType::Tensor => ReflectedBindingClass::Tensor,
+        MTLBindingType(code) => ReflectedBindingClass::Unnamed(code),
+    }
 }
 
 /// Reads what one bound Candle Metal device reports about itself.
@@ -715,6 +769,13 @@ impl RuntimeAdapter for CandleMetalAdapter {
     /// entirely from the pipeline cache: the cache stores the reflected table as
     /// a fact and never the verdict, because the declared side comes from *this*
     /// attempt's routed bindings and is not part of the cache key.
+    ///
+    /// The obligation's other half — that the object addresses no resource class
+    /// the artifact ABI can express at all — arrives from
+    /// [`prepare_pipeline_with_reflection`] rather than from a second comparison
+    /// here, because it has no declared side to vary per attempt: it is a
+    /// property of the object, answered where the reflection is read, and an
+    /// object that fails it never becomes a cache entry to be hit later.
     fn prepare_entries(
         &mut self,
         _context: &LiveExecutionContext,
@@ -1104,6 +1165,53 @@ pub fn declared_transport_slots(entry: &RoutedEntry<'_>) -> Vec<u64> {
     declared
 }
 
+/// Whether every row a compiled object's reflection reports is one the ABI can declare.
+///
+/// The remainder of ADR 0090 item 8's third obligation. Split from the device
+/// call for the same reason [`binding_fits`] is: the reflection contributes the
+/// rows and this contributes the decision, and a decision written inline against
+/// a live pipeline is one the repository gate cannot watch fail.
+///
+/// # Why the whole table rather than a pre-filtered list
+///
+/// The filter *is* the decision. Taking the complete classified table means this
+/// function answers "which of these can the ABI declare" rather than trusting a
+/// caller to have asked that already, and it means a test can hand it a buffer
+/// row beside a texture row and watch exactly one of them be named.
+///
+/// # Why an empty table is admitted
+///
+/// A kernel taking no arguments at all is a real answer, the same way an empty
+/// buffer table is in [`argument_slots_agree`]. Nothing about "no undeclarable
+/// resources" needs a lower bound; the entry's own declaration is what decides
+/// whether the buffer table is the right one, and that is a separate check.
+///
+/// # Errors
+///
+/// Returns [`RouteRefusal::UndeclarableBindings`] naming every offending row's
+/// class and index, sorted so the message does not depend on the order the
+/// runtime enumerated the reflection in.
+pub fn bindings_are_declarable(
+    entry: usize,
+    symbol: &str,
+    reflected: &[ReflectedBinding],
+) -> Result<(), RouteRefusal> {
+    let mut bindings: Vec<ReflectedBinding> = reflected
+        .iter()
+        .copied()
+        .filter(|row| !row.class.is_declarable())
+        .collect();
+    if bindings.is_empty() {
+        return Ok(());
+    }
+    bindings.sort_unstable();
+    Err(RouteRefusal::UndeclarableBindings {
+        entry,
+        symbol: symbol.to_owned(),
+        bindings,
+    })
+}
+
 /// Whether the slots one compiled object addresses are the ones its entry declares.
 ///
 /// ADR 0090 item 8's third obligation, and the comparison half of it: the device
@@ -1220,10 +1328,11 @@ pub fn bind_candle_storage(
 #[cfg(test)]
 mod tests {
     use super::{
-        SubmissionOutcome, allocation_holds, argument_slots_agree, binding_fits,
-        gpu_family_from_payload, submission_outcome, workgroup_fits,
+        ReflectedBinding, ReflectedBindingClass, SubmissionOutcome, allocation_holds,
+        argument_slots_agree, binding_fits, bindings_are_declarable, gpu_family_from_payload,
+        reflected_binding_class, submission_outcome, workgroup_fits,
     };
-    use objc2_metal::MTLCommandBufferStatus;
+    use objc2_metal::{MTLBindingType, MTLCommandBufferStatus};
     use tiler_metal::applicability::MetalGpuFamily;
 
     /// Only `Completed` permits a readback, and `Error` is distinguished from it.
@@ -1343,6 +1452,124 @@ mod tests {
                     } if *named_declared == declared && *named_addressed == addressed,
                 ),
                 "{refusal} does not carry both tables it compared",
+            );
+        }
+    }
+
+    /// Exactly one binding class is declarable, and every other one is named.
+    ///
+    /// The population is every constant `objc2-metal` 0.3.2 declares on
+    /// `MTLBindingType`, plus a value it does not declare. Written out rather
+    /// than derived, because the binding models the type as a newtype over
+    /// `NSInteger` and offers no iteration over its constants — so nothing but
+    /// this list would notice a class that mapped to the wrong variant, and
+    /// nothing but the last row would notice one that fell through to a class
+    /// this adapter treats as bindable.
+    #[test]
+    fn only_a_buffer_binding_is_a_class_the_abi_declares() {
+        let classified = [
+            (MTLBindingType::Buffer, ReflectedBindingClass::Buffer),
+            (
+                MTLBindingType::ThreadgroupMemory,
+                ReflectedBindingClass::ThreadgroupMemory,
+            ),
+            (MTLBindingType::Texture, ReflectedBindingClass::Texture),
+            (MTLBindingType::Sampler, ReflectedBindingClass::Sampler),
+            (
+                MTLBindingType::ImageblockData,
+                ReflectedBindingClass::ImageblockData,
+            ),
+            (
+                MTLBindingType::Imageblock,
+                ReflectedBindingClass::Imageblock,
+            ),
+            (
+                MTLBindingType::VisibleFunctionTable,
+                ReflectedBindingClass::VisibleFunctionTable,
+            ),
+            (
+                MTLBindingType::PrimitiveAccelerationStructure,
+                ReflectedBindingClass::PrimitiveAccelerationStructure,
+            ),
+            (
+                MTLBindingType::InstanceAccelerationStructure,
+                ReflectedBindingClass::InstanceAccelerationStructure,
+            ),
+            (
+                MTLBindingType::IntersectionFunctionTable,
+                ReflectedBindingClass::IntersectionFunctionTable,
+            ),
+            (
+                MTLBindingType::ObjectPayload,
+                ReflectedBindingClass::ObjectPayload,
+            ),
+            (MTLBindingType::Tensor, ReflectedBindingClass::Tensor),
+            // A class Apple has not named. It must classify as unnamed rather
+            // than as a buffer, and carry the code so a reader can look it up.
+            (MTLBindingType(4242), ReflectedBindingClass::Unnamed(4242)),
+        ];
+        let mut rendered: Vec<String> = Vec::new();
+        for (kind, expected) in classified {
+            let observed = reflected_binding_class(kind);
+            assert_eq!(observed, expected, "{kind:?} is classified as {observed}");
+            assert_eq!(
+                observed.is_declarable(),
+                expected == ReflectedBindingClass::Buffer,
+                "the artifact ABI declares buffer arguments and nothing else, and {observed} \
+                 disagrees",
+            );
+            let text = observed.to_string();
+            assert!(
+                !rendered.contains(&text),
+                "{text:?} is not distinguishable from an earlier class",
+            );
+            rendered.push(text);
+        }
+    }
+
+    /// A reflected table is admitted or names every row the ABI cannot declare.
+    ///
+    /// The admitted cases lead, because a check that refused everything would
+    /// take every route with it — including the one this adapter proves on
+    /// hardware. The refusing population pairs each undeclarable row with a
+    /// buffer row beside it, which is the case the whole ticket is about: the
+    /// buffer half agreeing is exactly why the object reached this far.
+    #[test]
+    fn a_reflected_table_is_declarable_or_names_every_row_that_is_not() {
+        let buffer = |index| ReflectedBinding {
+            class: ReflectedBindingClass::Buffer,
+            index,
+        };
+        assert!(bindings_are_declarable(0, "tiler_kernel", &[]).is_ok());
+        assert!(bindings_are_declarable(0, "tiler_kernel", &[buffer(0), buffer(1)]).is_ok());
+
+        for class in [
+            ReflectedBindingClass::Texture,
+            ReflectedBindingClass::Sampler,
+            ReflectedBindingClass::ThreadgroupMemory,
+            ReflectedBindingClass::Unnamed(4242),
+        ] {
+            let offending = ReflectedBinding { class, index: 0 };
+            let Err(refusal) =
+                bindings_are_declarable(1, "tiler_kernel", &[buffer(0), offending, buffer(1)])
+            else {
+                panic!("{class} is not a class the artifact ABI can declare");
+            };
+            assert!(
+                matches!(
+                    &refusal,
+                    super::RouteRefusal::UndeclarableBindings {
+                        entry: 1,
+                        bindings,
+                        ..
+                    } if bindings.as_slice() == [offending],
+                ),
+                "{refusal} does not name exactly the row the ABI cannot declare",
+            );
+            let rendered = refusal.to_string();
+            assert!(
+                rendered.contains(&class.to_string()) && rendered.contains("index 0"),
+                "{rendered:?} must name the resource kind and the index it found",
             );
         }
     }

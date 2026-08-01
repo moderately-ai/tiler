@@ -23,6 +23,19 @@ tiler-build.workspace = true
 # checked against. Read-only: nothing here builds or lowers a program.
 tiler-ir.workspace = true
 tiler-metal.workspace = true
+# The offline Apple toolchain driver, reached from `src/proof.rs` and from
+# nothing in `src/adapter.rs`. The proof needs an object the emitter *cannot*
+# produce — one addressing a texture, a sampler, or threadgroup memory — to watch
+# the undeclarable-resource refusal fail against a real `metallib`, and
+# hand-written MSL compiled outside the emitter is the only way to obtain one.
+# Compiled through the driver the producer itself uses, with the authoritative
+# declaration's own target and numerical realization, rather than through a
+# second `xcrun` invocation written here that could drift from it.
+#
+# The adapter's own claim is unweakened: nothing on the route compiles MSL, a
+# compiled probe object is never carried in an artifact and never dispatched, and
+# the only thing done with one is to build a pipeline and read its reflection.
+tiler-metal-aot.workspace = true
 tiler-runtime.workspace = true
 
 # Candle and its Metal binding link Apple frameworks, so declaring them

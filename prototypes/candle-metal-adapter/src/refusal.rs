@@ -357,6 +357,118 @@ impl fmt::Display for TensorRefusal {
 
 impl std::error::Error for TensorRefusal {}
 
+/// A resource class one reflected binding row names.
+///
+/// Metal's own vocabulary rather than this adapter's: there is a variant for
+/// every constant `MTLBindingType` names in `objc2-metal` 0.3.2, and a value it
+/// does not name is [`Self::Unnamed`] carrying the raw code.
+///
+/// **The unnamed arm has to exist, and it is fail-closed.** The binding models
+/// `MTLBindingType` as a `#[repr(transparent)]` newtype over `NSInteger` with
+/// associated constants rather than as a Rust enum, exactly as it models
+/// `MTLCommandBufferStatus`, so a wildcard-free exhaustive match is not
+/// expressible against it. A class Apple adds therefore arrives as an
+/// unrecognised number, and the one thing this adapter knows about a resource
+/// it cannot name is that it does not bind it.
+///
+/// [`crate::adapter::reflected_binding_class`] is the only constructor.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum ReflectedBindingClass {
+    /// A `[[buffer(N)]]` argument: the one class the artifact ABI declares.
+    Buffer,
+    /// A `[[threadgroup(N)]]` argument, whose length the encoder must set.
+    ThreadgroupMemory,
+    /// A `[[texture(N)]]` argument.
+    Texture,
+    /// A `[[sampler(N)]]` argument.
+    Sampler,
+    /// Imageblock data.
+    ImageblockData,
+    /// An imageblock.
+    Imageblock,
+    /// A visible function table.
+    VisibleFunctionTable,
+    /// A primitive acceleration structure.
+    PrimitiveAccelerationStructure,
+    /// An instance acceleration structure.
+    InstanceAccelerationStructure,
+    /// An intersection function table.
+    IntersectionFunctionTable,
+    /// A mesh-pipeline object payload.
+    ObjectPayload,
+    /// A Metal tensor argument.
+    Tensor,
+    /// A class this binding does not name, carrying the raw code it reported.
+    Unnamed(isize),
+}
+
+impl ReflectedBindingClass {
+    /// Whether the artifact ABI can declare a binding of this class.
+    ///
+    /// Stated once, because "the ABI models buffer bindings and nothing else" is
+    /// the fact both derivations from a reflection need — the addressed buffer
+    /// table and the refusal below — and restating it at either site is how the
+    /// two would drift. `tiler-metal`'s emitter produces `[[buffer(N)]]`
+    /// parameters plus launch builtins, and a routed binding carries a transport
+    /// slot and nothing else, so no other class has a declared counterpart.
+    pub const fn is_declarable(self) -> bool {
+        matches!(self, Self::Buffer)
+    }
+}
+
+impl fmt::Display for ReflectedBindingClass {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Buffer => formatter.write_str("buffer"),
+            Self::ThreadgroupMemory => formatter.write_str("threadgroup memory"),
+            Self::Texture => formatter.write_str("texture"),
+            Self::Sampler => formatter.write_str("sampler"),
+            Self::ImageblockData => formatter.write_str("imageblock data"),
+            Self::Imageblock => formatter.write_str("imageblock"),
+            Self::VisibleFunctionTable => formatter.write_str("visible function table"),
+            Self::PrimitiveAccelerationStructure => {
+                formatter.write_str("primitive acceleration structure")
+            }
+            Self::InstanceAccelerationStructure => {
+                formatter.write_str("instance acceleration structure")
+            }
+            Self::IntersectionFunctionTable => formatter.write_str("intersection function table"),
+            Self::ObjectPayload => formatter.write_str("object payload"),
+            Self::Tensor => formatter.write_str("tensor"),
+            Self::Unnamed(code) => write!(formatter, "unnamed binding class {code}"),
+        }
+    }
+}
+
+/// One row of a compiled object's reflected argument table.
+///
+/// The class and the index together, because neither identifies a resource on
+/// its own: the `[[buffer(N)]]`, `[[texture(N)]]`, `[[sampler(N)]]`, and
+/// `[[threadgroup(N)]]` namespaces are disjoint and all number from zero, so
+/// index 0 names four different things depending on the class beside it.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ReflectedBinding {
+    /// The resource class the row names.
+    pub class: ReflectedBindingClass,
+    /// The row's index within that class's own namespace.
+    pub index: u64,
+}
+
+impl fmt::Display for ReflectedBinding {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{} at index {}", self.class, self.index)
+    }
+}
+
+/// Renders a binding table as a readable list.
+fn joined(bindings: &[ReflectedBinding]) -> String {
+    bindings
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Why this adapter refused a route before it committed.
 ///
 /// Deliberately not `#[non_exhaustive]` for the same reason [`TensorRefusal`] is
@@ -412,6 +524,27 @@ pub enum RouteRefusal {
         entry: usize,
         /// The symbol the pipeline was built for.
         symbol: String,
+    },
+    /// The compiled object addresses a resource class the artifact ABI cannot declare.
+    ///
+    /// The remainder of ADR 0090 item 8's third obligation, and a class of its
+    /// own rather than a [`Self::ArgumentSlotsDisagree`] with an odd table: a
+    /// slot disagreement is two argument tables that could have matched, and
+    /// this is an object built against an ABI the artifact has no vocabulary
+    /// for. Its buffer arguments may agree exactly — that is the case this
+    /// exists to catch, since the encoder would then bind every buffer, dispatch,
+    /// and leave the texture, sampler, or threadgroup allocation unbound.
+    ///
+    /// Every offending row is carried with its class *and* its index, because
+    /// the namespaces are disjoint and index 0 alone does not say whether a
+    /// reader is looking at a texture or a threadgroup allocation.
+    UndeclarableBindings {
+        /// Position of the entry in the route's execution order.
+        entry: usize,
+        /// The symbol whose pipeline was reflected.
+        symbol: String,
+        /// The reflected rows the ABI cannot declare, ascending by class then index.
+        bindings: Vec<ReflectedBinding>,
     },
     /// The compiled object's buffer arguments are not the slots the entry declares.
     ///
@@ -559,6 +692,17 @@ impl fmt::Display for RouteRefusal {
                 "candle-metal.prepare: entry {entry}'s {symbol:?} built and the device returned no \
                  argument-table reflection, so the slots it addresses cannot be compared against \
                  the ones the entry declares",
+            ),
+            Self::UndeclarableBindings {
+                entry,
+                symbol,
+                bindings,
+            } => write!(
+                formatter,
+                "candle-metal.prepare: entry {entry}'s {symbol:?} addresses {}, and the artifact \
+                 ABI declares buffer arguments and nothing else, so this consumer would bind \
+                 nothing for it",
+                joined(bindings),
             ),
             Self::ArgumentSlotsDisagree {
                 entry,
@@ -715,8 +859,8 @@ impl std::error::Error for DispatchFailure {}
 #[cfg(test)]
 mod tests {
     use super::{
-        DeliveredPath, FallbackAvailability, Realization, RouteRefusal, TensorRefusal,
-        fallback_availability,
+        DeliveredPath, FallbackAvailability, Realization, ReflectedBinding, ReflectedBindingClass,
+        RouteRefusal, TensorRefusal, fallback_availability,
     };
     use candle_core::DType;
 
@@ -830,6 +974,20 @@ mod tests {
             RouteRefusal::ArgumentTableUnavailable {
                 entry: 0,
                 symbol: "tiler_kernel".to_owned(),
+            },
+            RouteRefusal::UndeclarableBindings {
+                entry: 0,
+                symbol: "tiler_kernel".to_owned(),
+                bindings: vec![
+                    ReflectedBinding {
+                        class: ReflectedBindingClass::Texture,
+                        index: 0,
+                    },
+                    ReflectedBinding {
+                        class: ReflectedBindingClass::Unnamed(4242),
+                        index: 1,
+                    },
+                ],
             },
             RouteRefusal::ArgumentSlotsDisagree {
                 entry: 0,
