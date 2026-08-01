@@ -1,7 +1,7 @@
 ---
 id: generalize-payload-provenance-beyond-the-apple-shape
 title: Generalize payload provenance beyond the Apple shape
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [route-or-refuse-the-device-translation-execution-policy, prototype-a-bounded-scalar-cpu-backend-vertical, state-the-backend-payload-validation-obligation-normatively]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifacts, backend-providers, provenance, consumer-neutrality]
+claimed_from: todo
+assignee: coordinator
+lease_expires_at: 1785612420
 ---
 ## User-visible outcome
 
