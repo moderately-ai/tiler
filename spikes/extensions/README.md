@@ -7,7 +7,7 @@ topics: ["extensions", "proc-macro", "rust"]
 experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["executable-model", "bounded-measurement"]
-supports: ["tiler.research.extensions.operation-extension-surface", "tiler.research.extensions.operation-extension-api", "tiler.research.extensions.proc-macro-extension-visibility"]
+supports: ["tiler.research.extensions.operation-extension-surface", "tiler.research.extensions.operation-extension-api", "tiler.research.extensions.proc-macro-extension-visibility", "tiler.research.extensions.backend-provider-composition"]
 entrypoints: ["spikes/extensions/run.py", "spikes/extensions/non-exhaustive-visibility/Cargo.toml", "spikes/extensions/forkless-physical-provider/Cargo.toml"]
 last_verified: "2026-07-25"
 ticket: "operation-extension-surface"
