@@ -1,7 +1,7 @@
 ---
 id: carry-symbolic-extents-into-the-semantic-program
 title: Carry symbolic extents from an inline region into the semantic program
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [prototype-inline-proc-macro-frontend, promote-the-symbolic-index-profile-to-a-public-boundary, prototype-inline-aot-integration-proof]
@@ -9,9 +9,6 @@ scopes: [contracts/foundation, contracts/navigation, research/shapes]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, frontend, shapes]
-claimed_from: todo
-assignee: worker-sym-extents
-lease_expires_at: 1785560186
 ---
 ## Why this exists
 
