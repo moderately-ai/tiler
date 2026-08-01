@@ -1,7 +1,7 @@
 ---
 id: derive-boundary-alignment-from-the-element-type
 title: Derive boundary alignment from the element type rather than the profile
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [spike-bf16-through-the-second-dtype-seams, admit-bf16-into-the-schedule-and-kernel-vocabulary]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, bf16, abi, boundary]
+claimed_from: todo
+assignee: worker-alignment
+lease_expires_at: 1785570907
 ---
 ## User-visible outcome
 
