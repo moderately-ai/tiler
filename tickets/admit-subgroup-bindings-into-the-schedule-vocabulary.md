@@ -3,7 +3,7 @@ id: admit-subgroup-bindings-into-the-schedule-vocabulary
 title: Admit subgroup bindings and their reduction topology into the schedule vocabulary
 status: todo
 priority: p2
-dependencies: [accept-the-subgroup-execution-tier-adr]
+dependencies: [accept-adr-0094-subgroup-execution-tier]
 related: [design-the-subgroup-execution-tier, admit-vector-lane-bindings-into-the-schedule-vocabulary, compose-the-two-level-subgroup-and-workgroup-reduction]
 scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
@@ -16,11 +16,13 @@ A scheduled region can state that its work is spread across the lanes of a subgr
 
 ## Why now
 
-**Fact — the acceptance node claims to release implementation tickets, and there are none to release.** [`accept-the-subgroup-execution-tier-adr`](accept-the-subgroup-execution-tier-adr.md):15 says acceptance "is what releases the implementation tickets gated behind it" and `:31` repeats that it "releases the implementation tickets". [`design-the-subgroup-execution-tier`](design-the-subgroup-execution-tier.md):65 lists the four tickets that design filed — the ADR carrier, the acceptance node, the two-level composition, and the route-dimension correction — and none is an implementation ticket. This ticket and its two siblings are what make that claim true.
+**Fact — the acceptance node claims to release implementation tickets, and there are none to release.** [`accept-adr-0094-subgroup-execution-tier`](accept-adr-0094-subgroup-execution-tier.md):15 says acceptance "is what releases the implementation tickets gated behind it" and `:31` repeats that it "releases the implementation tickets". [`design-the-subgroup-execution-tier`](design-the-subgroup-execution-tier.md):65 lists the four tickets that design filed — the ADR carrier, the acceptance node, the two-level composition, and the route-dimension correction — and none is an implementation ticket. This ticket and its two siblings are what make that claim true.
 
-**Fact — nine public-boundary items are enumerated for Tom and none is self-accepted.** [The subgroup execution tier](../docs/research/scheduling/subgroup-execution-tier.md):333 opens "Public-boundary items, enumerated for Tom and not self-accepted"; `design-the-subgroup-execution-tier.md:65` summarizes them as including "the `ReductionTopology` variant, the `CombineTree` vocabulary, `lane_identity_bits` and its proof obligation, a subgroup-lane `LocalCoordinateSource`, a `SubgroupRealization` subject and its builder method, and the `RouteResourceDimension` change". This ticket owns the schedule-side subset and drafts them; it accepts none.
+**Resolved 2026-08-01 — the node closed and this ticket is what it released.** [ADR 0094](../docs/decisions/0094-bind-a-subgroup-combine-to-a-register-transfer-tree.md) landed `accepted` and the acceptance node is `done` under its final id, which is why the link above no longer reads `accept-the-subgroup-execution-tier-adr`. The paragraph is preserved rather than rewritten because it is the reason this ticket exists; what changed is that the claim it was filed to make true is now true.
 
-**Inference — this trio mirrors the CPU vector-lane trio deliberately.** The subgroup record at `:391` states that the lane identity "becomes the second construct in the vocabulary needing a proved reduction identity, and it should land as one concept with the CPU tier's padding identity rather than as two". [`admit-vector-lane-bindings-into-the-schedule-vocabulary`](admit-vector-lane-bindings-into-the-schedule-vocabulary.md) is the shape to match — including its status idiom, `todo` gated on its ADR acceptance ticket rather than parked, so acceptance releases it structurally.
+**Fact — nine public-boundary items are enumerated for Tom and none is self-accepted.** [The subgroup execution tier](../docs/research/scheduling/subgroup-execution-tier.md):334 opens "Public-boundary items, enumerated for Tom and not self-accepted" — the line moved from `:333` when ADR 0094's acceptance sweep added the model-versus-surfaces sentence under that heading, and the heading's own claim is unchanged; `design-the-subgroup-execution-tier.md:65` summarizes them as including "the `ReductionTopology` variant, the `CombineTree` vocabulary, `lane_identity_bits` and its proof obligation, a subgroup-lane `LocalCoordinateSource`, a `SubgroupRealization` subject and its builder method, and the `RouteResourceDimension` change". This ticket owns the schedule-side subset and drafts them; it accepts none.
+
+**Inference — this trio mirrors the CPU vector-lane trio deliberately.** The subgroup record at `:396` states that the lane identity "becomes the second construct in the vocabulary needing a proved reduction identity, and it should land as one concept with the CPU tier's padding identity rather than as two". [`admit-vector-lane-bindings-into-the-schedule-vocabulary`](admit-vector-lane-bindings-into-the-schedule-vocabulary.md) is the shape to match — including its status idiom, `todo` gated on its ADR acceptance ticket rather than parked, so acceptance releases it structurally.
 
 ## Implementation keys
 
