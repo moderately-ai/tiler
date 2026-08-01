@@ -19,13 +19,13 @@ A multi-backend artifact filters variants by installed executable backend/repres
 
 ## Implementation keys
 
-- Replace the current effective order—first true guard, then compatibility—with adapter/profile eligibility, applicability guards, policy comparison, and one-way commit.
+- **Corrected 2026-08-01 against accepted [ADR 0090](../docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md), which this ticket predates:** there is no adapter registry — eligibility derives from the loading host's *stated* `ExecutionEnvironment` (backend/representation compared as a pair, profile classified) exactly as the loader already does for one variant; this ticket widens that to filter a multi-family portfolio. Replace the current effective order — first true guard, then compatibility — with host-environment eligibility, applicability guards, policy comparison, and one-way commit.
 - Preserve artifact stable-priority semantics where requested while making ineligible variants non-candidates rather than terminal mismatches.
 - Keep compile-time plan cost selection separate from runtime routing policy; runtime must not invoke the optimizer or invent unrecorded costs.
-- Define typed outcomes for missing adapter, duplicate adapter authority, unsupported representation, profile mismatch, no guard match, and no eligible variant.
+- Define typed outcomes for unsupported representation, profile mismatch, no guard match, and no eligible variant. (The registry-era outcomes this key named — missing adapter, duplicate adapter authority — do not exist under the accepted no-registry model; a host that cannot execute a family simply declares an environment no variant of that family matches.)
 - Verify complete semantic/numerical equivalence or explicit fallback coverage before packaging alternatives.
 - Ensure one variant may legitimately use several payloads without treating that as multi-device execution.
-- Perturb provider registration, variant ordering, eligibility, guard results, and commit timing; prove the old algorithm fails the cross-backend fixture.
+- Perturb the host's stated environment, variant ordering, eligibility, guard results, and commit timing; prove the old algorithm fails the cross-backend fixture.
 - Present the exact routing-policy and public result boundary to Tom.
 
 ## Closes when
