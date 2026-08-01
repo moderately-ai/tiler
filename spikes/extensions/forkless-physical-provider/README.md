@@ -2,7 +2,7 @@
 
 **Question.** Can a separately authored, statically linked provider contribute one specialized Metal physical implementation alongside Tiler's governed provider, without forking `tiler-compiler` and without replacing `tiler-metal`?
 
-**Answer at `7b1e3a7`: no.** The result is a falsification, and the useful part is *where* it falsifies. Nothing in `tiler-metal` is in the way — a third party reuses stock Metal emission unchanged, and the implementation body it wants to propose is fully constructible from the public `tiler_ir::schedule` surface. Everything in the way is one crate's registration seam, and it fails in two independent places: the frontier vocabulary is behind a private module, and even if it were not, there is no method that installs a physical provider into a compilation.
+**Answer at `7b1e3a7`, re-verified unchanged at `63f9259` on 2026-08-01: no.** The result is a falsification, and the useful part is *where* it falsifies. Nothing in `tiler-metal` is in the way — a third party reuses stock Metal emission unchanged, and the implementation body it wants to propose is fully constructible from the public `tiler_ir::schedule` surface. Everything in the way is one crate's registration seam, and it fails in two independent places: the frontier vocabulary is behind a private module, and even if it were not, there is no method that installs a physical provider into a compilation.
 
 ## Run it
 
@@ -23,6 +23,8 @@ Seven tests, no host toolchain required beyond the repository's pinned Rust: not
 `probe/` drives that provider as far as the public surface reaches. `tests/composition.rs` holds the runtime claims; `tests/ui/` holds the compile-fail evidence and its compiling contrasts.
 
 `results/` records the exact toolchain, the blocking surfaces with their declaration sites, and the falsification runs.
+
+**Measurement — restored and re-run at `63f9259` on 2026-08-01.** `acme-provider` had stopped compiling: `TensorRole::Input` gained an `ordinal: InputOrdinal` payload and `PointwiseF32ExpressionBuilder::input` gained an ordinal argument, both after this spike's last edit. The provider now names `InputOrdinal::FIRST` at its one read, its one bounds proof, and its expression leaf, which is what `crates/tiler-compiler/src/physical.rs:46` spells as `FIRST_INPUT` and what its `scale_bias_expression` passes — the same spelling the request-subject binding compares against. All seven tests pass, and **the three `.stderr` goldens matched byte for byte with no regeneration**: the API change moved no line the diagnostics point at, so nothing here was blessed. The falsification stands unchanged — `frontier` is still private and there is still no installation seam.
 
 ## What blocks it
 

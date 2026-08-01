@@ -165,6 +165,10 @@ The tracked
 recorded command's output. See
 [the build-tool exercise](../../docs/research/cache/build-tool-exercise.md).
 
+**Measurement — re-run at `63f9259` on 2026-08-01, reproduced.** `envelope/` had stopped compiling: `compile_governed` now returns one `Compilation` rather than a collection, and `bind-the-artifact-variant-abi-to-the-program-abi` moved the variant ABI replay inside `push_variant`, deleting the `accessible_bytes`, `grid_threads`, `threads_per_workgroup`, and `applicability_guard` fields this spike used to declare by hand. The exercise now assembles the way `crates/tiler-build/src/metal_plan.rs` does, and the [2026-08-01 result](results/build-tool-exercise-macos-27.0-2026-08-01.tsv) is the same recorded command's output at that commit. Every counted quantity — events, builds, published, hit, uncached, processes, and drivers, in all eight scenarios — is identical to the 2026-07-25 row beside it, including the `negative-control-x3` row that makes the others mean anything. `overlaps` and `seconds` differ run to run and are not claims: `overlaps` is the observed-concurrency check, which requires only that expansions in different processes genuinely intersect, and three runs at this commit produced 21, 18, and 5 for `cargo-concurrent-x3` while the counted columns did not move.
+
+Only this exercise was re-run on 2026-08-01. The harness, production bundle, collection ladder, and filesystem probe above still carry their 2026-07-25 verification, which is why the frontmatter's `last_verified` is unchanged.
+
 [`ExpansionCache`]: ../../crates/tiler-cache/src/expansion/store.rs
 
 ## Deciding whether a directory can hold a cache

@@ -39,8 +39,8 @@
 
 use tiler_ir::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ExceptionalValueAssumption,
-    ExecutionBinding, FlushedZeroSign, IndexRegion, KernelSchedule, LaunchPlan, LogicalAccess,
-    NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
+    ExecutionBinding, FlushedZeroSign, IndexRegion, InputOrdinal, KernelSchedule, LaunchPlan,
+    LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
     OwnershipWitnessId, PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionTopology,
     RegionId, ScalarProgram, ScheduledRegion, SubnormalMode, TailPolicy, TensorRole,
 };
@@ -183,7 +183,9 @@ fn region(
             iteration_shape: Shape::from_dims([subject.elements]),
             accesses: vec![
                 Access {
-                    tensor: TensorRole::Input,
+                    tensor: TensorRole::Input {
+                        ordinal: InputOrdinal::FIRST,
+                    },
                     component_role: None,
                     mode: AccessMode::Read,
                     map: LogicalAccess::LinearIdentity,
@@ -202,7 +204,9 @@ fn region(
             bounds_proofs: vec![
                 BoundsProof {
                     id: BoundsWitnessId::new(0),
-                    tensor: TensorRole::Input,
+                    tensor: TensorRole::Input {
+                        ordinal: InputOrdinal::FIRST,
+                    },
                     component_role: None,
                     kind: BoundsProofKind::LinearRange {
                         element_count: subject.elements,
@@ -255,7 +259,7 @@ fn region(
 fn scale_bias_expression(scale_bits: u32, bias_bits: u32) -> PointwiseF32Expression {
     let mut expression = PointwiseF32ExpressionBuilder::new();
     let input = expression
-        .input()
+        .input(InputOrdinal::FIRST)
         .expect("the fixed expression has exactly one input");
     let scale = expression
         .constant(scale_bits)

@@ -54,7 +54,7 @@ use tiler_compiler::session::{
 };
 use tiler_compiler::target::{TargetProfileBuildError, TargetRequest};
 use tiler_ir::kernel::{AddressSpace, BufferAccess, BufferParameter, KernelType};
-use tiler_ir::schedule::TensorRole;
+use tiler_ir::schedule::{InputOrdinal, TensorRole};
 use tiler_ir::semantic::{
     F32, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram, SemanticProgramBuilder,
 };
@@ -1459,7 +1459,9 @@ fn probe_host(
 /// refuse is accepted, which is as loud a failure as a wrong refusal.
 fn refused_buffers() -> Result<Vec<String>, VerticalError> {
     let admitted = BufferParameter {
-        tensor: TensorRole::Input,
+        tensor: TensorRole::Input {
+            ordinal: InputOrdinal::FIRST,
+        },
         component_role: None,
         element_type: KernelType::F32,
         address_space: AddressSpace::Device,
