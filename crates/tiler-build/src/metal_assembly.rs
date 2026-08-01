@@ -107,16 +107,31 @@ impl From<MetalTargetError> for MetalAssemblyError {
 }
 
 /// One emitted payload bound to the exact prepared compilation that may produce it.
+///
+/// The governed descriptor keys are resolved once here rather than at each
+/// declaration site, so the descriptor this payload declares pending, the
+/// descriptor the cache seam compares every result against, and the descriptor
+/// its compiled object is carried under are one derivation rather than three.
 #[derive(Debug)]
 pub struct PreparedMetalPayload<'request> {
     prepared: PreparedCompilation<'request>,
     metadata: PayloadMetadata,
     digest: PayloadDigest,
+    backend: BackendKey,
+    representation: RepresentationKey,
 }
 
 impl<'request> PreparedMetalPayload<'request> {
     pub(crate) fn compilation_identity_bytes(&self) -> &[u8] {
         self.prepared.identity().as_bytes()
+    }
+
+    pub(crate) const fn backend(&self) -> &BackendKey {
+        &self.backend
+    }
+
+    pub(crate) const fn representation(&self) -> &RepresentationKey {
+        &self.representation
     }
 
     pub(crate) fn into_parts(
@@ -150,8 +165,8 @@ impl<'request> PreparedMetalPayload<'request> {
         compatibility: TargetProfileRef,
     ) -> Result<PayloadId, ArtifactBuildError> {
         builder.push_payload(BackendPayloadDescriptor {
-            backend: BackendKey::new(BACKEND)?,
-            representation: RepresentationKey::new(REPRESENTATION)?,
+            backend: self.backend.clone(),
+            representation: self.representation.clone(),
             payload_schema: PAYLOAD_SCHEMA,
             compatibility,
             execution_policy: ArtifactExecutionPolicy::NativeImage,
@@ -173,6 +188,10 @@ impl<'request> PreparedMetalPayload<'request> {
 impl CompiledMetalPayload {
     pub(crate) const fn from_content(content: PayloadContent) -> Self {
         Self { content }
+    }
+
+    pub(crate) fn into_content(self) -> PayloadContent {
+        self.content
     }
 
     pub(crate) fn compile_prepared(
@@ -260,6 +279,8 @@ pub fn prepare_metal_payload<'request>(
         prepared,
         metadata,
         digest,
+        backend: BackendKey::new(BACKEND)?,
+        representation: RepresentationKey::new(REPRESENTATION)?,
     })
 }
 

@@ -4,19 +4,21 @@
 //!
 //! That a statically linked producer outside every crate in the workspace can
 //! consume verified compiler output through the promoted build-orchestration
-//! seam, publish one canonical payload, and be unable to forge any identity the
+//! seams — both of them — publish one canonical payload under a complete cache
+//! subject, re-accept it from the cache, and be unable to forge any identity the
 //! plan already decided. It is the refutation test
 //! [ADR 0090](../../../../docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md)
 //! item 11 names for itself: *a second backend needing to vary something
 //! `assemble_artifact` derives rather than something it delegates would show the
-//! split is in the wrong place*. This backend is that second backend.
+//! split is in the wrong place*. This backend is that second backend, and it
+//! shares no code with the Metal path on either seam.
 //!
 //! It is an integration test on purpose. It compiles against `tiler-build`'s
 //! public surface alone, so a `pub(crate)` item is unreachable here in exactly
 //! the way it is unreachable to a consumer; a `#[cfg(test)]` module beside the
 //! facade could reach into the crate and would prove nothing about the boundary.
 //!
-//! # The four kinds of case
+//! # The five kinds of case
 //!
 //! *Positive* cases assert what the produced artifact says, and are written so a
 //! change that quietly moved a derived fact would fail them rather than pass.
@@ -25,19 +27,31 @@
 //! it must produce, and each was watched failing before it was believed.
 //! *Derivation* cases assert that a fact the producer never supplied came from
 //! the plan — the property that makes forgery structural rather than checked.
+//! *Cache* cases move exactly one operand of the promoted cache seam and name
+//! the refusal, and each of the seam's own comparisons was separately disabled
+//! and watched being caught by exactly one of them.
 
 mod backend;
 mod image;
 mod partial_metal;
 mod profile;
 
-use backend::{EntryPerturbation, ScalarHostRefusal};
+use std::cell::Cell;
+
+use backend::{
+    EntryPerturbation, PayloadDeclaration, PreparedScalarPayload, ScalarHostFact, ScalarHostRefusal,
+};
 use image::{ScalarImageRefusal, encode};
 
 use tiler_artifact::program::{
-    ArtifactExecutionPolicy, DecodedArtifact, PayloadContent, PayloadMetadata, decode_artifact,
+    ArtifactExecutionPolicy, DecodedArtifact, PayloadContent, PayloadMetadata, RepresentationKey,
+    VerifiedArtifactProgram, decode_artifact,
 };
-use tiler_cache::expansion::{ExpansionCache, Resolution};
+use tiler_build::{
+    AcceptedArtifact, SinglePayloadCacheError, SinglePayloadProtocolError,
+    accept_or_publish_single_payload_artifact,
+};
+use tiler_cache::expansion::{ExpansionCache, Resolution, SubjectFacet, SubjectRefusal};
 use tiler_compiler::session::{
     Compilation, CompileRequest, NumericalContract, PlanAlternative, compile, compile_governed,
 };
@@ -48,6 +62,12 @@ use tiler_ir::semantic::{
     SemanticProgramBuilder, StrictSerialF32Sum,
 };
 use tiler_ir::shape::{Axis, Shape};
+
+/// The exact refusal type this backend instantiates the promoted seam with.
+///
+/// Three authorities and three type arguments: which compilation fact this
+/// backend compared, why its own compile step failed, and why its assembly did.
+type SeamRefusal = SinglePayloadCacheError<ScalarHostFact, ScalarHostRefusal, ScalarHostRefusal>;
 
 /// Builds the verified semantic graph every case here packages a plan for.
 fn semantic_program() -> SemanticProgram {
@@ -94,8 +114,7 @@ fn scalar_host_compilation(program: &SemanticProgram) -> Compilation {
 
 /// One complete production run: refuse, emit, describe, assemble.
 struct Produced {
-    artifact: tiler_artifact::program::VerifiedArtifactProgram,
-    metadata: PayloadMetadata,
+    artifact: VerifiedArtifactProgram,
     bytes: Vec<u8>,
 }
 
@@ -114,20 +133,13 @@ fn produce(
     let artifact = backend::assemble(
         semantic,
         plan,
-        PayloadContent {
-            metadata: metadata.clone(),
-            code,
-        },
+        PayloadContent { metadata, code },
         perturbation,
     )?;
     let bytes = artifact
         .encode()
         .map_err(|error| ScalarHostRefusal::CacheEncoding(error.to_string()))?;
-    Ok(Produced {
-        artifact,
-        metadata,
-        bytes,
-    })
+    Ok(Produced { artifact, bytes })
 }
 
 /// Produces one sound artifact, panicking on any refusal.
@@ -333,13 +345,120 @@ fn two_assemblies_of_one_plan_are_byte_identical() {
     );
 }
 
-/// The payload publishes once and is accepted from the cache thereafter.
+// -------------------------------------------------------------------------
+// The promoted cache seam: one arrangement, and every operand a case moves
+// -------------------------------------------------------------------------
+
+/// One complete arrangement of what `accept_or_publish_single_payload_artifact` takes.
 ///
-/// The subject is composed from the payload's derived compilation digest and the
-/// artifact's canonical identity, both of which the producer receives rather
-/// than states. The hit is checked back against the published identity, so a
-/// cache returning another artifact under this subject is a hard refusal rather
-/// than a silent substitution.
+/// A record rather than eight positional arguments per case, because every
+/// perturbation below is one field of it and naming the field is what says which
+/// statement was moved.
+struct SeamRun<'run> {
+    semantic: &'run SemanticProgram,
+    plan: PlanAlternative<'run>,
+    /// The descriptor-only artifact whose canonical identity the subject names.
+    pending: &'run VerifiedArtifactProgram,
+    /// What this backend declares its sole payload must say.
+    declaration: &'run PayloadDeclaration,
+    /// What the miss closure returns.
+    compiled: PayloadContent,
+    /// What `correspondence` compares a carried payload's metadata against.
+    expected: &'run PayloadMetadata,
+    /// The launch statements the miss assembly makes.
+    perturbation: EntryPerturbation,
+    /// Counts the miss closure's invocations.
+    compilations: &'run Cell<usize>,
+}
+
+/// Drives one arrangement through the promoted seam.
+fn resolve(cache: &ExpansionCache, run: SeamRun<'_>) -> Result<AcceptedArtifact, SeamRefusal> {
+    let SeamRun {
+        semantic,
+        plan,
+        pending,
+        declaration,
+        compiled,
+        expected,
+        perturbation,
+        compilations,
+    } = run;
+    accept_or_publish_single_payload_artifact(
+        cache,
+        pending,
+        &declaration.declared(),
+        |actual| backend::correspondence(expected, actual),
+        || {
+            compilations.set(compilations.get() + 1);
+            Ok::<PayloadContent, ScalarHostRefusal>(compiled)
+        },
+        |content| backend::assemble(semantic, plan, content, perturbation),
+    )
+}
+
+/// One prepared payload and the pending artifact assembled from its declaration.
+struct CacheFixture {
+    prepared: PreparedScalarPayload,
+    pending: VerifiedArtifactProgram,
+}
+
+impl CacheFixture {
+    fn new(semantic: &SemanticProgram, plan: PlanAlternative<'_>) -> Self {
+        let kernels: Vec<&VerifiedKernel> = plan.kernels().iter().collect();
+        let prepared = backend::prepare(&kernels).expect("the kernels translate and describe");
+        let pending = backend::assemble_pending(
+            semantic,
+            plan,
+            &prepared.declaration,
+            EntryPerturbation::default(),
+        )
+        .expect("the pending artifact assembles");
+        Self { prepared, pending }
+    }
+
+    /// The content a sound compile step produces.
+    fn compiled(&self) -> PayloadContent {
+        PayloadContent {
+            metadata: self.prepared.metadata.clone(),
+            code: encode(&self.prepared.image),
+        }
+    }
+
+    /// The sound arrangement every case below starts from.
+    fn run<'run>(
+        &'run self,
+        semantic: &'run SemanticProgram,
+        plan: PlanAlternative<'run>,
+        compilations: &'run Cell<usize>,
+    ) -> SeamRun<'run> {
+        SeamRun {
+            semantic,
+            plan,
+            pending: &self.pending,
+            declaration: &self.prepared.declaration,
+            compiled: self.compiled(),
+            expected: &self.prepared.metadata,
+            perturbation: EntryPerturbation::default(),
+            compilations,
+        }
+    }
+}
+
+fn outcome(resolution: &Resolution) -> &'static str {
+    match resolution {
+        Resolution::Published { .. } => "published",
+        Resolution::Hit { .. } => "hit",
+        Resolution::Uncached { .. } => "uncached",
+    }
+}
+
+/// The payload publishes once, is accepted thereafter, and compiles exactly once.
+///
+/// The subject is composed by the seam from the payload's derived compilation
+/// digest and the pending artifact's canonical identity, neither of which the
+/// producer states. The counter is what makes "miss-only compilation" a
+/// measurement rather than a claim: a second call that recompiled would still
+/// publish the same bytes and every other assertion here would pass.
 #[test]
 fn a_custom_payload_publishes_then_is_accepted_from_the_cache() {
     let directory = scratch("publish");
@@ -347,81 +466,30 @@ fn a_custom_payload_publishes_then_is_accepted_from_the_cache() {
     let semantic = semantic_program();
     let compilation = scalar_host_compilation(&semantic);
     let plan = compilation.selected().expect("one selected plan");
-    let produced = sound(&semantic, plan);
-    let digest = produced
-        .metadata
-        .identity()
-        .expect("the metadata derives its own digest");
+    let fixture = CacheFixture::new(&semantic, plan);
+    let compilations = Cell::new(0);
 
     let mut outcomes = Vec::new();
     for _ in 0..2 {
-        let resolution = backend::accept_or_publish(&cache, &produced.artifact, digest.as_bytes())
-            .expect("the custom payload resolves");
-        outcomes.push(match resolution {
-            Resolution::Published { .. } => "published",
-            Resolution::Hit { .. } => "hit",
-            Resolution::Uncached { .. } => "uncached",
-        });
+        let accepted = resolve(&cache, fixture.run(&semantic, plan, &compilations))
+            .expect("the custom payload resolves through the promoted seam");
+        outcomes.push(outcome(accepted.resolution()));
+        assert_eq!(
+            backend::validate_from_bytes(accepted.decoded()),
+            Ok(()),
+            "the backend's own from-bytes obligation still runs on the accepted result",
+        );
+        assert_eq!(
+            accepted.decoded().identity().as_bytes(),
+            fixture.pending.canonical_identity().as_bytes(),
+        );
     }
     assert_eq!(outcomes, ["published", "hit"]);
-    let _ = std::fs::remove_dir_all(directory);
-}
-
-/// A cache entry holding another artifact under this subject is a hard refusal.
-///
-/// The perturbation is the *cache*, not the producer: an entry for one
-/// artifact's subject is filled with a different artifact's envelope, which is
-/// what a corrupted store or a subject that under-keyed its facets would look
-/// like. Accepting it would return bytes a host would then execute under the
-/// identity it asked for, so the re-check after resolution is the whole
-/// protection and it must fire rather than degrade into a rebuild.
-#[test]
-fn a_cache_entry_naming_another_artifact_is_refused_rather_than_accepted() {
-    let directory = scratch("subject-disagreement");
-    let cache = ExpansionCache::open(directory.join("cache"));
-    let semantic = semantic_program();
-    let compilation = scalar_host_compilation(&semantic);
-    let plan = compilation.selected().expect("one selected plan");
-    let kernels: Vec<&VerifiedKernel> = plan.kernels().iter().collect();
-    let image = backend::emit(&kernels).expect("the kernels translate");
-    let expected = backend::payload_metadata(&kernels, &image).expect("a payload subject");
-    let mut other = expected.clone();
-    other.provenance.compile_flags = vec!["-other".to_owned()];
-
-    let expected_artifact = backend::assemble(
-        &semantic,
-        plan,
-        PayloadContent {
-            metadata: expected.clone(),
-            code: encode(&image),
-        },
-        EntryPerturbation::default(),
-    )
-    .expect("the expected artifact assembles");
-    let other_artifact = backend::assemble(
-        &semantic,
-        plan,
-        PayloadContent {
-            metadata: other,
-            code: encode(&image),
-        },
-        EntryPerturbation::default(),
-    )
-    .expect("the other artifact assembles");
-    let digest = expected.identity().expect("a derived payload digest");
-
-    // Fill the expected artifact's own subject with the other artifact's bytes.
-    backend::publish_under_foreign_subject(
-        &cache,
-        &expected_artifact,
-        digest.as_bytes(),
-        &other_artifact,
-    )
-    .expect("the perturbed entry publishes");
-
-    let refusal = backend::accept_or_publish(&cache, &expected_artifact, digest.as_bytes())
-        .expect_err("a cache entry naming another artifact cannot be accepted");
-    assert_eq!(refusal, ScalarHostRefusal::CacheIdentity);
+    assert_eq!(
+        compilations.get(),
+        1,
+        "the hit must not re-enter the compile step",
+    );
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -439,38 +507,583 @@ fn a_perturbed_compilation_subject_moves_every_derived_identity() {
     let semantic = semantic_program();
     let compilation = scalar_host_compilation(&semantic);
     let plan = compilation.selected().expect("one selected plan");
-    let kernels: Vec<&VerifiedKernel> = plan.kernels().iter().collect();
-    let image = backend::emit(&kernels).expect("the kernels translate");
+    let sound_fixture = CacheFixture::new(&semantic, plan);
 
-    let sound_metadata = backend::payload_metadata(&kernels, &image).expect("a payload subject");
-    let mut moved_metadata = sound_metadata.clone();
-    moved_metadata.provenance.compile_flags = vec!["-scalar-host-opt".to_owned()];
+    let mut moved = sound_fixture.prepared.metadata.clone();
+    moved.provenance.compile_flags = vec!["-scalar-host-opt".to_owned()];
+    let moved_fixture = fixture_for(&semantic, plan, &sound_fixture, moved);
 
+    let mut subjects = Vec::new();
     let mut identities = Vec::new();
-    let mut digests = Vec::new();
-    for metadata in [sound_metadata, moved_metadata] {
-        let digest = metadata.identity().expect("a derived payload digest");
-        let artifact = backend::assemble(
-            &semantic,
-            plan,
-            PayloadContent {
-                metadata,
-                code: encode(&image),
-            },
-            EntryPerturbation::default(),
-        )
-        .expect("both subjects assemble");
-        backend::accept_or_publish(&cache, &artifact, digest.as_bytes())
+    let compilations = Cell::new(0);
+    for fixture in [&sound_fixture, &moved_fixture] {
+        let accepted = resolve(&cache, fixture.run(&semantic, plan, &compilations))
             .expect("both subjects resolve");
-        identities.push(artifact.canonical_identity().as_bytes().to_vec());
-        digests.push(digest.as_bytes().to_vec());
+        subjects.push(accepted.cache_subject().as_bytes().to_vec());
+        identities.push(fixture.pending.canonical_identity().as_bytes().to_vec());
     }
 
-    assert_ne!(digests[0], digests[1], "the payload digest must move");
+    assert_ne!(
+        sound_fixture.prepared.declaration.digest, moved_fixture.prepared.declaration.digest,
+        "the payload digest must move",
+    );
     assert_ne!(
         identities[0], identities[1],
         "the artifact identity must move with the payload digest",
     );
+    assert_ne!(
+        subjects[0], subjects[1],
+        "the composed cache subject must move with both",
+    );
+    assert_eq!(
+        compilations.get(),
+        2,
+        "two subjects are two misses, not one entry serving both",
+    );
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// Rebuilds a fixture around a deliberately perturbed compilation subject.
+fn fixture_for(
+    semantic: &SemanticProgram,
+    plan: PlanAlternative<'_>,
+    sound: &CacheFixture,
+    metadata: PayloadMetadata,
+) -> CacheFixture {
+    let mut declaration = sound.prepared.declaration.clone();
+    declaration.digest = metadata
+        .identity()
+        .expect("the moved metadata derives its digest");
+    declaration.compilation = declaration.digest.as_bytes().to_vec();
+    let pending =
+        backend::assemble_pending(semantic, plan, &declaration, EntryPerturbation::default())
+            .expect("the moved pending artifact assembles");
+    CacheFixture {
+        prepared: PreparedScalarPayload {
+            image: sound.prepared.image.clone(),
+            metadata,
+            declaration,
+        },
+        pending,
+    }
+}
+
+// -------------------------------------------------------------------------
+// Every refusal the promoted cache seam can produce, watched failing
+// -------------------------------------------------------------------------
+
+/// A declared payload the pending artifact does not carry is refused first.
+///
+/// Point one of three: before a subject exists, the sole pending payload must be
+/// the one this backend says it prepared. The declaration is data, so this is
+/// the seam's own comparison and its own refusal — a backend cannot lose the
+/// check by supplying a permissive closure.
+#[test]
+fn a_declared_payload_the_pending_artifact_does_not_carry_is_refused() {
+    let directory = scratch("declared-descriptor");
+    let cache = ExpansionCache::open(directory.join("cache"));
+    let semantic = semantic_program();
+    let compilation = scalar_host_compilation(&semantic);
+    let plan = compilation.selected().expect("one selected plan");
+    let fixture = CacheFixture::new(&semantic, plan);
+    let compilations = Cell::new(0);
+
+    let mut declaration = fixture.prepared.declaration.clone();
+    declaration.representation = RepresentationKey::new("tiler.test.scalar-host-image-v2")
+        .expect("a governed representation key");
+    let refusal = resolve(
+        &cache,
+        SeamRun {
+            declaration: &declaration,
+            ..fixture.run(&semantic, plan, &compilations)
+        },
+    )
+    .expect_err("a pending payload of another representation cannot be keyed");
+
+    assert!(
+        matches!(
+            refusal,
+            SeamRefusal::Protocol(SinglePayloadProtocolError::PayloadDescriptor),
+        ),
+        "unexpected refusal: {refusal:?}",
+    );
+    assert_eq!(
+        compilations.get(),
+        0,
+        "the pending check must precede every compile step",
+    );
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// A declared digest other than the pending payload's is refused as a subject.
+///
+/// Separate from the case above because the two mean different things: a
+/// different descriptor is a payload of another kind, and a different digest is
+/// this kind of payload naming a compilation the pending artifact did not
+/// describe. A check comparing only the governed keys would pass this one.
+#[test]
+fn a_declared_digest_other_than_the_pending_payloads_is_refused() {
+    let directory = scratch("declared-digest");
+    let cache = ExpansionCache::open(directory.join("cache"));
+    let semantic = semantic_program();
+    let compilation = scalar_host_compilation(&semantic);
+    let plan = compilation.selected().expect("one selected plan");
+    let fixture = CacheFixture::new(&semantic, plan);
+    let compilations = Cell::new(0);
+
+    let mut moved = fixture.prepared.metadata.clone();
+    moved.provenance.link_flags = vec!["-other".to_owned()];
+    let mut declaration = fixture.prepared.declaration.clone();
+    declaration.digest = moved
+        .identity()
+        .expect("the moved metadata derives its digest");
+    let refusal = resolve(
+        &cache,
+        SeamRun {
+            declaration: &declaration,
+            ..fixture.run(&semantic, plan, &compilations)
+        },
+    )
+    .expect_err("a declaration naming another compilation cannot be keyed");
+
+    assert!(
+        matches!(
+            refusal,
+            SeamRefusal::Protocol(SinglePayloadProtocolError::PayloadSubject),
+        ),
+        "unexpected refusal: {refusal:?}",
+    );
+    assert_eq!(compilations.get(), 0);
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// A compilation facet with no bytes is refused rather than under-keyed.
+///
+/// The facet is opaque to the cache, which is exactly why an empty one has to be
+/// a typed refusal: nothing downstream could tell a key that named no
+/// compilation from one that named a compilation producing no bytes.
+#[test]
+fn a_compilation_facet_with_no_bytes_is_refused() {
+    let directory = scratch("empty-facet");
+    let cache = ExpansionCache::open(directory.join("cache"));
+    let semantic = semantic_program();
+    let compilation = scalar_host_compilation(&semantic);
+    let plan = compilation.selected().expect("one selected plan");
+    let fixture = CacheFixture::new(&semantic, plan);
+    let compilations = Cell::new(0);
+
+    let mut declaration = fixture.prepared.declaration.clone();
+    declaration.compilation = Vec::new();
+    let refusal = resolve(
+        &cache,
+        SeamRun {
+            declaration: &declaration,
+            ..fixture.run(&semantic, plan, &compilations)
+        },
+    )
+    .expect_err("a facet with no canonical bytes cannot compose a subject");
+
+    assert!(
+        matches!(
+            refusal,
+            SeamRefusal::Subject(SubjectRefusal::EmptyRun {
+                facet: SubjectFacet::BackendCompilations,
+                index: 0,
+            }),
+        ),
+        "unexpected refusal: {refusal:?}",
+    );
+    assert_eq!(compilations.get(), 0);
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// A failing compile step stays a compilation failure, not a protocol defect.
+///
+/// The distinction is the reason the seam carries three type parameters rather
+/// than one: an environment failure may legitimately be retried and a
+/// contradicted declaration may not, so collapsing them would make a defect that
+/// must never become a rebuild indistinguishable from one that can.
+#[test]
+fn a_failing_compile_step_is_not_a_protocol_defect() {
+    let directory = scratch("compile-failure");
+    let cache = ExpansionCache::open(directory.join("cache"));
+    let semantic = semantic_program();
+    let compilation = scalar_host_compilation(&semantic);
+    let plan = compilation.selected().expect("one selected plan");
+    let fixture = CacheFixture::new(&semantic, plan);
+
+    let refusal: SeamRefusal = accept_or_publish_single_payload_artifact(
+        &cache,
+        &fixture.pending,
+        &fixture.prepared.declaration.declared(),
+        |actual| backend::correspondence(&fixture.prepared.metadata, actual),
+        || Err(ScalarHostRefusal::UnsupportedAccessPattern { entry: 0 }),
+        |content| backend::assemble(&semantic, plan, content, EntryPerturbation::default()),
+    )
+    .expect_err("a compile step that refuses cannot publish");
+
+    assert!(
+        matches!(
+            refusal,
+            SeamRefusal::Compile(ScalarHostRefusal::UnsupportedAccessPattern { entry: 0 }),
+        ),
+        "unexpected refusal: {refusal:?}",
+    );
+    assert_eq!(
+        format!("{refusal}"),
+        "payload compilation failed: kernel 0 is not one read and one write",
+        "the neutral seam must name the stage and forward the backend's own words",
+    );
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// An assembly the neutral facade refuses stays an assembly refusal.
+#[test]
+fn an_assembly_the_facade_refuses_stays_an_assembly_refusal() {
+    let directory = scratch("assembly-failure");
+    let cache = ExpansionCache::open(directory.join("cache"));
+    let semantic = semantic_program();
+    let compilation = scalar_host_compilation(&semantic);
+    let plan = compilation.selected().expect("one selected plan");
+    let fixture = CacheFixture::new(&semantic, plan);
+    let compilations = Cell::new(0);
+
+    let refusal = resolve(
+        &cache,
+        SeamRun {
+            perturbation: EntryPerturbation {
+                bindings: Some(3),
+                forbid_zero_work_skip: false,
+            },
+            ..fixture.run(&semantic, plan, &compilations)
+        },
+    )
+    .expect_err("a surplus binding declaration cannot be published");
+
+    assert!(
+        matches!(
+            refusal,
+            SeamRefusal::Assemble(ScalarHostRefusal::Assembly(_)),
+        ),
+        "unexpected refusal: {refusal:?}",
+    );
+    assert_eq!(
+        compilations.get(),
+        1,
+        "the assembly refusal must follow the compile step it consumes",
+    );
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// A produced artifact whose identity moved is refused *before* publication.
+///
+/// Point two of three, and the first check inside the miss closure. The
+/// perturbation declares a zero-thread launch unskippable, which the plan admits
+/// and which folds into artifact identity — so the produced artifact is
+/// perfectly valid and simply is not the one the subject was composed from.
+///
+/// The second half is what makes this a distinct case rather than a slower
+/// spelling of the post-resolution check: both refuse with the same kind, so the
+/// only observable difference is whether the wrong artifact reached the store.
+/// A sound run afterwards must therefore *publish* — a hit would mean the
+/// refused run had already filed the perturbed envelope under this subject,
+/// where every later process would read it.
+#[test]
+fn a_produced_artifact_whose_identity_moved_is_refused_before_publication() {
+    let directory = scratch("produced-identity");
+    let cache = ExpansionCache::open(directory.join("cache"));
+    let semantic = semantic_program();
+    let compilation = scalar_host_compilation(&semantic);
+    let plan = compilation.selected().expect("one selected plan");
+    let fixture = CacheFixture::new(&semantic, plan);
+    let compilations = Cell::new(0);
+
+    let refusal = resolve(
+        &cache,
+        SeamRun {
+            perturbation: EntryPerturbation {
+                bindings: None,
+                forbid_zero_work_skip: true,
+            },
+            ..fixture.run(&semantic, plan, &compilations)
+        },
+    )
+    .expect_err("an artifact other than the pending one cannot be published under its subject");
+
+    assert!(
+        matches!(
+            refusal,
+            SeamRefusal::Protocol(SinglePayloadProtocolError::ArtifactIdentity),
+        ),
+        "unexpected refusal: {refusal:?}",
+    );
+    let accepted = resolve(&cache, fixture.run(&semantic, plan, &compilations))
+        .expect("the sound arrangement resolves afterwards");
+    assert_eq!(
+        outcome(accepted.resolution()),
+        "published",
+        "the refused run must have left this subject unpublished",
+    );
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// A compilation other than the expected one is named fact by fact.
+///
+/// The refinement this seam delegates. Everything here is self-consistent — the
+/// declaration, the pending artifact, and the produced artifact all describe the
+/// perturbed compilation, so identity agrees and the descriptor comparison
+/// passes — and the only authority that can notice is the backend, which says
+/// *which* fact moved rather than that something did.
+#[test]
+fn a_compilation_other_than_the_one_expected_is_named_fact_by_fact() {
+    let directory = scratch("correspondence");
+    let cache = ExpansionCache::open(directory.join("cache"));
+    let semantic = semantic_program();
+    let compilation = scalar_host_compilation(&semantic);
+    let plan = compilation.selected().expect("one selected plan");
+    let sound = CacheFixture::new(&semantic, plan);
+
+    let mut moved = sound.prepared.metadata.clone();
+    moved
+        .source
+        .extend_from_slice(b"a kernel this plan does not have");
+    let perturbed = fixture_for(&semantic, plan, &sound, moved);
+    let compilations = Cell::new(0);
+
+    let refusal = resolve(
+        &cache,
+        SeamRun {
+            // The whole run describes the perturbed compilation; only what the
+            // backend was told to *expect* is the sound one.
+            expected: &sound.prepared.metadata,
+            ..perturbed.run(&semantic, plan, &compilations)
+        },
+    )
+    .expect_err("a payload describing another compilation cannot be published");
+
+    assert!(
+        matches!(
+            refusal,
+            SeamRefusal::Protocol(SinglePayloadProtocolError::Correspondence(
+                ScalarHostFact::Source
+            )),
+        ),
+        "unexpected refusal: {refusal:?}",
+    );
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// An artifact carrying object bytes other than the compiled ones is refused.
+///
+/// Artifact identity deliberately excludes the emitted object, so this artifact
+/// carries the same identity and the same descriptor as the sound one. Only the
+/// seam's own comparison against the exact bytes the compile step returned
+/// separates them, and without it a producer could publish one compilation's
+/// subject over another compilation's object.
+#[test]
+fn an_artifact_carrying_other_object_bytes_is_refused_before_publication() {
+    let directory = scratch("object-substitution");
+    let cache = ExpansionCache::open(directory.join("cache"));
+    let semantic = semantic_program();
+    let compilation = scalar_host_compilation(&semantic);
+    let plan = compilation.selected().expect("one selected plan");
+    let fixture = CacheFixture::new(&semantic, plan);
+
+    let refusal: SeamRefusal = accept_or_publish_single_payload_artifact(
+        &cache,
+        &fixture.pending,
+        &fixture.prepared.declaration.declared(),
+        |actual| backend::correspondence(&fixture.prepared.metadata, actual),
+        || Ok::<PayloadContent, ScalarHostRefusal>(fixture.compiled()),
+        |content| {
+            let mut substituted = content;
+            substituted.code.push(0);
+            backend::assemble(&semantic, plan, substituted, EntryPerturbation::default())
+        },
+    )
+    .expect_err("an object other than the compiled one cannot be published");
+
+    assert!(
+        matches!(
+            refusal,
+            SeamRefusal::Protocol(SinglePayloadProtocolError::PayloadObject),
+        ),
+        "unexpected refusal: {refusal:?}",
+    );
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// An artifact that declares its payload without carrying it is refused.
+///
+/// A pending descriptor and a carried one are the same descriptor, so identity
+/// agrees and nothing before this notices. What is missing is the content, and
+/// publishing an envelope naming a backend object it does not contain would put
+/// an unexecutable entry in the cache under a subject that promises one.
+#[test]
+fn an_artifact_carrying_no_payload_content_is_refused_before_publication() {
+    let directory = scratch("uncarried-payload");
+    let cache = ExpansionCache::open(directory.join("cache"));
+    let semantic = semantic_program();
+    let compilation = scalar_host_compilation(&semantic);
+    let plan = compilation.selected().expect("one selected plan");
+    let fixture = CacheFixture::new(&semantic, plan);
+
+    let refusal: SeamRefusal = accept_or_publish_single_payload_artifact(
+        &cache,
+        &fixture.pending,
+        &fixture.prepared.declaration.declared(),
+        |actual| backend::correspondence(&fixture.prepared.metadata, actual),
+        || Ok::<PayloadContent, ScalarHostRefusal>(fixture.compiled()),
+        |_| {
+            backend::assemble_pending(
+                &semantic,
+                plan,
+                &fixture.prepared.declaration,
+                EntryPerturbation::default(),
+            )
+        },
+    )
+    .expect_err("an artifact that carries no payload cannot be published");
+
+    assert!(
+        matches!(
+            refusal,
+            SeamRefusal::Protocol(SinglePayloadProtocolError::MissingPayloadMetadata),
+        ),
+        "unexpected refusal: {refusal:?}",
+    );
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// A cache entry holding another artifact under this subject is a hard refusal.
+///
+/// Point three of three. The perturbation is the *cache*, not the producer: an
+/// entry for one artifact's subject is filled with a different artifact's
+/// envelope, which is what a corrupted store or a subject that under-keyed its
+/// facets would look like. The substituted artifact carries the same payload, so
+/// every payload check passes and the identity comparison is the whole
+/// protection. Accepting it would return bytes a host executes under the
+/// identity it asked for, so it must fire rather than degrade into a rebuild.
+#[test]
+fn a_cache_entry_naming_another_artifact_is_refused_rather_than_accepted() {
+    let directory = scratch("subject-disagreement");
+    let cache = ExpansionCache::open(directory.join("cache"));
+    let semantic = semantic_program();
+    let compilation = scalar_host_compilation(&semantic);
+    let plan = compilation.selected().expect("one selected plan");
+    let fixture = CacheFixture::new(&semantic, plan);
+
+    let other = backend::assemble(
+        &semantic,
+        plan,
+        fixture.compiled(),
+        EntryPerturbation {
+            bindings: None,
+            forbid_zero_work_skip: true,
+        },
+    )
+    .expect("the other artifact assembles");
+    backend::publish_under_foreign_subject(
+        &cache,
+        &fixture.pending,
+        &fixture.prepared.declaration.compilation,
+        &other,
+    )
+    .expect("the perturbed entry publishes");
+
+    let compilations = Cell::new(0);
+    let refusal = resolve(&cache, fixture.run(&semantic, plan, &compilations))
+        .expect_err("a cache entry naming another artifact cannot be accepted");
+
+    assert!(
+        matches!(
+            refusal,
+            SeamRefusal::Protocol(SinglePayloadProtocolError::ArtifactIdentity),
+        ),
+        "unexpected refusal: {refusal:?}",
+    );
+    assert_eq!(
+        compilations.get(),
+        0,
+        "a contradicted hit is a hard refusal, never a rebuild",
+    );
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+/// A cache entry whose payload moved is refused by the same rules a miss is.
+///
+/// Point three runs the whole payload validation again rather than trusting what
+/// publication proved, because the entry a hit returns need not be the entry
+/// this process published. The two cases are the two halves of the split: a
+/// fact the backend compares is named by the backend, and a fact it deliberately
+/// leaves to the digest is caught one step later by the seam.
+#[test]
+fn a_cache_entry_whose_payload_moved_is_refused_after_resolution() {
+    let directory = scratch("resolved-payload");
+    let semantic = semantic_program();
+    let compilation = scalar_host_compilation(&semantic);
+    let plan = compilation.selected().expect("one selected plan");
+    let fixture = CacheFixture::new(&semantic, plan);
+
+    let mut named = fixture.prepared.metadata.clone();
+    named.provenance.target.push_str("-other");
+    let mut unnamed = fixture.prepared.metadata.clone();
+    unnamed
+        .obligations
+        .push(tiler_artifact::program::PayloadTargetObligation {
+            key: "tiler.test.scalar-host.obligation".to_owned(),
+            value: "1".to_owned(),
+        });
+
+    for (index, (label, metadata)) in [
+        ("a fact this backend compares", named),
+        ("a fact it leaves to the digest", unnamed),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let cache = ExpansionCache::open(directory.join(format!("cache-{index}")));
+        let moved = backend::assemble(
+            &semantic,
+            plan,
+            PayloadContent {
+                metadata,
+                code: encode(&fixture.prepared.image),
+            },
+            EntryPerturbation::default(),
+        )
+        .expect("the moved artifact assembles");
+        backend::publish_under_foreign_subject(
+            &cache,
+            &fixture.pending,
+            &fixture.prepared.declaration.compilation,
+            &moved,
+        )
+        .expect("the perturbed entry publishes");
+
+        let compilations = Cell::new(0);
+        let refusal = resolve(&cache, fixture.run(&semantic, plan, &compilations))
+            .expect_err("a cache entry carrying another payload cannot be accepted");
+        let expected_by_the_backend = matches!(
+            refusal,
+            SeamRefusal::Protocol(SinglePayloadProtocolError::Correspondence(
+                ScalarHostFact::Target
+            )),
+        );
+        let expected_by_the_seam = matches!(
+            refusal,
+            SeamRefusal::Protocol(SinglePayloadProtocolError::PayloadSubject),
+        );
+        assert!(
+            if index == 0 {
+                expected_by_the_backend
+            } else {
+                expected_by_the_seam
+            },
+            "{label}: unexpected refusal: {refusal:?}",
+        );
+        assert_eq!(compilations.get(), 0, "{label}: a hit is never rebuilt");
+    }
     let _ = std::fs::remove_dir_all(directory);
 }
 

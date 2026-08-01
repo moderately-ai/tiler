@@ -29,10 +29,10 @@ use tiler_metal_aot::driver::Toolchain;
 use tiler_metal_aot::input::OptimizationLevel;
 
 use crate::{
-    AcceptedMetalArtifact, BackendEntryDeclaration, BoundMetalCompileDeclaration,
-    CompiledMetalPayload, MetalArtifactProtocolError, MetalAssemblyError, MetalCacheError,
-    MetalPlanProfileMismatch, PlanArtifactError, accept_or_publish_single_payload_metal_artifact,
-    assemble_plan_artifact, metal_compile_request, prepare_metal_payload,
+    AcceptedArtifact, BackendEntryDeclaration, BoundMetalCompileDeclaration, CompiledMetalPayload,
+    MetalArtifactProtocolError, MetalAssemblyError, MetalCacheError, MetalPlanProfileMismatch,
+    PlanArtifactError, accept_or_publish_single_payload_metal_artifact, assemble_plan_artifact,
+    metal_compile_request, prepare_metal_payload,
 };
 
 /// Why a checked compiler plan did not produce an accepted Metal artifact.
@@ -75,7 +75,7 @@ pub enum MetalPlanBuildError {
 /// carried payload and proves the two identities agree before returning.
 #[derive(Debug)]
 pub struct AcceptedMetalPlanArtifact {
-    acceptance: AcceptedMetalArtifact,
+    acceptance: AcceptedArtifact,
     artifact: VerifiedArtifactProgram,
 }
 
@@ -98,9 +98,19 @@ impl AcceptedMetalPlanArtifact {
         self.acceptance.cache_subject()
     }
 
+    /// Returns the validated artifact the cache resolution carries.
+    ///
+    /// The decoded envelope rather than [`Self::artifact`]: what a loading host
+    /// receives is bytes, and the two are proven to name one identity before
+    /// this value exists.
+    #[must_use]
+    pub const fn decoded(&self) -> &DecodedArtifact {
+        self.acceptance.decoded()
+    }
+
     /// Consumes the result into its cache acceptance and verified artifact.
     #[must_use]
-    pub fn into_parts(self) -> (AcceptedMetalArtifact, VerifiedArtifactProgram) {
+    pub fn into_parts(self) -> (AcceptedArtifact, VerifiedArtifactProgram) {
         (self.acceptance, self.artifact)
     }
 }
@@ -231,7 +241,7 @@ pub fn accept_or_publish_metal_plan(
             )
         })
         .map_err(MetalPlanBuildError::from)?;
-    let decoded = resolution_artifact(acceptance.resolution());
+    let decoded = acceptance.decoded();
     let metadata = decoded
         .payload_metadata(0)
         .ok_or(MetalPlanBuildError::CacheProtocol(
@@ -261,13 +271,6 @@ pub fn accept_or_publish_metal_plan(
         acceptance,
         artifact,
     })
-}
-
-const fn resolution_artifact(resolution: &Resolution) -> &DecodedArtifact {
-    match resolution {
-        Resolution::Hit { entry, .. } | Resolution::Published { entry, .. } => entry.artifact(),
-        Resolution::Uncached { artifact, .. } => artifact,
-    }
 }
 
 /// The three launch statements the standard Metal backend makes per stage.
@@ -333,10 +336,7 @@ mod tests {
     use tiler_metal_aot::driver::Toolchain;
     use tiler_metal_aot::input::OptimizationLevel;
 
-    use super::{
-        MetalPlanBuildError, accept_or_publish_metal_plan, metal_entry_declaration,
-        resolution_artifact,
-    };
+    use super::{MetalPlanBuildError, accept_or_publish_metal_plan, metal_entry_declaration};
     use crate::{
         BoundMetalCompileDeclaration, CompiledMetalPayload, MetalPlanProfileMismatch,
         PlanArtifactError, assemble_plan_artifact, metal_compile_request, prepare_metal_payload,
@@ -509,7 +509,8 @@ mod tests {
             OptimizationLevel::Default,
         )
         .expect("the second cache hit remains readable");
-        let variant = resolution_artifact(accepted.resolution())
+        let variant = accepted
+            .decoded()
             .variants()
             .next()
             .expect("one packaged variant");
@@ -567,7 +568,8 @@ mod tests {
             artifact_identity(materialized.resolution()),
             "the facade must consume the supplied checked plan rather than reselecting",
         );
-        let materialized_variant = resolution_artifact(materialized.resolution())
+        let materialized_variant = materialized
+            .decoded()
             .variants()
             .next()
             .expect("one materialized variant");
