@@ -1,7 +1,7 @@
 ---
 id: correct-the-sdk-apple-family-range-in-the-runtime-answer-record
 title: Correct the SDK Apple family range in the runtime answer record
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [close-the-metal-gpu-family-out-of-crate-total-map, widen-the-metal-gpu-family-vocabulary-to-apple10]
@@ -9,6 +9,9 @@ scopes: [research/runtime]
 shared_scopes: []
 paths: []
 tags: [documentation, metal, adr-0074]
+claimed_from: todo
+assignee: worker-sdk-range
+lease_expires_at: 1785598736
 ---
 ## User-visible outcome
 
