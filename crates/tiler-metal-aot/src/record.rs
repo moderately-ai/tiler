@@ -24,6 +24,12 @@ pub struct ResolvedTool {
 }
 
 /// The resolved identity of the single selected SDK.
+///
+/// Every field here is portable identity that reaches the compilation subject.
+/// The SDK's absolute path is deliberately not among them: `metal` selects its
+/// own sysroot — the driver passes no `-isysroot` — so the path decided nothing,
+/// was excluded from identity, and was not carried by the artifact payload,
+/// while costing an `xcrun --show-sdk-path` on every resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SdkIdentity {
     /// The canonical `--sdk` selector, for example `macosx`.
@@ -32,8 +38,6 @@ pub struct SdkIdentity {
     pub version: String,
     /// The SDK's build identifier, for example `25F70`.
     pub build: String,
-    /// The absolute SDK path. This is local provenance, not portable identity.
-    pub path: PathBuf,
 }
 
 /// The portable compiler fingerprint: the `metal` and `metallib` component

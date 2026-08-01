@@ -93,7 +93,6 @@ impl Toolchain {
         // path, and artifact identity folds the version alone.
         let metal_version = Self::tool_version(&metal_path, "metal")?;
         let metallib_version = Self::tool_version(&metallib_path, "metallib")?;
-        let sdk_path = self.sdk_field(sdk, "--show-sdk-path")?;
         let sdk_version = self.sdk_field(sdk, "--show-sdk-version")?;
         let sdk_build = self.sdk_field(sdk, "--show-sdk-build-version")?;
 
@@ -102,7 +101,6 @@ impl Toolchain {
                 canonical_name: sdk.selector().to_owned(),
                 version: sdk_version,
                 build: sdk_build,
-                path: PathBuf::from(sdk_path),
             },
             metal: ResolvedTool {
                 path: metal_path,
@@ -663,7 +661,6 @@ kernel void canonicalize_kernel(device const float* in [[buffer(0)]],\n\
              shift 2\n\
              case \"$1\" in\n\
              --find) echo /bin/echo ;;\n\
-             --show-sdk-path) echo /nonexistent/sdk ;;\n\
              --show-sdk-version) echo 0.0 ;;\n\
              --show-sdk-build-version) echo ZZZZ ;;\n\
              *) exec /usr/bin/xcrun --sdk \"$sdk\" \"$@\" ;;\n\
@@ -725,7 +722,6 @@ kernel void canonicalize_kernel(device const float* in [[buffer(0)]],\n\
                  shift 2\n\
                  case \"$1\" in\n\
                    --find) if [ \"$2\" = \"metal\" ]; then echo '{}'; else echo '{}'; fi ;;\n\
-                   --show-sdk-path) echo /SDKs/MacOSX.sdk ;;\n\
                    --show-sdk-version) echo 26.5 ;;\n\
                    --show-sdk-build-version) echo 25F70 ;;\n\
                    *) exit 1 ;;\n\
