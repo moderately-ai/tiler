@@ -336,7 +336,13 @@ fn read_scale_value(tensor: &Tensor) -> Result<f32, ReferenceValueError> {
         .try_into()
         .map_err(|_| ReferenceValueError::InvalidRepresentation)?;
     let value = f32::from_bits(u32::from_be_bytes(bytes));
-    if !value.is_finite() || value <= 0.0 {
+    // The governed contract's scale domain is `positive-normal-f32`, not merely
+    // positive finite: the subnormal range is excluded so the decode's multiply
+    // cannot produce a subnormal, which is what makes the declared subnormal
+    // preservation dischargeable on a flushing target. `f32::is_normal` is
+    // already false for zero, subnormal, infinite, and NaN values, so the sign
+    // test is the only thing it does not cover.
+    if !value.is_normal() || value <= 0.0 {
         return Err(ReferenceValueError::InvalidRepresentation);
     }
     Ok(value)
@@ -526,6 +532,14 @@ mod tests {
         );
     }
 
+    /// The admitted scale domain is `positive-normal-f32`, and this pins its
+    /// exact boundary.
+    ///
+    /// The subnormal entries are the ones this ticket added: they used to
+    /// validate, and admitting them is what made the decode's declared
+    /// subnormal preservation unhonourable on a flushing target. The smallest
+    /// *normal* scale one bit above the largest subnormal still validates, so
+    /// the rejection is a boundary rather than a blanket tightening.
     #[test]
     fn compound_validator_rejects_every_invalid_scale_class() {
         let (profile, codes, _, zero) = compound_fixture();
@@ -538,17 +552,22 @@ mod tests {
             f32::NEG_INFINITY,
             f32::NAN,
             f32::from_bits(0x7f80_0001),
+            f32::from_bits(1),
+            f32::from_bits(0x0000_ffff),
+            f32::from_bits(f32::MIN_POSITIVE.to_bits() - 1),
         ] {
             let value =
                 compound_value(&profile, &codes, &f32_scalar(invalid_scale), &zero).unwrap();
             assert_eq!(
                 validate_strict_affine(&value, &profile),
-                Err(ReferenceValueError::InvalidRepresentation)
+                Err(ReferenceValueError::InvalidRepresentation),
+                "{:#010x} must be outside the admitted scale domain",
+                invalid_scale.to_bits(),
             );
         }
-        let smallest_positive_subnormal =
-            compound_value(&profile, &codes, &f32_scalar(f32::from_bits(1)), &zero).unwrap();
-        assert!(validate_strict_affine(&smallest_positive_subnormal, &profile).is_ok());
+        let smallest_normal =
+            compound_value(&profile, &codes, &f32_scalar(f32::MIN_POSITIVE), &zero).unwrap();
+        assert!(validate_strict_affine(&smallest_normal, &profile).is_ok());
     }
 
     #[test]
@@ -577,8 +596,32 @@ mod tests {
         assert_eq!(
             dequantize_one(1, f32::from_bits(1), 0).to_bits(),
             1,
-            "the exact f32 evaluation preserves a representable subnormal"
+            "the exact f32 evaluation preserves a representable subnormal, which is \
+             why a subnormal scale is excluded from the contract rather than tolerated"
         );
+    }
+
+    /// No decode over the admitted scale domain produces a subnormal.
+    ///
+    /// The derivation the honourability decision rests on, exhausted over the
+    /// U8 code domain at the worst-case scale: the smallest admitted one, where
+    /// the smallest nonzero product is exactly `1.0 * MIN_POSITIVE`. Every
+    /// result is `+0.0` or normal, so a target that flushes subnormals in `f32`
+    /// arithmetic returns these same bits.
+    #[test]
+    fn the_admitted_scale_domain_leaves_no_subnormal_decode_result() {
+        for zero_point in 0..=u8::MAX {
+            for code in 0..=u8::MAX {
+                let value = dequantize_one(code, f32::MIN_POSITIVE, zero_point);
+                assert!(
+                    value == 0.0 || value.is_normal(),
+                    "code {code} against zero point {zero_point} decoded to {value:e}",
+                );
+                if code == zero_point {
+                    assert_eq!(value.to_bits(), 0.0_f32.to_bits());
+                }
+            }
+        }
     }
 
     #[test]
@@ -808,13 +851,16 @@ mod tests {
                             == tiler_ir::semantic::SemanticPreconditionStatus::Residual
                     })
                     .count(),
-                2
+                3
             );
             let zero = Tensor::scalar(zero_type, element([8])).unwrap();
             let evaluator = ReferenceEvaluator::standard().unwrap();
+            // The third payload is the one the strengthened predicate added: a
+            // scale that is positive and finite, and still outside the domain.
             for (x, scale) in [
                 (f32_scalar(f32::NAN), f32_scalar(0.5)),
                 (f32_scalar(1.0), f32_scalar(0.0)),
+                (f32_scalar(1.0), f32_scalar(f32::from_bits(1))),
             ] {
                 let error = evaluator
                     .evaluate(

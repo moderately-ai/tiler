@@ -95,16 +95,17 @@ pub use precondition::{
     SemanticPreconditionObligationIdentity, SemanticPreconditionOrdinal,
     SemanticPreconditionProofBasis, SemanticPreconditionRef, SemanticPreconditionStatus,
     SemanticPredicateIdentity, no_nan_predicate, positive_finite_scalar_predicate,
+    positive_normal_scalar_predicate,
 };
 pub use program::{SemanticProgram, SemanticProgramBuilder};
 pub use quantization::{
     ENCODED_NUMERIC_CODE_MAX, ENCODED_NUMERIC_CODE_MIN, ENCODED_NUMERIC_CODE_TYPE,
     ENCODED_NUMERIC_COMPUTE_TYPE, ENCODED_NUMERIC_DECODE_EVALUATION,
     ENCODED_NUMERIC_EXPRESSED_TYPE, ENCODED_NUMERIC_MATERIALIZATION, ENCODED_NUMERIC_NAN_BEHAVIOR,
-    ENCODED_NUMERIC_ROUNDING, ENCODED_NUMERIC_SATURATION, STRICT_AFFINE_CODES_ROLE,
-    STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE, StrictAffineU4, StrictAffineU8, U4,
-    U8, assemble_strict_affine_op, dequantize_strict_affine_op, quantize_strict_affine_op,
-    strict_affine_scheme,
+    ENCODED_NUMERIC_ROUNDING, ENCODED_NUMERIC_SATURATION, ENCODED_NUMERIC_SCALE_DOMAIN,
+    STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
+    StrictAffineU4, StrictAffineU8, U4, U8, assemble_strict_affine_op, dequantize_strict_affine_op,
+    quantize_strict_affine_op, strict_affine_scheme,
 };
 pub(crate) use registry::canonical_f32_bits;
 pub use registry::{

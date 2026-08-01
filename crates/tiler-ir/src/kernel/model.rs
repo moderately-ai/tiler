@@ -16,8 +16,8 @@ use crate::identity::{push_len, push_slice};
 use crate::schedule::{BoundsWitnessId, OwnershipWitnessId};
 use crate::schedule::{
     CanonicalScheduledRegionIdentity, ExceptionalValueAssumption, FlushedZeroSign,
-    NumericalPermission, NumericalRealization, RegionId, ResourceRequirements, SubnormalMode,
-    TensorRole, ValueDomainProvenance,
+    NumericalPermission, NumericalRealization, RegionId, ResourceRequirements, SubnormalFreedom,
+    SubnormalMode, TensorRole, ValueDomainProvenance,
 };
 use crate::semantic::EncodedComponentRole;
 
@@ -620,6 +620,9 @@ pub struct VerifiedKernel {
     pub(super) schedule_identity: CanonicalScheduledRegionIdentity,
     pub(super) data: KernelData,
     pub(super) identity: CanonicalKernelIdentity,
+    /// Derived from the refined region's scalar program; see
+    /// [`VerifiedKernel::subnormal_freedom`] for why it is not in `data`.
+    pub(super) subnormal_freedom: SubnormalFreedom,
 }
 
 impl PartialEq for VerifiedKernel {
@@ -693,6 +696,26 @@ impl VerifiedKernel {
     #[must_use]
     pub const fn numerical(&self) -> NumericalRealization {
         self.data.numerical
+    }
+
+    /// Returns whether this kernel's arithmetic is bounded away from subnormals.
+    ///
+    /// A backend deciding whether it can honour [`Self::numerical`]'s declared
+    /// subnormal behaviour must consult this first: where the freedom covers the
+    /// arithmetic type in question, both resolutions of that type's subnormal
+    /// dimensions return identical bits, so a target whose behaviour differs is
+    /// not a gap.
+    ///
+    /// **Copied from the region, not encoded into
+    /// [`Self::canonical_identity`].** It is a total function of the scheduled
+    /// program, whose canonical identity this kernel's identity already folds
+    /// in, so encoding it would add a byte no two distinguishable kernels
+    /// differ in. Keeping it out of the assembled kernel arena also keeps it
+    /// out of the refinement gate's structural comparison, where it would have
+    /// compared a derived value against itself.
+    #[must_use]
+    pub const fn subnormal_freedom(&self) -> SubnormalFreedom {
+        self.subnormal_freedom
     }
 
     /// Returns the derived resource requirements.

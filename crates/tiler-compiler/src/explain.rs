@@ -3736,7 +3736,19 @@ mod tests {
                 // different requests. The trace's own two record lines are
                 // unchanged again — the fixture's program has one input and one
                 // output, and nothing about explain's content moved.
-                "tiler-explain-v7 request=0b7759de2d9b5756\n",
+                // Rebaselined from `0b7759de2d9b5756` when the strict-affine
+                // scale domain narrowed to positive *normal* f32. Two facts
+                // inside the frozen semantic registry snapshot moved together:
+                // the strict-affine value contract gained its scale-domain
+                // field, and `assemble-` and `quantize-strict-affine` gained
+                // semantic-precondition declarations for that domain. The
+                // subject covers the snapshot, which encodes every registered
+                // definition's contract and its precondition declarations, so
+                // this digest *must* move — a request whose semantic authority
+                // admits a different set of scale values is a different
+                // request. The trace's own two record lines are unchanged;
+                // nothing about explain's content moved.
+                "tiler-explain-v7 request=bae4788d2fc79631\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

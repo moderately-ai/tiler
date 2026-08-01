@@ -67,8 +67,8 @@ use tiler_ir::kernel::{
     VerifiedValueId,
 };
 use tiler_ir::schedule::{
-    ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, NumericalRealization,
-    SubnormalMode, TensorRole, ValueDomainProvenance,
+    ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
+    NumericalRealization, SubnormalMode, TensorRole, ValueDomainProvenance,
 };
 
 use crate::diagnostic::{BarrierRejection, MetalEmitError, MetalOperationFamily};
@@ -739,6 +739,22 @@ const fn subnormal_gap(
     }
 }
 
+/// Returns the target-neutral arithmetic type one MSL arithmetic type denotes.
+///
+/// A translation between two vocabularies for one thing, written as an
+/// exhaustive match so widening either set is a build error here rather than a
+/// silent mapping onto whichever neighbour happens to be listed. It is needed
+/// because subnormal *freedom* is a property of the value domain, stated in the
+/// IR's dtype vocabulary, while the subnormal *facts* it is weighed against are
+/// measurements indexed by the target's own MSL spellings.
+const fn ir_arithmetic_type(arithmetic_type: MetalFloatArithmeticType) -> ArithmeticType {
+    match arithmetic_type {
+        MetalFloatArithmeticType::F32 => ArithmeticType::F32,
+        MetalFloatArithmeticType::F16 => ArithmeticType::F16,
+        MetalFloatArithmeticType::Bf16 => ArithmeticType::Bf16,
+    }
+}
+
 /// Per-kernel emission state.
 struct KernelEmitter<'a> {
     kernel: &'a VerifiedKernel,
@@ -1025,6 +1041,25 @@ impl KernelEmitter<'_> {
     /// semantic dimensions (ADR 0019), so a divergence on either is recorded on
     /// its own.
     fn record_subnormal_obligation(&mut self, arithmetic_type: MetalFloatArithmeticType) {
+        // The declared behaviour is compared only where it is observable. A
+        // kernel whose value domain keeps every operand and result of this
+        // arithmetic type out of the subnormal range returns the same bits
+        // under either resolution, so a target that resolves the dimension
+        // differently has nothing to differ about, and recording a gap would
+        // refuse a program on a difference that cannot occur.
+        //
+        // This consults a *discharged* obligation, not a weakened contract. The
+        // kernel still declares what it means; `tiler-ir` derives the freedom
+        // from the verified program it refines and refuses to let a producer
+        // assert one, and the freedom is typed by arithmetic type because the
+        // derivation behind it is. Nothing here can widen either.
+        if self
+            .kernel
+            .subnormal_freedom()
+            .discharges(ir_arithmetic_type(arithmetic_type))
+        {
+            return;
+        }
         let Ok(target) = self.target.subnormal_arithmetic.behaviour(arithmetic_type) else {
             self.unstated.insert(arithmetic_type);
             return;
