@@ -188,15 +188,10 @@ The implementation graph now maps these contracts to bounded coding tickets:
 
 ### Q-ART-008 — Ergonomic artifact-family profiles
 
-- Owner/track: [Frontend integration](integration/frontends.md),
-  [`generate-cfg-gated-artifact-family-delivery`](../tickets/generate-cfg-gated-artifact-family-delivery.md).
-  Retargeted 2026-07-28: the previous owner
-  [`prototype-artifact-family-delivery`](../tickets/prototype-artifact-family-delivery.md)
-  closed `done` with this close condition unmet, which left the question owned
-  by a terminal ticket — unowned in fact. The blocked successor had asked for
-  this retarget and nobody performed it.
-- Close: named profiles expand to canonical `ArtifactFamilySelection` with
-  generated `cfg` compile-pass/fail tests.
+- Owner/track: [Frontend integration](integration/frontends.md), [`accept-the-inline-artifact-family-profile-syntax`](../tickets/accept-the-inline-artifact-family-profile-syntax.md). Retargeted 2026-07-28 to [`generate-cfg-gated-artifact-family-delivery`](../tickets/generate-cfg-gated-artifact-family-delivery.md), because the previous owner [`prototype-artifact-family-delivery`](../tickets/prototype-artifact-family-delivery.md) closed `done` with this close condition unmet, which left the question owned by a terminal ticket — unowned in fact. Retargeted again 2026-07-31, when that ticket delivered everything the close condition names except the part ADR 0075 reserves to Tom.
+- **The stated close condition is met, 2026-07-31, and the question stays open on one residue.** `crates/tiler-macros/src/delivery.rs` names four profiles — `fallback-only`, `macos`, `ios`, `macos-and-ios` — each expanding to a canonical `ArtifactFamilySelection` through `ArtifactFamilySelection::new` rather than through a second encoder, with each family's deployment minimum pinned to the governed floor for MSL 3.1 and a test that one version lower is refused by the driver. Mac Catalyst is in no profile because the governed table admits it only at MSL 4.0, so a Catalyst consumer matches no selected family and takes the semantic fallback — the outcome [the Metal backend contract](backends/metal.md) requires, never a relabelled payload. The generated-`cfg` evidence is `crates/tiler/tests/facade/pass/family_cfg_matching_family_embeds_its_payload.rs`, `.../pass/family_cfg_nonmatching_targets_fall_back.rs`, and the compile-fail `.../fail/family_cfg_matching_family_retains_its_diagnostic.rs`; the five-target matrix `docs/correctness-and-testing.md` states is evaluated against `rustc --print cfg` in `crates/tiler-macros/src/delivery/tests.rs`, and the versioned map itself in `crates/tiler-macros/src/family_cfg.rs`.
+- **The residue is the consumer-visible spelling.** Nothing constructs a profile during an expansion, because the approved region grammar has no production for a profile name and inventing one is a public boundary [ADR 0075](decisions/0075-scope-public-boundary-approval-by-change-category.md) reserves to Tom. A profile a consumer cannot state is not ergonomic yet, so the implementation alone does not close the question.
+- Close: Tom accepts a region syntax and a profile-name vocabulary, the grammar admits it, and `delivery::stated_policy` becomes a function of the parsed region rather than a constant.
 
 ### Q-KIR-001 — Conservative uniformity analysis
 
