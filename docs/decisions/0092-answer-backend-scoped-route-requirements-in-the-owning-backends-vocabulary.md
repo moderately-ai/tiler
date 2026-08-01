@@ -1,0 +1,86 @@
+---
+schema: "tiler-doc/v1"
+id: "ADR-0092"
+kind: "decision"
+title: "Answer backend-scoped route requirements in the owning backend's vocabulary"
+topics: ["runtime", "routing", "backends", "metal", "extensions", "public-boundary"]
+catalog_group: "runtime-integration-placement"
+decision_status: "proposed"
+implementation_status: "not-started"
+applies_to: ["tiler.contract.architecture", "tiler.contract.artifact-abi", "tiler.contract.metal-backend"]
+evidence: ["tiler.research.runtime.backend-scoped-route-requirement-answers"]
+depends_on: ["ADR-0074", "ADR-0075", "ADR-0081", "ADR-0086", "ADR-0090"]
+ticket: "land-the-backend-scoped-route-requirement-answer-adr"
+---
+
+# 0092: Answer backend-scoped route requirements in the owning backend's vocabulary
+
+**Status:** proposed. **Nothing here is accepted and nothing downstream is released on it.** Tom chose the design-ticket route on 2026-08-01 with a stated lean toward candidate b2 and eliminated candidates (a) and fail-closed-forever-as-terminus on the record that day; the b1/b2 derivation that followed is [Backend-scoped route-requirement answers](../research/runtime/backend-scoped-route-requirement-answers.md), and this record puts its result up for review. A lean is not an acceptance of the derived model, and the derived model would not be an acceptance of the surfaces below it. The nine decisions are transferred verbatim from the drafted body that record carries, unreworded, so that what Tom reads here is what the derivation produced.
+
+**What is still Tom's, enumerated rather than gestured at.** The research record lists **seven** public-boundary items under "Public-boundary items, enumerated for Tom and not self-accepted", and none is accepted by this record even if the model below is: a new `pub mod` in `tiler-metal`'s crate root, which is the one item [ADR 0075](0075-scope-public-boundary-approval-by-change-category.md)'s mechanical categories fire for; reclassifying `tiler-metal` as a crate a consumer may name, which is the acceptance act for item 6 and lands as an amendment to `docs/architecture.md`; the exact shapes of `observe_highest_gpu_family`, `decide_metal_route_requirement`, `AppleGpuFamilyConstant`, and `MetalRouteRequirementAnswer`; whether the observation crosses as a raw Apple constant at all; the minting constructor's shape; `MetalGpuFamilySupport` becoming a compatibility surface; and whether the governed key and version stay private to `tiler-metal`. The record's own reading is that ADR 0075's mechanical test fires for the first alone and AGENTS.md's broader public-boundary clause carries the other six.
+
+This record states the decision and cites the research record for the derivation; it does not re-derive it. Every witness, elimination, both worked examples, the b1a/b1b/b1c split, the convention 5b/5c defect found while deriving it, and the measurement boundary live there — and that boundary is unusually wide for a decision record and is repeated here rather than left one link away: **nothing in this design was compiled or measured.** Every interface shape is a type-system reservation in [ADR 0090](0090-compose-backends-per-responsibility-rather-than-per-backend.md)'s sense, none compiles, and the working implementation the record cites (`prototypes/candle-metal-adapter`) is an in-workspace crate reaching the vocabulary through an ordinary dependency, so it proves the decision logic and not the reachability this design exists for.
+
+## Context
+
+A `RouteRequirement::BackendFeature` carries an owner, a governed key, an exact version, and a canonical payload the artifact layer deliberately does not interpret. The neutral answer channel is complete: `LiveDeviceObservation::Feature(bool)` crosses the seam, the loader owns the owner check, the shape check, and the satisfaction decision, and `crates/tiler-runtime/tests/adapter_route` exercises all three refusal classes in the ordinary gate against a fictional backend.
+
+What no out-of-workspace consumer can do is decide which `bool` to report for `tiler.metal.route-requirement.minimum-gpu-family`, because deciding it means decoding the payload into a family and comparing it under that vocabulary's own ordering, and `tiler-metal` is an internal crate a consumer may not name. `spikes/runtime/inline-dispatch` therefore answers `Unrecognized` for every row, which is correct and fail-closed and is not a viable end state once a Metal plan states the row.
+
+## Decision
+
+1. **The channel is not extended.** No answer variant, payload accessor, or observation shape is added to `tiler-runtime` or `tiler-artifact`. The neutral layer keeps carrying opaque bytes and a `bool`, and the loader keeps every comparison it holds today.
+
+2. **The owning backend owns the decode, the probe order, the ordering, and the qualitative decision**, published as one item with an exhaustive match over the neutral requirement vocabulary. An undecodable payload, an unknown key, and an unknown version are `Unrecognized` and never a negative verdict, because the two produce different loader refusals with different repairs.
+
+3. **The published surface must not require an out-of-crate total map over the backend's own vocabulary.** Where observing the device means naming a foreign constant, the backend publishes an observation function that walks its own vocabulary and takes the caller's probe as a callback over an opaque raw constant. This is convention 5b and 5c applied rather than amended: a variant added to a backend vocabulary must be a compile error inside the defining crate, never a silently unprobed case at each consumer.
+
+4. **The consumer's adapter observes and never decodes.** It supplies the probe, passes the backend's observation back unexamined, and maps the backend's three-valued answer onto `LiveDeviceObservation` — a total map, so that answer type is not `#[non_exhaustive]`. It performs no string comparison of its own, which removes the governed key and version from every call site.
+
+5. **`tiler-metal` becomes a crate a *dispatching* consumer may name, and the facade does not.** The dependency arrow is consumer→backend, never core→backend or facade→backend. `crates/tiler/tests/dependency_direction.rs` is extended to assert the facade holds no edge to `tiler-metal`, with an anti-vacuity witness valid for an edge no frontend package holds.
+
+6. **"A consumer names `tiler` alone" is a property of the non-dispatching consumer and of the fallback path**, and is restated that way in `docs/architecture.md`. Every non-dispatching use is unaffected.
+
+7. **A satisfied route requirement is a live-device capability fact and never host-applicability eligibility.** A satisfied `minimum-gpu-family` row licenses continuation of that route and answers exactly one of `MetalHostPredicate`'s seven predicates. It contributes nothing to `evaluate_metal_host_applicability`, which remains structurally unreachable under ADR 0086 while `NativeTranslationAuthority` is uninhabited. The two comparisons over the one vocabulary run in opposite directions — the policy requires an exact family, the route row a minimum — and are never served by one function, nor published in one module.
+
+8. **The pattern is available to every backend and free to none.** A backend minting a backend-scoped row must own a crate a consumer may name; a backend whose rows are all neutral `ResourceFloor`s owns nothing. For a process-bound fact the availability phase is borrowed and the `prepare` path is forced, and both costs are stated rather than absorbed. The *shape* is normative; its exact spelling is per-backend, because a probe over a foreign constant and a probe over a compiler intrinsic do not need the same signature.
+
+9. **Fail-closed stays the interim.** Until a backend publishes its answer surface, `Unrecognized` is the only correct answer and the loader's refusal is the correct outcome.
+
+## Consequences
+
+- A dispatching consumer declares two crates and a fallback-only consumer declares one. That asymmetry becomes contract rather than an artifact of what happens to be reachable.
+- The governed key, version, and payload spelling for a backend-scoped row acquire exactly one authority, replacing duplicated `const`s and two independently written scans in two prototypes.
+- `MetalGpuFamilySupport`'s deliberate exhaustiveness becomes a promise to out-of-crate code. `MetalGpuFamily` itself stays unreachable from outside `tiler-metal`, which is what keeps its growth additive rather than hazardous.
+- `tiler-build` gains the ability to mint the row it currently declares none of, and the producing and consuming halves land as one codec.
+- The exact public shapes remain Tom's under ADR 0075 and AGENTS.md; this record decides the model.
+
+## Alternatives considered
+
+**Re-export the backend vocabulary through the facade.** Eliminated by Tom on 2026-08-01: no facade-reachable signature names the vocabulary, so the `tiler::runtime` whole-module re-export precedent does not apply — a consumer must *produce* a family, not read one. It would also make the facade enumerate backends, and a second backend a second edge. The closure-cost argument sometimes offered alongside is weak and should not be relied on: `tiler-metal`'s dependencies are `tiler-artifact` and `tiler-ir`, both already in the facade's closure.
+
+**Publish the family vocabulary and let each consumer observe the device itself.** Eliminated on ADR 0074 conventions 5b and 5c. Mapping a Tiler family onto its Apple constant is a total map with no derivable wildcard value, so it is a 5b site; and written as a table rather than a match — which is what the existing prototype does — a variant added to the vocabulary compiles cleanly, is never probed, and silently under-reports the device. That is 5c's named failure: fail-closed but silently incomplete.
+
+**Feature-gate the vocabulary onto the facade.** Eliminated on Cargo semantics. Features are additive and unify across a build graph, so one crate enabling `metal` puts the backend in every crate's closure — restoring the property the elimination above rests on, by a mechanism that hides it — and it puts backend names in the facade's own feature namespace.
+
+**Neutralize the vocabulary into the runtime or artifact layer.** Eliminated in three parts. A neutral *enum* of Apple families is refused by the artifact layer's own contract sentence, which names this exact case. A neutral *ordered token* is refused by correctness: the only ordering a neutral layer has is lexicographic, `"Apple10"` sorts below `"Apple9"` byte-for-byte, and a vocabulary's ordering is a fact about the backend that mints it; carrying a rank instead moves the same authority problem into data minted twice. A neutral *carrier of opaque bytes validated by the owning backend* is not an alternative at all — it is what `BackendFeatureRequirement` already is and what this decision keeps.
+
+**Fail-closed forever.** Rejected as a terminus and accepted as the interim by Tom on the same date. It leaves a producer able to mint rows nothing on the primary consumer path can answer.
+
+**Let a satisfied family row contribute to the ADR 0086 eligibility policy.** Eliminated because it satisfies one of seven predicates while the receipt needs all seven, and would show near-eligibility in explain output for a host whose missing predicate is the one ADR 0086 item 3 says the measured environment row cannot stand in for.
+
+## Traceability
+
+[Backend-scoped route-requirement answers](../research/runtime/backend-scoped-route-requirement-answers.md) is the derivation, the eliminations, both worked examples, the public-boundary list, and the measurement boundary. [ADR 0090](0090-compose-backends-per-responsibility-rather-than-per-backend.md) item 4 owns the report-versus-adjudicate division and the independent adapter selection this record extends; [ADR 0086](0086-require-attributable-or-attested-native-translation.md) owns the eligibility gate item 7 composes with; [ADR 0081](0081-admit-tiler-runtime-as-a-device-free-artifact-loader.md) owns the loader's backend neutrality; [ADR 0074](0074-use-explicit-public-api-conventions.md) conventions 5b and 5c decide item 3; [ADR 0075](0075-scope-public-boundary-approval-by-change-category.md) routes the public boundaries to Tom. [The architecture contract](../architecture.md) owns the packaging profile and the sentence item 6 amends; [the artifact contract](../artifact-abi.md) owns the route-requirement family and its governed keys.
+
+Three links the transferred paragraph does not carry, added here because the sibling records carry them and because one of them is an `applies_to` target this record would otherwise name only in frontmatter. **Normative owner not named above:** [Metal AOT backend](../backends/metal.md), which owns the ADR 0086 eligibility gate that item 7 composes with and the backend whose vocabulary items 2 and 3 hand the decode to. **Work record:** [`design-the-adapter-owned-route-requirement-answer-channel`](../../tickets/design-the-adapter-owned-route-requirement-answer-channel.md) for the derivation and the eliminations, and [`land-the-backend-scoped-route-requirement-answer-adr`](../../tickets/land-the-backend-scoped-route-requirement-answer-adr.md) for this record.
+
+## Implementation boundary
+
+**This record proposes; nothing follows from it, and nothing follows automatically even if it is accepted.** `implementation_status` is `not-started` and no crate gains an item under it: `tiler-metal` publishes neither function, `tiler-build` still declares no route requirement of any kind (`grep -rn 'RouteRequirement' crates/tiler-build/src/` returns nothing at `cb5d86a`), `crates/tiler/tests/dependency_direction.rs` still forbids exactly one edge, and `spikes/runtime/inline-dispatch` stays fail-closed at `Unrecognized`, which decision item 9 says is the correct interim rather than a gap to close before acceptance. Decision item 5's enforcement change is not a one-line edit and the record establishes why: adding `tiler-metal` to `FACADE_FORBIDDEN_DEPENDENCIES` as that test stands makes it fail on its own anti-vacuity guard, because the guard asserts `tiler-macros` holds each forbidden edge and `tiler-macros` does not hold this one. Decision item 6's amendment to `docs/architecture.md` lands in `contracts/foundation`, which this record's ticket does not hold, and is part of an acceptance sweep rather than of landing a proposal.
+
+## Open questions
+
+Five deferrals are carried by the research record with the evidence that would close each and its reconsideration trigger, and this record adopts them unchanged rather than restating them: the convention 5b/5c defect on `MetalGpuFamily`, which is live today, independent of this design, and filed as [`close-the-metal-gpu-family-out-of-crate-total-map`](../../tickets/close-the-metal-gpu-family-out-of-crate-total-map.md) with its trigger already fired; whether `tiler-metal` becomes the owner of the governed backend key `"tiler.metal"`, which `tiler-build` holds today as a `pub(crate)` constant, triggered by ADR 0090 item 11's promoted orchestration closure or by the first second backend needing `tiler-build`; whether `dependency_direction.rs` needs a second forbidden list or a per-entry witness, closing with the implementation ticket that lands item 5's edge assertion; whether a `tiler-cpu` crate exists before a CPU backend-scoped row does, on which item 8's CPU generalization is conditional, closing with that backend's own admission record; and whether `LiveDevicePreflight` is the right phase for a process-bound fact, which this design borrows and does not resolve, owned by [`name-a-host-process-availability-phase`](../../tickets/name-a-host-process-availability-phase.md) and triggered by the CPU ISA row.
+
+One thing is deliberately *not* an open question here. Whether a Metal plan will ever state the `minimum-gpu-family` row is not in doubt — family is exactly the kind of qualitative device fact no `ResourceFloor` expresses — and the fact that no production path mints the row at the record's base commit changes the landing order rather than the case: the producing and consuming halves are one codec and item 2 keeps them in one module.

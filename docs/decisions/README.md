@@ -120,6 +120,7 @@ accepted. Unresolved questions are collected in
 ### Runtime, integration, and placement
 
 - [0081: Admit tiler-runtime as a device-free artifact loader](0081-admit-tiler-runtime-as-a-device-free-artifact-loader.md) — accepted; contracts: [System architecture](../architecture.md); evidence: [Prototype crate layout and Rust MSRV](../research/workspace/prototype-crate-layout-and-msrv.md), [Target-neutral artifact and backend payload envelope](../research/artifacts/target-neutral-artifact-envelope.md)
+- [0092: Answer backend-scoped route requirements in the owning backend's vocabulary](0092-answer-backend-scoped-route-requirements-in-the-owning-backends-vocabulary.md) — proposed; contracts: [System architecture](../architecture.md), [Artifact envelope and Metal kernel ABI profile](../artifact-abi.md), [Metal AOT backend](../backends/metal.md); evidence: [Backend-scoped route-requirement answers](../research/runtime/backend-scoped-route-requirement-answers.md)
 - [0003: Keep the compiler independent of Candle](0003-candle-is-an-integration.md) — accepted; contracts: [Candle integration](../integration/candle.md); evidence: [Consumer-neutral runtime execution contract](../research/runtime/runtime-execution-contract.md)
 - [0051: Make runtime routing commit one-way before program work](0051-make-runtime-routing-commit-one-way.md) — accepted; contracts: [Artifact envelope and Metal kernel ABI profile](../artifact-abi.md), [Candle integration](../integration/candle.md); evidence: [Consumer-neutral runtime execution contract](../research/runtime/runtime-execution-contract.md), [Candle Metal post-wait error checking](../research/runtime/candle-metal-post-wait-error-checking.md), [Semantic validation enforcement](../research/runtime/semantic-validation-enforcement.md)
 
@@ -223,6 +224,7 @@ accepted. Unresolved questions are collected in
 - [0089: Resolve the expansion-cache root from an override or the user cache](0089-resolve-the-expansion-cache-root-from-an-override-or-the-user-cache.md) — accepted
 - [0090: Compose backends per responsibility rather than per backend](0090-compose-backends-per-responsibility-rather-than-per-backend.md) — accepted
 - [0091: Separate BF16 float conversion families and keep the accumulator an operation fact](0091-separate-bf16-float-conversion-families-and-keep-the-accumulator-an-operation-fact.md) — accepted
+- [0092: Answer backend-scoped route requirements in the owning backend's vocabulary](0092-answer-backend-scoped-route-requirements-in-the-owning-backends-vocabulary.md) — proposed
 <!-- END GENERATED ADR CHRONOLOGY -->
 
 ## Template
