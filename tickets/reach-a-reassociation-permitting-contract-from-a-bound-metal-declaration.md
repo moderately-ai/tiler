@@ -1,7 +1,7 @@
 ---
 id: reach-a-reassociation-permitting-contract-from-a-bound-metal-declaration
 title: Reach a reassociation-permitting contract from a bound Metal declaration
-status: todo
+status: closed
 priority: p2
 dependencies: []
 related: [admit-a-reassociating-contract-without-contraction, calibrate-and-activate-parallel-reduction-selection, package-a-multi-entry-bundle-from-one-expansion]
@@ -9,6 +9,8 @@ scopes: [research/apple-targets, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, apple-targets, reductions]
+closed_reason: duplicate
+closed_note: "Filed from base 2aa0824, before the parallel-reduction landing (merge 39b7ebc) reached main. Its three-way elimination is already settled on the landed tree: option 3 (measurement gap) is refuted by the ledger's retained measurement that this hardware flushes f32 subnormals in every math mode; option 2 (real coupling) is refuted by the fifth-preset design reasoning on register-a-flush-and-reassociate-numerical-contract (presets are points in a space, not strength-ordered, so flush-plus-reassociate is coherent); option 1 (composition artifact) holds and register-a-flush-and-reassociate-numerical-contract is its owner and resolution. The one obligation this ticket carried that register- did not — correcting calibrate-and-activate-parallel-reduction-selection's measurement target, which names an environment/contract pair that cannot both hold — has been added to register-'s graph maintenance."
 ---
 ## User-visible outcome
 

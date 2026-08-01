@@ -42,4 +42,6 @@ The preset is registered, both parallel strategies reach a portfolio on the auth
 
 - This unblocks `realize-parallel-reduction-strategies-on-metal`'s executable backend evidence, which is otherwise complete on the profile-fact half. Re-dispatch that ticket's execution half once this lands.
 - Measured crossover and winner activation stay in `calibrate-and-activate-parallel-reduction-selection`.
+- `calibrate-and-activate-parallel-reduction-selection`'s stated measurement target must be corrected when this lands: it names the exact qualified Metal environment and the retained alternatives together, and today no contract makes both hold — the environment refuses the contracts that retain the split. Name the new preset as the measurement contract in the same change. (Carried over from the closed duplicate `reach-a-reassociation-permitting-contract-from-a-bound-metal-declaration`, which owned this correction.)
+- `package-a-multi-entry-bundle-from-one-expansion` depends on this ticket: under the new preset a selected multi-entry plan becomes expressible, which with the reduction grammar is that ticket's trigger.
 - Whether the *public* preset enumeration is the right shape for a fifth entry, or whether a caller should be able to compose dimensions directly, is a public-boundary question for Tom rather than something to settle inside this ticket.
