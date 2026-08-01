@@ -342,6 +342,75 @@ fn every_unbuildable_selection_is_refused_before_any_toolchain_work() {
     }
 }
 
+/// A mixed selection's refusal names the unmeasured families and only those.
+///
+/// `deliver macos-and-ios;` states three families and one of them is measured.
+/// Listing all three beside "and this frontend compiles exactly one target" —
+/// which is what the refusal did — named macOS on both sides of one sentence,
+/// so a consumer reading it could not tell which entry to change. The assertion
+/// is therefore two-sided: the two unmeasured families are present *and* the
+/// measured one is absent, because a check that only looked for the iOS entries
+/// would have passed on the old rendering too.
+#[test]
+fn a_mixed_selection_refuses_by_naming_only_its_unmeasured_families() {
+    let buildable = BoundMetalCompileDeclaration::first_macos_apple9()
+        .expect("the declaration assembles")
+        .aot_target();
+    let macos = SelectedFamily {
+        family: ApplePlatform::MacOs,
+        deployment_minimum: buildable.deployment_minimum(),
+        msl_version: buildable.msl_version(),
+    };
+    let selection = ArtifactFamilySelection::new(ArtifactDeliveryPolicy::SelectedFamilies {
+        families: vec![
+            macos,
+            SelectedFamily {
+                family: ApplePlatform::IOsDevice,
+                ..macos
+            },
+            SelectedFamily {
+                family: ApplePlatform::IOsSimulator,
+                ..macos
+            },
+        ],
+        requirement: FamilyRequirement::RequiredWhenTargetMatches,
+    })
+    .expect("the `macos-and-ios` profile's three families");
+
+    let refusal = deliver(
+        Some(&approved_region()),
+        selection,
+        &stating(std::path::Path::new("/tiler-no-such-cache-root")),
+        &Toolchain::system(),
+    )
+    .expect_err("two of the three families have no measured declaration");
+    let AotRefusal::UnbuildableFamilies { stated, .. } = &refusal else {
+        panic!("unexpected refusal: {refusal:?}");
+    };
+    assert_eq!(
+        stated.len(),
+        2,
+        "exactly the two unmeasured families are named: {stated:?}",
+    );
+    for unmeasured in ["ios-device", "ios-simulator"] {
+        assert!(
+            stated.iter().any(|named| named.contains(unmeasured)),
+            "{unmeasured} must be named: {stated:?}",
+        );
+    }
+    assert!(
+        !stated.iter().any(|named| named.contains("macos")),
+        "the one measured family must not be listed as unbuildable: {stated:?}",
+    );
+    assert!(
+        refusal
+            .to_string()
+            .contains("no measured Metal compile-time declaration exists for it"),
+        "the diagnostic must name the missing measurement rather than a missing capability: \
+         {refusal}",
+    );
+}
+
 /// The `RouteFacts` an expansion emits are Rust source naming the block-local
 /// artifact and selector rather than restating either.
 ///

@@ -318,7 +318,7 @@ impl From<MetalCacheError<PlanArtifactError>> for MetalPlanBuildError {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use tiler_artifact::program::{DigestAlgorithm, StageDependencyReason};
+    use tiler_artifact::program::{ArtifactDiagnostic, DigestAlgorithm, StageDependencyReason};
     use tiler_cache::expansion::{ExpansionCache, Resolution};
     use tiler_compiler::session::{
         Compilation, CompileRequest, NumericalContract, compile, compile_governed,
@@ -333,8 +333,14 @@ mod tests {
     use tiler_metal_aot::driver::Toolchain;
     use tiler_metal_aot::input::OptimizationLevel;
 
-    use super::{MetalPlanBuildError, accept_or_publish_metal_plan, resolution_artifact};
-    use crate::{BoundMetalCompileDeclaration, MetalPlanProfileMismatch};
+    use super::{
+        MetalPlanBuildError, accept_or_publish_metal_plan, metal_entry_declaration,
+        resolution_artifact,
+    };
+    use crate::{
+        BoundMetalCompileDeclaration, CompiledMetalPayload, MetalPlanProfileMismatch,
+        PlanArtifactError, assemble_plan_artifact, metal_compile_request, prepare_metal_payload,
+    };
 
     fn semantic_program() -> SemanticProgram {
         let mut builder =
@@ -718,6 +724,110 @@ mod tests {
         DigestAlgorithm::GOVERNED
             .digest(b"tiler.build.metal-plan-golden.v1\0", preimage)
             .label()
+    }
+
+    /// One envelope cannot yet carry one payload per artifact family.
+    ///
+    /// Tom decided on 2026-07-25 that one selection produces one envelope
+    /// carrying one payload per built family, and
+    /// `tiler_macros::delivery::DeliveryPlan` implements the emission half. This
+    /// test is the measurement of how far the *production* half currently
+    /// reaches, and it is retained rather than described because the two facts
+    /// it establishes are the ones a reader would otherwise have to re-derive.
+    ///
+    /// **First: an artifact family is not a compiler-profile axis.** The two
+    /// declarations below differ in exactly one field —
+    /// `MetalTargetFacts::platform` — and the authority ledger's projection
+    /// table records that field as backend-only. So they share a profile key and
+    /// a byte-identical descriptor, and differ only in the AOT target they
+    /// compile for. That is what makes "several families from one expansion" a
+    /// question about payloads rather than about profiles: one compilation, one
+    /// plan, one kernel program, two compiled objects.
+    ///
+    /// **Second: the neutral artifact model refuses the two-payload envelope,
+    /// and the refusal is structural rather than incidental.** Whole-artifact
+    /// verification requires every declared payload to be realized by some
+    /// executable entry, so a second payload needs a second entry to name it.
+    /// A variant's entries are exactly its program's stages, so a second entry
+    /// for the same stage needs a second *variant* — and
+    /// `tiler_artifact`'s own `rejects_a_duplicate_plan_variant` pins that two
+    /// variants packaging one program under one guard are `DuplicateVariant`.
+    /// The two rules close on each other, so the envelope this ticket wants is
+    /// not expressible today by any arrangement of the current builder's calls.
+    ///
+    /// This test therefore fails the day the artifact model gains a way to
+    /// express it, which is exactly when
+    /// `carry-one-payload-per-artifact-family-in-one-envelope` should be
+    /// revisited. It is a pinned limitation, not an endorsement of one.
+    #[test]
+    fn a_second_artifact_family_cannot_yet_share_one_envelope() {
+        let directory = scratch("two-family-envelope");
+        let (toolchain, _counter) = counted_toolchain(&directory);
+        let program = semantic_program();
+        let first = declaration();
+        let second = BoundMetalCompileDeclaration::second_artifact_family_fixture()
+            .expect("the second artifact family assembles");
+        assert_eq!(
+            first.profile().profile_key(),
+            second.profile().profile_key()
+        );
+        assert_eq!(
+            first.profile().canonical_descriptor(),
+            second.profile().canonical_descriptor(),
+            "the artifact family does not project into the compiler profile",
+        );
+        assert_eq!(first.aot_target().triple(), "air64-apple-macos26.0");
+        assert_eq!(second.aot_target().triple(), "air64-apple-ios26.0");
+
+        let compilation = declared_compilation(&first, &program);
+        let plan = compilation.selected().expect("one selected plan");
+        let kernels: Vec<_> = plan.kernels().iter().collect();
+
+        let mut compiled = Vec::new();
+        for declaration in [&first, &second] {
+            let unit =
+                emit_translation_unit(&kernels, declaration.metal_facts(), declaration.emission())
+                    .expect("the unit emits for this family");
+            let request = metal_compile_request(
+                &unit,
+                OptimizationLevel::Default,
+                declaration.numerical_realization(),
+            )
+            .expect("the request derives");
+            let prepared = toolchain
+                .prepare(&request)
+                .expect("the fake toolchain prepares");
+            let payload = prepare_metal_payload(&unit, prepared).expect("the payload binds");
+            compiled.push(payload.compile().expect("the payload compiles"));
+        }
+        let [macos_payload, ios_payload]: [CompiledMetalPayload; 2] = compiled
+            .try_into()
+            .expect("one compiled payload per family");
+        assert_ne!(
+            macos_payload.content().metadata.provenance.target,
+            ios_payload.content().metadata.provenance.target,
+            "two artifact families are two compilations of one plan",
+        );
+
+        let outcome = assemble_plan_artifact(
+            &program,
+            plan,
+            |builder, profile| {
+                let first = macos_payload.push_carried(builder, profile.clone())?;
+                ios_payload.push_carried(builder, profile)?;
+                Ok(first)
+            },
+            |_, stage| Ok(metal_entry_declaration(stage)),
+        );
+        let Err(PlanArtifactError::Verification(refusal)) = outcome else {
+            panic!("one envelope must not yet accept a second artifact family's payload");
+        };
+        assert_eq!(
+            refusal.diagnostics(),
+            [ArtifactDiagnostic::UnusedPayload],
+            "the second payload is refused for having no entry to realize it",
+        );
+        let _ = std::fs::remove_dir_all(directory);
     }
 
     /// The backend's own realization recheck survives a direct emitter call.
