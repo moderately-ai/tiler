@@ -33,3 +33,15 @@ Acceptance flips `decision_status` to `accepted`, sets `adopted_by` on the resea
 ## Closes when
 
 Tom accepts or rejects it.
+
+## Outcome — accepted (2026-08-01)
+
+**Tom accepted the subgroup execution tier ADR at the live review on 2026-08-01**, relayed by the coordinator. The decision is settled; the acceptance *execution* is separately queued, so this ticket stays open until that landing rather than closing on the decision alone. Its remaining work is therefore the sweep this ticket's own "What acceptance does" section already enumerates — flip `decision_status` to `accepted`, set `adopted_by` on the research record and move its `disposition` to `adopted`, update both catalog views, and rename this ticket to `accept-adr-NNNN-subgroup-execution-tier` per the placeholder note above — not a further decision.
+
+**The three implementation tickets this node claims to release now exist.** At acceptance they did not: [`design-the-subgroup-execution-tier`](design-the-subgroup-execution-tier.md):65 lists the four tickets that design filed and none is an implementation ticket, so the claim at `:15` and `:31` that acceptance "releases the implementation tickets gated behind it" released nothing. They were filed on 2026-08-01 and each depends on this node in the `todo`-gated-by-a-parked-acceptance idiom the workflow configuration describes, so this node becoming `done` releases them structurally:
+
+- [`admit-subgroup-bindings-into-the-schedule-vocabulary`](admit-subgroup-bindings-into-the-schedule-vocabulary.md)
+- [`admit-subgroup-typed-values-and-collectives-into-the-kernel-ir`](admit-subgroup-typed-values-and-collectives-into-the-kernel-ir.md)
+- [`declare-metal-subgroup-realization-facts-in-the-target-profile`](declare-metal-subgroup-realization-facts-in-the-target-profile.md)
+
+**Unchanged by acceptance.** The two-level composition and the narrowing tree stay excluded, as `:31` states; the nine public-boundary items enumerated at [the subgroup execution tier](../docs/research/scheduling/subgroup-execution-tier.md):333 remain unaccepted and come to Tom individually at implementation time; and [`correct-the-subgroup-threads-route-dimension-meaning`](correct-the-subgroup-threads-route-dimension-meaning.md) is independent of this decision, as `design-the-subgroup-execution-tier.md:65` records.
