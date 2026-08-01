@@ -13,6 +13,8 @@ reverse. Proposed ADRs and design text remain non-decisions until explicitly
 accepted. Unresolved questions are collected in
 [open questions](../open-questions.md).
 
+Exactly one record below is `proposed` rather than accepted or superseded: [ADR 0090](0090-compose-backends-per-responsibility-rather-than-per-backend.md), the backend-provider composition model, whose acceptance is parked on [`accept-the-public-backend-provider-composition-boundary`](../../tickets/accept-the-public-backend-provider-composition-boundary.md). Both catalog views mark its status, and no sentence of it may be cited as a decision until that node closes. This paragraph is a disclosure that stops being true at acceptance; correcting it belongs to whoever accepts the record.
+
 ## Browse by theme
 
 <!-- BEGIN GENERATED ADR TOPICS -->
@@ -24,6 +26,7 @@ accepted. Unresolved questions are collected in
 - [0045: Bound inline proc-macro providers to host dependencies](0045-bound-proc-macro-providers-to-host-dependencies.md) — accepted; contracts: [Operation extension contract](../operation-extensions.md); evidence: [Proc-macro visibility of operation extensions](../research/extensions/proc-macro-extension-visibility.md)
 - [0063: Check value graph ownership at semantic admission](0063-check-graph-ownership-at-admission.md) — accepted; contracts: [IR stack and invariants](../ir.md); evidence: [Rust semantic-program construction lifecycle](../research/semantic-graph/rust-construction-lifecycle.md)
 - [0064: Compact semantic programs at commitment](0064-compact-at-semantic-program-commit.md) — accepted; contracts: [System architecture](../architecture.md), [IR stack and invariants](../ir.md); evidence: [Rust semantic-program construction lifecycle](../research/semantic-graph/rust-construction-lifecycle.md), [Semantic tensor graph contract research memo](../research/semantic-graph/contract-memo.md)
+- [0090: Compose backends per responsibility rather than per backend](0090-compose-backends-per-responsibility-rather-than-per-backend.md) — proposed; contracts: [System architecture](../architecture.md), [Operation extension contract](../operation-extensions.md), [Artifact envelope and Metal kernel ABI profile](../artifact-abi.md), [Proposed CPU/SIMD target profile](../backends/cpu.md); evidence: [Consumer-neutral backend-provider composition](../research/extensions/backend-provider-composition.md)
 - [0005: Expose a public semantic graph and extension boundary](0005-public-semantic-tensor-graph.md) — accepted; contracts: [System architecture](../architecture.md), [Vision and scope](../vision.md), [Operation extension contract](../operation-extensions.md); evidence: [Semantic tensor graph contract research memo](../research/semantic-graph/contract-memo.md), [Operation-extension surface research](../research/extensions/operation-extension-surface.md)
 - [0065: Extract reference evaluation from the IR crate](0065-extract-reference-evaluation-from-ir.md) — accepted; contracts: [System architecture](../architecture.md), [IR stack and invariants](../ir.md); evidence: [Corrected semantic foundation API](../research/extensions/semantic-foundation-api-v2.md), [Normative reference evaluator slice](../research/reference/normative-reference-slice.md)
 - [0061: Layer checked shape evidence over canonical typed values](0061-layer-checked-shape-evidence-over-values.md) — accepted; contracts: [IR stack and invariants](../ir.md); evidence: [Shape environment contract research memo](../research/shapes/shape-environment-contract.md), [Shape constraint prover boundary](../research/shapes/constraint-prover-boundary.md), [Stable-Rust shape-evidence feasibility](../research/shapes/stable-rust-shape-evidence.md), [Public static-shape evidence spelling](../research/shapes/public-static-shape-spelling.md), [Nightly arbitrary-rank const shape parameters](../research/shapes/nightly-const-shape-parameters.md), [Rust semantic-program construction lifecycle](../research/semantic-graph/rust-construction-lifecycle.md)
@@ -219,6 +222,7 @@ accepted. Unresolved questions are collected in
 - [0087: Model contraction as one keyed family with an index structure](0087-model-contraction-as-one-keyed-family-with-an-index-structure.md) — accepted
 - [0088: Admit tiler and tiler-macros as the consumer frontend pair](0088-admit-tiler-and-tiler-macros-as-the-frontend-pair.md) — accepted
 - [0089: Resolve the expansion-cache root from an override or the user cache](0089-resolve-the-expansion-cache-root-from-an-override-or-the-user-cache.md) — accepted
+- [0090: Compose backends per responsibility rather than per backend](0090-compose-backends-per-responsibility-rather-than-per-backend.md) — proposed
 <!-- END GENERATED ADR CHRONOLOGY -->
 
 ## Template

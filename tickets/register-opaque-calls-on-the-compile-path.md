@@ -4,7 +4,7 @@ title: Register opaque calls on the compile path
 status: todo
 priority: p2
 dependencies: []
-related: []
+related: [accept-the-public-backend-provider-composition-boundary]
 scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
@@ -38,3 +38,4 @@ A registered opaque call is admitted through `session::compile` by a test that f
 ## Graph maintenance
 
 - Record the outcome against ADR 0078's opaque-call correction if the classification is affected; it should not be.
+- **This ticket is `related` to [`accept-the-public-backend-provider-composition-boundary`](accept-the-public-backend-provider-composition-boundary.md) and deliberately does not depend on it.** [ADR 0090](../docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md) names this gap among its unsupported cases, so the ticket was considered as a conditional implementation ticket and rejected as one. The call registry is crate-private, which makes composing it internal wiring rather than a public seam, and a crate-private composition site can be moved for free while Tiler is pre-alpha; parking a live reachability gap — no caller of any kind registers an opaque call, so every test of the frontier's opaque-call admission proves nothing about `compile()` — behind a decision it does not need would cost more than the churn it saves. The interaction that does exist is worth knowing before starting: if ADR 0090's physical-provider seam is accepted, `CompileRequest` acquires an installation idiom, and an internal registry composed here should match that idiom rather than invent a third spelling.
