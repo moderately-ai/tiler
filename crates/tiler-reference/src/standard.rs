@@ -9,8 +9,10 @@ use std::sync::Arc;
 use tiler_ir::semantic::{
     CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE, ProviderIdentity, TypeKey, add_f32_op,
     broadcast_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op, strict_serial_sum_f32_op,
+    strict_tensor_contraction_f32_op,
 };
 
+use super::contraction::{ContractionContract, StrictTensorContractionF32Reference};
 use super::error::{ReferenceOperationError, ReferenceRegistryError, ReferenceValueError};
 use super::evaluate::{binary, reduction_axes, strict_sum};
 use super::quantization::register_standard_quantization;
@@ -58,9 +60,24 @@ impl ReferenceRegistryProvider for StandardReferenceProvider {
         )?;
         registrar.register(
             add_f32_op(),
-            binary_signature,
+            binary_signature.clone(),
             revision,
             Arc::new(F32BinaryReference::Add),
+        )?;
+        // The contraction's own numerical signature parameterizes its evaluator,
+        // so a declaration this reference cannot compute refuses the registration
+        // rather than binding an implementation that would answer for it anyway.
+        let contraction = ContractionContract::governed().map_err(|source| {
+            ReferenceRegistryError::UnsupportedContraction {
+                operation: strict_tensor_contraction_f32_op(),
+                source,
+            }
+        })?;
+        registrar.register(
+            strict_tensor_contraction_f32_op(),
+            binary_signature,
+            revision,
+            Arc::new(StrictTensorContractionF32Reference::new(contraction)),
         )?;
         let unary_signature =
             ReferenceSignature::new([F32::resolved_type()], [F32::resolved_type()])?;
