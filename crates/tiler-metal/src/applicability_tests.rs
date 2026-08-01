@@ -20,9 +20,9 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::applicability::{
-    MetalGpuFamily, MetalGpuFamilySupport, MetalHostApplicabilityPolicy,
+    AppleGpuFamilyConstant, MetalGpuFamily, MetalGpuFamilySupport, MetalHostApplicabilityPolicy,
     MetalHostApplicabilityRefusal, MetalHostObservation, MetalHostPredicate,
-    evaluate_metal_host_applicability,
+    evaluate_metal_host_applicability, observe_highest_gpu_family,
 };
 
 /// The exact row `FIRST_MACOS_APPLE9` was transcribed from.
@@ -443,4 +443,139 @@ fn the_dependency_set_keeps_producer_types_unnameable() {
         "adding a dependency here would make producer-owned types nameable in this policy's \
          signature; the host-applicability decision may not see one",
     );
+}
+
+/// Records every enumerator one probe asks about, in the order it asks.
+///
+/// The probe is a pure walk over the vocabulary, so a recording closure is the
+/// whole device: no `MTLDevice` is needed to observe what an adapter would ask a
+/// real one.
+fn record_probe(
+    supported: impl Fn(AppleGpuFamilyConstant) -> bool,
+) -> (Vec<AppleGpuFamilyConstant>, MetalGpuFamilySupport) {
+    let mut asked = Vec::new();
+    let observed = observe_highest_gpu_family(|family| {
+        asked.push(family);
+        supported(family)
+    });
+    (asked, observed)
+}
+
+/// Each family carries the enumerator Apple's SDK declares for it.
+///
+/// Pinned as literals, and read from the header rather than from a binding:
+/// `MTLDevice.h` in the macOS 26.5 SDK (build `25F70`) declares
+/// `MTLGPUFamilyApple5 = 1005` through `MTLGPUFamilyApple9 = 1009` at lines
+/// 237-241. These five values are what an adapter forwards to `supportsFamily`,
+/// so a silent edit to one would probe a device for a family nobody meant and
+/// report the answer under this vocabulary's name.
+#[test]
+fn each_family_carries_its_apple_enumerator() {
+    assert_eq!(MetalGpuFamily::Apple5.apple_constant().value(), 1005);
+    assert_eq!(MetalGpuFamily::Apple6.apple_constant().value(), 1006);
+    assert_eq!(MetalGpuFamily::Apple7.apple_constant().value(), 1007);
+    assert_eq!(MetalGpuFamily::Apple8.apple_constant().value(), 1008);
+    assert_eq!(MetalGpuFamily::Apple9.apple_constant().value(), 1009);
+}
+
+/// A probe asks about every family this vocabulary names, and no other.
+///
+/// This is the check the out-of-crate pair tables could not have: their
+/// population was a hand-written list beside a device call, so a family added to
+/// [`MetalGpuFamily`] left them probing four of five with the tree green. Here
+/// the population is the walk's own, and it is compared against `ALL` in both
+/// directions — length and membership — so an under-populated probe fails
+/// whether the shortfall came from `ALL` or from the walk.
+///
+/// The expected count is the **literal** 5, not `MetalGpuFamily::COUNT`. A count
+/// derived from the thing it counts cannot fail: shrinking the vocabulary would
+/// shrink the expectation with it and this would still report full coverage.
+/// Widening the vocabulary is meant to land here as a failure.
+#[test]
+fn a_probe_covers_every_named_family_highest_first() {
+    let (asked, observed) = record_probe(|_| false);
+
+    assert_eq!(
+        asked.len(),
+        5,
+        "the vocabulary names five Apple families, so a probe asks five questions",
+    );
+    assert_eq!(
+        asked.len(),
+        MetalGpuFamily::COUNT,
+        "the probe population and MetalGpuFamily::ALL must not disagree in length",
+    );
+
+    let expected: Vec<_> = MetalGpuFamily::ALL
+        .into_iter()
+        .rev()
+        .map(MetalGpuFamily::apple_constant)
+        .collect();
+    assert_eq!(
+        asked, expected,
+        "a probe asks about exactly the families ALL names, highest first",
+    );
+    assert_eq!(
+        asked.iter().collect::<BTreeSet<_>>().len(),
+        asked.len(),
+        "no family is asked about twice",
+    );
+    assert_eq!(
+        observed,
+        MetalGpuFamilySupport::NoneNamed,
+        "a device that claims nothing reports the answer it gave, not a guess",
+    );
+}
+
+/// The walk stops at the highest supported family and reports that one.
+///
+/// Cumulative families make the first supported answer the most specific true
+/// statement, so a device claiming Apple7 and below must be named Apple7 after
+/// three questions — not Apple5 after five, and not `NoneNamed`.
+#[test]
+fn the_highest_supported_family_is_the_reported_one() {
+    let (asked, observed) = record_probe(|family| family.value() <= 1007);
+    assert_eq!(
+        observed,
+        MetalGpuFamilySupport::Highest(MetalGpuFamily::Apple7),
+    );
+    assert_eq!(
+        asked
+            .iter()
+            .map(|family| family.value())
+            .collect::<Vec<_>>(),
+        [1009, 1008, 1007],
+        "the walk stops at the first supported family rather than asking the rest",
+    );
+
+    // The newest family this vocabulary names is answered on the first question.
+    let (asked, observed) = record_probe(|_| true);
+    assert_eq!(
+        observed,
+        MetalGpuFamilySupport::Highest(MetalGpuFamily::Apple9),
+    );
+    assert_eq!(asked.len(), 1);
+}
+
+/// The two spellings of a family are distinct per family and agree with `ALL`.
+///
+/// One vocabulary reaches Metal by two routes — the canonical payload spelling
+/// through [`MetalGpuFamily::as_str`] and the device query through
+/// [`MetalGpuFamily::apple_constant`] — and a collision in either would make two
+/// families indistinguishable at a boundary that has no other way to tell them
+/// apart.
+#[test]
+fn every_family_is_distinct_under_both_spellings() {
+    let names: BTreeSet<_> = MetalGpuFamily::ALL
+        .iter()
+        .map(|family| family.as_str())
+        .collect();
+    let constants: BTreeSet<_> = MetalGpuFamily::ALL
+        .iter()
+        .map(|family| family.apple_constant().value())
+        .collect();
+    assert_eq!(names.len(), 5);
+    assert_eq!(constants.len(), 5);
+    assert_eq!(names.len(), MetalGpuFamily::ALL.len());
+    assert_eq!(constants.len(), MetalGpuFamily::ALL.len());
 }

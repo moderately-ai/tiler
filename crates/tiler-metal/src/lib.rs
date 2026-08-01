@@ -1,3 +1,11 @@
+// `variant_count` is the one mechanism that makes
+// `applicability::MetalGpuFamily::ALL` fail the build when a family is added to
+// the enum and not to the list. Every other site that has to know about a family
+// is an exhaustive `match`, which `rustc` already closes; a hand-written array
+// has no such check, and an under-populated `ALL` is exactly the silently
+// unprobed device this crate's applicability policy exists to refuse. The
+// assertion that consumes it is beside `ALL` in `applicability.rs`.
+#![feature(variant_count)]
 //! Pure structured-kernel-to-Metal-source lowering for Tiler.
 //!
 //! This crate owns deterministic source emission and target metadata, not live
