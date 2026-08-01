@@ -165,6 +165,13 @@ const PROFILE_SOURCE_DOMAIN: &[u8] = b"tiler.target-profile.fact-sources.v4\0";
 const DISPATCHABILITY_DOMAIN: &[u8] = b"tiler.target-profile.dtype-dispatchability.v2\0";
 
 /// Maximum byte length of one target-profile key.
+///
+/// A *minting* bound: what a profile key this compiler build names may occupy.
+/// `tiler_artifact::program::MAX_GOVERNED_KEY_BYTES` is 256 because that layer
+/// holds keys minted by producers other than this compiler, and the smaller
+/// number here is what makes the two safe together — every key this compiler
+/// can name is packageable there. Neither crate depends on the other, so a
+/// change requires checking both.
 pub const MAX_TARGET_PROFILE_KEY_BYTES: usize = 128;
 /// Maximum UTF-8 byte length of one target-fact provenance field.
 pub const MAX_TARGET_PROVENANCE_TEXT_BYTES: usize = MAX_PROVENANCE_TEXT_BYTES;
@@ -206,6 +213,24 @@ impl std::fmt::Display for TargetProfileKeyError {
 impl std::error::Error for TargetProfileKeyError {}
 
 /// The owned, validated key of one declared target profile.
+///
+/// A key is non-empty, at most [`MAX_TARGET_PROFILE_KEY_BYTES`], and spelled in
+/// ASCII lowercase, ASCII digits, `.`, `-`, and `_`.
+///
+/// # The alphabet is shared with the artifact layer, and shared deliberately
+///
+/// `tiler_artifact::program::TargetProfileKey` is a different type with the
+/// same name — this one is what a compilation is *assessed against*, that one
+/// is what a packaged artifact *carries* — and it admits exactly this alphabet.
+/// The two agree because a profile key's whole job is to be compared byte for
+/// byte against one some other producer minted: a spelling only one side admits
+/// would leave two keys a reader sees as one comparing unequal, and a key
+/// carrying case, whitespace, or a control byte cannot be reproduced from the
+/// rejection that prints it. Neither crate depends on the other, so widening
+/// either alphabet requires checking both.
+///
+/// The byte bounds are not shared and are not meant to be;
+/// [`MAX_TARGET_PROFILE_KEY_BYTES`] records why.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TargetProfileKey(Arc<str>);
 

@@ -2628,6 +2628,121 @@ fn checked_narrowing_rejects_a_value_that_does_not_fit() {
 }
 
 // -------------------------------------------------------------------------
+// A governed key is spelled in one alphabet
+// -------------------------------------------------------------------------
+
+/// Every governed key refuses a byte outside the governed-key alphabet.
+///
+/// One case per key type rather than one case, because the six share a single
+/// validator through the `governed_key!` macro and the per-type `kind` is the
+/// only thing their refusals differ by. A key wired to the wrong subject would
+/// report a rejection about something the producer did not write, and the
+/// shared validator is exactly what stops that from being caught elsewhere.
+///
+/// The refused bytes are the classes the alphabet exists to exclude: case,
+/// which leaves two keys a reader sees as one comparing unequal; a space, a
+/// NUL, and a non-ASCII byte, which cannot be reproduced from the rejection
+/// that prints them; and a separator from another naming scheme, which would
+/// let one subject be spelled two ways.
+#[test]
+fn a_governed_key_refuses_a_byte_outside_the_governed_alphabet() {
+    assert_eq!(
+        BackendKey::new("tiler.Metal"),
+        Err(ArtifactBuildError::NoncanonicalKeyByte {
+            kind: ArtifactKeyKind::Backend,
+            index: 6,
+            value: b'M',
+        }),
+    );
+    assert_eq!(
+        RepresentationKey::new("metal lib"),
+        Err(ArtifactBuildError::NoncanonicalKeyByte {
+            kind: ArtifactKeyKind::Representation,
+            index: 5,
+            value: b' ',
+        }),
+    );
+    assert_eq!(
+        TargetProfileKey::new("tiler.target\0"),
+        Err(ArtifactBuildError::NoncanonicalKeyByte {
+            kind: ArtifactKeyKind::TargetProfile,
+            index: 12,
+            value: 0,
+        }),
+    );
+    assert_eq!(
+        FeasibilityRuleSetKey::new("tiler/feasibility"),
+        Err(ArtifactBuildError::NoncanonicalKeyByte {
+            kind: ArtifactKeyKind::FeasibilityRuleSet,
+            index: 5,
+            value: b'/',
+        }),
+    );
+    assert_eq!(
+        CapabilityKey::new("tiler.capability.fusé"),
+        Err(ArtifactBuildError::NoncanonicalKeyByte {
+            kind: ArtifactKeyKind::Capability,
+            index: 20,
+            value: 0xc3,
+        }),
+    );
+    assert_eq!(
+        RouteFeatureKey::new("tiler.test.strict-f32!"),
+        Err(ArtifactBuildError::NoncanonicalKeyByte {
+            kind: ArtifactKeyKind::RouteFeature,
+            index: 21,
+            value: b'!',
+        }),
+    );
+}
+
+/// The decoding constructor enforces the same grammar as the building one.
+///
+/// `from_owned` is what the decoder calls on every governed key it reads out of
+/// foreign bytes, and the macro gives it its own body rather than routing it
+/// through `new`. A grammar only `new` enforced would be a producer courtesy
+/// instead of the boundary check this layer exists to perform.
+#[test]
+fn the_decoding_constructor_enforces_the_governed_alphabet() {
+    assert_eq!(
+        TargetProfileKey::from_owned("tiler.Target.v1".to_owned()),
+        Err(ArtifactBuildError::NoncanonicalKeyByte {
+            kind: ArtifactKeyKind::TargetProfile,
+            index: 6,
+            value: b'T',
+        }),
+    );
+    BackendKey::from_owned("tiler.metal".to_owned())
+        .expect("a canonically spelled key is admitted");
+}
+
+/// The empty and bound refusals fire too, and the bound stays this layer's own.
+///
+/// The maximum-length case is the deliberate half of the reconciliation: this
+/// bound is what the artifact layer will *hold*, not what any one producer will
+/// *mint*, so its own maximum is admitted rather than narrowed to the smaller
+/// minting bound `tiler_compiler::target::MAX_TARGET_PROFILE_KEY_BYTES` sets.
+#[test]
+fn a_governed_key_refuses_an_empty_and_an_oversized_spelling() {
+    assert_eq!(
+        BackendKey::new(""),
+        Err(ArtifactBuildError::EmptyKey {
+            kind: ArtifactKeyKind::Backend,
+        }),
+    );
+    assert_eq!(
+        TargetProfileKey::new("a".repeat(super::MAX_GOVERNED_KEY_BYTES + 1)),
+        Err(ArtifactBuildError::KeyTooLong {
+            kind: ArtifactKeyKind::TargetProfile,
+            bytes: super::MAX_GOVERNED_KEY_BYTES + 1,
+            limit: super::MAX_GOVERNED_KEY_BYTES,
+        }),
+    );
+    TargetProfileKey::new("a".repeat(super::MAX_GOVERNED_KEY_BYTES))
+        .expect("the admission bound admits its own maximum");
+}
+
+// -------------------------------------------------------------------------
 // Received opaque identities are bounded by whoever mints them
 // -------------------------------------------------------------------------
 

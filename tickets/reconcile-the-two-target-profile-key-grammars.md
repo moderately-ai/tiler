@@ -4,7 +4,7 @@ title: Reconcile the two target-profile key grammars
 status: in-progress
 priority: p2
 dependencies: []
-related: []
+related: [reconcile-the-operation-identity-and-governed-key-grammars, record-the-settled-governed-key-grammar-in-the-contracts, restore-the-two-path-dependent-spikes-to-a-running-state]
 scopes: [implementation/artifact, implementation/compiler, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
@@ -41,3 +41,63 @@ The [consumer-neutral backend-provider composition record](../docs/research/exte
 ## Closes when
 
 Either the two grammars agree, or each site documents the deliberate difference and the glossary indexes the shared name; and any fixture affected by a tightening is identified rather than discovered by a failing gate.
+
+## Outcome
+
+**The alphabet reconciles across the whole `governed_key!` family; the byte bounds deliberately do not.** Both halves of the implementation key's first branch, taken at base `c142991`.
+
+### The contract, and the elimination that produced it
+
+*Correctness-derived, so no question went to Tom.* Three candidates were tested.
+
+**Rejected — permissiveness is deliberate and both sites document it.** `docs/artifact-abi.md:286` already commits the layer: "A governed key is bounded at 256 UTF-8 bytes *because this layer governs what a producer may name*", in explicit contrast to an opaque identity, whose bound the same module disclaims. Being the authority for what a producer may name settles the spelling as well as the length, so the permissive branch would have to document that the layer governs naming and declines to. It also has a concrete cost: with ADR 0090 item 10 keeping minting open, a `BackendKey` of `tiler.Metal` and one of `tiler.metal` are two families every reader sees as one and every byte comparison sees as two, and a key carrying a NUL or a newline cannot be reproduced from the rejection that prints it — which defeats the explainability half of failing closed. Eliminated on correctness.
+
+**Rejected — tighten `TargetProfileKey` alone.** The six keys share one validator through one macro, and the property the alphabet buys is legibility and byte-comparability, which is a property of *governed keys as a shape* rather than of the target-profile subject. Tightening one leaves five siblings admitting exactly the values the sixth refuses, for no stated reason. Eliminated on maintainability.
+
+**Accepted — the whole family enforces the alphabet.** `validate_key` now admits ASCII lowercase, ASCII digits, `.`, `-`, and `_` — exactly `tiler_compiler::target::TargetProfileKey`'s set — and refuses every other byte with the new `ArtifactBuildError::NoncanonicalKeyByte { kind, index, value }`. Because `crates/tiler-artifact/src/program/codec/decode.rs` builds every governed key through `from_owned`, the refusal reaches the decode path with no change there: nine sites already map it to `ArtifactCodecError::InvalidGovernedKey`.
+
+**Why the byte bounds stay 128 and 256.** An alphabet is part of what a governed key *is*, so every producer owes it. A byte bound is a resource ceiling, and the two numbers answer different questions: 128 is what a profile key *this compiler build mints* may occupy, 256 is what *the artifact layer will hold* from any producer — the same reasoning `keys.rs` already applies one level in, where an opaque identity takes its minter's bound. Narrowing the artifact layer to 128 would impose one producer's number on producers ADR 0090 item 10 deliberately leaves free to mint. The **direction** is what makes the inequality safe rather than a gap: the smaller number is the minting bound, so every key this compiler can name is packageable, and a key between the two is one the layer holds and this compiler could not have minted — a fact about which producer named it, not a value anything mishandles. Were the inequality reversed, a legally minted key would be unpackageable.
+
+The gap is also inert in the only direction that could bite. There is no artifact-to-compiler profile-key conversion anywhere in the tree — `crates/tiler/src/route.rs:216` and `crates/tiler-runtime/src/load/host.rs:113` both construct the *artifact* type, and the runtime compares two artifact keys byte-wise — so a 129-to-256-byte key never reaches a compiler constructor. Checked by reading every `TargetProfileKey::new` / `::governed` / `::from_owned` site in `crates/`, `prototypes/`, and `spikes/`.
+
+### Fixture sweep, before any tightening
+
+**Fact.** No retained fixture, golden, spike result, or doc example carries a governed key value outside `[a-z0-9.\-_]` or longer than 128 bytes. Established two ways.
+
+- Every construction site of the six artifact keys and of the compiler's `TargetProfileKey` was enumerated and each literal read. The longest key value in the repository is 66 bytes (`tiler.feasibility.phased-capability-and-numerical-honourability.v4`, `crates/tiler-compiler/src/target/feasibility.rs:137`). The only two off-alphabet or over-bound inputs in the tree are the compiler's own **refusal tests** at `crates/tiler-compiler/src/target.rs:3398` (`"Acme family"`, asserted `InvalidByte`) and `:3405` (129 bytes, asserted `TooLong`) — inputs that are asserted never to become keys.
+- **No stored envelope can be refused, because none exists.** `git ls-files` over the whole tree returns zero binary files; the check is one line: every tracked file is text. The only `include_bytes!`/`include_str!` uses are four `crates/tiler-metal/goldens/*.metal` sources and one `emit.rs`, none an artifact envelope. Every encoded envelope in the tree is built in memory and decoded in the same process (`prototypes/serial-sum-run`, `spikes/target-profiles/scalar-cpu-vertical`, `spikes/cache/build-tool-exercise`, the codec tests), or emitted into `OUT_DIR` at build time by `crates/tiler-macros/src/delivery.rs` from an envelope this compiler just produced. No `.stderr` trybuild golden mentions `ArtifactBuildError`, `TargetProfileKey`, or a governed key: `git grep -l "ArtifactBuildError\|TargetProfileKey\|governed key" -- '*.stderr'` exits 1.
+
+So the wire-format tightening refuses no byte sequence that exists. It would refuse a foreign one, which is the point.
+
+**The two spikes that build a real envelope could not confirm it by running, and the reason is not this change.** No `make` target reaches `spikes/`, so both were run by hand from their own directories. Neither compiles at base `c142991`: `spikes/target-profiles/scalar-cpu-vertical` fails with `E0533: expected value, found struct variant TensorRole::Input` at `src/vertical.rs:1462`, and `spikes/cache/build-tool-exercise` fails with five errors in `envelope/src/lib.rs` naming `Compilation::first`, `BindingSpec::accessible_bytes`, `LaunchSpec::grid_threads`, `LaunchSpec::threads_per_workgroup`, and `VariantSpec::applicability_guard`. Attributed rather than assumed: this branch's diff touches no file under `spikes/` or `crates/tiler-ir/` (`git diff --stat c142991 HEAD`), and `TensorRole::Input` gained its field in `2b745f3`, which `git merge-base --is-ancestor 2b745f3 093c23c` shows postdates the spike's last edit. None of the eight errors touches key validation. Filed as [`restore-the-two-path-dependent-spikes-to-a-running-state`](restore-the-two-path-dependent-spikes-to-a-running-state.md); their key literals were read instead, and all conform.
+
+### What the tightening found — a third grammar, and a live defect
+
+**Measurement**, throwaway `tiler-build` integration test (that crate depends on both), run once and deleted. `crates/tiler-compiler/src/lowering.rs`'s `governed_capability_key` composes `tiler.capability.{family}.{namespace}.{name}.v{version}` from an `OpKey`, whose components are validated by `crates/tiler-ir/src/semantic/types.rs:1378-1399` — which admits `is_ascii_alphanumeric()`, **uppercase included**, at 255 bytes per component. Both read in full; `register_scalar_lowering` and `register_index_access` (`crates/tiler-compiler/src/capability.rs:888`, `:918`) are `pub` and take an `OpKey`.
+
+- `OpKey::new("Acme", "MyOp", 1)` succeeds → composed `tiler.capability.scalar.Acme.MyOp.v1` → `CapabilityKey::new` now returns `Err(NoncanonicalKeyByte { kind: Capability, index: 24, value: 65 })`.
+- Two 255-byte components → a 538-byte key → `Err(KeyTooLong { kind: Capability, bytes: 538, limit: 256 })`. **This half predates this change** and is reachable today.
+
+Refusing is correct — an uppercase capability key is exactly the unequal-comparison the alphabet exists to prevent — but the *site* is wrong: an infallible composition cannot report it, so it surfaces at `crates/tiler-build/src/metal_plan.rs:283`, and as a **panic** at `prototypes/serial-sum-run/src/proof.rs:3235` and `spikes/cache/build-tool-exercise/envelope/src/lib.rs:126`. Every in-tree operation key is lowercase, so nothing in the tree is affected; this is reachable only by an out-of-crate registration. Recorded in `governed_capability_key`'s rustdoc and filed as [`reconcile-the-operation-identity-and-governed-key-grammars`](reconcile-the-operation-identity-and-governed-key-grammars.md) — choosing between narrowing the identity grammar and making the composition fallible is a public boundary under ADR 0075.
+
+### Deliberately not done
+
+- **`tiler_ir::program::abi::TargetPropertyKey` keeps its length-only validator.** It is the seventh subject in `ArtifactKeyKind` but not a `governed_key!` type: ADR 0068 moved it to `tiler-ir` with the expression domain that names it, leaving this crate only failure classification (`crates/tiler-artifact/src/program/error.rs:451-464`). Re-validating it here would be the dependency inversion that ADR exists to prevent. It belongs to the ticket above, in `implementation/ir`.
+- **Three contract sentences are now stale**, in scopes this ticket did not hold: `docs/artifact-abi.md:101` and `:286`, and ADR 0090's `:103` **Fact** paragraph (whose stated reproduction `grep -rn "is_ascii\|InvalidByte" crates/tiler-artifact/src/` no longer returns nothing) and `:149` open question. Plus the glossary row this ticket's fourth implementation key asked about — the rustdoc at both code sites carries the derivation, which is where the corpus puts a code-level subject, but the ambiguous *name* still wants an index entry. Filed as [`record-the-settled-governed-key-grammar-in-the-contracts`](record-the-settled-governed-key-grammar-in-the-contracts.md).
+- **`crates/tiler-build/src/metal_plan.rs:333` is unchanged.** It was the laundering site only while the grammars differed; the conversion is now strict-to-strict and there is nothing left to say there that the two key sites do not already say better.
+- **Neither broken spike was repaired here.** Both breaks are in `research/target-profiles` and `research/cache`, scopes this ticket does not hold, and both predate it; repairing them means re-running each to its own stop condition and reconciling its retained fixture, which is its own ticket's work rather than a compile fix.
+
+### Public and behavioural changes, for the provisional-acceptance packet
+
+1. **New `ArtifactBuildError::NoncanonicalKeyByte { kind: ArtifactKeyKind, index: usize, value: u8 }`.** Additive — the enum is `#[non_exhaustive]`, so no downstream match breaks. Field names mirror the compiler's `TargetProfileKeyError::InvalidByte { index, value }` so the two read together.
+2. **Behaviour: all six governed key constructors refuse a byte outside the alphabet**, on both `new` and `from_owned`, which tightens artifact construction *and* artifact decode. A previously decodable byte sequence carrying such a key is now refused as `ArtifactCodecError::InvalidGovernedKey` — fail-closed tightening of a validator, affecting no envelope that exists.
+3. **Documentation-only:** `tiler_compiler::target::MAX_TARGET_PROFILE_KEY_BYTES` and `TargetProfileKey` gained rustdoc stating the shared alphabet and the deliberate bound difference; `governed_capability_key` gained the composition-gap paragraph.
+
+### Verification
+
+`cargo fmt`; `cargo check -p tiler-artifact -p tiler-compiler -p tiler-build`; `cargo nextest run -p tiler-artifact -p tiler-compiler -p tiler-build` (767 passed); `cargo clippy -p tiler-artifact -p tiler-compiler -p tiler-build --all-targets -- -D warnings`; `cargo test -p tiler-artifact -p tiler-compiler -p tiler-build --doc`; `tkt lint`; `git diff --check`; `tkt guard --base c142991 tkt/reconcile-the-two-target-profile-key-grammars` → **verdict: ok** (the reported extra scopes are the Rust backend's reverse-dependency expansion, not an escape; the `project/tickets` collision is a shared claim, which never gates). `make full` green on the committed tree: 1,754 tests passed, doc-tests passed, rustdoc with `-D warnings` clean, the release-profile numerical run 610 passed, `tkt lint` and shellcheck clean.
+
+**Every new refusal was watched failing**, twice and for two different reasons.
+
+- Replacing `admits`'s body with `true` fails `a_governed_key_refuses_a_byte_outside_the_governed_alphabet` (`left: Ok(BackendKey("tiler.Metal"))`) and `the_decoding_constructor_enforces_the_governed_alphabet` (`left: Ok(TargetProfileKey("tiler.Target.v1"))`), while `a_governed_key_refuses_an_empty_and_an_oversized_spelling` still passes — confirming the new test does not silently depend on the pre-existing refusals.
+- Because the six keys share one validator, a neutered alphabet cannot show that the per-type `kind` is asserted. Changing `governed_key!(CapabilityKey, ArtifactKeyKind::Capability, …)` to `::Backend` fails the same test at the capability case with `left: …{ kind: Backend, … }` against `right: …{ kind: Capability, … }` — so a key wired to the wrong subject is caught.
