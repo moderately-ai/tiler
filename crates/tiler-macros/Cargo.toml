@@ -29,7 +29,22 @@ doc = true
 # the frontend, and it names `StorageScalar` so a declared operand's stored
 # scalar is stated in the workspace's one authority over that subject rather than
 # in a frontend-local copy.
+#
+# `tiler-build`, `tiler-cache`, and `tiler-compiler` are three more host-built
+# edges, and they are what makes the expansion-time AOT flow
+# `docs/integration/frontends.md` specifies run inside this crate rather than in
+# a build script: optimize, emit, compute a complete identity, look it up,
+# compile on a miss, publish atomically, read the bytes back. Each step has one
+# authority and none of them is restated here — `tiler-compiler` is the ordinary
+# public compiler boundary the contract always said a frontend invokes,
+# `tiler-build` sequences emission, AOT preparation, artifact assembly and cache
+# resolution, and `tiler-cache` is the store `cache_root` resolves a root for.
+# None may sit on the `tiler` facade: `tiler-build` reaches `tiler-metal-aot`,
+# which `crates/tiler/tests/dependency_direction.rs` keeps off it.
 [dependencies]
+tiler-build.workspace = true
+tiler-cache.workspace = true
+tiler-compiler.workspace = true
 tiler-ir.workspace = true
 tiler-metal-aot.workspace = true
 

@@ -33,17 +33,14 @@
 //! `deliver` statement is token-for-token what it was before this module could
 //! emit anything at all.
 //!
-//! **A region stating a selected family is refused, and that is the honest
-//! outcome rather than a gap.** No expansion runs the offline driver yet: the
-//! compiler boundary refuses this frontend's multi-input elementwise programs,
-//! which `admit-multi-input-elementwise-programs-at-the-compiler-boundary` owns,
-//! so there is no compiled payload for any family to deliver. [`stated_delivery`]
-//! therefore returns [`DeliveryRefusal::BackendCompilationUnavailable`] at the
-//! `deliver` keyword. The alternative — emitting the semantic fallback anyway —
-//! is the one thing ADR 0053 forbids outright, because a selected family is
-//! *required* on a matching consumer target and a quiet fallback there is a
-//! wrong answer with no diagnostic. The delivery machinery below is complete and
-//! is what the slice that first compiles a family consumes.
+//! A region stating a selected family is *built*, by [`crate::aot`], which runs
+//! the offline Metal driver at expansion time and returns the plan this module's
+//! emission half turns into tokens. What it cannot build it refuses there, at
+//! the `deliver` keyword, with a reason that is a fact about the one bound
+//! compile declaration — never by emitting the semantic fallback anyway, which
+//! is the one thing ADR 0053 forbids outright: a selected family is *required*
+//! on a matching consumer target, and a quiet fallback there is a wrong answer
+//! with no diagnostic.
 //!
 //! # The delivery half
 //!
@@ -94,18 +91,32 @@ use crate::grammar::{DeliverySyntax, FamilyMinimumSyntax, StatedDelivery};
 /// Spelled like [`crate::REGION_FACTS_BINDING`] and for the same reason: block
 /// scope stops it colliding with anything outside the expansion, and the spelling
 /// stops it shadowing anything a consumer would write inside one.
-const ARTIFACT_BINDING: &str = "__TILER_ARTIFACT";
+pub(crate) const ARTIFACT_BINDING: &str = "__TILER_ARTIFACT";
 
 /// The block-local name holding this consumer target's payload position, or
 /// `None` when this target matches no built family and takes the fallback.
-const SELECTED_PAYLOAD_BINDING: &str = "__TILER_SELECTED_PAYLOAD";
+pub(crate) const SELECTED_PAYLOAD_BINDING: &str = "__TILER_SELECTED_PAYLOAD";
 
-/// The Metal language standard the named profiles select.
+/// The Metal language standard a stated policy selects.
 ///
-/// MSL 3.1 is the standard `docs/research/apple-targets/` measured, and the
-/// driver's own governed table is what fixes each profile's deployment minimum
-/// to that standard's floor.
-const PROFILE_MSL_VERSION: MslVersion = MslVersion::Metal3_1;
+/// This is *"the Metal language standard Tiler compiles with"*, which is what
+/// the accepted spelling's own definition of a profile is written in terms of,
+/// and it is MSL 4.0 because that is the standard the one authoritative
+/// compile-time declaration measures: `BoundMetalCompileDeclaration`'s ledger
+/// row is `air64-apple-macos26.0` at `-std=metal4.0`, and its manifest records
+/// that "the older MSL 3.1 / macOS 14.0 record would attribute these
+/// measurements to a compilation that did not produce them".
+///
+/// It read `Metal3_1` while nothing compiled, which was harmless exactly
+/// because nothing compiled: a stated policy that never reached the driver
+/// could not deliver a consumer an artifact built for a standard other than the
+/// one it named. Now that [`crate::aot`] compiles one, the two must agree or a
+/// consumer stating `deliver macos;` would receive a payload requiring macOS
+/// 26.0 under a policy that promised 14.0. The observable consequence — every
+/// profile's governed floor moves to 26.0, and a family list stating a lower
+/// one is refused at the version that stated it — is real and is listed in this
+/// slice's boundary packet.
+const PROFILE_MSL_VERSION: MslVersion = MslVersion::Metal4_0;
 
 /// An artifact family a consumer may name, and the driver families it covers.
 ///
@@ -118,7 +129,7 @@ const PROFILE_MSL_VERSION: MslVersion = MslVersion::Metal3_1;
 /// surface to express the case that always wants both.
 ///
 /// It is one vocabulary rather than two: [`NamedProfile`] names its families
-/// through these values, so `deliver ios;` and `deliver ios 17.0;` cannot come
+/// through these values, so `deliver ios;` and `deliver ios 26.0;` cannot come
 /// to disagree about which families `ios` means.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DeliveredFamily {
@@ -165,10 +176,17 @@ impl DeliveredFamily {
     /// `every_profile_family_sits_on_its_governed_language_floor` is what holds
     /// the two in agreement, by requiring one minor version lower to be refused
     /// by the driver.
+    ///
+    /// Both families sit at 26.0, and the shared arm is a fact about
+    /// [`PROFILE_MSL_VERSION`] rather than about the families: MSL 4.0's
+    /// governed floor is 26.0 on every family the driver admits it for. Under
+    /// MSL 3.1 the same two rows read 14.0 and 17.0, so a standard change splits
+    /// this arm rather than editing one number, and
+    /// `every_profile_family_sits_on_its_governed_language_floor` is what fails
+    /// if it is not split.
     const fn governed_minimum(self) -> DeploymentMinimum {
         match self {
-            Self::MacOs => DeploymentMinimum::new(14, 0),
-            Self::IOs => DeploymentMinimum::new(17, 0),
+            Self::MacOs | Self::IOs => DeploymentMinimum::new(26, 0),
         }
     }
 
@@ -204,17 +222,17 @@ impl DeliveredFamily {
 ///
 /// # Why Mac Catalyst is in no profile
 ///
-/// The driver's governed table admits Mac Catalyst only at MSL 4.0, whose floor
-/// is 26.0, and `docs/backends/metal.md` records that row as a bounded
+/// Not because the standard excludes it — [`PROFILE_MSL_VERSION`] is MSL 4.0
+/// and the driver's governed table admits Catalyst there — but because
+/// `docs/backends/metal.md` records the Catalyst row as a bounded
 /// compile-and-link measurement rather than a specification or runtime
-/// qualification claim. A profile naming Catalyst would therefore have to raise
-/// every other family in it to MSL 4.0 as well. A Catalyst consumer consequently
-/// matches no profile's selected family and takes the semantic fallback, which is
-/// the only correct outcome: `docs/backends/metal.md` forbids relabelling an
-/// iOS-device or macOS payload as Catalyst-compatible. The family list cannot
-/// reach it either, because [`DeliveredFamily`] publishes no Catalyst spelling;
-/// admitting one is `Q-ART-012` in `docs/open-questions.md`, which is deferred
-/// until an explicit trigger.
+/// qualification claim, and admitting a spelling for it is `Q-ART-012` in
+/// `docs/open-questions.md`, deferred until an explicit trigger. A Catalyst
+/// consumer consequently matches no profile's selected family and takes the
+/// semantic fallback, which is the only correct outcome:
+/// `docs/backends/metal.md` forbids relabelling an iOS-device or macOS payload
+/// as Catalyst-compatible. The family list cannot reach it either, because
+/// [`DeliveredFamily`] publishes no Catalyst spelling.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NamedProfile {
     /// Build nothing; every consumer target uses the semantic fallback.
@@ -299,17 +317,6 @@ impl NamedProfile {
 /// Two outcomes and no third: ADR 0053 gives a matching consumer target either
 /// the family's artifact or a compile error, never a quiet fallback. A variant
 /// meaning "not attempted" would be the quiet fallback wearing a name.
-#[allow(
-    dead_code,
-    reason = "an outcome is constructed by whoever ran the driver, and no expansion runs it. A \
-              region can now state a selected family — the `deliver` statement is accepted and \
-              implemented — but `stated_delivery` refuses one, because the compiler boundary \
-              admits none of this frontend's programs and there is therefore no payload to \
-              report an outcome for. Every plan an expansion builds is consequently \
-              `FallbackOnly`'s, which names no family and carries no outcome. \
-              `admit-multi-input-elementwise-programs-at-the-compiler-boundary` is what makes \
-              these variants reachable; the emission they drive is complete and tested below."
-)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FamilyDelivery {
     /// The family built. Its payload is carried by the plan's one artifact, at
@@ -508,7 +515,7 @@ impl fmt::Display for PlanRefusal {
 /// per byte of an embedded artifact, and `docs/correctness-and-testing.md`
 /// measures bundles up to a megabyte: one allocation for the whole literal
 /// instead of one per escaped byte.
-fn byte_string_literal(bytes: &[u8]) -> String {
+pub(crate) fn byte_string_literal(bytes: &[u8]) -> String {
     const HEX: [u8; 16] = *b"0123456789abcdef";
 
     let mut literal = String::with_capacity(bytes.len() + 3);
@@ -577,7 +584,7 @@ impl<S> fmt::Display for StatementRefusal<S> {
             Self::UnknownProfile { name, .. } => write!(
                 formatter,
                 "`{name}` is not a delivery profile; this frontend names {}, or state a family \
-                 list such as `deliver macos 14.0, ios 17.0;` to choose a deployment minimum of \
+                 list such as `deliver macos 26.0, ios 26.0;` to choose a deployment minimum of \
                  your own",
                 rendered_profiles(),
             ),
@@ -718,22 +725,6 @@ fn stated_family_list<S: Copy>(
 pub(crate) enum DeliveryRefusal {
     /// The stated policy is not a valid artifact-family selection.
     InvalidSelection(FamilySelectionError),
-    /// The selection is valid and requires backend compilation, which this
-    /// expansion cannot perform yet.
-    ///
-    /// Refusing is the fail-closed half of ADR 0053: a selected family is
-    /// *required* when the consumer target matches it, so an expansion that
-    /// emitted its fallback anyway would silently turn a required artifact into
-    /// fallback on exactly the target that was owed one.
-    ///
-    /// This is what a consumer writing `deliver macos;` gets today. It is
-    /// reachable rather than defensive: the grammar admits the statement, and
-    /// `admit-multi-input-elementwise-programs-at-the-compiler-boundary` is what
-    /// makes a compiled payload exist for it to deliver.
-    BackendCompilationUnavailable {
-        /// The selected families' stable identifiers, in canonical order.
-        families: Vec<&'static str>,
-    },
     /// The selection and the outcomes claimed for it do not form a plan.
     MalformedPlan(PlanRefusal),
 }
@@ -744,20 +735,6 @@ impl fmt::Display for DeliveryRefusal {
             Self::InvalidSelection(source) => write!(
                 formatter,
                 "`tiler::tensor!` cannot state its artifact-family delivery policy: {source}"
-            ),
-            Self::BackendCompilationUnavailable { families } => write!(
-                formatter,
-                "this `deliver` statement selects the {} artifact {}, but no expansion runs the \
-                 offline Metal driver yet, so there is no payload to deliver; a selected family \
-                 must not silently become fallback on a matching target, so this is a refusal \
-                 rather than a quiet downgrade. Remove the statement, or state `fallback-only`, \
-                 to expand with the semantic fallback on every target",
-                families.join(", "),
-                if families.len() == 1 {
-                    "family"
-                } else {
-                    "families"
-                },
             ),
             Self::MalformedPlan(source) => write!(
                 formatter,
@@ -771,37 +748,35 @@ impl fmt::Display for DeliveryRefusal {
 /// Validates one stated policy into the canonical selection this expansion
 /// delivers.
 ///
+/// It no longer refuses a selection that invokes the backend compiler: since
+/// `prototype-inline-aot-integration-proof`, [`crate::aot`] runs the offline
+/// driver for one, and refusing here would refuse the very thing the statement
+/// asks for. What the frontend still cannot build refuses in [`crate::aot`]
+/// instead, where the reason is a fact about the one bound compile declaration
+/// rather than about the policy vocabulary.
+///
 /// # Errors
 ///
 /// Returns [`DeliveryRefusal::InvalidSelection`] when the policy is not a valid
-/// selection, and [`DeliveryRefusal::BackendCompilationUnavailable`] when it is
-/// valid but names families this expansion cannot yet build.
+/// selection.
 pub(crate) fn stated_delivery(
     policy: ArtifactDeliveryPolicy,
 ) -> Result<ArtifactFamilySelection, DeliveryRefusal> {
-    let selection =
-        ArtifactFamilySelection::new(policy).map_err(DeliveryRefusal::InvalidSelection)?;
-    if selection.invokes_backend_compiler() {
-        return Err(DeliveryRefusal::BackendCompilationUnavailable {
-            families: selection
-                .families()
-                .iter()
-                .map(|selected| selected.family.as_str())
-                .collect(),
-        });
-    }
-    Ok(selection)
+    ArtifactFamilySelection::new(policy).map_err(DeliveryRefusal::InvalidSelection)
 }
 
-/// Builds the plan one validated selection delivers.
+/// Builds the plan a selection naming no family delivers.
+///
+/// `FallbackOnly`'s plan, and only its: a selection that invokes the backend
+/// compiler goes through [`crate::aot::delivered_plan`], which has an artifact
+/// and per-family outcomes to supply.
 ///
 /// # Errors
 ///
 /// Returns [`DeliveryRefusal::MalformedPlan`] when the selection and outcomes do
-/// not correspond. [`stated_delivery`] admits only `FallbackOnly`, whose plan
-/// names no family and carries no artifact, so today this is a propagated
-/// impossibility rather than a reachable failure.
-pub(crate) fn stated_plan(
+/// not correspond, which for an empty selection is a propagated impossibility
+/// rather than a reachable failure.
+pub(crate) fn fallback_plan(
     selection: ArtifactFamilySelection,
 ) -> Result<DeliveryPlan, DeliveryRefusal> {
     DeliveryPlan::new(selection, Vec::new(), Vec::new()).map_err(DeliveryRefusal::MalformedPlan)

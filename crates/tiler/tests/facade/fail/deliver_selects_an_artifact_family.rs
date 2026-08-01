@@ -1,44 +1,57 @@
-//! A region selecting an artifact family is refused, and the refusal says what
-//! is not wired.
+//! A region selecting an artifact family this frontend cannot build is refused,
+//! and the refusal names the one it can.
 //!
 //! Both accepted productions parse — a syntax error here would be a *different*
 //! diagnostic, which is what makes this file evidence that the family list is
-//! admitted and not merely tolerated — and both then reach the same fail-closed
-//! refusal: no expansion runs the offline Metal driver yet, so there is no
-//! compiled payload for a selected family to deliver.
+//! admitted and not merely tolerated. What each region below then meets is a
+//! different gate, and keeping them in one file is what makes the gates legible
+//! as a set:
+//!
+//! - a symbolic extent has no semantic program to compile ahead of time;
+//! - a family the one bound Metal compile-time declaration does not measure has
+//!   no target to compile for;
+//! - a deployment minimum below the governed floor for the standard Tiler
+//!   compiles with is the driver's own refusal, at the version that stated it.
 //!
 //! Emitting the semantic fallback instead is the one thing ADR 0053 forbids
 //! outright. A selected family is *required* when the consumer target matches
 //! it, so a quiet fallback would give exactly the target that asked for an
 //! artifact the thing it asked not to have, with no diagnostic anywhere.
 //!
-//! The golden beside this file records that each refusal lands on its own
-//! `deliver` keyword rather than on the invocation, so a consumer with several
-//! regions is told which one it was.
+//! The golden beside this file records that each refusal lands on its own token
+//! rather than on the invocation, so a consumer with several regions is told
+//! which one it was.
 
 fn main() {
-    // The ergonomic production.
-    let _profile = tiler::tensor! {
+    // A symbolic extent: the region is well formed and its policy is
+    // buildable, and there is still nothing to compile, because the shape is
+    // not known until the values arrive.
+    let _symbolic = tiler::tensor! {
         sym n;
         in a: f32[n], b: f32[n];
         deliver macos;
         out a * b
     };
 
-    // The escape hatch, on the governed floors.
-    let _list = tiler::tensor! {
-        sym n;
-        in a: f32[n], b: f32[n];
-        deliver macos 14.0, ios 17.0;
+    // A family with no measured compile-time declaration.
+    let _ios = tiler::tensor! {
+        in a: f32[4], b: f32[4];
+        deliver ios;
         out a * b
     };
 
-    // A floor above the governed one is equally well-formed, and equally
-    // undeliverable: the refusal is about compilation, never about the version.
-    let _raised = tiler::tensor! {
-        sym n;
-        in a: f32[n], b: f32[n];
-        deliver ios 18.2;
+    // Several families: one envelope carries one payload per built family, and
+    // this frontend builds one.
+    let _both = tiler::tensor! {
+        in a: f32[4], b: f32[4];
+        deliver macos-and-ios;
+        out a * b
+    };
+
+    // A floor below the governed one for the standard the profiles select.
+    let _low = tiler::tensor! {
+        in a: f32[4], b: f32[4];
+        deliver macos 14.0;
         out a * b
     };
 }

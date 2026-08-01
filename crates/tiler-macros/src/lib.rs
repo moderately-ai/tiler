@@ -73,6 +73,7 @@ use core::fmt;
 
 use proc_macro::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenStream, TokenTree};
 
+mod aot;
 mod binding;
 mod cache_root;
 mod delivery;
@@ -81,6 +82,7 @@ mod grammar;
 mod region;
 mod tokens;
 
+use aot::{AotRefusal, RouteFacts};
 use delivery::DeliveryPlan;
 use region::{Expansion, RegionError};
 
@@ -98,8 +100,19 @@ use region::{Expansion, RegionError};
 /// question of whether that stays acceptable.
 const FACADE_ENTRY_PATH: &str = "::tiler::__private::bind_and_build";
 
+/// The path a region that embedded an artifact reaches the facade through.
+///
+/// A second entry point rather than an argument on the first: guarded selection
+/// is a different obligation from binding a region, and a facade that took an
+/// optional route would have to decide what an absent one means at run time
+/// rather than at expansion time, where it is already decided.
+const FACADE_ROUTE_ENTRY_PATH: &str = "::tiler::__private::bind_route_and_build";
+
 /// The type generated tokens name for the region facts they carry.
 const FACADE_FACTS_TYPE: &str = "::tiler::__private::RegionFacts";
+
+/// The type generated tokens name for the embedded artifact's route facts.
+const FACADE_ROUTE_FACTS_TYPE: &str = "::tiler::__private::RouteFacts";
 
 /// The name of the block-local constant holding one region's facts.
 ///
@@ -107,6 +120,11 @@ const FACADE_FACTS_TYPE: &str = "::tiler::__private::RegionFacts";
 /// spelled unlike a name a consumer would write, so it does not shadow one
 /// inside the block either.
 const REGION_FACTS_BINDING: &str = "__TILER_REGION_FACTS";
+
+/// The name of the block-local constant holding one region's route facts.
+///
+/// Spelled like [`REGION_FACTS_BINDING`] and block-scoped for the same reason.
+const ROUTE_FACTS_BINDING: &str = "__TILER_ROUTE_FACTS";
 
 /// Expands an inline Tiler tensor region.
 ///
@@ -136,7 +154,7 @@ const REGION_FACTS_BINDING: &str = "__TILER_REGION_FACTS";
 ///
 /// ```text
 /// deliver macos-and-ios;        // a named profile
-/// deliver macos 14.0, ios 17.0; // a family list, when a floor must be stated
+/// deliver macos 26.0, ios 26.0; // a family list, when a floor must be stated
 /// ```
 ///
 /// The profiles are `fallback-only`, `macos`, `ios`, and `macos-and-ios`, and
@@ -150,11 +168,16 @@ const REGION_FACTS_BINDING: &str = "__TILER_REGION_FACTS";
 /// Stating nothing is `fallback-only`: every consumer target runs the semantic
 /// fallback and no backend compiler is invoked.
 ///
-/// **A statement selecting a family is refused today.** No expansion runs the
-/// offline Metal driver yet, so there is no compiled payload to deliver, and
-/// delivering the fallback instead would silently give a target that asked for
-/// an artifact the very thing it asked not to have. The refusal names the
-/// families and lands on the `deliver` keyword.
+/// A statement selecting a family compiles the region ahead of time, during this
+/// expansion: the offline Apple toolchain runs, the result is shared through the
+/// validated expansion cache, and the artifact's bytes are embedded in the
+/// consumer's binary. Two consequences a consumer sees today: every declared
+/// extent must be literal, because a symbolic one has no program to compile, and
+/// the one family this frontend has a measured compile-time declaration for is
+/// macOS — so `deliver macos;` builds and anything else is refused at the
+/// `deliver` keyword with the target it can build. Delivering the fallback
+/// instead would silently give a target that asked for an artifact the very
+/// thing it asked not to have.
 ///
 /// # What it evaluates to
 ///
@@ -195,14 +218,35 @@ fn expand(trees: &[tokens::Tree<Span>], region: Span) -> Result<TokenStream, Ref
         .delivery
         .as_ref()
         .map_or(region, |delivery| delivery.keyword);
-    let delivery = delivery::stated_delivery(policy)
-        .and_then(delivery::stated_plan)
-        .map_err(|source| Refusal::Delivery {
+    let selection = delivery::stated_delivery(policy).map_err(|source| Refusal::Delivery {
+        span: stated_at,
+        source,
+    })?;
+
+    // The branch is the whole of "`FallbackOnly` invokes no backend compiler":
+    // a selection naming no family never reaches `aot`, so it opens no cache,
+    // resolves no root, and spawns no process.
+    let (delivery, route) = if selection.invokes_backend_compiler() {
+        let delivered = aot::deliver(
+            expansion.program.verified(),
+            selection,
+            &cache_root::RootEnvironment::from_process(),
+            &tiler_metal_aot::driver::Toolchain::system(),
+        )
+        .map_err(|source| Refusal::Aot {
+            span: stated_at,
+            source: Box::new(source),
+        })?;
+        (delivered.plan, delivered.route_facts)
+    } else {
+        let plan = delivery::fallback_plan(selection).map_err(|source| Refusal::Delivery {
             span: stated_at,
             source,
         })?;
+        (plan, None)
+    };
 
-    emit(&expansion, &delivery, region)
+    emit(&expansion, &delivery, route.as_ref(), region)
 }
 
 /// Why an invocation did not expand.
@@ -219,6 +263,18 @@ enum Refusal {
         span: Span,
         /// The delivery module's own refusal.
         source: delivery::DeliveryRefusal,
+    },
+    /// The expansion-time AOT flow could not produce the stated families'
+    /// artifact.
+    ///
+    /// Boxed because it carries the compiler's and the driver's own refusals,
+    /// which are far larger than every other variant here, and an unboxed one
+    /// would make the size of a syntax refusal the size of a compile failure.
+    Aot {
+        /// The `deliver` keyword, or the invocation when no statement named one.
+        span: Span,
+        /// The AOT module's own refusal.
+        source: Box<AotRefusal>,
     },
     /// This crate produced tokens it cannot itself lex.
     ///
@@ -240,7 +296,9 @@ impl Refusal {
         match self {
             Self::Region(source) => *source.span(),
             Self::DeliveryStatement(source) => *source.span(),
-            Self::Delivery { span, .. } | Self::MalformedEmission { span, .. } => *span,
+            Self::Delivery { span, .. }
+            | Self::Aot { span, .. }
+            | Self::MalformedEmission { span, .. } => *span,
         }
     }
 }
@@ -251,6 +309,7 @@ impl fmt::Display for Refusal {
             Self::Region(source) => source.fmt(formatter),
             Self::DeliveryStatement(source) => source.fmt(formatter),
             Self::Delivery { source, .. } => source.fmt(formatter),
+            Self::Aot { source, .. } => source.fmt(formatter),
             Self::MalformedEmission { source, .. } => write!(
                 formatter,
                 "`tiler-macros` produced source it cannot lex (`{source}`); this is a defect in \
@@ -274,22 +333,39 @@ impl From<delivery::StatementRefusal<Span>> for Refusal {
 
 /// Builds the block one region expands to.
 ///
-/// The shape is fixed:
+/// A region delivering `FallbackOnly` expands to exactly what it always did:
 ///
 /// ```text
 /// {
 ///     const __TILER_REGION_FACTS: ::tiler::__private::RegionFacts = …;
-///     <the delivery plan's `#[cfg]`-gated items, if it has any>
 ///     ::tiler::__private::bind_and_build(&__TILER_REGION_FACTS, &[&a, &b, &c])
 /// }
 /// ```
 ///
-/// The delivery items are `delivery::DeliveryPlan::items_source`'s, placed in
-/// the same block so a `#[cfg]`-gated payload selector is scoped to the one
-/// region that selected it. Every expansion that reaches this function delivers
-/// `FallbackOnly`, whose plan contributes nothing, so the block is exactly the
-/// two statements above: a region stating a selected family is refused before
-/// emission, because no expansion compiles a payload for one yet.
+/// and a region whose `deliver` statement selected a family adds the artifact,
+/// its `#[cfg]` selector, and the producer-declared facts about it, then calls
+/// the routing entry instead:
+///
+/// ```text
+/// {
+///     const __TILER_REGION_FACTS: ::tiler::__private::RegionFacts = …;
+///     const __TILER_ARTIFACT: &[u8] = b"…";
+///     #[cfg(all(target_os = "macos", target_abi = ""))]
+///     const __TILER_SELECTED_PAYLOAD: Option<usize> = Some(0usize);
+///     #[cfg(not(any(all(target_os = "macos", target_abi = ""))))]
+///     const __TILER_SELECTED_PAYLOAD: Option<usize> = None;
+///     const __TILER_ROUTE_FACTS: ::tiler::__private::RouteFacts = …;
+///     ::tiler::__private::bind_route_and_build(
+///         &__TILER_REGION_FACTS, &__TILER_ROUTE_FACTS, &[&a, &b, &c],
+///     )
+/// }
+/// ```
+///
+/// Two entry points rather than one optional argument, because a region that
+/// embedded nothing has no route facts to pass and a `None` there would be a
+/// third state the facade would have to interpret. Everything is block-scoped,
+/// so a `#[cfg]`-gated payload selector belongs to the one region that selected
+/// it and two invocations in one function cannot collide.
 ///
 /// The operand identifiers carry the spans the region's own `in` list wrote
 /// them at, so a value that is not in scope is reported at the declaration that
@@ -298,6 +374,7 @@ impl From<delivery::StatementRefusal<Span>> for Refusal {
 fn emit(
     expansion: &Expansion<Span>,
     delivery: &DeliveryPlan,
+    route: Option<&RouteFacts>,
     region: Span,
 ) -> Result<TokenStream, Refusal> {
     let facts = lex(
@@ -313,7 +390,27 @@ fn emit(
     } else {
         lex(&items, region)?
     };
-    let entry = lex(FACADE_ENTRY_PATH, region)?;
+    let routed = match route {
+        Some(route) => lex(
+            &format!(
+                "const {ROUTE_FACTS_BINDING}: {FACADE_ROUTE_FACTS_TYPE} = {};",
+                route.source(
+                    delivery::ARTIFACT_BINDING,
+                    delivery::SELECTED_PAYLOAD_BINDING,
+                ),
+            ),
+            region,
+        )?,
+        None => TokenStream::new(),
+    };
+    let entry = lex(
+        if route.is_some() {
+            FACADE_ROUTE_ENTRY_PATH
+        } else {
+            FACADE_ENTRY_PATH
+        },
+        region,
+    )?;
     let facts_reference = lex(&format!("&{REGION_FACTS_BINDING}"), region)?;
 
     let mut operands = TokenStream::new();
@@ -335,11 +432,16 @@ fn emit(
     let mut arguments = TokenStream::new();
     arguments.extend(facts_reference);
     arguments.extend([TokenTree::Punct(spanned_punct(',', region))]);
+    if route.is_some() {
+        arguments.extend(lex(&format!("&{ROUTE_FACTS_BINDING}"), region)?);
+        arguments.extend([TokenTree::Punct(spanned_punct(',', region))]);
+    }
     arguments.extend(operand_slice);
 
     let mut body = TokenStream::new();
     body.extend(facts);
     body.extend(delivered);
+    body.extend(routed);
     body.extend(entry);
     body.extend([TokenTree::Group(spanned_group(
         Delimiter::Parenthesis,

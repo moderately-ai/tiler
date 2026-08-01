@@ -18,8 +18,9 @@ use tiler_metal_aot::input::{
 };
 
 use super::{
-    DeliveredFamily, DeliveryPlan, DeliveryRefusal, FamilyDelivery, NamedProfile, PlanRefusal,
-    StatementRefusal, byte_string_literal, stated_delivery, stated_plan, stated_policy,
+    DeliveredFamily, DeliveryPlan, DeliveryRefusal, FamilyDelivery, NamedProfile,
+    PROFILE_MSL_VERSION, PlanRefusal, StatementRefusal, byte_string_literal, fallback_plan,
+    stated_delivery, stated_policy,
 };
 use crate::family_cfg::consumer_cfg;
 use crate::family_cfg::tests::{evaluate, target_cfg};
@@ -95,7 +96,7 @@ fn selected(family: ApplePlatform, major: u16, minor: u16) -> SelectedFamily {
     SelectedFamily {
         family,
         deployment_minimum: DeploymentMinimum::new(major, minor),
-        msl_version: MslVersion::Metal3_1,
+        msl_version: PROFILE_MSL_VERSION,
     }
 }
 
@@ -253,7 +254,7 @@ fn the_production_expansion_plans_no_delivery_items() {
         let policy = stated_policy(stated.as_ref()).expect("no-delivery resolves");
         assert_eq!(policy, ArtifactDeliveryPolicy::FallbackOnly);
         let selection = stated_delivery(policy).expect("FallbackOnly is deliverable");
-        let plan = stated_plan(selection).expect("FallbackOnly plans nothing");
+        let plan = fallback_plan(selection).expect("FallbackOnly plans nothing");
         assert_eq!(plan.items_source(), "");
         assert!(gated_items(&plan.items_source()).is_empty());
     }
@@ -295,7 +296,7 @@ fn every_profile_name_a_region_states_resolves_to_its_families() {
 /// simulator too.
 #[test]
 fn a_family_list_resolves_to_its_families_at_the_floors_it_states() {
-    let statement = family_statement(&[("macos", 2, 15, 4, 3), ("ios", 4, 18, 0, 5)]);
+    let statement = family_statement(&[("macos", 2, 27, 4, 3), ("ios", 4, 28, 0, 5)]);
     let policy = stated_policy(Some(&statement)).expect("the statement resolves");
     let ArtifactDeliveryPolicy::SelectedFamilies {
         families,
@@ -311,9 +312,9 @@ fn a_family_list_resolves_to_its_families_at_the_floors_it_states() {
     assert_eq!(
         families,
         vec![
-            selected(ApplePlatform::IOsDevice, 18, 0),
-            selected(ApplePlatform::IOsSimulator, 18, 0),
-            selected(ApplePlatform::MacOs, 15, 4),
+            selected(ApplePlatform::IOsDevice, 28, 0),
+            selected(ApplePlatform::IOsSimulator, 28, 0),
+            selected(ApplePlatform::MacOs, 27, 4),
         ],
         "one stated `ios` entry is two driver families, and each carries the stated floor",
     );
@@ -327,8 +328,8 @@ fn a_family_list_resolves_to_its_families_at_the_floors_it_states() {
 #[test]
 fn a_family_list_on_the_governed_floors_equals_the_profile_that_names_them() {
     let listed = stated_policy(Some(&family_statement(&[
-        ("macos", 2, 14, 0, 3),
-        ("ios", 4, 17, 0, 5),
+        ("macos", 2, 26, 0, 3),
+        ("ios", 4, 26, 0, 5),
     ])))
     .expect("the statement resolves");
     assert_eq!(
@@ -385,7 +386,7 @@ fn an_unknown_family_is_refused_at_the_name() {
         "fallback-only",
     ] {
         assert_eq!(
-            stated_policy(Some(&family_statement(&[(unknown, 9, 17, 0, 10)])))
+            stated_policy(Some(&family_statement(&[(unknown, 9, 26, 0, 10)])))
                 .expect_err("an unknown family is refused"),
             StatementRefusal::UnknownFamily {
                 name: unknown.to_owned(),
@@ -411,8 +412,8 @@ fn an_unknown_family_is_refused_at_the_name() {
 fn a_repeated_family_is_refused_at_the_second_spelling() {
     assert_eq!(
         stated_policy(Some(&family_statement(&[
-            ("macos", 2, 14, 0, 3),
-            ("macos", 4, 15, 0, 5),
+            ("macos", 2, 26, 0, 3),
+            ("macos", 4, 27, 0, 5),
         ])))
         .expect_err("one family is stated twice"),
         StatementRefusal::RepeatedFamily {
@@ -423,8 +424,8 @@ fn a_repeated_family_is_refused_at_the_second_spelling() {
     // The accepting neighbour differs only in the second family's name.
     assert_eq!(
         resolved(&family_statement(&[
-            ("macos", 2, 14, 0, 3),
-            ("ios", 4, 17, 0, 5),
+            ("macos", 2, 26, 0, 3),
+            ("ios", 4, 26, 0, 5),
         ])),
         vec!["ios-device", "ios-simulator", "macos"],
     );
@@ -457,20 +458,20 @@ fn a_floor_below_the_governed_minimum_is_refused_at_the_version() {
 
     let cases = [
         BelowFloor {
-            governed: ("ios", 2, 17, 0, 3),
+            governed: ("ios", 2, 26, 0, 3),
             family: "macos",
             major: 13,
             minor: 0,
             platform: ApplePlatform::MacOs,
-            required: DeploymentMinimum::new(14, 0),
+            required: DeploymentMinimum::new(26, 0),
         },
         BelowFloor {
-            governed: ("macos", 2, 14, 0, 3),
+            governed: ("macos", 2, 26, 0, 3),
             family: "ios",
             major: 16,
             minor: 0,
             platform: ApplePlatform::IOsDevice,
-            required: DeploymentMinimum::new(17, 0),
+            required: DeploymentMinimum::new(26, 0),
         },
     ];
     for case in cases {
@@ -483,7 +484,7 @@ fn a_floor_below_the_governed_minimum_is_refused_at_the_version() {
             StatementRefusal::UngovernedTarget {
                 source: MetalTargetError::DeploymentMinimumTooLow {
                     platform: case.platform,
-                    language: MslVersion::Metal3_1,
+                    language: PROFILE_MSL_VERSION,
                     requested: DeploymentMinimum::new(case.major, case.minor),
                     required: case.required,
                 },
@@ -496,21 +497,24 @@ fn a_floor_below_the_governed_minimum_is_refused_at_the_version() {
     // governed floor is admitted, so the refusal is a floor and not a gap.
     assert_eq!(
         resolved(&family_statement(&[
-            ("macos", 2, 14, 0, 3),
-            ("ios", 4, 17, 0, 5),
+            ("macos", 2, 26, 0, 3),
+            ("ios", 4, 26, 0, 5),
         ])),
         vec!["ios-device", "ios-simulator", "macos"],
     );
 }
 
-/// A region stating a selected family is refused at its `deliver` keyword, and
-/// the refusal says what is not wired rather than delivering a fallback.
+/// A region stating a selected family resolves to a selection that invokes the
+/// backend compiler, rather than being refused here.
 ///
-/// This is what `deliver macos;` produces today, checked through the same two
-/// steps the expansion takes. Both productions reach it, because both name a
-/// family and nothing compiles one.
+/// This layer used to refuse it, because nothing compiled one. `crate::aot`
+/// does now, so refusing here would refuse the thing the statement asks for;
+/// what this layer still owes is that both accepted productions reach a
+/// selection naming the same families, and that the selection *says* it needs
+/// the backend compiler — which is the flag `crate::expand` branches on to
+/// decide whether any toolchain work happens at all.
 #[test]
-fn a_stated_selected_family_is_refused_rather_than_quietly_delivered() {
+fn a_stated_selected_family_resolves_to_a_backend_compilation() {
     let stated: [(&str, DeliverySyntax<At>, Vec<&str>); 2] = [
         (
             "deliver macos;",
@@ -518,55 +522,48 @@ fn a_stated_selected_family_is_refused_rather_than_quietly_delivered() {
             vec!["macos"],
         ),
         (
-            "deliver macos 14.0, ios 17.0;",
-            family_statement(&[("macos", 2, 14, 0, 3), ("ios", 4, 17, 0, 5)]),
+            "deliver macos 26.0, ios 26.0;",
+            family_statement(&[("macos", 2, 26, 0, 3), ("ios", 4, 26, 0, 5)]),
             vec!["ios-device", "ios-simulator", "macos"],
         ),
     ];
     for (spelling, statement, families) in stated {
         let policy = stated_policy(Some(&statement)).expect("the statement resolves");
-        let refusal = stated_delivery(policy)
-            .expect_err("no expansion compiles a selected family, so none is deliverable");
+        let selection = stated_delivery(policy).expect("a stated family is a valid selection");
+        assert!(
+            selection.invokes_backend_compiler(),
+            "`{spelling}` must state a selection that needs the offline driver",
+        );
         assert_eq!(
-            refusal,
-            DeliveryRefusal::BackendCompilationUnavailable { families },
-            "`{spelling}` must refuse rather than deliver",
-        );
-        let rendered = refusal.to_string();
-        assert!(
-            rendered.contains("no payload to deliver"),
-            "the refusal must say what is missing: {rendered}",
-        );
-        assert!(
-            rendered.contains("fallback-only"),
-            "the refusal must name the remedy: {rendered}",
+            selection
+                .families()
+                .iter()
+                .map(|selected| selected.family.as_str())
+                .collect::<Vec<_>>(),
+            families,
+            "`{spelling}` must name its families in canonical order",
         );
     }
 }
 
-/// A valid selection naming families is refused rather than silently
-/// downgraded to fallback.
+/// `FallbackOnly` states a selection that invokes no backend compiler.
 ///
-/// The paired negative of the test above: without it, "`FallbackOnly` is
-/// deliverable" would also be what a function that accepted everything
-/// reported.
+/// The paired negative of the test above, and the executable form of the
+/// property ADR 0053 defines `FallbackOnly` by: without it, "a selected family
+/// needs the driver" would also be what a flag that was always true reported.
 #[test]
-fn a_selected_family_is_refused_rather_than_downgraded_to_fallback() {
-    let refusal = stated_delivery(policy(vec![
-        selected(ApplePlatform::IOsSimulator, 17, 0),
-        selected(ApplePlatform::MacOs, 14, 0),
-    ]))
-    .expect_err("this expansion cannot build a selected family yet");
-    assert_eq!(
-        refusal,
-        DeliveryRefusal::BackendCompilationUnavailable {
-            families: vec!["ios-simulator", "macos"],
-        },
-        "the refusal names the families in canonical order, not declaration order",
+fn fallback_only_states_a_selection_that_invokes_no_backend_compiler() {
+    let selection = stated_delivery(ArtifactDeliveryPolicy::FallbackOnly)
+        .expect("`fallback-only` is a valid selection");
+    assert!(!selection.invokes_backend_compiler());
+    assert!(selection.families().is_empty());
+    assert!(
+        fallback_plan(selection)
+            .expect("an empty selection needs no artifact")
+            .items_source()
+            .is_empty(),
+        "a region delivering nothing must be token-for-token what it always was",
     );
-    let rendered = refusal.to_string();
-    assert!(rendered.contains("ios-simulator"), "{rendered}");
-    assert!(rendered.contains("macos"), "{rendered}");
 }
 
 /// The frontend gets the driver's empty-selection rejection, not its own.
@@ -583,8 +580,8 @@ fn an_empty_family_list_is_refused_as_an_invalid_selection() {
 fn a_repeated_family_is_refused_as_an_invalid_selection() {
     assert_eq!(
         stated_delivery(policy(vec![
-            selected(ApplePlatform::MacOs, 14, 0),
-            selected(ApplePlatform::MacOs, 15, 0),
+            selected(ApplePlatform::MacOs, 26, 0),
+            selected(ApplePlatform::MacOs, 27, 0),
         ]))
         .expect_err("a duplicate family is invalid"),
         DeliveryRefusal::InvalidSelection(FamilySelectionError::DuplicateFamily {
@@ -602,13 +599,13 @@ fn a_repeated_family_is_refused_as_an_invalid_selection() {
 fn a_deployment_minimum_below_its_language_floor_is_refused() {
     assert_eq!(
         stated_delivery(policy(vec![selected(ApplePlatform::MacOs, 13, 0)]))
-            .expect_err("MSL 3.1 requires macOS 14.0"),
+            .expect_err("MSL 4.0 requires macOS 26.0"),
         DeliveryRefusal::InvalidSelection(FamilySelectionError::InvalidTarget {
             source: MetalTargetError::DeploymentMinimumTooLow {
                 platform: ApplePlatform::MacOs,
-                language: MslVersion::Metal3_1,
+                language: PROFILE_MSL_VERSION,
                 requested: DeploymentMinimum::new(13, 0),
-                required: DeploymentMinimum::new(14, 0),
+                required: DeploymentMinimum::new(26, 0),
             },
         }),
     );
@@ -622,12 +619,12 @@ fn a_deployment_minimum_below_its_language_floor_is_refused() {
 #[test]
 fn declaration_order_does_not_change_what_the_frontend_states() {
     let forward = selection(vec![
-        selected(ApplePlatform::MacOs, 14, 0),
-        selected(ApplePlatform::IOsDevice, 17, 0),
+        selected(ApplePlatform::MacOs, 26, 0),
+        selected(ApplePlatform::IOsDevice, 26, 0),
     ]);
     let reversed = selection(vec![
-        selected(ApplePlatform::IOsDevice, 17, 0),
-        selected(ApplePlatform::MacOs, 14, 0),
+        selected(ApplePlatform::IOsDevice, 26, 0),
+        selected(ApplePlatform::MacOs, 26, 0),
     ]);
     assert_eq!(forward, reversed);
     assert_eq!(forward.canonical_bytes(), reversed.canonical_bytes());
@@ -798,14 +795,18 @@ fn no_profile_names_mac_catalyst_and_the_governed_table_is_why() {
             language: MslVersion::Metal3_1,
         },
     );
+    // At the standard the profiles actually select, Catalyst *is* a governed
+    // target — so its absence from this frontend is a vocabulary decision
+    // (`Q-ART-012`, deferred) rather than the floor it once was, and the two
+    // assertions above and below are what keep that distinction legible.
     assert!(
         MetalTarget::new(
             ApplePlatform::MacCatalyst,
             DeploymentMinimum::new(26, 0),
-            MslVersion::Metal4_0,
+            PROFILE_MSL_VERSION,
         )
         .is_ok(),
-        "Catalyst is representable at MSL 4.0, so its absence is a floor and not a gap",
+        "Catalyst is representable at the profile standard, so its absence is a decision",
     );
 }
 
@@ -813,8 +814,8 @@ fn no_profile_names_mac_catalyst_and_the_governed_table_is_why() {
 #[test]
 fn a_plan_must_cover_every_selected_family() {
     let two = selection(vec![
-        selected(ApplePlatform::MacOs, 14, 0),
-        selected(ApplePlatform::IOsDevice, 17, 0),
+        selected(ApplePlatform::MacOs, 26, 0),
+        selected(ApplePlatform::IOsDevice, 26, 0),
     ]);
     assert_eq!(
         DeliveryPlan::new(
@@ -851,7 +852,7 @@ fn a_plan_must_cover_every_selected_family() {
 fn a_built_family_without_an_artifact_is_refused() {
     assert_eq!(
         DeliveryPlan::new(
-            selection(vec![selected(ApplePlatform::MacOs, 14, 0)]),
+            selection(vec![selected(ApplePlatform::MacOs, 26, 0)]),
             Vec::new(),
             vec![FamilyDelivery::Payload],
         )
@@ -865,7 +866,7 @@ fn a_built_family_without_an_artifact_is_refused() {
 fn an_artifact_with_no_built_family_is_refused() {
     assert_eq!(
         DeliveryPlan::new(
-            selection(vec![selected(ApplePlatform::MacOs, 14, 0)]),
+            selection(vec![selected(ApplePlatform::MacOs, 26, 0)]),
             b"orphan".to_vec(),
             vec![FamilyDelivery::Retained("no toolchain".to_owned())],
         )
@@ -891,7 +892,7 @@ fn a_malformed_plan_reads_as_a_frontend_defect() {
 #[test]
 fn one_built_family_emits_its_gated_selector_and_a_total_catch_all() {
     let plan = plan(
-        vec![selected(ApplePlatform::MacOs, 14, 0)],
+        vec![selected(ApplePlatform::MacOs, 26, 0)],
         b"tiler",
         vec![FamilyDelivery::Payload],
     );
@@ -918,7 +919,7 @@ fn one_built_family_emits_its_gated_selector_and_a_total_catch_all() {
 #[test]
 fn a_retained_family_emits_only_its_gated_diagnostic() {
     let plan = plan(
-        vec![selected(ApplePlatform::MacOs, 14, 0)],
+        vec![selected(ApplePlatform::MacOs, 26, 0)],
         b"",
         vec![FamilyDelivery::Retained(
             "xcrun: error: unable to find utility \"metal\"".to_owned(),
@@ -944,8 +945,8 @@ fn a_retained_family_emits_only_its_gated_diagnostic() {
 fn a_mixed_plan_gates_the_built_family_and_leaves_the_retained_one_to_the_catch_all() {
     let plan = plan(
         vec![
-            selected(ApplePlatform::IOsDevice, 17, 0),
-            selected(ApplePlatform::IOsSimulator, 17, 0),
+            selected(ApplePlatform::IOsDevice, 26, 0),
+            selected(ApplePlatform::IOsSimulator, 26, 0),
         ],
         b"tiler",
         vec![
@@ -979,9 +980,9 @@ fn a_mixed_plan_gates_the_built_family_and_leaves_the_retained_one_to_the_catch_
 fn payload_positions_count_built_families_in_canonical_order() {
     let plan = plan(
         vec![
-            selected(ApplePlatform::IOsDevice, 17, 0),
-            selected(ApplePlatform::IOsSimulator, 17, 0),
-            selected(ApplePlatform::MacOs, 14, 0),
+            selected(ApplePlatform::IOsDevice, 26, 0),
+            selected(ApplePlatform::IOsSimulator, 26, 0),
+            selected(ApplePlatform::MacOs, 26, 0),
         ],
         b"tiler",
         vec![
@@ -1026,8 +1027,8 @@ fn payload_positions_count_built_families_in_canonical_order() {
 fn the_emitted_arms_select_exactly_one_payload_per_consumer_target() {
     let plan = plan(
         vec![
-            selected(ApplePlatform::MacOs, 14, 0),
-            selected(ApplePlatform::IOsDevice, 17, 0),
+            selected(ApplePlatform::MacOs, 26, 0),
+            selected(ApplePlatform::IOsDevice, 26, 0),
         ],
         b"tiler",
         vec![FamilyDelivery::Payload, FamilyDelivery::Payload],
@@ -1097,8 +1098,8 @@ fn the_emitted_arms_select_exactly_one_payload_per_consumer_target() {
 fn a_retained_diagnostic_fires_only_on_the_family_it_names() {
     let plan = plan(
         vec![
-            selected(ApplePlatform::MacOs, 14, 0),
-            selected(ApplePlatform::IOsDevice, 17, 0),
+            selected(ApplePlatform::MacOs, 26, 0),
+            selected(ApplePlatform::IOsDevice, 26, 0),
         ],
         b"tiler",
         // Positional against canonical family order, which puts `ios-device`
@@ -1169,8 +1170,8 @@ fn the_nonmatching_fixture_compiles_what_this_emitter_produces() {
     let source = fixture("pass/family_cfg_nonmatching_targets_fall_back.rs");
     let plan = plan(
         vec![
-            selected(ApplePlatform::IOsDevice, 17, 0),
-            selected(ApplePlatform::IOsSimulator, 17, 0),
+            selected(ApplePlatform::IOsDevice, 26, 0),
+            selected(ApplePlatform::IOsSimulator, 26, 0),
         ],
         b"tiler-artifact-envelope",
         vec![
@@ -1192,8 +1193,8 @@ fn the_matching_fixture_compiles_what_this_emitter_produces() {
     let artifact: Vec<u8> = (0..=u8::MAX).collect();
     let plan = plan(
         vec![
-            selected(ApplePlatform::MacOs, 14, 0),
-            selected(ApplePlatform::IOsDevice, 17, 0),
+            selected(ApplePlatform::MacOs, 26, 0),
+            selected(ApplePlatform::IOsDevice, 26, 0),
         ],
         &artifact,
         vec![FamilyDelivery::Payload, FamilyDelivery::Payload],
@@ -1214,7 +1215,7 @@ fn the_matching_fixture_compiles_what_this_emitter_produces() {
 fn the_retained_diagnostic_fixture_compiles_what_this_emitter_produces() {
     let source = fixture("fail/family_cfg_matching_family_retains_its_diagnostic.rs");
     let plan = plan(
-        vec![selected(ApplePlatform::MacOs, 14, 0)],
+        vec![selected(ApplePlatform::MacOs, 26, 0)],
         b"",
         vec![FamilyDelivery::Retained(
             "xcrun: error: unable to find utility \"metal\"".to_owned(),

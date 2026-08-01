@@ -6,7 +6,7 @@
 
 use crate::grammar::{AxisSyntax, Expression, Name, OperandSyntax, Operator, RegionSyntax};
 
-use super::{ProgramEvidence, RegionError, lower};
+use super::{RegionError, lower};
 
 /// A span a test can construct and assert on.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -112,7 +112,7 @@ fn static_region() -> RegionSyntax<At> {
 fn the_approved_region_lowers_and_defers_its_public_logical_program() {
     let expansion = lower(&symbolic_region()).expect("the approved region lowers");
 
-    assert_eq!(expansion.program, ProgramEvidence::DeferredSymbolicExtent);
+    assert!(expansion.program.verified().is_none());
     assert_eq!(
         expansion
             .operands
@@ -156,7 +156,7 @@ fn the_approved_region_lowers_and_defers_its_public_logical_program() {
 #[test]
 fn a_static_region_is_constructed_as_a_public_logical_program() {
     let expansion = lower(&static_region()).expect("the static region lowers");
-    assert_eq!(expansion.program, ProgramEvidence::Verified);
+    assert!(expansion.program.verified().is_some());
     assert!(
         expansion
             .facts
@@ -168,11 +168,12 @@ fn a_static_region_is_constructed_as_a_public_logical_program() {
     // The paired neighbour: one symbolic axis is enough to defer it, so
     // `Verified` is a claim about representability rather than about this
     // fixture happening to be simple.
-    assert_eq!(
+    assert!(
         lower(&approved_region(|| vec![symbol_axis("n", 12)]))
             .expect("the region lowers")
-            .program,
-        ProgramEvidence::DeferredSymbolicExtent,
+            .program
+            .verified()
+            .is_none(),
     );
 }
 
@@ -271,7 +272,7 @@ fn a_scalar_operand_broadcasts_and_the_result_takes_the_shaped_side() {
     let mut region = static_region();
     region.operands[1].axes = Vec::new();
     let expansion = lower(&region).expect("a scalar operand broadcasts");
-    assert_eq!(expansion.program, ProgramEvidence::Verified);
+    assert!(expansion.program.verified().is_some());
     assert!(
         expansion
             .facts
@@ -304,7 +305,7 @@ fn a_scalar_operand_broadcasts_and_the_result_takes_the_shaped_side() {
         operand.axes = Vec::new();
     }
     let expansion = lower(&region).expect("a rank-0 region is admitted");
-    assert_eq!(expansion.program, ProgramEvidence::Verified);
+    assert!(expansion.program.verified().is_some());
     assert!(expansion.facts.contains("axes: &[]"), "{}", expansion.facts);
 }
 
