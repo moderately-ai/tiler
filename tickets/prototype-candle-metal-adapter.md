@@ -1,7 +1,7 @@
 ---
 id: prototype-candle-metal-adapter
 title: Prototype the Candle Metal adapter
-status: in-progress
+status: done
 priority: p1
 dependencies: [prototype-inline-aot-integration-proof]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/candle, implementation/runtime, implementation/workspace
 shared_scopes: [project/tickets, implementation/cargo-lock]
 paths: [crates/tiler/tests/workspace_population.rs]
 tags: [implementation, integration, candle]
-claimed_from: todo
-assignee: worker-prototype-ca
-lease_expires_at: 1785559830
 ---
 ## User-visible outcome
 
@@ -164,3 +161,5 @@ No `crates/` boundary moved. Everything below is inside the new prototype and re
 - `cargo clippy -p tiler-prototype-candle --all-targets -- -D warnings` — clean, with the workspace's `pedantic` set, despite the member being excluded from `make lint`.
 - `cargo nextest run -p tiler-prototype-candle` — 12 tests, all passing, all device-free.
 - **Deliberate failure perturbations, both watched:** adding `tiler-prototype-candle` to the dependency test's neutral list fails with `` `tiler-prototype-candle` must stay consumer-agnostic, and its resolved dependency closure contains: ["candle-core", "candle-metal-kernels", "candle-ug", "dispatch2", "objc2-metal"] ``; replacing the Candle prefix list with one matching nothing fails the population check with `no Candle package is in the parsed lockfile at all, so this test would pass whether or not the compiler depended on one`. Both restored.
+
+**Provisional boundary acceptance (2026-08-01, overnight mode).** The coordinator provisionally accepted the prototype workspace member `tiler-prototype-candle` (prototype placement deliberately avoids the reserved public-crate decision) and recorded the seam-friction report — the `route_prepared` shape answering the adapter seam's first open sub-question — for Tom's morning review.
