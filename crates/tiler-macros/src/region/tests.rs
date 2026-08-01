@@ -1037,15 +1037,32 @@ fn an_unrecognized_region_names_what_a_consumer_would_change() {
         &[("rows", 58)],
     );
 
+    // Two of the ticket's four awaiting shapes stopped waiting while this
+    // branch was in flight: the general program-shape recognizer landed on
+    // main, and a multi-input reduction and a deeper elementwise prologue are
+    // exactly what its occurrence walk admits. They compile now — with no
+    // grammar change, which is what this module's refusal rendering was
+    // designed for — so they moved from this refusal population to the
+    // positive assertion below, and only the two walls the recognizer still
+    // refuses by name remain here: a reduction directly over a declared input
+    // (`reduction-prologue`), and a reduction whose prologue meets a
+    // non-elementwise producer (`operation-set`).
+    for (label, region) in [
+        ("a two-input reduction", &multi_input),
+        ("a deeper pointwise chain under a reduction", &deeper),
+    ] {
+        assert!(
+            plans_for_the_bound_declaration(region),
+            "{label} must compile under the general recognizer, or this population is wrong",
+        );
+    }
     let cases = [
         ("a bare reduction", bare),
-        ("a two-input reduction", multi_input),
-        ("a deeper pointwise chain under a reduction", deeper),
         ("a reduction of a reduction", nested),
     ];
     assert_eq!(
         cases.len(),
-        4,
+        2,
         "the population is every grammar-expressible shape this build does not recognize that the \
          ticket names, counted",
     );
