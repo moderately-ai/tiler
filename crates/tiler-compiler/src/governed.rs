@@ -25,10 +25,12 @@ use tiler_ir::index::{
     canonicalize_nan_f32_scalar_op, constant_f32_scalar_op, multiply_f32_scalar_op,
 };
 use tiler_ir::semantic::{
-    CanonicalField, CanonicalIntegerWidth, CanonicalValue, CanonicalValueView, F32,
-    F32_CONSTANT_BITS_ATTRIBUTE, OpKey, OperationAttributes, ProviderIdentity,
-    REDUCTION_AXES_ATTRIBUTE, ResolvedValueType, TypeKey, add_f32_op, constant_f32_op,
-    multiply_f32_op, strict_serial_sum_f32_op,
+    BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, BroadcastAxisSource, CanonicalField,
+    CanonicalIntegerWidth, CanonicalValue, CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE,
+    OpKey, OperationAttributes, ProviderIdentity, REDUCTION_AXES_ATTRIBUTE,
+    REINDEX_MAPPING_ATTRIBUTE, ReindexForm, ReindexFormKind, ResolvedValueType, TypeKey,
+    add_f32_op, broadcast_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op,
+    strict_serial_sum_f32_op,
 };
 use tiler_ir::shape::{Axis, Extent, Shape};
 
@@ -194,14 +196,14 @@ impl GovernedIndexAccess {
     }
 }
 
-/// Returns the four shipped index-access capabilities in canonical family order.
+/// Returns the six shipped index-access capabilities in canonical family order.
 ///
 /// # Errors
 ///
 /// Returns [`GovernedRegistryError`] when a governed signature exceeds its
 /// governed structural bound.
 pub(crate) fn governed_index_access_capabilities()
--> Result<[GovernedIndexAccess; 4], GovernedRegistryError> {
+-> Result<[GovernedIndexAccess; 6], GovernedRegistryError> {
     let f32_type = F32::resolved_type();
     let pointwise =
         || LoweringSignature::new([f32_type.clone(), f32_type.clone()], [f32_type.clone()]);
@@ -234,7 +236,7 @@ pub(crate) fn governed_index_access_capabilities()
         GovernedIndexAccess {
             provider: governed_provider("strict-serial-sum-f32"),
             operation: strict_serial_sum_f32_op(),
-            signature: LoweringSignature::new([f32_type.clone()], [f32_type])?,
+            signature: LoweringSignature::new([f32_type.clone()], [f32_type.clone()])?,
             // One capability lowers every shape of the family, so the declared
             // set is the union over shapes, not what any one occurrence reaches:
             // an empty reduced domain reaches only the identity constant, a lone
@@ -247,6 +249,26 @@ pub(crate) fn governed_index_access_capabilities()
                 canonicalize_nan_f32_scalar_op(),
             ],
             implementation: Arc::new(GovernedStrictSerialSumF32),
+        },
+        GovernedIndexAccess {
+            provider: governed_provider("reindex-f32"),
+            operation: reindex_f32_op(),
+            signature: LoweringSignature::new([f32_type.clone()], [f32_type.clone()])?,
+            // Deliberately empty, and not an omission. A reindex applies no
+            // scalar operation at all: the value written is the value read, so
+            // the emitted region reaches no scalar authority. Declaring one
+            // anyway would make refinement's containment check pass over an
+            // operation the region never emits, which is the reverse of what the
+            // declaration is for.
+            emitted: Vec::new(),
+            implementation: Arc::new(GovernedReindexF32),
+        },
+        GovernedIndexAccess {
+            provider: governed_provider("broadcast-f32"),
+            operation: broadcast_f32_op(),
+            signature: LoweringSignature::new([f32_type.clone()], [f32_type])?,
+            emitted: Vec::new(),
+            implementation: Arc::new(GovernedBroadcastF32),
         },
     ])
 }
@@ -625,6 +647,383 @@ impl SumPlan {
     }
 }
 
+/// Emits the copy region realizing one `tiler.reindex-f32` occurrence.
+///
+/// Every admitted form becomes one read whose coordinates are index expressions
+/// over the result's iteration dimensions, and one write at the identity
+/// coordinates. No scalar operation is applied, because a reindex computes
+/// nothing: the value written is the value read.
+///
+/// The emitted region is *not* a claim that a copy must happen. It is the access
+/// relation the occurrence denotes; whether the surrounding plan materializes it,
+/// composes it into a neighbouring kernel's addressing, or elides it entirely is
+/// a scheduling outcome this authority does not decide.
+struct GovernedReindexF32;
+
+impl IndexAccessLoweringProvider for GovernedReindexF32 {
+    fn lower(&self, context: &mut IndexAccessLoweringContext<'_>) -> Result<(), LoweringEmitError> {
+        let occurrence = context.occurrence();
+        let ([input], [result]) = (occurrence.inputs(), occurrence.results()) else {
+            return Err(occurrence_error("reindex-arity"));
+        };
+        if occurrence.operands() != [0] {
+            return Err(occurrence_error("reindex-operand-binding"));
+        }
+        let Some(value) = occurrence.attributes().get(REINDEX_MAPPING_ATTRIBUTE) else {
+            return Err(occurrence_error("reindex-form-missing"));
+        };
+        let form = ReindexForm::from_canonical_value(value)
+            .map_err(|_| occurrence_error("reindex-form"))?;
+        let input_shape = input.shape().clone();
+        let result_shape = result.shape().clone();
+        // The occurrence is re-derived rather than trusted: the form must produce
+        // exactly this result from exactly this operand, or the region about to
+        // be emitted would realize a different occurrence than the one requested.
+        if form
+            .result_shape(&input_shape)
+            .map_err(|_| occurrence_error("reindex-form"))?
+            != result_shape
+        {
+            return Err(occurrence_error("reindex-result-shape"));
+        }
+        let value_type = result.value_type().clone();
+        let input_type = input.value_type().clone();
+
+        let dimensions = declare_parallel_domain(context, &result_shape)?;
+        let coordinates = dimension_expressions(context, &dimensions)?;
+        let operand_coordinates =
+            reindex_operand_coordinates(context, &form, &input_shape, &coordinates)?;
+        // Every admitted form's coordinates range over every result dimension,
+        // with one exception: an inserted unit axis has no operand axis behind it
+        // and is omitted, which is what makes the read invariant in it.
+        let domain: Vec<_> = match form.kind() {
+            ReindexFormKind::InsertUnitAxis => {
+                let inserted = usize::try_from(
+                    form.axes()
+                        .first()
+                        .ok_or_else(|| occurrence_error("reindex-axis"))?
+                        .get(),
+                )
+                .map_err(|_| occurrence_error("reindex-axis"))?;
+                dimensions
+                    .iter()
+                    .enumerate()
+                    .filter(|(position, _)| *position != inserted)
+                    .map(|(_, dimension)| *dimension)
+                    .collect()
+            }
+            _ => dimensions.clone(),
+        };
+
+        let tensor = context.input_tensor(input_type, input_shape)?;
+        let value = context.read(tensor, &domain, &operand_coordinates)?;
+        let output = context.output_tensor(value_type, result_shape)?;
+        let write = context.write(output, &dimensions, &coordinates)?;
+        context.output(write, value)
+    }
+}
+
+/// Builds the operand coordinate per input axis for one admitted reindex form.
+///
+/// `coordinates` are the result's iteration coordinates in result-axis order.
+fn reindex_operand_coordinates(
+    context: &mut IndexAccessLoweringContext<'_>,
+    form: &ReindexForm,
+    input_shape: &Shape,
+    coordinates: &[IndexExprId],
+) -> Result<Vec<IndexExprId>, LoweringEmitError> {
+    let extents = input_shape.extents();
+    let at = |position: usize| -> Result<IndexExprId, LoweringEmitError> {
+        coordinates
+            .get(position)
+            .copied()
+            .ok_or_else(|| occurrence_error("reindex-coordinate"))
+    };
+    let axis_of = |axis: Axis| -> Result<usize, LoweringEmitError> {
+        usize::try_from(axis.get()).map_err(|_| occurrence_error("reindex-axis"))
+    };
+    match form.kind() {
+        // Result axis `k` reads operand axis `order[k]`, so the operand's axis
+        // `order[k]` takes the result's `k`-th coordinate. Written as a scatter
+        // into the operand's axis order rather than a gather, because that is the
+        // direction the attribute states.
+        ReindexFormKind::PermuteAxes => {
+            let mut operand = vec![None; extents.len()];
+            for (position, axis) in form.axes().iter().enumerate() {
+                let index = axis_of(*axis)?;
+                let slot = operand
+                    .get_mut(index)
+                    .ok_or_else(|| occurrence_error("reindex-axis"))?;
+                if slot.replace(at(position)?).is_some() {
+                    return Err(occurrence_error("reindex-permutation"));
+                }
+            }
+            operand
+                .into_iter()
+                .map(|slot| slot.ok_or_else(|| occurrence_error("reindex-permutation")))
+                .collect()
+        }
+        // The split's result axes linearize back into one operand coordinate,
+        // major factor first: `sum(d_j * prod(factors[j+1..]))`. This is one
+        // affine combination rather than a chain of multiplies, which is what
+        // keeps the access affine.
+        ReindexFormKind::SplitAxis => {
+            let axis = axis_of(
+                *form
+                    .axes()
+                    .first()
+                    .ok_or_else(|| occurrence_error("reindex-axis"))?,
+            )?;
+            let factors = form.factors();
+            let mut strides = vec![1_u64; factors.len()];
+            let mut stride = 1_u64;
+            for (position, factor) in factors.iter().enumerate().rev() {
+                strides[position] = stride;
+                stride = stride
+                    .checked_mul(factor.get())
+                    .ok_or_else(|| occurrence_error("reindex-split-overflow"))?;
+            }
+            let mut terms = Vec::with_capacity(factors.len());
+            for (position, stride) in strides.iter().enumerate() {
+                terms.push((
+                    IndexInteger::from_u64(*stride),
+                    at(axis.saturating_add(position))?,
+                ));
+            }
+            let linearized = context.linear_combination(IndexInteger::from_u64(0), &terms)?;
+            let mut operand = Vec::with_capacity(extents.len());
+            for position in 0..extents.len() {
+                operand.push(match position.cmp(&axis) {
+                    std::cmp::Ordering::Less => at(position)?,
+                    std::cmp::Ordering::Equal => linearized,
+                    std::cmp::Ordering::Greater => {
+                        at(position.saturating_add(factors.len()).saturating_sub(1))?
+                    }
+                });
+            }
+            Ok(operand)
+        }
+        // The merge decodes one result coordinate back into the merged run, using
+        // the same wrap-then-divide shape the serial sum's reduced-offset decode
+        // uses so that one decoding convention exists in this module.
+        ReindexFormKind::MergeAxes => {
+            let axes = form.axes();
+            let first = axis_of(
+                *axes
+                    .first()
+                    .ok_or_else(|| occurrence_error("reindex-axis"))?,
+            )?;
+            let count = axes.len();
+            let merged: Vec<u64> = axes
+                .iter()
+                .map(|axis| {
+                    axis_of(*axis).and_then(|index| {
+                        extents
+                            .get(index)
+                            .map(|extent| extent.get())
+                            .ok_or_else(|| occurrence_error("reindex-axis"))
+                    })
+                })
+                .collect::<Result<_, _>>()?;
+            let mut strides = vec![1_u64; count];
+            let mut stride = 1_u64;
+            for (position, extent) in merged.iter().enumerate().rev() {
+                strides[position] = stride;
+                stride = stride
+                    .checked_mul(*extent)
+                    .ok_or_else(|| occurrence_error("reindex-merge-overflow"))?;
+            }
+            let linear = at(first)?;
+            let mut decoded = Vec::with_capacity(count);
+            for position in 0..count {
+                // The leading merged axis needs no wrap: the result coordinate is
+                // already below the product of every merged extent.
+                let wrapped = if position == 0 {
+                    linear
+                } else {
+                    let modulus = strides[position]
+                        .checked_mul(merged[position])
+                        .ok_or_else(|| occurrence_error("reindex-merge-overflow"))?;
+                    context.modulo(linear, SourcedExtent::Static(Extent::new(modulus)))?
+                };
+                decoded.push(if strides[position] == 1 {
+                    wrapped
+                } else {
+                    context.floor_div(
+                        wrapped,
+                        SourcedExtent::Static(Extent::new(strides[position])),
+                    )?
+                });
+            }
+            let mut operand = Vec::with_capacity(extents.len());
+            for position in 0..extents.len() {
+                operand.push(if position < first {
+                    at(position)?
+                } else if position < first.saturating_add(count) {
+                    decoded[position - first]
+                } else {
+                    at(position.saturating_sub(count).saturating_add(1))?
+                });
+            }
+            Ok(operand)
+        }
+        // The inserted result axis has extent one and no operand axis behind it,
+        // so it contributes no coordinate and the read is invariant in it.
+        ReindexFormKind::InsertUnitAxis => {
+            let position = axis_of(
+                *form
+                    .axes()
+                    .first()
+                    .ok_or_else(|| occurrence_error("reindex-axis"))?,
+            )?;
+            (0..extents.len())
+                .map(|axis| {
+                    if axis < position {
+                        at(axis)
+                    } else {
+                        at(axis.saturating_add(1))
+                    }
+                })
+                .collect()
+        }
+        // The removed operand axis has extent one, so its only coordinate is zero.
+        ReindexFormKind::RemoveUnitAxis => {
+            let removed = axis_of(
+                *form
+                    .axes()
+                    .first()
+                    .ok_or_else(|| occurrence_error("reindex-axis"))?,
+            )?;
+            let zero = context.constant(IndexInteger::from_u64(0))?;
+            (0..extents.len())
+                .map(|axis| match axis.cmp(&removed) {
+                    std::cmp::Ordering::Less => at(axis),
+                    std::cmp::Ordering::Equal => Ok(zero),
+                    std::cmp::Ordering::Greater => at(axis.saturating_sub(1)),
+                })
+                .collect()
+        }
+        // `i -> extent - 1 - i`, the one within-axis coordinate permutation the
+        // family admits. It is affine — a constant plus a coefficient of minus
+        // one — which is exactly why it is the form D-10 admits.
+        ReindexFormKind::ReverseAxis => {
+            let reversed = axis_of(
+                *form
+                    .axes()
+                    .first()
+                    .ok_or_else(|| occurrence_error("reindex-axis"))?,
+            )?;
+            let extent = extents
+                .get(reversed)
+                .ok_or_else(|| occurrence_error("reindex-axis"))?
+                .get();
+            let last = i128::from(extent)
+                .checked_sub(1)
+                .ok_or_else(|| occurrence_error("reindex-reverse-extent"))?;
+            let mirrored = context.linear_combination(
+                IndexInteger::from_i128(last),
+                &[(IndexInteger::from_i128(-1), at(reversed)?)],
+            )?;
+            (0..extents.len())
+                .map(|axis| {
+                    if axis == reversed {
+                        Ok(mirrored)
+                    } else {
+                        at(axis)
+                    }
+                })
+                .collect()
+        }
+    }
+}
+
+/// Emits the region realizing one `tiler.broadcast-f32` occurrence.
+///
+/// The read omits every replicated result dimension and maps every stretched one
+/// to zero, which is precisely how the IR contract describes a broadcast's access
+/// map. The write covers the whole result domain, so ownership is a coordinate
+/// permutation even though the read aliases.
+struct GovernedBroadcastF32;
+
+impl IndexAccessLoweringProvider for GovernedBroadcastF32 {
+    fn lower(&self, context: &mut IndexAccessLoweringContext<'_>) -> Result<(), LoweringEmitError> {
+        let occurrence = context.occurrence();
+        let ([input], [result]) = (occurrence.inputs(), occurrence.results()) else {
+            return Err(occurrence_error("broadcast-arity"));
+        };
+        if occurrence.operands() != [0] {
+            return Err(occurrence_error("broadcast-operand-binding"));
+        }
+        let Some(value) = occurrence
+            .attributes()
+            .get(BROADCAST_AXIS_MAPPING_ATTRIBUTE)
+        else {
+            return Err(occurrence_error("broadcast-mapping-missing"));
+        };
+        let mapping = BroadcastAxisMapping::from_canonical_value(value)
+            .map_err(|_| occurrence_error("broadcast-mapping"))?;
+        let input_shape = input.shape().clone();
+        let result_shape = result.shape().clone();
+        if mapping
+            .result_shape(&input_shape)
+            .map_err(|_| occurrence_error("broadcast-mapping"))?
+            != result_shape
+        {
+            return Err(occurrence_error("broadcast-result-shape"));
+        }
+        let value_type = result.value_type().clone();
+        let input_type = input.value_type().clone();
+
+        let dimensions = declare_parallel_domain(context, &result_shape)?;
+        let coordinates = dimension_expressions(context, &dimensions)?;
+        let zero = context.constant(IndexInteger::from_u64(0))?;
+        // The read ranges only over the result dimensions a one-to-one
+        // correspondence carries. A replicated dimension is omitted and a
+        // stretched one maps to zero, which is exactly the IR contract's "a
+        // broadcast omits an iteration coordinate or maps it to zero".
+        let domain: Vec<_> = mapping
+            .sources()
+            .iter()
+            .zip(&dimensions)
+            .filter(|(source, _)| matches!(source, BroadcastAxisSource::FromOperand(_)))
+            .map(|(_, dimension)| *dimension)
+            .collect();
+        let mut operand_coordinates = vec![None; input_shape.rank()];
+        for (result_axis, source) in mapping.sources().iter().enumerate() {
+            let Some(axis) = source.operand_axis() else {
+                continue;
+            };
+            let index = usize::try_from(axis.get())
+                .ok()
+                .filter(|index| *index < input_shape.rank())
+                .ok_or_else(|| occurrence_error("broadcast-axis"))?;
+            let coordinate = match source {
+                BroadcastAxisSource::FromOperand(_) => *coordinates
+                    .get(result_axis)
+                    .ok_or_else(|| occurrence_error("broadcast-coordinate"))?,
+                // An extent-one operand axis has exactly one coordinate, so the
+                // stretched result dimension maps to zero rather than being
+                // omitted: the axis exists on the operand and must be indexed.
+                BroadcastAxisSource::StretchUnit(_) => zero,
+                BroadcastAxisSource::Replicate => unreachable!("a replication names no axis"),
+            };
+            if operand_coordinates[index].replace(coordinate).is_some() {
+                return Err(occurrence_error("broadcast-axis-repeated"));
+            }
+        }
+        let operand_coordinates: Vec<IndexExprId> = operand_coordinates
+            .into_iter()
+            .map(|slot| slot.ok_or_else(|| occurrence_error("broadcast-axis-unmapped")))
+            .collect::<Result<_, _>>()?;
+
+        let tensor = context.input_tensor(input_type, input_shape)?;
+        let value = context.read(tensor, &domain, &operand_coordinates)?;
+        let output = context.output_tensor(value_type, result_shape)?;
+        let write = context.write(output, &dimensions, &coordinates)?;
+        context.output(write, value)
+    }
+}
+
 /// Declares one parallel dimension per axis of `shape`, in axis order.
 fn declare_parallel_domain(
     context: &mut IndexAccessLoweringContext<'_>,
@@ -738,11 +1137,13 @@ mod tests {
     };
     use tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS;
     use tiler_ir::semantic::{
+        BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, BroadcastAxisSource,
         CanonicalField, CanonicalValue, F32, F32_CONSTANT_BITS_ATTRIBUTE, OpKey,
-        OperationAttributes, OperationEffect, REDUCTION_AXES_ATTRIBUTE, ResolvedValueType, TypeKey,
-        add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
+        OperationAttributes, OperationEffect, REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE,
+        ReindexForm, ResolvedValueType, TypeKey, add_f32_op, broadcast_f32_op, constant_f32_op,
+        multiply_f32_op, reindex_f32_op, strict_serial_sum_f32_op,
     };
-    use tiler_ir::shape::{Axis, Shape};
+    use tiler_ir::shape::{Axis, Extent, Shape};
     use tiler_reference::{
         FloatBitOrder, FrozenReferenceRegistry, FrozenScalarReferenceRegistry,
         IndexRegionAuthority, IndexRegionEvaluator, IndexRegionInput, ReferenceElement, Tensor,
@@ -1057,6 +1458,329 @@ mod tests {
             evaluate_refined(&add, &[(0, &left), (1, &right)])[3],
             CANONICAL_F32_ARITHMETIC_NAN_BITS,
             "an add over a non-canonical NaN produces the canonical payload",
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // The two structural families' access maps
+    // ---------------------------------------------------------------------
+    //
+    // Every case below refines the emitted region *and* executes it, because a
+    // coordinate map that refines proves only that the region is well formed
+    // against its occurrence — the interface, the ownership, the reached
+    // authority. Which element each result coordinate reads is exactly what
+    // refinement does not check, and it is the whole content of these families.
+    //
+    // The fixtures are ascending integers rather than exceptional payloads, so a
+    // wrong coordinate map produces a wrong *value* and not a coincidence. The
+    // bit-preservation property is checked separately, once, at the end.
+
+    fn reindex_attributes(form: &ReindexForm) -> OperationAttributes {
+        OperationAttributes::new([CanonicalField::new(
+            REINDEX_MAPPING_ATTRIBUTE,
+            form.canonical_value().clone(),
+        )])
+        .unwrap()
+    }
+
+    fn broadcast_attributes(mapping: &BroadcastAxisMapping) -> OperationAttributes {
+        OperationAttributes::new([CanonicalField::new(
+            BROADCAST_AXIS_MAPPING_ATTRIBUTE,
+            mapping.canonical_value().clone(),
+        )])
+        .unwrap()
+    }
+
+    /// Refines and executes one structural occurrence over ascending integers.
+    fn structural_result(
+        operation: OpKey,
+        attributes: OperationAttributes,
+        input: Shape,
+        result: Shape,
+    ) -> Vec<u32> {
+        let count = input.element_count().expect("a test shape is bounded");
+        let bits: Vec<u32> = (0..count)
+            .map(|value| u32::try_from(value).expect("a test operand is small"))
+            .collect();
+        let refinement = refine(
+            operation,
+            vec![OccurrenceOperand::new(
+                OccurrenceValueId(0),
+                f32_type(),
+                input.clone(),
+            )],
+            vec![OccurrenceResult::new(f32_type(), result)],
+            attributes,
+        );
+        let tensor = bit_tensor(input, &bits);
+        evaluate_refined(&refinement, &[(0, &tensor)])
+    }
+
+    /// Every admitted reindex form, emitted and executed against a hand-derived
+    /// expected permutation of the operand's elements.
+    #[test]
+    fn the_governed_reindex_region_realizes_every_admitted_form() {
+        // A transpose of `[2, 3]`: row-major 0..6 becomes column-major.
+        assert_eq!(
+            structural_result(
+                reindex_f32_op(),
+                reindex_attributes(
+                    &ReindexForm::permute_axes([Axis::new(1), Axis::new(0)]).unwrap()
+                ),
+                Shape::from_dims([2, 3]),
+                Shape::from_dims([3, 2]),
+            ),
+            vec![0, 3, 1, 4, 2, 5],
+        );
+
+        // A split of a six-wide axis into (3, 2), major factor first. Row-major
+        // order is unchanged, which is what makes a split a reshape.
+        assert_eq!(
+            structural_result(
+                reindex_f32_op(),
+                reindex_attributes(
+                    &ReindexForm::split_axis(Axis::new(0), [Extent::new(3), Extent::new(2)])
+                        .unwrap()
+                ),
+                Shape::from_dims([6]),
+                Shape::from_dims([3, 2]),
+            ),
+            vec![0, 1, 2, 3, 4, 5],
+        );
+
+        // The merge back, and one over an inner run of a rank-three operand,
+        // which is the case a wrong stride order would get wrong while the
+        // rank-two case still passed.
+        assert_eq!(
+            structural_result(
+                reindex_f32_op(),
+                reindex_attributes(&ReindexForm::merge_axes([Axis::new(0), Axis::new(1)]).unwrap()),
+                Shape::from_dims([3, 2]),
+                Shape::from_dims([6]),
+            ),
+            vec![0, 1, 2, 3, 4, 5],
+        );
+        assert_eq!(
+            structural_result(
+                reindex_f32_op(),
+                reindex_attributes(&ReindexForm::merge_axes([Axis::new(1), Axis::new(2)]).unwrap()),
+                Shape::from_dims([2, 2, 3]),
+                Shape::from_dims([2, 6]),
+            ),
+            (0..12).collect::<Vec<_>>(),
+        );
+
+        // Unit-axis insertion and removal move no element.
+        assert_eq!(
+            structural_result(
+                reindex_f32_op(),
+                reindex_attributes(&ReindexForm::insert_unit_axis(Axis::new(1)).unwrap()),
+                Shape::from_dims([3]),
+                Shape::from_dims([3, 1]),
+            ),
+            vec![0, 1, 2],
+        );
+        assert_eq!(
+            structural_result(
+                reindex_f32_op(),
+                reindex_attributes(&ReindexForm::remove_unit_axis(Axis::new(1)).unwrap()),
+                Shape::from_dims([3, 1]),
+                Shape::from_dims([3]),
+            ),
+            vec![0, 1, 2],
+        );
+
+        // The D-10 form. On a `[2, 2, 3]` operand the size-two axis 1 reverses,
+        // which swaps the two three-element rows within each outer block — the
+        // exact map `rotate_half` performs at head dimension two.
+        assert_eq!(
+            structural_result(
+                reindex_f32_op(),
+                reindex_attributes(&ReindexForm::reverse_axis(Axis::new(1)).unwrap()),
+                Shape::from_dims([2, 2, 3]),
+                Shape::from_dims([2, 2, 3]),
+            ),
+            vec![3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8],
+        );
+        // A wider axis, so the reversal is tested where it is more than a swap.
+        assert_eq!(
+            structural_result(
+                reindex_f32_op(),
+                reindex_attributes(&ReindexForm::reverse_axis(Axis::new(0)).unwrap()),
+                Shape::from_dims([4]),
+                Shape::from_dims([4]),
+            ),
+            vec![3, 2, 1, 0],
+        );
+    }
+
+    /// Both many-to-one relations, emitted and executed.
+    #[test]
+    fn the_governed_broadcast_region_realizes_both_many_to_one_relations() {
+        let replicate = BroadcastAxisSource::Replicate;
+        // A rank pad: `[3]` against `[2, 3]`, the normalization weight's shape.
+        assert_eq!(
+            structural_result(
+                broadcast_f32_op(),
+                broadcast_attributes(
+                    &BroadcastAxisMapping::new(
+                        [Extent::new(2), Extent::new(3)],
+                        [replicate, BroadcastAxisSource::FromOperand(Axis::new(0))],
+                    )
+                    .unwrap()
+                ),
+                Shape::from_dims([3]),
+                Shape::from_dims([2, 3]),
+            ),
+            vec![0, 1, 2, 0, 1, 2],
+        );
+
+        // A unit stretch: `[2, 1]` against `[2, 3]`, the rotary sign operand's
+        // shape. The distinguishing case — a rank pad of `[2]` to `[2, 3]` is not
+        // even expressible, because the operand axis would have nowhere to go.
+        assert_eq!(
+            structural_result(
+                broadcast_f32_op(),
+                broadcast_attributes(
+                    &BroadcastAxisMapping::new(
+                        [Extent::new(2), Extent::new(3)],
+                        [
+                            BroadcastAxisSource::FromOperand(Axis::new(0)),
+                            BroadcastAxisSource::StretchUnit(Axis::new(1)),
+                        ],
+                    )
+                    .unwrap()
+                ),
+                Shape::from_dims([2, 1]),
+                Shape::from_dims([2, 3]),
+            ),
+            vec![0, 0, 0, 1, 1, 1],
+        );
+
+        // An interior rank pad, which is the rotary table's `[T, D]` against
+        // `[T, heads, D]` and the one shape a leading-pad-only implementation
+        // would get wrong.
+        assert_eq!(
+            structural_result(
+                broadcast_f32_op(),
+                broadcast_attributes(
+                    &BroadcastAxisMapping::new(
+                        [Extent::new(2), Extent::new(2), Extent::new(3)],
+                        [
+                            BroadcastAxisSource::FromOperand(Axis::new(0)),
+                            replicate,
+                            BroadcastAxisSource::FromOperand(Axis::new(1)),
+                        ],
+                    )
+                    .unwrap()
+                ),
+                Shape::from_dims([2, 3]),
+                Shape::from_dims([2, 2, 3]),
+            ),
+            vec![0, 1, 2, 0, 1, 2, 3, 4, 5, 3, 4, 5],
+        );
+    }
+
+    /// Neither family may rewrite a payload it only transports.
+    ///
+    /// The arithmetic families canonicalize every NaN they produce, and that rule
+    /// must not leak into a family that produces nothing. A structural region
+    /// that applied it would return a canonical NaN where the program supplied a
+    /// signalling one, which is a value change wearing a numerical contract's
+    /// clothes.
+    #[test]
+    fn the_structural_regions_transport_exceptional_payloads_unchanged() {
+        let payloads = [
+            NONCANONICAL_NAN,
+            0x7f80_0001,
+            (-0.0_f32).to_bits(),
+            LEAST_SUBNORMAL,
+        ];
+        let shape = Shape::from_dims([4]);
+        let tensor = bit_tensor(shape.clone(), &payloads);
+
+        let reversed = refine(
+            reindex_f32_op(),
+            vec![OccurrenceOperand::new(
+                OccurrenceValueId(0),
+                f32_type(),
+                shape.clone(),
+            )],
+            vec![OccurrenceResult::new(f32_type(), shape.clone())],
+            reindex_attributes(&ReindexForm::reverse_axis(Axis::new(0)).unwrap()),
+        );
+        assert_eq!(
+            evaluate_refined(&reversed, &[(0, &tensor)]),
+            vec![
+                LEAST_SUBNORMAL,
+                (-0.0_f32).to_bits(),
+                0x7f80_0001,
+                NONCANONICAL_NAN,
+            ],
+            "a reindex reorders payloads and rewrites none of them",
+        );
+
+        let widened = refine(
+            broadcast_f32_op(),
+            vec![OccurrenceOperand::new(
+                OccurrenceValueId(0),
+                f32_type(),
+                shape,
+            )],
+            vec![OccurrenceResult::new(f32_type(), Shape::from_dims([2, 4]))],
+            broadcast_attributes(
+                &BroadcastAxisMapping::new(
+                    [Extent::new(2), Extent::new(4)],
+                    [
+                        BroadcastAxisSource::Replicate,
+                        BroadcastAxisSource::FromOperand(Axis::new(0)),
+                    ],
+                )
+                .unwrap(),
+            ),
+        );
+        assert_eq!(
+            evaluate_refined(&widened, &[(0, &tensor)])[4..],
+            payloads,
+            "and a broadcast replicates them unchanged",
+        );
+    }
+
+    /// A lowering emits a region for the occurrence it was handed, or refuses.
+    ///
+    /// The occurrence's declared result shape is the host's, and the form's is
+    /// derived. A lowering that emitted its own derivation regardless would
+    /// produce a region that realizes a different occurrence than the one
+    /// requested, and refinement's interface check is not what catches it —
+    /// the region would be internally consistent and simply wrong.
+    #[test]
+    fn a_structural_lowering_refuses_an_occurrence_its_mapping_does_not_describe() {
+        let scalars = governed_scalars().unwrap();
+        let registry = governed_lowering_capabilities(&scalars).unwrap();
+        let signature = LoweringSignature::new([f32_type()], [f32_type()]).unwrap();
+
+        let mismatched = SemanticOccurrence::new(
+            reindex_f32_op(),
+            vec![OccurrenceOperand::new(
+                OccurrenceValueId(0),
+                f32_type(),
+                Shape::from_dims([6]),
+            )],
+            // The form derives `[3, 2]`; the occurrence declares `[2, 3]`.
+            vec![OccurrenceResult::new(f32_type(), Shape::from_dims([2, 3]))],
+            reindex_attributes(
+                &ReindexForm::split_axis(Axis::new(0), [Extent::new(3), Extent::new(2)]).unwrap(),
+            ),
+            OperationEffect::Pure,
+            contract(),
+            SemanticOccurrenceIdentity::from_bytes(b"mismatched-fixture".to_vec()),
+        );
+        let resolved = registry
+            .resolve_index_access(mismatched.operation(), &signature)
+            .unwrap();
+        assert!(
+            refine_index_region(&resolved, &mismatched, &scalars).is_err(),
+            "a reindex whose declared result the form does not derive is refused",
         );
     }
 

@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use tiler_ir::semantic::{
     CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE, ProviderIdentity, TypeKey, add_f32_op,
-    constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
+    broadcast_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op, strict_serial_sum_f32_op,
 };
 
 use super::error::{ReferenceOperationError, ReferenceRegistryError, ReferenceValueError};
@@ -19,6 +19,7 @@ use super::registry::{
     ReferenceRegistryProvider, ReferenceRegistryRegistrar, ReferenceSignature,
     ReferenceValueValidator,
 };
+use super::structural::{BroadcastF32Reference, ReindexF32Reference};
 use super::tensor::{FloatBitOrder, ReferenceElement, Tensor, TensorPayloadView};
 
 pub(crate) struct StandardReferenceProvider;
@@ -61,11 +62,25 @@ impl ReferenceRegistryProvider for StandardReferenceProvider {
             revision,
             Arc::new(F32BinaryReference::Add),
         )?;
+        let unary_signature =
+            ReferenceSignature::new([F32::resolved_type()], [F32::resolved_type()])?;
         registrar.register(
             strict_serial_sum_f32_op(),
-            ReferenceSignature::new([F32::resolved_type()], [F32::resolved_type()])?,
+            unary_signature.clone(),
             revision,
             Arc::new(StrictSerialF32SumReference),
+        )?;
+        registrar.register(
+            reindex_f32_op(),
+            unary_signature.clone(),
+            revision,
+            Arc::new(ReindexF32Reference),
+        )?;
+        registrar.register(
+            broadcast_f32_op(),
+            unary_signature,
+            revision,
+            Arc::new(BroadcastF32Reference),
         )?;
         register_standard_quantization(registrar, revision)
     }

@@ -8,6 +8,7 @@ use std::sync::{Arc, OnceLock};
 use crate::identity::{push_len, push_slice};
 use crate::shape::Axis;
 
+use super::broadcast::register_standard_broadcast;
 use super::catalog::register_builtin_dtype_catalog;
 use super::contraction::register_standard_contraction;
 use super::operation::{
@@ -20,6 +21,7 @@ use super::operation::{
     validate_provider_diagnostic_message,
 };
 use super::quantization::register_standard_quantization;
+use super::reindex::register_standard_reindex;
 use super::types::{
     AttributeFieldId, CanonicalField, CanonicalValue, CanonicalValueView, QuantSchemeKey,
     ResolvedValueType, TypeIdentityError, TypeKey, validate_canonical_value, validate_key,
@@ -2092,6 +2094,12 @@ impl SemanticRegistryProvider for StandardSemantics {
             Arc::new(StrictSerialSumF32),
         ))?;
         register_standard_contraction(registrar)?;
+        // The two structural families sit between the arithmetic and quantized
+        // registrations for a reader's benefit alone: registration order fixes
+        // nothing about semantics, and the frozen snapshot's identity is
+        // computed over an ordered map rather than over this call sequence.
+        register_standard_reindex(registrar)?;
+        register_standard_broadcast(registrar)?;
         register_standard_quantization(registrar)
     }
 }

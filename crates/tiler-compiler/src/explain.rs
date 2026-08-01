@@ -3718,7 +3718,16 @@ mod tests {
                 // against. No lowering capability was registered for the new
                 // family, so a contraction still fails closed at resolution, and
                 // the trace's own two record lines are again unchanged.
-                "tiler-explain-v7 request=e1e95ea1d50a918f\n",
+                // Rebaselined from `e1e95ea1d50a918f` when the standard semantic
+                // registry began registering `tiler::reindex-f32@1` and
+                // `tiler::broadcast-f32@1`. Both halves of the subject move this
+                // time: the semantic snapshot admits two further operation
+                // families, and — unlike the contraction — the lowering registry
+                // admits an index-access capability for each, so the
+                // lowering-registry identity the subject binds changes as well.
+                // The trace's own two record lines are once more unchanged,
+                // because nothing about explain's content moved.
+                "tiler-explain-v7 request=bddeaf899938ede4\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

@@ -21,6 +21,7 @@
 //! | `registry` | the semantic capability registry and its dispatch vocabulary |
 //! | `evaluate` | executing a semantic program against that registry |
 //! | `standard` | the one provider this crate ships, a consumer of the registry |
+//! | `structural` | reference semantics for the element-moving families |
 //! | `identity` | canonical identity encoding for a frozen registry |
 //! | `oracle` | the *other* oracle: scalar dispatch and index-region evaluation |
 //! | `arithmetic` | exact scalar arithmetic shared by both |
@@ -40,6 +41,7 @@ mod oracle;
 mod quantization;
 mod registry;
 mod standard;
+mod structural;
 mod tensor;
 
 pub use conformance::{ReferenceNumericalConformance, UnsupportedReferenceContract};

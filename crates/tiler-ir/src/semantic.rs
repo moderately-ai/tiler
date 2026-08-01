@@ -5,6 +5,7 @@
 //! one-way, output-reachable compaction into an immutable
 //! [`SemanticProgram`](crate::semantic::SemanticProgram).
 
+mod broadcast;
 mod catalog;
 mod contraction;
 mod error;
@@ -16,10 +17,20 @@ mod precondition;
 mod program;
 mod quantization;
 mod registry;
+mod reindex;
 mod shape_evidence;
 mod standard_operations;
 mod types;
 
+pub use broadcast::{
+    BROADCAST_AXIS_MAPPING_ATTRIBUTE, BROADCAST_FACT_ADMITTED_RELATIONS,
+    BROADCAST_FACT_MAPPING_CLASS, BROADCAST_FACT_STORAGE_CLAIM, BROADCAST_FACT_VALUE_BEHAVIOUR,
+    BROADCAST_MAPPING_RESULT_EXTENTS, BROADCAST_MAPPING_SOURCES, BROADCAST_RELATION_FROM_OPERAND,
+    BROADCAST_RELATION_REPLICATE, BROADCAST_RELATION_STRETCH_UNIT, BROADCAST_SOURCE_AXIS,
+    BROADCAST_SOURCE_RELATION, BroadcastAttributeSubject, BroadcastAxisMapping,
+    BroadcastAxisSource, BroadcastMappingError, CanonicalBroadcastAxisMapping,
+    MAX_BROADCAST_MAPPING_AXES, broadcast_f32_op,
+};
 pub use catalog::{
     admitted_complex_component_types, builtin_scalar_value_types, complex_type_constructor,
     complex_value_type, microscaling_scheme_keys,
@@ -102,9 +113,19 @@ pub use registry::{
     TypeInstanceRejection, ValueTypeDefinition, ValueTypeDefinitionKey, ValueTypeInstanceValidator,
     ValueTypeMarker,
 };
+pub use reindex::{
+    CanonicalReindexForm, MAX_REINDEX_FORM_ITEMS, REINDEX_FACT_ADMITTED_FORMS,
+    REINDEX_FACT_MAPPING_CLASS, REINDEX_FACT_STORAGE_CLAIM, REINDEX_FACT_VALUE_BEHAVIOUR,
+    REINDEX_FORM_AXES, REINDEX_FORM_AXIS, REINDEX_FORM_FACTORS, REINDEX_FORM_INSERT_UNIT_AXIS,
+    REINDEX_FORM_KIND, REINDEX_FORM_MERGE_AXES, REINDEX_FORM_PERMUTE_AXES,
+    REINDEX_FORM_REMOVE_UNIT_AXIS, REINDEX_FORM_REVERSE_AXIS, REINDEX_FORM_SPLIT_AXIS,
+    REINDEX_MAPPING_ATTRIBUTE, ReindexAttributeSubject, ReindexForm, ReindexFormError,
+    ReindexFormKind, reindex_f32_op,
+};
 pub use shape_evidence::{SameShape, ShapePredicate, ShapeWitness, ShapedValue};
 pub use standard_operations::{
-    F32Add, F32Constant, F32Multiply, F32TensorContraction, StrictSerialF32Sum,
+    F32Add, F32Broadcast, F32Constant, F32Multiply, F32Reindex, F32TensorContraction,
+    StrictSerialF32Sum,
 };
 pub use types::{
     AttributeFieldId, CanonicalField, CanonicalFloatBitsRef, CanonicalIntegerWidth,
