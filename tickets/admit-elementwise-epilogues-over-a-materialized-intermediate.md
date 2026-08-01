@@ -6,7 +6,7 @@ priority: p2
 dependencies: [admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary]
 related: []
 scopes: [implementation/compiler]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler-api, optimizer]
 ---

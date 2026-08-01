@@ -1,7 +1,7 @@
 ---
 id: admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary
 title: Admit a general program-shape recognizer at the compiler request boundary
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [reach-a-verified-kernel-through-the-structural-families, carry-the-elementary-numerical-dimensions-in-the-region-realization]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler-api, optimizer]
-claimed_from: todo
-assignee: worker-recognizer
-lease_expires_at: 1785610282
 ---
 ## User-visible outcome
 

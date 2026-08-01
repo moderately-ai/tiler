@@ -6,7 +6,7 @@ priority: p1
 dependencies: [admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary]
 related: [admit-the-silu-activation-family, admit-the-reindex-and-broadcast-operation-families, admit-the-rms-normalization-family, admit-the-softmax-family]
 scopes: [implementation/compiler]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler-api, optimizer]
 ---
