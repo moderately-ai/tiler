@@ -69,8 +69,8 @@ use tiler_artifact::program::{
     ArtifactExecutionPolicy, ArtifactProgramBuilder, AvailabilityPhase, BackendEntryKey,
     BackendEntryRef, BackendFeatureRequirement, BackendKey, BindingKind, BindingSpec,
     CapabilityKey, CompilationEnvironment, DeferredPredicateSpec, EntrySpec, FeasibilityRuleSetKey,
-    FeasibilityRuleSetRef, LaunchSpec, PayloadContent, PayloadMetadata, PayloadProvenance,
-    PayloadSdkIdentity, RecordedArtifactProgramIdentity, RepresentationKey, RouteFeatureKey,
+    FeasibilityRuleSetRef, LaunchSpec, PayloadContent, PayloadMetadata, PayloadPlatform,
+    PayloadProvenance, RecordedArtifactProgramIdentity, RepresentationKey, RouteFeatureKey,
     RouteRequirement, SchemaVersion, SelectedProvider, TargetProfileDescriptorDigest,
     TargetProfileKey, TargetProfileRef, TargetPropertyKey, ToolComponent, VariantSpec,
 };
@@ -639,22 +639,15 @@ fn push_member(draft: &mut ArtifactProgramBuilder, semantic: &SemanticProgram, s
                         target: "aarch64-apple-darwin".to_owned(),
                         family: spec.backend.as_str().to_owned(),
                         language: "tiler.kernel-ir.v4".to_owned(),
-                        // Apple-shaped required fields with no meaning for this
-                        // backend. ADR 0090 item 14 names that gap; stating this
-                        // representation's own version here rather than a
-                        // platform claim is the same compromise the CPU vertical
-                        // recorded, not a new one.
-                        deployment_major: 1,
-                        deployment_minor: 0,
+                        // No SDK and no platform deployment minimum on this
+                        // backend's target, stated rather than approximated. The
+                        // Apple-shaped placeholders this line replaced were what
+                        // ADR 0090 item 14 named.
+                        platform: PayloadPlatform::Unversioned,
                         components: vec![ToolComponent {
                             role: "translator".to_owned(),
                             version: "1".to_owned(),
                         }],
-                        sdk: PayloadSdkIdentity {
-                            name: "tiler.test.scalar-host-image".to_owned(),
-                            version: "1".to_owned(),
-                            build: "0".to_owned(),
-                        },
                         compile_flags: Vec::new(),
                         link_flags: Vec::new(),
                     },

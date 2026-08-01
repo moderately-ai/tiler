@@ -100,8 +100,8 @@ pub(crate) use encode::{ENVELOPE_DIGEST_DOMAIN, MANIFEST_DIGEST_DOMAIN, SECTION_
 //
 // Promoted on Tom's review, 2026-07-25.
 pub use payload::{
-    PayloadContent, PayloadEntryMapping, PayloadMetadata, PayloadProvenance, PayloadSdkIdentity,
-    PayloadTargetObligation, ToolComponent,
+    PayloadContent, PayloadEntryMapping, PayloadMetadata, PayloadPlatform, PayloadProvenance,
+    PayloadSdkIdentity, PayloadTargetObligation, ToolComponent,
 };
 // The codec's *capability* — encode an artifact, decode bytes back — is public
 // as of `carry-the-metal-payload-in-an-artifact-envelope`, so an out-of-crate

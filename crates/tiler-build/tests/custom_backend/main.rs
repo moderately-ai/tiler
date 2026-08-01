@@ -44,8 +44,8 @@ use backend::{
 use image::{ScalarImageRefusal, encode};
 
 use tiler_artifact::program::{
-    ArtifactExecutionPolicy, DecodedArtifact, PayloadContent, PayloadMetadata, RepresentationKey,
-    VerifiedArtifactProgram, decode_artifact,
+    ArtifactBuildError, ArtifactExecutionPolicy, DecodedArtifact, PayloadContent, PayloadMetadata,
+    PayloadPlatform, ProvenanceField, RepresentationKey, VerifiedArtifactProgram, decode_artifact,
 };
 use tiler_build::{
     AcceptedArtifact, DeliveredPayloadCacheError, DeliveredPayloadProtocolError,
@@ -208,6 +208,85 @@ fn a_custom_backend_publishes_a_self_validating_payload() {
             .is_some_and(|symbol| symbol.starts_with("scalar_host_")),
         "every entry must reach this backend's own identity-derived symbol",
     );
+}
+
+/// This backend's provenance is complete without an Apple-shaped placeholder.
+///
+/// The first half is the outcome `generalize-payload-provenance-beyond-the-apple-shape`
+/// exists for: an out-of-crate, non-Metal backend states that its toolchain
+/// resolved against no SDK, and the decoded payload carries that statement
+/// rather than a minted SDK name and a deployment minimum standing in for one.
+/// Nothing in `crates/` knows this backend, so the record is neutral rather than
+/// accommodating.
+///
+/// The second half is the other side of the same rule and the reason the first
+/// is not a weakening: what a payload owes follows the shape it declares, so
+/// this backend still owes its toolchain, target, family, language, and every
+/// component field — and dropping one leaves the payload with no identity, named
+/// by field. What it does *not* owe are the four fields it has no referent for.
+#[test]
+fn a_non_metal_backend_states_no_sdk_and_still_owes_the_rest() {
+    let semantic = semantic_program();
+    let compilation = scalar_host_compilation(&semantic);
+    let plan = compilation.selected().expect("one selected plan");
+    let produced = sound(&semantic, plan);
+
+    let decoded = decode_artifact(&produced.bytes).expect("the produced envelope decodes");
+    let metadata = decoded
+        .payload_metadata(0)
+        .expect("this backend carries its payload");
+    assert_eq!(
+        metadata.provenance.platform,
+        PayloadPlatform::Unversioned,
+        "a backend whose toolchain has no SDK must be able to say so",
+    );
+    metadata
+        .identity()
+        .expect("a payload that owes no SDK field is complete without one");
+
+    for (field, omit) in [
+        (ProvenanceField::Toolchain, omit_toolchain as fn(&mut _)),
+        (ProvenanceField::Target, omit_target),
+        (ProvenanceField::Family, omit_family),
+        (ProvenanceField::Language, omit_language),
+        (ProvenanceField::ToolComponentRole, omit_component_role),
+        (
+            ProvenanceField::ToolComponentVersion,
+            omit_component_version,
+        ),
+    ] {
+        let mut incomplete = metadata.clone();
+        omit(&mut incomplete);
+        assert_eq!(
+            incomplete.identity(),
+            Err(ArtifactBuildError::IncompletePayloadProvenance { field }),
+            "omitting an owed field must be refused by that field's name",
+        );
+    }
+}
+
+fn omit_toolchain(metadata: &mut PayloadMetadata) {
+    metadata.provenance.toolchain.clear();
+}
+
+fn omit_target(metadata: &mut PayloadMetadata) {
+    metadata.provenance.target.clear();
+}
+
+fn omit_family(metadata: &mut PayloadMetadata) {
+    metadata.provenance.family.clear();
+}
+
+fn omit_language(metadata: &mut PayloadMetadata) {
+    metadata.provenance.language.clear();
+}
+
+fn omit_component_role(metadata: &mut PayloadMetadata) {
+    metadata.provenance.components[0].role.clear();
+}
+
+fn omit_component_version(metadata: &mut PayloadMetadata) {
+    metadata.provenance.components[0].version.clear();
 }
 
 /// The three statements the backend supplies reach the artifact intact.

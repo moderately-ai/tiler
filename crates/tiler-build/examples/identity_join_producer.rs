@@ -56,7 +56,7 @@ use std::process::Command;
 use tiler_artifact::program::{
     ArtifactBuildError, ArtifactExecutionPolicy, BackendEntryKey, BackendKey,
     BackendPayloadDescriptor, BindingKind, DigestAlgorithm, PayloadContent, PayloadDigest,
-    PayloadEntryMapping, PayloadMetadata, PayloadProvenance, PayloadSdkIdentity, RepresentationKey,
+    PayloadEntryMapping, PayloadMetadata, PayloadPlatform, PayloadProvenance, RepresentationKey,
     SchemaVersion, TargetProfileDescriptorDigest, TargetProfileRef, ToolComponent,
     VerifiedArtifactProgram,
 };
@@ -708,21 +708,14 @@ fn payload_metadata(
             target: TARGET_TRIPLE.to_owned(),
             family: BACKEND_KEY.to_owned(),
             language: "tiler.test.scalar-host-image".to_owned(),
-            // Apple-shaped required fields with no meaning for this backend.
-            // ADR 0090 item 14 names that gap; stating this representation's own
-            // version rather than a platform claim is the compromise the bounded
-            // scalar vertical already recorded.
-            deployment_major: 1,
-            deployment_minor: 0,
+            // No SDK and no platform deployment minimum on this target, stated
+            // rather than approximated. The Apple-shaped placeholders this line
+            // replaced were what ADR 0090 item 14 named.
+            platform: PayloadPlatform::Unversioned,
             components: vec![ToolComponent {
                 role: "translator".to_owned(),
                 version: "1".to_owned(),
             }],
-            sdk: PayloadSdkIdentity {
-                name: TOOLCHAIN_KEY.to_owned(),
-                version: "1".to_owned(),
-                build: "0".to_owned(),
-            },
             // The one output-affecting producer statement a variant moves
             // without touching anything else. It reaches the canonical metadata
             // bytes, so the payload digest, the artifact identity, and the cache

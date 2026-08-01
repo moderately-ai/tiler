@@ -3,7 +3,7 @@
 use std::error::Error;
 use std::fmt;
 
-use tiler_artifact::program::{PayloadMetadata, ToolComponent};
+use tiler_artifact::program::{PayloadMetadata, PayloadPlatform, ToolComponent};
 use tiler_metal_aot::driver::PreparedCompilation;
 
 /// Governed representation key of retained Metal source.
@@ -33,6 +33,14 @@ pub enum MetalPayloadFact {
     Family,
     /// MSL language standard.
     Language,
+    /// Declared platform shape of the payload's provenance.
+    ///
+    /// Ahead of the two facts below in contract order because they are fields
+    /// *of* the shape: a payload that declares it resolved against no versioned
+    /// SDK has no deployment minimum and no SDK identity to disagree about, and
+    /// reporting one of those would name a value where the disagreement is about
+    /// what kind of toolchain produced the payload at all.
+    PlatformShape,
     /// Requested deployment minimum.
     DeploymentMinimum,
     /// Canonically ordered compiler and linker versions.
@@ -56,6 +64,7 @@ impl MetalPayloadFact {
             Self::Target => "target",
             Self::Family => "family",
             Self::Language => "language",
+            Self::PlatformShape => "platform-shape",
             Self::DeploymentMinimum => "deployment-minimum",
             Self::Components => "components",
             Self::Sdk => "sdk",
@@ -143,6 +152,20 @@ pub(crate) fn validate_metal_payload_metadata(
     actual: &PayloadMetadata,
 ) -> Result<(), MetalPayloadMismatch> {
     let provenance = &expected.provenance;
+    // The expected side is a Metal payload by construction, so a shape other
+    // than the versioned SDK is a defect in whatever produced *it*. Reporting
+    // the shape keeps this total without inventing an expectation to compare
+    // against, and the actual side is checked for the same shape below.
+    let PayloadPlatform::VersionedSdk {
+        deployment_major,
+        deployment_minor,
+        sdk,
+    } = &provenance.platform
+    else {
+        return Err(MetalPayloadMismatch {
+            fact: MetalPayloadFact::PlatformShape,
+        });
+    };
     validate_metal_payload_facts(
         &MetalPayloadFacts {
             source_representation: expected.source_representation.as_str(),
@@ -151,12 +174,12 @@ pub(crate) fn validate_metal_payload_metadata(
             target: &provenance.target,
             family: &provenance.family,
             language: &provenance.language,
-            deployment_major: provenance.deployment_major,
-            deployment_minor: provenance.deployment_minor,
+            deployment_major: *deployment_major,
+            deployment_minor: *deployment_minor,
             components: ExpectedComponents::Metadata(&provenance.components),
-            sdk_name: &provenance.sdk.name,
-            sdk_version: &provenance.sdk.version,
-            sdk_build: &provenance.sdk.build,
+            sdk_name: &sdk.name,
+            sdk_version: &sdk.version,
+            sdk_build: &sdk.build,
             compile_flags: &provenance.compile_flags,
             link_flags: &provenance.link_flags,
         },
@@ -209,9 +232,23 @@ fn validate_metal_payload_facts(
         actual.language == expected.language,
         MetalPayloadFact::Language,
     )?;
+    // A Metal payload declares the versioned-SDK platform shape. One that
+    // declares it resolved against no SDK is not a Metal payload with wrong
+    // values in it: it has no deployment minimum and no SDK identity to compare,
+    // so the shape is the disagreement.
+    let PayloadPlatform::VersionedSdk {
+        deployment_major,
+        deployment_minor,
+        sdk,
+    } = &actual.platform
+    else {
+        return Err(MetalPayloadMismatch {
+            fact: MetalPayloadFact::PlatformShape,
+        });
+    };
     require(
-        actual.deployment_major == expected.deployment_major
-            && actual.deployment_minor == expected.deployment_minor,
+        *deployment_major == expected.deployment_major
+            && *deployment_minor == expected.deployment_minor,
         MetalPayloadFact::DeploymentMinimum,
     )?;
     require(
@@ -224,9 +261,9 @@ fn validate_metal_payload_facts(
         MetalPayloadFact::Components,
     )?;
     require(
-        actual.sdk.name == expected.sdk_name
-            && actual.sdk.version == expected.sdk_version
-            && actual.sdk.build == expected.sdk_build,
+        sdk.name == expected.sdk_name
+            && sdk.version == expected.sdk_version
+            && sdk.build == expected.sdk_build,
         MetalPayloadFact::Sdk,
     )?;
     require(
@@ -265,7 +302,8 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use tiler_artifact::program::{
-        PayloadMetadata, PayloadProvenance, PayloadSdkIdentity, RepresentationKey, ToolComponent,
+        PayloadMetadata, PayloadPlatform, PayloadProvenance, PayloadSdkIdentity, RepresentationKey,
+        ToolComponent,
     };
     use tiler_metal_aot::driver::{PreparedCompilation, Toolchain};
     use tiler_metal_aot::input::{
@@ -341,8 +379,15 @@ mod tests {
                 target: provenance.target_triple.clone(),
                 family: provenance.platform.as_str().to_owned(),
                 language: provenance.msl_version.semantic_name().to_owned(),
-                deployment_major: provenance.deployment_minimum.major(),
-                deployment_minor: provenance.deployment_minimum.minor(),
+                platform: PayloadPlatform::VersionedSdk {
+                    deployment_major: provenance.deployment_minimum.major(),
+                    deployment_minor: provenance.deployment_minimum.minor(),
+                    sdk: PayloadSdkIdentity {
+                        name: provenance.sdk.canonical_name.clone(),
+                        version: provenance.sdk.version.clone(),
+                        build: provenance.sdk.build.clone(),
+                    },
+                },
                 components: vec![
                     ToolComponent {
                         role: COMPILER_ROLE.to_owned(),
@@ -353,11 +398,6 @@ mod tests {
                         version: provenance.fingerprint.metallib_version.clone(),
                     },
                 ],
-                sdk: PayloadSdkIdentity {
-                    name: provenance.sdk.canonical_name.clone(),
-                    version: provenance.sdk.version.clone(),
-                    build: provenance.sdk.build.clone(),
-                },
                 compile_flags: provenance.compile_flags.clone(),
                 link_flags: provenance.link_flags.clone(),
             },
@@ -399,7 +439,7 @@ mod tests {
 
     type Mutation = fn(&mut PayloadMetadata);
 
-    fn mutations() -> [(MetalPayloadFact, Mutation); 11] {
+    fn mutations() -> [(MetalPayloadFact, Mutation); 12] {
         [
             (MetalPayloadFact::SourceRepresentation, |metadata| {
                 metadata.source_representation = RepresentationKey::new("other-source").unwrap();
@@ -419,14 +459,31 @@ mod tests {
             (MetalPayloadFact::Language, |metadata| {
                 metadata.provenance.language.push_str("-other");
             }),
+            // A Metal payload that declares it resolved against no SDK is the
+            // shape disagreement rather than a wrong deployment minimum, and it
+            // is the case the record could not express before it had a platform
+            // block at all.
+            (MetalPayloadFact::PlatformShape, |metadata| {
+                metadata.provenance.platform = PayloadPlatform::Unversioned;
+            }),
             (MetalPayloadFact::DeploymentMinimum, |metadata| {
-                metadata.provenance.deployment_minor += 1;
+                let PayloadPlatform::VersionedSdk {
+                    deployment_minor, ..
+                } = &mut metadata.provenance.platform
+                else {
+                    panic!("the fixture declares a versioned SDK");
+                };
+                *deployment_minor += 1;
             }),
             (MetalPayloadFact::Components, |metadata| {
                 metadata.provenance.components.swap(0, 1);
             }),
             (MetalPayloadFact::Sdk, |metadata| {
-                metadata.provenance.sdk.build.push_str("-other");
+                let PayloadPlatform::VersionedSdk { sdk, .. } = &mut metadata.provenance.platform
+                else {
+                    panic!("the fixture declares a versioned SDK");
+                };
+                sdk.build.push_str("-other");
             }),
             (MetalPayloadFact::CompileFlags, |metadata| {
                 metadata.provenance.compile_flags.reverse();
