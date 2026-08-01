@@ -194,6 +194,15 @@ use tiler_runtime::load::{
     TargetCompatibility, VariantIneligibility,
 };
 
+/// The one delivery position every artifact here is built for.
+///
+/// A delivery position is the ordered slot a consumer's build target resolves
+/// to, and these artifacts are built for a single target, so the sole position
+/// is zero. Named rather than written as a bare `0` at each call, because the
+/// argument decides *which compiled object* is loaded and a literal there says
+/// nothing about why that one.
+const SOLE_DELIVERY: usize = 0;
+
 /// Rows of the direct path's input; each row reduces to one output element.
 ///
 /// The direct path's own number, and deliberately not the one the producer
@@ -986,7 +995,8 @@ fn refused(probe: &'static str, outcome: String) -> ProofError {
 /// first is what makes each refusal below attributable to the one thing that
 /// probe changed.
 fn probe_accepted_baseline(subject: &ProbeSubject<'_>) -> Result<String, ProofError> {
-    let mut decoded = DecodedProgram::decode(subject.bytes).map_err(ProofError::ProbeBaseline)?;
+    let mut decoded =
+        DecodedProgram::decode(subject.bytes, SOLE_DELIVERY).map_err(ProofError::ProbeBaseline)?;
     let preflight = decoded
         .prepare(subject.environment, subject.expected, subject.abi)
         .and_then(|qualification| {
@@ -1029,7 +1039,8 @@ fn probe_accepted_baseline(subject: &ProbeSubject<'_>) -> Result<String, ProofEr
 /// which sends a reader to rebuild a plan when the repair is to re-fetch the
 /// bytes; one reported as `Malformed` sends them to look for a different file.
 fn probe_damaged_section_content(subject: &ProbeSubject<'_>) -> Result<String, ProofError> {
-    let decoded = DecodedProgram::decode(subject.bytes).map_err(ProofError::ProbeBaseline)?;
+    let decoded =
+        DecodedProgram::decode(subject.bytes, SOLE_DELIVERY).map_err(ProofError::ProbeBaseline)?;
     let content = decoded
         .sections()
         .last()
@@ -1047,7 +1058,7 @@ fn probe_damaged_section_content(subject: &ProbeSubject<'_>) -> Result<String, P
 
     let mut damaged = subject.bytes.to_vec();
     damaged[at] ^= 0x01;
-    match DecodedProgram::decode(&damaged) {
+    match DecodedProgram::decode(&damaged, SOLE_DELIVERY) {
         Err(rejection @ LoadRejection::Artifact(ArtifactCodecFailure::IntegrityFailure { .. })) => {
             Ok(format!(
                 "a flipped byte at section offset {at}: {rejection}"
@@ -1080,7 +1091,7 @@ fn probe_damaged_interior_byte(subject: &ProbeSubject<'_>) -> Result<String, Pro
     let mut damaged = subject.bytes.to_vec();
     let midpoint = damaged.len() / 2;
     damaged[midpoint] ^= 0x01;
-    match DecodedProgram::decode(&damaged) {
+    match DecodedProgram::decode(&damaged, SOLE_DELIVERY) {
         Err(rejection @ LoadRejection::Artifact(_)) => {
             Ok(format!("a flipped byte at offset {midpoint}: {rejection}"))
         }
@@ -1102,7 +1113,7 @@ fn probe_damaged_interior_byte(subject: &ProbeSubject<'_>) -> Result<String, Pro
 /// nothing about this class depends on where the cut falls.
 fn probe_truncated_envelope(subject: &ProbeSubject<'_>) -> Result<String, ProofError> {
     let midpoint = subject.bytes.len() / 2;
-    match DecodedProgram::decode(&subject.bytes[..midpoint]) {
+    match DecodedProgram::decode(&subject.bytes[..midpoint], SOLE_DELIVERY) {
         Err(rejection @ LoadRejection::Artifact(ArtifactCodecFailure::Malformed { .. })) => {
             Ok(format!("truncated to {midpoint} byte(s): {rejection}"))
         }
@@ -1126,7 +1137,8 @@ fn probe_truncated_envelope(subject: &ProbeSubject<'_>) -> Result<String, ProofE
 /// refused at the assertion boundary and never reach the loader — a different
 /// refusal, and not the one this probe is about.
 fn probe_foreign_expected_identity(subject: &ProbeSubject<'_>) -> Result<String, ProofError> {
-    let mut decoded = DecodedProgram::decode(subject.bytes).map_err(ProofError::ProbeBaseline)?;
+    let mut decoded =
+        DecodedProgram::decode(subject.bytes, SOLE_DELIVERY).map_err(ProofError::ProbeBaseline)?;
     let mut bytes = subject.expected.as_bytes().to_vec();
     if let Some(last) = bytes.last_mut() {
         *last ^= 0x01;
@@ -1188,7 +1200,8 @@ fn sole_exclusion<T>(
 /// built for another family entirely. Asserting only that something refused
 /// would erase both distinctions at the moment a caller needs them.
 fn probe_other_profile_descriptor(subject: &ProbeSubject<'_>) -> Result<String, ProofError> {
-    let mut decoded = DecodedProgram::decode(subject.bytes).map_err(ProofError::ProbeBaseline)?;
+    let mut decoded =
+        DecodedProgram::decode(subject.bytes, SOLE_DELIVERY).map_err(ProofError::ProbeBaseline)?;
     let mut descriptor = subject
         .environment
         .target_profile
@@ -1236,7 +1249,8 @@ fn probe_other_profile_descriptor(subject: &ProbeSubject<'_>) -> Result<String, 
 /// The perturbed key is a *valid* profile key that no artifact here declares, so
 /// the refusal is the classification and not a key-validation failure.
 fn probe_other_profile_key(subject: &ProbeSubject<'_>) -> Result<String, ProofError> {
-    let mut decoded = DecodedProgram::decode(subject.bytes).map_err(ProofError::ProbeBaseline)?;
+    let mut decoded =
+        DecodedProgram::decode(subject.bytes, SOLE_DELIVERY).map_err(ProofError::ProbeBaseline)?;
     let other_host = ExecutionEnvironment {
         target_profile: TargetProfileRef {
             key: TargetProfileKey::new("tiler.metal.some-other-target-family.v1")
@@ -1269,7 +1283,8 @@ fn probe_other_profile_key(subject: &ProbeSubject<'_>) -> Result<String, ProofEr
 /// pinned as well, because a multi-entry route realized by two payloads must say
 /// which of them this host is not.
 fn probe_other_backend_family(subject: &ProbeSubject<'_>) -> Result<String, ProofError> {
-    let mut decoded = DecodedProgram::decode(subject.bytes).map_err(ProofError::ProbeBaseline)?;
+    let mut decoded =
+        DecodedProgram::decode(subject.bytes, SOLE_DELIVERY).map_err(ProofError::ProbeBaseline)?;
     let other_backend = ExecutionEnvironment {
         target_profile: subject.environment.target_profile.clone(),
         backend: BackendKey::new("tiler.some-other-backend")
@@ -2272,7 +2287,7 @@ fn prove_member(
     // only to *name* what the artifact claims to package: the routed environment
     // comes from the declaration, not from this compilation, per
     // `declared_route_environment`.
-    let declared_shape = DecodedProgram::decode(&bytes).map_err(ProofError::Load)?;
+    let declared_shape = DecodedProgram::decode(&bytes, SOLE_DELIVERY).map_err(ProofError::Load)?;
     let (rows, columns, compilation) = compile_for_declared_shape(declaration, &declared_shape)?;
     drop(declared_shape);
     let environment = declared_route_environment(declaration)?;
@@ -2289,7 +2304,8 @@ fn prove_member(
 
     for case in sidecar.cases() {
         // A fresh decode per case: see this function's own note on why.
-        let mut decoded = DecodedProgram::decode(&bytes).map_err(ProofError::Load)?;
+        let mut decoded =
+            DecodedProgram::decode(&bytes, SOLE_DELIVERY).map_err(ProofError::Load)?;
         let (rows, declared_columns, abi) = bind_interface(&decoded)?;
         // Re-read per case rather than trusted from above, because the shape is
         // what every remaining check is scaled by; a member whose variants
@@ -2443,7 +2459,7 @@ fn run() -> Result<(), ProofError> {
 
     // ---- the envelope path -----------------------------------------------
     let (bytes, sidecar) = read_artifact(&envelope_path)?;
-    let mut decoded = DecodedProgram::decode(&bytes).map_err(ProofError::Load)?;
+    let mut decoded = DecodedProgram::decode(&bytes, SOLE_DELIVERY).map_err(ProofError::Load)?;
     println!(
         "decoded: {} variant(s), required features {:?}",
         decoded.variant_count(),
@@ -3027,11 +3043,11 @@ mod tests {
         METAL_MINIMUM_GPU_FAMILY, METAL_MINIMUM_GPU_FAMILY_VERSION, MetalGpuFamily,
         MetalGpuFamilySupport, MetalHostApplicabilityPolicy, PLAN_ROLES, Path, ProbeSubject,
         REDUCTION_CLASSES, REPRESENTATION_KEY, ROWS, RoutePreparation, RouteRequirement,
-        RouteResourceDimension, bind_interface, compile_under, decide_live_device_requirement,
-        declaration, declared_route_environment, evaluate_metal_host_applicability, expected_shape,
-        normalized_architecture, observe_host_environment, probe_accepted_baseline,
-        probe_damaged_interior_byte, probe_damaged_section_content,
-        probe_foreign_expected_identity, probe_other_backend_family,
+        RouteResourceDimension, SOLE_DELIVERY, bind_interface, compile_under,
+        decide_live_device_requirement, declaration, declared_route_environment,
+        evaluate_metal_host_applicability, expected_shape, normalized_architecture,
+        observe_host_environment, probe_accepted_baseline, probe_damaged_interior_byte,
+        probe_damaged_section_content, probe_foreign_expected_identity, probe_other_backend_family,
         probe_other_profile_descriptor, probe_other_profile_key, probe_truncated_envelope,
         proof_member, serial_sum_program,
     };
@@ -3186,7 +3202,8 @@ mod tests {
         let environment =
             declared_route_environment(&declaration).expect("the declared environment composes");
 
-        let decoded = DecodedProgram::decode(&bytes).expect("the assembled envelope decodes");
+        let decoded =
+            DecodedProgram::decode(&bytes, SOLE_DELIVERY).expect("the assembled envelope decodes");
         let (_, _, abi) = bind_interface(&decoded).expect("the declared interface binds");
         Fixture {
             bytes,
@@ -3368,7 +3385,7 @@ mod tests {
                     preconditions: Vec::new(),
                 },
                 implementation: BackendEntryRef {
-                    payload,
+                    payloads: vec![payload],
                     entry_key: BackendEntryKey::from_bytes(
                         stage.kernel().canonical_identity().as_bytes(),
                     )
@@ -3488,7 +3505,8 @@ mod tests {
         let expected = recorded_identity(&artifact);
         let environment =
             declared_route_environment(&declaration).expect("the declared environment composes");
-        let decoded = DecodedProgram::decode(&bytes).expect("the requiring envelope decodes");
+        let decoded =
+            DecodedProgram::decode(&bytes, SOLE_DELIVERY).expect("the requiring envelope decodes");
         let (_, _, abi) = bind_interface(&decoded).expect("the declared interface binds");
         RequiringFixture {
             bytes,
@@ -3940,7 +3958,7 @@ mod tests {
         for (class, extent) in REDUCTION_CLASSES {
             let fixture = assembled_fixture(PUBLISHED_ROWS, extent);
 
-            let decoded = DecodedProgram::decode(&fixture.bytes)
+            let decoded = DecodedProgram::decode(&fixture.bytes, SOLE_DELIVERY)
                 .expect("the published-shape envelope decodes");
             let (rows, columns, compilation) =
                 super::compile_for_declared_shape(&declaration, &decoded)
@@ -3954,7 +3972,7 @@ mod tests {
             // The packaged identity, read off the route rather than off the
             // compilation: taking it from the same `Compilation` the check
             // compares against would make the comparison a tautology.
-            let mut routed = DecodedProgram::decode(&fixture.bytes)
+            let mut routed = DecodedProgram::decode(&fixture.bytes, SOLE_DELIVERY)
                 .expect("the published-shape envelope decodes again");
             let packaged = routed
                 .prepare(&fixture.environment, &fixture.expected, &fixture.abi)
@@ -4261,7 +4279,8 @@ mod tests {
         let expected = recorded_identity(&artifact);
         let environment =
             declared_route_environment(&declaration).expect("the declared environment composes");
-        let mut decoded = DecodedProgram::decode(&bytes).expect("the multi-stage envelope decodes");
+        let mut decoded = DecodedProgram::decode(&bytes, SOLE_DELIVERY)
+            .expect("the multi-stage envelope decodes");
         let (_, _, abi) = bind_interface(&decoded).expect("the declared interface binds");
 
         assert!(
@@ -4274,8 +4293,8 @@ mod tests {
             ),
             "the device-free path remains fail-closed"
         );
-        let mut decoded =
-            DecodedProgram::decode(&bytes).expect("the multi-stage envelope decodes again");
+        let mut decoded = DecodedProgram::decode(&bytes, SOLE_DELIVERY)
+            .expect("the multi-stage envelope decodes again");
         let preparation = qualify_without_requirements(
             decoded
                 .prepare(&environment, &expected, &abi)
@@ -4317,8 +4336,8 @@ mod tests {
             } if entry == refused_entry
         ));
 
-        let mut decoded =
-            DecodedProgram::decode(&bytes).expect("the multi-stage envelope decodes again");
+        let mut decoded = DecodedProgram::decode(&bytes, SOLE_DELIVERY)
+            .expect("the multi-stage envelope decodes again");
         let preflight = qualify_without_requirements(
             decoded
                 .prepare(&environment, &expected, &abi)
@@ -4406,8 +4425,8 @@ mod tests {
         let expected = recorded_identity(&artifact);
         let environment =
             declared_route_environment(&declaration).expect("the declared environment composes");
-        let mut decoded =
-            DecodedProgram::decode(&bytes).expect("the partial-window envelope decodes");
+        let mut decoded = DecodedProgram::decode(&bytes, SOLE_DELIVERY)
+            .expect("the partial-window envelope decodes");
         let (_, _, abi) = bind_interface(&decoded).expect("the declared interface binds");
         let preflight = qualify_without_requirements(
             decoded
@@ -4658,7 +4677,8 @@ mod tests {
     #[test]
     fn a_live_device_requirement_refuses_the_device_free_path() {
         let fixture = requiring_fixture(&[metal_family_requirement(MetalGpuFamily::Apple9)]);
-        let mut decoded = DecodedProgram::decode(&fixture.bytes).expect("the envelope decodes");
+        let mut decoded =
+            DecodedProgram::decode(&fixture.bytes, SOLE_DELIVERY).expect("the envelope decodes");
         let rejection = decoded
             .preflight(&fixture.environment, &fixture.expected, &fixture.abi)
             .expect_err("a device-free path cannot observe a device");
@@ -4687,7 +4707,8 @@ mod tests {
             1,
             b"9.0",
         )]);
-        let mut decoded = DecodedProgram::decode(&fixture.bytes).expect("the envelope decodes");
+        let mut decoded =
+            DecodedProgram::decode(&fixture.bytes, SOLE_DELIVERY).expect("the envelope decodes");
         let rejection = decoded
             .prepare(&fixture.environment, &fixture.expected, &fixture.abi)
             .err()
@@ -4748,7 +4769,8 @@ mod tests {
                 },
             ),
         ] {
-            let mut decoded = DecodedProgram::decode(&fixture.bytes).expect("the envelope decodes");
+            let mut decoded = DecodedProgram::decode(&fixture.bytes, SOLE_DELIVERY)
+                .expect("the envelope decodes");
             let rejection = decoded
                 .prepare(&fixture.environment, &fixture.expected, &fixture.abi)
                 .expect("the route prepares")
@@ -4766,7 +4788,8 @@ mod tests {
 
         // The satisfying neighbour, without which the three above prove only
         // that this route refuses everything.
-        let mut decoded = DecodedProgram::decode(&fixture.bytes).expect("the envelope decodes");
+        let mut decoded =
+            DecodedProgram::decode(&fixture.bytes, SOLE_DELIVERY).expect("the envelope decodes");
         let mut asked = 0;
         let _qualified = decoded
             .prepare(&fixture.environment, &fixture.expected, &fixture.abi)
@@ -4784,7 +4807,8 @@ mod tests {
     #[test]
     fn a_route_requiring_nothing_qualifies_without_a_question() {
         let fixture = requiring_fixture(&[]);
-        let mut decoded = DecodedProgram::decode(&fixture.bytes).expect("the envelope decodes");
+        let mut decoded =
+            DecodedProgram::decode(&fixture.bytes, SOLE_DELIVERY).expect("the envelope decodes");
         let qualification = decoded
             .prepare(&fixture.environment, &fixture.expected, &fixture.abi)
             .expect("the route prepares");
@@ -4826,7 +4850,8 @@ mod tests {
             let requirement = metal_family_requirement(required);
             let facts = observed_facts(observed);
             let fixture = requiring_fixture(std::slice::from_ref(&requirement));
-            let mut decoded = DecodedProgram::decode(&fixture.bytes).expect("the envelope decodes");
+            let mut decoded = DecodedProgram::decode(&fixture.bytes, SOLE_DELIVERY)
+                .expect("the envelope decodes");
             let qualification = decoded
                 .prepare(&fixture.environment, &fixture.expected, &fixture.abi)
                 .expect("the route prepares");
@@ -4885,7 +4910,8 @@ mod tests {
 
         for requirement in &unowned {
             let fixture = requiring_fixture(std::slice::from_ref(requirement));
-            let mut decoded = DecodedProgram::decode(&fixture.bytes).expect("the envelope decodes");
+            let mut decoded = DecodedProgram::decode(&fixture.bytes, SOLE_DELIVERY)
+                .expect("the envelope decodes");
             let qualification = decoded
                 .prepare(&fixture.environment, &fixture.expected, &fixture.abi)
                 .expect("the route prepares");

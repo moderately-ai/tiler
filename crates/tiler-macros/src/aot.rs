@@ -81,15 +81,18 @@
 //! flattering error and the wrong one: the missing measurement is the binding
 //! constraint, and it is upstream of every machinery question.
 //!
-//! Two things are nonetheless needed before `deliver macos-and-ios;` can
-//! succeed, and they are separately blocked, so neither should be read as
-//! waiting on the other. `first-authoritative-ios-metal-compile-declaration`
-//! owns the measured declaration, and is blocked on a physical iOS device.
-//! `carry-one-payload-per-artifact-family-in-one-envelope` owns the envelope:
-//! `tiler_build`'s `a_second_artifact_family_cannot_yet_share_one_envelope`
-//! measures the neutral artifact model refusing a two-payload envelope today,
-//! for a reason that is structural rather than a limit of the cache
-//! orchestration below.
+//! One thing is nonetheless needed before `deliver macos-and-ios;` can succeed,
+//! and it is a *measurement* rather than machinery.
+//! `first-authoritative-ios-metal-compile-declaration` owns the second measured
+//! declaration and is blocked on a physical iOS device. The envelope half is
+//! done: `carry-one-payload-per-artifact-family-in-one-envelope` landed one
+//! payload per delivery position, and `tiler_build`'s
+//! `one_envelope_carries_one_payload_per_artifact_family` drives the production
+//! seam over two families end to end, through a `#[cfg(test)]` fixture that may
+//! not escape `cfg(test)` because its measured rows were taken on a macOS host.
+//! [`deliver`] therefore hands `accept_or_publish_metal_plan` a declaration run
+//! that today has exactly one entry, and gains a second when the measurement
+//! does.
 //!
 //! # The numerical contract is derived, not chosen
 //!
@@ -386,7 +389,7 @@ pub(crate) fn deliver(
         toolchain,
         program,
         plan,
-        &declaration,
+        std::slice::from_ref(&declaration),
         OPTIMIZATION,
     ) {
         Ok(accepted) => accepted,

@@ -69,6 +69,8 @@ pub enum ArtifactLimitKind {
     Expressions,
     /// Backend payload descriptor count of one artifact program.
     Payloads,
+    /// Delivery-position count of one artifact program.
+    DeliveryPositions,
     /// Selected capability-provider count of one artifact program.
     SelectedProviders,
     /// Available provider count of one compilation environment.
@@ -299,6 +301,34 @@ pub enum ArtifactBuildError {
         /// Declared executable-entry count.
         actual: usize,
     },
+    /// An executable entry names no backend payload at all.
+    ///
+    /// An entry is realized once per delivery position, and an artifact declares
+    /// at least one position: every entry is executable on the consumer targets
+    /// the artifact was built for, or the artifact carries an entry no consumer
+    /// can dispatch. Distinct from [`Self::DeliveryCardinality`] because the
+    /// first entry declared has no sibling to disagree with, so an empty
+    /// realization there would otherwise establish an artifact with zero
+    /// positions rather than be refused.
+    EmptyDelivery {
+        /// Ordered entry position.
+        entry: usize,
+    },
+    /// An entry names a different payload count than the artifact's delivery positions.
+    ///
+    /// The count is fixed by the first entry any variant declares and every
+    /// later entry must agree, because a consumer resolves one delivery position
+    /// for the whole artifact: an entry with fewer positions would leave that
+    /// consumer with no object for an entry its route must dispatch, and one
+    /// with more would carry a payload no position selects.
+    DeliveryCardinality {
+        /// Ordered entry position.
+        entry: usize,
+        /// Delivery-position count the artifact already established.
+        expected: usize,
+        /// Payload count this entry declared.
+        actual: usize,
+    },
     /// An entry declared a different binding count than its kernel signature.
     BindingCardinality {
         /// Ordered entry position.
@@ -516,6 +546,8 @@ impl Error for ArtifactBuildError {
             | Self::NumericalContractMismatch
             | Self::TargetProfileMismatch
             | Self::EntryCardinality { .. }
+            | Self::EmptyDelivery { .. }
+            | Self::DeliveryCardinality { .. }
             | Self::BindingCardinality { .. }
             | Self::UnnameableBindingTarget { .. }
             | Self::AliasedInternalBinding { .. }
@@ -608,6 +640,21 @@ pub enum ArtifactDiagnostic {
     UnusedPayload,
     /// Two executable entries claim the same backend entry of one payload.
     DuplicateBackendEntry,
+    /// One backend payload realizes entries at two different delivery positions.
+    ///
+    /// A delivery position is what a consumer's build target resolves to, and
+    /// each position is meant to be one backend object built for that target. A
+    /// payload reached from two positions makes the artifact carry fewer objects
+    /// than it declares positions, so two consumer targets would load one
+    /// object while the artifact claims to have built one for each.
+    ///
+    /// The neutral layer cannot decide *which* target a payload was built for —
+    /// that is a backend fact a producer holds — so this refuses the shape that
+    /// makes the question unanswerable rather than answering it.
+    AmbiguousPayloadDelivery {
+        /// Canonical position of the payload reached from two delivery positions.
+        payload: u32,
+    },
     /// Two entities produced the same canonical key, so identity is ambiguous.
     AmbiguousCanonicalKey {
         /// Category of the colliding entities.
@@ -632,6 +679,7 @@ impl ArtifactDiagnostic {
             Self::UnusedExpression => "unused-expression",
             Self::UnusedPayload => "unused-payload",
             Self::DuplicateBackendEntry => "duplicate-backend-entry",
+            Self::AmbiguousPayloadDelivery { .. } => "ambiguous-payload-delivery",
             Self::AmbiguousCanonicalKey { .. } => "ambiguous-canonical-key",
             Self::IdentityLimit { .. } => "identity-limit",
         }

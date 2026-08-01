@@ -704,7 +704,7 @@ fn push_member(draft: &mut ArtifactProgramBuilder, semantic: &SemanticProgram, s
                             preconditions: Vec::new(),
                         },
                         implementation: BackendEntryRef {
-                            payload,
+                            payloads: vec![payload],
                             entry_key: entry.key.clone(),
                         },
                     })

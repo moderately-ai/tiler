@@ -59,8 +59,9 @@ use super::super::requirement::{
 };
 use super::super::{
     MAX_ABI_EXPRESSIONS, MAX_ARTIFACT_PAYLOADS, MAX_ARTIFACT_VARIANTS, MAX_DEFERRED_PREDICATES,
-    MAX_ENTRY_BINDINGS, MAX_LAUNCH_PRECONDITIONS, MAX_ROUTE_FEATURE_PAYLOAD_BYTES,
-    MAX_ROUTE_REQUIREMENTS, MAX_SELECTED_PROVIDERS, MAX_STAGE_DEPENDENCIES, MAX_VARIANT_ENTRIES,
+    MAX_DELIVERY_POSITIONS, MAX_ENTRY_BINDINGS, MAX_LAUNCH_PRECONDITIONS,
+    MAX_ROUTE_FEATURE_PAYLOAD_BYTES, MAX_ROUTE_REQUIREMENTS, MAX_SELECTED_PROVIDERS,
+    MAX_STAGE_DEPENDENCIES, MAX_VARIANT_ENTRIES,
 };
 use super::digest::{Digest, DigestAlgorithm};
 use super::encode::{
@@ -1047,20 +1048,31 @@ fn parse_entry(
             |cursor| cursor.expression_ref(expressions),
         )?,
     };
-    let payload = cursor.u32()?;
-    if position(payload) >= payloads {
-        return Err(ArtifactCodecError::MissingReference {
-            subject: ReferenceSubject::Payload,
-            index: u64::from(payload),
-        });
-    }
+    // Bounded before it is allocated against, and every reference range-checked
+    // as it is read. Whether the count agrees with the rest of the artifact is
+    // `validate`'s, because it is a whole-envelope obligation this row cannot
+    // see.
+    let realizations = cursor.vec(
+        MAX_DELIVERY_POSITIONS,
+        CodecLimitKind::DeliveryPositions,
+        |cursor| {
+            let payload = cursor.u32()?;
+            if position(payload) >= payloads {
+                return Err(ArtifactCodecError::MissingReference {
+                    subject: ReferenceSubject::Payload,
+                    index: u64::from(payload),
+                });
+            }
+            Ok(payload)
+        },
+    )?;
     Ok(EntryRow {
         stage,
         resources,
         numerical,
         bindings,
         launch,
-        payload,
+        payloads: realizations,
         entry_key: BackendEntryKey::from_bytes(cursor.slice()?)
             .map_err(|cause| ArtifactCodecError::InvalidGovernedKey { cause })?,
     })

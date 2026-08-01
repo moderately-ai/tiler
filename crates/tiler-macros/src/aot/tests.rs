@@ -281,7 +281,7 @@ fn the_second_expansion_of_one_subject_compiles_nothing() {
             &toolchain,
             &program,
             plan,
-            &declaration,
+            std::slice::from_ref(&declaration),
             OPTIMIZATION,
         )
         .expect("the checked plan resolves");
@@ -702,7 +702,7 @@ fn resolved(root: &std::path::Path, program: &SemanticProgram) -> (ComposedSubje
         &Toolchain::system(),
         program,
         plan,
-        &declaration,
+        std::slice::from_ref(&declaration),
         OPTIMIZATION,
     )
     .expect("the checked plan resolves");

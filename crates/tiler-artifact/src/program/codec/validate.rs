@@ -78,6 +78,10 @@ pub(super) fn validate(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecE
     check_sections(envelope)?;
     check_payload_identity(envelope)?;
     check_binding_targets(envelope)?;
+    // Before the mapping check, which resolves a payload per delivery position
+    // and would otherwise report a scrambled realization run as a missing
+    // symbol.
+    check_delivery_positions(envelope)?;
     check_entry_mappings(envelope)?;
     let facts = ExpressionFacts::derive(envelope.expressions());
     let keys = expression_keys(envelope.expressions());
@@ -406,26 +410,29 @@ fn check_entry_mappings(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodec
         .iter()
         .flat_map(|variant| &variant.entries)
     {
-        let Some(content) = envelope.payload_content()[position(entry.payload)] else {
-            continue;
-        };
-        // Re-parsed rather than threaded from `check_payload_identity`: that
-        // check ran for its own reason and this one must not depend on having
-        // been reached, so each proves what it needs from the bytes.
-        let metadata = decode_metadata(&envelope.sections()[position(content.metadata)].bytes)?;
-        let mapping = metadata
-            .entries
-            .iter()
-            .find(|mapping| mapping.entry_key == entry.entry_key)
-            .ok_or(ArtifactCodecError::UnmappedBackendEntry {
-                payload: entry.payload,
-            })?;
-        if mapping.transports.len() != entry.bindings.len() {
-            return Err(ArtifactCodecError::EntryTransportCardinality {
-                payload: entry.payload,
-                bindings: entry.bindings.len(),
-                transports: mapping.transports.len(),
-            });
+        // Every delivery position, not the first: a consumer resolving position
+        // `p` loads that position's object, so an object that maps none of the
+        // entries it realizes must be refused wherever it sits.
+        for payload in &entry.payloads {
+            let Some(content) = envelope.payload_content()[position(*payload)] else {
+                continue;
+            };
+            // Re-parsed rather than threaded from `check_payload_identity`: that
+            // check ran for its own reason and this one must not depend on having
+            // been reached, so each proves what it needs from the bytes.
+            let metadata = decode_metadata(&envelope.sections()[position(content.metadata)].bytes)?;
+            let mapping = metadata
+                .entries
+                .iter()
+                .find(|mapping| mapping.entry_key == entry.entry_key)
+                .ok_or(ArtifactCodecError::UnmappedBackendEntry { payload: *payload })?;
+            if mapping.transports.len() != entry.bindings.len() {
+                return Err(ArtifactCodecError::EntryTransportCardinality {
+                    payload: *payload,
+                    bindings: entry.bindings.len(),
+                    transports: mapping.transports.len(),
+                });
+            }
         }
     }
     Ok(())
@@ -466,6 +473,11 @@ fn check_expression_closure(envelope: &ArtifactEnvelope) -> Result<(), ArtifactC
 }
 
 /// Proves every payload realizes an entry and no backend entry is claimed twice.
+///
+/// A *realization* is an entry paired with a delivery position, so the walk is
+/// over those rather than over entries. An entry naming one payload at two
+/// positions repeats its `(payload, entry_key)` pair and is refused here, which
+/// is what stops one object standing in for two consumer build targets.
 fn check_backend_entries(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecError> {
     let mut claimed: BTreeSet<(u32, &[u8])> = BTreeSet::new();
     let mut referenced: BTreeSet<u32> = BTreeSet::new();
@@ -474,15 +486,56 @@ fn check_backend_entries(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCode
         .iter()
         .flat_map(|variant| &variant.entries)
     {
-        referenced.insert(entry.payload);
-        if !claimed.insert((entry.payload, entry.entry_key.as_bytes())) {
-            return Err(obligation(ArtifactDiagnostic::DuplicateBackendEntry));
+        for payload in &entry.payloads {
+            referenced.insert(*payload);
+            if !claimed.insert((*payload, entry.entry_key.as_bytes())) {
+                return Err(obligation(ArtifactDiagnostic::DuplicateBackendEntry));
+            }
         }
     }
     for payload in 0..envelope.payloads().len() {
         let payload = u32::try_from(payload).expect("a bounded payload table fits u32");
         if !referenced.contains(&payload) {
             return Err(obligation(ArtifactDiagnostic::UnusedPayload));
+        }
+    }
+    Ok(())
+}
+
+/// Proves every entry is realized at the artifact's own delivery positions.
+///
+/// Three obligations the builder discharged at construction and a decoder must
+/// re-prove against bytes no builder wrote. Every entry names at least one
+/// payload, every entry names the *same* number — a consumer resolves one
+/// position for the whole artifact, so an entry short of it would have no object
+/// for a route it must dispatch — and no payload is reached from two different
+/// positions, which would make the artifact carry fewer objects than the
+/// consumer targets it claims to have built for.
+fn check_delivery_positions(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecError> {
+    let positions = envelope.delivery_positions();
+    let mut seen: std::collections::BTreeMap<u32, usize> = std::collections::BTreeMap::new();
+    for (index, entry) in envelope
+        .variants()
+        .iter()
+        .flat_map(|variant| &variant.entries)
+        .enumerate()
+    {
+        if entry.payloads.is_empty() {
+            return Err(rule(ArtifactBuildError::EmptyDelivery { entry: index }));
+        }
+        if entry.payloads.len() != positions {
+            return Err(rule(ArtifactBuildError::DeliveryCardinality {
+                entry: index,
+                expected: positions,
+                actual: entry.payloads.len(),
+            }));
+        }
+        for (delivery, payload) in entry.payloads.iter().enumerate() {
+            if *seen.entry(*payload).or_insert(delivery) != delivery {
+                return Err(obligation(ArtifactDiagnostic::AmbiguousPayloadDelivery {
+                    payload: *payload,
+                }));
+            }
         }
     }
     Ok(())

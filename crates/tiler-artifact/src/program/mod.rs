@@ -308,8 +308,11 @@
 //!                 zero_work_skips_dispatch: true,
 //!                 preconditions: Vec::new(),
 //!             },
+//!             // One delivery position, because this artifact is built for one
+//!             // consumer target. A second position would name a second
+//!             // compiled object realizing this same entry.
 //!             implementation: BackendEntryRef {
-//!                 payload,
+//!                 payloads: vec![payload],
 //!                 entry_key: BackendEntryKey::from_bytes(b"fused")?,
 //!             },
 //!         }],
@@ -318,6 +321,7 @@
 //! let artifact = artifact.build()?;
 //!
 //! assert_eq!(artifact.variants().len(), 1);
+//! assert_eq!(artifact.delivery_positions(), 1);
 //! assert_eq!(artifact.selected_providers().len(), 1);
 //! assert_eq!(artifact.inputs().next().expect("one input").key().as_str(), "input");
 //! // The artifact retains the exact verified program it packages.
@@ -441,6 +445,15 @@ pub const MAX_ENTRY_BINDINGS: usize = 64;
 pub const MAX_ABI_EXPRESSIONS: usize = 4_096;
 /// Maximum backend payload descriptors admitted by one artifact program.
 pub const MAX_ARTIFACT_PAYLOADS: usize = 16;
+/// Maximum delivery positions admitted by one artifact program.
+///
+/// Equal to [`MAX_ARTIFACT_PAYLOADS`] rather than chosen separately, because a
+/// position is a distinct backend object: no payload may realize entries at two
+/// positions, so an artifact can never have more positions than it has payloads
+/// and a larger bound would admit a count no artifact could satisfy. It is
+/// stated anyway rather than left implicit, because a decoder must refuse a
+/// hostile count before it allocates against it.
+pub const MAX_DELIVERY_POSITIONS: usize = MAX_ARTIFACT_PAYLOADS;
 /// Maximum selected capability providers admitted by one artifact program.
 pub const MAX_SELECTED_PROVIDERS: usize = 256;
 /// Maximum available providers admitted by one compilation environment.

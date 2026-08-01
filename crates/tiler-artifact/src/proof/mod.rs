@@ -332,7 +332,7 @@
 //! #                 preconditions: Vec::new(),
 //! #             },
 //! #             implementation: BackendEntryRef {
-//! #                 payload,
+//! #                 payloads: vec![payload],
 //! #                 entry_key: BackendEntryKey::from_bytes(b"fused")?,
 //! #             },
 //! #         }],

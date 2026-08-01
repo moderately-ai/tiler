@@ -165,7 +165,26 @@ use super::requirement::{RouteRequirement, push_requirements};
 /// could not state a device precondition at all. Two artifacts alike in every
 /// other respect but requiring different device capabilities are two artifacts,
 /// and the domain step is what stops them comparing equal.
-const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v12\0";
+///
+/// # Why this is a `v13` step
+///
+/// An executable entry is no longer realized by one backend payload but by one
+/// payload per **delivery position** — the ordered slot a consumer's build
+/// target resolves to. The entry record now writes a counted run of payload keys
+/// where it wrote exactly one, so a `v12` encoding of one artifact could
+/// otherwise equal a `v13` encoding of another, and the subjects genuinely
+/// differ: a `v12` identity described an artifact that could carry only one
+/// backend object per entry, so a two-position artifact and the one-position
+/// artifact holding its first object are not the same artifact and must not
+/// share bytes.
+///
+/// The count is folded rather than assumed, which is what makes that true. A
+/// one-position artifact writes `1` and one key; a two-position artifact writes
+/// `2` and two. Dropping one family from a selection therefore moves every
+/// entry's bytes rather than only removing a payload from the sorted table, so a
+/// cache holding the two-family artifact misses for the one-family one instead
+/// of matching a subject that carries different objects.
+const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v13\0";
 
 /// [`ARTIFACT_DOMAIN`] without its terminator, for rendering in a diagnostic.
 ///
@@ -563,18 +582,42 @@ impl BackendPayloadDescriptor {
     }
 }
 
-/// The backend entry one executable entry is realized by.
+/// The backend entries one executable entry is realized by, in delivery order.
+///
+/// # One entry, several objects
+///
+/// A **delivery position** is the ordered slot a consumer's build target
+/// resolves to — not a device property, and not a plan alternative. Two
+/// positions are one compilation, one plan, one kernel program, and two
+/// compiled objects, so what varies across them is the object and never the
+/// entry: [`Self::entry_key`] is stated once and every position's payload is
+/// looked up by it. An artifact that wanted a different *entry* per position
+/// would be describing two programs, which is a portfolio of variants rather
+/// than a delivery.
+///
+/// [`Self::payloads`] is positional against the artifact's delivery positions:
+/// position `p` of every entry names the object a consumer resolving to `p`
+/// loads. The order is meaning and is retained in identity; the artifact layer
+/// deliberately does not name what a position *is*, because "macOS" and "iOS"
+/// are consumer-target vocabulary a target-neutral artifact must not carry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BackendEntryRef {
-    /// Payload descriptor that contains the entry.
-    pub payload: PayloadId,
-    /// Opaque backend entry key within that payload.
+    /// Payload descriptors that contain the entry, one per delivery position.
+    ///
+    /// Never empty, and the same length for every entry of the artifact; the
+    /// builder refuses both with [`ArtifactBuildError::EmptyDelivery`] and
+    /// [`ArtifactBuildError::DeliveryCardinality`].
+    ///
+    /// [`ArtifactBuildError::EmptyDelivery`]: super::ArtifactBuildError::EmptyDelivery
+    /// [`ArtifactBuildError::DeliveryCardinality`]: super::ArtifactBuildError::DeliveryCardinality
+    pub payloads: Vec<PayloadId>,
+    /// Opaque backend entry key, the same within every one of those payloads.
     pub entry_key: BackendEntryKey,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct StoredBackendEntry {
-    pub(super) payload: u32,
+    pub(super) payloads: Vec<u32>,
     pub(super) entry_key: BackendEntryKey,
 }
 
@@ -973,6 +1016,22 @@ impl VerifiedArtifactProgram {
         self.data.routing
     }
 
+    /// Returns how many delivery positions this artifact carries a payload for.
+    ///
+    /// One for the ordinary single-target artifact. A consumer resolves exactly
+    /// one of these positions from its own build target, and every executable
+    /// entry names one payload at each — see [`BackendEntryRef`] for what a
+    /// position is and what it deliberately is not.
+    ///
+    /// Derived from the entry table rather than stored beside it, because the
+    /// two would be one fact written twice and a stored copy could disagree with
+    /// the realizations it describes. The builder refuses an entry that does not
+    /// agree, so every entry answers the same number.
+    #[must_use]
+    pub fn delivery_positions(&self) -> usize {
+        delivery_positions(&self.data)
+    }
+
     /// Returns the named program inputs in the semantic interface order.
     #[must_use]
     pub fn inputs(&self) -> impl ExactSizeIterator<Item = ArtifactInputRef<'_>> {
@@ -1329,10 +1388,28 @@ impl<'a> EntryRef<'a> {
             })
     }
 
-    /// Returns the backend payload descriptor this entry is realized by.
+    /// Returns the backend payload realizing this entry at one delivery position.
+    ///
+    /// `None` for a position this artifact declares no payload at; see
+    /// [`VerifiedArtifactProgram::delivery_positions`] for how many there are.
+    /// A position argument rather than a bare accessor because an artifact
+    /// carrying several objects has no *default* one — picking the first would
+    /// hand a consumer the object built for somebody else's target.
     #[must_use]
-    pub fn payload(self) -> &'a BackendPayloadDescriptor {
-        &self.artifact.data.payloads[position(self.data().implementation.payload)]
+    pub fn payload(self, delivery: usize) -> Option<&'a BackendPayloadDescriptor> {
+        let payload = *self.data().implementation.payloads.get(delivery)?;
+        Some(&self.artifact.data.payloads[position(payload)])
+    }
+
+    /// Returns every payload realizing this entry, in delivery-position order.
+    #[must_use]
+    pub fn payloads(self) -> impl ExactSizeIterator<Item = &'a BackendPayloadDescriptor> {
+        let artifact = self.artifact;
+        self.data()
+            .implementation
+            .payloads
+            .iter()
+            .map(move |payload| &artifact.data.payloads[position(*payload)])
     }
 
     /// Returns the opaque backend entry key within that payload.
@@ -2382,7 +2459,32 @@ fn push_entry(
     for node in preconditions {
         push_abi_reference(bytes, arena, *node);
     }
-    push_slice(bytes, &payload_keys[node_at(entry.payload)]);
+    // The delivery-position count is folded by writing it, not assumed from the
+    // enclosing record: two artifacts that differ only in how many families they
+    // were built for differ here, in every entry, rather than only in the sorted
+    // payload table. Order is meaning — position `p` is what a consumer's build
+    // target resolves to — so the keys are written as stated rather than sorted.
+    push_len(bytes, entry.payloads.len());
+    for payload in &entry.payloads {
+        push_slice(bytes, &payload_keys[node_at(*payload)]);
+    }
     push_slice(bytes, entry.entry_key.as_bytes());
     Ok(())
+}
+
+/// Reads how many delivery positions one artifact's entries are realized at.
+///
+/// The first entry answers for all of them: `push_variant` refuses an entry
+/// whose realization count disagrees, and `codec::validate` re-proves the same
+/// agreement for an envelope decoded from bytes no builder wrote. Zero is
+/// reachable only for a draft with no variant or no entry, which
+/// [`ArtifactDiagnostic::EmptyPortfolio`] and
+/// [`ArtifactBuildError::EntryCardinality`] already refuse.
+///
+/// [`ArtifactBuildError::EntryCardinality`]: super::ArtifactBuildError::EntryCardinality
+pub(super) fn delivery_positions(data: &ArtifactProgramData) -> usize {
+    data.variants
+        .first()
+        .and_then(|variant| variant.entries.first())
+        .map_or(0, |entry| entry.implementation.payloads.len())
 }

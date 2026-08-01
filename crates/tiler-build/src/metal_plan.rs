@@ -7,17 +7,35 @@
 //! [`Compilation`], so target, feasibility, and provider facts always come from
 //! the same checked product as the kernels and target-neutral program.
 //!
-//! The initial path assembles one plan and one Metal payload, preserves every
-//! compiler-minted prepared-entry target requirement, and declares no
-//! launch-time preconditions. The artifact builder mints each requirement's ABI
-//! predicate, so this layer never reconstructs comparison direction.
+//! The path assembles one plan and one Metal payload **per declared artifact
+//! family**, preserves every compiler-minted prepared-entry target requirement,
+//! and declares no launch-time preconditions. The artifact builder mints each
+//! requirement's ABI predicate, so this layer never reconstructs comparison
+//! direction.
+//!
+//! # Several families are one compilation, not several artifacts
+//!
+//! The artifact family is not a compiler-profile axis: the authority ledger
+//! records `MetalTargetFacts::platform` as backend-only, so two declarations
+//! differing only in platform share a profile key and a byte-identical
+//! canonical descriptor. What differs is the emitted unit's target facts and the
+//! AOT triple it compiles for. So the declaration run below is one compilation,
+//! one selected plan, one kernel program, and one compiled object per family,
+//! carried into one envelope at one delivery position each.
+//!
+//! The order the caller states is the delivery order, preserved end to end and
+//! never re-derived here. Whether the object at position `p` really is the one
+//! declaration `p` prepared is not assumed either: the cache seam compares each
+//! position's decoded metadata against the compilation prepared for it, and two
+//! objects placed the other way round disagree on the AOT target triple.
 
 use std::error::Error;
 use std::fmt;
 
 use tiler_artifact::program::{
-    ArtifactBuildError, ArtifactCodecFailure, ArtifactVerificationError, BindingKind,
-    DecodedArtifact, PayloadContent, VerifiedArtifactProgram,
+    ArtifactBuildError, ArtifactCodecFailure, ArtifactProgramBuilder, ArtifactVerificationError,
+    BindingKind, DecodedArtifact, PayloadContent, PayloadId, TargetProfileRef,
+    VerifiedArtifactProgram,
 };
 use tiler_cache::expansion::{ComposedSubject, ExpansionCache, Resolution, SubjectRefusal};
 use tiler_compiler::session::PlanAlternative;
@@ -31,7 +49,7 @@ use tiler_metal_aot::input::OptimizationLevel;
 use crate::{
     AcceptedArtifact, BackendEntryDeclaration, BoundMetalCompileDeclaration, CompiledMetalPayload,
     MetalArtifactProtocolError, MetalAssemblyError, MetalCacheError, MetalPlanProfileMismatch,
-    PlanArtifactError, accept_or_publish_single_payload_metal_artifact, assemble_plan_artifact,
+    PlanArtifactError, accept_or_publish_delivered_metal_artifact, assemble_plan_artifact,
     metal_compile_request, prepare_metal_payload,
 };
 
@@ -39,6 +57,14 @@ use crate::{
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum MetalPlanBuildError {
+    /// No artifact family was declared, so there is nothing to compile for.
+    ///
+    /// One selection produces one envelope carrying one payload per built
+    /// family, and an envelope carrying none has no entry any consumer could
+    /// dispatch. Refused here rather than by the artifact builder so the reason
+    /// names the selection a caller wrote instead of the empty realization it
+    /// produced.
+    NoDeclaredFamily,
     /// The plan was not compiled under the bound declaration's target profile.
     ///
     /// First in this enum because it is checked first: a plan assessed against
@@ -118,6 +144,9 @@ impl AcceptedMetalPlanArtifact {
 impl fmt::Display for MetalPlanBuildError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::NoDeclaredFamily => formatter.write_str(
+                "no Metal artifact family was declared, so one plan has nothing to compile for",
+            ),
             Self::DeclaredProfile(error) => error.fmt(formatter),
             Self::Emission(error) => write!(formatter, "Metal emission failed: {error}"),
             Self::Preparation(error) | Self::CacheCompilation(error) => error.fmt(formatter),
@@ -147,6 +176,7 @@ impl fmt::Display for MetalPlanBuildError {
 impl Error for MetalPlanBuildError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::NoDeclaredFamily => None,
             Self::DeclaredProfile(error) => Some(error),
             Self::Emission(error) => Some(error),
             Self::Preparation(error) | Self::CacheCompilation(error) => Some(error),
@@ -202,63 +232,115 @@ pub fn accept_or_publish_metal_plan(
     toolchain: &Toolchain,
     semantic: &SemanticProgram,
     plan: PlanAlternative<'_>,
-    declaration: &BoundMetalCompileDeclaration,
+    declarations: &[BoundMetalCompileDeclaration],
     optimization: OptimizationLevel,
 ) -> Result<AcceptedMetalPlanArtifact, MetalPlanBuildError> {
+    if declarations.is_empty() {
+        return Err(MetalPlanBuildError::NoDeclaredFamily);
+    }
     let compilation = plan.compilation();
-    declaration
-        .require_compiled_under(
-            compilation.target_profile_key(),
-            compilation.target_profile_descriptor(),
-        )
-        .map_err(MetalPlanBuildError::DeclaredProfile)?;
     let kernels: Vec<_> = plan.kernels().iter().collect();
-    let unit = emit_translation_unit(&kernels, declaration.metal_facts(), declaration.emission())
-        .map_err(MetalPlanBuildError::Emission)?;
-    let request = metal_compile_request(&unit, optimization, declaration.numerical_realization())
-        .map_err(MetalPlanBuildError::Preparation)?;
-    let prepared = toolchain
-        .prepare(&request)
-        .map_err(MetalAssemblyError::from)
-        .map_err(MetalPlanBuildError::Preparation)?;
-    let payload =
-        prepare_metal_payload(&unit, prepared).map_err(MetalPlanBuildError::Preparation)?;
+    // Every declaration is checked against the plan's profile before *any* of
+    // them emits, so a selection with one wrong family costs no compiler work
+    // rather than one family's worth.
+    for declaration in declarations {
+        declaration
+            .require_compiled_under(
+                compilation.target_profile_key(),
+                compilation.target_profile_descriptor(),
+            )
+            .map_err(MetalPlanBuildError::DeclaredProfile)?;
+    }
+    // One emitted unit and one prepared compilation per delivery position, in
+    // the caller's stated order. The units are retained because
+    // `prepare_metal_payload` borrows one and the prepared token borrows its
+    // request; keeping them alive here is what lets the whole run be prepared
+    // before any of it is compiled.
+    let mut units = Vec::with_capacity(declarations.len());
+    for declaration in declarations {
+        units.push(
+            emit_translation_unit(&kernels, declaration.metal_facts(), declaration.emission())
+                .map_err(MetalPlanBuildError::Emission)?,
+        );
+    }
+    let mut requests = Vec::with_capacity(declarations.len());
+    for (declaration, unit) in declarations.iter().zip(&units) {
+        requests.push(
+            metal_compile_request(unit, optimization, declaration.numerical_realization())
+                .map_err(MetalPlanBuildError::Preparation)?,
+        );
+    }
+    let mut payloads = Vec::with_capacity(declarations.len());
+    for (unit, request) in units.iter().zip(&requests) {
+        let prepared = toolchain
+            .prepare(request)
+            .map_err(MetalAssemblyError::from)
+            .map_err(MetalPlanBuildError::Preparation)?;
+        payloads
+            .push(prepare_metal_payload(unit, prepared).map_err(MetalPlanBuildError::Preparation)?);
+    }
+
     let pending = assemble_plan_artifact(
         semantic,
         plan,
-        |builder, profile| payload.push_pending(builder, profile),
+        |builder, profile| {
+            payloads
+                .iter()
+                .map(|payload| payload.push_pending(builder, profile.clone()))
+                .collect()
+        },
         |_, stage| Ok(metal_entry_declaration(stage)),
     )
     .map_err(MetalPlanBuildError::from)?;
 
     let acceptance =
-        accept_or_publish_single_payload_metal_artifact(cache, &pending, payload, |compiled| {
+        accept_or_publish_delivered_metal_artifact(cache, &pending, payloads, |compiled| {
             assemble_plan_artifact(
                 semantic,
                 plan,
-                |builder, profile| compiled.push_carried(builder, profile),
+                |builder, profile| carry_all(builder, &profile, compiled),
                 |_, stage| Ok(metal_entry_declaration(stage)),
             )
         })
         .map_err(MetalPlanBuildError::from)?;
+    // Read back in delivery order, which the descriptor table does not carry:
+    // its order is canonical content order, so the payload a consumer at
+    // position `p` loads is only nameable through the artifact's own entries.
     let decoded = acceptance.decoded();
-    let metadata = decoded
-        .payload_metadata(0)
-        .ok_or(MetalPlanBuildError::CacheProtocol(
-            MetalArtifactProtocolError::MissingPayloadMetadata,
-        ))?
-        .clone();
-    let code = decoded
-        .payload_object(0)
-        .ok_or(MetalPlanBuildError::CacheProtocol(
-            MetalArtifactProtocolError::MissingPayloadObject,
-        ))?
-        .to_vec();
-    let compiled = CompiledMetalPayload::from_content(PayloadContent { metadata, code });
+    let mut carried = Vec::with_capacity(declarations.len());
+    for delivery in 0..declarations.len() {
+        let descriptor = decoded
+            .variants()
+            .next()
+            .and_then(|variant| variant.entries().next())
+            .and_then(|entry| entry.payload(delivery))
+            .ok_or(MetalPlanBuildError::CacheProtocol(
+                MetalArtifactProtocolError::DeliveryPositions {
+                    expected: declarations.len(),
+                    actual: decoded.delivery_positions(),
+                },
+            ))?;
+        let metadata = decoded
+            .payload_metadata(descriptor)
+            .ok_or(MetalPlanBuildError::CacheProtocol(
+                MetalArtifactProtocolError::MissingPayloadMetadata { delivery },
+            ))?
+            .clone();
+        let code = decoded
+            .payload_object(descriptor)
+            .ok_or(MetalPlanBuildError::CacheProtocol(
+                MetalArtifactProtocolError::MissingPayloadObject { delivery },
+            ))?
+            .to_vec();
+        carried.push(CompiledMetalPayload::from_content(PayloadContent {
+            metadata,
+            code,
+        }));
+    }
     let artifact = assemble_plan_artifact(
         semantic,
         plan,
-        |builder, profile| compiled.push_carried(builder, profile),
+        |builder, profile| carry_all(builder, &profile, carried),
         |_, stage| Ok(metal_entry_declaration(stage)),
     )
     .map_err(MetalPlanBuildError::from)?;
@@ -271,6 +353,22 @@ pub fn accept_or_publish_metal_plan(
         acceptance,
         artifact,
     })
+}
+
+/// Declares one compiled payload per delivery position, in the order supplied.
+///
+/// The order is the whole content of the delivery contract, so it is preserved
+/// by consuming the run rather than by keying it: a caller states which family
+/// it built first and this places that object at position 0.
+fn carry_all(
+    builder: &mut ArtifactProgramBuilder,
+    profile: &TargetProfileRef,
+    compiled: Vec<CompiledMetalPayload>,
+) -> Result<Vec<PayloadId>, ArtifactBuildError> {
+    compiled
+        .into_iter()
+        .map(|payload| payload.push_carried(builder, profile.clone()))
+        .collect()
 }
 
 /// The three launch statements the standard Metal backend makes per stage.
@@ -321,10 +419,12 @@ impl From<MetalCacheError<PlanArtifactError>> for MetalPlanBuildError {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use tiler_artifact::program::{ArtifactDiagnostic, DigestAlgorithm, StageDependencyReason};
+    use tiler_artifact::program::{
+        DecodedArtifact, DigestAlgorithm, StageDependencyReason, VerifiedArtifactProgram,
+    };
     use tiler_cache::expansion::{ExpansionCache, Resolution};
     use tiler_compiler::session::{
-        Compilation, CompileRequest, NumericalContract, compile, compile_governed,
+        Compilation, CompileRequest, NumericalContract, PlanAlternative, compile, compile_governed,
     };
     use tiler_compiler::target::TargetRequest;
     use tiler_ir::semantic::{
@@ -338,8 +438,10 @@ mod tests {
 
     use super::{MetalPlanBuildError, accept_or_publish_metal_plan, metal_entry_declaration};
     use crate::{
-        BoundMetalCompileDeclaration, CompiledMetalPayload, MetalPlanProfileMismatch,
-        PlanArtifactError, assemble_plan_artifact, metal_compile_request, prepare_metal_payload,
+        BoundMetalCompileDeclaration, CompiledMetalPayload, MetalArtifactProtocolError,
+        MetalCacheError, MetalPlanProfileMismatch, PreparedMetalPayload,
+        accept_or_publish_delivered_metal_artifact, assemble_plan_artifact, metal_compile_request,
+        prepare_metal_payload,
     };
 
     fn semantic_program() -> SemanticProgram {
@@ -488,7 +590,7 @@ mod tests {
                 &toolchain,
                 &program,
                 plan,
-                &declaration,
+                std::slice::from_ref(&declaration),
                 OptimizationLevel::Default,
             )
             .expect("the checked plan resolves");
@@ -505,7 +607,7 @@ mod tests {
             &toolchain,
             &program,
             plan,
-            &declaration,
+            std::slice::from_ref(&declaration),
             OptimizationLevel::Default,
         )
         .expect("the second cache hit remains readable");
@@ -549,7 +651,7 @@ mod tests {
             &toolchain,
             &program,
             selected,
-            &declaration,
+            std::slice::from_ref(&declaration),
             OptimizationLevel::Default,
         )
         .expect("the selected plan resolves");
@@ -558,7 +660,7 @@ mod tests {
             &toolchain,
             &program,
             materialized,
-            &declaration,
+            std::slice::from_ref(&declaration),
             OptimizationLevel::Default,
         )
         .expect("the materialized plan resolves");
@@ -623,7 +725,7 @@ mod tests {
             &toolchain,
             &program,
             plan,
-            &declaration,
+            std::slice::from_ref(&declaration),
             OptimizationLevel::Default,
         )
         .expect_err("a plan compiled under another profile cannot be emitted here");
@@ -677,13 +779,18 @@ mod tests {
     /// identity revision — which must move the goldens in the commit that states
     /// why — or the defect this test exists to catch.
     ///
+    /// Both moved once since, at the `tiler.artifact-program.v13` step: an
+    /// executable entry is realized once per delivery position, so its identity
+    /// record writes a counted run of payload keys where it wrote exactly one.
+    /// The subject moves with it because it frames the artifact identity.
+    ///
     /// [`assemble_plan_artifact`]: crate::assemble_plan_artifact
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "7a11d035c13036b7206b5388e59787f37722a6ee812798c99dd8292da8eafabd";
+            "cee402b825426ba2b39f50c0e548c2c69ef9ced9bf9103c0d61bbc46e9f8853f";
         const CACHE_SUBJECT: &str =
-            "58a71c547d008574de8e2277ecf9121ea627b3f9d919fdc282140d237291945d";
+            "3f86db909b123264af67cc58d0b0dc10e79b4a349512aa65f17894a2a65e58f3";
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));
@@ -698,7 +805,7 @@ mod tests {
             &toolchain,
             &program,
             plan,
-            &declaration,
+            std::slice::from_ref(&declaration),
             OptimizationLevel::Default,
         )
         .expect("the standard Metal path resolves");
@@ -728,42 +835,41 @@ mod tests {
             .label()
     }
 
-    /// One envelope cannot yet carry one payload per artifact family.
+    /// One envelope carries one payload per artifact family, at its own position.
     ///
-    /// Tom decided on 2026-07-25 that one selection produces one envelope
-    /// carrying one payload per built family, and
-    /// `tiler_macros::delivery::DeliveryPlan` implements the emission half. This
-    /// test is the measurement of how far the *production* half currently
-    /// reaches, and it is retained rather than described because the two facts
-    /// it establishes are the ones a reader would otherwise have to re-derive.
+    /// The positive successor of `a_second_artifact_family_cannot_yet_share_one_envelope`,
+    /// which measured the neutral artifact model refusing this envelope with
+    /// `[ArtifactDiagnostic::UnusedPayload]`. Tom decided on 2026-07-25 that one
+    /// selection produces one envelope carrying one payload per built family, so
+    /// the whole selection has one identity and a partial delivery is impossible
+    /// by construction, and this drives the production seam end to end.
     ///
-    /// **First: an artifact family is not a compiler-profile axis.** The two
-    /// declarations below differ in exactly one field —
-    /// `MetalTargetFacts::platform` — and the authority ledger's projection
-    /// table records that field as backend-only. So they share a profile key and
-    /// a byte-identical descriptor, and differ only in the AOT target they
-    /// compile for. That is what makes "several families from one expansion" a
-    /// question about payloads rather than about profiles: one compilation, one
-    /// plan, one kernel program, two compiled objects.
+    /// **An artifact family is still not a compiler-profile axis**, which is
+    /// what makes this a question about payloads rather than about profiles. The
+    /// two declarations differ in exactly one field —
+    /// `MetalTargetFacts::platform` — which the authority ledger's projection
+    /// table records as backend-only, so they share a profile key and a
+    /// byte-identical descriptor and differ only in the AOT target they compile
+    /// for. One compilation, one selected plan, one kernel program, two compiled
+    /// objects.
     ///
-    /// **Second: the neutral artifact model refuses the two-payload envelope,
-    /// and the refusal is structural rather than incidental.** Whole-artifact
-    /// verification requires every declared payload to be realized by some
-    /// executable entry, so a second payload needs a second entry to name it.
-    /// A variant's entries are exactly its program's stages, so a second entry
-    /// for the same stage needs a second *variant* — and
-    /// `tiler_artifact`'s own `rejects_a_duplicate_plan_variant` pins that two
-    /// variants packaging one program under one guard are `DuplicateVariant`.
-    /// The two rules close on each other, so the envelope this ticket wants is
-    /// not expressible today by any arrangement of the current builder's calls.
+    /// **What is proven, in the order it is asserted.** The artifact declares
+    /// two delivery positions and carries two payloads; each position resolves
+    /// to the object built for *that* family's AOT triple, through the
+    /// artifact's own entries rather than through the canonically ordered
+    /// descriptor table; the cache subject covers both compilations, so it is
+    /// not the one-family subject; and the two-family artifact identity is not
+    /// the one-family artifact's, because identity folds every carried payload.
     ///
-    /// This test therefore fails the day the artifact model gains a way to
-    /// express it, which is exactly when
-    /// `carry-one-payload-per-artifact-family-in-one-envelope` should be
-    /// revisited. It is a pinned limitation, not an endorsement of one.
+    /// The end-to-end consumer half waits on
+    /// `first-authoritative-ios-metal-compile-declaration`: the second family
+    /// here is a `#[cfg(test)]` fixture over the macOS declaration's measured
+    /// rows, which may not escape `cfg(test)` because those rows were taken on a
+    /// macOS host.
     #[test]
-    fn a_second_artifact_family_cannot_yet_share_one_envelope() {
+    fn one_envelope_carries_one_payload_per_artifact_family() {
         let directory = scratch("two-family-envelope");
+        let cache = ExpansionCache::open(directory.join("cache"));
         let (toolchain, _counter) = counted_toolchain(&directory);
         let program = semantic_program();
         let first = declaration();
@@ -783,53 +889,337 @@ mod tests {
 
         let compilation = declared_compilation(&first, &program);
         let plan = compilation.selected().expect("one selected plan");
-        let kernels: Vec<_> = plan.kernels().iter().collect();
+        let declarations = [first.clone(), second.clone()];
 
-        let mut compiled = Vec::new();
-        for declaration in [&first, &second] {
-            let unit =
-                emit_translation_unit(&kernels, declaration.metal_facts(), declaration.emission())
-                    .expect("the unit emits for this family");
-            let request = metal_compile_request(
-                &unit,
-                OptimizationLevel::Default,
-                declaration.numerical_realization(),
-            )
-            .expect("the request derives");
-            let prepared = toolchain
-                .prepare(&request)
-                .expect("the fake toolchain prepares");
-            let payload = prepare_metal_payload(&unit, prepared).expect("the payload binds");
-            compiled.push(payload.compile().expect("the payload compiles"));
-        }
-        let [macos_payload, ios_payload]: [CompiledMetalPayload; 2] = compiled
-            .try_into()
-            .expect("one compiled payload per family");
-        assert_ne!(
-            macos_payload.content().metadata.provenance.target,
-            ios_payload.content().metadata.provenance.target,
-            "two artifact families are two compilations of one plan",
-        );
-
-        let outcome = assemble_plan_artifact(
+        let accepted = accept_or_publish_metal_plan(
+            &cache,
+            &toolchain,
             &program,
             plan,
-            |builder, profile| {
-                let first = macos_payload.push_carried(builder, profile.clone())?;
-                ios_payload.push_carried(builder, profile)?;
-                Ok(first)
-            },
-            |_, stage| Ok(metal_entry_declaration(stage)),
-        );
-        let Err(PlanArtifactError::Verification(refusal)) = outcome else {
-            panic!("one envelope must not yet accept a second artifact family's payload");
-        };
+            &declarations,
+            OptimizationLevel::Default,
+        )
+        .expect("one selection produces one envelope carrying both families");
+
+        let artifact = accepted.artifact();
+        assert_eq!(artifact.delivery_positions(), 2);
+        assert_eq!(artifact.payloads().len(), 2);
+
+        // Resolved through the entries, because the descriptor table is ordered
+        // by canonical content and says nothing about which object a consumer at
+        // a given position would load.
+        let decoded = accepted.decoded();
+        assert_eq!(decoded.delivery_positions(), 2);
+        let entry = decoded
+            .variants()
+            .next()
+            .expect("one packaged variant")
+            .entries()
+            .next()
+            .expect("one packaged entry");
+        assert_eq!(entry.delivery_positions(), 2);
         assert_eq!(
-            refusal.diagnostics(),
-            [ArtifactDiagnostic::UnusedPayload],
-            "the second payload is refused for having no entry to realize it",
+            delivered_targets(decoded, 2),
+            [
+                first.aot_target().triple().clone(),
+                second.aot_target().triple().clone(),
+            ],
+            "each delivery position resolves to the object built for its own family",
+        );
+        // Resolving through the entries is a check rather than a coincidence,
+        // and the reversed selection is what shows it. The descriptor table is
+        // ordered by canonical content and does *not* move when the delivery
+        // order does, so the same two objects delivered the other way round
+        // resolve the other way round while the table stays put. A seam reading
+        // a payload positionally from that table would report the same pair for
+        // both selections.
+        let reversed = accept_or_publish_metal_plan(
+            &cache,
+            &toolchain,
+            &program,
+            plan,
+            &[second.clone(), first.clone()],
+            OptimizationLevel::Default,
+        )
+        .expect("the reversed selection resolves as its own artifact");
+        assert_eq!(
+            delivered_targets(reversed.decoded(), 2),
+            [
+                second.aot_target().triple().clone(),
+                first.aot_target().triple().clone(),
+            ],
+            "delivery order decides which object a position names",
+        );
+        assert_eq!(
+            table_targets(reversed.decoded(), 2),
+            table_targets(decoded, 2),
+            "the canonically ordered descriptor table is the same for both",
+        );
+        // Two distinct objects, which is what "one payload per built family"
+        // means: a shared object would leave one family loading another's bytes.
+        assert_ne!(entry.payload(0), entry.payload(1));
+
+        // The whole selection, not one family's share of it: both the cache
+        // subject and the artifact identity move when the second family is
+        // dropped.
+        let one_family = accept_or_publish_metal_plan(
+            &cache,
+            &toolchain,
+            &program,
+            plan,
+            std::slice::from_ref(&first),
+            OptimizationLevel::Default,
+        )
+        .expect("the one-family selection also resolves");
+        assert_eq!(one_family.artifact().delivery_positions(), 1);
+        assert_ne!(
+            accepted.cache_subject().as_bytes(),
+            one_family.cache_subject().as_bytes(),
+            "the cache subject covers the whole selection",
+        );
+        assert_ne!(
+            accepted.artifact().canonical_identity().as_bytes(),
+            one_family.artifact().canonical_identity().as_bytes(),
+            "identity folds every carried payload, so two families is not one",
         );
         let _ = std::fs::remove_dir_all(directory);
+    }
+
+    /// A payload placed at another family's delivery position is a build error.
+    ///
+    /// The perturbation is the *order*: the same two declarations, the same two
+    /// compilations, and the objects carried into the artifact the other way
+    /// round. Nothing structural notices on its own — both families share a
+    /// compiler profile, a profile descriptor, and a kernel program, and a
+    /// wrong-family `metallib` loads and dispatches on the host GPU without
+    /// error — so without a refusal the consumer's `#[cfg]` would select
+    /// position 0, load the object built for the other family, and get an answer
+    /// rather than a diagnostic.
+    ///
+    /// **It refuses as an identity disagreement, which is the strongest form
+    /// available and not a weaker one.** Delivery order is meaning, so artifact
+    /// identity folds each entry's payload keys *as stated*: the swapped
+    /// assembly is a different artifact from the pending one whose identity
+    /// keyed the cache, and the seam refuses it before publication. The two
+    /// halves are asserted separately below — that the refusal fires, and that
+    /// the two orders really are two identities — because the first without the
+    /// second would not say why.
+    ///
+    /// The second case is the same defect one step earlier: a *pending*
+    /// artifact whose payloads sit at the other family's positions is refused
+    /// against the prepared run before any compiler work, naming the position
+    /// that disagreed.
+    #[test]
+    fn a_payload_at_another_familys_delivery_position_is_refused() {
+        let directory = scratch("swapped-delivery");
+        let cache = ExpansionCache::open(directory.join("cache"));
+        let (toolchain, _counter) = counted_toolchain(&directory);
+        let program = semantic_program();
+        let first = declaration();
+        let second = BoundMetalCompileDeclaration::second_artifact_family_fixture()
+            .expect("the second artifact family assembles");
+        let compilation = declared_compilation(&first, &program);
+        let plan = compilation.selected().expect("one selected plan");
+
+        let sound = accept_or_publish_metal_plan(
+            &cache,
+            &toolchain,
+            &program,
+            plan,
+            &[first.clone(), second.clone()],
+            OptimizationLevel::Default,
+        )
+        .expect("the sound two-family selection resolves");
+        let reversed = accept_or_publish_metal_plan(
+            &cache,
+            &toolchain,
+            &program,
+            plan,
+            &[second.clone(), first.clone()],
+            OptimizationLevel::Default,
+        )
+        .expect("the reversed two-family selection also resolves, as its own artifact");
+        assert_ne!(
+            sound.artifact().canonical_identity().as_bytes(),
+            reversed.artifact().canonical_identity().as_bytes(),
+            "delivery order is meaning, so two orders are two artifacts",
+        );
+
+        // Prepared in one order, carried in the other, under a cache this
+        // subject has never been published to: the sound publication above
+        // resolved the very same subject, so sharing the cache would hit and the
+        // swapped assembly would never be attempted.
+        let swapped_cache = ExpansionCache::open(directory.join("swapped"));
+        with_prepared_run(&toolchain, plan, &[&first, &second], |prepared| {
+            let pending = assemble_plan_artifact(
+                &program,
+                plan,
+                |builder, profile| {
+                    prepared
+                        .iter()
+                        .map(|payload| payload.push_pending(builder, profile.clone()))
+                        .collect()
+                },
+                |_, stage| Ok(metal_entry_declaration(stage)),
+            )
+            .expect("the pending two-family artifact assembles");
+            let refusal = accept_or_publish_delivered_metal_artifact(
+                &swapped_cache,
+                &pending,
+                prepared,
+                |compiled: Vec<CompiledMetalPayload>| {
+                    let mut swapped = compiled;
+                    swapped.reverse();
+                    assemble_plan_artifact(
+                        &program,
+                        plan,
+                        |builder, profile| {
+                            swapped
+                                .into_iter()
+                                .map(|payload| payload.push_carried(builder, profile.clone()))
+                                .collect()
+                        },
+                        |_, stage| Ok(metal_entry_declaration(stage)),
+                    )
+                },
+            )
+            .expect_err("an object at another family's delivery position cannot publish");
+            assert!(
+                matches!(
+                    refusal,
+                    MetalCacheError::Protocol(MetalArtifactProtocolError::ArtifactIdentity),
+                ),
+                "unexpected refusal: {refusal:?}",
+            );
+        });
+
+        // The same defect in the pending artifact, refused before any compiler
+        // work and naming the position that disagreed.
+        with_prepared_run(&toolchain, plan, &[&first, &second], |prepared| {
+            let mis_ordered = assemble_plan_artifact(
+                &program,
+                plan,
+                |builder, profile| {
+                    prepared
+                        .iter()
+                        .rev()
+                        .map(|payload| payload.push_pending(builder, profile.clone()))
+                        .collect()
+                },
+                |_, stage| Ok(metal_entry_declaration(stage)),
+            )
+            .expect("the mis-ordered pending artifact assembles");
+            let refusal = accept_or_publish_delivered_metal_artifact(
+                &cache,
+                &mis_ordered,
+                prepared,
+                |_: Vec<CompiledMetalPayload>| {
+                    Err::<VerifiedArtifactProgram, MetalPlanBuildError>(
+                        MetalPlanBuildError::NoDeclaredFamily,
+                    )
+                },
+            )
+            .expect_err("a pending artifact whose positions are swapped cannot be keyed");
+            assert!(
+                matches!(
+                    refusal,
+                    MetalCacheError::Protocol(MetalArtifactProtocolError::PayloadSubject {
+                        delivery: 0
+                    }),
+                ),
+                "unexpected refusal: {refusal:?}",
+            );
+        });
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    /// Reads each delivery position's AOT target, resolved through the entries.
+    ///
+    /// Through the artifact's own entries and never through the descriptor
+    /// table: that table is ordered by canonical content and says nothing about
+    /// which object a consumer at a given position would load.
+    fn delivered_targets(decoded: &DecodedArtifact, positions: usize) -> Vec<String> {
+        let entry = decoded
+            .variants()
+            .next()
+            .expect("one packaged variant")
+            .entries()
+            .next()
+            .expect("one packaged entry");
+        (0..positions)
+            .map(|delivery| {
+                let payload = entry
+                    .payload(delivery)
+                    .expect("every delivery position realizes this entry");
+                decoded
+                    .payload_metadata(payload)
+                    .expect("every position carries its compilation subject")
+                    .provenance
+                    .target
+                    .clone()
+            })
+            .collect()
+    }
+
+    /// Reads the AOT targets in the descriptor table's own canonical order.
+    ///
+    /// The order a positional reader would get, which is what the comparison
+    /// against [`delivered_targets`] exists to separate from delivery order.
+    fn table_targets(decoded: &DecodedArtifact, positions: usize) -> Vec<String> {
+        (0..positions)
+            .map(|payload| {
+                decoded
+                    .payload_metadata(payload)
+                    .expect("every payload is carried")
+                    .provenance
+                    .target
+                    .clone()
+            })
+            .collect()
+    }
+
+    /// Prepares one compilation per declaration, in order, and runs a body over them.
+    ///
+    /// A callback rather than a return value because a prepared token borrows
+    /// the request that borrows the emitted unit, so the two tables have to
+    /// outlive the payloads and there is nowhere above this to keep them.
+    fn with_prepared_run<R>(
+        toolchain: &Toolchain,
+        plan: PlanAlternative<'_>,
+        declarations: &[&BoundMetalCompileDeclaration],
+        body: impl FnOnce(Vec<PreparedMetalPayload<'_>>) -> R,
+    ) -> R {
+        let kernels: Vec<_> = plan.kernels().iter().collect();
+        let units: Vec<_> = declarations
+            .iter()
+            .map(|declaration| {
+                emit_translation_unit(&kernels, declaration.metal_facts(), declaration.emission())
+                    .expect("the unit emits for this family")
+            })
+            .collect();
+        let requests: Vec<_> = declarations
+            .iter()
+            .zip(&units)
+            .map(|(declaration, unit)| {
+                metal_compile_request(
+                    unit,
+                    OptimizationLevel::Default,
+                    declaration.numerical_realization(),
+                )
+                .expect("the request derives")
+            })
+            .collect();
+        let payloads = units
+            .iter()
+            .zip(&requests)
+            .map(|(unit, request)| {
+                let token = toolchain
+                    .prepare(request)
+                    .expect("the fake toolchain prepares");
+                prepare_metal_payload(unit, token).expect("the payload binds")
+            })
+            .collect();
+        body(payloads)
     }
 
     /// The backend's own realization recheck survives a direct emitter call.

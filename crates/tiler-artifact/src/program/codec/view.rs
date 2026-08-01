@@ -230,6 +230,17 @@ impl DecodedArtifact {
         self.envelope.variants.len()
     }
 
+    /// Returns how many delivery positions this artifact carries a payload for.
+    ///
+    /// One for the ordinary single-target artifact. A consumer resolves exactly
+    /// one of these from its own build target and passes it to
+    /// [`DecodedEntry::payload`]; a decode proves every entry is realized at
+    /// every one of them.
+    #[must_use]
+    pub fn delivery_positions(&self) -> usize {
+        self.envelope.delivery_positions()
+    }
+
     /// Returns the named program inputs in semantic interface order.
     ///
     /// Order is meaning here and is retained rather than canonicalized. These
@@ -715,48 +726,70 @@ impl<'a> DecodedEntry<'a> {
             })
     }
 
-    /// Returns the position of the backend payload descriptor realizing this entry.
+    /// Returns the payload descriptor position realizing this entry at one
+    /// delivery position.
     ///
     /// A position into [`DecodedArtifact::payloads`], and therefore also the
-    /// argument [`DecodedArtifact::payload_object`] takes.
+    /// argument [`DecodedArtifact::payload_object`] takes. `None` for a delivery
+    /// position this artifact does not declare.
+    ///
+    /// A delivery position is the ordered slot a consumer's *build target*
+    /// resolves to, so there is no default: an artifact carrying several objects
+    /// has no "the" payload, and taking the first would hand a consumer the
+    /// object built for somebody else's target. See
+    /// [`DecodedArtifact::delivery_positions`].
     #[must_use]
-    pub fn payload(self) -> usize {
-        position(self.data().payload)
+    pub fn payload(self, delivery: usize) -> Option<usize> {
+        self.data().payloads.get(delivery).copied().map(position)
     }
 
-    /// Returns the opaque backend entry key within that payload.
+    /// Returns how many delivery positions realize this entry.
+    ///
+    /// The artifact's own count: a decode proves every entry declares the same
+    /// non-zero number, so this and [`DecodedArtifact::delivery_positions`]
+    /// always agree.
+    #[must_use]
+    pub fn delivery_positions(self) -> usize {
+        self.data().payloads.len()
+    }
+
+    /// Returns the opaque backend entry key, the same in every realizing payload.
     #[must_use]
     pub fn backend_entry_key(self) -> &'a BackendEntryKey {
         &self.data().entry_key
     }
 
-    /// Returns the backend's own entry-point symbol for this entry.
+    /// Returns the backend's own entry-point symbol at one delivery position.
     ///
-    /// `None` exactly when the realizing payload is descriptor-only, since a
+    /// `None` for a delivery position this artifact does not declare, and
+    /// exactly when the realizing payload there is descriptor-only, since a
     /// payload this envelope does not carry has no mapping to report. When the
     /// payload *is* carried the answer is always `Some`: a decode proves the
-    /// mapping covers every entry key the artifact dispatches, so a carried
-    /// payload with a missing symbol is refused rather than reported here.
+    /// mapping covers every entry key the artifact dispatches at every position,
+    /// so a carried payload with a missing symbol is refused rather than
+    /// reported here.
     #[must_use]
-    pub fn backend_symbol(self) -> Option<&'a str> {
-        self.mapping().map(|mapping| mapping.symbol.as_str())
+    pub fn backend_symbol(self, delivery: usize) -> Option<&'a str> {
+        self.mapping(delivery)
+            .map(|mapping| mapping.symbol.as_str())
     }
 
     /// Returns the backend transport slot each ABI binding occupies, in slot order.
     ///
     /// `transports[i]` is where binding slot `i` goes, so this is the last step
     /// between an artifact's neutral ABI and a real encoder. `None` under the
-    /// same condition as [`Self::backend_symbol`], and never a short list: a
+    /// same conditions as [`Self::backend_symbol`], and never a short list: a
     /// decode proves the count equals this entry's binding count.
     #[must_use]
-    pub fn transport_slots(self) -> Option<&'a [u32]> {
-        self.mapping().map(|mapping| mapping.transports.as_slice())
+    pub fn transport_slots(self, delivery: usize) -> Option<&'a [u32]> {
+        self.mapping(delivery)
+            .map(|mapping| mapping.transports.as_slice())
     }
 
-    /// Resolves this entry's mapping inside its realizing payload's subject.
-    fn mapping(self) -> Option<&'a PayloadEntryMapping> {
+    /// Resolves this entry's mapping inside one delivery position's payload subject.
+    fn mapping(self, delivery: usize) -> Option<&'a PayloadEntryMapping> {
         self.artifact
-            .payload_metadata(self.payload())?
+            .payload_metadata(self.payload(delivery)?)?
             .entries
             .iter()
             .find(|mapping| mapping.entry_key == self.data().entry_key)

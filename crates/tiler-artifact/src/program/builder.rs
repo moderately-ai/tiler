@@ -49,8 +49,8 @@ use super::model::{
 use super::requirement::RouteRequirement;
 use super::{
     MAX_ABI_EXPRESSIONS, MAX_ARTIFACT_PAYLOADS, MAX_ARTIFACT_VARIANTS, MAX_DEFERRED_PREDICATES,
-    MAX_ENTRY_BINDINGS, MAX_ENVIRONMENT_PROVIDERS, MAX_LAUNCH_PRECONDITIONS,
-    MAX_ROUTE_REQUIREMENTS, MAX_SELECTED_PROVIDERS, MAX_VARIANT_ENTRIES,
+    MAX_DELIVERY_POSITIONS, MAX_ENTRY_BINDINGS, MAX_ENVIRONMENT_PROVIDERS,
+    MAX_LAUNCH_PRECONDITIONS, MAX_ROUTE_REQUIREMENTS, MAX_SELECTED_PROVIDERS, MAX_VARIANT_ENTRIES,
 };
 
 /// The complete frozen set of capability providers offered to one compilation.
@@ -200,6 +200,12 @@ pub struct ArtifactProgramBuilder {
     expression_interface_only: Vec<bool>,
     variants: Vec<VariantData>,
     subject: Option<PortfolioSubject>,
+    /// Delivery positions the first accepted entry established, if any.
+    ///
+    /// `None` until a variant is accepted, so the first entry declared decides
+    /// the count and every later one is measured against it rather than against
+    /// a number this builder chose.
+    delivery_positions: Option<usize>,
     routing: RoutingPolicy,
 }
 
@@ -232,6 +238,7 @@ impl ArtifactProgramBuilder {
             expression_interface_only: Vec::new(),
             variants: Vec::new(),
             subject: None,
+            delivery_positions: None,
             routing: RoutingPolicy::StablePriority,
         })
     }
@@ -630,7 +637,8 @@ impl ArtifactProgramBuilder {
     /// # Errors
     ///
     /// Returns a handle error; a semantic-subject, interface, numerical, or
-    /// target-profile disagreement; an entry or binding cardinality error; an
+    /// target-profile disagreement; an entry, delivery, or binding cardinality
+    /// error; an
     /// expression type, root-phase, or interface-root rejection; an accessible
     /// range, launch, or zero-work disagreement with the bound program; a
     /// duplicate variant, deferred predicate, or launch precondition; a
@@ -693,6 +701,13 @@ impl ArtifactProgramBuilder {
             return Err(ArtifactBuildError::DuplicateVariant);
         }
         self.subject = Some(subject);
+        // Established only now, after every refusal above has passed: a variant
+        // this call rejects must leave the artifact's delivery-position count
+        // exactly where it found it, so a caller amending and retrying is not
+        // measured against a count a refused variant set.
+        if let Some(entry) = entries.first() {
+            self.delivery_positions = Some(entry.implementation.payloads.len());
+        }
         self.variants.push(VariantData {
             program: program.clone(),
             guard,
@@ -982,15 +997,45 @@ impl ArtifactProgramBuilder {
         derived: &DerivedAbi,
     ) -> Result<Vec<EntryData>, ArtifactBuildError> {
         let mut resolved = Vec::with_capacity(specs.len());
+        // The first entry any variant declares fixes the artifact's
+        // delivery-position count; within this call the first entry of this
+        // variant fixes it for the rest. Carried rather than re-read from
+        // `self`, because `self.delivery_positions` is only updated once the
+        // whole variant is accepted and a variant must be internally consistent
+        // before it can establish anything.
+        let mut positions = self.delivery_positions;
         for (index, (spec, stage)) in specs.iter().zip(program.stages()).enumerate() {
             let bindings = self.check_bindings(program, index, spec, stage, facts, derived)?;
             let launch = self.check_launch(index, &spec.launch, stage, facts, &derived.adopted)?;
-            let payload = self.resolve_payload(spec.implementation.payload)?;
+            let declared = spec.implementation.payloads.len();
+            if declared == 0 {
+                return Err(ArtifactBuildError::EmptyDelivery { entry: index });
+            }
+            limit(
+                declared,
+                MAX_DELIVERY_POSITIONS,
+                ArtifactLimitKind::DeliveryPositions,
+            )?;
+            match positions {
+                Some(expected) if expected != declared => {
+                    return Err(ArtifactBuildError::DeliveryCardinality {
+                        entry: index,
+                        expected,
+                        actual: declared,
+                    });
+                }
+                Some(_) => {}
+                None => positions = Some(declared),
+            }
+            let mut payloads = Vec::with_capacity(declared);
+            for payload in &spec.implementation.payloads {
+                payloads.push(self.resolve_payload(*payload)?);
+            }
             resolved.push(EntryData {
                 bindings,
                 launch,
                 implementation: StoredBackendEntry {
-                    payload,
+                    payloads,
                     entry_key: spec.implementation.entry_key.clone(),
                 },
             });

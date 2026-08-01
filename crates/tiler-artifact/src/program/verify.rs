@@ -4,10 +4,11 @@
 //! is the set of obligations that only the assembled artifact can discharge:
 //! the portfolio is non-empty, the plan attributes itself to some reached
 //! authority, the expression arena and the payload table are exactly the
-//! reachable sets, no two entries claim the same backend entry, and every
-//! canonical key an identity cross-reference depends on is unambiguous.
+//! reachable sets, no two realizations claim the same backend entry, no payload
+//! is reached from two delivery positions, and every canonical key an identity
+//! cross-reference depends on is unambiguous.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::error::{ArtifactDiagnostic, ArtifactEntityKind};
 use super::expr::ExprNode;
@@ -34,6 +35,9 @@ pub(super) fn verify_artifact(data: &ArtifactProgramData) -> Vec<ArtifactDiagnos
     }
     if backend_entries_collide(data) {
         diagnostics.push(ArtifactDiagnostic::DuplicateBackendEntry);
+    }
+    if let Some(payload) = payload_at_two_delivery_positions(data) {
+        diagnostics.push(ArtifactDiagnostic::AmbiguousPayloadDelivery { payload });
     }
     if stage_keys_collide(data) {
         diagnostics.push(ArtifactDiagnostic::AmbiguousCanonicalKey {
@@ -95,33 +99,68 @@ fn expressions_are_reachable(data: &ArtifactProgramData) -> bool {
 }
 
 /// Returns whether every declared payload descriptor realizes some entry.
+///
+/// A payload is reached through one *realization* — an entry paired with a
+/// delivery position — rather than through an entry, so a two-position artifact
+/// keeps every one of its objects referenced without needing a second entry for
+/// each. The obligation is unchanged: an unreferenced payload would change the
+/// envelope's bytes without changing the artifact's identity, giving one
+/// artifact two byte identities.
 fn payloads_are_referenced(data: &ArtifactProgramData) -> bool {
     let referenced: BTreeSet<u32> = data
         .variants
         .iter()
         .flat_map(|variant| &variant.entries)
-        .map(|entry| entry.implementation.payload)
+        .flat_map(|entry| &entry.implementation.payloads)
+        .copied()
         .collect();
     (0..data.payloads.len())
         .map(|payload| u32::try_from(payload).expect("a bounded payload table fits u32"))
         .all(|payload| referenced.contains(&payload))
 }
 
-/// Returns whether two executable entries claim the same backend entry.
+/// Returns whether two realizations claim the same backend entry of one payload.
 ///
-/// Two neutral entries mapping to one backend entry would make the backend
+/// Two neutral realizations mapping to one backend entry would make the backend
 /// mapping non-injective, which the payload validator could not later repair.
+///
+/// It also decides one case delivery positions introduced: an entry naming the
+/// same payload at two positions repeats `(payload, entry_key)` and is refused
+/// here, so a consumer resolving either position cannot be handed one object
+/// standing in for two build targets.
 fn backend_entries_collide(data: &ArtifactProgramData) -> bool {
     let mut claimed: BTreeSet<(u32, &[u8])> = BTreeSet::new();
     data.variants
         .iter()
         .flat_map(|variant| &variant.entries)
-        .any(|entry| {
-            !claimed.insert((
-                entry.implementation.payload,
-                entry.implementation.entry_key.as_bytes(),
-            ))
+        .flat_map(|entry| {
+            entry
+                .implementation
+                .payloads
+                .iter()
+                .map(|payload| (*payload, entry.implementation.entry_key.as_bytes()))
         })
+        .any(|realization| !claimed.insert(realization))
+}
+
+/// Returns a payload reached from two different delivery positions, if any.
+///
+/// [`backend_entries_collide`] already refuses one *entry* naming a payload
+/// twice; this refuses the cross-entry case it cannot see — position 0 of one
+/// entry and position 1 of another naming one object. That artifact declares
+/// more consumer build targets than it carries objects for, and the neutral
+/// layer cannot decide which target the shared object was built for, so it
+/// refuses the shape rather than guessing.
+fn payload_at_two_delivery_positions(data: &ArtifactProgramData) -> Option<u32> {
+    let mut seen: BTreeMap<u32, usize> = BTreeMap::new();
+    for entry in data.variants.iter().flat_map(|variant| &variant.entries) {
+        for (delivery, payload) in entry.implementation.payloads.iter().enumerate() {
+            if *seen.entry(*payload).or_insert(delivery) != delivery {
+                return Some(*payload);
+            }
+        }
+    }
+    None
 }
 
 /// Returns whether one variant's program holds two stages with equal keys.

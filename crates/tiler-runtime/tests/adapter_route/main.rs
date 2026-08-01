@@ -46,6 +46,15 @@ use tiler_runtime::load::{
     DecodedProgram, LoadRejection, TargetCompatibility, VariantIneligibility,
 };
 
+/// The one delivery position every artifact here is built for.
+///
+/// A delivery position is the ordered slot a consumer's build target resolves
+/// to, and these artifacts are built for a single target, so the sole position
+/// is zero. Named rather than written as a bare `0` at each call, because the
+/// argument decides *which compiled object* is loaded and a literal there says
+/// nothing about why that one.
+const SOLE_DELIVERY: usize = 0;
+
 /// The operand bits every routed case runs over.
 ///
 /// Chosen so that agreement is a result rather than a coincidence: a negative
@@ -91,7 +100,8 @@ fn bind_facts(program: &DecodedProgram) -> AbiFacts {
 /// left behind — neither of which any returned value carries.
 fn route(spec: &FixtureSpec, mut host: ScalarHostAdapter) -> (Outcome, ScalarHostAdapter) {
     let built = assemble(spec);
-    let mut program = DecodedProgram::decode(&built.bytes).expect("the fixture artifact decodes");
+    let mut program =
+        DecodedProgram::decode(&built.bytes, SOLE_DELIVERY).expect("the fixture artifact decodes");
     let facts = bind_facts(&program);
     let outcome = route_with_adapter(&mut program, &mut host, &built.expected, &facts);
     (outcome, host)
@@ -234,7 +244,8 @@ fn a_route_requiring_nothing_still_passes_through_both_device_stages() {
 #[test]
 fn a_foreign_expected_identity_is_a_program_mismatch() {
     let built = assemble(&FixtureSpec::default());
-    let mut program = DecodedProgram::decode(&built.bytes).expect("the fixture decodes");
+    let mut program =
+        DecodedProgram::decode(&built.bytes, SOLE_DELIVERY).expect("the fixture decodes");
     let facts = bind_facts(&program);
     let mut host = ScalarHostAdapter::new(&OPERANDS);
     // One bit of the real recording, so the value is a well-formed identity
@@ -699,7 +710,7 @@ fn every_payload_defect_is_the_backends_refusal_and_the_artifact_layer_accepts_t
             sound.expected.as_bytes(),
             "{name}: artifact identity excludes the object, so both artifacts are the same one",
         );
-        DecodedProgram::decode(&damaged.bytes).unwrap_or_else(|rejection| {
+        DecodedProgram::decode(&damaged.bytes, SOLE_DELIVERY).unwrap_or_else(|rejection| {
             panic!("{name}: the artifact layer accepts it: {rejection}")
         });
 
@@ -887,12 +898,39 @@ fn a_damaged_envelope_never_reaches_the_adapter() {
     let midpoint = damaged.len() / 2;
     damaged[midpoint] ^= 0xff;
     assert!(
-        DecodedProgram::decode(&damaged).is_err(),
+        DecodedProgram::decode(&damaged, SOLE_DELIVERY).is_err(),
         "a flipped interior byte must be refused by the artifact layer",
     );
     assert!(
-        DecodedProgram::decode(&built.bytes[..midpoint]).is_err(),
+        DecodedProgram::decode(&built.bytes[..midpoint], SOLE_DELIVERY).is_err(),
         "a truncated envelope must be refused by the artifact layer",
+    );
+}
+
+/// A consumer asking to be a build target the artifact was not built for is refused.
+///
+/// The bytes are a valid artifact and the caller is asking for a delivery
+/// position it does not carry. Refusing is the only fail-closed answer: taking
+/// the sole payload instead would hand this consumer the object built for
+/// somebody else's target, and `docs/research/apple-targets/artifact-compatibility.md`
+/// records that such an object can load and dispatch without error.
+///
+/// It refuses at the decode, before any route exists, which is what makes the
+/// position a property of the program rather than an argument three call sites
+/// could disagree about.
+#[test]
+fn a_delivery_position_the_artifact_does_not_carry_is_refused() {
+    let built = assemble(&FixtureSpec::default());
+    let program = DecodedProgram::decode(&built.bytes, SOLE_DELIVERY).expect("the fixture decodes");
+    assert_eq!(program.delivery_positions(), 1);
+    assert_eq!(program.delivery_position(), SOLE_DELIVERY);
+    assert_eq!(
+        DecodedProgram::decode(&built.bytes, 1)
+            .expect_err("this artifact carries no second delivery position"),
+        LoadRejection::UnknownDeliveryPosition {
+            requested: 1,
+            positions: 1,
+        },
     );
 }
 
@@ -900,7 +938,7 @@ fn a_damaged_envelope_never_reaches_the_adapter() {
 #[test]
 fn the_routed_interface_is_the_one_the_artifact_declares() {
     let built = assemble(&FixtureSpec::default());
-    let program = DecodedProgram::decode(&built.bytes).expect("the fixture decodes");
+    let program = DecodedProgram::decode(&built.bytes, SOLE_DELIVERY).expect("the fixture decodes");
     let inputs: Vec<_> = program.inputs().collect();
     assert_eq!(inputs.len(), 1);
     assert_eq!(inputs[0].key(), &fixture::input_key());
@@ -1175,7 +1213,8 @@ fn select(
     host: &tiler_runtime::load::ExecutionEnvironment,
 ) -> Vec<String> {
     let built = assemble_portfolio(members);
-    let mut program = DecodedProgram::decode(&built.bytes).expect("the portfolio decodes");
+    let mut program =
+        DecodedProgram::decode(&built.bytes, SOLE_DELIVERY).expect("the portfolio decodes");
     let facts = bind_facts(&program);
     let preflight = program
         .preflight(host, &built.expected, &facts)
@@ -1311,7 +1350,8 @@ fn a_portfolio_this_host_cannot_execute_fails_closed() {
         selectable(FixtureSpec::metal(PackagedPlan::Fused)),
         selectable(FixtureSpec::metal(PackagedPlan::Materialized)),
     ]);
-    let mut program = DecodedProgram::decode(&built.bytes).expect("the portfolio decodes");
+    let mut program =
+        DecodedProgram::decode(&built.bytes, SOLE_DELIVERY).expect("the portfolio decodes");
     let facts = bind_facts(&program);
     let Err(LoadRejection::NoEligibleVariant { packaged, filtered }) =
         program.preflight(&fixture::scalar_host(), &built.expected, &facts)
@@ -1353,7 +1393,8 @@ fn an_eligible_portfolio_with_no_applicable_guard_refuses_as_inapplicable() {
         selectable(FixtureSpec::metal(PackagedPlan::Fused)),
         selectable(FixtureSpec::for_plan(PackagedPlan::FusedInapplicable)),
     ]);
-    let mut program = DecodedProgram::decode(&built.bytes).expect("the portfolio decodes");
+    let mut program =
+        DecodedProgram::decode(&built.bytes, SOLE_DELIVERY).expect("the portfolio decodes");
     let facts = bind_facts(&program);
     let Err(LoadRejection::NoApplicableVariant { packaged, filtered }) =
         program.preflight(&fixture::scalar_host(), &built.expected, &facts)
@@ -1388,7 +1429,8 @@ fn an_eligible_variants_unanswerable_guard_refuses_instead_of_falling_through() 
         selectable(FixtureSpec::for_plan(PackagedPlan::FusedExtentGuarded)),
         selectable(FixtureSpec::materialized()),
     ]);
-    let mut program = DecodedProgram::decode(&built.bytes).expect("the portfolio decodes");
+    let mut program =
+        DecodedProgram::decode(&built.bytes, SOLE_DELIVERY).expect("the portfolio decodes");
     // Deliberately nothing bound. Every other case in this suite reads the
     // artifact's own declared interface; this one is about the caller that did
     // not.
@@ -1420,7 +1462,8 @@ fn an_ineligible_variants_unanswerable_guard_does_not_abort_the_walk() {
         selectable(FixtureSpec::metal(PackagedPlan::FusedExtentGuarded)),
         selectable(FixtureSpec::materialized()),
     ]);
-    let mut program = DecodedProgram::decode(&built.bytes).expect("the portfolio decodes");
+    let mut program =
+        DecodedProgram::decode(&built.bytes, SOLE_DELIVERY).expect("the portfolio decodes");
     let unbound = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight).build();
     let preflight = program
         .preflight(&fixture::scalar_host(), &built.expected, &unbound)
@@ -1448,7 +1491,8 @@ fn a_portfolio_routes_its_selected_member_through_the_adapter_to_the_reference()
         FixtureSpec::metal(PackagedPlan::Fused),
         FixtureSpec::materialized(),
     ]);
-    let mut program = DecodedProgram::decode(&built.bytes).expect("the portfolio decodes");
+    let mut program =
+        DecodedProgram::decode(&built.bytes, SOLE_DELIVERY).expect("the portfolio decodes");
     let facts = bind_facts(&program);
     let mut host = ScalarHostAdapter::new(&OPERANDS);
     let completion = route_with_adapter(&mut program, &mut host, &built.expected, &facts)
@@ -1479,7 +1523,8 @@ fn a_filtered_portfolio_refuses_at_binding_and_still_permits_a_fallback() {
         FixtureSpec::metal(PackagedPlan::Fused),
         FixtureSpec::metal(PackagedPlan::Materialized),
     ]);
-    let mut program = DecodedProgram::decode(&built.bytes).expect("the portfolio decodes");
+    let mut program =
+        DecodedProgram::decode(&built.bytes, SOLE_DELIVERY).expect("the portfolio decodes");
     let facts = bind_facts(&program);
     let mut host = ScalarHostAdapter::new(&OPERANDS);
     let outcome = route_with_adapter(&mut program, &mut host, &built.expected, &facts);

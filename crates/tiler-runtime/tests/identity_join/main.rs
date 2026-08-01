@@ -67,6 +67,15 @@ use tiler_runtime::load::{
     DecodedProgram, ExecutionEnvironment, LoadRejection, TargetCompatibility, VariantIneligibility,
 };
 
+/// The one delivery position every artifact here is built for.
+///
+/// A delivery position is the ordered slot a consumer's build target resolves
+/// to, and these artifacts are built for a single target, so the sole position
+/// is zero. Named rather than written as a bare `0` at each call, because the
+/// argument decides *which compiled object* is loaded and a literal there says
+/// nothing about why that one.
+const SOLE_DELIVERY: usize = 0;
+
 /// Rows of the packaged input, which is also the output element count.
 const ROWS: u64 = 2;
 /// Columns of the packaged input, which is the reduction extent.
@@ -234,7 +243,7 @@ fn route(
     expected: &[u8],
     adapt: impl FnOnce(ScalarHostAdapter) -> ScalarHostAdapter,
 ) -> (Outcome, ScalarHostAdapter) {
-    let mut program = DecodedProgram::decode(&transported.bytes)
+    let mut program = DecodedProgram::decode(&transported.bytes, SOLE_DELIVERY)
         .expect("the transported envelope decodes from its own bytes");
     let facts = bind_facts(&program);
     let mut host = adapt(ScalarHostAdapter::new(environment(pinned), &OPERANDS));
@@ -278,7 +287,7 @@ fn a_payload_produced_in_another_process_loads_executes_and_matches_the_referenc
 
     // Every load validates from bytes. Nothing about the producing process's
     // prior validation is carried, and nothing here trusts it.
-    let program = DecodedProgram::decode(&transported.bytes)
+    let program = DecodedProgram::decode(&transported.bytes, SOLE_DELIVERY)
         .expect("the transported envelope validates from its own bytes");
     assert_eq!(
         program.identity().as_bytes(),
@@ -322,7 +331,10 @@ fn a_payload_produced_in_another_process_loads_executes_and_matches_the_referenc
         panic!("this producer maps exactly one entry");
     };
     assert_eq!(entry.backend_entry_key().as_bytes(), mapping.key);
-    assert_eq!(entry.backend_symbol(), Some(mapping.symbol.as_str()));
+    assert_eq!(
+        entry.backend_symbol(SOLE_DELIVERY),
+        Some(mapping.symbol.as_str())
+    );
 
     let (outcome, host) = route(&transported, record, &record.artifact_identity, |host| host);
     let completion = outcome.expect("the transported artifact routes");
@@ -400,7 +412,8 @@ fn two_producer_processes_write_one_envelope_and_the_second_run_hits_the_cache()
     // And a third process — this one — re-derives the same identity from the
     // bytes alone. If any producer-local value had entered it, a reader that
     // never ran the producer could not agree.
-    let program = DecodedProgram::decode(&first.bytes).expect("the transported envelope validates");
+    let program = DecodedProgram::decode(&first.bytes, SOLE_DELIVERY)
+        .expect("the transported envelope validates");
     assert_eq!(
         program.identity().as_bytes(),
         first.sidecar.artifact_identity.as_slice(),
@@ -707,7 +720,7 @@ fn an_entry_mapping_reaching_no_packaged_entry_is_refused_from_bytes() {
     let moved = produced.variant("run-a", "unmapped-entry-key");
     assert_eq!(moved.sidecar.resolution, "bypassed");
 
-    let Err(rejection) = DecodedProgram::decode(&moved.bytes) else {
+    let Err(rejection) = DecodedProgram::decode(&moved.bytes, SOLE_DELIVERY) else {
         panic!("an entry reaching no mapping must be refused");
     };
     assert!(
@@ -728,7 +741,7 @@ fn a_mapping_naming_an_absent_symbol_is_the_backends_refusal() {
     let sound = produced.variant("run-a", SOUND);
     let moved = produced.variant("run-a", "foreign-entry-symbol");
 
-    DecodedProgram::decode(&moved.bytes)
+    DecodedProgram::decode(&moved.bytes, SOLE_DELIVERY)
         .expect("the artifact layer accepts an entry symbol it cannot check");
 
     let (outcome, host) = route(
@@ -774,7 +787,7 @@ fn a_moved_object_under_an_unmoved_identity_is_caught_only_by_the_backend() {
     let sound = produced.variant("run-a", SOUND);
     let moved = produced.variant("run-a", "moved-emitted-object");
 
-    let program = DecodedProgram::decode(&moved.bytes)
+    let program = DecodedProgram::decode(&moved.bytes, SOLE_DELIVERY)
         .expect("the artifact layer accepts the damaged object");
     assert_eq!(
         program.identity().as_bytes(),
@@ -820,11 +833,11 @@ fn a_damaged_envelope_never_reaches_the_adapter() {
     let midpoint = damaged.len() / 2;
     damaged[midpoint] ^= 0xff;
     assert!(
-        DecodedProgram::decode(&damaged).is_err(),
+        DecodedProgram::decode(&damaged, SOLE_DELIVERY).is_err(),
         "a flipped interior byte must be refused by the artifact layer",
     );
     assert!(
-        DecodedProgram::decode(&sound.bytes[..midpoint]).is_err(),
+        DecodedProgram::decode(&sound.bytes[..midpoint], SOLE_DELIVERY).is_err(),
         "a truncated envelope must be refused by the artifact layer",
     );
     produced.discard();

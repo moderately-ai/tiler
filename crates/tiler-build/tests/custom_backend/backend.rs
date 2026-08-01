@@ -18,7 +18,7 @@
 //!    provenance names an in-process translator and no SDK; that honesty is what
 //!    makes the digest mean something.
 //! 4. [`assemble`] — orchestration through `tiler_build::assemble_plan_artifact`
-//!    and `tiler_build::accept_or_publish_single_payload_artifact`, which is
+//!    and `tiler_build::accept_or_publish_delivered_payload_artifact`, which is
 //!    where this backend stops making statements the plan already made.
 //!
 //! # What this backend states to the promoted cache seam, and what it does not
@@ -533,14 +533,16 @@ pub fn assemble(
         semantic,
         plan,
         |builder, profile| {
-            builder.push_carried_payload(
-                backend(),
-                representation(),
-                PAYLOAD_SCHEMA,
-                profile,
-                ArtifactExecutionPolicy::NativeImage,
-                content,
-            )
+            builder
+                .push_carried_payload(
+                    backend(),
+                    representation(),
+                    PAYLOAD_SCHEMA,
+                    profile,
+                    ArtifactExecutionPolicy::NativeImage,
+                    content,
+                )
+                .map(|payload| vec![payload])
         },
         |builder, stage| entry_declaration(builder, stage, perturbation),
     )?)
@@ -566,14 +568,16 @@ pub fn assemble_pending(
         semantic,
         plan,
         |builder, profile| {
-            builder.push_payload(BackendPayloadDescriptor {
-                backend: declaration.backend.clone(),
-                representation: declaration.representation.clone(),
-                payload_schema: declaration.payload_schema,
-                compatibility: profile,
-                execution_policy: declaration.execution_policy,
-                digest: declaration.digest.clone(),
-            })
+            builder
+                .push_payload(BackendPayloadDescriptor {
+                    backend: declaration.backend.clone(),
+                    representation: declaration.representation.clone(),
+                    payload_schema: declaration.payload_schema,
+                    compatibility: profile,
+                    execution_policy: declaration.execution_policy,
+                    digest: declaration.digest.clone(),
+                })
+                .map(|payload| vec![payload])
         },
         |builder, stage| entry_declaration(builder, stage, perturbation),
     )?)
@@ -626,23 +630,29 @@ fn scratch_precondition(
 pub fn validate_from_bytes(artifact: &DecodedArtifact) -> Result<(), ScalarHostRefusal> {
     for variant in artifact.variants() {
         for entry in variant.entries() {
-            let object = artifact
-                .payload_object(entry.payload())
-                .ok_or(ScalarHostRefusal::MissingPayloadObject)?;
-            let image = decode(object).map_err(ScalarHostRefusal::Payload)?;
-            let symbol = entry
-                .backend_symbol()
-                .ok_or(ScalarHostRefusal::UnmappedBackendEntry)?;
-            let transports = entry
-                .transport_slots()
-                .ok_or(ScalarHostRefusal::UnmappedBackendEntry)?;
-            let placed = image
-                .entries
-                .iter()
-                .find(|candidate| candidate.symbol == symbol)
-                .ok_or(ScalarHostRefusal::UnmappedSymbol)?;
-            if placed.transports.as_slice() != transports {
-                return Err(ScalarHostRefusal::TransportDisagreement);
+            // Every delivery position, because a consumer at any of them loads
+            // that position's object and this backend validates what it would
+            // execute rather than a representative of it.
+            for delivery in 0..entry.delivery_positions() {
+                let object = entry
+                    .payload(delivery)
+                    .and_then(|payload| artifact.payload_object(payload))
+                    .ok_or(ScalarHostRefusal::MissingPayloadObject)?;
+                let image = decode(object).map_err(ScalarHostRefusal::Payload)?;
+                let symbol = entry
+                    .backend_symbol(delivery)
+                    .ok_or(ScalarHostRefusal::UnmappedBackendEntry)?;
+                let transports = entry
+                    .transport_slots(delivery)
+                    .ok_or(ScalarHostRefusal::UnmappedBackendEntry)?;
+                let placed = image
+                    .entries
+                    .iter()
+                    .find(|candidate| candidate.symbol == symbol)
+                    .ok_or(ScalarHostRefusal::UnmappedSymbol)?;
+                if placed.transports.as_slice() != transports {
+                    return Err(ScalarHostRefusal::TransportDisagreement);
+                }
             }
         }
     }

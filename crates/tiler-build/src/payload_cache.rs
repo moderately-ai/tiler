@@ -7,6 +7,27 @@
 //! and payload correspondence validation. It names no backend, and this crate's
 //! Metal path is one caller of it rather than its owner.
 //!
+//! # One artifact, one payload per delivery position
+//!
+//! A **delivery position** is the ordered slot a consumer's build target
+//! resolves to, and one selection produces one envelope carrying one payload per
+//! built family. So a caller declares a *run* of payloads in delivery order,
+//! compiles one object for each on a miss, and the composed cache subject names
+//! every one of their compilations beside the artifact program's own identity.
+//! The subject therefore covers the whole selection: dropping a family changes
+//! the subject and the artifact identity together rather than silently reusing
+//! an entry that carries more objects than the consumer asked to build.
+//!
+//! **Delivery order is not the payload table's order.** An artifact's descriptor
+//! table is canonically ordered by content, so position `p` of a declaration run
+//! and position `p` of `DecodedArtifact::payloads` are unrelated. Every check
+//! below therefore resolves a delivery position through the artifact's own
+//! entries — [`DecodedEntry::payload`] — which is the only authority that says
+//! which object a consumer at position `p` would load. Comparing the tables
+//! positionally would have compared a declaration against whichever descriptor
+//! sorted there, and would have passed for two payloads swapped between two
+//! positions, which is exactly the defect this seam exists to refuse.
+//!
 //! # Why the shape is a declaration plus one closure, and not the alternatives
 //!
 //! The obligations here interleave: three times in one call, a structural rule
@@ -16,17 +37,17 @@
 //! derivable rather than a matter of taste.
 //!
 //! **Point 1, before the subject exists.** The pending artifact must carry
-//! exactly one payload, that payload must be the one the backend declared, and
-//! its digest must be the compilation subject the cache key will name. The
-//! portfolio and digest halves are structural; "is this the payload I declared"
-//! is the backend's.
+//! exactly the declared payloads, one per delivery position, each the one the
+//! backend declared at that position, and each with the digest the cache key
+//! will name. The portfolio and digest halves are structural; "is this the
+//! payload I declared" is the backend's.
 //!
 //! **Point 2, inside the miss closure, after encoding and before publication.**
-//! The produced artifact must carry the declared payload, metadata that
-//! corresponds to the compilation just performed, the same descriptor the
-//! pending artifact declared, and the exact object bytes the compile step
-//! produced — and its canonical identity must already have agreed with the
-//! pending one. Only the correspondence half is the backend's.
+//! The produced artifact must carry the declared payloads, metadata that
+//! corresponds to the compilation just performed at each position, the same
+//! descriptors the pending artifact declared, and the exact object bytes the
+//! compile step produced for each — and its canonical identity must already have
+//! agreed with the pending one. Only the correspondence half is the backend's.
 //!
 //! **Point 3, after any resolution.** Every result — a hit, a publication, or an
 //! uncached artifact — is re-validated by the same rules, minus the object
@@ -65,23 +86,29 @@
 //! backend could — so it lives in [`DeclaredPayload`]. The backend's
 //! *correspondence* statement is behaviour, because only the backend knows which
 //! facts its metadata asserts and what to call each one — so it is a closure the
-//! facade invokes at exactly the two points where a decoded payload exists.
-//! One closure, not a trait, for the reason item 11 gives: a closure parameter
-//! already abstracts this edge and a trait would only re-mediate it.
+//! facade invokes at exactly the points where a decoded payload exists. It takes
+//! the delivery position beside the metadata, because with several objects in
+//! flight "which compilation was this supposed to be" is the question a backend
+//! is being asked. One closure, not a trait, for the reason item 11 gives: a
+//! closure parameter already abstracts this edge and a trait would only
+//! re-mediate it.
 //!
 //! # What this seam is bounded to
 //!
-//! Exactly one payload per artifact, which [`SinglePayloadProtocolError::PayloadPortfolio`]
-//! states rather than assumes. Ordered multi-payload orchestration is a broader
-//! slice and is deliberately not inferred here.
+//! One payload per delivery position, shared by every executable entry, which
+//! [`DeliveredPayloadProtocolError::DeliveryRealization`] states rather than
+//! assumes. An artifact whose entries are realized by *different* objects at one
+//! position is expressible in the artifact model and is deliberately not
+//! orchestrated here.
 
 use std::error::Error;
 use std::fmt;
 
 use tiler_artifact::program::{
     ArtifactCodecFailure, ArtifactExecutionPolicy, BackendKey, BackendPayloadDescriptor,
-    DecodedArtifact, Digest, DigestAlgorithm, PayloadContent, PayloadDigest, PayloadMetadata,
-    RepresentationKey, SchemaVersion, VerifiedArtifactProgram, decode_artifact,
+    DecodedArtifact, DecodedVariant, Digest, DigestAlgorithm, PayloadContent, PayloadDigest,
+    PayloadMetadata, RepresentationKey, SchemaVersion, VariantRef, VerifiedArtifactProgram,
+    decode_artifact,
 };
 use tiler_cache::expansion::{
     ComposedSubject, ExpansionCache, PublishFailure, Resolution, SubjectFacets, SubjectRefusal,
@@ -94,16 +121,20 @@ use tiler_cache::expansion::{
 /// object the artifact it was assembled into carries.
 const OBJECT_VALIDATION_DOMAIN: &[u8] = b"tiler.build.object-validation.v1\0";
 
-/// What a backend declares about the single payload its artifact carries.
+/// What a backend declares about one payload its artifact carries.
 ///
 /// A caller-constructed leaf record with public fields, in the convention this
 /// crate's callers already write. Every field is a statement the cache cannot
 /// derive and the plan does not make; a fact either party *does* hold — the
 /// payload's compatibility profile, the artifact's canonical identity — is
 /// absent by design and read from the pending artifact instead.
+///
+/// One of these per delivery position. The position is the record's index in the
+/// run a caller supplies rather than a field, so a declaration cannot claim a
+/// position the run does not put it at.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct DeclaredPayload<'facts> {
-    /// Governed backend family the sole payload must declare.
+    /// Governed backend family this position's payload must declare.
     pub backend: &'facts BackendKey,
     /// Governed executable representation it must declare.
     pub representation: &'facts RepresentationKey,
@@ -170,25 +201,75 @@ impl AcceptedArtifact {
 /// is the contract: a producer reading two refusals in sequence is reading them
 /// in this order, and a check moved past another changes what it is handed.
 ///
+/// Every position-scoped variant names its **delivery position**, not a
+/// descriptor-table index. With one object per consumer build target, "which one
+/// disagreed" is the first thing a producer needs, and a descriptor position
+/// would name a canonical content slot the producer never chose.
+///
 /// `M` is the backend's own correspondence vocabulary — the naming half this
 /// seam delegates.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub enum SinglePayloadProtocolError<M> {
-    /// The artifact does not carry exactly the one declared payload.
+pub enum DeliveredPayloadProtocolError<M> {
+    /// The artifact does not carry exactly the declared payloads.
     PayloadPortfolio {
+        /// Number of payloads declared, one per delivery position.
+        expected: usize,
         /// Number of payload descriptors the artifact carries.
         actual: usize,
     },
-    /// The sole payload is not the declared backend, representation, schema, and policy.
-    PayloadDescriptor,
-    /// The carried payload omits its compilation metadata.
-    MissingPayloadMetadata,
-    /// The backend refused the carried metadata against its own compilation.
-    Correspondence(M),
-    /// The payload's complete compilation subject differs from the pending declaration.
-    PayloadSubject,
-    /// The carried payload omits its compiled object.
+    /// The artifact declares a different number of delivery positions.
+    ///
+    /// Distinct from [`Self::PayloadPortfolio`] because the two are different
+    /// subjects: an artifact may carry the right number of *objects* and realize
+    /// its entries at the wrong number of positions, which is a consumer facing
+    /// no payload for the target it built for.
+    DeliveryPositions {
+        /// Number of delivery positions declared.
+        expected: usize,
+        /// Number the artifact realizes its entries at.
+        actual: usize,
+    },
+    /// Two executable entries name different payloads at one delivery position.
+    ///
+    /// This seam orchestrates one object per position, shared by every entry;
+    /// the artifact model admits more, so the bound is stated rather than
+    /// assumed.
+    ///
+    /// Unreachable through [`crate::assemble_plan_artifact`], which hands every
+    /// entry the one delivery-ordered run a backend declared, so no artifact
+    /// this crate assembles can contradict it. It is retained for the reason
+    /// [`Self::MissingPayloadObject`] is: the artifact model is a public
+    /// boundary an out-of-crate producer may reach directly, and a seam that
+    /// took the first entry's answer as the position's would be reading a
+    /// property of whichever entry it looked at.
+    DeliveryRealization {
+        /// The delivery position the entries disagreed about.
+        delivery: usize,
+    },
+    /// One position's payload is not the declared backend, representation, schema, and policy.
+    PayloadDescriptor {
+        /// The delivery position that disagreed.
+        delivery: usize,
+    },
+    /// One position's carried payload omits its compilation metadata.
+    MissingPayloadMetadata {
+        /// The delivery position that disagreed.
+        delivery: usize,
+    },
+    /// The backend refused a carried metadata against its own compilation.
+    Correspondence {
+        /// The delivery position that disagreed.
+        delivery: usize,
+        /// The backend's own naming of the disagreement.
+        cause: M,
+    },
+    /// One position's payload names a different complete compilation subject.
+    PayloadSubject {
+        /// The delivery position that disagreed.
+        delivery: usize,
+    },
+    /// One position's carried payload omits its compiled object.
     ///
     /// Unreachable through today's artifact codec, which frames a payload's
     /// metadata and its object under one presence flag, so
@@ -197,35 +278,75 @@ pub enum SinglePayloadProtocolError<M> {
     /// this crate does not own: `DecodedArtifact::payload_object` answers
     /// `Option`, and reading through that with an assumption rather than a
     /// refusal is what would have to be rewritten if the framing ever separated.
-    MissingPayloadObject,
-    /// The artifact carries object bytes other than the exact miss-produced object.
-    PayloadObject,
+    MissingPayloadObject {
+        /// The delivery position that disagreed.
+        delivery: usize,
+    },
+    /// One position carries object bytes other than the exact miss-produced object.
+    PayloadObject {
+        /// The delivery position that disagreed.
+        delivery: usize,
+    },
+    /// The compile step produced a different number of objects than declared.
+    ///
+    /// A defect in the caller rather than in any artifact: it promised one
+    /// compilation per delivery position and delivered another count, and
+    /// zipping the two would have silently assembled the shorter run.
+    CompiledPortfolio {
+        /// Number of compilations declared.
+        expected: usize,
+        /// Number the compile step produced.
+        actual: usize,
+    },
     /// The artifact's identity differs from the pending artifact used in the key.
     ArtifactIdentity,
 }
 
-impl<M: fmt::Display> fmt::Display for SinglePayloadProtocolError<M> {
+impl<M: fmt::Display> fmt::Display for DeliveredPayloadProtocolError<M> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::PayloadPortfolio { actual } => write!(
+            Self::PayloadPortfolio { expected, actual } => write!(
                 formatter,
-                "single-payload cache orchestration requires exactly one payload, found {actual}",
+                "delivered-payload cache orchestration requires exactly {expected} payload(s), \
+                 found {actual}",
             ),
-            Self::PayloadDescriptor => {
-                formatter.write_str("artifact payload is not the declared payload descriptor")
+            Self::DeliveryPositions { expected, actual } => write!(
+                formatter,
+                "{expected} payload(s) were declared and the artifact realizes its entries at \
+                 {actual} delivery position(s)",
+            ),
+            Self::DeliveryRealization { delivery } => write!(
+                formatter,
+                "two executable entries name different payloads at delivery position {delivery}",
+            ),
+            Self::PayloadDescriptor { delivery } => write!(
+                formatter,
+                "the payload at delivery position {delivery} is not the declared payload descriptor",
+            ),
+            Self::MissingPayloadMetadata { delivery } => write!(
+                formatter,
+                "the payload at delivery position {delivery} carries no compilation metadata",
+            ),
+            Self::Correspondence { delivery, cause } => {
+                write!(formatter, "at delivery position {delivery}: {cause}")
             }
-            Self::MissingPayloadMetadata => {
-                formatter.write_str("artifact payload carries no compilation metadata")
-            }
-            Self::Correspondence(error) => error.fmt(formatter),
-            Self::PayloadSubject => formatter
-                .write_str("artifact payload names a different complete compilation subject"),
-            Self::MissingPayloadObject => {
-                formatter.write_str("artifact payload carries no compiled object")
-            }
-            Self::PayloadObject => {
-                formatter.write_str("artifact payload carries a different compiled object")
-            }
+            Self::PayloadSubject { delivery } => write!(
+                formatter,
+                "the payload at delivery position {delivery} names a different complete \
+                 compilation subject",
+            ),
+            Self::MissingPayloadObject { delivery } => write!(
+                formatter,
+                "the payload at delivery position {delivery} carries no compiled object",
+            ),
+            Self::PayloadObject { delivery } => write!(
+                formatter,
+                "the payload at delivery position {delivery} carries a different compiled object",
+            ),
+            Self::CompiledPortfolio { expected, actual } => write!(
+                formatter,
+                "{expected} compilation(s) were declared and the compile step produced {actual}",
+            ),
             Self::ArtifactIdentity => formatter.write_str(
                 "produced artifact identity differs from the pending artifact cache subject",
             ),
@@ -233,10 +354,10 @@ impl<M: fmt::Display> fmt::Display for SinglePayloadProtocolError<M> {
     }
 }
 
-impl<M: Error + 'static> Error for SinglePayloadProtocolError<M> {
+impl<M: Error + 'static> Error for DeliveredPayloadProtocolError<M> {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Correspondence(error) => Some(error),
+            Self::Correspondence { cause, .. } => Some(cause),
             _ => None,
         }
     }
@@ -252,23 +373,23 @@ impl<M: Error + 'static> Error for SinglePayloadProtocolError<M> {
 /// failure that legitimately can.
 #[derive(Debug)]
 #[non_exhaustive]
-pub enum SinglePayloadCacheError<M, C, A> {
+pub enum DeliveredPayloadCacheError<M, C, A> {
     /// The complete cache subject could not be composed.
     Subject(SubjectRefusal),
     /// The backend's external compilation failed on a cache miss.
     Compile(C),
-    /// The caller could not assemble the compiled payload into its artifact.
+    /// The caller could not assemble the compiled payloads into its artifact.
     Assemble(A),
     /// The caller's verified artifact could not be encoded.
     Encode(ArtifactCodecFailure),
     /// The cache's governed artifact validator rejected the produced envelope.
     CacheArtifact(ArtifactCodecFailure),
     /// The pending, produced, or cached artifact contradicted its declaration.
-    Protocol(SinglePayloadProtocolError<M>),
+    Protocol(DeliveredPayloadProtocolError<M>),
 }
 
 impl<M: fmt::Display, C: fmt::Display, A: fmt::Display> fmt::Display
-    for SinglePayloadCacheError<M, C, A>
+    for DeliveredPayloadCacheError<M, C, A>
 {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -286,7 +407,7 @@ impl<M: fmt::Display, C: fmt::Display, A: fmt::Display> fmt::Display
 }
 
 impl<M: Error + 'static, C: Error + 'static, A: Error + 'static> Error
-    for SinglePayloadCacheError<M, C, A>
+    for DeliveredPayloadCacheError<M, C, A>
 {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
@@ -303,27 +424,30 @@ enum PublicationError<M, C, A> {
     Compile(C),
     Assemble(A),
     Encode(ArtifactCodecFailure),
-    Protocol(SinglePayloadProtocolError<M>),
+    Protocol(DeliveredPayloadProtocolError<M>),
 }
 
-/// Resolves one singular declared payload's artifact through the expansion cache.
+/// Resolves one artifact's delivery-ordered payload run through the expansion cache.
 ///
 /// `pending` is the verified descriptor-only artifact whose canonical identity
-/// is available before compilation, and `declared` is what its sole payload must
-/// say. `compile` runs only on a cache miss and performs whatever external work
-/// the backend's representation requires; `assemble` then carries the compiled
-/// content into the corresponding artifact. `correspondence` is the backend's
-/// own fact-level check over a decoded payload's metadata, invoked before
-/// publication and again on every result.
+/// is available before compilation, and `declared` is what its payloads must say
+/// at each delivery position, in delivery order. `compile` runs only on a cache
+/// miss and performs whatever external work the backend's representation
+/// requires, returning one compiled object per declaration in the same order;
+/// `assemble` then carries them into the corresponding artifact.
+/// `correspondence` is the backend's own fact-level check over one decoded
+/// payload's metadata at a named position, invoked before publication and again
+/// on every result.
 ///
 /// # The order of the checks is part of the contract
 ///
 /// Within one validation pass the refusals fire in the declaration order of
-/// [`SinglePayloadProtocolError`]. In particular `correspondence` runs *before*
-/// the descriptor comparison that subsumes it, so a backend that names its facts
-/// keeps that naming; a backend supplying `|_| Ok(())` loses only the finer
-/// diagnostic and no accept/reject decision, because the payload digest is
-/// derived from the canonical metadata bytes.
+/// [`DeliveredPayloadProtocolError`], and within that, in delivery order. In
+/// particular `correspondence` runs *before* the descriptor comparison that
+/// subsumes it, so a backend that names its facts keeps that naming; a backend
+/// supplying `|_, _| Ok(())` loses only the finer diagnostic and no accept/reject
+/// decision, because the payload digest is derived from the canonical metadata
+/// bytes.
 ///
 /// # What runs before publication, and why not afterwards
 ///
@@ -339,42 +463,55 @@ enum PublicationError<M, C, A> {
 /// A protocol failure is hard: it is never translated into a cache miss or an
 /// automatic rebuild, because rebuilding under the same contradicted
 /// declaration would repeat the defect.
-pub fn accept_or_publish_single_payload_artifact<M, C, A>(
+pub fn accept_or_publish_delivered_payload_artifact<M, C, A>(
     cache: &ExpansionCache,
     pending: &VerifiedArtifactProgram,
-    declared: &DeclaredPayload<'_>,
-    correspondence: impl Fn(&PayloadMetadata) -> Result<(), M>,
-    compile: impl FnOnce() -> Result<PayloadContent, C>,
-    assemble: impl FnOnce(PayloadContent) -> Result<VerifiedArtifactProgram, A>,
-) -> Result<AcceptedArtifact, SinglePayloadCacheError<M, C, A>> {
-    let expected_descriptor =
-        validate_pending_payload(pending, declared).map_err(SinglePayloadCacheError::Protocol)?;
+    declared: &[DeclaredPayload<'_>],
+    correspondence: impl Fn(usize, &PayloadMetadata) -> Result<(), M>,
+    compile: impl FnOnce() -> Result<Vec<PayloadContent>, C>,
+    assemble: impl FnOnce(Vec<PayloadContent>) -> Result<VerifiedArtifactProgram, A>,
+) -> Result<AcceptedArtifact, DeliveredPayloadCacheError<M, C, A>> {
+    let expected_descriptors = validate_pending_payloads(pending, declared)
+        .map_err(DeliveredPayloadCacheError::Protocol)?;
     let expected_artifact = pending.canonical_identity().clone();
-    let compilation = [declared.compilation];
+    // Delivery order, so the subject names the whole selection in the order the
+    // producer built it: two families swapped are two subjects, not one.
+    let compilations: Vec<&[u8]> = declared.iter().map(|payload| payload.compilation).collect();
     let subject = ComposedSubject::compose(&SubjectFacets {
-        backend_compilations: &compilation,
+        backend_compilations: &compilations,
         artifact_program: expected_artifact.as_bytes(),
     })
-    .map_err(SinglePayloadCacheError::Subject)?;
+    .map_err(DeliveredPayloadCacheError::Subject)?;
 
     let resolution = cache
         .get_or_publish(&subject, || {
-            let content = compile().map_err(PublicationError::Compile)?;
-            let expected_object = object_digest(&content.code);
-            let artifact = assemble(content).map_err(PublicationError::Assemble)?;
+            let contents = compile().map_err(PublicationError::Compile)?;
+            if contents.len() != declared.len() {
+                return Err(PublicationError::Protocol(
+                    DeliveredPayloadProtocolError::CompiledPortfolio {
+                        expected: declared.len(),
+                        actual: contents.len(),
+                    },
+                ));
+            }
+            let expected_objects: Vec<Digest> = contents
+                .iter()
+                .map(|content| object_digest(&content.code))
+                .collect();
+            let artifact = assemble(contents).map_err(PublicationError::Assemble)?;
             if artifact.canonical_identity() != &expected_artifact {
                 return Err(PublicationError::Protocol(
-                    SinglePayloadProtocolError::ArtifactIdentity,
+                    DeliveredPayloadProtocolError::ArtifactIdentity,
                 ));
             }
             let envelope = artifact.encode().map_err(PublicationError::Encode)?;
             let decoded = decode_artifact(&envelope).map_err(PublicationError::Encode)?;
-            validate_decoded_payload(
+            validate_decoded_payloads(
                 &decoded,
                 declared,
-                &expected_descriptor,
+                &expected_descriptors,
                 &correspondence,
-                Some(&expected_object),
+                Some(&expected_objects),
             )
             .map_err(PublicationError::Protocol)?;
             Ok(envelope)
@@ -382,17 +519,17 @@ pub fn accept_or_publish_single_payload_artifact<M, C, A>(
         .map_err(map_publish_failure)?;
 
     let decoded = resolution_artifact(&resolution);
-    validate_decoded_payload(
+    validate_decoded_payloads(
         decoded,
         declared,
-        &expected_descriptor,
+        &expected_descriptors,
         &correspondence,
         None,
     )
-    .map_err(SinglePayloadCacheError::Protocol)?;
+    .map_err(DeliveredPayloadCacheError::Protocol)?;
     if decoded.identity().as_bytes() != expected_artifact.as_bytes() {
-        return Err(SinglePayloadCacheError::Protocol(
-            SinglePayloadProtocolError::ArtifactIdentity,
+        return Err(DeliveredPayloadCacheError::Protocol(
+            DeliveredPayloadProtocolError::ArtifactIdentity,
         ));
     }
     Ok(AcceptedArtifact {
@@ -401,55 +538,125 @@ pub fn accept_or_publish_single_payload_artifact<M, C, A>(
     })
 }
 
-fn validate_pending_payload<M>(
+fn validate_pending_payloads<M>(
     pending: &VerifiedArtifactProgram,
-    declared: &DeclaredPayload<'_>,
-) -> Result<BackendPayloadDescriptor, SinglePayloadProtocolError<M>> {
-    let [descriptor] = pending.payloads() else {
-        return Err(SinglePayloadProtocolError::PayloadPortfolio {
+    declared: &[DeclaredPayload<'_>],
+) -> Result<Vec<BackendPayloadDescriptor>, DeliveredPayloadProtocolError<M>> {
+    if pending.payloads().len() != declared.len() {
+        return Err(DeliveredPayloadProtocolError::PayloadPortfolio {
+            expected: declared.len(),
             actual: pending.payloads().len(),
         });
-    };
-    validate_descriptor(descriptor, declared)?;
-    if descriptor.digest != *declared.digest {
-        return Err(SinglePayloadProtocolError::PayloadSubject);
     }
-    Ok(descriptor.clone())
+    if pending.delivery_positions() != declared.len() {
+        return Err(DeliveredPayloadProtocolError::DeliveryPositions {
+            expected: declared.len(),
+            actual: pending.delivery_positions(),
+        });
+    }
+    let mut expected = Vec::with_capacity(declared.len());
+    for (delivery, payload) in declared.iter().enumerate() {
+        // Resolved through the entries rather than read off the descriptor
+        // table, because the table is canonically ordered by content and says
+        // nothing about which object a consumer at this position would load.
+        let descriptor = sole_realization(
+            pending.variants().flat_map(VariantRef::entries),
+            delivery,
+            |entry| entry.payload(delivery),
+        )?;
+        validate_descriptor(descriptor, payload, delivery)?;
+        if descriptor.digest != *payload.digest {
+            return Err(DeliveredPayloadProtocolError::PayloadSubject { delivery });
+        }
+        expected.push(descriptor.clone());
+    }
+    Ok(expected)
 }
 
-fn validate_decoded_payload<M>(
+fn validate_decoded_payloads<M>(
     artifact: &DecodedArtifact,
-    declared: &DeclaredPayload<'_>,
-    expected_descriptor: &BackendPayloadDescriptor,
-    correspondence: &impl Fn(&PayloadMetadata) -> Result<(), M>,
-    expected_object: Option<&Digest>,
-) -> Result<(), SinglePayloadProtocolError<M>> {
-    let [descriptor] = artifact.payloads() else {
-        return Err(SinglePayloadProtocolError::PayloadPortfolio {
+    declared: &[DeclaredPayload<'_>],
+    expected_descriptors: &[BackendPayloadDescriptor],
+    correspondence: &impl Fn(usize, &PayloadMetadata) -> Result<(), M>,
+    expected_objects: Option<&[Digest]>,
+) -> Result<(), DeliveredPayloadProtocolError<M>> {
+    if artifact.payloads().len() != declared.len() {
+        return Err(DeliveredPayloadProtocolError::PayloadPortfolio {
+            expected: declared.len(),
             actual: artifact.payloads().len(),
         });
-    };
-    validate_descriptor(descriptor, declared)?;
-    let metadata = artifact
-        .payload_metadata(0)
-        .ok_or(SinglePayloadProtocolError::MissingPayloadMetadata)?;
-    correspondence(metadata).map_err(SinglePayloadProtocolError::Correspondence)?;
-    if descriptor != expected_descriptor {
-        return Err(SinglePayloadProtocolError::PayloadSubject);
     }
-    let object = artifact
-        .payload_object(0)
-        .ok_or(SinglePayloadProtocolError::MissingPayloadObject)?;
-    if expected_object.is_some_and(|expected| object_digest(object) != *expected) {
-        return Err(SinglePayloadProtocolError::PayloadObject);
+    if artifact.delivery_positions() != declared.len() {
+        return Err(DeliveredPayloadProtocolError::DeliveryPositions {
+            expected: declared.len(),
+            actual: artifact.delivery_positions(),
+        });
+    }
+    for (delivery, payload) in declared.iter().enumerate() {
+        let position = sole_realization(
+            artifact.variants().flat_map(DecodedVariant::entries),
+            delivery,
+            |entry| entry.payload(delivery),
+        )?;
+        let descriptor = &artifact.payloads()[position];
+        validate_descriptor(descriptor, payload, delivery)?;
+        let metadata = artifact
+            .payload_metadata(position)
+            .ok_or(DeliveredPayloadProtocolError::MissingPayloadMetadata { delivery })?;
+        correspondence(delivery, metadata)
+            .map_err(|cause| DeliveredPayloadProtocolError::Correspondence { delivery, cause })?;
+        if descriptor != &expected_descriptors[delivery] {
+            return Err(DeliveredPayloadProtocolError::PayloadSubject { delivery });
+        }
+        let object = artifact
+            .payload_object(position)
+            .ok_or(DeliveredPayloadProtocolError::MissingPayloadObject { delivery })?;
+        if expected_objects.is_some_and(|expected| object_digest(object) != expected[delivery]) {
+            return Err(DeliveredPayloadProtocolError::PayloadObject { delivery });
+        }
     }
     Ok(())
+}
+
+/// Reads the one thing every entry names at one delivery position.
+///
+/// Every entry is asked, not the first: the artifact model admits entries
+/// realized by different objects at one position, and this seam orchestrates one
+/// object per position. Requiring agreement is what makes "position `delivery`'s
+/// payload" a fact rather than a property of whichever entry was looked at.
+fn sole_realization<T, E, M>(
+    entries: impl Iterator<Item = E>,
+    delivery: usize,
+    resolve: impl Fn(E) -> Option<T>,
+) -> Result<T, DeliveredPayloadProtocolError<M>>
+where
+    T: Copy + Eq,
+{
+    let mut found: Option<T> = None;
+    for entry in entries {
+        let resolved = resolve(entry).ok_or(DeliveredPayloadProtocolError::DeliveryPositions {
+            expected: delivery.saturating_add(1),
+            actual: delivery,
+        })?;
+        match found {
+            Some(held) if held != resolved => {
+                return Err(DeliveredPayloadProtocolError::DeliveryRealization { delivery });
+            }
+            Some(_) => {}
+            None => found = Some(resolved),
+        }
+    }
+    found.ok_or(DeliveredPayloadProtocolError::DeliveryPositions {
+        expected: delivery.saturating_add(1),
+        actual: 0,
+    })
 }
 
 fn validate_descriptor<M>(
     descriptor: &BackendPayloadDescriptor,
     declared: &DeclaredPayload<'_>,
-) -> Result<(), SinglePayloadProtocolError<M>> {
+    delivery: usize,
+) -> Result<(), DeliveredPayloadProtocolError<M>> {
     if &descriptor.backend == declared.backend
         && &descriptor.representation == declared.representation
         && descriptor.payload_schema == declared.payload_schema
@@ -457,7 +664,7 @@ fn validate_descriptor<M>(
     {
         Ok(())
     } else {
-        Err(SinglePayloadProtocolError::PayloadDescriptor)
+        Err(DeliveredPayloadProtocolError::PayloadDescriptor { delivery })
     }
 }
 
@@ -475,20 +682,20 @@ const fn resolution_artifact(resolution: &Resolution) -> &DecodedArtifact {
 
 fn map_publish_failure<M, C, A>(
     failure: PublishFailure<PublicationError<M, C, A>>,
-) -> SinglePayloadCacheError<M, C, A> {
+) -> DeliveredPayloadCacheError<M, C, A> {
     match failure {
         PublishFailure::Build(PublicationError::Compile(error)) => {
-            SinglePayloadCacheError::Compile(error)
+            DeliveredPayloadCacheError::Compile(error)
         }
         PublishFailure::Build(PublicationError::Assemble(error)) => {
-            SinglePayloadCacheError::Assemble(error)
+            DeliveredPayloadCacheError::Assemble(error)
         }
         PublishFailure::Build(PublicationError::Encode(error)) => {
-            SinglePayloadCacheError::Encode(error)
+            DeliveredPayloadCacheError::Encode(error)
         }
         PublishFailure::Build(PublicationError::Protocol(error)) => {
-            SinglePayloadCacheError::Protocol(error)
+            DeliveredPayloadCacheError::Protocol(error)
         }
-        PublishFailure::Artifact(error) => SinglePayloadCacheError::CacheArtifact(error),
+        PublishFailure::Artifact(error) => DeliveredPayloadCacheError::CacheArtifact(error),
     }
 }

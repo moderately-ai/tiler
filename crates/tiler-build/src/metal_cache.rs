@@ -11,10 +11,24 @@
 //! naming *which* compilation fact disagreed is a judgement only this backend
 //! can make.
 //!
+//! # Several artifact families, one envelope
+//!
+//! A selection naming several artifact families is one compilation, one plan,
+//! one kernel program, and one compiled object per family — so this takes a
+//! *run* of prepared payloads in delivery order and the neutral seam resolves
+//! each delivery position through the artifact's own entries. The correspondence
+//! closure is what makes a wrong-position payload a build error rather than a
+//! wrong artifact: position `p`'s decoded metadata is compared against the
+//! compilation prepared for position `p`, and two families whose objects were
+//! placed the other way round disagree on
+//! [`MetalPayloadFact::Target`](crate::MetalPayloadFact::Target) — the AOT
+//! triple, which is the one fact that distinguishes them, since the ledger
+//! records the artifact family as backend-only and the two share a byte-identical
+//! compiler profile descriptor.
+//!
 //! The refusal vocabulary below is Metal's own and is preserved exactly: the
 //! neutral seam's protocol refusals map one-to-one onto it, so a caller reading
-//! [`MetalArtifactProtocolError`] sees the same kinds in the same order it saw
-//! before the seam was promoted.
+//! [`MetalArtifactProtocolError`] sees the same kinds in the same order.
 
 use std::error::Error;
 use std::fmt;
@@ -30,60 +44,138 @@ use crate::metal_assembly::{
 };
 use crate::metal_payload::validate_metal_payload_metadata;
 use crate::payload_cache::{
-    AcceptedArtifact, DeclaredPayload, SinglePayloadCacheError, SinglePayloadProtocolError,
-    accept_or_publish_single_payload_artifact,
+    AcceptedArtifact, DeclaredPayload, DeliveredPayloadCacheError, DeliveredPayloadProtocolError,
+    accept_or_publish_delivered_payload_artifact,
 };
 
-/// A decoded or assembled artifact contradicts the singular prepared Metal subject.
+/// A decoded or assembled artifact contradicts the prepared Metal subjects.
+///
+/// Every position-scoped variant names the **delivery position** it is about —
+/// the ordered slot a consumer's build target resolves to — because with one
+/// object per artifact family "which one disagreed" is the first thing a
+/// producer needs, and a descriptor-table index would name a canonical content
+/// slot the producer never chose.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum MetalArtifactProtocolError {
-    /// The artifact does not carry exactly the one backend compilation in the cache subject.
+    /// The artifact does not carry exactly the backend compilations in the cache subject.
     PayloadPortfolio {
+        /// Number of payloads the cache subject names.
+        expected: usize,
         /// Number of payload descriptors the artifact carries.
         actual: usize,
     },
-    /// The sole payload is not the governed Metal native-image descriptor.
-    PayloadDescriptor,
-    /// The carried payload omits its compilation metadata.
-    MissingPayloadMetadata,
-    /// The carried payload omits its compiled object.
-    MissingPayloadObject,
-    /// The carried metadata contradicts the current prepared compilation.
-    Correspondence(MetalPayloadMismatch),
-    /// The payload's complete compilation subject differs from the pending declaration.
-    PayloadSubject,
+    /// The artifact realizes its entries at a different number of delivery positions.
+    DeliveryPositions {
+        /// Number of delivery positions prepared.
+        expected: usize,
+        /// Number the artifact realizes its entries at.
+        actual: usize,
+    },
+    /// Two executable entries name different payloads at one delivery position.
+    DeliveryRealization {
+        /// The delivery position the entries disagreed about.
+        delivery: usize,
+    },
+    /// One position's payload is not the governed Metal native-image descriptor.
+    PayloadDescriptor {
+        /// The delivery position that disagreed.
+        delivery: usize,
+    },
+    /// One position's carried payload omits its compilation metadata.
+    MissingPayloadMetadata {
+        /// The delivery position that disagreed.
+        delivery: usize,
+    },
+    /// One position's carried payload omits its compiled object.
+    MissingPayloadObject {
+        /// The delivery position that disagreed.
+        delivery: usize,
+    },
+    /// The carried metadata contradicts the compilation prepared for that position.
+    ///
+    /// This is the refusal a wrong-position payload arrives as: two artifact
+    /// families share a compiler profile and differ in their AOT triple, so the
+    /// object built for the other family disagrees on
+    /// [`MetalPayloadFact::Target`](crate::MetalPayloadFact::Target).
+    Correspondence {
+        /// The delivery position that disagreed.
+        delivery: usize,
+        /// The exact compilation fact that disagreed.
+        mismatch: MetalPayloadMismatch,
+    },
+    /// One position's payload names a different complete compilation subject.
+    PayloadSubject {
+        /// The delivery position that disagreed.
+        delivery: usize,
+    },
+    /// The compile step produced a different number of objects than were prepared.
+    CompiledPortfolio {
+        /// Number of compilations prepared.
+        expected: usize,
+        /// Number the compile step produced.
+        actual: usize,
+    },
     /// The compiled artifact differs from the pending artifact program used in the key.
     ArtifactIdentity,
-    /// The artifact carries object bytes other than the exact miss-produced object.
-    PayloadObject,
+    /// One position carries object bytes other than the exact miss-produced object.
+    PayloadObject {
+        /// The delivery position that disagreed.
+        delivery: usize,
+    },
 }
 
 impl fmt::Display for MetalArtifactProtocolError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::PayloadPortfolio { actual } => write!(
+            Self::PayloadPortfolio { expected, actual } => write!(
                 formatter,
-                "Metal cache orchestration requires exactly one payload, found {actual}",
+                "Metal cache orchestration requires exactly {expected} payload(s), found {actual}",
             ),
-            Self::PayloadDescriptor => formatter.write_str(
-                "artifact payload is not the governed Metal metallib native-image descriptor",
+            Self::DeliveryPositions { expected, actual } => write!(
+                formatter,
+                "{expected} Metal compilation(s) were prepared and the artifact realizes its \
+                 entries at {actual} delivery position(s)",
             ),
-            Self::MissingPayloadMetadata => {
-                formatter.write_str("artifact Metal payload carries no compilation metadata")
+            Self::DeliveryRealization { delivery } => write!(
+                formatter,
+                "two executable entries name different Metal payloads at delivery position \
+                 {delivery}",
+            ),
+            Self::PayloadDescriptor { delivery } => write!(
+                formatter,
+                "the payload at delivery position {delivery} is not the governed Metal metallib \
+                 native-image descriptor",
+            ),
+            Self::MissingPayloadMetadata { delivery } => write!(
+                formatter,
+                "the Metal payload at delivery position {delivery} carries no compilation metadata",
+            ),
+            Self::MissingPayloadObject { delivery } => write!(
+                formatter,
+                "the Metal payload at delivery position {delivery} carries no compiled object",
+            ),
+            Self::Correspondence { delivery, mismatch } => {
+                write!(formatter, "at delivery position {delivery}: {mismatch}")
             }
-            Self::MissingPayloadObject => {
-                formatter.write_str("artifact Metal payload carries no compiled object")
-            }
-            Self::Correspondence(error) => error.fmt(formatter),
-            Self::PayloadSubject => formatter
-                .write_str("artifact Metal payload names a different complete compilation subject"),
+            Self::PayloadSubject { delivery } => write!(
+                formatter,
+                "the Metal payload at delivery position {delivery} names a different complete \
+                 compilation subject",
+            ),
+            Self::CompiledPortfolio { expected, actual } => write!(
+                formatter,
+                "{expected} Metal compilation(s) were prepared and the compile step produced \
+                 {actual}",
+            ),
             Self::ArtifactIdentity => formatter.write_str(
                 "compiled artifact identity differs from the pending artifact cache subject",
             ),
-            Self::PayloadObject => {
-                formatter.write_str("artifact Metal payload carries a different compiled object")
-            }
+            Self::PayloadObject { delivery } => write!(
+                formatter,
+                "the Metal payload at delivery position {delivery} carries a different compiled \
+                 object",
+            ),
         }
     }
 }
@@ -91,30 +183,54 @@ impl fmt::Display for MetalArtifactProtocolError {
 impl Error for MetalArtifactProtocolError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Correspondence(error) => Some(error),
+            Self::Correspondence { mismatch, .. } => Some(mismatch),
             _ => None,
         }
     }
 }
 
-impl From<SinglePayloadProtocolError<MetalPayloadMismatch>> for MetalArtifactProtocolError {
+impl From<DeliveredPayloadProtocolError<MetalPayloadMismatch>> for MetalArtifactProtocolError {
     /// Renames the neutral protocol refusals into Metal's own vocabulary.
     ///
     /// Exhaustive by arm rather than by wildcard, so a refusal added to the
     /// neutral seam is a build error here instead of a Metal diagnostic that
     /// silently loses a case.
-    fn from(error: SinglePayloadProtocolError<MetalPayloadMismatch>) -> Self {
+    fn from(error: DeliveredPayloadProtocolError<MetalPayloadMismatch>) -> Self {
         match error {
-            SinglePayloadProtocolError::PayloadPortfolio { actual } => {
-                Self::PayloadPortfolio { actual }
+            DeliveredPayloadProtocolError::PayloadPortfolio { expected, actual } => {
+                Self::PayloadPortfolio { expected, actual }
             }
-            SinglePayloadProtocolError::PayloadDescriptor => Self::PayloadDescriptor,
-            SinglePayloadProtocolError::MissingPayloadMetadata => Self::MissingPayloadMetadata,
-            SinglePayloadProtocolError::Correspondence(mismatch) => Self::Correspondence(mismatch),
-            SinglePayloadProtocolError::PayloadSubject => Self::PayloadSubject,
-            SinglePayloadProtocolError::MissingPayloadObject => Self::MissingPayloadObject,
-            SinglePayloadProtocolError::PayloadObject => Self::PayloadObject,
-            SinglePayloadProtocolError::ArtifactIdentity => Self::ArtifactIdentity,
+            DeliveredPayloadProtocolError::DeliveryPositions { expected, actual } => {
+                Self::DeliveryPositions { expected, actual }
+            }
+            DeliveredPayloadProtocolError::DeliveryRealization { delivery } => {
+                Self::DeliveryRealization { delivery }
+            }
+            DeliveredPayloadProtocolError::PayloadDescriptor { delivery } => {
+                Self::PayloadDescriptor { delivery }
+            }
+            DeliveredPayloadProtocolError::MissingPayloadMetadata { delivery } => {
+                Self::MissingPayloadMetadata { delivery }
+            }
+            DeliveredPayloadProtocolError::Correspondence { delivery, cause } => {
+                Self::Correspondence {
+                    delivery,
+                    mismatch: cause,
+                }
+            }
+            DeliveredPayloadProtocolError::PayloadSubject { delivery } => {
+                Self::PayloadSubject { delivery }
+            }
+            DeliveredPayloadProtocolError::MissingPayloadObject { delivery } => {
+                Self::MissingPayloadObject { delivery }
+            }
+            DeliveredPayloadProtocolError::PayloadObject { delivery } => {
+                Self::PayloadObject { delivery }
+            }
+            DeliveredPayloadProtocolError::CompiledPortfolio { expected, actual } => {
+                Self::CompiledPortfolio { expected, actual }
+            }
+            DeliveredPayloadProtocolError::ArtifactIdentity => Self::ArtifactIdentity,
         }
     }
 }
@@ -167,76 +283,111 @@ impl<E: Error + 'static> Error for MetalCacheError<E> {
     }
 }
 
-impl<E> From<SinglePayloadCacheError<MetalPayloadMismatch, MetalAssemblyError, E>>
+impl<E> From<DeliveredPayloadCacheError<MetalPayloadMismatch, MetalAssemblyError, E>>
     for MetalCacheError<E>
 {
-    fn from(error: SinglePayloadCacheError<MetalPayloadMismatch, MetalAssemblyError, E>) -> Self {
+    fn from(
+        error: DeliveredPayloadCacheError<MetalPayloadMismatch, MetalAssemblyError, E>,
+    ) -> Self {
         match error {
-            SinglePayloadCacheError::Subject(error) => Self::Subject(error),
-            SinglePayloadCacheError::Compile(error) => Self::Compile(error),
-            SinglePayloadCacheError::Assemble(error) => Self::Assemble(error),
-            SinglePayloadCacheError::Encode(error) => Self::Encode(error),
-            SinglePayloadCacheError::CacheArtifact(error) => Self::CacheArtifact(error),
-            SinglePayloadCacheError::Protocol(error) => Self::Protocol(error.into()),
+            DeliveredPayloadCacheError::Subject(error) => Self::Subject(error),
+            DeliveredPayloadCacheError::Compile(error) => Self::Compile(error),
+            DeliveredPayloadCacheError::Assemble(error) => Self::Assemble(error),
+            DeliveredPayloadCacheError::Encode(error) => Self::Encode(error),
+            DeliveredPayloadCacheError::CacheArtifact(error) => Self::CacheArtifact(error),
+            DeliveredPayloadCacheError::Protocol(error) => Self::Protocol(error.into()),
         }
     }
 }
 
-/// Resolves one singular prepared Metal artifact through the expansion cache.
+/// Resolves one plan's delivery-ordered Metal payload run through the expansion cache.
 ///
 /// `pending` is the verified descriptor-only artifact whose canonical identity
-/// is available before compilation. `assemble` runs only on a cache miss and
-/// must assemble the supplied compiled payload into the corresponding carried
-/// artifact. The carried identity and payload are checked before publication;
-/// every cache result is checked again before this function returns.
+/// is available before compilation. `prepared` is one prepared compilation per
+/// delivery position, in the order the producer built its artifact families;
+/// `assemble` runs only on a cache miss and must assemble the supplied compiled
+/// payloads — in that same order — into the corresponding carried artifact. The
+/// carried identity and payloads are checked before publication; every cache
+/// result is checked again before this function returns.
 ///
-/// This binds [`accept_or_publish_single_payload_artifact`] to Metal's two
-/// statements and nothing else: the prepared payload already holds its governed
+/// This binds [`accept_or_publish_delivered_payload_artifact`] to Metal's two
+/// statements and nothing else: each prepared payload already holds its governed
 /// descriptor keys and its derived compilation digest, and this crate's own
-/// `validate_metal_payload_metadata` is the correspondence closure. The
-/// compilation facet the cache subject names is the AOT driver's own prepared
-/// identity, which has no public constructor, so it cannot be minted from
-/// invented toolchain facts.
+/// `validate_metal_payload_metadata` is the correspondence closure, applied to
+/// the compilation prepared for *that* position. The compilation facet the cache
+/// subject names is the AOT driver's own prepared identity, which has no public
+/// constructor, so it cannot be minted from invented toolchain facts.
 ///
 /// # Errors
 ///
 /// Returns a typed subject, compilation, assembly, codec, or protocol failure.
 /// A protocol failure is hard: it is never translated into a cache miss or an
 /// automatic rebuild.
-pub fn accept_or_publish_single_payload_metal_artifact<E>(
+pub fn accept_or_publish_delivered_metal_artifact<E>(
     cache: &ExpansionCache,
     pending: &VerifiedArtifactProgram,
-    prepared: PreparedMetalPayload<'_>,
-    assemble: impl FnOnce(CompiledMetalPayload) -> Result<VerifiedArtifactProgram, E>,
+    prepared: Vec<PreparedMetalPayload<'_>>,
+    assemble: impl FnOnce(Vec<CompiledMetalPayload>) -> Result<VerifiedArtifactProgram, E>,
 ) -> Result<AcceptedArtifact, MetalCacheError<E>> {
-    let backend = prepared.backend().clone();
-    let representation = prepared.representation().clone();
-    let digest = prepared.digest().clone();
-    let expected_metadata = prepared.metadata().clone();
-    // Owned because the declaration outlives the prepared token: the compile
-    // closure consumes the token, and the same declaration is compared again
-    // after resolution.
-    let compilation = prepared.compilation_identity_bytes().to_vec();
-    let declared = DeclaredPayload {
-        backend: &backend,
-        representation: &representation,
-        payload_schema: PAYLOAD_SCHEMA,
-        execution_policy: ArtifactExecutionPolicy::NativeImage,
-        digest: &digest,
-        compilation: &compilation,
-    };
-    let (prepared, compiled_metadata, _digest) = prepared.into_parts();
+    // Owned before the tokens are consumed: the compile closure consumes each
+    // token, and the same declarations are compared again after resolution.
+    let backends: Vec<_> = prepared
+        .iter()
+        .map(|payload| payload.backend().clone())
+        .collect();
+    let representations: Vec<_> = prepared
+        .iter()
+        .map(|payload| payload.representation().clone())
+        .collect();
+    let digests: Vec<_> = prepared
+        .iter()
+        .map(|payload| payload.digest().clone())
+        .collect();
+    let expected_metadata: Vec<_> = prepared
+        .iter()
+        .map(|payload| payload.metadata().clone())
+        .collect();
+    let compilations: Vec<Vec<u8>> = prepared
+        .iter()
+        .map(|payload| payload.compilation_identity_bytes().to_vec())
+        .collect();
+    let declared: Vec<DeclaredPayload<'_>> = (0..prepared.len())
+        .map(|delivery| DeclaredPayload {
+            backend: &backends[delivery],
+            representation: &representations[delivery],
+            payload_schema: PAYLOAD_SCHEMA,
+            execution_policy: ArtifactExecutionPolicy::NativeImage,
+            digest: &digests[delivery],
+            compilation: &compilations[delivery],
+        })
+        .collect();
+    let tokens: Vec<_> = prepared
+        .into_iter()
+        .map(PreparedMetalPayload::into_parts)
+        .collect();
 
-    accept_or_publish_single_payload_artifact(
+    accept_or_publish_delivered_payload_artifact(
         cache,
         pending,
         &declared,
-        |actual| validate_metal_payload_metadata(&expected_metadata, actual),
+        |delivery, actual| validate_metal_payload_metadata(&expected_metadata[delivery], actual),
         || {
-            CompiledMetalPayload::compile_prepared(prepared, compiled_metadata)
-                .map(CompiledMetalPayload::into_content)
+            tokens
+                .into_iter()
+                .map(|(prepared, metadata, _digest)| {
+                    CompiledMetalPayload::compile_prepared(prepared, metadata)
+                        .map(CompiledMetalPayload::into_content)
+                })
+                .collect::<Result<Vec<_>, _>>()
         },
-        |content| assemble(CompiledMetalPayload::from_content(content)),
+        |contents| {
+            assemble(
+                contents
+                    .into_iter()
+                    .map(CompiledMetalPayload::from_content)
+                    .collect(),
+            )
+        },
     )
     .map_err(MetalCacheError::from)
 }

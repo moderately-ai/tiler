@@ -62,7 +62,16 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 /// counted run inside each variant record ahead of its entries, so a `9.0`
 /// reader would consume the route-requirement count as the entry count and lose
 /// framing for the rest of the manifest.
-pub(super) const MANIFEST_SCHEMA: (u16, u16) = (10, 0);
+///
+/// Raised to `11.0` when an entry row replaced its single fixed-width payload
+/// reference with a counted run of them, one per delivery position. Major for
+/// the plainest of the reasons above: a `10.0` reader would consume the count as
+/// the payload reference and then read the first reference as the entry key's
+/// length prefix, losing framing for the rest of the manifest. It would also be
+/// wrong even if the framing survived — a reader that cannot resolve a delivery
+/// position has no basis for choosing among several objects — which is what the
+/// separate required-feature key states for a reader at this schema.
+pub(super) const MANIFEST_SCHEMA: (u16, u16) = (11, 0);
 
 /// Versioned domain tag opening the canonical manifest bytes.
 pub(super) const MANIFEST_DOMAIN: &[u8] = b"tiler.artifact-envelope.manifest.v1\0";
@@ -443,7 +452,15 @@ fn encode_entry(bytes: &mut Vec<u8>, entry: &EntryRow) {
     for precondition in &entry.launch.preconditions {
         bytes.extend_from_slice(&precondition.to_be_bytes());
     }
-    bytes.extend_from_slice(&entry.payload.to_be_bytes());
+    // A counted run, and the count is what a reader frames the rest of the entry
+    // around: the row that preceded it was one fixed-width payload reference, so
+    // a reader of the earlier schema would consume this count as that reference
+    // and lose framing for every row after it. That is why the schema step below
+    // is major.
+    push_len(bytes, entry.payloads.len());
+    for payload in &entry.payloads {
+        bytes.extend_from_slice(&payload.to_be_bytes());
+    }
     push_slice(bytes, entry.entry_key.as_bytes());
 }
 

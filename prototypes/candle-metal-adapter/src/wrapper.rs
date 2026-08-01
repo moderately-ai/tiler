@@ -77,6 +77,15 @@ use crate::refusal::{
     TensorRefusal, fallback_availability,
 };
 
+/// The one delivery position every artifact here is built for.
+///
+/// A delivery position is the ordered slot a consumer's build target resolves
+/// to, and these artifacts are built for a single target, so the sole position
+/// is zero. Named rather than written as a bare `0` at each call, because the
+/// argument decides *which compiled object* is loaded and a literal there says
+/// nothing about why that one.
+const SOLE_DELIVERY: usize = 0;
+
 /// The operations a delivered realization claim covers, and only those.
 ///
 /// Named as a constant because `docs/integration/candle.md` makes the scope
@@ -215,7 +224,7 @@ impl TilerPlan {
         environment: ExecutionEnvironment,
         realization: Realization,
     ) -> Result<Self, WrapperError> {
-        let decoded = DecodedProgram::decode(&bytes).map_err(WrapperError::Load)?;
+        let decoded = DecodedProgram::decode(&bytes, SOLE_DELIVERY).map_err(WrapperError::Load)?;
         let identity = decoded.identity().as_bytes().to_vec();
         if identity != recorded.as_bytes() {
             return Err(WrapperError::Load(LoadRejection::ProgramMismatch {
@@ -352,7 +361,8 @@ impl TilerPlan {
         device: &candle_core::MetalDevice,
         symbol: &str,
     ) -> Result<(), WrapperError> {
-        let mut program = DecodedProgram::decode(&self.bytes).map_err(WrapperError::Load)?;
+        let mut program =
+            DecodedProgram::decode(&self.bytes, SOLE_DELIVERY).map_err(WrapperError::Load)?;
         let qualification = program
             .prepare(&self.environment, &self.recorded, &self.facts)
             .map_err(WrapperError::Load)?;
@@ -404,7 +414,8 @@ impl TilerPlan {
         &self,
         device: &candle_core::MetalDevice,
     ) -> Result<ArgumentSlotProbe, WrapperError> {
-        let mut program = DecodedProgram::decode(&self.bytes).map_err(WrapperError::Load)?;
+        let mut program =
+            DecodedProgram::decode(&self.bytes, SOLE_DELIVERY).map_err(WrapperError::Load)?;
         let qualification = program
             .prepare(&self.environment, &self.recorded, &self.facts)
             .map_err(WrapperError::Load)?;
@@ -610,7 +621,8 @@ impl TilerFusedOp<'_> {
         // Decoded afresh for this attempt. The plan holds bytes rather than a
         // program precisely so that each application mints its own single-use
         // routing authority.
-        let mut program = DecodedProgram::decode(&self.plan.bytes).map_err(WrapperError::Load)?;
+        let mut program =
+            DecodedProgram::decode(&self.plan.bytes, SOLE_DELIVERY).map_err(WrapperError::Load)?;
         let output_elements = usize::try_from(self.plan.rows).unwrap_or(usize::MAX);
         let mut adapter = CandleMetalAdapter::new(
             &device,

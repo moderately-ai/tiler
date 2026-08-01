@@ -119,11 +119,21 @@ impl From<ArtifactBuildError> for PlanArtifactError {
 /// target-neutral program before returning.
 ///
 /// `declare_payload` runs once, before any entry, and receives the *derived*
-/// target-profile reference — a backend states which payload it carries, never
-/// which target the artifact declares compatibility with. `declare_entry` runs
-/// once per stage in stage order and receives that stage, so a backend reads the
-/// kernel, its accesses, and its launch geometry to decide the four statements
-/// that are its own.
+/// target-profile reference — a backend states which payloads it carries, never
+/// which target the artifact declares compatibility with. It returns them in
+/// **delivery order**: one payload per delivery position, which is the ordered
+/// slot a consumer's build target resolves to. One selection produces one
+/// envelope carrying one payload per built family, so several families are
+/// several entries in that run rather than several artifacts. The order is the
+/// backend's statement and this function never reorders it; an empty run and a
+/// run that disagrees with a sibling entry are the artifact builder's typed
+/// refusals.
+///
+/// `declare_entry` runs once per stage in stage order and receives that stage,
+/// so a backend reads the kernel, its accesses, and its launch geometry to
+/// decide the four statements that are its own. It does **not** decide payloads:
+/// every entry is realized by the same delivery-ordered run, because two
+/// delivery positions are one plan compiled twice rather than two plans.
 ///
 /// # This does not validate the payload's bytes, and cannot
 ///
@@ -145,7 +155,7 @@ pub fn assemble_plan_artifact(
     declare_payload: impl FnOnce(
         &mut ArtifactProgramBuilder,
         TargetProfileRef,
-    ) -> Result<PayloadId, ArtifactBuildError>,
+    ) -> Result<Vec<PayloadId>, ArtifactBuildError>,
     mut declare_entry: impl FnMut(
         &mut ArtifactProgramBuilder,
         StageRef<'_>,
@@ -165,7 +175,7 @@ pub fn assemble_plan_artifact(
         })?;
     }
 
-    let payload_id = declare_payload(&mut builder, profile.clone())?;
+    let payload_ids = declare_payload(&mut builder, profile.clone())?;
     let program = plan.abi().kernel_program();
     let deferred_predicates = plan
         .prepared_entry_target_requirements()
@@ -188,7 +198,11 @@ pub fn assemble_plan_artifact(
                 preconditions: declared.preconditions,
             },
             implementation: BackendEntryRef {
-                payload: payload_id,
+                // The same delivery-ordered payload run for every entry, so
+                // position `p` names one object across the whole plan by
+                // construction rather than by a check: a backend states which
+                // objects it built, in which order, once.
+                payloads: payload_ids.clone(),
                 // The stage kernel's own canonical identity, with no parameter a
                 // producer could supply instead. A backend states which *symbol*
                 // realizes this key in its payload's entry mapping, and a
