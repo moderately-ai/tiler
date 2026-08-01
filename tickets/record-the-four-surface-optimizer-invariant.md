@@ -1,7 +1,7 @@
 ---
 id: record-the-four-surface-optimizer-invariant
 title: Record the four-surface optimizer invariant in the contracts
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [implement-transactional-rewrite-engine, route-the-compile-path-through-the-rewrite-engine, emit-analytical-costs-through-the-typed-cost-vocabulary, drive-an-external-physical-implementation-provider-through-compilation]
@@ -9,6 +9,9 @@ scopes: [contracts/optimizer, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [contracts, optimizer, architecture, backend-providers]
+claimed_from: todo
+assignee: worker-invariant
+lease_expires_at: 1785598277
 ---
 ## User-visible outcome
 
