@@ -1736,6 +1736,7 @@ mod tests {
         SelectionError, TensorRole, reconcile_boundaries, select_physical_plans,
         verify_selected_plan, verify_selected_portfolio,
     };
+    use crate::boundary::StorageScalar;
     use crate::boundary::{
         AdmittedMemoryDomains, AvailabilityGuarantee, AvailabilityRequirement, BoundaryProperty,
         ByteAlignment, ExecutionAffinity, GuaranteedProperty, LayoutGuarantee, LayoutRequirement,
@@ -1853,7 +1854,7 @@ mod tests {
                 ParameterRole::InOut => unreachable!("the fixture has separate input and output"),
             },
             encoding: StorageEncoding::Unpacked,
-            alignment: ByteAlignment::F32_NATURAL,
+            alignment: ByteAlignment::natural_for(StorageScalar::F32),
         };
         let realization = StrictF32NumericalContract::governed().realization();
         OpaqueCallDeclaration::check(
@@ -2437,7 +2438,7 @@ mod tests {
         GuaranteedProperties::new([
             GuaranteedProperty::StorageLayout(LayoutGuarantee::DenseRowMajor),
             GuaranteedProperty::StorageEncoding(StorageEncoding::Unpacked),
-            GuaranteedProperty::Alignment(ByteAlignment::F32_NATURAL),
+            GuaranteedProperty::Alignment(ByteAlignment::natural_for(StorageScalar::F32)),
             GuaranteedProperty::Materialization(MaterializationForm::MaterializedBuffer),
             GuaranteedProperty::ExecutionAffinity(ExecutionAffinity::PRIMARY),
             GuaranteedProperty::MemoryDomain(MemoryDomainClass::Device),
@@ -2452,7 +2453,7 @@ mod tests {
         RequiredProperties::new([
             RequiredProperty::StorageLayout(LayoutRequirement::DenseRowMajor),
             RequiredProperty::StorageEncoding(StorageEncoding::Unpacked),
-            RequiredProperty::Alignment(ByteAlignment::F32_NATURAL),
+            RequiredProperty::Alignment(ByteAlignment::natural_for(StorageScalar::F32)),
             RequiredProperty::Materialization(MaterializationForm::MaterializedBuffer),
             RequiredProperty::ExecutionAffinity(ExecutionAffinity::PRIMARY),
             RequiredProperty::MemoryDomain(
@@ -2923,8 +2924,10 @@ mod tests {
                 ByteAlignment::new(16).unwrap(),
             )])
             .unwrap(),
-            &GuaranteedProperties::new([GuaranteedProperty::Alignment(ByteAlignment::F32_NATURAL)])
-                .unwrap(),
+            &GuaranteedProperties::new([GuaranteedProperty::Alignment(
+                ByteAlignment::natural_for(StorageScalar::F32),
+            )])
+            .unwrap(),
         )
         .remove(0);
         let composition =

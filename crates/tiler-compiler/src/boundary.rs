@@ -90,8 +90,8 @@
 use std::fmt;
 
 use tiler_ir::identity::{push_len, push_slice};
-pub(crate) use tiler_ir::program::StorageEncoding;
 use tiler_ir::program::{BitPackedEncoding, PackedBitOrder, PackedTailRule};
+pub(crate) use tiler_ir::program::{StorageEncoding, StorageScalar};
 use tiler_ir::shape::Axis;
 
 /// Canonical domain-separation tag for one boundary property set.
@@ -641,14 +641,39 @@ const fn packed_u4() -> BitPackedEncoding {
 pub(crate) struct ByteAlignment(u32);
 
 impl ByteAlignment {
-    /// The natural alignment of one `f32` element.
+    /// The natural alignment of one element of `scalar`, unpacked.
     ///
-    /// The bounded profile's boundary values are strict `f32` throughout under
-    /// `StrictF32NumericalContract`, and `ScheduledRegion` carries no resolved
-    /// element type of its own. A widened dtype vocabulary must derive this from
-    /// the boundary value's element type rather than from the profile, and that
-    /// derivation needs a field the scheduled-region IR does not have today.
-    pub(crate) const F32_NATURAL: Self = Self(4);
+    /// Alignment is a property of the boundary value's own element type, not of
+    /// the profile the region compiles under: a two-byte carrier requires two
+    /// bytes whatever else the program contains, and telling it four is a
+    /// requirement that is not its own — permissive today only because one dtype
+    /// makes the wrong answer coincide with the right one.
+    ///
+    /// [`StorageScalar::byte_width`] is the derivation, and deliberately the only
+    /// one. A width table here would be a second place for a carrier's width to
+    /// be stated, and the two would agree exactly until the day a carrier was
+    /// added to one of them.
+    ///
+    /// The argument is the *carrier*, which is why the storage encoding is not a
+    /// second argument: a sub-byte logical element reaches memory inside a
+    /// carrier under a [`StorageEncoding::BitPacked`] rule, and what the first
+    /// element requires is that carrier's alignment. Deriving an alignment from
+    /// the logical width instead would ask a four-bit element for a whole-byte
+    /// power of two and get zero, which [`Self::new`] refuses.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a storage carrier's byte width is not a positive power of two
+    /// within `u32`, which would make it unrepresentable as an alignment at all.
+    /// No carrier in the vocabulary is such a width, and
+    /// `every_storage_carrier_has_a_natural_alignment` checks the whole
+    /// vocabulary rather than leaving that a claim about the two that exist now.
+    pub(crate) fn natural_for(scalar: StorageScalar) -> Self {
+        u32::try_from(scalar.byte_width())
+            .ok()
+            .and_then(Self::new)
+            .expect("a storage carrier's byte width is a positive power of two within `u32`")
+    }
 
     /// Builds an alignment, rejecting anything that is not a positive power of
     /// two.
@@ -1974,7 +1999,7 @@ mod tests {
         ChildRequirementConflict, ExecutionAffinity, GuaranteedProperties, GuaranteedProperty,
         LayoutGuarantee, LayoutRequirement, MaterializationForm, MemoryDomainClass, PackedBitOrder,
         PackedTailRule, RequiredProperties, RequiredProperty, StorageAccessError,
-        StorageAccessKind, StorageCodecError, StorageEncoding, UnsatisfiedProperty,
+        StorageAccessKind, StorageCodecError, StorageEncoding, StorageScalar, UnsatisfiedProperty,
         UnsatisfiedReason, VisibilityGuarantee, VisibilityRequirement, code_access,
         derive_child_requirements, encode_property_identity, pack_codes, unpack_codes,
         unsatisfied_properties,
@@ -1986,7 +2011,7 @@ mod tests {
         GuaranteedProperties::new([
             GuaranteedProperty::StorageLayout(LayoutGuarantee::DenseRowMajor),
             GuaranteedProperty::StorageEncoding(StorageEncoding::Unpacked),
-            GuaranteedProperty::Alignment(ByteAlignment::F32_NATURAL),
+            GuaranteedProperty::Alignment(ByteAlignment::natural_for(StorageScalar::F32)),
             GuaranteedProperty::Materialization(MaterializationForm::MaterializedBuffer),
             GuaranteedProperty::ExecutionAffinity(ExecutionAffinity::PRIMARY),
             GuaranteedProperty::MemoryDomain(MemoryDomainClass::Device),
@@ -2001,7 +2026,7 @@ mod tests {
         RequiredProperties::new([
             RequiredProperty::StorageLayout(LayoutRequirement::DenseRowMajor),
             RequiredProperty::StorageEncoding(StorageEncoding::Unpacked),
-            RequiredProperty::Alignment(ByteAlignment::F32_NATURAL),
+            RequiredProperty::Alignment(ByteAlignment::natural_for(StorageScalar::F32)),
             RequiredProperty::Materialization(MaterializationForm::MaterializedBuffer),
             RequiredProperty::ExecutionAffinity(ExecutionAffinity::PRIMARY),
             RequiredProperty::MemoryDomain(
@@ -2051,7 +2076,7 @@ mod tests {
         // The accepted contract's own example: 16-byte alignment satisfies a
         // 4-byte requirement, and the converse does not hold.
         let sixteen = ByteAlignment::new(16).unwrap();
-        let four = ByteAlignment::F32_NATURAL;
+        let four = ByteAlignment::natural_for(StorageScalar::F32);
         let coarse = GuaranteedProperties::new([GuaranteedProperty::Alignment(sixteen)]).unwrap();
         let fine = GuaranteedProperties::new([GuaranteedProperty::Alignment(four)]).unwrap();
         let needs_four = RequiredProperties::new([RequiredProperty::Alignment(four)]).unwrap();
@@ -2063,6 +2088,59 @@ mod tests {
         assert_eq!(refused.len(), 1);
         assert_eq!(refused[0].reason(), UnsatisfiedReason::NotSatisfied);
         assert!(refused[0].guaranteed().is_some());
+    }
+
+    /// Alignment is the element type's, and a narrower element gets less of it.
+    ///
+    /// This is exactly what the constant this replaced could not say. It answered
+    /// four bytes for every boundary, which was the right answer for `f32` only
+    /// because `f32` was the only element there was; a one-byte carrier told the
+    /// same four is being handed a requirement that is not its own. If the `U8`
+    /// case ever reports four again, a derivation has been replaced by a constant.
+    #[test]
+    fn alignment_derives_from_the_element_width_rather_than_the_profile() {
+        assert_eq!(
+            ByteAlignment::natural_for(StorageScalar::F32).bytes(),
+            4,
+            "the four-byte carrier stopped deriving four bytes"
+        );
+        assert_eq!(
+            ByteAlignment::natural_for(StorageScalar::U8).bytes(),
+            1,
+            "a one-byte carrier was told the four-byte carrier's alignment"
+        );
+    }
+
+    /// No carrier in the vocabulary has a width that cannot be an alignment.
+    ///
+    /// What this proves is the [`ByteAlignment::natural_for`] panic's absence,
+    /// not the widths themselves: the equality below is close to a restatement of
+    /// the derivation, but reaching it at all establishes that every carrier's
+    /// width is a positive power of two within `u32`. A carrier whose width were
+    /// six — legal as a byte count, impossible as an alignment — would otherwise
+    /// first reach that panic from a construction site on the compile path.
+    ///
+    /// The `match` is what keeps the list honest: it has no wildcard, so a widened
+    /// [`StorageScalar`] is an `E0004` here and the author has to extend the array
+    /// beside it. A bare array would keep passing while silently covering one
+    /// fewer variant than the vocabulary has.
+    #[test]
+    fn every_storage_carrier_has_a_representable_alignment() {
+        for scalar in [StorageScalar::U8, StorageScalar::F32] {
+            match scalar {
+                StorageScalar::U8 | StorageScalar::F32 => {}
+            }
+            let width = scalar.byte_width();
+            assert!(
+                width != 0 && width.is_power_of_two() && u32::try_from(width).is_ok(),
+                "{scalar:?} has byte width {width}, which cannot be a byte alignment"
+            );
+            assert_eq!(
+                u64::from(ByteAlignment::natural_for(scalar).bytes()),
+                width,
+                "{scalar:?} derived an alignment that is not its own byte width"
+            );
+        }
     }
 
     #[test]
@@ -2428,7 +2506,7 @@ mod tests {
     #[test]
     fn duplicate_dimensions_are_malformed_output() {
         let error = RequiredProperties::new([
-            RequiredProperty::Alignment(ByteAlignment::F32_NATURAL),
+            RequiredProperty::Alignment(ByteAlignment::natural_for(StorageScalar::F32)),
             RequiredProperty::Alignment(ByteAlignment::new(16).unwrap()),
         ])
         .unwrap_err();
@@ -2464,9 +2542,10 @@ mod tests {
 
     #[test]
     fn requirement_dominance_is_a_partial_order_over_the_dimensions() {
-        let four =
-            RequiredProperties::new([RequiredProperty::Alignment(ByteAlignment::F32_NATURAL)])
-                .unwrap();
+        let four = RequiredProperties::new([RequiredProperty::Alignment(
+            ByteAlignment::natural_for(StorageScalar::F32),
+        )])
+        .unwrap();
         let sixteen =
             RequiredProperties::new([RequiredProperty::Alignment(ByteAlignment::new(16).unwrap())])
                 .unwrap();
@@ -2476,7 +2555,7 @@ mod tests {
         // A requirement on a dimension the other set does not name is stronger,
         // because the other admits every producer on it.
         let plus_layout = RequiredProperties::new([
-            RequiredProperty::Alignment(ByteAlignment::F32_NATURAL),
+            RequiredProperty::Alignment(ByteAlignment::natural_for(StorageScalar::F32)),
             RequiredProperty::StorageLayout(LayoutRequirement::DenseRowMajor),
         ])
         .unwrap();
@@ -2501,9 +2580,10 @@ mod tests {
             ByteAlignment::new(16).unwrap(),
         )])
         .unwrap();
-        let fine =
-            GuaranteedProperties::new([GuaranteedProperty::Alignment(ByteAlignment::F32_NATURAL)])
-                .unwrap();
+        let fine = GuaranteedProperties::new([GuaranteedProperty::Alignment(
+            ByteAlignment::natural_for(StorageScalar::F32),
+        )])
+        .unwrap();
         assert!(coarse.is_at_least_as_strong_as(&fine));
         assert!(!fine.is_at_least_as_strong_as(&coarse));
 

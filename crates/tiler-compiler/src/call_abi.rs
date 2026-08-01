@@ -523,6 +523,7 @@ pub(crate) fn check_bindings<Role: Copy + Eq>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::boundary::StorageScalar;
 
     /// A spec with the bounded profile's storage answers, so tests that care
     /// about names and roles do not have to restate the other three.
@@ -543,7 +544,7 @@ mod tests {
             role,
             layout: layout_for(role),
             encoding: StorageEncoding::Unpacked,
-            alignment: ByteAlignment::F32_NATURAL,
+            alignment: ByteAlignment::natural_for(StorageScalar::F32),
         }
     }
 
@@ -743,7 +744,7 @@ mod tests {
             role: ParameterRole::In,
             layout: ParameterLayout::Guaranteed(LayoutGuarantee::DenseRowMajor),
             encoding: StorageEncoding::Unpacked,
-            alignment: ByteAlignment::F32_NATURAL,
+            alignment: ByteAlignment::natural_for(StorageScalar::F32),
         };
         assert_eq!(
             CallAbi::declare([guaranteeing_input, spec("w", ParameterRole::Out)]),
@@ -756,7 +757,7 @@ mod tests {
             role: ParameterRole::Out,
             layout: ParameterLayout::Required(LayoutRequirement::DenseRowMajor),
             encoding: StorageEncoding::Unpacked,
-            alignment: ByteAlignment::F32_NATURAL,
+            alignment: ByteAlignment::natural_for(StorageScalar::F32),
         };
         assert_eq!(
             CallAbi::declare([requiring_output]),
@@ -779,7 +780,7 @@ mod tests {
                 rank: 2,
             }),
             encoding: StorageEncoding::Unpacked,
-            alignment: ByteAlignment::F32_NATURAL,
+            alignment: ByteAlignment::natural_for(StorageScalar::F32),
         };
         assert!(
             CallAbi::declare([strided, spec("w", ParameterRole::Out)]).is_ok(),
