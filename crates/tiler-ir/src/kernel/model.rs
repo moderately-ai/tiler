@@ -173,6 +173,32 @@ pub struct BufferParameter {
     pub element_count: u64,
 }
 
+/// One workgroup-scoped staging allocation a kernel declares.
+///
+/// **Deliberately not a [`BufferParameter`], and this is a correctness
+/// requirement rather than a preference.** A buffer parameter's position *is*
+/// its argument-table ordinal, which [`VerifiedKernel::declared_buffers`]
+/// documents as positional; a workgroup allocation is not an argument at all,
+/// and placing one in that list would re-base every later ordinal and change
+/// what an existing signature position means. Keeping the two lists apart also
+/// keeps [`BufferAccess`] a two-value vocabulary: staging is read *and* written
+/// by the workgroup, which no parameter access mode expresses.
+///
+/// The allocation names the scheduled [`crate::schedule::StagingId`] it
+/// realizes, so a verifier can compare it against the region's cooperative tile
+/// rather than trusting a producer's element count.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct StagingParameter {
+    /// Scheduled staging allocation this realizes.
+    pub staging: crate::schedule::StagingId,
+    /// Element type every slot holds.
+    pub element_type: KernelType,
+    /// Governed address space the allocation lives in.
+    pub address_space: AddressSpace,
+    /// Number of addressable slots.
+    pub element_count: u64,
+}
+
 /// A governed launch builtin a kernel signature may admit.
 ///
 /// Builtins use governed execution keys, never a target spelling such as
@@ -183,12 +209,25 @@ pub struct BufferParameter {
 pub enum Builtin {
     /// The linear index of one global invocation in the launch grid.
     GlobalInvocationIndex,
+    /// The linear index of one invocation within its own workgroup.
+    ///
+    /// The coordinate a cooperative tile's participants are named by. It is a
+    /// separate key rather than a derivation from the global index, because the
+    /// workgroup width is a launch fact and a kernel that recomputed the local
+    /// coordinate from it would carry a second, unchecked copy of that fact.
+    LocalInvocationIndex,
 }
 
 impl Builtin {
     const fn tag(self) -> u8 {
         match self {
             Self::GlobalInvocationIndex => 0x01,
+            // Appended rather than inserted, like `UnaryOp::F32Rsqrt`: the
+            // global index keeps `0x01` and every field keeps its position, so
+            // no previously encodable kernel's bytes move and the kernel
+            // identity domain does not step. A reader that reaches `0x02` is
+            // reading a kernel the earlier vocabulary could not express.
+            Self::LocalInvocationIndex => 0x02,
         }
     }
 
@@ -196,7 +235,7 @@ impl Builtin {
     #[must_use]
     pub const fn result_type(self) -> KernelType {
         match self {
-            Self::GlobalInvocationIndex => KernelType::Index,
+            Self::GlobalInvocationIndex | Self::LocalInvocationIndex => KernelType::Index,
         }
     }
 }
@@ -671,6 +710,7 @@ pub(super) struct ValueData {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct KernelData {
     pub(super) buffers: Vec<BufferParameter>,
+    pub(super) staging: Vec<StagingParameter>,
     pub(super) admitted_builtins: Vec<Builtin>,
     pub(super) numerical: NumericalRealization,
     pub(super) requirements: ResourceRequirements,
@@ -779,6 +819,17 @@ impl VerifiedKernel {
     #[must_use]
     pub fn admitted_builtins(&self) -> &[Builtin] {
         &self.data.admitted_builtins
+    }
+
+    /// Returns the workgroup staging allocations this kernel declares.
+    ///
+    /// Declaration order, which is ascending [`crate::schedule::StagingId`]
+    /// order — the verifier proves that correspondence against the region's
+    /// cooperative tile, so a consumer may index by staging ordinal. Empty for
+    /// every kernel whose region stages nothing.
+    #[must_use]
+    pub fn staging(&self) -> impl ExactSizeIterator<Item = StagingParameter> + '_ {
+        self.data.staging.iter().copied()
     }
 
     /// Returns the preserved numerical realization.
@@ -1297,6 +1348,44 @@ fn push_buffer(bytes: &mut Vec<u8>, buffer: &BufferParameter) {
     bytes.extend_from_slice(&buffer.element_count.to_be_bytes());
 }
 
+/// Encodes the workgroup staging allocations a kernel declares.
+///
+/// **Written last, and written as nothing at all when the list is empty.** That
+/// is what makes this an append rather than a domain step: a kernel that stages
+/// nothing encodes exactly the bytes it encoded before this list existed, so no
+/// cached or artifact-held identity moves. Injectivity survives because the
+/// block encoding preceding it is fully self-framing — after it the decoder is
+/// at a determined offset, so "bytes remain" *is* the presence tag, and a
+/// nonempty list carries its own length. A `0` length written unconditionally
+/// would have added eight bytes to every kernel ever encoded and stepped
+/// `tiler.kernel.v5`.
+fn push_staging(bytes: &mut Vec<u8>, staging: &[StagingParameter]) {
+    if staging.is_empty() {
+        return;
+    }
+    push_len(bytes, staging.len());
+    for parameter in staging {
+        bytes.extend_from_slice(&parameter.staging.get().to_be_bytes());
+        bytes.push(parameter.element_type.tag());
+        bytes.push(parameter.address_space.tag());
+        bytes.extend_from_slice(&parameter.element_count.to_be_bytes());
+    }
+}
+
+/// Mirrors [`push_staging`], including its empty case writing nothing.
+fn staging_encoded_len(staging: &[StagingParameter]) -> usize {
+    if staging.is_empty() {
+        return 0;
+    }
+    LENGTH_BYTES.saturating_add(staging.iter().fold(0_usize, |total, parameter| {
+        total
+            .saturating_add(size_of_val(&parameter.staging.get()))
+            // The element type and address space tags.
+            .saturating_add(2)
+            .saturating_add(size_of_val(&parameter.element_count))
+    }))
+}
+
 fn push_component_role(bytes: &mut Vec<u8>, role: Option<EncodedComponentRole>) {
     match role {
         None => bytes.push(0x00),
@@ -1474,6 +1563,7 @@ pub(super) fn encode_identity(
         bytes.push(value.value_type.tag());
     }
     push_block(&mut bytes, data, 0);
+    push_staging(&mut bytes, &data.staging);
     debug_assert_eq!(
         bytes.len(),
         encoded_len,
@@ -1524,6 +1614,7 @@ fn identity_encoded_len(
         // One tag byte per value type.
         .saturating_add(data.values.len())
         .saturating_add(block_encoded_len(data, 0))
+        .saturating_add(staging_encoded_len(&data.staging))
 }
 
 /// Mirrors [`push_buffer`]: tensor, optional role, three tags, and element count.

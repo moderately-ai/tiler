@@ -11,11 +11,13 @@ use std::cell::Cell;
 use super::*;
 use crate::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
-    ExceptionalValueAssumption, ExecutionBinding, InputOrdinal, KernelSchedule, LaunchPlan,
-    LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
-    OwnershipWitnessId, PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionPass,
-    ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy,
-    TensorRole, VerifiedScheduledRegion,
+    ContributorPartition, CooperativePhase, CooperativeTile, ExceptionalValueAssumption,
+    ExecutionBinding, InputOrdinal, KernelSchedule, LaunchPlan, LocalCoordinateSource,
+    LocalCoordinates, LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof,
+    OwnershipProofKind, OwnershipWitnessId, ParticipantRange, PhaseId, PointwiseF32Expression,
+    PointwiseF32ExpressionBuilder, ReductionPass, ReductionTopology, RegionId, ScalarProgram,
+    ScheduledRegionBuilder, StagedElement, StagedRead, StagedSpan, StagedWrite, StagingId,
+    SubnormalMode, TailPolicy, TensorRole, VerifiedScheduledRegion, WorkgroupStaging,
 };
 use crate::semantic::{
     STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
@@ -881,6 +883,7 @@ fn body_shaping_vocabulary_is_closed(
                 ..
             } => "multi-pass-final",
             ReductionTopology::Contraction { .. } => "contraction",
+            ReductionTopology::CooperativeWorkgroup { .. } => "cooperative-workgroup",
         },
         match program {
             ScalarProgram::PointwiseF32(_) => "pointwise-f32",
@@ -1841,4 +1844,519 @@ fn diagnostics_and_errors_expose_stable_rule_identifiers() {
         KernelLoweringError::UnsupportedRegion { rule: "fixture" }.rule(),
         "fixture"
     );
+}
+
+// ---- Cooperative workgroup tiles ------------------------------------------
+//
+// The structured-kernel half of the cooperative dataflow: a kernel can *name*
+// the local invocation coordinate and *declare* the workgroup storage its
+// region's tile allocates, and the verifier proves both against that tile. It
+// cannot yet contain a body, because the staged handoff a tile describes is
+// correct only when something orders its phases and nothing does.
+
+/// Builds the cooperative realization of a `[2, 6] -> [2]` strict serial sum.
+///
+/// Three participants per workgroup, each folding two contributors into its own
+/// staging slot, all three reading the staged set back, one committing.
+fn cooperative_region() -> VerifiedScheduledRegion {
+    let mut builder = ScheduledRegionBuilder::new(RegionId::new(23));
+    builder.iteration_shape(Shape::from_dims([2, 3])).unwrap();
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Intermediate,
+            component_role: None,
+            mode: AccessMode::Read,
+            map: LogicalAccess::ReductionContributor {
+                input_shape: Shape::from_dims([2, 6]),
+                output_shape: Shape::from_dims([2]),
+                axes: vec![Axis::new(1)],
+                order: ContributorOrder::OriginalAxisLexicographic,
+            },
+            bounds: BoundsWitnessId::new(0),
+            ownership: None,
+        })
+        .unwrap();
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Output,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(1),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        })
+        .unwrap();
+    builder
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(0),
+            tensor: TensorRole::Intermediate,
+            component_role: None,
+            kind: BoundsProofKind::ReductionDomain {
+                input_shape: Shape::from_dims([2, 6]),
+                output_shape: Shape::from_dims([2]),
+                axes: vec![Axis::new(1)],
+                order: ContributorOrder::OriginalAxisLexicographic,
+            },
+        })
+        .unwrap();
+    builder
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(1),
+            tensor: TensorRole::Output,
+            component_role: None,
+            kind: BoundsProofKind::LinearRange { element_count: 2 },
+        })
+        .unwrap();
+    builder
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 2 },
+        })
+        .unwrap();
+    builder
+        .scalar_program(ScalarProgram::StrictSerialSum {
+            axes: vec![Axis::new(1)],
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: NAN_BITS,
+            empty_identity_bits: 0.0_f32.to_bits(),
+        })
+        .unwrap();
+    builder
+        .numerical(NumericalRealization {
+            reassociation: NumericalPermission::Permitted,
+            ..numerical()
+        })
+        .unwrap();
+    builder
+        .schedule(KernelSchedule {
+            threads_per_workgroup: 3,
+            reduction: ReductionTopology::CooperativeWorkgroup {
+                partition: ContributorPartition {
+                    partitions: 3,
+                    contributors_per_partition: 2,
+                },
+                tile: CooperativeTile {
+                    coordinates: LocalCoordinates {
+                        source: LocalCoordinateSource::LocalLinearInvocation,
+                        participants: ParticipantRange { first: 0, count: 3 },
+                    },
+                    staging: vec![WorkgroupStaging {
+                        id: StagingId::FIRST,
+                        element: StagedElement::F32,
+                        slots: 3,
+                        live_from: PhaseId::FIRST,
+                        live_through: PhaseId::new(1),
+                    }],
+                    phases: vec![
+                        CooperativePhase {
+                            id: PhaseId::FIRST,
+                            participation: ParticipantRange { first: 0, count: 3 },
+                            writes: vec![StagedWrite {
+                                staging: StagingId::FIRST,
+                                span: StagedSpan {
+                                    stride: 1,
+                                    offset: 0,
+                                    count: 1,
+                                },
+                            }],
+                            reads: Vec::new(),
+                        },
+                        CooperativePhase {
+                            id: PhaseId::new(1),
+                            participation: ParticipantRange { first: 0, count: 3 },
+                            writes: Vec::new(),
+                            reads: vec![StagedRead {
+                                staging: StagingId::FIRST,
+                                span: StagedSpan {
+                                    stride: 0,
+                                    offset: 0,
+                                    count: 3,
+                                },
+                            }],
+                        },
+                    ],
+                    commit: ParticipantRange { first: 0, count: 1 },
+                },
+                axes: vec![Axis::new(1)],
+                order: ContributorOrder::OriginalAxisLexicographic,
+                accumulation: crate::schedule::ArithmeticType::F32,
+                permits_reassociation: true,
+                permits_permutation: false,
+            },
+            launch: LaunchPlan {
+                grid_threads: 6,
+                threads_per_workgroup: 3,
+                zero_work_skips_dispatch: true,
+            },
+            ..linear_schedule(6, OwnershipWitnessId::new(0))
+        })
+        .unwrap();
+    builder.build().unwrap()
+}
+
+/// Declares the boundary signature every cooperative kernel below shares.
+fn cooperative_signature(
+    builder: &mut KernelBuilder,
+    scheduled: &VerifiedScheduledRegion,
+) -> (KernelBufferId, KernelBufferId) {
+    let read = builder
+        .declare_buffer(BufferParameter {
+            tensor: TensorRole::Intermediate,
+            component_role: None,
+            element_type: KernelType::F32,
+            address_space: AddressSpace::Device,
+            access: BufferAccess::Read,
+            element_count: 12,
+        })
+        .unwrap();
+    let write = builder
+        .declare_buffer(BufferParameter {
+            tensor: TensorRole::Output,
+            component_role: None,
+            element_type: KernelType::F32,
+            address_space: AddressSpace::Device,
+            access: BufferAccess::Write,
+            element_count: 2,
+        })
+        .unwrap();
+    builder
+        .admit_builtin(Builtin::GlobalInvocationIndex)
+        .unwrap();
+    builder
+        .admit_builtin(Builtin::LocalInvocationIndex)
+        .unwrap();
+    builder
+        .numerical(NumericalRealization {
+            reassociation: NumericalPermission::Permitted,
+            ..numerical()
+        })
+        .unwrap();
+    builder.requirements(scheduled.requirements()).unwrap();
+    (read, write)
+}
+
+/// The one staging allocation the cooperative region's tile declares.
+const COOPERATIVE_STAGING: StagingParameter = StagingParameter {
+    staging: StagingId::FIRST,
+    element_type: KernelType::F32,
+    address_space: AddressSpace::Workgroup,
+    element_count: 3,
+};
+
+fn cooperative_diagnostic(builder: KernelBuilder) -> KernelDiagnostic {
+    let diagnostics = builder.build().unwrap_err().diagnostics().to_vec();
+    let [diagnostic] = diagnostics.as_slice() else {
+        panic!("expected exactly one diagnostic, got {diagnostics:?}")
+    };
+    *diagnostic
+}
+
+/// The cooperative region derives its workgroup storage into its requirements.
+///
+/// The value a feasibility authority composes against a target's declared
+/// threadgroup memory. Nothing here claims a target supplies it.
+#[test]
+fn a_cooperative_region_requires_the_workgroup_storage_its_tile_allocates() {
+    let scheduled = cooperative_region();
+    assert_eq!(scheduled.requirements().local_memory_bytes, 12);
+    assert_eq!(scheduled.requirements().threads_per_workgroup, 3);
+}
+
+/// No canonical body exists for a cooperative tile, and lowering says so.
+///
+/// The refusal is the point. A body realizing the tile's phases would stage and
+/// re-read across invocations with nothing ordering the two, which is a race,
+/// so the lowering refuses the region before inserting any operation instead of
+/// authoring one.
+#[test]
+fn lowering_a_cooperative_region_is_refused_as_an_undischarged_visibility() {
+    let scheduled = cooperative_region();
+    assert_eq!(
+        lower_scheduled_region(&scheduled).unwrap_err(),
+        KernelLoweringError::Verification(KernelDiagnostic::UndischargedVisibility)
+    );
+}
+
+/// A hand-built cooperative kernel is refused for the same undischarged edge.
+///
+/// The signature and staging declarations are exactly what the tile states, so
+/// this reaches the visibility rule rather than failing earlier — which is what
+/// makes the three negative tests below evidence about *their* rules.
+#[test]
+fn a_correctly_declared_cooperative_kernel_is_still_refused() {
+    let scheduled = cooperative_region();
+    let mut builder = KernelBuilder::new(&scheduled).unwrap();
+    cooperative_signature(&mut builder, &scheduled);
+    builder.declare_staging(COOPERATIVE_STAGING).unwrap();
+    assert_eq!(
+        cooperative_diagnostic(builder),
+        KernelDiagnostic::UndischargedVisibility
+    );
+}
+
+/// Staging that does not realize the region's tile is refused.
+#[test]
+fn staging_that_contradicts_the_region_tile_is_refused() {
+    for staging in [
+        StagingParameter {
+            element_count: 4,
+            ..COOPERATIVE_STAGING
+        },
+        StagingParameter {
+            address_space: AddressSpace::Device,
+            ..COOPERATIVE_STAGING
+        },
+        StagingParameter {
+            element_type: KernelType::U8,
+            ..COOPERATIVE_STAGING
+        },
+        StagingParameter {
+            staging: StagingId::new(1),
+            ..COOPERATIVE_STAGING
+        },
+    ] {
+        let scheduled = cooperative_region();
+        let mut builder = KernelBuilder::new(&scheduled).unwrap();
+        cooperative_signature(&mut builder, &scheduled);
+        builder.declare_staging(staging).unwrap();
+        assert_eq!(
+            cooperative_diagnostic(builder),
+            KernelDiagnostic::StagingContract,
+            "{staging:?} was admitted against the region's tile"
+        );
+    }
+
+    // The count itself, in both directions.
+    let scheduled = cooperative_region();
+    let mut missing = KernelBuilder::new(&scheduled).unwrap();
+    cooperative_signature(&mut missing, &scheduled);
+    assert_eq!(
+        cooperative_diagnostic(missing),
+        KernelDiagnostic::StagingContract
+    );
+    let mut extra = KernelBuilder::new(&scheduled).unwrap();
+    cooperative_signature(&mut extra, &scheduled);
+    extra.declare_staging(COOPERATIVE_STAGING).unwrap();
+    extra
+        .declare_staging(StagingParameter {
+            staging: StagingId::new(1),
+            ..COOPERATIVE_STAGING
+        })
+        .unwrap();
+    assert_eq!(
+        cooperative_diagnostic(extra),
+        KernelDiagnostic::StagingContract
+    );
+}
+
+/// Declares the boundary signature of the `[2, 3] -> [2]` serial reduction.
+///
+/// No body follows it in the tests below: the staging and builtin rules run
+/// inside signature and cooperative verification, ahead of the body walk, so a
+/// body would add operations to a kernel that is already rejected and would
+/// obscure which rule the test is about.
+fn serial_reduction_signature(builder: &mut KernelBuilder, scheduled: &VerifiedScheduledRegion) {
+    builder
+        .declare_buffer(BufferParameter {
+            tensor: TensorRole::Intermediate,
+            component_role: None,
+            element_type: KernelType::F32,
+            address_space: AddressSpace::Device,
+            access: BufferAccess::Read,
+            element_count: 6,
+        })
+        .unwrap();
+    builder
+        .declare_buffer(BufferParameter {
+            tensor: TensorRole::Output,
+            component_role: None,
+            element_type: KernelType::F32,
+            address_space: AddressSpace::Device,
+            access: BufferAccess::Write,
+            element_count: 2,
+        })
+        .unwrap();
+    builder
+        .admit_builtin(Builtin::GlobalInvocationIndex)
+        .unwrap();
+    builder.numerical(numerical()).unwrap();
+    builder.requirements(scheduled.requirements()).unwrap();
+}
+
+/// A region that stages nothing may declare no workgroup storage.
+///
+/// Without this a producer could allocate threadgroup memory its schedule never
+/// proved, and the derived requirement composed against a target would be the
+/// schedule's zero rather than the kernel's real demand.
+#[test]
+fn a_noncooperative_kernel_declaring_staging_is_refused() {
+    let scheduled = reduction_region(
+        RegionId::new(24),
+        &Shape::from_dims([2, 3]),
+        &[Axis::new(1)],
+    );
+    let mut builder = KernelBuilder::new(&scheduled).unwrap();
+    serial_reduction_signature(&mut builder, &scheduled);
+    builder.declare_staging(COOPERATIVE_STAGING).unwrap();
+    assert_eq!(
+        cooperative_diagnostic(builder),
+        KernelDiagnostic::StagingContract
+    );
+}
+
+/// A cooperative kernel must admit the local invocation coordinate.
+///
+/// Its participants are named by their position in the workgroup, so a kernel
+/// that cannot read that position cannot say which participant it is.
+#[test]
+fn a_cooperative_kernel_without_the_local_coordinate_is_refused() {
+    let scheduled = cooperative_region();
+    let mut builder = KernelBuilder::new(&scheduled).unwrap();
+    builder
+        .declare_buffer(BufferParameter {
+            tensor: TensorRole::Intermediate,
+            component_role: None,
+            element_type: KernelType::F32,
+            address_space: AddressSpace::Device,
+            access: BufferAccess::Read,
+            element_count: 12,
+        })
+        .unwrap();
+    builder
+        .declare_buffer(BufferParameter {
+            tensor: TensorRole::Output,
+            component_role: None,
+            element_type: KernelType::F32,
+            address_space: AddressSpace::Device,
+            access: BufferAccess::Write,
+            element_count: 2,
+        })
+        .unwrap();
+    builder
+        .admit_builtin(Builtin::GlobalInvocationIndex)
+        .unwrap();
+    builder
+        .numerical(NumericalRealization {
+            reassociation: NumericalPermission::Permitted,
+            ..numerical()
+        })
+        .unwrap();
+    builder.requirements(scheduled.requirements()).unwrap();
+    builder.declare_staging(COOPERATIVE_STAGING).unwrap();
+    assert_eq!(
+        cooperative_diagnostic(builder),
+        KernelDiagnostic::BuiltinContract
+    );
+}
+
+/// A non-cooperative kernel must not admit the local coordinate either.
+#[test]
+fn a_noncooperative_kernel_admitting_the_local_coordinate_is_refused() {
+    let scheduled = reduction_region(
+        RegionId::new(25),
+        &Shape::from_dims([2, 3]),
+        &[Axis::new(1)],
+    );
+    let mut builder = KernelBuilder::new(&scheduled).unwrap();
+    serial_reduction_signature(&mut builder, &scheduled);
+    builder
+        .admit_builtin(Builtin::LocalInvocationIndex)
+        .unwrap();
+    assert_eq!(
+        cooperative_diagnostic(builder),
+        KernelDiagnostic::BuiltinContract
+    );
+}
+
+/// Workgroup storage is never a buffer *parameter*, whatever it is used for.
+///
+/// A parameter's position is its argument-table ordinal, so admitting a
+/// workgroup buffer would re-base every later ordinal and change what an
+/// existing signature position means. The refusal holds for a cooperative
+/// region, which does require workgroup storage, so it is a rule about the
+/// binding namespace rather than about whether local memory is needed.
+#[test]
+fn workgroup_storage_is_refused_as_a_buffer_parameter() {
+    let scheduled = cooperative_region();
+    let mut builder = KernelBuilder::new(&scheduled).unwrap();
+    builder
+        .declare_buffer(BufferParameter {
+            tensor: TensorRole::Intermediate,
+            component_role: None,
+            element_type: KernelType::F32,
+            address_space: AddressSpace::Workgroup,
+            access: BufferAccess::Read,
+            element_count: 12,
+        })
+        .unwrap();
+    builder
+        .declare_buffer(BufferParameter {
+            tensor: TensorRole::Output,
+            component_role: None,
+            element_type: KernelType::F32,
+            address_space: AddressSpace::Device,
+            access: BufferAccess::Write,
+            element_count: 2,
+        })
+        .unwrap();
+    builder
+        .admit_builtin(Builtin::GlobalInvocationIndex)
+        .unwrap();
+    builder
+        .admit_builtin(Builtin::LocalInvocationIndex)
+        .unwrap();
+    builder
+        .numerical(NumericalRealization {
+            reassociation: NumericalPermission::Permitted,
+            ..numerical()
+        })
+        .unwrap();
+    builder.requirements(scheduled.requirements()).unwrap();
+    builder.declare_staging(COOPERATIVE_STAGING).unwrap();
+    assert_eq!(
+        cooperative_diagnostic(builder),
+        KernelDiagnostic::AddressSpaceContract
+    );
+}
+
+/// A zero-extent reduction commits `+0.0` with no fold and no synchronization.
+///
+/// The authority a cooperative tile must not disturb: the empty result is the
+/// reducer's declared `empty_identity_bits`, committed by one invocation from a
+/// constant. There is no loop to enter and nothing to stage, which is why the
+/// schedule verifier refuses a tile over an empty contributor domain rather
+/// than describing a handoff of values no participant produces.
+#[test]
+fn a_zero_extent_reduction_commits_its_identity_without_a_loop_or_a_barrier() {
+    let scheduled = reduction_region(
+        RegionId::new(26),
+        &Shape::from_dims([2, 0]),
+        &[Axis::new(1)],
+    );
+    let kernel = lower_scheduled_region(&scheduled).unwrap();
+    assert_eq!(kernel.staging().len(), 0);
+    assert_eq!(kernel.requirements().local_memory_bytes, 0);
+    assert_eq!(kernel.admitted_builtins(), [Builtin::GlobalInvocationIndex]);
+    let mut stored = None;
+    let mut loops = 0;
+    let mut barriers = 0;
+    for operation in kernel.body().operations() {
+        let OperationView::Predicated { body, .. } = operation.view() else {
+            continue;
+        };
+        for inner in body.operations() {
+            match inner.view() {
+                OperationView::SerialLoop(_) => loops += 1,
+                OperationView::Barrier { .. } => barriers += 1,
+                OperationView::Store { value, .. } => {
+                    stored = kernel.value_constant(value).unwrap();
+                }
+                _ => {}
+            }
+        }
+    }
+    assert_eq!(loops, 0);
+    assert_eq!(barriers, 0);
+    assert_eq!(stored, Some(KernelConstant::F32Bits(0.0_f32.to_bits())));
 }

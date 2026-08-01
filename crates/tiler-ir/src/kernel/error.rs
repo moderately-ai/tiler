@@ -20,6 +20,8 @@ use super::model::KernelType;
 pub enum KernelLimitKind {
     /// Buffer-parameter count of one kernel signature.
     Buffers,
+    /// Workgroup staging-allocation count of one kernel.
+    Staging,
     /// Admitted launch-builtin count of one kernel signature.
     AdmittedBuiltins,
     /// SSA value count of one kernel.
@@ -221,6 +223,21 @@ pub enum KernelDiagnostic {
     EffectOrdering,
     /// The kernel contains synchronization that no schedule has authorized.
     UnexpectedSynchronization,
+    /// The declared staging allocations do not realize the region's tile.
+    StagingContract,
+    /// The region's cooperative dataflow carries a visibility dependency that
+    /// no schedule has authorized a synchronization point for.
+    ///
+    /// A cooperative tile states that values one participant writes to
+    /// workgroup storage are read by others in a later phase. Nothing orders
+    /// those two phases: the barrier vocabulary is refused intrinsically by
+    /// [`Self::UnexpectedSynchronization`], and no schedule owns a
+    /// synchronization point, participant set, or convergence proof a barrier
+    /// could be matched against. Admitting the kernel would deliver a race, so
+    /// the dependency is refused rather than assumed discharged. Removing this
+    /// refusal is the synchronization authority's work, not a widening of this
+    /// verifier's.
+    UndischargedVisibility,
     /// The structured loops do not realize the scheduled reduction topology.
     ReductionContract,
     /// The reduction contributor domain is malformed.
@@ -256,6 +273,8 @@ impl KernelDiagnostic {
             Self::OutputCoverage => "output-coverage",
             Self::EffectOrdering => "effect-ordering",
             Self::UnexpectedSynchronization => "unexpected-synchronization",
+            Self::StagingContract => "staging-contract",
+            Self::UndischargedVisibility => "undischarged-visibility",
             Self::ReductionContract => "reduction-contract",
             Self::ContributorDomain => "contributor-domain",
             Self::ElementCountOverflow => "element-count-overflow",

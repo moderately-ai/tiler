@@ -9,21 +9,25 @@
 //! agreement, and zero-domain behaviour. No later cost or feasibility query can
 //! repair a schedule this verifier rejects.
 
+use super::cooperative::{CooperativeTile, ParticipantRange, StagedSpan};
 use super::error::{
-    ScheduleBuildError, ScheduleComponent, ScheduleLimitKind, ScheduledRegionBuildError,
-    ScheduledRegionDiagnostic,
+    CooperativeTileRule, ScheduleBuildError, ScheduleComponent, ScheduleLimitKind,
+    ScheduledRegionBuildError, ScheduledRegionDiagnostic,
 };
-use super::handles::{InputOrdinal, RegionId};
+use super::handles::{InputOrdinal, RegionId, StagingId};
 use super::model::{
     Access, AccessMode, BoundsProof, BoundsProofKind, CanonicalScheduledRegionIdentity,
     ContractionAxisSource, ExecutionBinding, IndexRegion, KernelSchedule, LogicalAccess,
     OwnershipProof, OwnershipProofKind, ReductionPass, ReductionTopology, ResourceRequirements,
     ScalarProgram, ScheduledRegion, TailPolicy, TensorRole, VerifiedScheduledRegion,
-    contributor_count, derive_requirements, element_count, encode_identity, partial_reduction_axis,
-    partial_reduction_shape,
+    contributor_count, cooperative_tile, derive_requirements, element_count, encode_identity,
+    partial_reduction_axis, partial_reduction_shape,
 };
 use super::numerics::{ArithmeticType, ExceptionalValueAssumption, NumericalRealization};
-use super::{MAX_SCHEDULE_ACCESSES, MAX_SCHEDULE_BOUNDS_PROOFS};
+use super::{
+    MAX_COOPERATIVE_PARTICIPANTS, MAX_COOPERATIVE_PHASE_ACCESSES, MAX_COOPERATIVE_PHASES,
+    MAX_COOPERATIVE_STAGING_SLOTS, MAX_SCHEDULE_ACCESSES, MAX_SCHEDULE_BOUNDS_PROOFS,
+};
 use crate::semantic::{
     STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
 };
@@ -625,6 +629,12 @@ fn verify_access_and_semantics(
     ) {
         return verify_multi_pass_semantics(region, read, write);
     }
+    if matches!(
+        region.schedule.reduction,
+        ReductionTopology::CooperativeWorkgroup { .. }
+    ) {
+        return verify_cooperative_semantics(region, read, write);
+    }
     let numerical = &region.index.numerical;
     match (
         &region.index.scalar_program,
@@ -863,31 +873,382 @@ fn verify_multi_pass_semantics(
     }
 }
 
+/// Verifies one cooperative workgroup reduction tile and its split.
+///
+/// Two obligations that stay apart. The *semantic* half proves the tile realizes
+/// the region's declared reduction: the split covers the contributor sequence
+/// exactly once each, the participants are the partitions, the iteration domain
+/// runs one invocation per (output, participant) pair, and the reassociation the
+/// split performs is one the contract permits. The *dataflow* half, in
+/// [`verify_cooperative_tile`], proves the staging itself is well formed
+/// independently of what is being reduced.
+///
+/// Neither half authorizes the handoff. The tile's visibility edges are
+/// recorded, never discharged: the structured-kernel verifier refuses a kernel
+/// whose region carries one, so a well-formed tile is a representation of a
+/// dataflow rather than a claim that any target can run it.
+fn verify_cooperative_semantics(
+    region: &ScheduledRegion,
+    read: &Access,
+    write: &Access,
+) -> Result<(), ScheduledRegionDiagnostic> {
+    let ReductionTopology::CooperativeWorkgroup {
+        partition,
+        tile,
+        axes: scheduled_axes,
+        order: scheduled_order,
+        accumulation,
+        permits_reassociation,
+        permits_permutation,
+    } = &region.schedule.reduction
+    else {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    };
+    let numerical = &region.index.numerical;
+    // Reassociation is what a split consumes, exactly as it is for a multi-pass
+    // one, and it is required rather than merely recorded: a contract that
+    // forbids reassociation forbids this strategy outright.
+    if *permits_reassociation != numerical.permits_reassociation()
+        || *permits_permutation != numerical.permits_permutation()
+        || !*permits_reassociation
+        || *accumulation != ArithmeticType::F32
+    {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+
+    // A cooperative tile reads the original inputs and commits the reduction's
+    // own output in one dispatch, so every family whose prologue belongs to the
+    // pass that reads the inputs is admissible — there is no later pass here for
+    // a prologue to be applied twice in.
+    let (axes, order, empty_identity_bits, read_tensor) = match &region.index.scalar_program {
+        ScalarProgram::StrictSerialSum {
+            axes,
+            order,
+            empty_identity_bits,
+            ..
+        } => (axes, order, *empty_identity_bits, TensorRole::Intermediate),
+        ScalarProgram::FusedMultiplyAddSerialSum {
+            axes,
+            order,
+            empty_identity_bits,
+            contraction,
+            ..
+        } if !contraction => (axes, order, *empty_identity_bits, FIRST_INPUT),
+        ScalarProgram::SquaredSerialSum {
+            axes,
+            order,
+            empty_identity_bits,
+            ..
+        } => (axes, order, *empty_identity_bits, FIRST_INPUT),
+        ScalarProgram::PointwiseF32(_)
+        | ScalarProgram::StrictAffineU4Dequantize { .. }
+        | ScalarProgram::StrictTensorContraction { .. }
+        | ScalarProgram::FusedMultiplyAddSerialSum { .. } => {
+            return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+        }
+    };
+
+    let LogicalAccess::ReductionContributor {
+        input_shape,
+        output_shape,
+        axes: access_axes,
+        order: access_order,
+    } = &read.map
+    else {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    };
+    if axes != scheduled_axes
+        || axes != access_axes
+        || order != scheduled_order
+        || order != access_order
+        // The strict sum's empty result is `+0.0`, and every family here shares
+        // it. Required at the same place the serial and multi-pass arms require
+        // it, so a tile cannot introduce a second empty-domain answer.
+        || empty_identity_bits != 0.0_f32.to_bits()
+        || input_shape.without_axes(axes) != *output_shape
+        || read.tensor != read_tensor
+        || write.tensor != TensorRole::Output
+    {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+
+    let contributors = contributor_count(axes, &read.map)
+        .map_err(|_| ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?;
+    // An empty contributor domain commits the declared identity from one
+    // invocation with no fold, which is what the serial topology already does
+    // and what needs no staging at all. A tile over it would declare a
+    // visibility edge for values no participant produces.
+    if contributors == 0 {
+        return Err(cooperative(CooperativeTileRule::EmptyContributorDomain));
+    }
+    // The iteration domain is the output shape with one trailing participant
+    // axis — the same layout a partial pass uses, and for the same reason: it
+    // makes the participant ordinal the innermost coordinate of the invocation
+    // index, so a participant's local coordinate is derivable without a second
+    // layout rule.
+    let participants = tile.coordinates.participants.count;
+    if !partition.covers(contributors)
+        || partition.partitions != participants
+        || partial_reduction_shape(output_shape, *partition)
+            .is_none_or(|shape| region.index.iteration_shape != shape)
+    {
+        return Err(cooperative(CooperativeTileRule::ContributorSplit));
+    }
+    verify_cooperative_tile(region, tile)
+}
+
+/// Verifies one cooperative tile's cross-invocation dataflow.
+///
+/// Every rule here is decided by enumerating the slots each participant
+/// addresses, which is why the governed bounds are checked first: enumeration is
+/// what makes disjointness and coverage exact instead of a modular argument, and
+/// an unbounded tile would make it unbounded work.
+fn verify_cooperative_tile(
+    region: &ScheduledRegion,
+    tile: &CooperativeTile,
+) -> Result<(), ScheduledRegionDiagnostic> {
+    let participants = tile.coordinates.participants;
+    if participants.count > MAX_COOPERATIVE_PARTICIPANTS
+        || tile.phases.len() > MAX_COOPERATIVE_PHASES
+        || tile
+            .phases
+            .iter()
+            .any(|phase| phase.writes.len() > MAX_COOPERATIVE_PHASE_ACCESSES)
+        || tile
+            .phases
+            .iter()
+            .any(|phase| phase.reads.len() > MAX_COOPERATIVE_PHASE_ACCESSES)
+        || tile
+            .staging
+            .iter()
+            .try_fold(0_u64, |total, staging| total.checked_add(staging.slots))
+            .is_none_or(|slots| slots > MAX_COOPERATIVE_STAGING_SLOTS)
+    {
+        return Err(cooperative(CooperativeTileRule::StructuralLimit));
+    }
+    // Local coordinates are the dense run the participants occupy. A tile whose
+    // run does not start at zero leaves the workgroup's lower invocations with
+    // no coordinate, so nothing could say what they execute.
+    if participants.first != 0 || participants.count == 0 || participants.end().is_none() {
+        return Err(cooperative(CooperativeTileRule::LocalCoordinates));
+    }
+    // Uniform convergence. Every launched invocation of the workgroup is a
+    // participant, so a synchronization point placed in any phase is one they
+    // all reach.
+    if participants.count != u64::from(region.schedule.threads_per_workgroup) {
+        return Err(cooperative(CooperativeTileRule::ParticipantConvergence));
+    }
+    // Exactly one participant performs the region's owning write, which is what
+    // makes `OneGlobalInvocationPerOutput` true of a workgroup that runs several
+    // invocations over one output position.
+    if tile.commit.count != 1 || !participants.contains_range(tile.commit) {
+        return Err(cooperative(CooperativeTileRule::CommitOwnership));
+    }
+
+    let phase_count = u32::try_from(tile.phases.len())
+        .map_err(|_| cooperative(CooperativeTileRule::StructuralLimit))?;
+    if tile.phases.is_empty()
+        || tile
+            .phases
+            .iter()
+            .enumerate()
+            .any(|(position, phase)| u32::try_from(position) != Ok(phase.id.get()))
+    {
+        return Err(cooperative(CooperativeTileRule::PhaseSequence));
+    }
+    // Nonuniform reachability is stated per phase precisely so it can be
+    // refused: a synchronization point inside a phase some participants skip is
+    // divergent, and this is where a tile that would place one is caught.
+    if tile
+        .phases
+        .iter()
+        .any(|phase| phase.participation != participants)
+    {
+        return Err(cooperative(CooperativeTileRule::PhaseParticipation));
+    }
+
+    let staging_count = u32::try_from(tile.staging.len())
+        .map_err(|_| cooperative(CooperativeTileRule::StructuralLimit))?;
+    if tile.staging.is_empty()
+        || tile
+            .staging
+            .iter()
+            .enumerate()
+            .any(|(position, staging)| u32::try_from(position) != Ok(staging.id.get()))
+    {
+        return Err(cooperative(CooperativeTileRule::StagingCapacity));
+    }
+    tile.local_memory_bytes()
+        .ok_or_else(|| cooperative(CooperativeTileRule::StructuralLimit))?;
+    // A lifetime that ends before it begins, or that names a phase the tile does
+    // not have, cannot bound anything.
+    if tile.staging.iter().any(|staging| {
+        staging.live_from > staging.live_through || staging.live_through.get() >= phase_count
+    }) {
+        return Err(cooperative(CooperativeTileRule::StagingLifetime));
+    }
+
+    // One writer per slot, and every in-range slot written. The two are checked
+    // together over one occupancy map because they are the two halves of the
+    // same statement: the participants' writes are a bijection onto the
+    // allocation's slots.
+    let mut written: Vec<Vec<bool>> = tile
+        .staging
+        .iter()
+        .map(|staging| {
+            vec![
+                false;
+                usize::try_from(staging.slots)
+                    .unwrap_or(usize::MAX)
+                    .min(usize::try_from(MAX_COOPERATIVE_STAGING_SLOTS).unwrap_or(usize::MAX))
+            ]
+        })
+        .collect();
+    for phase in &tile.phases {
+        for write in &phase.writes {
+            let staging = resolve_staging(tile, write.staging, staging_count)?;
+            if phase.id < staging.live_from || phase.id > staging.live_through {
+                return Err(cooperative(CooperativeTileRule::StagingLifetime));
+            }
+            let occupancy = written
+                .get_mut(usize::try_from(write.staging.get()).unwrap_or(usize::MAX))
+                .ok_or_else(|| cooperative(CooperativeTileRule::StagingCapacity))?;
+            for slot in addressed_slots(participants, write.span, staging.slots)? {
+                let slot = occupancy
+                    .get_mut(usize::try_from(slot).unwrap_or(usize::MAX))
+                    .ok_or_else(|| cooperative(CooperativeTileRule::StagingCapacity))?;
+                // A second write to a live slot needs a per-round lifetime and a
+                // per-round visibility edge this profile does not model, so a
+                // rewriting tree is refused here rather than approximated.
+                if std::mem::replace(slot, true) {
+                    return Err(cooperative(CooperativeTileRule::StagingConflict));
+                }
+            }
+        }
+    }
+    if written
+        .iter()
+        .any(|occupancy| occupancy.iter().any(|written| !written))
+    {
+        return Err(cooperative(CooperativeTileRule::StagingCoverage));
+    }
+
+    for phase in &tile.phases {
+        for read in &phase.reads {
+            let staging = resolve_staging(tile, read.staging, staging_count)?;
+            if phase.id < staging.live_from || phase.id > staging.live_through {
+                return Err(cooperative(CooperativeTileRule::StagingLifetime));
+            }
+            addressed_slots(participants, read.span, staging.slots)?;
+            // Coverage above already proved every in-range slot has a writer, so
+            // what remains is the *ordering*: the writer must be in an earlier
+            // phase, or the read observes values its own phase is still
+            // producing and no synchronization point could ever separate them.
+            if !tile.phases.iter().any(|producer| {
+                producer.id < phase.id
+                    && producer
+                        .writes
+                        .iter()
+                        .any(|write| write.staging == read.staging)
+            }) {
+                return Err(cooperative(CooperativeTileRule::StagedProducer));
+            }
+        }
+    }
+
+    if tile.visibility_edges().is_empty() {
+        return Err(cooperative(CooperativeTileRule::NoVisibilityEdge));
+    }
+    Ok(())
+}
+
+/// Resolves one staged access's allocation, refusing an ordinal the tile lacks.
+fn resolve_staging(
+    tile: &CooperativeTile,
+    id: StagingId,
+    staging_count: u32,
+) -> Result<super::cooperative::WorkgroupStaging, ScheduledRegionDiagnostic> {
+    if id.get() >= staging_count {
+        return Err(cooperative(CooperativeTileRule::StagingCapacity));
+    }
+    tile.staging
+        .get(usize::try_from(id.get()).unwrap_or(usize::MAX))
+        .copied()
+        .ok_or_else(|| cooperative(CooperativeTileRule::StagingCapacity))
+}
+
+/// Returns every slot the participants address through one span.
+///
+/// An address that overflows `u64` and one that merely exceeds the allocation
+/// are the same refusal, because both mean the span leaves the storage the tile
+/// declared.
+fn addressed_slots(
+    participants: ParticipantRange,
+    span: StagedSpan,
+    slots: u64,
+) -> Result<Vec<u64>, ScheduledRegionDiagnostic> {
+    if span.count == 0 {
+        return Err(cooperative(CooperativeTileRule::StagingCapacity));
+    }
+    let addressed = CooperativeTile::addressed_slots(participants, span)
+        .ok_or_else(|| cooperative(CooperativeTileRule::StagingCapacity))?;
+    if addressed.iter().any(|slot| *slot >= slots) {
+        return Err(cooperative(CooperativeTileRule::StagingCapacity));
+    }
+    Ok(addressed)
+}
+
+const fn cooperative(rule: CooperativeTileRule) -> ScheduledRegionDiagnostic {
+    ScheduledRegionDiagnostic::CooperativeTile { rule }
+}
+
+/// Returns the boundary output positions one region's owning write covers.
+///
+/// Equal to the work-item count for every topology in which one invocation owns
+/// one output. A cooperative tile runs one invocation per (output, participant)
+/// pair, so its owned set is `participants` times smaller — and the ownership
+/// proof, the write's bounds proof, and the write's linear index all read this
+/// value rather than the work-item count, which would otherwise claim ownership
+/// of positions the region never writes.
+fn owned_output_positions(region: &ScheduledRegion) -> Option<u64> {
+    let work_items = region.schedule.work_items;
+    let Some(tile) = cooperative_tile(&region.schedule.reduction) else {
+        return Some(work_items);
+    };
+    let participants = tile.coordinates.participants.count;
+    if participants == 0 || !work_items.is_multiple_of(participants) {
+        return None;
+    }
+    Some(work_items / participants)
+}
+
 /// Returns the reduction output shape this region's iteration domain realizes.
 ///
 /// A serial or final pass iterates the reduction's own output; a partial pass
 /// iterates it once per partition, so its iteration shape carries one trailing
-/// axis the reduction domain does not. Reading the domain back from the
-/// iteration shape is what lets one bounds-proof rule serve both.
+/// axis the reduction domain does not. A cooperative tile has the same trailing
+/// axis, one coordinate per participant, for the same reason. Reading the domain
+/// back from the iteration shape is what lets one bounds-proof rule serve all
+/// three.
 fn reduction_output_shape(region: &ScheduledRegion) -> Option<crate::shape::Shape> {
     let shape = &region.index.iteration_shape;
-    match &region.schedule.reduction {
+    let trailing_partitions = match &region.schedule.reduction {
         ReductionTopology::MultiPass {
             pass: ReductionPass::Partial,
             partition,
             ..
-        } => {
-            let kept = shape.rank().checked_sub(1)?;
-            let trailing = shape.extents().get(kept)?;
-            (trailing.get() == partition.partitions)
-                .then(|| crate::shape::Shape::try_new(shape.extents()[..kept].iter().copied()).ok())
-                .flatten()
         }
+        | ReductionTopology::CooperativeWorkgroup { partition, .. } => partition.partitions,
         ReductionTopology::None
         | ReductionTopology::Serial { .. }
         | ReductionTopology::Contraction { .. }
-        | ReductionTopology::MultiPass { .. } => Some(shape.clone()),
-    }
+        | ReductionTopology::MultiPass { .. } => return Some(shape.clone()),
+    };
+    let kept = shape.rank().checked_sub(1)?;
+    let trailing = shape.extents().get(kept)?;
+    (trailing.get() == trailing_partitions)
+        .then(|| crate::shape::Shape::try_new(shape.extents()[..kept].iter().copied()).ok())
+        .flatten()
 }
 
 fn verify_proof_records(
@@ -910,10 +1271,10 @@ fn verify_proof_records(
         || read_proofs.iter().any(|proof| proof.id == write_proof.id)
         || region.index.ownership_proof.id != region.schedule.output_owner
         || region.index.ownership_proof.tensor != write.tensor
-        || region.index.ownership_proof.kind
-            != (OwnershipProofKind::OneGlobalInvocationPerOutput {
-                output_count: region.schedule.work_items,
-            })
+        || owned_output_positions(region).is_none_or(|output_count| {
+            region.index.ownership_proof.kind
+                != (OwnershipProofKind::OneGlobalInvocationPerOutput { output_count })
+        })
     {
         return Err(ScheduledRegionDiagnostic::ProofReference);
     }
@@ -934,8 +1295,12 @@ fn bounds_proof_refines_access(
     region: &ScheduledRegion,
 ) -> bool {
     match (&proof.kind, access) {
+        // The owned positions rather than the work items: they are the same
+        // number for every topology that runs one invocation per output, and a
+        // cooperative tile's write covers one position per workgroup rather than
+        // one per invocation.
         (BoundsProofKind::LinearRange { element_count }, LogicalAccess::LinearIdentity) => {
-            *element_count == region.schedule.work_items
+            owned_output_positions(region).is_some_and(|owned| *element_count == owned)
         }
         (BoundsProofKind::LinearRange { element_count }, LogicalAccess::ScalarBroadcast) => {
             *element_count == 1
@@ -989,7 +1354,12 @@ mod tests {
     use std::fmt::Write as _;
 
     use crate::schedule::PointwiseF32ExpressionBuilder;
-    use crate::schedule::handles::{BoundsWitnessId, OwnershipWitnessId};
+    use crate::schedule::cooperative::{
+        CooperativePhase, CooperativeTile, LocalCoordinateSource, LocalCoordinates,
+        ParticipantRange, StagedElement, StagedRead, StagedSpan, StagedWrite, VisibilityEdge,
+        WorkgroupStaging,
+    };
+    use crate::schedule::handles::{BoundsWitnessId, OwnershipWitnessId, PhaseId, StagingId};
     use crate::schedule::model::{ContributorOrder, ContributorPartition, LaunchPlan};
     use crate::schedule::numerics::{
         ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
@@ -2368,6 +2738,630 @@ mod tests {
             );
             seen.push(identity);
         }
+    }
+
+    // ---- Cooperative workgroup tiles -------------------------------------
+    //
+    // Every fixture below is the same `[2, 6] -> [2]` reduction the split tests
+    // use, realized cooperatively: three participants per workgroup, each
+    // folding two contributors into its own staging slot, and one commit. The
+    // perturbation tests each change exactly one fact of that fixture, so a
+    // rejection names the rule the change violated rather than a difference the
+    // fixture happened to carry.
+
+    /// The staging allocation every cooperative fixture below declares.
+    fn tile_staging(slots: u64, live_through: PhaseId) -> WorkgroupStaging {
+        WorkgroupStaging {
+            id: StagingId::FIRST,
+            element: StagedElement::F32,
+            slots,
+            live_from: PhaseId::FIRST,
+            live_through,
+        }
+    }
+
+    /// The well-formed tile: write your own slot, then read the whole set.
+    fn cooperative_tile_fixture() -> CooperativeTile {
+        CooperativeTile {
+            coordinates: LocalCoordinates {
+                source: LocalCoordinateSource::LocalLinearInvocation,
+                participants: ParticipantRange { first: 0, count: 3 },
+            },
+            staging: vec![tile_staging(3, PhaseId::new(1))],
+            phases: vec![
+                CooperativePhase {
+                    id: PhaseId::FIRST,
+                    participation: ParticipantRange { first: 0, count: 3 },
+                    writes: vec![StagedWrite {
+                        staging: StagingId::FIRST,
+                        span: StagedSpan {
+                            stride: 1,
+                            offset: 0,
+                            count: 1,
+                        },
+                    }],
+                    reads: Vec::new(),
+                },
+                CooperativePhase {
+                    id: PhaseId::new(1),
+                    participation: ParticipantRange { first: 0, count: 3 },
+                    writes: Vec::new(),
+                    reads: vec![StagedRead {
+                        staging: StagingId::FIRST,
+                        span: StagedSpan {
+                            stride: 0,
+                            offset: 0,
+                            count: 3,
+                        },
+                    }],
+                },
+            ],
+            commit: ParticipantRange { first: 0, count: 1 },
+        }
+    }
+
+    fn cooperative_topology(tile: CooperativeTile) -> ReductionTopology {
+        ReductionTopology::CooperativeWorkgroup {
+            partition: SPLIT,
+            tile,
+            axes: vec![Axis::new(1)],
+            order: ContributorOrder::OriginalAxisLexicographic,
+            accumulation: ArithmeticType::F32,
+            permits_reassociation: true,
+            permits_permutation: false,
+        }
+    }
+
+    /// Builds the cooperative realization of the `[2, 6] -> [2]` reduction.
+    ///
+    /// One workgroup per output position, three invocations per workgroup, so
+    /// the iteration domain is the output shape with the participant axis
+    /// appended — the same layout a partial pass uses, which is what keeps the
+    /// participant ordinal the innermost coordinate of the invocation index.
+    fn cooperative_builder(tile: CooperativeTile) -> ScheduledRegionBuilder {
+        let participants = tile.coordinates.participants.count;
+        let work_items = 2 * participants;
+        let mut builder = ScheduledRegionBuilder::new(RegionId::new(4));
+        builder
+            .iteration_shape(
+                partial_reduction_shape(&Shape::from_dims([2]), SPLIT)
+                    .expect("a rank-two cooperative domain is within the governed bound"),
+            )
+            .unwrap();
+        builder
+            .push_access(Access {
+                tensor: TensorRole::Intermediate,
+                component_role: None,
+                mode: AccessMode::Read,
+                map: LogicalAccess::ReductionContributor {
+                    input_shape: Shape::from_dims([2, 6]),
+                    output_shape: Shape::from_dims([2]),
+                    axes: vec![Axis::new(1)],
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                },
+                bounds: BoundsWitnessId::new(0),
+                ownership: None,
+            })
+            .unwrap();
+        builder
+            .push_access(Access {
+                tensor: TensorRole::Output,
+                component_role: None,
+                mode: AccessMode::Write,
+                map: LogicalAccess::LinearIdentity,
+                bounds: BoundsWitnessId::new(1),
+                ownership: Some(OwnershipWitnessId::new(0)),
+            })
+            .unwrap();
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(0),
+                tensor: TensorRole::Intermediate,
+                component_role: None,
+                kind: BoundsProofKind::ReductionDomain {
+                    input_shape: Shape::from_dims([2, 6]),
+                    output_shape: Shape::from_dims([2]),
+                    axes: vec![Axis::new(1)],
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                },
+            })
+            .unwrap();
+        // Two positions, not six: the write covers one output per workgroup, and
+        // the ownership proof below says the same number.
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(1),
+                tensor: TensorRole::Output,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange { element_count: 2 },
+            })
+            .unwrap();
+        builder
+            .ownership_proof(OwnershipProof {
+                id: OwnershipWitnessId::new(0),
+                tensor: TensorRole::Output,
+                kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 2 },
+            })
+            .unwrap();
+        builder
+            .scalar_program(ScalarProgram::StrictSerialSum {
+                axes: vec![Axis::new(1)],
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: 0x7fc0_0000,
+                empty_identity_bits: 0.0_f32.to_bits(),
+            })
+            .unwrap();
+        builder.numerical(reassociating_numerical()).unwrap();
+        let threads = u32::try_from(participants).expect("the fixture's width fits u32");
+        builder
+            .schedule(KernelSchedule {
+                threads_per_workgroup: threads,
+                reduction: cooperative_topology(tile),
+                launch: LaunchPlan {
+                    grid_threads: work_items,
+                    threads_per_workgroup: threads,
+                    zero_work_skips_dispatch: true,
+                },
+                ..linear_schedule(work_items, OwnershipWitnessId::new(0))
+            })
+            .unwrap();
+        builder
+    }
+
+    /// Applies one edit to the fixture tile and returns the resulting builder.
+    fn perturbed(edit: impl FnOnce(&mut CooperativeTile)) -> ScheduledRegionBuilder {
+        let mut tile = cooperative_tile_fixture();
+        edit(&mut tile);
+        cooperative_builder(tile)
+    }
+
+    fn cooperative_rejection(builder: ScheduledRegionBuilder) -> ScheduledRegionDiagnostic {
+        let diagnostics = builder.build().unwrap_err().diagnostics().to_vec();
+        let [diagnostic] = diagnostics.as_slice() else {
+            panic!("expected exactly one diagnostic, got {diagnostics:?}")
+        };
+        *diagnostic
+    }
+
+    /// One cooperative tile verifies, and states everything the handoff needs.
+    #[test]
+    fn one_cooperative_tile_verifies_and_derives_its_workgroup_storage() {
+        let verified = cooperative_builder(cooperative_tile_fixture())
+            .build()
+            .expect("the cooperative fixture verifies");
+        // Three `f32` slots, which is the only workgroup memory this tile asks
+        // for and the value a feasibility authority composes against a target's
+        // declared threadgroup memory.
+        assert_eq!(verified.requirements().local_memory_bytes, 12);
+        assert_eq!(verified.requirements().threads_per_workgroup, 3);
+        // Six invocations over two output positions: the ownership proof counts
+        // the positions, not the invocations.
+        assert_eq!(verified.region().schedule.work_items, 6);
+        let tile = cooperative_tile(&verified.region().schedule.reduction)
+            .expect("the topology carries its tile");
+        // The exact dependency a synchronization point would have to discharge.
+        assert_eq!(
+            tile.visibility_edges(),
+            [VisibilityEdge {
+                staging: StagingId::FIRST,
+                produced_in: PhaseId::FIRST,
+                consumed_in: PhaseId::new(1),
+            }]
+        );
+        // The split it consumes, and only that split.
+        assert_eq!(
+            verified.requirements().reassociation,
+            NumericalPermission::Permitted
+        );
+        assert_eq!(
+            verified.requirements().permutation,
+            NumericalPermission::Forbidden
+        );
+    }
+
+    /// Two participants writing one slot is a race the tile can state.
+    #[test]
+    fn overlapping_staged_writes_are_rejected() {
+        assert_eq!(
+            cooperative_rejection(perturbed(|tile| {
+                tile.phases[0].writes[0].span.stride = 0;
+            })),
+            ScheduledRegionDiagnostic::CooperativeTile {
+                rule: CooperativeTileRule::StagingConflict,
+            }
+        );
+    }
+
+    /// A read after the allocation's declared lifetime ends is rejected.
+    #[test]
+    fn a_staged_read_outside_the_declared_lifetime_is_rejected() {
+        assert_eq!(
+            cooperative_rejection(perturbed(|tile| {
+                tile.staging[0].live_through = PhaseId::FIRST;
+            })),
+            ScheduledRegionDiagnostic::CooperativeTile {
+                rule: CooperativeTileRule::StagingLifetime,
+            }
+        );
+    }
+
+    /// A slot inside the allocation that no participant writes is rejected.
+    #[test]
+    fn a_staging_slot_with_no_writer_is_rejected() {
+        assert_eq!(
+            cooperative_rejection(perturbed(|tile| {
+                tile.staging[0].slots = 4;
+            })),
+            ScheduledRegionDiagnostic::CooperativeTile {
+                rule: CooperativeTileRule::StagingCoverage,
+            }
+        );
+    }
+
+    /// A phase only some participants reach is rejected.
+    ///
+    /// The rule a barrier depends on: a synchronization point inside a phase
+    /// the remaining participants skip is divergent, so the phase set has to be
+    /// uniform before any point can be placed in it.
+    #[test]
+    fn a_nonuniformly_reachable_phase_is_rejected() {
+        assert_eq!(
+            cooperative_rejection(perturbed(|tile| {
+                tile.phases[1].participation = ParticipantRange { first: 0, count: 2 };
+            })),
+            ScheduledRegionDiagnostic::CooperativeTile {
+                rule: CooperativeTileRule::PhaseParticipation,
+            }
+        );
+    }
+
+    /// A participant run that does not start at local coordinate zero is rejected.
+    #[test]
+    fn an_invalid_local_coordinate_space_is_rejected() {
+        assert_eq!(
+            cooperative_rejection(perturbed(|tile| {
+                tile.coordinates.participants.first = 1;
+                for phase in &mut tile.phases {
+                    phase.participation.first = 1;
+                }
+            })),
+            ScheduledRegionDiagnostic::CooperativeTile {
+                rule: CooperativeTileRule::LocalCoordinates,
+            }
+        );
+    }
+
+    /// Storage too small for the slots the participants address is rejected.
+    #[test]
+    fn insufficient_staging_storage_is_rejected() {
+        assert_eq!(
+            cooperative_rejection(perturbed(|tile| {
+                tile.staging[0].slots = 2;
+            })),
+            ScheduledRegionDiagnostic::CooperativeTile {
+                rule: CooperativeTileRule::StagingCapacity,
+            }
+        );
+    }
+
+    /// A staged read in the phase that writes it has no producer to observe.
+    #[test]
+    fn a_staged_read_with_no_producing_phase_is_rejected() {
+        assert_eq!(
+            cooperative_rejection(perturbed(|tile| {
+                let read = tile.phases[1].reads.remove(0);
+                tile.phases[0].reads.push(read);
+            })),
+            ScheduledRegionDiagnostic::CooperativeTile {
+                rule: CooperativeTileRule::StagedProducer,
+            }
+        );
+    }
+
+    /// A tile that stages values nobody reads performs no cooperation.
+    #[test]
+    fn a_tile_with_no_visibility_edge_is_rejected() {
+        assert_eq!(
+            cooperative_rejection(perturbed(|tile| {
+                tile.phases[1].reads.clear();
+            })),
+            ScheduledRegionDiagnostic::CooperativeTile {
+                rule: CooperativeTileRule::NoVisibilityEdge,
+            }
+        );
+    }
+
+    /// Participants must be the whole workgroup, or a barrier would diverge.
+    #[test]
+    fn a_participant_set_narrower_than_the_workgroup_is_rejected() {
+        let mut builder = cooperative_builder(cooperative_tile_fixture());
+        let schedule = builder.schedule.as_mut().unwrap();
+        schedule.threads_per_workgroup = 6;
+        schedule.launch.threads_per_workgroup = 6;
+        assert_eq!(
+            cooperative_rejection(builder),
+            ScheduledRegionDiagnostic::CooperativeTile {
+                rule: CooperativeTileRule::ParticipantConvergence,
+            }
+        );
+    }
+
+    /// More than one committing participant contradicts the ownership proof.
+    #[test]
+    fn a_tile_committing_from_every_participant_is_rejected() {
+        assert_eq!(
+            cooperative_rejection(perturbed(|tile| {
+                tile.commit = ParticipantRange { first: 0, count: 3 };
+            })),
+            ScheduledRegionDiagnostic::CooperativeTile {
+                rule: CooperativeTileRule::CommitOwnership,
+            }
+        );
+    }
+
+    /// A split that does not cover the contributor sequence is rejected.
+    ///
+    /// The partition count is held at the participant count, so this isolates
+    /// the coverage half: three participants folding three contributors each
+    /// would combine nine of the six the access declares.
+    #[test]
+    fn a_split_that_does_not_cover_the_contributors_is_rejected() {
+        let mut builder = cooperative_builder(cooperative_tile_fixture());
+        let ReductionTopology::CooperativeWorkgroup { partition, .. } =
+            &mut builder.schedule.as_mut().unwrap().reduction
+        else {
+            panic!("expected a cooperative topology")
+        };
+        *partition = ContributorPartition {
+            partitions: 3,
+            contributors_per_partition: 3,
+        };
+        assert_eq!(
+            cooperative_rejection(builder),
+            ScheduledRegionDiagnostic::CooperativeTile {
+                rule: CooperativeTileRule::ContributorSplit,
+            }
+        );
+    }
+
+    /// The ownership proof counts output positions, never invocations.
+    ///
+    /// Without this the cooperative region would have claimed one owned position
+    /// per invocation — six for two outputs — and every consumer reading the
+    /// proof would have sized the output tensor three times too large.
+    #[test]
+    fn a_cooperative_region_owns_one_position_per_workgroup() {
+        let mut builder = cooperative_builder(cooperative_tile_fixture());
+        builder.ownership_proof = Some(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 6 },
+        });
+        assert_eq!(
+            builder.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::ProofReference]
+        );
+    }
+
+    /// A zero-extent input keeps the reducer's identity and stages nothing.
+    ///
+    /// The empty result is `+0.0`, which every arm of this verifier requires as
+    /// `empty_identity_bits`, and the serial topology commits it from one
+    /// invocation with no fold — so the empty case needs no staging, no phase,
+    /// and no visibility edge. A cooperative tile over the same domain is
+    /// refused rather than made to stage values no participant produces.
+    #[test]
+    fn a_zero_extent_reduction_keeps_its_identity_without_a_tile() {
+        let mut serial = ScheduledRegionBuilder::new(RegionId::new(5));
+        serial.iteration_shape(Shape::from_dims([2])).unwrap();
+        serial
+            .push_access(Access {
+                tensor: TensorRole::Intermediate,
+                component_role: None,
+                mode: AccessMode::Read,
+                map: LogicalAccess::ReductionContributor {
+                    input_shape: Shape::from_dims([2, 0]),
+                    output_shape: Shape::from_dims([2]),
+                    axes: vec![Axis::new(1)],
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                },
+                bounds: BoundsWitnessId::new(0),
+                ownership: None,
+            })
+            .unwrap();
+        serial
+            .push_access(Access {
+                tensor: TensorRole::Output,
+                component_role: None,
+                mode: AccessMode::Write,
+                map: LogicalAccess::LinearIdentity,
+                bounds: BoundsWitnessId::new(1),
+                ownership: Some(OwnershipWitnessId::new(0)),
+            })
+            .unwrap();
+        serial
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(0),
+                tensor: TensorRole::Intermediate,
+                component_role: None,
+                kind: BoundsProofKind::ReductionDomain {
+                    input_shape: Shape::from_dims([2, 0]),
+                    output_shape: Shape::from_dims([2]),
+                    axes: vec![Axis::new(1)],
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                },
+            })
+            .unwrap();
+        serial
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(1),
+                tensor: TensorRole::Output,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange { element_count: 2 },
+            })
+            .unwrap();
+        serial
+            .ownership_proof(OwnershipProof {
+                id: OwnershipWitnessId::new(0),
+                tensor: TensorRole::Output,
+                kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 2 },
+            })
+            .unwrap();
+        serial
+            .scalar_program(ScalarProgram::StrictSerialSum {
+                axes: vec![Axis::new(1)],
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: 0x7fc0_0000,
+                empty_identity_bits: 0.0_f32.to_bits(),
+            })
+            .unwrap();
+        serial.numerical(strict_numerical()).unwrap();
+        serial
+            .schedule(KernelSchedule {
+                reduction: ReductionTopology::Serial {
+                    axes: vec![Axis::new(1)],
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    permits_reassociation: false,
+                    permits_permutation: false,
+                },
+                ..linear_schedule(2, OwnershipWitnessId::new(0))
+            })
+            .unwrap();
+        let empty = serial
+            .clone()
+            .build()
+            .expect("the empty reduction verifies");
+        assert_eq!(empty.requirements().local_memory_bytes, 0);
+        let ScalarProgram::StrictSerialSum {
+            empty_identity_bits,
+            ..
+        } = &empty.region().index.scalar_program
+        else {
+            panic!("expected a strict serial sum")
+        };
+        assert_eq!(*empty_identity_bits, 0.0_f32.to_bits());
+
+        // The same empty domain declared cooperative, with every launch,
+        // ownership, and proof fact left exactly as the well-formed fixture
+        // states them: nothing to stage, so the tile is refused instead of
+        // describing a handoff of values that do not exist.
+        let mut cooperative = cooperative_builder(cooperative_tile_fixture());
+        let empty_contributors = LogicalAccess::ReductionContributor {
+            input_shape: Shape::from_dims([2, 0]),
+            output_shape: Shape::from_dims([2]),
+            axes: vec![Axis::new(1)],
+            order: ContributorOrder::OriginalAxisLexicographic,
+        };
+        cooperative.accesses[0].map = empty_contributors;
+        cooperative.bounds_proofs[0].kind = BoundsProofKind::ReductionDomain {
+            input_shape: Shape::from_dims([2, 0]),
+            output_shape: Shape::from_dims([2]),
+            axes: vec![Axis::new(1)],
+            order: ContributorOrder::OriginalAxisLexicographic,
+        };
+        assert_eq!(
+            cooperative_rejection(cooperative),
+            ScheduledRegionDiagnostic::CooperativeTile {
+                rule: CooperativeTileRule::EmptyContributorDomain,
+            }
+        );
+    }
+
+    /// A region that stages nothing encodes exactly the bytes it always did.
+    ///
+    /// The append proof for `tiler.schedule.v3`: the cooperative topology takes
+    /// a fresh tag, so no previously encodable region's bytes move and no cache
+    /// or artifact holding an earlier identity has to miss. This is the same
+    /// pinned strict-`f32` region the domain-step test above compares, asserted
+    /// here for the reason that pin exists at all.
+    #[test]
+    fn the_cooperative_topology_moves_no_earlier_region_identity() {
+        let verified = pointwise_builder(RegionId::new(0), Shape::from_dims([2, 3]), 6)
+            .build()
+            .unwrap();
+        let mut hex = String::new();
+        for byte in verified.canonical_identity().as_bytes() {
+            write!(&mut hex, "{byte:02x}").unwrap();
+        }
+        assert_eq!(hex, STRICT_F32_REGION_IDENTITY_HEX);
+    }
+
+    /// Every field of a tile separates canonical scheduled-region identity.
+    ///
+    /// A dataflow that stages more, phases differently, or commits from another
+    /// participant is a different program, so a tile field left out of the
+    /// encoding would let two of these share identity.
+    #[test]
+    fn every_cooperative_tile_field_separates_scheduled_region_identity() {
+        let baseline = cooperative_builder(cooperative_tile_fixture())
+            .build()
+            .unwrap()
+            .region()
+            .clone();
+        let mut seen = vec![encode_identity(&baseline)];
+        let variants: Vec<CooperativeTile> = vec![
+            perturb_tile(|tile| tile.staging[0].slots = 4),
+            perturb_tile(|tile| tile.staging[0].live_through = PhaseId::FIRST),
+            perturb_tile(|tile| tile.phases[0].writes[0].span.stride = 2),
+            perturb_tile(|tile| tile.phases[0].writes[0].span.offset = 1),
+            perturb_tile(|tile| tile.phases[1].reads[0].span.count = 2),
+            perturb_tile(|tile| tile.commit = ParticipantRange { first: 2, count: 1 }),
+            perturb_tile(|tile| {
+                tile.phases[1].participation = ParticipantRange { first: 0, count: 2 };
+            }),
+            perturb_tile(|tile| tile.coordinates.participants.count = 4),
+        ];
+        for tile in variants {
+            let mut candidate = baseline.clone();
+            candidate.schedule.reduction = cooperative_topology(tile.clone());
+            let identity = encode_identity(&candidate);
+            assert!(
+                !seen.contains(&identity),
+                "{tile:?} collided with an earlier tile"
+            );
+            seen.push(identity);
+        }
+    }
+
+    /// The enumeration bounds refuse a tile they could not decide.
+    ///
+    /// Coverage and disjointness are decided by walking every addressed slot, so
+    /// the bounds are what keep that decision finite. Driven here rather than
+    /// assumed, because a limit nothing has been seen to trip is a limit that
+    /// might not be reached at all.
+    #[test]
+    fn a_tile_beyond_a_governed_enumeration_bound_is_rejected() {
+        let overlong_phases = perturbed(|tile| {
+            let template = tile.phases[1].clone();
+            for ordinal in 2..=u32::try_from(MAX_COOPERATIVE_PHASES).unwrap() {
+                tile.phases.push(CooperativePhase {
+                    id: PhaseId::new(ordinal),
+                    ..template.clone()
+                });
+            }
+        });
+        assert_eq!(
+            cooperative_rejection(overlong_phases),
+            ScheduledRegionDiagnostic::CooperativeTile {
+                rule: CooperativeTileRule::StructuralLimit,
+            }
+        );
+
+        let oversized_storage = perturbed(|tile| {
+            tile.staging[0].slots = MAX_COOPERATIVE_STAGING_SLOTS.saturating_add(1);
+        });
+        assert_eq!(
+            cooperative_rejection(oversized_storage),
+            ScheduledRegionDiagnostic::CooperativeTile {
+                rule: CooperativeTileRule::StructuralLimit,
+            }
+        );
+    }
+
+    fn perturb_tile(edit: impl FnOnce(&mut CooperativeTile)) -> CooperativeTile {
+        let mut tile = cooperative_tile_fixture();
+        edit(&mut tile);
+        tile
     }
 
     #[test]

@@ -171,6 +171,17 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
             contracted_shape, ..
         } => crate::schedule::element_count(contracted_shape)
             .map_err(|_| KernelDiagnostic::ElementCountOverflow)?,
+        // No canonical body exists for a cooperative tile, and refusing here is
+        // what keeps that true. Emitting one would mean emitting the staged
+        // handoff its phases describe, which is correct only when something
+        // orders the producing phase before the consuming one -- and the
+        // barrier vocabulary is refused intrinsically, so nothing can. A body
+        // that staged and re-read without that ordering would be a race this
+        // lowering had authored, so the region is refused before any operation
+        // is inserted rather than lowered into one.
+        ReductionTopology::CooperativeWorkgroup { .. } => {
+            return Err(KernelDiagnostic::UndischargedVisibility);
+        }
     };
     // The strict-affine decode addresses its three role-scoped components by the
     // invocation index directly, so it consults no coordinate map.
@@ -238,6 +249,14 @@ fn addressing(
                     partitions: partition.partitions,
                     contributors_per_partition: partition.contributors_per_partition,
                 }),
+                // The cooperative arm is unreachable from `plan`, which
+                // refuses the topology before resolving any addressing, and it
+                // is spelled rather than wildcarded so a later reachable path
+                // is a build error here instead of silently addressing a tile
+                // by the unsplit relation.
+                ReductionTopology::CooperativeWorkgroup { .. } => {
+                    Err(KernelDiagnostic::UndischargedVisibility)
+                }
                 ReductionTopology::None
                 | ReductionTopology::Serial { .. }
                 | ReductionTopology::Contraction { .. }

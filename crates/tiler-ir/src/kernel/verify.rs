@@ -18,8 +18,9 @@ use std::collections::BTreeSet;
 
 use crate::schedule::{
     Access, AccessMode, BoundsProofKind, BoundsWitnessId, CanonicalScheduledRegionIdentity,
-    ExecutionBinding, OwnershipWitnessId, ReductionPass, ReductionTopology, ResourceRequirements,
-    ScheduledRegion, contributor_count, element_count,
+    CooperativeTile, ExecutionBinding, OwnershipWitnessId, ReductionPass, ReductionTopology,
+    ResourceRequirements, ScheduledRegion, StagedElement, contributor_count, cooperative_tile,
+    element_count,
 };
 
 use super::error::KernelDiagnostic;
@@ -108,6 +109,7 @@ pub(super) fn verify_kernel(
 ) -> Result<(), KernelDiagnostic> {
     let (reads, write) = boundary_accesses(schedule)?;
     verify_signature(data, schedule, reads, write, derived)?;
+    verify_cooperative(data, schedule)?;
 
     let guards = guard_values(data, schedule.schedule.work_items);
     let mut walk = Walk::default();
@@ -189,16 +191,32 @@ fn verify_signature(
     for buffer in &data.buffers {
         let admitted = match buffer.address_space {
             AddressSpace::Device => derived.requires_device_memory,
-            AddressSpace::Workgroup => derived.local_memory_bytes > 0,
-            AddressSpace::InvocationPrivate | AddressSpace::Constant => false,
+            // A workgroup allocation is never a buffer *parameter*, whatever the
+            // region's local-memory requirement is. A parameter's position is
+            // its argument-table ordinal, and workgroup storage is declared
+            // inside the entry point rather than bound as an argument — so
+            // admitting one here would re-base every later ordinal and change
+            // what an existing signature position means. It is declared through
+            // [`super::KernelBuilder::declare_staging`] instead, and
+            // `verify_cooperative` proves that list against the region's tile.
+            AddressSpace::Workgroup | AddressSpace::InvocationPrivate | AddressSpace::Constant => {
+                false
+            }
         };
         if !admitted {
             return Err(KernelDiagnostic::AddressSpaceContract);
         }
     }
-    let expected_builtins = match schedule.schedule.binding {
-        ExecutionBinding::GlobalLinearInvocation => [Builtin::GlobalInvocationIndex],
+    // The binding fixes the global coordinate; a cooperative tile additionally
+    // needs the local one, because its participants are named by their position
+    // within the workgroup. The second builtin is required rather than merely
+    // permitted, so a tile whose kernel cannot name its participants is refused.
+    let mut expected_builtins = match schedule.schedule.binding {
+        ExecutionBinding::GlobalLinearInvocation => vec![Builtin::GlobalInvocationIndex],
     };
+    if cooperative_tile(&schedule.schedule.reduction).is_some() {
+        expected_builtins.push(Builtin::LocalInvocationIndex);
+    }
     if data.admitted_builtins != expected_builtins {
         return Err(KernelDiagnostic::BuiltinContract);
     }
@@ -209,6 +227,56 @@ fn verify_signature(
         return Err(KernelDiagnostic::ResourceRequirements);
     }
     Ok(())
+}
+
+/// Verifies the workgroup staging a kernel declares against its region's tile.
+///
+/// Two jobs. The staging declarations must realize the tile exactly — same
+/// count, same ordinals in order, same element type, same slot count — so a
+/// producer cannot allocate more or differently shaped workgroup storage than
+/// the schedule proved well formed. And a region carrying any cross-invocation
+/// visibility dependency is refused outright: the tile states that one
+/// participant's staged writes are read by others in a later phase, and nothing
+/// orders the two.
+///
+/// **The refusal is derived, not a placeholder.** The barrier vocabulary is
+/// rejected intrinsically by [`verify_effects`], and no schedule owns a
+/// synchronization point a barrier could be matched to, so there is no
+/// construct this kernel could contain that would discharge the edge. Admitting
+/// the kernel would hand a backend a program whose staged reads observe
+/// unordered writes. Discharging an edge is the synchronization authority's
+/// work; representing one is this ticket's.
+fn verify_cooperative(
+    data: &KernelData,
+    schedule: &ScheduledRegion,
+) -> Result<(), KernelDiagnostic> {
+    let Some(tile) = cooperative_tile(&schedule.schedule.reduction) else {
+        // A region that stages nothing must declare nothing, or the kernel
+        // claims workgroup storage its schedule never proved.
+        if data.staging.is_empty() {
+            return Ok(());
+        }
+        return Err(KernelDiagnostic::StagingContract);
+    };
+    if data.staging.len() != tile.staging.len() {
+        return Err(KernelDiagnostic::StagingContract);
+    }
+    for (declared, staged) in data.staging.iter().zip(&tile.staging) {
+        let element_type = match staged.element {
+            StagedElement::F32 => KernelType::F32,
+        };
+        if declared.staging != staged.id
+            || declared.element_type != element_type
+            || declared.address_space != AddressSpace::Workgroup
+            || declared.element_count != staged.slots
+        {
+            return Err(KernelDiagnostic::StagingContract);
+        }
+    }
+    if CooperativeTile::visibility_edges(tile).is_empty() {
+        return Ok(());
+    }
+    Err(KernelDiagnostic::UndischargedVisibility)
 }
 
 /// Collects the values that denote the scheduled bounds predicate.
@@ -441,6 +509,14 @@ fn verify_reduction(
                 return Err(KernelDiagnostic::ContributorDomain);
             }
             verify_contributor_loop(walk, contributors)
+        }
+        // `verify_cooperative` refused this region before the walk reached
+        // here, so no loop obligation is stated for it: a cooperative fold's
+        // shape is decided together with the synchronization point that
+        // separates its phases, and stating one now would be a contract written
+        // against a body nothing can produce.
+        ReductionTopology::CooperativeWorkgroup { .. } => {
+            Err(KernelDiagnostic::UndischargedVisibility)
         }
     }
 }

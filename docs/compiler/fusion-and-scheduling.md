@@ -284,6 +284,18 @@ Each implementation declares valid extents, lane-result visibility, tail masking
 barrier requirements, accumulator type, and target capabilities. There is no
 underspecified portable “block reduce” operation in final scheduled IR.
 
+The threadgroup form's *dataflow* is implemented and verifier-owned ahead of its
+execution: `ReductionTopology::CooperativeWorkgroup` states the participant set,
+local coordinates, workgroup staging with declared lifetimes, phased writes and
+reads, uniform phase reachability, and the single committing participant, and the
+intrinsic schedule verifier proves all of it. What it does not state is the
+ordering between a staged write and a later staged read — that dependency is
+derived as an explicit visibility edge, no schedule authorizes a synchronization
+point to discharge it, and the structured-kernel verifier refuses any kernel
+whose region carries one. So a threadgroup reduction is *representable and
+rejected*, which is what keeps a strategy the compiler cannot yet order out of an
+executable plan rather than silently into a race.
+
 A multi-pass reduction is a `KernelSubprogram`: an initial scheduled kernel
 fully defines a typed partials temporary in declared scratch, a typed `Data`
 dependency on that materialized value makes those bits visible to its reader,

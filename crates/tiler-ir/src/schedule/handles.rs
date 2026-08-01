@@ -83,6 +83,59 @@ impl BoundsWitnessId {
     }
 }
 
+/// A tile-local ordinal naming one phase of a cooperative workgroup tile.
+///
+/// Unlike [`RegionId`], this *is* part of canonical identity: a phase ordinal
+/// says when a staged value is produced relative to when it is consumed, and two
+/// tiles that order their handoffs differently are different dataflows.
+///
+/// Ordinals are dense and ascending within one tile — `0` is the first phase —
+/// so "earlier than" is ordinal comparison rather than a separate edge set the
+/// verifier would have to prove acyclic.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct PhaseId(u32);
+
+impl PhaseId {
+    /// The first phase of a cooperative tile.
+    pub const FIRST: Self = Self(0);
+
+    /// Wraps a tile-local phase ordinal.
+    #[must_use]
+    pub const fn new(ordinal: u32) -> Self {
+        Self(ordinal)
+    }
+
+    /// Returns the tile-local phase ordinal.
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+/// A tile-local ordinal naming one workgroup staging allocation.
+///
+/// Part of canonical identity for the reason [`PhaseId`] is: which allocation a
+/// phase writes and which one a later phase reads is the dataflow itself.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct StagingId(u32);
+
+impl StagingId {
+    /// The first staging allocation of a cooperative tile.
+    pub const FIRST: Self = Self(0);
+
+    /// Wraps a tile-local staging ordinal.
+    #[must_use]
+    pub const fn new(ordinal: u32) -> Self {
+        Self(ordinal)
+    }
+
+    /// Returns the tile-local staging ordinal.
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
 /// A region-local reference to a write-ownership proof witness.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct OwnershipWitnessId(u32);
