@@ -1,7 +1,7 @@
 ---
 id: measure-the-model-level-comparison-envelope-under-the-target-realization
 title: Measure the model-level comparison envelope under the target realization
-status: todo
+status: in-progress
 priority: p1
 dependencies: [retain-the-qwen-conformance-reference-logit-fixture]
 related: [design-model-level-qualification-and-optimization, land-the-model-level-qualification-record, define-the-model-level-conformance-corpus, retain-the-c1-model-attribution-fixture]
@@ -9,6 +9,9 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, numerics, conformance, measurement, language-model, qwen, metal]
+claimed_from: todo
+assignee: coordinator
+lease_expires_at: 1785613493
 ---
 ## User-visible outcome
 
