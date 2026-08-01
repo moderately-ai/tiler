@@ -10,11 +10,13 @@
 /.loops/
 __pycache__/
 *.py[cod]
-# Anchored, plus the spike workspaces' own build directories: an unanchored
-# `target/` also swallows source modules named `target`, and a file added under
-# `crates/*/src/target/` would silently vanish from `git add`.
+# Anchored, plus the two places nested build directories actually occur: an
+# unanchored `target/` also swallows source modules named `target`, and a file
+# added under `crates/*/src/target/` would silently vanish from `git add`.
+# `crates/*/target/` is trybuild's nested cargo invocation, not a source path.
 /target/
 spikes/*/*/target/
+crates/*/target/
 /.worktrees/
 # Compiler crash reports are regenerable diagnostics, not repository evidence.
 /rustc-ice-*.txt
