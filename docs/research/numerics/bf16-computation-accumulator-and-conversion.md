@@ -6,7 +6,8 @@ topics: ["numerics", "dtypes", "bf16", "conversion", "accumulator", "contraction
 title: "BF16 computation, accumulator, and conversion"
 catalog_group: "dtypes-quantization"
 research_status: "complete"
-disposition: "pending"
+disposition: "adopted"
+adopted_by: ["ADR-0091"]
 implementation_status: "not-started"
 evidence_classes: ["executable-model", "exhaustive-finite", "primary-source-synthesis", "bounded-measurement"]
 informs: ["tiler.contract.numerical-semantics"]
@@ -16,7 +17,9 @@ ticket: "design-the-bf16-computation-and-accumulator-contract"
 
 # BF16 computation, accumulator, and conversion
 
-**Status:** derivation complete; the surviving design is a **Proposal** carried below as a drafted ADR body that this record's scope cannot land. Nothing here registers an operation, moves a dtype-support cell, or authorizes implementation.
+**Status:** derivation complete and **adopted**. Tom accepted the derivation and its drafted ADR body at the morning review of 2026-08-01, and [ADR 0091](../../decisions/0091-separate-bf16-float-conversion-families-and-keep-the-accumulator-an-operation-fact.md) is the accepted record; the body below transferred to it verbatim and unamended. What was accepted is the *model* — the five answers — and not any public spelling: the six items under [Public-boundary consequences](#public-boundary-consequences-identified-for-tom-and-not-designed-into-acceptance) are each still Tom's at implementation time under [ADR 0075](../../decisions/0075-scope-public-boundary-approval-by-change-category.md). Nothing here registers an operation, moves a dtype-support cell, or authorizes implementation, and acceptance changed none of that.
+
+Every **Proposal** label below is retained as what was written before the acceptance rather than rewritten after it, because a reader checking what Tom agreed to needs the text he read. The five answers are now decided, and ADR 0091 is where their decided form lives.
 
 ## What this record decides and what it deliberately does not
 
@@ -255,6 +258,8 @@ proposed B: a mixed-precision operation stating what it does
 
 Every item below is a public boundary under ADR 0075 and is listed rather than proposed for self-acceptance. None is implemented by this record.
 
+**Still true after the 2026-08-01 acceptance, and this is the sentence most likely to be misread.** Tom accepted the *model* — the five answers, now [ADR 0091](../../decisions/0091-separate-bf16-float-conversion-families-and-keep-the-accumulator-an-operation-fact.md) — and accepted none of the six items below. An accepted decision that two conversion directions are two families is not an accepted spelling for either key, and the distinction is exactly the one ADR 0075 exists to hold: the model says what a surface must mean, and Tom says what it is called and what shape it takes. Each item still arrives at his desk when its implementation does.
+
 1. **Two new operation keys for the conversion family**, one per direction — a `bf16 → f32` widening with no rounding field and an `f32 → bf16` narrowing carrying rounding, overflow, NaN, and subnormal fields. Their names, versioning, and whether the narrowing's rounding rule is a key suffix or a typed attribute are boundary decisions. Whether the family generalizes over `(source, destination)` or stays BF16/F32-specific is a further one, and this record deliberately proposes only the specific pair.
 2. **A new typed conversion-contract vocabulary** in the semantic layer. `docs/numerical-semantics.md` names "floating-point widening and narrowing" as an initial family and nothing implements it; the `Cast and convert` row of the support matrix sits at R2 with `ConvertOp::CanonicalizeF32Nan` as its only realized construct. The shape — separate discriminated families per ADR 0010 and 0041 — is derived; the exact Rust boundary is not.
 3. **A `(value type, accumulator type)` operation key for a reducing BF16 family**, if and when a workload asks. It does not exist and is not proposed for registration; what is proposed is that when it arrives it is a new key with complete facts rather than an attribute on an existing one.
@@ -269,9 +274,11 @@ Every item below is a public boundary under ADR 0075 and is listed rather than p
 - **Whether a truncating `f32 → bf16` narrowing is ever wanted.** It is a real ecosystem contract and stage 6 separates it from nearest-even in 32,704 of 65,536 patterns. **Closes with:** a named producer or consumer requiring it. **Trigger:** a frontend importing a model whose weights were produced by truncation, where round-tripping under nearest-even would move bits.
 - **Whether the conversion family generalizes beyond BF16/F32.** Every derivation here rests on BF16-and-binary32-specific inequalities. **Closes with:** the second float pair a workload selects, at which point the shared structure is visible rather than guessed. **Trigger:** the F16 vertical, whose widening is exact by a *different* argument and whose narrowing from binary32 has its own overflow behaviour.
 
-## Drafted ADR body
+## Drafted ADR body — landed as ADR 0091 on 2026-08-01
 
-**Proposal.** The following is a complete ADR draft, written to be landed verbatim as `docs/decisions/00NN-separate-bf16-float-conversion-families-and-keep-the-accumulator-an-operation-fact.md` with `decision_status: proposed`. **This record's scope cannot create it:** `ticketsplease.toml` maps `docs/decisions/[0-9]*.md` to `contracts/decisions` and `docs/decisions/README.md` to `contracts/navigation`, and this ticket holds `research/numerics`, `contracts/numerics`, and shared `project/tickets` only. `land-the-bf16-conversion-and-accumulator-adr` carries it.
+**The authority is [ADR 0091](../../decisions/0091-separate-bf16-float-conversion-families-and-keep-the-accumulator-an-operation-fact.md), accepted; the blockquote below is retained as the drafted text it landed from and is not a second authority over the same subject.** The transfer was byte-identical — context, five numbered decisions, consequences, and four alternatives-considered entries — so a reader who wants the decision should read the ADR, which additionally states what the acceptance covers, the implementation boundary, and the deferrals. The blockquote is kept rather than replaced by a bare pointer because it is the exact text Tom read, and a record that hatched a decision is evidence about that decision as well as about the derivation.
+
+The paragraph this replaces recorded why the drafted body could not become a file from here, and the reason is preserved because it is the reusable part: `ticketsplease.toml` maps `docs/decisions/[0-9]*.md` to `contracts/decisions` and `docs/decisions/README.md` to `contracts/navigation`, and the ticket that produced this record holds `research/numerics`, `contracts/numerics`, and shared `project/tickets` only, so writing the ADR from that branch would have been a guard escape. [`land-the-bf16-conversion-and-accumulator-adr`](../../../tickets/land-the-bf16-conversion-and-accumulator-adr.md) held both catalog scopes and carried it. The draft was written to land `proposed`; the acceptance arrived before that ticket started, so it landed `accepted` instead, which is the shape [ADR 0089](../../decisions/0089-resolve-the-expansion-cache-root-from-an-override-or-the-user-cache.md) took for an in-session ratification.
 
 > ## Context
 >
