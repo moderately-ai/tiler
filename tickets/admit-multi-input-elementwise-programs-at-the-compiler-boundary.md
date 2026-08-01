@@ -1,7 +1,7 @@
 ---
 id: admit-multi-input-elementwise-programs-at-the-compiler-boundary
 title: Admit multi-input elementwise programs at the public compiler boundary
-status: todo
+status: done
 priority: p1
 dependencies: [admit-multi-input-tensors-in-the-scheduled-region-vocabulary]
 related: [prototype-inline-proc-macro-frontend, prototype-semantic-normalization, prototype-inline-aot-integration-proof]
@@ -62,3 +62,7 @@ The one mechanism that looks like it already binds several buffers is the U4 deq
 **Blocked on.** `admit-multi-input-tensors-in-the-scheduled-region-vocabulary` (`implementation/ir`), now this ticket's dependency, which carries the located evidence and the identity-encoding hazards. When it lands, this ticket's remaining work is the compiler-side recognizer and program assembly, and the permanent test above is what turns its closure into a demonstrated transition.
 
 **Referred to Tom, not self-accepted.** The refusal rule `"signature"` is a single combined gate over input count, output count, operation count, and dtype, so the approved region's refusal does not name input cardinality as the unrecognized property — and `CompileFailureClass::UnsupportedCapability { rule }` is public observable behaviour, quoted verbatim in `crates/tiler-macros/src/region.rs:55`. Splitting it so a frontend can emit a diagnostic naming multi-input support is a public boundary change under ADR 0075 and is recommended, but it is Tom's to accept and was left alone.
+
+## Outcome (2026-07-31)
+
+**Fact.** Closed by `admit-multi-input-tensors-in-the-scheduled-region-vocabulary`, which owned the real wall this ticket located: the scheduled-region and physical scalar vocabulary. The approved three-input region now compiles end to end under `StrictF32`, `FlushSubnormalsToZeroF32`, and `ReassociateF32`, and `crates/tiler-compiler/tests/multi_input_elementwise_boundary.rs` — this ticket's own permanent measurement — was flipped in that same change, its refusal expectation becoming a compilation, with the transition demonstrated failing at the unwidened base. `RelaxedF32` still refuses on the adjacency (`unrealized-contraction`), which is that contract's correct behaviour and is owned by `admit-the-fused-multiply-add-pointwise-body-under-a-contracting-contract`. The split refusal rules (`input-arity`, `output-arity`, `operation-set`, `dtype-f32`) landed with it, Tom-accepted.
