@@ -1,7 +1,7 @@
 ---
 id: validate-metal-payload-argument-slots-against-declared-bindings
 title: Validate a Metal payload's argument slots against the entry's declared bindings
-status: in-progress
+status: done
 priority: p2
 dependencies: [prototype-candle-metal-adapter]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/candle]
 shared_scopes: [project/tickets]
 paths: []
 tags: [candle, runtime, artifacts]
-claimed_from: todo
-assignee: worker-arg-slots
-lease_expires_at: 1785563995
 ---
 ## User-visible outcome
 
