@@ -1,7 +1,7 @@
 ---
 id: route-or-refuse-the-device-translation-execution-policy
 title: Route or retire the device-translation execution policy
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [generalize-payload-provenance-beyond-the-apple-shape, specify-the-consumer-neutral-backend-provider-composition-contract]
@@ -9,9 +9,6 @@ scopes: [implementation/artifact, implementation/runtime, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [runtime, artifacts, backend-providers, routing]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785626991
 ---
 ## User-visible outcome
 

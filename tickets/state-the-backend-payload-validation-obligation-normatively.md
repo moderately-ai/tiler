@@ -1,7 +1,7 @@
 ---
 id: state-the-backend-payload-validation-obligation-normatively
 title: State the backend payload-validation obligation normatively
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [route-a-custom-backend-through-an-independently-selected-adapter, generalize-payload-provenance-beyond-the-apple-shape]
@@ -9,9 +9,6 @@ scopes: [contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, artifacts, backend-providers, runtime]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785627953
 ---
 ## User-visible outcome
 
