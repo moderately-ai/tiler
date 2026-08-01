@@ -100,7 +100,9 @@ xcrun: note: database key is: metal|…/MacOSX26.5.sdk||/Applications/Xcode.app/
 xcrun: note: lookup resolved in '$TMPDIR/xcrun_db' : /var/run/com.apple.security.cryptexd/mnt/com.apple.MobileAsset.MetalToolchain-v17.6.109.0.IaP0Ob/Metal.xctoolchain/usr/bin/metal
 ```
 
-Reading that 41,673-byte `xcrun_db` shows all five of Tiler's queries are cached keys — the two `--find` results, and `<sdk>|<DEVELOPER_DIR>|<sdklookup>|{Path,SDKVersion,ProductBuildVersion}` — together with a `<resolved path>|<toolchain-signature>` witness per tool (`1779476302|1779476302`, matching the cryptex mount's own timestamp).
+Reading that 41,673-byte `xcrun_db` shows all five of Tiler's queries are cached keys — the two `--find` results, and `<sdk>|<DEVELOPER_DIR>|<sdklookup>|{Path,SDKVersion,ProductBuildVersion}` — together with a `<resolved path>|<toolchain-signature>` entry per tool holding `1779476302|1779476302`.
+
+**That signature is a stat-class witness, verified rather than assumed.** `1779476302` is 2026-05-22 14:58:22, and `stat -f '%Sm'` reports exactly `May 22 14:58:22 2026` for both the cryptex mount directory and the `metal` binary inside it. So Apple's cache already carries the same witness class a Tiler-side fingerprint cache would have to use — a timestamp over the resolved tool — which is the concrete form of the elimination below: a second cache could match that witness and not improve on it, because it would be reading the same facts about the same files.
 
 **Measurement — what the cache is worth.** `xcrun --no-cache --sdk macosx --find metal`, 20 iterations: **66.67 s total, ~3.33 s per call**, against ~6 ms cached. A ratio of roughly **550×**.
 
