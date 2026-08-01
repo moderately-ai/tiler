@@ -1,7 +1,7 @@
 ---
 id: admit-the-reindex-and-broadcast-operation-families
 title: Admit the Reindex and Broadcast operation families
-status: in-progress
+status: done
 priority: p1
 dependencies: [derive-transformer-operation-and-shape-surface]
 related: [own-operation-family-support-matrix, scope-transformer-nonlinear-normalization-and-reductions, design-attention-program-vertical, compose-rotary-position-embedding-from-reindex-and-broadcast, admit-the-grouped-query-head-layout-reindex-profile, reach-a-verified-kernel-through-the-structural-families]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/reference, implementation/compiler, i
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, semantics, structural, language-model, breadth]
-claimed_from: todo
-assignee: worker-reindex
-lease_expires_at: 1785546674
 ---
 ## User-visible outcome
 
@@ -88,3 +85,5 @@ Both families are admitted through R5 — registered identity, validated mapping
 ### Identity movements
 
 **Fact.** The explain request digest was rebaselined from `e1e95ea1d50a918f` to `bddeaf899938ede4`, with a comment recording that both halves of the subject moved this time — the semantic snapshot admits two further families, and unlike the contraction the lowering registry admits a capability for each, so the lowering-registry identity moved too. `FusionRegionStructure` gained a `coordinate_relations` count, which changes fusion-legality content identity for every region; it is counted separately so the four role counts sum to `members`. The `tiler.standard-semantics` and `tiler.standard-reference` provider revisions were deliberately **not** bumped, following the precedent this ticket's base commit records for the dtype catalog and the contraction.
+
+**Boundary acceptance (2026-07-31).** Tom accepted the D-10 resolution — a within-axis coordinate permutation is admitted only as the named `reverse-axis` form, the whole affine class — and the full public surface as reviewed, including the two deliberately exhaustive enums.
