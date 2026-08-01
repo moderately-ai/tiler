@@ -1,0 +1,5 @@
+error: xcrun: error: unable to find utility "metal"
+  --> tests/facade/fail/family_cfg_matching_family_retains_its_diagnostic.rs:25:17
+   |
+25 | const _: () = { ::core::compile_error!("xcrun: error: unable to find utility \"metal\""); };
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -76,10 +76,12 @@ use proc_macro::{Delimiter, Group, Ident, Literal, Punct, Spacing, Span, TokenSt
 mod binding;
 mod cache_root;
 mod delivery;
+mod family_cfg;
 mod grammar;
 mod region;
 mod tokens;
 
+use delivery::DeliveryPlan;
 use region::{Expansion, RegionError};
 
 /// The path generated tokens use to reach the facade's expansion entry point.
@@ -155,14 +157,14 @@ fn expand(trees: &[tokens::Tree<Span>], region: Span) -> Result<TokenStream, Ref
     // the region. Emitting anyway would be the one thing ADR 0053 forbids
     // outright: a selected family "cannot silently turn a selected-family build
     // failure into fallback on the matching target".
-    let _selection = delivery::stated_delivery(delivery::stated_policy()).map_err(|source| {
-        Refusal::Delivery {
+    let delivery = delivery::stated_delivery(delivery::stated_policy())
+        .and_then(delivery::stated_plan)
+        .map_err(|source| Refusal::Delivery {
             span: region,
             source,
-        }
-    })?;
+        })?;
 
-    emit(&expansion, region)
+    emit(&expansion, &delivery, region)
 }
 
 /// Why an invocation did not expand.
@@ -228,15 +230,25 @@ impl From<RegionError<Span>> for Refusal {
 /// ```text
 /// {
 ///     const __TILER_REGION_FACTS: ::tiler::__private::RegionFacts = …;
+///     <the delivery plan's `#[cfg]`-gated items, if it has any>
 ///     ::tiler::__private::bind_and_build(&__TILER_REGION_FACTS, &[&a, &b, &c])
 /// }
 /// ```
+///
+/// The delivery items are `delivery::DeliveryPlan::items_source`'s, placed in
+/// the same block so a `#[cfg]`-gated payload selector is scoped to the one
+/// region that selected it. Every expansion states `FallbackOnly` today, whose
+/// plan contributes nothing, so the block is exactly the two statements above.
 ///
 /// The operand identifiers carry the spans the region's own `in` list wrote
 /// them at, so a value that is not in scope is reported at the declaration that
 /// named it rather than at the invocation as a whole. Everything else is
 /// scaffolding and carries the call site.
-fn emit(expansion: &Expansion<Span>, region: Span) -> Result<TokenStream, Refusal> {
+fn emit(
+    expansion: &Expansion<Span>,
+    delivery: &DeliveryPlan,
+    region: Span,
+) -> Result<TokenStream, Refusal> {
     let facts = lex(
         &format!(
             "const {REGION_FACTS_BINDING}: {FACADE_FACTS_TYPE} = {};",
@@ -244,6 +256,12 @@ fn emit(expansion: &Expansion<Span>, region: Span) -> Result<TokenStream, Refusa
         ),
         region,
     )?;
+    let items = delivery.items_source();
+    let delivered = if items.is_empty() {
+        TokenStream::new()
+    } else {
+        lex(&items, region)?
+    };
     let entry = lex(FACADE_ENTRY_PATH, region)?;
     let facts_reference = lex(&format!("&{REGION_FACTS_BINDING}"), region)?;
 
@@ -270,6 +288,7 @@ fn emit(expansion: &Expansion<Span>, region: Span) -> Result<TokenStream, Refusa
 
     let mut body = TokenStream::new();
     body.extend(facts);
+    body.extend(delivered);
     body.extend(entry);
     body.extend([TokenTree::Group(spanned_group(
         Delimiter::Parenthesis,

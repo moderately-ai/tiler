@@ -75,10 +75,13 @@
               `FallbackOnly`, which ADR 0053 defines as invoking no backend compiler. There is \
               therefore nothing to cache, and resolving a root anyway would let an unset `HOME` \
               refuse an expansion that opens no cache. \
-              `generate-cfg-gated-artifact-family-delivery` is the slice that first compiles a \
-              selected family, and it is what consumes this resolver. The surface reserved is the \
-              whole of the stated policy — the override variable, the `off` value, the derived \
-              user-cache root, and every refusal a consumer can read."
+              `generate-cfg-gated-artifact-family-delivery` landed the delivery half — the \
+              versioned consumer-`cfg` map and the gated tokens — without changing that: it emits \
+              what a compilation produced and does not itself compile. \
+              `prototype-inline-aot-integration-proof` is the slice that first invokes the \
+              backend compiler, and it is what consumes this resolver. The surface reserved is \
+              the whole of the stated policy — the override variable, the `off` value, the \
+              derived user-cache root, and every refusal a consumer can read."
 )]
 
 use core::fmt;
