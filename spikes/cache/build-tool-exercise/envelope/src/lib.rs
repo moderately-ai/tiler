@@ -25,17 +25,15 @@
 //! validation pass need.
 
 use tiler_artifact::program::{
-    AbiExprId, ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey, BackendEntryRef,
-    BackendKey, BackendPayloadDescriptor, BindingKind, BindingSpec, CapabilityKey,
-    CompilationEnvironment, EntrySpec, FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec,
-    PayloadDigest, RepresentationKey, SchemaVersion, SelectedProvider,
-    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, VariantSpec,
-    VerifiedArtifactProgram,
+    ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey, BackendEntryRef, BackendKey,
+    BackendPayloadDescriptor, BindingKind, BindingSpec, CapabilityKey, CompilationEnvironment,
+    EntrySpec, FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec, PayloadDigest,
+    RepresentationKey, SchemaVersion, SelectedProvider, TargetProfileDescriptorDigest,
+    TargetProfileKey, TargetProfileRef, VariantSpec, VerifiedArtifactProgram,
 };
 use tiler_compiler::session::{
     Compilation, NumericalContract, PlanAlternative, compile_governed,
 };
-use tiler_ir::program::abi::ExprNode;
 use tiler_ir::semantic::{
     F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
     SemanticProgramBuilder, StrictSerialF32Sum,
@@ -58,11 +56,10 @@ const COLUMNS: u64 = 3;
 #[must_use]
 pub fn encoded_envelope() -> Vec<u8> {
     let semantic = serial_sum_program(ROWS, COLUMNS);
-    let compilations = compile_governed(&semantic, NumericalContract::FlushSubnormalsToZeroF32)
+    let compilation = compile_governed(&semantic, NumericalContract::FlushSubnormalsToZeroF32)
         .expect("the governed program compiles");
-    let compilation = compilations.first().expect("one governed target profile");
     let plan = compilation.selected().expect("a selected plan alternative");
-    assemble(&semantic, compilation, plan)
+    assemble(&semantic, &compilation, plan)
         .encode()
         .expect("the envelope encodes")
 }
@@ -143,28 +140,18 @@ fn assemble(
         })
         .expect("the declared payload is accepted");
 
-    let abi = plan.abi();
-    let program = abi.kernel_program();
-    let minted = replay(&mut builder, abi.expressions(), &variant_roots(plan));
-    let resolve = |position: u32| {
-        minted[usize::try_from(position).expect("a bounded arena position fits a usize")]
-            .expect("every use site names a position the variant's own roots reach")
-    };
+    let program = plan.abi().kernel_program();
 
-    let entries: Vec<EntrySpec> = abi
-        .entries()
-        .zip(program.stages())
-        .map(|(entry, stage)| EntrySpec {
-            bindings: entry
-                .accessible_bytes()
-                .map(|position| BindingSpec {
+    let entries: Vec<EntrySpec> = program
+        .stages()
+        .map(|stage| EntrySpec {
+            bindings: stage
+                .accesses()
+                .map(|_| BindingSpec {
                     kind: BindingKind::Buffer,
-                    accessible_bytes: resolve(position),
                 })
                 .collect(),
             launch: LaunchSpec {
-                grid_threads: resolve(entry.grid_threads()),
-                threads_per_workgroup: resolve(entry.threads_per_workgroup()),
                 // Not a choice: every verified scheduled region carries it.
                 zero_work_skips_dispatch: true,
                 preconditions: Vec::new(),
@@ -183,7 +170,6 @@ fn assemble(
         .push_variant(
             program,
             VariantSpec {
-                applicability_guard: resolve(abi.applicability_guard()),
                 target_profile: profile,
                 feasibility_rules: rules,
                 deferred_predicates: Vec::new(),
@@ -192,90 +178,4 @@ fn assemble(
         )
         .expect("the variant packages the plan it was built from");
     builder.build().expect("the assembled artifact verifies")
-}
-
-/// The arena positions one variant's own use sites name.
-fn variant_roots(plan: PlanAlternative<'_>) -> Vec<u32> {
-    let abi = plan.abi();
-    let mut roots = vec![abi.applicability_guard()];
-    for entry in abi.entries() {
-        roots.extend(entry.accessible_bytes());
-        roots.push(entry.grid_threads());
-        roots.push(entry.threads_per_workgroup());
-    }
-    roots
-}
-
-/// Transliterates the reachable sub-DAG of one arena onto the builder's own.
-///
-/// Pruned to the variant's roots because the artifact layer refuses an arena
-/// node no use site reaches, and the compiler's canonical graph serves both plan
-/// alternatives. One forward pass suffices: operands precede the node naming
-/// them, and the reachable set is operand-closed.
-fn replay(
-    builder: &mut ArtifactProgramBuilder,
-    arena: &[ExprNode],
-    roots: &[u32],
-) -> Vec<Option<AbiExprId>> {
-    let reachable = reachable_from(arena, roots);
-    let mut minted: Vec<Option<AbiExprId>> = vec![None; arena.len()];
-    let resolve = |minted: &[Option<AbiExprId>], position: u32| {
-        minted[usize::try_from(position).expect("a bounded arena position fits a usize")]
-            .expect("an operand precedes the node naming it")
-    };
-    for (position, node) in arena.iter().enumerate() {
-        if !reachable[position] {
-            continue;
-        }
-        let id = match node {
-            ExprNode::Root(root) => builder.push_root(root.clone()),
-            ExprNode::Unary { op, operand } => builder.push_unary(*op, resolve(&minted, *operand)),
-            ExprNode::Binary { op, left, right } => {
-                builder.push_binary(*op, resolve(&minted, *left), resolve(&minted, *right))
-            }
-            ExprNode::Select {
-                condition,
-                if_true,
-                if_false,
-            } => builder.push_select(
-                resolve(&minted, *condition),
-                resolve(&minted, *if_true),
-                resolve(&minted, *if_false),
-            ),
-        }
-        .expect("a well-typed compiler expression replays onto the artifact arena");
-        minted[position] = Some(id);
-    }
-    minted
-}
-
-/// Marks every arena position reachable from a set of use sites.
-fn reachable_from(arena: &[ExprNode], roots: &[u32]) -> Vec<bool> {
-    let mut reached = vec![false; arena.len()];
-    let mut work: Vec<u32> = roots.to_vec();
-    while let Some(node) = work.pop() {
-        let at = usize::try_from(node).expect("a bounded arena position fits a usize");
-        if reached[at] {
-            continue;
-        }
-        reached[at] = true;
-        match &arena[at] {
-            ExprNode::Root(_) => {}
-            ExprNode::Unary { operand, .. } => work.push(*operand),
-            ExprNode::Binary { left, right, .. } => {
-                work.push(*left);
-                work.push(*right);
-            }
-            ExprNode::Select {
-                condition,
-                if_true,
-                if_false,
-            } => {
-                work.push(*condition);
-                work.push(*if_true);
-                work.push(*if_false);
-            }
-        }
-    }
-    reached
 }

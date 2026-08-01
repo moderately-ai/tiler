@@ -1,0 +1,12 @@
+# host=macOS-27.0-arm64-arm-64bit machine=arm64 cpus=14 rustc=rustc 1.99.0-nightly (eff8269f7 2026-07-18)
+# analyzer=/Users/tsanterre/.rustup/toolchains/nightly-aarch64-apple-darwin/bin/rust-analyzer proc_macro_srv=/Users/tsanterre/.rustup/toolchains/nightly-2026-07-19-aarch64-apple-darwin/libexec/rust-analyzer-proc-macro-srv
+# invocations_per_build=4 concurrency=3
+scenario	events	builds	published	hit	uncached	processes	overlaps	cwds	drivers	seconds	note
+cargo-cold	4	4	4	0	0	1	0	1	rustc	0.1	
+cargo-warm	4	0	0	4	0	1	0	1	rustc	0.1	
+cargo-concurrent-x3	12	4	4	8	0	3	5	1	rustc	1.8	3 rustc processes
+negative-control-x3	12	12	0	0	12	3	21	1	rustc	1.8	duplicate work is observable
+killed-writer	4	4	4	0	0	1	0	1	rustc	0.2	killed after 0 completed expansions
+analyzer	4	0	0	4	0	1	0	1	rust-analyzer-proc-macro-srv	7.3	one server process, every invocation
+cargo-and-analyzer	8	4	4	4	0	2	4	1	rust-analyzer-proc-macro-srv,rustc	17.4	rust-analyzer-proc-macro-srv+rustc; one working directory
+analyzer-killed-holding-lock	4	4	4	0	0	1	0	1	rustc	3.0	server killed after 0 completed expansions; lock released
