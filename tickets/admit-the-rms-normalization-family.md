@@ -1,7 +1,7 @@
 ---
 id: admit-the-rms-normalization-family
 title: Admit the RMS normalization family
-status: todo
+status: in-progress
 priority: p1
 dependencies: [scope-transformer-nonlinear-normalization-and-reductions, admit-the-silu-activation-family, admit-the-reindex-and-broadcast-operation-families, implement-the-typed-accuracy-contract-vocabulary, record-the-metal-elementary-function-accuracy-guarantee]
 related: [admit-the-softmax-family, implement-parallel-reduction-strategies, own-operation-family-support-matrix, design-attention-program-vertical]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/reference, implementation/compiler, i
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, semantics, normalization, reduction, transcendental, language-model, breadth]
+claimed_from: todo
+assignee: worker-rms
+lease_expires_at: 1785576713
 ---
 ## User-visible outcome
 
