@@ -1,7 +1,7 @@
 ---
 id: land-the-backend-scoped-route-requirement-answer-adr
 title: Land the backend-scoped route-requirement answer ADR as proposed
-status: in-progress
+status: done
 priority: p2
 dependencies: [design-the-adapter-owned-route-requirement-answer-channel]
 related: [dispatch-a-tiler-region-on-metal-hardware, close-the-metal-gpu-family-out-of-crate-total-map]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions, contracts/navigation, research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [contracts, adr, runtime, backends, metal, public-boundary]
-claimed_from: todo
-assignee: worker-answer-adr
-lease_expires_at: 1785596471
 ---
 ## User-visible outcome
 
