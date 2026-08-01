@@ -1,7 +1,7 @@
 ---
 id: avoid-toolchain-resolution-on-a-warm-expansion-cache-hit
 title: Decide whether a warm expansion-cache hit may resolve the Apple toolchain
-status: in-progress
+status: done
 priority: p2
 dependencies: [prototype-inline-aot-integration-proof]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/frontend, implementation/metal-aot]
 shared_scopes: [project/tickets, contracts/integrations]
 paths: []
 tags: [research, performance, inline-dx]
-claimed_from: todo
-assignee: worker-warm-hit
-lease_expires_at: 1785565515
 ---
 ## Why this exists
 
