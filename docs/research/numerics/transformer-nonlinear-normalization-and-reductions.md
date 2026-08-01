@@ -6,7 +6,7 @@ title: "Transformer non-linear, normalization, and reduction contracts"
 topics: ["numerics", "softmax", "normalization", "activations", "masking", "reductions", "transcendentals", "transformer", "language-model", "metal"]
 catalog_group: "numerical-operations"
 research_status: "complete"
-disposition: "pending"
+disposition: "partially-adopted"
 implementation_status: "partial"
 evidence_classes: ["primary-source-synthesis", "bounded-measurement"]
 informs: ["tiler.contract.numerical-semantics", "tiler.contract.correctness-and-testing"]
