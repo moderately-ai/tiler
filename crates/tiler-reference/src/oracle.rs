@@ -45,7 +45,26 @@ use crate::{
     Tensor, TensorPayloadView, canonicalize_arithmetic_f32,
 };
 
-/// Maximum scalar, reducer-body, and index evaluations in one region evaluation.
+/// Maximum scalar, reducer-body, and index evaluations in one evaluated span.
+///
+/// **A running counter, not a product of extents.** Every other governed bound
+/// in this file is answerable before any work happens: an output's element count
+/// comes from its shape, a magnitude from the integer, a depth from the nesting.
+/// This one is incremented by [`RegionEvaluation::step`] on each scalar,
+/// reducer-body, and index-expression evaluation, and what a region costs per
+/// iteration point is a property of its own expression graph and reducer body
+/// rather than of its domain. No caller can therefore predict the cost before
+/// asking — including [`IndexRegionEvaluator::evaluate`] on an arbitrary
+/// verified region, which is the caller this bound exists for — and that is
+/// exactly why it is a running bound rather than a preflight one.
+///
+/// The unit it bounds is **one span**: one call that walks a contiguous run of
+/// the region's parallel iteration space. [`IndexRegionEvaluator::evaluate`] is
+/// one span over the whole space, so the whole-region walk is held to this
+/// number exactly as it always was, and [`StagedIndexRegionEvaluation`] reaches
+/// a larger region by spending several bounded spans rather than by weakening
+/// the number. A span whose points cost more than this refuses whatever its
+/// point count is: a single point over the bound is refused at a span of one.
 const MAX_EVALUATION_STEPS: u64 = 16 * 1024 * 1024;
 
 /// Maximum combined host recursion depth of one region evaluation.
@@ -1032,6 +1051,17 @@ pub enum IndexRegionEvaluationError {
         /// First rejected size.
         actual: u64,
     },
+    /// A staged span asked for no parallel points.
+    ///
+    /// A span that walks nothing cannot advance the evaluation, so a caller
+    /// looping until exhaustion on one would never finish. Refused at the call
+    /// that made it rather than diagnosed later as an incomplete walk.
+    EmptyStagedSpan,
+    /// [`StagedIndexRegionEvaluation::finish`] ran with parallel points unwalked.
+    IncompleteStagedWalk {
+        /// Parallel points the spans covered before finishing.
+        evaluated: u64,
+    },
     /// The region uses a feature outside this bounded oracle profile.
     Unsupported {
         /// Rejected region feature.
@@ -1117,6 +1147,13 @@ impl IndexRegionEvaluationError {
             Self::Unsupported { feature } => {
                 write!(formatter, "unsupported region feature: {feature}")
             }
+            Self::EmptyStagedSpan => {
+                formatter.write_str("a staged span must walk at least one parallel point")
+            }
+            Self::IncompleteStagedWalk { evaluated } => write!(
+                formatter,
+                "the staged walk finished after {evaluated} parallel points, leaving the region's parallel space uncovered"
+            ),
             Self::MalformedRegion => {
                 formatter.write_str("verified index region is internally malformed")
             }
@@ -1234,6 +1271,11 @@ impl IndexRegionEvaluator {
     /// coordinate, write coverage claim, and produced value is then checked
     /// independently of the structural verifier's own proofs.
     ///
+    /// This is [`Self::stage`] walked in **one span**, which is why the whole
+    /// walk is held to `MAX_EVALUATION_STEPS` as a single ask: the staged
+    /// entry point below did not give this path a second, larger budget, it
+    /// gave a caller a way to spend several of this one.
+    ///
     /// # Errors
     ///
     /// Returns an [`IndexRegionEvaluationError`] for missing authority, a
@@ -1245,6 +1287,29 @@ impl IndexRegionEvaluator {
         authority: IndexRegionAuthority<'_>,
         inputs: &[IndexRegionInput<'_>],
     ) -> Result<IndexRegionEvaluation, IndexRegionEvaluationError> {
+        let mut staged = self.stage(region, authority, inputs)?;
+        staged.evaluate_points(u64::MAX)?;
+        staged.finish()
+    }
+
+    /// Begins one region evaluation the caller walks in bounded spans.
+    ///
+    /// Revalidation, input binding, capability resolution, and output planning
+    /// all happen here, so a region this authority cannot admit is refused
+    /// before any point is walked and a caller learns the size of the walk
+    /// ([`StagedIndexRegionEvaluation::parallel_point_count`]) without paying
+    /// for it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same authority, binding, capability, unsupported-feature and
+    /// output-planning failures [`Self::evaluate`] returns before its walk.
+    pub fn stage<'a>(
+        &'a self,
+        region: &'a VerifiedIndexRegion,
+        authority: IndexRegionAuthority<'a>,
+        inputs: &[IndexRegionInput<'a>],
+    ) -> Result<StagedIndexRegionEvaluation<'a>, IndexRegionEvaluationError> {
         let evidence = authority
             .scalar()
             .revalidate_region(region)
@@ -1252,12 +1317,236 @@ impl IndexRegionEvaluator {
         if evidence.semantic_snapshot() != authority.semantic().snapshot_identity() {
             return Err(IndexRegionEvaluationError::SemanticAuthorityMismatch);
         }
-        let mut evaluation = RegionEvaluation::new(region, self, authority, inputs)?;
-        let outputs = evaluation.evaluate_outputs()?;
+        let evaluation = RegionEvaluation::new(region, self, authority, inputs)?;
+        let walk = ParallelWalk::new(evaluation.parallel_domain()?);
+        let plans = evaluation.output_plans()?;
+        Ok(StagedIndexRegionEvaluation {
+            evaluation,
+            walk,
+            plans,
+            authority: evidence,
+            failure: None,
+        })
+    }
+}
+
+/// One region evaluation walked in caller-sized spans of its parallel domain.
+///
+/// # What this is for
+///
+/// `MAX_EVALUATION_STEPS` bounds one span, and a region's cost per iteration
+/// point is not computable from its extents, so a region large enough is refused
+/// by the whole-region path however well formed it is. This type reaches such a
+/// region without moving that bound: each [`Self::evaluate_points`] call is one
+/// bounded ask that passes exactly the test [`IndexRegionEvaluator::evaluate`]
+/// applies, and the total is the caller's own loop.
+///
+/// There is deliberately **no convenience that walks every remaining point in
+/// one call**. The loop is the authorization: a single call that walked an
+/// arbitrary total would put back the unbounded ask the bound exists to prevent,
+/// and it is already available under its real name as
+/// [`IndexRegionEvaluator::evaluate`].
+///
+/// # Why a span boundary cannot change a value
+///
+/// The argument is about what a [`VerifiedIndexRegion`] *proves*, not about the
+/// shape of the loop below; the loop is what was checked against it.
+///
+/// - **A write's iteration domain is exactly the region's parallel dimension
+///   set.** `IndexRegionBuilder`'s access preparation refuses any other write
+///   domain with `IndexBuildError::InvalidWriteDomain`. So "the parallel points
+///   this walk visits" and "the domain each output is written over" are one set
+///   rather than two that happen to coincide for the regions tried so far.
+/// - **That write is total and injective over that domain.** Every write access
+///   carries a `WriteOwnershipProofView`: `CoordinatePermutation`, where each
+///   coordinate *is* a distinct domain dimension whose extent the environment
+///   proves equal to the axis it indexes, or `Exhaustive`, where a finite
+///   enumeration set one bit per covered element and refused both a repeat and a
+///   gap. Either way the point-to-element map is a bijection, so **a partition
+///   of the parallel points is a partition of each output's elements** and no
+///   span can land on an element another span produced.
+/// - **No value in a region can read a boundary the region writes.** The same
+///   access preparation refuses a read of an output tensor with
+///   `IndexBuildError::ReadFromOutput`. The written elements are the only state
+///   spans share, and this makes them unobservable to the computation, so a
+///   point's value cannot depend on which other points have already run.
+///
+/// What was checked against those three facts: `RegionEvaluation::evaluate_point`
+/// builds a fresh `Frame` per point; a read resolves only against the immutable
+/// bound inputs; a reduction's state is built from its `init` values inside the
+/// point's own frame and folded through a `BodyContext` that does not outlive
+/// the point. How many reads a contributor performs never enters this — a fold
+/// taking two operand reads per contributor composes exactly as one taking a
+/// single read does.
+///
+/// # What staging does not weaken
+///
+/// The output element buffers live here, across spans, so `DuplicateWrite` and
+/// `IncompleteWrite` see precisely the elements an unstaged walk would have
+/// seen: a duplicate across two spans is the same slot written twice, and a gap
+/// is the same `None` at [`Self::finish`]. Both checks are the oracle's own,
+/// independent of the ownership proof cited above, and staging leaves them
+/// exactly where they were.
+///
+/// The step budget is not caller-held state. Each span is a self-contained
+/// evaluation of a *stated* run of parallel points whose result is the whole
+/// walk's result restricted to them, and the budget bounds one such ask
+/// unchanged; a caller who wants more work must write more calls, which was
+/// already true of [`IndexRegionEvaluator::evaluate`] itself. What is refused is
+/// resuming *inside* a point with a fresh budget, which would make the unit a
+/// caller pays for something no one can state.
+///
+/// A span width is the caller's because nothing else can supply it: unlike a
+/// fold whose widest admissible slab divides out of a step product, a region's
+/// per-point cost is discovered by walking. The budget is what tells a caller
+/// the width was too large.
+pub struct StagedIndexRegionEvaluation<'a> {
+    evaluation: RegionEvaluation<'a>,
+    walk: ParallelWalk,
+    plans: Vec<OutputPlan<'a>>,
+    authority: ScalarAuthorityEvidence,
+    failure: Option<IndexRegionEvaluationError>,
+}
+
+impl fmt::Debug for StagedIndexRegionEvaluation<'_> {
+    /// Renders the walk, never the borrowed input tensors.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StagedIndexRegionEvaluation")
+            .field("parallel_point_count", &self.walk.point_count())
+            .field("evaluated_points", &self.walk.evaluated)
+            .field("exhausted", &self.walk.exhausted)
+            .field("output_count", &self.plans.len())
+            .field("failed", &self.failure.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl StagedIndexRegionEvaluation<'_> {
+    /// Returns the number of parallel points the whole walk covers.
+    ///
+    /// `None` when the product of the parallel extents exceeds `u64`. That is
+    /// not "very many": it is the case where no point count exists to report,
+    /// and a saturated one would be a number a caller could divide by. Such a
+    /// region is still walkable — and still refused by the step budget or by the
+    /// write-coverage checks long before the count would have mattered.
+    #[must_use]
+    pub fn parallel_point_count(&self) -> Option<u64> {
+        self.walk.point_count()
+    }
+
+    /// Returns the parallel points walked so far.
+    #[must_use]
+    pub const fn evaluated_points(&self) -> u64 {
+        self.walk.evaluated
+    }
+
+    /// Returns whether every parallel point has been walked.
+    #[must_use]
+    pub const fn is_exhausted(&self) -> bool {
+        self.walk.exhausted
+    }
+
+    /// Walks up to `points` further parallel points under one step budget.
+    ///
+    /// Returns how many were walked, which is fewer than asked exactly when the
+    /// walk reached its end, and zero only when it had already reached it.
+    ///
+    /// A failed span poisons this evaluation: the outputs it had written are a
+    /// partial result, and a later call returning the original failure is what
+    /// stops that partial result from being finished as if it were whole.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexRegionEvaluationError::EmptyStagedSpan`] for a span of no
+    /// points, the retained failure of an earlier span, or any evaluation
+    /// failure this span reaches — including
+    /// [`IndexReferenceResource::EvaluationSteps`] when the span's points cost
+    /// more than `MAX_EVALUATION_STEPS` between them.
+    pub fn evaluate_points(&mut self, points: u64) -> Result<u64, IndexRegionEvaluationError> {
+        if let Some(failure) = &self.failure {
+            return Err(failure.clone());
+        }
+        if points == 0 {
+            return Err(IndexRegionEvaluationError::EmptyStagedSpan);
+        }
+        self.evaluation
+            .evaluate_span(&mut self.walk, &mut self.plans, points)
+            .inspect_err(|failure| self.failure = Some(failure.clone()))
+    }
+
+    /// Finishes the walked outputs and their scalar authority receipt.
+    ///
+    /// # Errors
+    ///
+    /// Returns the retained failure of a poisoned evaluation,
+    /// [`IndexRegionEvaluationError::IncompleteStagedWalk`] when parallel points
+    /// remain unwalked, or the same write-coverage and value failures the
+    /// whole-region path reports when it finishes its outputs.
+    pub fn finish(self) -> Result<IndexRegionEvaluation, IndexRegionEvaluationError> {
+        if let Some(failure) = self.failure {
+            return Err(failure);
+        }
+        if !self.walk.exhausted {
+            return Err(IndexRegionEvaluationError::IncompleteStagedWalk {
+                evaluated: self.walk.evaluated,
+            });
+        }
+        let outputs = self
+            .plans
+            .into_iter()
+            .map(finish_output)
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(IndexRegionEvaluation {
             outputs,
-            authority: evidence,
+            authority: self.authority,
         })
+    }
+}
+
+/// Lexicographic cursor over one region's parallel iteration space.
+///
+/// Holds the position a span left off at, which is what makes a span boundary a
+/// resumption between points rather than inside one.
+struct ParallelWalk {
+    dimensions: Vec<(VerifiedDimensionId, u64)>,
+    extents: Vec<u64>,
+    point: Vec<u64>,
+    exhausted: bool,
+    evaluated: u64,
+}
+
+impl ParallelWalk {
+    fn new(dimensions: Vec<(VerifiedDimensionId, u64)>) -> Self {
+        let extents: Vec<u64> = dimensions.iter().map(|(_, extent)| *extent).collect();
+        // One empty extent makes the space empty; a rank-zero parallel domain is
+        // the one point of the empty tuple, which is what `advance_point`'s
+        // immediate `false` on an empty slice already produced.
+        let exhausted = extents.contains(&0);
+        let point = vec![0_u64; extents.len()];
+        Self {
+            dimensions,
+            extents,
+            point,
+            exhausted,
+            evaluated: 0,
+        }
+    }
+
+    fn point_count(&self) -> Option<u64> {
+        if self.extents.contains(&0) {
+            return Some(0);
+        }
+        self.extents
+            .iter()
+            .try_fold(1_u64, |total, extent| total.checked_mul(*extent))
+    }
+
+    fn advance(&mut self) {
+        self.evaluated = self.evaluated.saturating_add(1);
+        if !advance_point(&mut self.point, &self.extents) {
+            self.exhausted = true;
+        }
     }
 }
 
@@ -1574,25 +1863,36 @@ fn finish_output(plan: OutputPlan<'_>) -> Result<Tensor, IndexRegionEvaluationEr
 }
 
 impl<'a> RegionEvaluation<'a> {
-    fn evaluate_outputs(&mut self) -> Result<Vec<Tensor>, IndexRegionEvaluationError> {
-        let parallel = self.domain(
+    fn parallel_domain(
+        &self,
+    ) -> Result<Vec<(VerifiedDimensionId, u64)>, IndexRegionEvaluationError> {
+        self.domain(
             self.region
                 .dimensions()
                 .filter(|dimension| dimension.role() == DomainRole::Parallel)
                 .map(tiler_ir::index::DomainDimensionRef::id),
-        )?;
-        let mut plans = self.output_plans()?;
-        let extents: Vec<u64> = parallel.iter().map(|(_, extent)| *extent).collect();
-        if !extents.contains(&0) {
-            let mut point = vec![0_u64; extents.len()];
-            loop {
-                self.evaluate_point(&parallel, &point, &mut plans)?;
-                if !advance_point(&mut point, &extents) {
-                    break;
-                }
-            }
+        )
+    }
+
+    /// Walks up to `points` parallel points from where the walk stands.
+    ///
+    /// The step budget starts here and nowhere else, so one span is one ask: the
+    /// whole-region path calls this once with an unbounded point count and is
+    /// held to exactly the number it always was.
+    fn evaluate_span(
+        &mut self,
+        walk: &mut ParallelWalk,
+        plans: &mut [OutputPlan<'a>],
+        points: u64,
+    ) -> Result<u64, IndexRegionEvaluationError> {
+        self.steps = 0;
+        let mut walked = 0_u64;
+        while walked < points && !walk.exhausted {
+            self.evaluate_point(&walk.dimensions, &walk.point, plans)?;
+            walk.advance();
+            walked = walked.saturating_add(1);
         }
-        plans.into_iter().map(finish_output).collect()
+        Ok(walked)
     }
 
     fn domain(
