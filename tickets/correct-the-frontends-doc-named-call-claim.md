@@ -6,7 +6,7 @@ priority: p3
 dependencies: []
 related: [denote-a-reduction-region-in-the-inline-macro-grammar]
 scopes: [contracts/integrations]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, frontend]
 ---
