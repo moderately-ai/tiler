@@ -1,7 +1,7 @@
 ---
 id: record-the-metal-elementary-function-accuracy-guarantee
 title: Record the Metal normative elementary-function accuracy guarantee
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [admit-the-silu-activation-family, admit-the-rms-normalization-family, admit-the-softmax-family, scope-transformer-nonlinear-normalization-and-reductions, implement-the-typed-accuracy-contract-vocabulary, numerical-policy-contract, own-operation-family-support-matrix]
@@ -9,6 +9,9 @@ scopes: [research/numerics, research/apple-targets, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, numerics, transcendental, accuracy, metal, language-model]
+claimed_from: todo
+assignee: worker-record-the-m
+lease_expires_at: 1785561991
 ---
 ## User-visible outcome
 

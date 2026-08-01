@@ -1,7 +1,7 @@
 ---
 id: admit-the-grouped-query-head-layout-reindex-profile
 title: Admit the grouped-query head-layout reindex profile
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-the-reindex-and-broadcast-operation-families]
 related: [design-attention-program-vertical, admit-the-attention-contraction-structures, compose-rotary-position-embedding-from-reindex-and-broadcast, assemble-the-causal-self-attention-block-program]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, semantics, structural, attention, gqa, language-model]
+claimed_from: todo
+assignee: worker-admit-the-gr
+lease_expires_at: 1785561991
 ---
 ## User-visible outcome
 
