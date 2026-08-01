@@ -1,7 +1,7 @@
 ---
 id: accept-the-public-backend-provider-composition-boundary
 title: Accept or revise the public backend-provider composition boundary
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: [draft-the-backend-provider-composition-adr]
 related: [draft-public-extension-seam-ownership-adr]
@@ -43,3 +43,9 @@ The record is [ADR 0090: Compose backends per responsibility rather than per bac
 **What is not in scope for this acceptance and must stay out.** Multi-device, sharding, collectives, cross-device transfers, queue affinity, and multiple command streams stay with [`multi-device-and-sharding-scope-gate`](multi-device-and-sharding-scope-gate.md). Dynamic loading, a stable plugin ABI, adapter discovery, hot reload, untrusted or sandboxed providers, cross-process callbacks, and runtime source compilation stay jointly deferred with no reserved seam. The two target-profile key grammars stay with [`reconcile-the-two-target-profile-key-grammars`](reconcile-the-two-target-profile-key-grammars.md), the missing host-process availability phase with [`name-a-host-process-availability-phase`](name-a-host-process-availability-phase.md), and the compile-path opaque-call registry with [`register-opaque-calls-on-the-compile-path`](register-opaque-calls-on-the-compile-path.md), which is `related` rather than dependent for the reason recorded there.
 
 **On acceptance, the disclosures become wrong and correcting them is part of closing this node.** Seven documents carry a sentence that exists only because the record is proposed: `docs/architecture.md` (four sites), `docs/operation-extensions.md` (two), `docs/artifact-abi.md`, `docs/backends/cpu.md`, `docs/glossary.md`'s Provider row, `docs/decisions/0078-name-the-intended-public-extension-seams.md`'s two Tom-owned open questions, and `docs/decisions/README.md`'s two catalog rows and its "exactly one record is proposed" paragraph. Reproduce the set with `grep -rln "0090-compose-backends-per-responsibility-rather-than-per-backend" docs/`. Nothing checks any of them, which is why the closing condition above names them.
+
+## Outcome (2026-07-31)
+
+**Tom accepted ADR 0090 in full, as recommended.** Item 1: target-specific scheduling knowledge is a checked combination split at feasibility. Item 2: the physical-implementation provider becomes an installable public seam in the lowering-seam idiom. Item 3: ADR 0078 item 5's sharpened trigger reads as evidence-based rather than literal, the two spikes satisfy it, and the deferral is lifted. Acceptance is of the model; each concrete public surface still comes to Tom under ADR 0075 at implementation time.
+
+**The acceptance sweep, executed with this closure:** ADR 0090's `decision_status` moved to `accepted` with the acceptance recorded in its status paragraph; the seven proposal-era disclosure sites were corrected in the same landing (`docs/architecture.md` four sites, `docs/operation-extensions.md` two, `docs/artifact-abi.md`, `docs/backends/cpu.md`, `docs/glossary.md`'s Provider row, ADR 0078's two open questions closed with dated resolutions, and `docs/decisions/README.md`'s exactly-one-proposed paragraph removed with both catalog rows moved to accepted). Reproduce the sweep's completeness with `grep -rn "proposed" docs/decisions/README.md` and `grep -rln "0090-compose" docs/` followed by reading each hit for status language.
