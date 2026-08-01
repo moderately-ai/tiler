@@ -220,6 +220,32 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
         NumericalDimension::NanAssumptions,
         NumericalDimension::InfinityAssumptions,
     ];
+    /// Dimensions the strict tensor contraction can consume.
+    ///
+    /// The union of the two rows above, and the only admitted operation for
+    /// which that union is right. A *tensor* contraction is a reduction, so both
+    /// order-contract dimensions act on its contributor fold; and its
+    /// per-contributor step is `accumulator + a * b`, an adjacent multiply and
+    /// add, so ADR 0015's contraction dimension has a product to fuse — which
+    /// the strict serial sum's row above explicitly does not. This is the single
+    /// point where the two senses of "contraction" meet, and it is a bit-level
+    /// difference rather than a naming curiosity: a device or library GEMM built
+    /// on fused multiply-add accumulation is incompatible with a contract that
+    /// forbids it, and a target is only ever asked because this row is here.
+    ///
+    /// Distributivity, which a contraction-order rewrite would consume, is
+    /// absent rather than withheld: no contract Tiler can express resolves it,
+    /// so it is not a `NumericalDimension` at all.
+    const TENSOR_CONTRACTION: &[NumericalDimension] = &[
+        NumericalDimension::InputSubnormals,
+        NumericalDimension::ResultSubnormals,
+        NumericalDimension::Contraction,
+        NumericalDimension::Reassociation,
+        NumericalDimension::Permutation,
+        NumericalDimension::SignedZero,
+        NumericalDimension::NanAssumptions,
+        NumericalDimension::InfinityAssumptions,
+    ];
     &[
         // A constant retains its declared bit pattern until an operation's
         // semantics produce a new value, so no arithmetic freedom acts on it.
@@ -238,6 +264,10 @@ pub(crate) const fn operation_capabilities() -> &'static [OperationNumericalCapa
         OperationNumericalCapability {
             key: "tiler::strict-serial-sum-f32@1",
             consumes: REDUCTION,
+        },
+        OperationNumericalCapability {
+            key: "tiler::strict-tensor-contraction-f32@1",
+            consumes: TENSOR_CONTRACTION,
         },
         // These operations carry a complete, fixed strict-affine conversion
         // contract. No caller-selected generic freedom can weaken or substitute

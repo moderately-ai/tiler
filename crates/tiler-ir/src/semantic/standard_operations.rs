@@ -3,9 +3,10 @@
 use crate::shape::{Axis, ShapeEvidence, StaticShape};
 
 use super::{
-    BuildError, CanonicalField, CanonicalValue, F32, F32_CONSTANT_BITS_ATTRIBUTE,
-    OperationAttributes, REDUCTION_AXES_ATTRIBUTE, SemanticProgramBuilder, ShapedValue, Value,
-    add_f32_op, constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op,
+    BuildError, CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField, CanonicalValue,
+    ContractionIndexStructure, F32, F32_CONSTANT_BITS_ATTRIBUTE, OperationAttributes,
+    REDUCTION_AXES_ATTRIBUTE, SemanticProgramBuilder, ShapedValue, Value, add_f32_op,
+    constant_f32_op, multiply_f32_op, strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
 };
 
 /// Exact binary32 constant from its IEEE-754 payload.
@@ -239,6 +240,47 @@ impl StrictSerialF32Sum {
             strict_serial_sum_f32_op(),
             attributes,
             &[input.erase()],
+        )
+    }
+}
+
+/// Strict binary32 tensor contraction over a canonical index structure.
+///
+/// The *tensor* sense of contraction: a sum over indices shared by both
+/// operands. It is unrelated to ADR 0015's contraction, the permission to fuse a
+/// multiply and an add into one rounding, which this family forbids.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct F32TensorContraction;
+
+impl F32TensorContraction {
+    /// Applies the registered tensor-contraction semantics.
+    ///
+    /// The structure is stated once and validated once, by the registered
+    /// operation authority; a frontend never chooses among contraction keys
+    /// because there is only one. The result's shape is derived from the
+    /// structure's output tuple and the operands' extents, never declared here.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed construction error without mutating the graph on
+    /// failure, including the named structural rule the structure violated
+    /// against this occurrence's operands.
+    pub fn apply(
+        builder: &mut SemanticProgramBuilder,
+        structure: &ContractionIndexStructure,
+        left: Value<F32>,
+        right: Value<F32>,
+    ) -> Result<Value<F32>, BuildError> {
+        let attributes = OperationAttributes::new([CanonicalField::new(
+            CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE,
+            structure.canonical_value().clone(),
+        )])
+        .map_err(BuildError::InvalidOperationAttributes)?;
+        apply_single(
+            builder,
+            strict_tensor_contraction_f32_op(),
+            attributes,
+            &[left.erase(), right.erase()],
         )
     }
 }

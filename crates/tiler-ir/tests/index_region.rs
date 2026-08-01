@@ -2230,3 +2230,118 @@ fn closure_verification_failure_preserves_recoverable_diagnostic() {
     scalar_output(&mut recovered, value);
     assert_eq!(recovered.build().unwrap().outputs().count(), 1);
 }
+
+/// The contraction access relation: two operand maps projecting away *different*
+/// iteration coordinates.
+///
+/// `tiler::strict-tensor-contraction-f32@1`'s index structure `td,od->to` has
+/// iteration domain `(t, o)`, reduction domain `(d)`, operand 0's map
+/// `(t, o, d) -> (t, d)` never mentioning `o`, and operand 1's map
+/// `(t, o, d) -> (o, d)` never mentioning `t`. Both are pure projections of the
+/// coordinate vector, so the family needs no new access class — but no admitted
+/// operation had ever produced two operand maps that drop *different* iteration
+/// coordinates, and "needs no new class" is a claim about this vocabulary that
+/// only emitting the region can settle. This test emits it.
+///
+/// Deliberately not a lowering capability. Registering one is a separate,
+/// gated obligation; what is exercised here is that the index layer can express
+/// the relation at all, and that both projections discharge their bounds without
+/// enumeration.
+#[test]
+fn a_contraction_emits_two_operand_projections_dropping_different_coordinates() {
+    let (_, registry) = registries();
+    let mut builder = IndexRegionBuilder::new(registry).unwrap();
+
+    // The B1-a prefill gate projection's extents, scaled down: `[T, D]` against
+    // `[O, D]` producing `[T, O]`, contracting the LAST axis of both operands.
+    let t = builder
+        .dimension(DomainRole::Parallel, Extent::new(4))
+        .unwrap();
+    let o = builder
+        .dimension(DomainRole::Parallel, Extent::new(6))
+        .unwrap();
+    let d = builder
+        .dimension(DomainRole::Reduction, Extent::new(8))
+        .unwrap();
+    let activations = builder
+        .tensor(TensorRole::Input, test_type(), Shape::from_dims([4, 8]))
+        .unwrap();
+    let weights = builder
+        .tensor(TensorRole::Input, test_type(), Shape::from_dims([6, 8]))
+        .unwrap();
+    let projected = builder
+        .tensor(TensorRole::Output, test_type(), Shape::from_dims([4, 6]))
+        .unwrap();
+
+    let te = builder.dimension_expr(t).unwrap();
+    let oe = builder.dimension_expr(o).unwrap();
+    let de = builder.dimension_expr(d).unwrap();
+
+    // The two maps. Operand 0 omits `o`; operand 1 omits `t`.
+    let activation = builder.read(activations, &[t, d], &[te, de]).unwrap();
+    let weight = builder.read(weights, &[o, d], &[oe, de]).unwrap();
+    let product = builder
+        .apply(
+            ScalarOpKey::new("example", "binary", 1).unwrap(),
+            ScalarAttributes::empty(),
+            &[activation, weight],
+        )
+        .unwrap()
+        .get(0)
+        .unwrap();
+    let init = constant_value(&mut builder);
+    let contracted = builder
+        .reduce(&[d], &[init], &[product], |body| {
+            let accumulated = body.apply(
+                ScalarOpKey::new("example", "binary", 1).unwrap(),
+                ScalarAttributes::empty(),
+                &[body.state(0).unwrap(), body.contributor(0).unwrap()],
+            )?;
+            body.yield_values(&[accumulated.get(0).unwrap()])
+        })
+        .unwrap()
+        .get(0)
+        .unwrap();
+    let write = builder.write(projected, &[t, o], &[te, oe]).unwrap();
+    builder.output(write, contracted).unwrap();
+    let region = builder.build().unwrap();
+
+    let accesses: Vec<_> = region.accesses().collect();
+    assert_eq!(accesses.len(), 3);
+    let domain_of = |position: usize| {
+        accesses[position]
+            .domain()
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    let activation_domain = domain_of(0);
+    let weight_domain = domain_of(1);
+    assert_eq!(activation_domain.len(), 2);
+    assert_eq!(weight_domain.len(), 2);
+    assert_eq!(
+        activation_domain.intersection(&weight_domain).count(),
+        1,
+        "the two operand maps share exactly the reduction coordinate"
+    );
+    assert_eq!(
+        activation_domain.difference(&weight_domain).count(),
+        1,
+        "operand 0 keeps one iteration coordinate operand 1 drops"
+    );
+    assert_eq!(
+        weight_domain.difference(&activation_domain).count(),
+        1,
+        "and operand 1 keeps one operand 0 drops -- which is the property no \
+         previously admitted family had"
+    );
+
+    // Every coordinate is a bare dimension reference against an axis of equal
+    // static extent, so both projections and the write discharge cheaply; a
+    // contraction does not pay for an exhaustive proof.
+    for access in &accesses[..2] {
+        assert_eq!(access.bounds_proof(), Some(BoundsProofView::Interval));
+    }
+    assert_eq!(
+        accesses[2].write_ownership_proof(),
+        Some(WriteOwnershipProofView::CoordinatePermutation)
+    );
+}

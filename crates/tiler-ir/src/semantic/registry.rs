@@ -9,6 +9,7 @@ use crate::identity::{push_len, push_slice};
 use crate::shape::Axis;
 
 use super::catalog::register_builtin_dtype_catalog;
+use super::contraction::register_standard_contraction;
 use super::operation::{
     CanonicalValueKind, F32_CONSTANT_BITS_ATTRIBUTE, OpKey, OperationAlgebraicCapabilities,
     OperationArity, OperationAttributeSchema, OperationAttributes, OperationConformance,
@@ -2090,6 +2091,7 @@ impl SemanticRegistryProvider for StandardSemantics {
             OperationEffect::Pure,
             Arc::new(StrictSerialSumF32),
         ))?;
+        register_standard_contraction(registrar)?;
         register_standard_quantization(registrar)
     }
 }
@@ -2107,7 +2109,7 @@ fn exact_schema<const N: usize>(
     .expect("governed operation schema is valid")
 }
 
-fn standard_conformance(name: &str) -> OperationConformance {
+pub(super) fn standard_conformance(name: &str) -> OperationConformance {
     OperationConformance::new(
         CanonicalValue::record([
             CanonicalField::new(

@@ -3706,7 +3706,19 @@ mod tests {
                 // key, which is a definition contract inside the same snapshot.
                 // Nothing about the trace's own content changed, which is why
                 // the two record lines below are unchanged.
-                "tiler-explain-v7 request=928bbdb50eb505ed\n",
+                // Rebaselined from `928bbdb50eb505ed` when the standard semantic
+                // registry began registering `tiler::strict-tensor-contraction-f32@1`.
+                // The request subject covers the frozen semantic registry
+                // snapshot, which encodes every registered *operation* along with
+                // its schema, facts, and conformance identity, so admitting one
+                // further operation family must move this digest exactly as
+                // admitting thirty-one further value types did. It moves a second
+                // time over: the lowering-registry identity in the same subject
+                // binds the semantic snapshot the capability registry froze
+                // against. No lowering capability was registered for the new
+                // family, so a contraction still fails closed at resolution, and
+                // the trace's own two record lines are again unchanged.
+                "tiler-explain-v7 request=e1e95ea1d50a918f\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

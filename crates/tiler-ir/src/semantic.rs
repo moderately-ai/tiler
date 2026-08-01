@@ -6,6 +6,7 @@
 //! [`SemanticProgram`](crate::semantic::SemanticProgram).
 
 mod catalog;
+mod contraction;
 mod error;
 mod handles;
 mod identity;
@@ -22,6 +23,20 @@ mod types;
 pub use catalog::{
     admitted_complex_component_types, builtin_scalar_value_types, complex_type_constructor,
     complex_value_type, microscaling_scheme_keys,
+};
+pub use contraction::{
+    CONTRACTION_F32_FACT_ACCUMULATOR_TYPE, CONTRACTION_F32_FACT_ARITHMETIC_CONTRACTION_PERMITTED,
+    CONTRACTION_F32_FACT_CANONICAL_NAN_BITS, CONTRACTION_F32_FACT_COMPUTATION_PRECISION,
+    CONTRACTION_F32_FACT_CONTRIBUTOR_SEQUENCE, CONTRACTION_F32_FACT_CONVERSION,
+    CONTRACTION_F32_FACT_DETERMINISM, CONTRACTION_F32_FACT_DISTRIBUTIVITY,
+    CONTRACTION_F32_FACT_EMPTY_CONTRACTED_DOMAIN, CONTRACTION_F32_FACT_NAN_CANONICALIZATION,
+    CONTRACTION_F32_FACT_PERMUTATION_PERMITTED, CONTRACTION_F32_FACT_REASSOCIATION_PERMITTED,
+    CONTRACTION_F32_FACT_RESULT_TYPE, CONTRACTION_F32_FACT_SEED,
+    CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CONTRACTION_STRUCTURE_CONTRACTED_INDICES,
+    CONTRACTION_STRUCTURE_OPERAND_INDICES, CONTRACTION_STRUCTURE_OUTPUT_INDICES,
+    CanonicalContractionIndexStructure, ContractionAttributeSubject, ContractionIndex,
+    ContractionIndexStructure, ContractionStructureError, MAX_CONTRACTION_OPERANDS,
+    MAX_CONTRACTION_TUPLE_INDICES, strict_tensor_contraction_f32_op,
 };
 pub use error::{
     BuildError, BuilderCreateError, EntityKind, HandleError, ProgramBuildError,
@@ -88,7 +103,9 @@ pub use registry::{
     ValueTypeMarker,
 };
 pub use shape_evidence::{SameShape, ShapePredicate, ShapeWitness, ShapedValue};
-pub use standard_operations::{F32Add, F32Constant, F32Multiply, StrictSerialF32Sum};
+pub use standard_operations::{
+    F32Add, F32Constant, F32Multiply, F32TensorContraction, StrictSerialF32Sum,
+};
 pub use types::{
     AttributeFieldId, CanonicalField, CanonicalFloatBitsRef, CanonicalIntegerWidth,
     CanonicalResolvedValueType, CanonicalValue, CanonicalValueView, EncodedComponentDeclaration,
