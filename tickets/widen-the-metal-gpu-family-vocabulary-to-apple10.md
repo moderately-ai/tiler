@@ -31,6 +31,8 @@ Reproduce in one line: `grep -n MTLGPUFamilyApple "$(xcrun --sdk macosx --show-s
 
 **Fact — the bindings disagree, which is itself part of the decision.** `objc2-metal` 0.3.2 names `MTLGPUFamilyApple10` (`objc2-metal-0.3.2/src/generated/MTLDevice.rs:238`). `metal` 0.33.0 does **not**: its `#[repr(i64)]` enum stops at `Apple9 = 1009` (`metal-0.33.0/src/device.rs:70-89`). So `prototypes/candle-metal-adapter` could already ask a device about Apple10 and `prototypes/serial-sum-run` could not without naming the raw value itself.
 
+**Fact — that second binding gap is now announced rather than silent, and it will stop this ticket's build.** `close-the-serial-sum-run-gpu-family-probe-table` left a compile-time assertion in `prototypes/serial-sum-run/src/proof.rs` that fails when `MetalGpuFamily::COUNT` leaves `5`, and fails again on a nameability sweep if the literal is merely raised. Adding an `Apple10` variant therefore breaks `cargo check` until that runner's `metal` binding genuinely names the enumerator — the intended coupling, not an obstacle to route around. At runtime the same runner already refuses fail-closed on an enumerator it cannot name (`MetalHostApplicabilityRefusal::Unobserved { predicate: GpuFamily }` for host applicability, `LiveDeviceObservation::Unrecognized` for a family route requirement), so widening degrades nothing silently; it leaves that runner unable to *observe* the family until its binding catches up.
+
 ## Why this is not a transcription
 
 `MetalGpuFamily`'s own documentation states that the set "is bounded by what the retained measurements needed". Widening it is therefore a *measurement* question, not a header-reading one, and it has consequences that outlive the edit:
