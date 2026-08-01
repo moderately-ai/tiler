@@ -1,7 +1,7 @@
 ---
 id: admit-loop-carried-cooperative-staging
 title: Admit loop-carried cooperative staging so a reused tile is expressible
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [realize-the-strict-contraction-on-metal, represent-cooperative-workgroup-reduction-dataflow, implement-the-single-workgroup-synchronized-reduction-strategy]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: []
 paths: []
 tags: [research, physical-planning, contraction]
+claimed_from: todo
+assignee: worker-loop-staging
+lease_expires_at: 1785610106
 ---
 ## User-visible outcome
 
