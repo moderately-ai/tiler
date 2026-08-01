@@ -3,7 +3,7 @@ id: admit-the-softmax-family
 title: Admit the softmax family
 status: todo
 priority: p1
-dependencies: [scope-transformer-nonlinear-normalization-and-reductions, admit-the-rms-normalization-family]
+dependencies: [scope-transformer-nonlinear-normalization-and-reductions, admit-the-rms-normalization-family, implement-the-typed-accuracy-contract-vocabulary, record-the-metal-elementary-function-accuracy-guarantee]
 related: [admit-the-silu-activation-family, implement-parallel-reduction-strategies, own-operation-family-support-matrix, design-attention-program-vertical, promote-the-symbolic-index-profile-to-a-public-boundary, assemble-the-causal-self-attention-block-program, retain-the-c1-attention-block-conformance-evidence]
 scopes: [implementation/ir, implementation/reference, implementation/compiler, implementation/metal, contracts/navigation]
 shared_scopes: [project/tickets]
