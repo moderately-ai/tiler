@@ -142,6 +142,18 @@ pub(crate) enum PhysicalError {
         region: RegionId,
         cause: UnhonouredDimension,
     },
+    /// A synchronization realization no available target fact speaks to.
+    ///
+    /// Distinct from [`Self::Synchronization`], which carries a fact that says
+    /// *no*. This one carries no fact because there is none: the profile has
+    /// never been asked about this subject. Both reject before
+    /// executable-frontier admission and neither is a cost, but only one of them
+    /// can name a refusing authority, and inventing one for the other would be
+    /// the false attribution the atomic fact exists to prevent.
+    UnrealizedSynchronization {
+        region: RegionId,
+        subject: tiler_ir::schedule::SynchronizationSubject,
+    },
     /// A synchronization realization the target declares it cannot provide.
     ///
     /// A distinct variant for the reason [`Self::Numerical`] is one: the
@@ -196,6 +208,26 @@ impl fmt::Display for PhysicalError {
                 }
                 write!(formatter, " (profile {})", cause.profile().key())
             }
+            Self::UnrealizedSynchronization { region, subject } => write!(
+                formatter,
+                "schedule.synchronization.unrealized: region {} requires {} arriving {}, \
+                 publishing {}, fencing{}{}, ordered {}; no available fact declares it",
+                region.get(),
+                subject.kind.key(),
+                subject.execution_scope.key(),
+                subject.visibility_scope.key(),
+                if subject.fenced_spaces.workgroup {
+                    " workgroup"
+                } else {
+                    ""
+                },
+                if subject.fenced_spaces.device {
+                    " device"
+                } else {
+                    ""
+                },
+                subject.ordering.key(),
+            ),
             Self::Synchronization { region, cause } => {
                 let subject = cause.subject();
                 write!(
@@ -924,6 +956,203 @@ pub(crate) fn final_reduction_region(
     Some((region, Vec::new()))
 }
 
+/// The stable name of the single-workgroup tree strategy in explain output.
+pub(crate) const SINGLE_WORKGROUP_TREE_STRATEGY: &str = "tiler.reduction.single-workgroup-tree";
+
+/// Why the governed profile offers no single-workgroup tree of one request's
+/// reduction.
+///
+/// A decline is a fact about *this request*, decided before any region exists,
+/// exactly as [`SplitUnavailable`] is. Every reason a *target* cannot run the
+/// strategy is deliberately absent from this vocabulary: workgroup memory,
+/// workgroup width, and the synchronization realization are resolved by the
+/// feasibility authority against the profile, so putting any of them here would
+/// let a preference decide legality and would hide the exact refusing bound.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WorkgroupTreeUnavailable {
+    /// The resolved numerical contract forbids reassociation.
+    ///
+    /// The tree regroups the declared contributor sequence, so this is the
+    /// permission it consumes. It is the *only* numerical decline here: the
+    /// admitted arrival order is fixed by the program, so the strategy consumes
+    /// no contributor permutation and a contract withholding permutation
+    /// forbids nothing this strategy does.
+    ReassociationForbidden,
+    /// No exact split of the contributor sequence across participants exists.
+    ///
+    /// Carries the contributor count, because "which extent admitted none" is
+    /// what a reader needs. The tail policy is exact by construction — a ragged
+    /// participant would stage a slot the coverage rule requires a writer for,
+    /// and a masked lane would break the emitted body's soundness argument — so
+    /// an inexact split is declined rather than padded.
+    NoAdmissibleParticipantCount {
+        /// Contributors one output position folds under this request.
+        contributors: u64,
+    },
+    /// The tree's derived extents, shapes, or tile are not representable.
+    Unrepresentable,
+}
+
+impl WorkgroupTreeUnavailable {
+    /// Returns the stable reason code naming this decline.
+    pub(crate) const fn reason(self) -> &'static str {
+        match self {
+            Self::ReassociationForbidden => "reassociation-forbidden",
+            Self::NoAdmissibleParticipantCount { .. } => "no-admissible-participant-count",
+            Self::Unrepresentable => "workgroup-tree-unrepresentable",
+        }
+    }
+}
+
+/// Builds the single-workgroup tree reduction of one request, or states why not.
+///
+/// # The strategy, with every key stated
+///
+/// One workgroup per output position and `participants` invocations in it.
+/// Level 0: every participant serially folds the contiguous contributor range
+/// its partition owns and stages the partial in its own slot of workgroup
+/// memory. The synchronization point. Level 1: the one committing participant
+/// folds the `participants` staged slots in ascending order and performs the
+/// region's owning write.
+///
+/// | Key | Value | Where it is stated |
+/// | --- | --- | --- |
+/// | topology | depth-two tree, fan-in `contributors_per_partition` then `participants` | [`ContributorPartition`] and [`tiler_ir::schedule::workgroup_tree_tile`] |
+/// | active lanes | every participant, then the committing one | the tile's phase participation and its `commit` range |
+/// | tail | exact, or declined | [`ContributorPartition::covers`], enforced by the schedule verifier |
+/// | workgroup storage | one `f32` slot per participant | the tile's [`tiler_ir::schedule::WorkgroupStaging`] |
+/// | accumulation dtype | the resolved contract's arithmetic type | the topology's `accumulation` |
+/// | contributor order | original-axis lexicographic within a partition, ascending participant across them | the topology's `order` and `arrival` |
+///
+/// The participant count is [`governed_partition`]'s balanced exact split — the
+/// same *choice*, not a calibrated one, that the multi-pass split makes, and for
+/// the same reason: it keeps both levels' folds as short as one choice can, and
+/// `calibrate-and-activate-parallel-reduction-selection` owns replacing it with
+/// measured evidence. Nothing here makes the tree win.
+///
+/// # Errors
+///
+/// Returns the typed [`WorkgroupTreeUnavailable`] the frontier records as a
+/// declined strategy. None of them is a compiler fault, and none of them is a
+/// target decision.
+pub(crate) fn single_workgroup_tree_region(
+    request: &VerifiedTargetRequest,
+) -> Result<(ScheduledRegion, Vec<SemanticMemberId>), WorkgroupTreeUnavailable> {
+    if request.numerical_contract().reassociation == NumericalPermission::Forbidden {
+        return Err(WorkgroupTreeUnavailable::ReassociationForbidden);
+    }
+    let subject = request.serial_sum();
+    let contributors =
+        reduction_contributors(request).ok_or(WorkgroupTreeUnavailable::Unrepresentable)?;
+    let partition = governed_partition(contributors)
+        .ok_or(WorkgroupTreeUnavailable::NoAdmissibleParticipantCount { contributors })?;
+    let participants = partition.partitions;
+    let tile = tiler_ir::schedule::workgroup_tree_tile(participants)
+        .ok_or(WorkgroupTreeUnavailable::Unrepresentable)?;
+    let iteration_shape =
+        tiler_ir::schedule::partial_reduction_shape(&subject.output_shape, partition)
+            .ok_or(WorkgroupTreeUnavailable::Unrepresentable)?;
+    let work_items = subject
+        .output_elements
+        .checked_mul(participants)
+        .ok_or(WorkgroupTreeUnavailable::Unrepresentable)?;
+    let threads_per_workgroup =
+        u32::try_from(participants).map_err(|_| WorkgroupTreeUnavailable::Unrepresentable)?;
+    let region = ScheduledRegion {
+        index: IndexRegion {
+            id: RegionId::new(4),
+            iteration_shape,
+            accesses: vec![
+                Access {
+                    tensor: TensorRole::Intermediate,
+                    component_role: None,
+                    mode: AccessMode::Read,
+                    map: LogicalAccess::ReductionContributor {
+                        input_shape: subject.input_shape.clone(),
+                        output_shape: subject.output_shape.clone(),
+                        axes: subject.reduction_axes.clone(),
+                        order: ContributorOrder::OriginalAxisLexicographic,
+                    },
+                    bounds: BoundsWitnessId::new(8),
+                    ownership: None,
+                },
+                Access {
+                    tensor: TensorRole::Output,
+                    component_role: None,
+                    mode: AccessMode::Write,
+                    map: LogicalAccess::LinearIdentity,
+                    bounds: BoundsWitnessId::new(9),
+                    ownership: Some(OwnershipWitnessId::new(4)),
+                },
+            ],
+            bounds_proofs: vec![
+                BoundsProof {
+                    id: BoundsWitnessId::new(8),
+                    tensor: TensorRole::Intermediate,
+                    component_role: None,
+                    kind: BoundsProofKind::ReductionDomain {
+                        input_shape: subject.input_shape.clone(),
+                        output_shape: subject.output_shape.clone(),
+                        axes: subject.reduction_axes.clone(),
+                        order: ContributorOrder::OriginalAxisLexicographic,
+                    },
+                },
+                // The owned output positions, which is one per *workgroup* and
+                // not one per invocation: the tile runs `participants`
+                // invocations over each of them.
+                BoundsProof {
+                    id: BoundsWitnessId::new(9),
+                    tensor: TensorRole::Output,
+                    component_role: None,
+                    kind: BoundsProofKind::LinearRange {
+                        element_count: subject.output_elements,
+                    },
+                },
+            ],
+            ownership_proof: OwnershipProof {
+                id: OwnershipWitnessId::new(4),
+                tensor: TensorRole::Output,
+                kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                    output_count: subject.output_elements,
+                },
+            },
+            scalar_program: ScalarProgram::StrictSerialSum {
+                axes: subject.reduction_axes.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
+                empty_identity_bits: 0.0_f32.to_bits(),
+            },
+            numerical: request.numerical_contract().realization(),
+        },
+        schedule: KernelSchedule {
+            threads_per_workgroup,
+            reduction: ReductionTopology::CooperativeWorkgroup {
+                partition,
+                tile,
+                axes: subject.reduction_axes.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                accumulation: request.numerical_contract().arithmetic,
+                permits_reassociation: request.numerical_contract().reassociation
+                    != NumericalPermission::Forbidden,
+                // Reported as the contract resolves it and deliberately not
+                // consulted to admit the strategy: the arrival below is fixed by
+                // the program, so a build that later registers a permuting
+                // contract does not start admitting trees for the wrong reason.
+                permits_permutation: request.numerical_contract().permutation
+                    != NumericalPermission::Forbidden,
+                arrival: tiler_ir::schedule::ContributorArrival::AscendingParticipant,
+            },
+            launch: LaunchPlan {
+                grid_threads: work_items,
+                threads_per_workgroup,
+                zero_work_skips_dispatch: true,
+            },
+            ..linear_schedule(work_items, OwnershipWitnessId::new(4))
+        },
+    };
+    Ok((region, subject.members.reduction().to_vec()))
+}
+
 /// Why the governed profile offers no multi-pass split of one request's
 /// reduction.
 ///
@@ -1373,6 +1602,22 @@ fn verify_region_subject_binding(
                     subject,
                 );
             }
+            // A single-workgroup tree realizes the same occurrences as the
+            // materialized reduction region by a different physical route, and
+            // like a partial pass it iterates the output shape once per
+            // participant, so it is matched on its own terms rather than by
+            // relaxing the single-dispatch rules below.
+            if matches!(
+                region.schedule.reduction,
+                ReductionTopology::CooperativeWorkgroup { .. }
+            ) {
+                return verify_workgroup_tree_subject_binding(
+                    region,
+                    semantic_members,
+                    normalized,
+                    subject,
+                );
+            }
             match scalar {
                 ScalarProgram::PointwiseF32(expression) => {
                     semantic_members == normalized.members().pointwise()
@@ -1491,6 +1736,44 @@ fn verify_multi_pass_subject_binding(
     Ok(())
 }
 
+/// Binds one single-workgroup tree region to the request subject it refines.
+///
+/// It claims the reduction occurrence, exactly as the materialized strategy's
+/// single reduction region does and as the split's partial pass does: the tree
+/// *replaces* that one region rather than adding a stage, so there is no second
+/// region to leave the occurrence to.
+///
+/// The participant count is re-derived from the request rather than read from
+/// the topology, because reading it back would make this check agree with
+/// whatever the provider chose instead of with what the request admits — the one
+/// thing a subject binding exists to stop.
+fn verify_workgroup_tree_subject_binding(
+    region: &ScheduledRegion,
+    semantic_members: &[SemanticMemberId],
+    normalized: &crate::request::NormalizedSerialSumSubject,
+    subject: &VerifiedRequestSubject,
+) -> Result<(), PhysicalError> {
+    let ReductionTopology::CooperativeWorkgroup { partition, .. } = &region.schedule.reduction
+    else {
+        return intrinsic("request-binding", region.index.id);
+    };
+    let expected = matches!(
+        &region.index.scalar_program,
+        ScalarProgram::StrictSerialSum { axes, canonical_nan_bits, .. }
+            if axes == normalized.reduction_axes()
+                && *canonical_nan_bits
+                    == subject.numerical_contract().canonical_arithmetic_nan_bits
+    ) && semantic_members == normalized.members().reduction()
+        && region.index.id == RegionId::new(4)
+        && reduction_access_matches(&region.index.accesses[0], normalized)
+        && tiler_ir::schedule::partial_reduction_shape(normalized.output_shape(), *partition)
+            .is_some_and(|shape| shape == region.index.iteration_shape);
+    if !expected {
+        return intrinsic("request-binding", region.index.id);
+    }
+    Ok(())
+}
+
 /// Requires both operand reads to realize the recognized structure exactly.
 ///
 /// Checked per declared input ordinal rather than as a set: the ordinal is the
@@ -1603,6 +1886,18 @@ pub(crate) enum ResourceVerdict {
     Intrinsic(FeasibilityError),
     /// The target refused the proposal, with the representative cause.
     Rejected(RejectionCause),
+    /// The proposal requires a synchronization realization nothing declares.
+    ///
+    /// Separated from [`Self::Unknown`] because the two blame different things.
+    /// A capability or dimension with no path is a gap in the profile's own
+    /// vocabulary, which a caller reports as an unresolved assessment. A
+    /// synchronization subject nothing speaks to is a *complete, well-formed*
+    /// requirement this target has simply never been asked about — the exact
+    /// case `admit-the-first-typed-synchronization-point-and-atomic-target-authority`
+    /// specified as "`Unknown` … before executable-frontier admission" — and
+    /// reporting it as an unresolved assessment would attribute a target's
+    /// silence to the provider that emitted valid IR.
+    UnrealizedSynchronization(tiler_ir::schedule::SynchronizationSubject),
     /// At least one predicate has no admissible fact or query path.
     Unknown,
 }
@@ -1630,6 +1925,19 @@ pub(crate) fn assess_resources(
         FeasibilityOutcome::Proven(evidence) => Ok(AdmissionEvidence::Proven(evidence)),
         FeasibilityOutcome::Deferred(deferred) if deferred.dimensions().is_empty() => {
             Ok(AdmissionEvidence::Deferred(deferred))
+        }
+        // An unknown that names a synchronization subject keeps that subject.
+        // The `if` order is deliberate: a candidate can be unknown on a
+        // capability *and* on its synchronization, and the synchronization is
+        // the more specific answer — it names a complete subject rather than a
+        // missing bound, so reporting it loses nothing a reader could act on.
+        FeasibilityOutcome::Unknown(unknown) if unknown.synchronization().is_some() => {
+            Err(ResourceVerdict::UnrealizedSynchronization(
+                unknown
+                    .synchronization()
+                    .expect("the guard proved the unknown names a subject")
+                    .subject(),
+            ))
         }
         FeasibilityOutcome::Deferred(_) | FeasibilityOutcome::Unknown(_) => {
             Err(ResourceVerdict::Unknown)
@@ -1667,6 +1975,9 @@ pub(crate) fn assess_region(
                     required: predicate.required().value(),
                     available: predicate.available().value(),
                 }
+            }
+            ResourceVerdict::UnrealizedSynchronization(subject) => {
+                PhysicalError::UnrealizedSynchronization { region, subject }
             }
             ResourceVerdict::Unknown => PhysicalError::Intrinsic {
                 rule: "target-assessment-unresolved",

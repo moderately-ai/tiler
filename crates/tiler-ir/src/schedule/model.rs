@@ -10,8 +10,8 @@ use crate::semantic::EncodedComponentRole;
 use crate::shape::{Axis, Shape};
 
 use super::cooperative::{
-    CooperativePhase, CooperativeTile, LocalCoordinates, ParticipantRange, StagedRead, StagedSpan,
-    StagedWrite, WorkgroupStaging,
+    ContributorArrival, CooperativePhase, CooperativeTile, LocalCoordinates, ParticipantRange,
+    StagedRead, StagedSpan, StagedWrite, WorkgroupStaging,
 };
 use super::error::{ContributorError, ElementCountOverflow};
 use super::handles::{BoundsWitnessId, InputOrdinal, OwnershipWitnessId, RegionId};
@@ -619,8 +619,19 @@ pub enum ReductionTopology {
         /// Whether the contract permits contributor permutation.
         ///
         /// Recorded because the region preserves the declared realization
-        /// whole, and deliberately not consulted to admit the split.
+        /// whole. Whether it is *consumed* depends on `arrival`, which is why
+        /// the two are separate fields rather than one summary.
         permits_permutation: bool,
+        /// Order in which the staged partials reach the combining participant.
+        ///
+        /// The field that decides whether this strategy consumes permutation in
+        /// addition to reassociation: the admitted
+        /// [`ContributorArrival::AscendingParticipant`] fixes the combine order
+        /// in the program and consumes reassociation alone, while an arrival the
+        /// program does not fix reorders the contributors themselves. Stated on
+        /// the topology so the composition is checkable rather than inferred
+        /// from whatever body a backend happens to emit.
+        arrival: ContributorArrival,
     },
 }
 
@@ -1681,6 +1692,7 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
             accumulation,
             permits_reassociation,
             permits_permutation,
+            arrival,
         } => {
             bytes.push(TAG_REDUCTION_COOPERATIVE_WORKGROUP);
             bytes.extend_from_slice(&partition.partitions.to_be_bytes());
@@ -1691,6 +1703,13 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
             bytes.push(accumulation.tag());
             bytes.push(u8::from(*permits_reassociation));
             bytes.push(u8::from(*permits_permutation));
+            // Appended at the end of the `0x35` arm rather than beside
+            // `accumulation`, where it belongs by meaning. Every earlier field
+            // of this arm keeps its offset, so the append is checkable by
+            // inspection instead of by trusting that no cooperative region has
+            // been persisted — and `tiler.schedule.v3` holds because `0x35` is
+            // itself an appended tag no earlier region could carry.
+            bytes.push(arrival.tag());
         }
     }
     bytes.extend_from_slice(&schedule.launch.grid_threads.to_be_bytes());

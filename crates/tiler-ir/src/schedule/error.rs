@@ -186,6 +186,24 @@ pub enum CooperativeTileRule {
     /// with no fold and no handoff; a tile there would declare a visibility edge
     /// over values no participant produces.
     EmptyContributorDomain,
+    /// The declared arrival order needs a permission the contract withholds.
+    ///
+    /// Separate from the reassociation the split itself consumes, and checked
+    /// separately, because the two permissions are independent (ADR 0011): an
+    /// arrival the program does not fix permutes the contributor sequence in
+    /// addition to regrouping it, and a strategy admitted on reassociation while
+    /// using both would consume a freedom nobody granted.
+    ArrivalPermission,
+    /// The declared arrival order names a construct this profile does not
+    /// realize.
+    ///
+    /// Distinct from [`Self::ArrivalPermission`], and reached only after it: a
+    /// contract may well permit permutation and there still be no
+    /// arrival-ordered construct to realize the order, because
+    /// [`crate::schedule::SynchronizationKind`] admits only a control barrier.
+    /// Collapsing the two would make a permitted-but-unrealizable arrival report
+    /// a numerical refusal the caller could not act on.
+    UnadmittedArrival,
 }
 
 impl CooperativeTileRule {
@@ -207,6 +225,8 @@ impl CooperativeTileRule {
             Self::StructuralLimit => "cooperative-structural-limit",
             Self::ContributorSplit => "cooperative-contributor-split",
             Self::EmptyContributorDomain => "cooperative-empty-contributor-domain",
+            Self::ArrivalPermission => "cooperative-arrival-permission",
+            Self::UnadmittedArrival => "cooperative-unadmitted-arrival",
         }
     }
 }

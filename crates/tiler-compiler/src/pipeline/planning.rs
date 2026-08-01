@@ -267,6 +267,19 @@ pub(super) fn enumerate_complete_plans(
                                 cause: cause.clone(),
                             })
                         }
+                        // A target verdict like the three above — the proposal
+                        // was made and was not admitted — so it is attributed to
+                        // this region rather than left to the frontier record.
+                        // What separates it from `Unsynchronizable` is that the
+                        // verdict rests on the absence of a fact, and the record
+                        // it produces says so.
+                        crate::frontier::FrontierRejection::SynchronizationUndeclared {
+                            subject,
+                            ..
+                        } => Some(PhysicalError::UnrealizedSynchronization {
+                            region: region_id_of(cover, region),
+                            subject: *subject,
+                        }),
                         // A reserved body variant, an unregistered opaque call,
                         // and an inapplicable proposal are not target verdicts
                         // and carry no rejection to attribute to this region.

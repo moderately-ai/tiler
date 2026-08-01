@@ -1525,6 +1525,25 @@ pub(crate) enum FrontierRejection {
         /// The complete refused subject and the fact that refused it.
         cause: Box<UnrealizableSynchronization>,
     },
+    /// The proposal is applicable and valid, and no available target fact speaks
+    /// to the synchronization its dataflow requires.
+    ///
+    /// Distinct from [`Self::Unsynchronizable`], which carries a fact that
+    /// refused. This carries none, because there is none — and that difference
+    /// is the whole reason the two are separate. A refusal names an authority a
+    /// caller can go and argue with; silence names a question nobody asked, and
+    /// reporting one as the other would either invent a refusing profile or hide
+    /// that a target was never measured for this realization.
+    ///
+    /// It is a rejection rather than a [`FrontierError`]: the provider emitted
+    /// valid IR, so failing the whole enumeration would attribute the target's
+    /// silence to the provider.
+    SynchronizationUndeclared {
+        /// The provider whose proposal was rejected.
+        provider: PhysicalProviderProvenance,
+        /// The complete subject the proposal required and nothing declared.
+        subject: tiler_ir::schedule::SynchronizationSubject,
+    },
     /// An opaque call proposal was refused, retaining its complete identity,
     /// ordered bindings, and typed cause.
     OpaqueCall {
@@ -1627,6 +1646,19 @@ impl FrontierRejection {
                 output.push(u8::from(subject.fenced_spaces.device));
                 output.push(subject.ordering.tag());
                 push_slice(output, cause.fact().provenance().profile().key().as_bytes());
+            }
+            // Appended tag `8`, with no profile key after the subject: there is
+            // no declaring profile, and writing an empty slice there would give
+            // this rejection the shape of a refusal by an unnamed authority.
+            Self::SynchronizationUndeclared { provider, subject } => {
+                output.push(8);
+                encode_provider(output, provider.provider());
+                output.push(subject.kind.tag());
+                output.push(subject.execution_scope.tag());
+                output.push(subject.visibility_scope.tag());
+                output.push(u8::from(subject.fenced_spaces.workgroup));
+                output.push(u8::from(subject.fenced_spaces.device));
+                output.push(subject.ordering.tag());
             }
             Self::OpaqueCall {
                 provider,
@@ -2154,6 +2186,12 @@ pub(crate) fn enumerate_frontier(
                         cause,
                     });
                 }
+                Err(PhysicalError::UnrealizedSynchronization { subject, .. }) => {
+                    rejections.push(FrontierRejection::SynchronizationUndeclared {
+                        provider: provenance.clone(),
+                        subject,
+                    });
+                }
                 Err(
                     source @ (PhysicalError::Intrinsic { .. }
                     | PhysicalError::Refinement { .. }
@@ -2204,6 +2242,7 @@ fn classify_opaque_resource_verdict(
         // and spelling the pattern keeps a later reachable path visible in this
         // match instead of swallowed by a `_`.
         ResourceVerdict::Rejected(RejectionCause::Synchronization(_))
+        | ResourceVerdict::UnrealizedSynchronization(_)
         | ResourceVerdict::Unknown => {
             return Err(FrontierError::UnresolvedOpaqueCallAssessment {
                 provider: provider.provider().clone(),
@@ -2604,6 +2643,12 @@ fn admit_subprogram(
                     cause,
                 }));
             }
+            Err(PhysicalError::UnrealizedSynchronization { subject, .. }) => {
+                return Ok(Err(FrontierRejection::SynchronizationUndeclared {
+                    provider: provider.clone(),
+                    subject,
+                }));
+            }
             Err(
                 source @ (PhysicalError::Intrinsic { .. }
                 | PhysicalError::Refinement { .. }
@@ -2648,6 +2693,12 @@ fn admit_subprogram(
             return Ok(Err(FrontierRejection::Unsynchronizable {
                 provider: provider.clone(),
                 cause: Box::new(cause),
+            }));
+        }
+        Err(ResourceVerdict::UnrealizedSynchronization(subject)) => {
+            return Ok(Err(FrontierRejection::SynchronizationUndeclared {
+                provider: provider.clone(),
+                subject,
             }));
         }
         Err(ResourceVerdict::Intrinsic(_) | ResourceVerdict::Unknown) => {
@@ -2812,6 +2863,7 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
         let applicability =
             TargetApplicability::for_targets([request.target_profile().profile_key().clone()]);
         let mut split = None;
+        let mut tree = None;
         let (region, cost) = if let Some(pointwise) = request.pointwise() {
             if members != pointwise.members {
                 return ProviderOffer::default();
@@ -2848,6 +2900,7 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
             // is stated. The serial alternative is offered either way; a split
             // is additive and never replaces it.
             split = Some(propose_split(request, &applicability));
+            tree = Some(propose_workgroup_tree(request, &applicability));
             (
                 crate::physical::reduction_region(request).0,
                 PhysicalCostEstimate::structural(1, output_elements, 0),
@@ -2870,11 +2923,21 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
             applicability,
             cost,
         );
-        match split {
-            None => ProviderOffer::proposing(vec![serial]),
-            Some(Ok(split)) => ProviderOffer::proposing(vec![serial, split]),
-            Some(Err(declined)) => ProviderOffer::proposing(vec![serial]).decline(declined),
+        // The serial alternative is offered unconditionally, and each parallel
+        // strategy is additive beside it: a request that admits neither still
+        // has a legal plan, and one that admits both retains all three. Whether
+        // a parallel one *wins* is not decided here.
+        let mut proposals = vec![serial];
+        let mut offer_declines = Vec::new();
+        for outcome in [split, tree].into_iter().flatten() {
+            match outcome {
+                Ok(proposal) => proposals.push(proposal),
+                Err(declined) => offer_declines.push(declined),
+            }
         }
+        offer_declines
+            .into_iter()
+            .fold(ProviderOffer::proposing(proposals), ProviderOffer::decline)
     }
 }
 
@@ -2930,6 +2993,59 @@ fn propose_split(
             partial_elements.saturating_add(output_elements),
             partial_elements.saturating_mul(4),
         ),
+    ))
+}
+
+/// Offers the single-workgroup tree of one request's reduction, or states why
+/// not.
+///
+/// The cost is structural and never a feasibility input: one dispatch, the
+/// launched invocations (`participants` per output position rather than one),
+/// and no materialized intermediate — the partials live in workgroup memory,
+/// which this model does not count as a materialization because nothing outside
+/// the dispatch can observe them.
+///
+/// Under this model the tree launches strictly more threads than the serial
+/// alternative and shares its dispatch count, so it does not win here and is not
+/// meant to. What it trades those threads for — a shorter critical path per
+/// output — is not something the structural model measures, which is exactly why
+/// `calibrate-and-activate-parallel-reduction-selection` owns preference and
+/// this slice only enumerates.
+fn propose_workgroup_tree(
+    request: &VerifiedTargetRequest,
+    applicability: &TargetApplicability,
+) -> Result<ImplementationProposal, DeclinedStrategy> {
+    let (region, _) =
+        crate::physical::single_workgroup_tree_region(request).map_err(|unavailable| {
+            DeclinedStrategy::new(
+                crate::physical::SINGLE_WORKGROUP_TREE_STRATEGY,
+                match unavailable {
+                    crate::physical::WorkgroupTreeUnavailable::ReassociationForbidden => {
+                        StrategyDeclineCause::NumericalPermissionRefused {
+                            dimension:
+                                crate::target::honourability::NumericalDimension::Reassociation
+                                    .key(),
+                        }
+                    }
+                    crate::physical::WorkgroupTreeUnavailable::NoAdmissibleParticipantCount {
+                        contributors,
+                    } => StrategyDeclineCause::NoAdmissibleShape {
+                        rule: unavailable.reason(),
+                        extent: contributors,
+                    },
+                    crate::physical::WorkgroupTreeUnavailable::Unrepresentable => {
+                        StrategyDeclineCause::Unrepresentable {
+                            rule: unavailable.reason(),
+                        }
+                    }
+                },
+            )
+        })?;
+    let launched = region.schedule.work_items;
+    Ok(ImplementationProposal::new(
+        ProposalBody::ScheduledKernel(Box::new(region)),
+        applicability.clone(),
+        PhysicalCostEstimate::structural(1, launched, 0),
     ))
 }
 

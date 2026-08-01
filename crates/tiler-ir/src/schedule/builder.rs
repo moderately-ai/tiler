@@ -9,7 +9,9 @@
 //! agreement, and zero-domain behaviour. No later cost or feasibility query can
 //! repair a schedule this verifier rejects.
 
-use super::cooperative::{CooperativeTile, ParticipantRange, StagedSpan, VisibilityEdge};
+use super::cooperative::{
+    ContributorArrival, CooperativeTile, ParticipantRange, StagedSpan, VisibilityEdge,
+};
 use super::error::{
     CooperativeTileRule, ScheduleBuildError, ScheduleComponent, ScheduleLimitKind,
     ScheduledRegionBuildError, ScheduledRegionDiagnostic,
@@ -902,6 +904,7 @@ fn verify_cooperative_semantics(
         accumulation,
         permits_reassociation,
         permits_permutation,
+        arrival,
     } = &region.schedule.reduction
     else {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
@@ -916,6 +919,20 @@ fn verify_cooperative_semantics(
         || *accumulation != ArithmeticType::F32
     {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+    // The second permission, checked on its own and only where the arrival
+    // actually consumes it. The order matters: a permitted-but-unrealizable
+    // arrival must reach the admission rule below rather than be reported as a
+    // numerical refusal, and an unpermitted one must name the permission rather
+    // than the construct.
+    if arrival.requires_permutation() && !numerical.permits_permutation() {
+        return Err(cooperative(CooperativeTileRule::ArrivalPermission));
+    }
+    // The combining level folds the staged slots in ascending order through one
+    // serial loop, which is the only arrival this vocabulary can order: the
+    // constructs the others need are unadmitted synchronization kinds.
+    if *arrival != ContributorArrival::AscendingParticipant {
+        return Err(cooperative(CooperativeTileRule::UnadmittedArrival));
     }
 
     // A cooperative tile reads the original inputs and commits the reduction's
@@ -2969,6 +2986,14 @@ mod tests {
         tile: CooperativeTile,
         partition: ContributorPartition,
     ) -> ReductionTopology {
+        cooperative_topology_arriving(tile, partition, ContributorArrival::AscendingParticipant)
+    }
+
+    fn cooperative_topology_arriving(
+        tile: CooperativeTile,
+        partition: ContributorPartition,
+        arrival: ContributorArrival,
+    ) -> ReductionTopology {
         ReductionTopology::CooperativeWorkgroup {
             partition,
             tile,
@@ -2977,6 +3002,7 @@ mod tests {
             accumulation: ArithmeticType::F32,
             permits_reassociation: true,
             permits_permutation: false,
+            arrival,
         }
     }
 
@@ -2994,6 +3020,64 @@ mod tests {
     fn cooperative_builder_with(
         tile: CooperativeTile,
         split: ContributorPartition,
+    ) -> ScheduledRegionBuilder {
+        cooperative_builder_parts(
+            split,
+            cooperative_topology_with(tile, split),
+            reassociating_numerical(),
+        )
+    }
+
+    /// The fixture region under one chosen arrival and permutation resolution.
+    ///
+    /// Both are varied together because the rule under test is exactly their
+    /// composition: the topology records what the contract resolved, and the
+    /// verifier requires the two to agree before it asks what the arrival
+    /// consumes.
+    fn arriving_builder(
+        arrival: ContributorArrival,
+        permutation_permitted: bool,
+    ) -> ScheduledRegionBuilder {
+        let numerical = NumericalRealization {
+            permutation: if permutation_permitted {
+                NumericalPermission::Permitted
+            } else {
+                NumericalPermission::Forbidden
+            },
+            ..reassociating_numerical()
+        };
+        let ReductionTopology::CooperativeWorkgroup {
+            partition,
+            tile,
+            axes,
+            order,
+            accumulation,
+            permits_reassociation,
+            ..
+        } = cooperative_topology_arriving(cooperative_tile_fixture(), SPLIT, arrival)
+        else {
+            panic!("the cooperative fixture builds a cooperative topology")
+        };
+        cooperative_builder_parts(
+            SPLIT,
+            ReductionTopology::CooperativeWorkgroup {
+                partition,
+                tile,
+                axes,
+                order,
+                accumulation,
+                permits_reassociation,
+                permits_permutation: permutation_permitted,
+                arrival,
+            },
+            numerical,
+        )
+    }
+
+    fn cooperative_builder_parts(
+        split: ContributorPartition,
+        reduction: ReductionTopology,
+        numerical: NumericalRealization,
     ) -> ScheduledRegionBuilder {
         let participants = split.partitions;
         let work_items = 2 * participants;
@@ -3067,12 +3151,12 @@ mod tests {
                 empty_identity_bits: 0.0_f32.to_bits(),
             })
             .unwrap();
-        builder.numerical(reassociating_numerical()).unwrap();
+        builder.numerical(numerical).unwrap();
         let threads = u32::try_from(participants).expect("the fixture's width fits u32");
         builder
             .schedule(KernelSchedule {
                 threads_per_workgroup: threads,
-                reduction: cooperative_topology_with(tile, split),
+                reduction,
                 launch: LaunchPlan {
                     grid_threads: work_items,
                     threads_per_workgroup: threads,
@@ -3284,6 +3368,126 @@ mod tests {
                 cooperative_rejection(perturbed(|tile| edit(tile))),
                 ScheduledRegionDiagnostic::Synchronization { rule: expected },
                 "{name} was admitted"
+            );
+        }
+    }
+
+    /// The canonical tree tile is exactly the tile every rule above was driven
+    /// against.
+    ///
+    /// The constructor exists so a strategy does not hand-assemble spans,
+    /// lifetimes, and a point subject, and this is what makes that safe: it is
+    /// compared against the fixture the whole perturbation table refuses defects
+    /// of, so the shape a planner emits is the shape those rules were proven on
+    /// rather than a second shape that merely also verifies.
+    #[test]
+    fn the_canonical_tree_tile_is_the_fixture_every_rule_was_driven_against() {
+        assert_eq!(
+            super::super::workgroup_tree_tile(3),
+            Some(cooperative_tile_fixture())
+        );
+        // The point's subject is derived from the tile's own edges rather than
+        // restated, so it cannot be constructed wrong.
+        let tile = super::super::workgroup_tree_tile(3).expect("three participants are admitted");
+        assert_eq!(
+            tile.synchronization[0].subject,
+            required_subject(&tile.visibility_edges()).expect("the tile carries one handoff")
+        );
+        // Below two participants the handoff is within one invocation, which the
+        // synchronization authority refuses; the constructor declines rather
+        // than emitting a tile that could only be rejected.
+        assert_eq!(super::super::workgroup_tree_tile(1), None);
+        assert_eq!(super::super::workgroup_tree_tile(0), None);
+        assert_eq!(
+            super::super::workgroup_tree_tile(MAX_COOPERATIVE_PARTICIPANTS + 1),
+            None
+        );
+        // And a width the enumeration bound admits is built rather than refused,
+        // so the bound check is not silently rejecting everything.
+        assert!(super::super::workgroup_tree_tile(MAX_COOPERATIVE_PARTICIPANTS).is_some());
+    }
+
+    /// Every width the constructor admits verifies as a whole region.
+    ///
+    /// The constructor states a dataflow; only the verifier decides whether the
+    /// dataflow, the split, and the launch agree. Driving several widths is what
+    /// stops the shape from being correct only at the one width the fixture pins.
+    #[test]
+    fn the_canonical_tree_tile_verifies_at_every_width_its_split_covers() {
+        for (participants, contributors_per_partition) in [(2, 3), (3, 2), (6, 1)] {
+            let split = ContributorPartition {
+                partitions: participants,
+                contributors_per_partition,
+            };
+            let tile = super::super::workgroup_tree_tile(participants)
+                .expect("the width is within the enumeration bound");
+            let verified = cooperative_builder_with(tile, split)
+                .build()
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "width {participants} was refused: {:?}",
+                        error.diagnostics()
+                    )
+                });
+            assert_eq!(
+                verified.requirements().local_memory_bytes,
+                participants * 4,
+                "one f32 slot per participant"
+            );
+            assert_eq!(
+                u64::from(verified.requirements().threads_per_workgroup),
+                participants
+            );
+        }
+    }
+
+    /// The two permissions stay independent, and the arrival is what separates
+    /// them.
+    ///
+    /// The admitted arrival is fixed by the program, so it consumes
+    /// reassociation alone and a contract forbidding permutation admits it. An
+    /// arrival the program does not fix consumes permutation *as well*, and the
+    /// two refusals are distinct: withholding the permission names the
+    /// permission, and granting it still names the construct nothing realizes.
+    #[test]
+    fn an_unfixed_arrival_order_consumes_permutation_and_is_refused_by_name() {
+        // The control: the same fixture with the admitted arrival verifies under
+        // a contract that forbids permutation, so neither refusal below is
+        // something the fixture would have earned anyway.
+        assert!(
+            arriving_builder(ContributorArrival::AscendingParticipant, false)
+                .build()
+                .is_ok()
+        );
+        // And granting permutation neither breaks nor is required by it: the
+        // recorded permission simply tracks the contract.
+        assert!(
+            arriving_builder(ContributorArrival::AscendingParticipant, true)
+                .build()
+                .is_ok()
+        );
+        for arrival in [
+            ContributorArrival::NondeterministicArrival,
+            ContributorArrival::AtomicAccumulation,
+        ] {
+            assert!(arrival.requires_permutation());
+            assert_eq!(
+                cooperative_rejection(arriving_builder(arrival, false)),
+                ScheduledRegionDiagnostic::CooperativeTile {
+                    rule: CooperativeTileRule::ArrivalPermission,
+                },
+                "{} was admitted under a contract that forbids permutation",
+                arrival.key()
+            );
+            // Granting permutation moves the refusal to the construct, which is
+            // the check that would be dead if the two were collapsed.
+            assert_eq!(
+                cooperative_rejection(arriving_builder(arrival, true)),
+                ScheduledRegionDiagnostic::CooperativeTile {
+                    rule: CooperativeTileRule::UnadmittedArrival,
+                },
+                "{} was admitted as a realizable construct",
+                arrival.key()
             );
         }
     }
