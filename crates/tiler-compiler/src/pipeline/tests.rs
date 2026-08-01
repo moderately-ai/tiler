@@ -40,8 +40,9 @@ use tiler_ir::kernel::{BinaryOp, CompareOp, ConvertOp, KernelConstant, Operation
 use tiler_ir::program::abi::{AvailabilityPhase, TargetPropertyRequirementRelation};
 use tiler_ir::program::{DependencyReasonView, ValueRole};
 use tiler_ir::semantic::{
-    CANONICAL_F32_ARITHMETIC_NAN_BITS, F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey,
-    SemanticProgram, SemanticProgramBuilder, StrictSerialF32Sum,
+    CANONICAL_F32_ARITHMETIC_NAN_BITS, ContractionIndex, ContractionIndexStructure, F32, F32Add,
+    F32Constant, F32Multiply, F32TensorContraction, InputKey, OutputKey, SemanticProgram,
+    SemanticProgramBuilder, StrictSerialF32Sum,
 };
 use tiler_ir::shape::{Axis, Shape};
 use tiler_reference::{
@@ -1124,6 +1125,64 @@ fn valid_but_unsupported_program_has_a_capability_failure() {
     assert_eq!(
         error.to_string(),
         "compile.unsupported.strategy.signature: no installed capability can compile this valid semantic program"
+    );
+}
+
+/// A contraction is statable and still compiles nothing, and the refusal that
+/// fires is named honestly.
+///
+/// Two claims, and they are different. The registered family means a program
+/// carrying the pinned workload's projection now *builds*, which it could not do
+/// at all before. What it does not mean is that `compile()` reaches
+/// lowering-capability resolution: both installed recognizers demand exactly one
+/// input over a fixed producer chain, so a two-operand contraction is refused at
+/// the request boundary, before any explain trace exists. Asserting a lowering
+/// refusal here would be fiction about which check said no.
+///
+/// The capability-resolution refusal ADR 0087 item 4 requires is proved
+/// separately and directly, against the governed registry, by
+/// `capability::tests::a_contraction_occurrence_resolves_to_no_installed_index_access_capability`.
+#[test]
+fn a_contraction_program_is_statable_and_refused_before_capability_resolution() {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let activations = builder
+        .input::<F32>(
+            InputKey::new("activations").unwrap(),
+            Shape::from_dims([128, 1024]),
+        )
+        .unwrap();
+    let weights = builder
+        .input::<F32>(
+            InputKey::new("weights").unwrap(),
+            Shape::from_dims([3072, 1024]),
+        )
+        .unwrap();
+    // `td,od->to`, spelled with the frontend's own labels.
+    let structure = ContractionIndexStructure::new(
+        [
+            [ContractionIndex::new(19), ContractionIndex::new(3)],
+            [ContractionIndex::new(14), ContractionIndex::new(3)],
+        ],
+        [ContractionIndex::new(19), ContractionIndex::new(14)],
+    )
+    .unwrap();
+    let projected =
+        F32TensorContraction::apply(&mut builder, &structure, activations, weights).unwrap();
+    builder
+        .output(OutputKey::new("projected").unwrap(), projected)
+        .unwrap();
+    let semantic = builder.build().unwrap();
+    assert_eq!(semantic.operation_count(), 1);
+
+    let error = compile(CompilationRequest::governed(&semantic)).unwrap_err();
+    assert_eq!(
+        error,
+        CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule: "signature",
+        }),
+        "the request boundary refuses a contraction program first; nothing here \
+         reaches the lowering registry"
     );
 }
 

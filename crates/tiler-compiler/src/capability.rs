@@ -2237,6 +2237,49 @@ mod tests {
         ));
     }
 
+    /// A contraction occurrence fails closed at lowering-capability resolution.
+    ///
+    /// `tiler::strict-tensor-contraction-f32@1` is a registered semantic
+    /// operation family: a program can state it and it verifies. That is
+    /// deliberately all it is. ADR 0087 item 4 requires a structure no installed
+    /// capability covers to be a typed resolution refusal, and this is the
+    /// check: the *governed* registry — the four index-access capabilities this
+    /// build ships — is asked for the exact signature a contraction occurrence
+    /// presents, and answers that it has none.
+    ///
+    /// Against the governed registry rather than an empty one, because the claim
+    /// under test is "nothing installed covers a contraction", and an empty
+    /// registry covers nothing at all.
+    #[test]
+    fn a_contraction_occurrence_resolves_to_no_installed_index_access_capability() {
+        let installed = crate::request::CompilerCapabilitySnapshot::governed();
+        let contraction = OpKey::new("tiler", "strict-tensor-contraction-f32", 1).unwrap();
+        let error = installed
+            .lowering()
+            .resolve_index_access(&contraction, &binary_signature())
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            LoweringResolveError::MissingCapability {
+                family: LoweringFamily::IndexAccess,
+                ..
+            }
+        ));
+        assert_eq!(
+            error.to_string(),
+            "no index-access lowering capability for operation tiler::strict-tensor-contraction-f32@1"
+        );
+        // The same registry does cover a governed occurrence, so the refusal
+        // above is a decision about the contraction rather than a registry that
+        // resolves nothing.
+        assert!(
+            installed
+                .lowering()
+                .resolve_index_access(&multiply_f32_op(), &binary_signature())
+                .is_ok()
+        );
+    }
+
     #[test]
     fn registration_rejects_an_operation_without_semantic_authority() {
         let mut builder = empty_builder();
