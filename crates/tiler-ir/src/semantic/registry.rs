@@ -1998,6 +1998,22 @@ impl Error for RegistryLookupError {}
 struct StandardSemantics;
 
 impl SemanticRegistryProvider for StandardSemantics {
+    /// Returns the standard provider's identity and output-affecting revision.
+    ///
+    /// The revision moves for a change this registry's *content* encoding
+    /// cannot already carry, and only then. `encode_definition_projection` is
+    /// deliberately provider-independent and folds in every registered
+    /// definition's schema, facts, conformance, effect, and semantic
+    /// precondition declarations, so adding, narrowing, or reordering a
+    /// declaration already moves the projection — and with it every residual
+    /// obligation identity and the compiler's explain request qualifier —
+    /// without touching this number. What the revision alone reaches is
+    /// `encode_admission_provenance`, which records *who admitted* each key, so
+    /// bumping it asserts that this provider's registered set or its behaviour
+    /// behind the encoding changed: an inferencer or type-instance validator
+    /// whose logic is Rust rather than canonical bytes. Bumping it for a change
+    /// the projection already carried would invalidate every pinned provenance
+    /// for an authority change that did not happen.
     fn identity(&self) -> ProviderIdentity {
         ProviderIdentity::new("tiler", "standard-semantics", 7)
             .expect("the governed standard provider identity is valid")
