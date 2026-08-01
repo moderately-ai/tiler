@@ -6,7 +6,8 @@ title: "CPU vector realization facts"
 topics: ["targets", "feasibility", "cpu", "simd", "provenance", "numerics"]
 catalog_group: "physical-planning-lowering"
 research_status: "complete"
-disposition: "pending"
+disposition: "adopted"
+adopted_by: ["ADR-0093"]
 implementation_status: "not-started"
 evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.cpu-backend", "tiler.contract.architecture", "tiler.contract.artifact-abi"]
@@ -141,6 +142,10 @@ These are the shape a real CPU profile's rows take. They are **Proposal**, not a
 - **Boundary.** No such measurement is taken here, and the paragraphs above are specification reading rather than observation of any machine — a manual saying one control governs both paths is not evidence that a given implementation obeys it. The scalar CPU vertical measured one process's scalar behaviour on one host in one interval and re-measures per run rather than caching; a packed row needs the same discipline and the same disclaimer.
 
 ## Public-boundary items, enumerated for Tom and not self-accepted
+
+**Unchanged by the 2026-08-01 acceptance, and this is the sentence most likely to be misread now that there is a decision to misread.** [ADR 0093](../../decisions/0093-bind-vector-lanes-to-the-map-or-the-contributor-partition.md) was accepted by Tom at that day's live review. **It accepts none of the six items below**, each of which remains a draft under [ADR 0075](../../decisions/0075-scope-public-boundary-approval-by-change-category.md) and arrives with [`declare-cpu-vector-realization-facts-in-the-target-profile`](../../../tickets/declare-cpu-vector-realization-facts-in-the-target-profile.md), the implementation ticket the acceptance released. Item 3 in particular is a **question** for Tom rather than a proposal, and acceptance neither answers it nor licenses answering it.
+
+**And exactly two of this record's four conclusions are what the ADR decided, which is narrower than "this record was adopted" sounds and is worth stating precisely.** ADR 0093's decision item 6 is the only one that reaches this half, and it carries the third and fourth conclusions: that the whole feasibility surface is answerable with no backend code executed, and that the lane tier does not require a host-process availability phase. **The first two conclusions remain Proposal.** That a vector realization is one *atomic* subject matched by equality is the substance of item 1 below and is not decided by the ADR's seven items; that fixed-width ISA presence is an `ExternalProfile` compile-target attribution rather than a runtime observation is a derivation this record makes and no accepted decision states. `disposition: adopted` records that an accepted decision rests on this record — it does not promote every claim in it, and the labels below and above stand as written.
 
 1. **A `VectorRealizationSubject` type and its six dimensions**, its `Realized`/`Unrealizable` verdict, and the declaration method that takes the whole subject as one argument.
 2. **Where the subject lives.** `SynchronizationSubject` is in `tiler-ir`'s schedule module because the schedule derives it; a vector subject is derived from a schedule the same way and would follow, which puts a target-facing vocabulary in the IR crate exactly as the precedent already does.
