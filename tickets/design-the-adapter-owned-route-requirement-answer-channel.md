@@ -1,7 +1,7 @@
 ---
 id: design-the-adapter-owned-route-requirement-answer-channel
 title: Design the adapter-owned route-requirement answer channel
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [dispatch-a-tiler-region-on-metal-hardware, route-an-embedded-artifact-through-a-consumer-storage-seam, realize-parallel-reduction-strategies-on-metal]
@@ -9,6 +9,9 @@ scopes: [research/runtime, research/extensions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, design, runtime, backend-providers, public-boundary]
+claimed_from: todo
+assignee: worker-answer-channel
+lease_expires_at: 1785594086
 ---
 ## User-visible outcome
 

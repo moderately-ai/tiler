@@ -1,7 +1,7 @@
 ---
 id: land-the-bf16-conversion-and-accumulator-adr
 title: Land the BF16 conversion and accumulator ADR as proposed
-status: todo
+status: in-progress
 priority: p2
 dependencies: [design-the-bf16-computation-and-accumulator-contract]
 related: [spike-bf16-through-the-second-dtype-seams, admit-a-bf16-scalar-arithmetic-subject, register-the-bf16-semantic-operation-signatures]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [contracts, adr, dtype, bf16, numerics, conversion]
+claimed_from: todo
+assignee: worker-adr-carrier
+lease_expires_at: 1785594086
 ---
 ## User-visible outcome
 
