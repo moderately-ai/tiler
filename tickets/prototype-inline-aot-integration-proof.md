@@ -1,7 +1,7 @@
 ---
 id: prototype-inline-aot-integration-proof
 title: Prove the complete inline AOT workflow
-status: in-progress
+status: done
 priority: p1
 dependencies: [prototype-macro-embedding-and-cargo-behavior, prototype-metal-runtime-proof, promote-the-metal-aot-compilation-identity, make-runtime-routing-commit-authority-one-shot, admit-multi-input-elementwise-programs-at-the-compiler-boundary, generate-cfg-gated-artifact-family-delivery]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/frontend, implementation/cache, implementation/compiler,
 shared_scopes: [project/tickets, implementation/cargo-lock]
 paths: []
 tags: [implementation, integration, inline-dx, milestone-0b]
-claimed_from: todo
-assignee: worker-aot-proof
-lease_expires_at: 1785556733
 ---
 ## User-visible outcome
 
@@ -165,3 +162,5 @@ Symbolic extents with a selected family; several families in one selection; any 
 - **`docs/integration/frontends.md` still says a statement selecting a family is refused, and that the cache-root resolver is uncalled.** Both are now false. The document is scope `contracts/integrations`, which this ticket does not hold; correcting it needs that scope. Flagged rather than edited.
 - **The literal-extent binding gap** found while writing the facade's tests is filed as `check-a-literal-operand-extent-against-the-supplied-value` rather than fixed here: the refusal is consumer-visible and belongs with its own boundary review.
 - **`admit-multi-input-elementwise-programs-at-the-compiler-boundary` was not closed.** Its stated outcome is supported at this base — `crates/tiler-compiler/tests/multi_input_elementwise_boundary.rs` shows the approved three-input region compiling — but workers do not close tickets, and `tkt claim` refused this ticket for exactly that unfinished dependency, so no claim is recorded.
+
+**Provisional boundary acceptance (2026-07-31, overnight mode).** The coordinator provisionally accepted the eleven observable changes under Tom's stated bar, headlined by the macOS 26.0 governed floor (the authoritative declaration compiles at `-std=metal4.0`/`macos26.0`; a 14.0 promise over a 26.0-requiring payload would be a lie behind a `#[cfg]` that cannot check minimums) and the four `__private` route items with the `tiler` → `tiler-runtime`/`tiler-artifact` outward edges. Recorded for Tom's morning review with one-revert isolation.
