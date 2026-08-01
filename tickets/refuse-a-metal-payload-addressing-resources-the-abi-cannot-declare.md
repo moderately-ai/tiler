@@ -1,7 +1,7 @@
 ---
 id: refuse-a-metal-payload-addressing-resources-the-abi-cannot-declare
 title: Refuse a Metal payload addressing resources the artifact ABI cannot declare
-status: in-progress
+status: done
 priority: p3
 dependencies: [validate-metal-payload-argument-slots-against-declared-bindings]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/candle]
 shared_scopes: [project/tickets, implementation/cargo-lock]
 paths: []
 tags: [candle, runtime, artifacts]
-claimed_from: todo
-assignee: worker-refuse-a-met
-lease_expires_at: 1785565713
 ---
 ADR 0090 item 8's third obligation is discharged for buffer arguments by `validate-metal-payload-argument-slots-against-declared-bindings`. This is the remainder it named rather than absorbed.
 
