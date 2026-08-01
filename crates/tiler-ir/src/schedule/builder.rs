@@ -10,7 +10,8 @@
 //! repair a schedule this verifier rejects.
 
 use super::cooperative::{
-    ContributorArrival, CooperativeTile, ParticipantRange, StagedSpan, VisibilityEdge,
+    AntiDependencyEdge, ContributorArrival, CooperativeTile, ParticipantRange, StagedSpan,
+    VisibilityEdge,
 };
 use super::error::{
     CooperativeTileRule, ScheduleBuildError, ScheduleComponent, ScheduleLimitKind,
@@ -29,8 +30,8 @@ use super::numerics::{ArithmeticType, ExceptionalValueAssumption, NumericalReali
 use super::synchronization::{ConvergenceEvidence, SynchronizationRule, required_subject};
 use super::{
     MAX_COOPERATIVE_PARTICIPANTS, MAX_COOPERATIVE_PHASE_ACCESSES, MAX_COOPERATIVE_PHASES,
-    MAX_COOPERATIVE_STAGING_SLOTS, MAX_COOPERATIVE_SYNCHRONIZATION_POINTS, MAX_SCHEDULE_ACCESSES,
-    MAX_SCHEDULE_BOUNDS_PROOFS,
+    MAX_COOPERATIVE_ROUNDS, MAX_COOPERATIVE_STAGING_SLOTS, MAX_COOPERATIVE_SYNCHRONIZATION_POINTS,
+    MAX_SCHEDULE_ACCESSES, MAX_SCHEDULE_BOUNDS_PROOFS,
 };
 use crate::semantic::{
     STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
@@ -936,10 +937,12 @@ fn verify_multi_pass_semantics(
 /// [`verify_cooperative_tile`], proves the staging itself is well formed
 /// independently of what is being reduced.
 ///
-/// Neither half authorizes the handoff. The tile's visibility edges are
-/// recorded, never discharged: the structured-kernel verifier refuses a kernel
-/// whose region carries one, so a well-formed tile is a representation of a
-/// dataflow rather than a claim that any target can run it.
+/// Neither half authorizes the handoff against a *machine*. The tile's derived
+/// edges are discharged here by the points the tile declares, and the
+/// structured-kernel verifier separately proves the emitted body puts the
+/// realizing barrier between the two effects — but whether any target can
+/// perform the realization those points require is a feasibility question this
+/// module never answers.
 fn verify_cooperative_semantics(
     region: &ScheduledRegion,
     read: &Access,
@@ -1063,7 +1066,37 @@ fn verify_cooperative_semantics(
     // index, so a participant's local coordinate is derivable without a second
     // layout rule.
     let participants = tile.coordinates.participants.count;
-    if !partition.covers(contributors)
+    // The round count is bounded before anything multiplies by it. A tile whose
+    // phases never run stages nothing yet would still derive staged accesses,
+    // visibility edges, and a synchronization requirement — a complete
+    // obligation over a program that executes nothing — and one beyond the bound
+    // would overflow the product below. Both would otherwise surface as a split
+    // mismatch, which names the wrong field.
+    if tile.rounds == 0 || tile.rounds > MAX_COOPERATIVE_ROUNDS {
+        return Err(cooperative(CooperativeTileRule::RoundStructure));
+    }
+    // The split covers the sequence once across *every* round. Participant `p`
+    // on round `r` folds the contiguous range at index `r * participants + p`,
+    // so `partitions * contributors_per_partition * rounds` is the whole
+    // sequence and the coverage stays contiguous and ascending — the split is a
+    // reassociation of the declared order and never a permutation of it, exactly
+    // as it is at one round. Without the round factor a tile could declare that
+    // its phases run several times while its split accounts for one of them,
+    // and every contributor after the first round would be folded again.
+    //
+    // `covers` is deliberately not extended to know about rounds: it is the
+    // multi-pass split's rule, where the partitions are the whole story, and
+    // teaching it a second dimension would give one method two meanings. Its
+    // zero-partition refusal is reused rather than restated.
+    let covered = (partition.partitions != 0)
+        .then(|| partition.total_contributors())
+        .flatten()
+        .and_then(|total| total.checked_mul(tile.rounds));
+    // The iteration domain appends one axis per *participant*, not one per
+    // partition of the whole fold: the launch runs one invocation per (output,
+    // participant) pair whatever the round count, because rounds are a loop
+    // inside each invocation rather than more invocations.
+    if covered != Some(contributors)
         || partition.partitions != participants
         || partial_reduction_shape(output_shape, *partition)
             .is_none_or(|shape| region.index.iteration_shape != shape)
@@ -1164,10 +1197,17 @@ fn verify_cooperative_tile(
         return Err(cooperative(CooperativeTileRule::StagingLifetime));
     }
 
-    // One writer per slot, and every in-range slot written. The two are checked
-    // together over one occupancy map because they are the two halves of the
-    // same statement: the participants' writes are a bijection onto the
-    // allocation's slots.
+    // One writer per slot *within one round*, and every in-range slot written on
+    // every round. The two are checked together over one occupancy map because
+    // they are the two halves of the same statement: the participants' writes
+    // are a bijection onto the allocation's slots.
+    //
+    // The map spans the phase sequence once, which is exactly one round — every
+    // phase runs on every round — so this needs no round dimension and gains
+    // none. A tile with several rounds rewrites these slots on the next one, and
+    // that is the capability rather than the defect; what the map still refuses
+    // is two writers reaching one slot inside a single round, where no point
+    // could separate them.
     let mut written: Vec<Vec<bool>> = tile
         .staging
         .iter()
@@ -1193,9 +1233,9 @@ fn verify_cooperative_tile(
                 let slot = occupancy
                     .get_mut(usize::try_from(slot).unwrap_or(usize::MAX))
                     .ok_or_else(|| cooperative(CooperativeTileRule::StagingCapacity))?;
-                // A second write to a live slot needs a per-round lifetime and a
-                // per-round visibility edge this profile does not model, so a
-                // rewriting tree is refused here rather than approximated.
+                // Two writers to one slot inside one round: nothing orders them,
+                // because a point sits between phases and both writes would be
+                // on the same side of every one that could.
                 if std::mem::replace(slot, true) {
                     return Err(cooperative(CooperativeTileRule::StagingConflict));
                 }
@@ -1236,7 +1276,7 @@ fn verify_cooperative_tile(
     if edges.is_empty() {
         return Err(cooperative(CooperativeTileRule::NoVisibilityEdge));
     }
-    verify_synchronization(tile, &edges)
+    verify_synchronization(tile, &edges, &tile.anti_dependency_edges())
 }
 
 /// Verifies the synchronization authority that orders one tile's handoffs.
@@ -1248,9 +1288,16 @@ fn verify_cooperative_tile(
 /// — the model can express an unadmitted kind, a boundary that is not a program
 /// point, a narrowed participant set, a weaker ordering, or a convergence claim
 /// with nothing behind it.
+///
+/// Both derived evidence classes arrive here and are held to the same standard.
+/// A visibility edge and an anti-dependency each need exactly one discharging
+/// point, and a point earns its place by discharging at least one of either —
+/// which is what lets a round boundary, whose whole job is the anti-dependency,
+/// be something other than redundant.
 fn verify_synchronization(
     tile: &CooperativeTile,
     edges: &[VisibilityEdge],
+    anti: &[AntiDependencyEdge],
 ) -> Result<(), ScheduledRegionDiagnostic> {
     let participants = tile.coordinates.participants;
     // A tile whose participants are one invocation stages values it reads back
@@ -1278,6 +1325,14 @@ fn verify_synchronization(
         .ok_or_else(|| synchronization(SynchronizationRule::UndischargedVisibility))?;
     let phase_count = u32::try_from(tile.phases.len())
         .map_err(|_| cooperative(CooperativeTileRule::StructuralLimit))?;
+    // The last phase of a round, which is the far side of a round boundary. The
+    // caller already proved the ordinals are the dense run `0..phase_count` and
+    // that the sequence is nonempty, so the subtraction is exact.
+    let last_phase = super::handles::PhaseId::new(
+        phase_count
+            .checked_sub(1)
+            .ok_or_else(|| cooperative(CooperativeTileRule::PhaseSequence))?,
+    );
 
     for point in &tile.synchronization {
         // The kind is checked first and separately, because a point naming an
@@ -1287,15 +1342,29 @@ fn verify_synchronization(
         if point.subject.kind != required.kind {
             return Err(synchronization(SynchronizationRule::UnadmittedKind));
         }
-        let preceding = point.placement.preceding();
-        let following = point.placement.following();
-        // A real program point sits between two consecutive phases. A "boundary"
-        // spanning a phase is not one: that phase's own effects would fall on an
-        // undetermined side of the fence.
-        if following.get() >= phase_count || preceding.get().checked_add(1) != Some(following.get())
-        {
-            return Err(synchronization(SynchronizationRule::Placement));
-        }
+        // The phases this point separates, which a placement either names or
+        // leaves to the tile. A phase boundary must name two consecutive
+        // existing phases: a "boundary" spanning a phase is not a program point,
+        // because that phase's own effects would fall on an undetermined side of
+        // the fence. A round boundary names none — the phases it separates are
+        // the sequence's last and first, which the tile already fixed — so there
+        // is nothing here for it to get wrong and the check has nothing to say
+        // about it.
+        let bounded = match (point.placement.preceding(), point.placement.following()) {
+            (Some(preceding), Some(following)) => {
+                if following.get() >= phase_count
+                    || preceding.get().checked_add(1) != Some(following.get())
+                {
+                    return Err(synchronization(SynchronizationRule::Placement));
+                }
+                vec![preceding, following]
+            }
+            (None, None) => vec![last_phase, super::handles::PhaseId::FIRST],
+            // Unreachable while every placement names both ordinals or neither,
+            // and refused rather than assumed so a half-named placement added
+            // later cannot silently pick one of the two arms above.
+            _ => return Err(synchronization(SynchronizationRule::Placement)),
+        };
         if point.participants != participants {
             return Err(synchronization(SynchronizationRule::ParticipantSet));
         }
@@ -1312,27 +1381,47 @@ fn verify_synchronization(
             return Err(synchronization(SynchronizationRule::Ordering));
         }
         // The evidence class, then the derivation it names. A caller's assertion
-        // is refused whatever the tile looks like; the derived class is only as
-        // good as the re-derivation below, which is why both run.
-        if point.convergence != ConvergenceEvidence::EveryParticipantReachesThePoint {
+        // is refused whatever the tile looks like, and so is the single-round
+        // derivation on a tile whose phases repeat — reaching a point is not the
+        // same as reaching the same *instance* of it once there are several. The
+        // derived class is only as good as the re-derivation below, which is why
+        // both run.
+        if point.convergence != ConvergenceEvidence::required_for_rounds(tile.rounds) {
             return Err(synchronization(SynchronizationRule::ConvergenceEvidence));
         }
-        if !phases_are_reached_by(tile, &[preceding, following], participants) {
+        if !phases_are_reached_by(tile, &bounded, participants) {
             return Err(synchronization(SynchronizationRule::Convergence));
         }
         // A point that orders nothing consumes a target authority for an
-        // operation the program has no reason to perform.
-        if !edges.iter().any(|edge| point.discharges(*edge)) {
+        // operation the program has no reason to perform. Both classes count: a
+        // round boundary discharges no visibility edge by construction, and
+        // refusing it for that would make the loop-carried tile unstatable.
+        if !edges.iter().any(|edge| point.discharges(*edge))
+            && !anti.iter().any(|edge| point.discharges_anti(*edge))
+        {
             return Err(synchronization(SynchronizationRule::RedundantPoint));
         }
     }
 
-    // Exactly one point per edge. Zero leaves a race; two are two schedules
-    // spelling one realization, which would give one program two identities.
+    // Exactly one point per edge, in each class. Zero leaves a race — a read of
+    // values never published, or a rewrite over values still being read; two are
+    // two schedules spelling one realization, which would give one program two
+    // identities.
     for edge in edges {
         match tile.discharging_points(*edge).len() {
             1 => {}
             0 => return Err(synchronization(SynchronizationRule::UndischargedVisibility)),
+            _ => return Err(synchronization(SynchronizationRule::RedundantPoint)),
+        }
+    }
+    for edge in anti {
+        match tile.anti_discharging_points(*edge).len() {
+            1 => {}
+            0 => {
+                return Err(synchronization(
+                    SynchronizationRule::UndischargedAntiDependency,
+                ));
+            }
             _ => return Err(synchronization(SynchronizationRule::RedundantPoint)),
         }
     }
@@ -1556,9 +1645,9 @@ mod tests {
 
     use crate::schedule::PointwiseF32ExpressionBuilder;
     use crate::schedule::cooperative::{
-        CooperativePhase, CooperativeTile, LocalCoordinateSource, LocalCoordinates,
-        ParticipantRange, StagedElement, StagedRead, StagedSpan, StagedWrite, VisibilityEdge,
-        WorkgroupStaging,
+        AntiDependencyEdge, CooperativePhase, CooperativeTile, LocalCoordinateSource,
+        LocalCoordinates, ParticipantRange, StagedElement, StagedRead, StagedSpan, StagedWrite,
+        VisibilityEdge, WorkgroupStaging,
     };
     use crate::schedule::handles::{
         BoundsWitnessId, OwnershipWitnessId, PhaseId, StagingId, SyncPointId,
@@ -1579,14 +1668,27 @@ mod tests {
     /// The pointwise program is encoded as a typed, framed topological graph,
     /// so its exact operand order, constants, root, and physical `f32` family are all pinned.
     ///
-    /// Rebaselined deliberately at the `tiler.schedule.v3` step, which gave
+    /// Rebaselined deliberately at the `tiler.schedule.v4` step, which gave
+    /// [`CooperativeTile`] its round count: this region stages nothing, so its
+    /// *payload* is untouched and only the separator moved — a claim
+    /// `the_round_step_moves_only_the_domain_separator` proves rather than
+    /// asserts, by comparing the two constants byte for byte past the tag.
+    ///
+    /// An earlier rebaseline recorded the `tiler.schedule.v3` step, which gave
     /// `TensorRole::Input` and `PointwiseF32Node::Input` their input ordinals:
-    /// the domain separator itself moves, every input access and bounds proof
-    /// gains four ordinal bytes, and the input leaf's framed length grows from
-    /// nine to twenty-one. An earlier rebaseline recorded the old
-    /// `ScalarProgram::MultiplyThenAdd` tag (`0x21`) becoming the exact
+    /// every input access and bounds proof gained four ordinal bytes and the
+    /// input leaf's framed length grew from nine to twenty-one. Before that, the
+    /// old `ScalarProgram::MultiplyThenAdd` tag (`0x21`) became the exact
     /// `ScalarProgram::PointwiseF32` expression encoding (`0x24`).
-    const STRICT_F32_REGION_IDENTITY_HEX: &str = "74696c65722e7363686564756c652e7633000000000000000002000000000000000200000000000000030000000000000002010000000000010100000000000200020100000001010000000000000000000000020000000001000000000011000000000000000600000001020011000000000000000600000000020000000000000006240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc0000001010101010101010100000000000000060000000101000000003100000000000000060000000101";
+    const STRICT_F32_REGION_IDENTITY_HEX: &str = "74696c65722e7363686564756c652e7634000000000000000002000000000000000200000000000000030000000000000002010000000000010100000000000200020100000001010000000000000000000000020000000001000000000011000000000000000600000001020011000000000000000600000000020000000000000006240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc0000001010101010101010100000000000000060000000101000000003100000000000000060000000101";
+
+    /// The same region's identity under `tiler.schedule.v3`.
+    ///
+    /// Retained rather than deleted, because it is what makes the `v4` step's
+    /// blast radius a measured fact instead of an assurance: everything after
+    /// the separator is byte-identical, so no region that stages nothing moved
+    /// for any reason other than the version.
+    const STRICT_F32_REGION_IDENTITY_HEX_V3: &str = "74696c65722e7363686564756c652e7633000000000000000002000000000000000200000000000000030000000000000002010000000000010100000000000200020100000001010000000000000000000000020000000001000000000011000000000000000600000001020011000000000000000600000000020000000000000006240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc0000001010101010101010100000000000000060000000101000000003100000000000000060000000101";
 
     fn strict_numerical() -> NumericalRealization {
         NumericalRealization::new(
@@ -3206,6 +3308,7 @@ mod tests {
     fn cooperative_tile_fixture() -> CooperativeTile {
         CooperativeTile {
             synchronization: vec![tile_point()],
+            rounds: 1,
             coordinates: LocalCoordinates {
                 source: LocalCoordinateSource::LocalLinearInvocation,
                 participants: ParticipantRange { first: 0, count: 3 },
@@ -3819,6 +3922,243 @@ mod tests {
         ));
     }
 
+    /// The loop-carried split: three participants, one contributor each, twice.
+    ///
+    /// The same `[2, 6] -> [2]` reduction and the same launch as `SPLIT`, with
+    /// the six contributors covered as `3 * 1 * 2` instead of `3 * 2 * 1`. Keeping
+    /// the launch identical is what makes the round count the only difference
+    /// between the two fixtures.
+    const ROUND_SPLIT: ContributorPartition = ContributorPartition {
+        partitions: 3,
+        contributors_per_partition: 1,
+    };
+
+    /// The point that orders the fixture's rewrite, at the round boundary.
+    fn round_boundary_point() -> SynchronizationPoint {
+        SynchronizationPoint {
+            id: SyncPointId::new(1),
+            placement: SynchronizationPlacement::RoundBoundary,
+            convergence: ConvergenceEvidence::EveryParticipantExecutesEveryRound,
+            ..tile_point()
+        }
+    }
+
+    /// The loop-carried tile: the single-round fixture, run twice.
+    ///
+    /// Structurally identical to [`cooperative_tile_fixture`] apart from the
+    /// round count, the second point, and the convergence class both points now
+    /// have to name — which is the whole content of the capability.
+    fn multi_round_tile_fixture() -> CooperativeTile {
+        CooperativeTile {
+            rounds: 2,
+            synchronization: vec![
+                SynchronizationPoint {
+                    convergence: ConvergenceEvidence::EveryParticipantExecutesEveryRound,
+                    ..tile_point()
+                },
+                round_boundary_point(),
+            ],
+            ..cooperative_tile_fixture()
+        }
+    }
+
+    fn multi_round_builder(tile: CooperativeTile) -> ScheduledRegionBuilder {
+        cooperative_builder_with(tile, ROUND_SPLIT)
+    }
+
+    /// Applies one edit to the loop-carried fixture and returns its builder.
+    fn round_perturbed(edit: impl FnOnce(&mut CooperativeTile)) -> ScheduledRegionBuilder {
+        let mut tile = multi_round_tile_fixture();
+        edit(&mut tile);
+        multi_round_builder(tile)
+    }
+
+    /// A tile that rewrites its slots on a later round verifies.
+    ///
+    /// The capability itself, and the two derivations it turns on: the rewrite
+    /// is no longer a staging conflict, and the anti-dependency it creates is
+    /// derived rather than declared. The storage is unchanged from the
+    /// single-round fixture, which is the point of reusing slots rather than
+    /// unrolling them into fresh ones.
+    #[test]
+    fn a_loop_carried_tile_rewrites_its_slots_and_verifies() {
+        let tile = multi_round_tile_fixture();
+        assert_eq!(
+            tile.anti_dependency_edges(),
+            vec![AntiDependencyEdge {
+                staging: StagingId::FIRST,
+                consumed_in: PhaseId::new(1),
+                rewritten_in: PhaseId::FIRST,
+            }]
+        );
+        // One discharger each, and not the same point: the phase boundary orders
+        // the publication and the round boundary orders the rewrite.
+        let [visibility] = tile.visibility_edges()[..] else {
+            panic!("the fixture stages one handoff")
+        };
+        assert_eq!(
+            tile.discharging_points(visibility)
+                .iter()
+                .map(|point| point.id)
+                .collect::<Vec<_>>(),
+            vec![SyncPointId::FIRST]
+        );
+        assert_eq!(
+            tile.anti_discharging_points(tile.anti_dependency_edges()[0])
+                .iter()
+                .map(|point| point.id)
+                .collect::<Vec<_>>(),
+            vec![SyncPointId::new(1)]
+        );
+
+        let verified = multi_round_builder(tile)
+            .build()
+            .expect("the loop-carried fixture verifies");
+        assert_eq!(verified.requirements().local_memory_bytes, 12);
+    }
+
+    /// A single-round tile derives no anti-dependency at all.
+    ///
+    /// The absence is a claim rather than a missing derivation: no round follows
+    /// the only one, so nothing overwrites what the consuming phase read.
+    #[test]
+    fn a_single_round_tile_derives_no_anti_dependency() {
+        assert!(
+            cooperative_tile_fixture()
+                .anti_dependency_edges()
+                .is_empty()
+        );
+    }
+
+    /// The rewrite needs its own point, and the handoff's does not serve.
+    #[test]
+    fn a_loop_carried_rewrite_with_no_round_boundary_is_refused() {
+        assert_eq!(
+            cooperative_rejection(round_perturbed(|tile| {
+                tile.synchronization.truncate(1);
+            })),
+            ScheduledRegionDiagnostic::Synchronization {
+                rule: SynchronizationRule::UndischargedAntiDependency,
+            }
+        );
+    }
+
+    /// A second point over one anti-dependency is two spellings of one program.
+    #[test]
+    fn two_points_over_one_anti_dependency_are_refused() {
+        assert_eq!(
+            cooperative_rejection(round_perturbed(|tile| {
+                tile.synchronization.push(SynchronizationPoint {
+                    id: SyncPointId::new(2),
+                    ..round_boundary_point()
+                });
+            })),
+            ScheduledRegionDiagnostic::Synchronization {
+                rule: SynchronizationRule::RedundantPoint,
+            }
+        );
+    }
+
+    /// A round boundary on a tile with one round orders nothing.
+    ///
+    /// The other side of `RedundantPoint` widening to both evidence classes: a
+    /// round boundary is not redundant *because* it discharges no visibility
+    /// edge, but it is redundant when there is no following round for it to
+    /// separate.
+    #[test]
+    fn a_round_boundary_without_a_following_round_is_redundant() {
+        assert_eq!(
+            cooperative_rejection(perturbed(|tile| {
+                // The single-round derivation, so the point reaches the
+                // redundancy rule instead of failing the evidence class first.
+                tile.synchronization.push(SynchronizationPoint {
+                    convergence: ConvergenceEvidence::EveryParticipantReachesThePoint,
+                    ..round_boundary_point()
+                });
+            })),
+            ScheduledRegionDiagnostic::Synchronization {
+                rule: SynchronizationRule::RedundantPoint,
+            }
+        );
+    }
+
+    /// The convergence derivation must match the tile's round structure.
+    ///
+    /// Both directions, because the rule is an equality and a one-sided check
+    /// would let the stronger claim stand unearned on a single-round tile.
+    #[test]
+    fn a_point_naming_the_wrong_convergence_derivation_is_refused() {
+        let weak = round_perturbed(|tile| {
+            tile.synchronization[0].convergence =
+                ConvergenceEvidence::EveryParticipantReachesThePoint;
+        });
+        assert_eq!(
+            cooperative_rejection(weak),
+            ScheduledRegionDiagnostic::Synchronization {
+                rule: SynchronizationRule::ConvergenceEvidence,
+            }
+        );
+        let unearned = perturbed(|tile| {
+            tile.synchronization[0].convergence =
+                ConvergenceEvidence::EveryParticipantExecutesEveryRound;
+        });
+        assert_eq!(
+            cooperative_rejection(unearned),
+            ScheduledRegionDiagnostic::Synchronization {
+                rule: SynchronizationRule::ConvergenceEvidence,
+            }
+        );
+    }
+
+    /// Two writers to one slot inside one round are still a race.
+    ///
+    /// The rule the round vocabulary relaxes is the one *between* rounds, and
+    /// this is what proves it did not relax the one inside them: no point sits
+    /// between two writes of the same phase, so nothing could separate them
+    /// however many rounds the tile declares.
+    #[test]
+    fn overlapping_staged_writes_inside_one_round_are_still_refused() {
+        assert_eq!(
+            cooperative_rejection(round_perturbed(|tile| {
+                tile.phases[0].writes[0].span.stride = 0;
+            })),
+            ScheduledRegionDiagnostic::CooperativeTile {
+                rule: CooperativeTileRule::StagingConflict,
+            }
+        );
+    }
+
+    /// A round count of zero, or beyond the governed bound, is refused.
+    #[test]
+    fn a_round_count_outside_the_governed_profile_is_refused() {
+        for rounds in [0, MAX_COOPERATIVE_ROUNDS.saturating_add(1)] {
+            assert_eq!(
+                cooperative_rejection(round_perturbed(|tile| tile.rounds = rounds)),
+                ScheduledRegionDiagnostic::CooperativeTile {
+                    rule: CooperativeTileRule::RoundStructure,
+                },
+                "round count {rounds}"
+            );
+        }
+    }
+
+    /// A split that ignores the round count folds every contributor twice.
+    ///
+    /// The single-round split covers the sequence once; declared on a two-round
+    /// tile it would have each participant fold the same range on both rounds,
+    /// which is a different computation and not the declared reduction.
+    #[test]
+    fn a_split_that_ignores_the_round_count_is_refused() {
+        let mut tile = cooperative_tile_fixture();
+        tile.rounds = 2;
+        assert_eq!(
+            cooperative_rejection(cooperative_builder_with(tile, SPLIT)),
+            ScheduledRegionDiagnostic::CooperativeTile {
+                rule: CooperativeTileRule::ContributorSplit,
+            }
+        );
+    }
+
     /// Two participants writing one slot is a race the tile can state.
     #[test]
     fn overlapping_staged_writes_are_rejected() {
@@ -4127,15 +4467,24 @@ mod tests {
         );
     }
 
-    /// A region that stages nothing encodes exactly the bytes it always did.
+    /// A region that stages nothing moved for the version and nothing else.
     ///
-    /// The append proof for `tiler.schedule.v3`: the cooperative topology takes
-    /// a fresh tag, so no previously encodable region's bytes move and no cache
-    /// or artifact holding an earlier identity has to miss. This is the same
-    /// pinned strict-`f32` region the domain-step test above compares, asserted
-    /// here for the reason that pin exists at all.
+    /// The blast-radius proof for `tiler.schedule.v4`. The round count lands
+    /// inside the `0x35` cooperative payload, which a region with no tile never
+    /// reaches, so the only bytes that may differ from `v3` are the eighteen of
+    /// the domain separator — and that is checked here by comparing the two
+    /// recorded identities past it rather than by asserting it in prose.
+    ///
+    /// It is deliberately *not* an append proof. The step is an insertion, and
+    /// [`encode_identity`] records why an append was not available: the
+    /// cooperative arm ends in a length-prefixed axis list that can absorb eight
+    /// shifted bytes, so an old identity and a new one could coincide, and only
+    /// a verifier invariant — not the encoding — kept them apart.
     #[test]
-    fn the_cooperative_topology_moves_no_earlier_region_identity() {
+    fn the_round_step_moves_only_the_domain_separator() {
+        // Eighteen bytes of `tiler.schedule.vN\0`, so thirty-six hex digits.
+        const SEPARATOR: usize = 36;
+
         let verified = pointwise_builder(RegionId::new(0), Shape::from_dims([2, 3]), 6)
             .build()
             .unwrap();
@@ -4144,6 +4493,14 @@ mod tests {
             write!(&mut hex, "{byte:02x}").unwrap();
         }
         assert_eq!(hex, STRICT_F32_REGION_IDENTITY_HEX);
+        assert_ne!(
+            STRICT_F32_REGION_IDENTITY_HEX[..SEPARATOR],
+            STRICT_F32_REGION_IDENTITY_HEX_V3[..SEPARATOR]
+        );
+        assert_eq!(
+            STRICT_F32_REGION_IDENTITY_HEX[SEPARATOR..],
+            STRICT_F32_REGION_IDENTITY_HEX_V3[SEPARATOR..]
+        );
     }
 
     /// Every field of a tile separates canonical scheduled-region identity.
@@ -4170,6 +4527,10 @@ mod tests {
                 tile.phases[1].participation = ParticipantRange { first: 0, count: 2 };
             }),
             perturb_tile(|tile| tile.coordinates.participants.count = 4),
+            // The round count separates identity like every other tile field: a
+            // schedule that rewrites its staging is a different program from one
+            // that stages once, and the two must not share bytes.
+            perturb_tile(|tile| tile.rounds = 2),
         ];
         for tile in variants {
             let mut candidate = baseline.clone();

@@ -34,24 +34,49 @@
 //! whole staged set read by every participant on the consuming side
 //! (`stride = 0`, `count = participants`).
 //!
+//! # Rounds, and why the lifetime is not a field
+//!
+//! [`CooperativeTile::rounds`] states how many times the whole phase sequence
+//! executes. `rounds > 1` is the loop-carried tile every blocked GPU kernel has:
+//! the participants fill one fixed allocation, hand it off behind a point, and
+//! *rewrite the same slots* on the next round.
+//!
+//! The allocation's lifetime therefore becomes round-scoped — and that is a
+//! consequence of the round structure rather than a choice an allocation makes,
+//! which is why no field carries it. Every phase runs on every round, so a phase
+//! that writes an allocation writes it on every round; there is no way to state
+//! "written once, read on every later round" in this vocabulary, so a
+//! `live_from`/`live_through` pair is already a within-round lifetime and a
+//! second field naming the scope would be a place to restate what the structure
+//! determines. The one-writer-per-slot rule is unchanged for the same reason:
+//! it enumerates the phase sequence once, which *is* one round, so it still
+//! refuses a genuine double write inside a round and no longer refuses the
+//! rewrite between them.
+//!
+//! What the rewrite does add is an obligation in the other direction. Round
+//! `r + 1`'s write must not overtake round `r`'s read, which is an
+//! [`AntiDependencyEdge`] — a second derived evidence class beside
+//! [`VisibilityEdge`], discharged by exactly one point in exactly the same way,
+//! and derived rather than declared for the same reason.
+//!
 //! # The broader space, and where this profile stops
 //!
-//! A tile that rewrote one slot across several rounds — a logarithmic tree — is
-//! statable in this vocabulary but is refused: [`CooperativeTile`] admits one
-//! writer per slot, because a second write to a live slot needs a per-round
-//! lifetime and a per-round visibility edge that this profile does not yet
-//! model. Writing *fresh* slots each round is not the way around that, and the
-//! reason is structural rather than incidental: a [`StagedSpan`] is addressed by
-//! every participant of the tile, so a write phase writes
-//! `participants * count` slots whatever the round, and the active lanes never
-//! narrow. A log-depth tree therefore needs a per-access active-participant
-//! subset — separate from a phase's `participation`, which is *arrival* and must
-//! stay uniform for the point between rounds to be convergent — and that subset
-//! is absent rather than reserved. [`workgroup_tree_tile`] is the depth-two tree
-//! this profile does state. Multi-dimensional local coordinates are likewise absent rather than
-//! reserved: [`LocalCoordinateSource`] names the one linear source the bounded
-//! profile can check, and widening it is an appended tag, not a reinterpretation
-//! of what a coordinate already means.
+//! A logarithmic tree is still not statable, and the reason is now the *only*
+//! remaining one: a [`StagedSpan`] is addressed by every participant of the tile
+//! and is the same span on every round, so a write phase writes
+//! `participants * count` slots whatever the round and the active lanes never
+//! narrow. A log-depth tree needs two things this profile does not have — a
+//! per-access active-participant subset, separate from a phase's
+//! `participation`, which is *arrival* and must stay uniform for a point between
+//! rounds to be convergent; and a span whose stride and count are functions of
+//! the round ordinal, since each level halves them. Both are absent rather than
+//! reserved, and neither is the rewrite rule that used to be blamed for the
+//! depth: [`workgroup_tree_tile`] is the depth-two tree this profile states, and
+//! it is depth two because of the subset and the varying span, not because a
+//! slot may not be rewritten. Multi-dimensional local coordinates are likewise
+//! absent rather than reserved: [`LocalCoordinateSource`] names the one linear
+//! source the bounded profile can check, and widening it is an appended tag, not
+//! a reinterpretation of what a coordinate already means.
 
 use super::handles::{PhaseId, StagingId, SyncPointId};
 use super::synchronization::{
@@ -259,6 +284,13 @@ pub struct StagedSpan {
 }
 
 /// One workgroup-shared staging allocation of a cooperative tile.
+///
+/// The lifetime this carries is a *within-round* one, and on a tile with several
+/// rounds the allocation is reborn at the start of each. There is deliberately
+/// no field naming that scope: every phase runs on every round, so an allocation
+/// written by a phase is written on every round whatever a scope field claimed,
+/// and the field would be a second place to state what
+/// [`CooperativeTile::rounds`] already determines.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct WorkgroupStaging {
     /// Tile-local ordinal naming this allocation.
@@ -267,9 +299,9 @@ pub struct WorkgroupStaging {
     pub element: StagedElement,
     /// Addressable slots.
     pub slots: u64,
-    /// First phase in which this allocation may be written.
+    /// First phase of a round in which this allocation may be written.
     pub live_from: PhaseId,
-    /// Last phase in which this allocation may be read.
+    /// Last phase of a round in which this allocation may be read.
     ///
     /// The lifetime is declared rather than inferred from the accesses, so a
     /// phase reading an allocation the tile considers dead is a rejectable
@@ -332,11 +364,53 @@ pub struct VisibilityEdge {
     pub consumed_in: PhaseId,
 }
 
+/// One staging allocation's cross-round anti-dependency.
+///
+/// The second derived evidence class, and the one a loop-carried tile needs that
+/// a single-round tile cannot state at all: the values participant `p` read from
+/// `staging` in `consumed_in` are still being read when round `r + 1`'s
+/// `rewritten_in` overwrites the same slots, and nothing in the tile orders the
+/// two. It is an *anti*-dependency rather than a [`VisibilityEdge`] — no value
+/// crosses it, only the storage is reused — which is why it is a separate type
+/// rather than an edge with the ends swapped: swapping the ends of a visibility
+/// edge would claim a value flows backwards, and a reader would have to know
+/// which direction each instance meant.
+///
+/// There is no ordinal comparison between the two phases, and that absence is
+/// the content: the rewrite is in the *next* round, so it follows the read in
+/// program order however the two phases are ordered within a round. A tile whose
+/// read is in phase 1 and whose rewrite is in phase 0 has the edge, and so does
+/// one whose read is in phase 0 and whose rewrite is in phase 2.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct AntiDependencyEdge {
+    /// Allocation whose slots are reused.
+    pub staging: StagingId,
+    /// Phase whose participants read the values a later round overwrites.
+    pub consumed_in: PhaseId,
+    /// Phase of the following round whose participants overwrite them.
+    pub rewritten_in: PhaseId,
+}
+
 /// The cross-invocation dataflow of one bounded cooperative workgroup tile.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CooperativeTile {
     /// Participants and the local coordinate space they occupy.
     pub coordinates: LocalCoordinates,
+    /// Times the whole phase sequence executes.
+    ///
+    /// `1` is the single-pass tile: the phases run once, no allocation is
+    /// rewritten, and the tile derives no [`AntiDependencyEdge`]. A larger count
+    /// is the loop-carried tile — the phases are a round body, each round
+    /// rewrites the slots the previous one read, and the anti-dependencies that
+    /// creates must each be discharged.
+    ///
+    /// A declared literal rather than a value, and that is what makes a point
+    /// inside the round loop convergent: every participant of the workgroup runs
+    /// the identical trip count, so they all reach the same dynamic instance of
+    /// the point. A round count read from a buffer or derived per invocation
+    /// would carry no such proof, which is why this is a `u64` here and not an
+    /// index expression.
+    pub rounds: u64,
     /// Workgroup-shared allocations, in ascending [`StagingId`] order.
     pub staging: Vec<WorkgroupStaging>,
     /// Phases, in ascending [`PhaseId`] order.
@@ -349,7 +423,12 @@ pub struct CooperativeTile {
     /// phases and two handoffs may separate them with one point or two — and a
     /// derivation would silently pick one and make the alternative unstatable.
     /// What is derived is which edges each point discharges, so the declaration
-    /// is checked against the dependency rather than trusted beside it.
+    /// is checked against the dependency rather than trusted beside it. That
+    /// holds for both evidence classes: a point at
+    /// [`SynchronizationPlacement::RoundBoundary`](super::SynchronizationPlacement::RoundBoundary)
+    /// orders every [`AntiDependencyEdge`] the tile has, and on a tile with
+    /// enough phases an ordinary boundary may already fall between a read and
+    /// the next round's rewrite.
     pub synchronization: Vec<SynchronizationPoint>,
     /// Participants that perform the region's owning write.
     ///
@@ -401,6 +480,47 @@ impl CooperativeTile {
         edges
     }
 
+    /// Returns every cross-round anti-dependency this tile requires.
+    ///
+    /// One edge per (allocation, reading phase, rewriting phase) triple, over
+    /// every pair of phases regardless of their order, because the rewrite
+    /// happens in the *following* round and therefore follows every read of the
+    /// current one. A single-round tile returns nothing — not because the
+    /// derivation is missing, but because no round follows the only one.
+    #[must_use]
+    pub fn anti_dependency_edges(&self) -> Vec<AntiDependencyEdge> {
+        let mut edges = Vec::new();
+        if self.rounds <= 1 {
+            return edges;
+        }
+        for consumer in &self.phases {
+            for read in &consumer.reads {
+                for producer in &self.phases {
+                    if producer
+                        .writes
+                        .iter()
+                        .any(|write| write.staging == read.staging)
+                    {
+                        edges.push(AntiDependencyEdge {
+                            staging: read.staging,
+                            consumed_in: consumer.id,
+                            rewritten_in: producer.id,
+                        });
+                    }
+                }
+            }
+        }
+        edges.sort_unstable_by_key(|edge| {
+            (
+                edge.staging.get(),
+                edge.consumed_in.get(),
+                edge.rewritten_in.get(),
+            )
+        });
+        edges.dedup();
+        edges
+    }
+
     /// Returns the points that discharge `edge`, in declaration order.
     ///
     /// The schedule verifier requires exactly one, so a caller holding a
@@ -412,6 +532,19 @@ impl CooperativeTile {
         self.synchronization
             .iter()
             .filter(|point| point.discharges(edge))
+            .collect()
+    }
+
+    /// Returns the points that discharge `edge`, in declaration order.
+    ///
+    /// The anti-dependency counterpart of [`Self::discharging_points`], and
+    /// plural for the same reason: the verifier requires exactly one, and needs
+    /// to tell an unordered rewrite apart from a doubly ordered one.
+    #[must_use]
+    pub fn anti_discharging_points(&self, edge: AntiDependencyEdge) -> Vec<&SynchronizationPoint> {
+        self.synchronization
+            .iter()
+            .filter(|point| point.discharges_anti(edge))
             .collect()
     }
 
@@ -479,16 +612,16 @@ impl CooperativeTile {
 ///
 /// # Why the depth is two and not `log2(participants)`
 ///
-/// A logarithmic tree narrows the *writing* lanes at every round, and this
-/// vocabulary cannot state that: a [`StagedSpan`] is addressed by every
-/// participant of the tile — the slot enumeration runs over the tile's whole
-/// participant range, not over a per-access subset — so every write phase writes
-/// exactly `participants * count` slots however few lanes are meant to be doing
-/// useful work. Rewriting one slot across rounds is refused by the one-writer-per-slot
-/// rule, and writing fresh slots per round does not shrink, so a log-depth tree
-/// needs a per-access active-participant subset this profile does not model.
-/// Stated here rather than left to be rediscovered, because "tree" is otherwise
-/// read as "logarithmic".
+/// A logarithmic tree narrows the *writing* lanes at every round and halves the
+/// span each level addresses, and this vocabulary can state neither. A
+/// [`StagedSpan`] is addressed by every participant of the tile — the slot
+/// enumeration runs over the tile's whole participant range, not over a
+/// per-access subset — so every write phase writes exactly `participants *
+/// count` slots however few lanes are meant to be doing useful work, and the
+/// same span is addressed on every round because a span carries no dependence on
+/// the round ordinal. Rewriting one slot across rounds is *not* what blocks it:
+/// [`CooperativeTile::rounds`] admits exactly that. Stated here rather than left
+/// to be rediscovered, because "tree" is otherwise read as "logarithmic".
 ///
 /// # Tail handling
 ///
@@ -522,6 +655,10 @@ pub fn workgroup_tree_tile(participants: u64) -> Option<CooperativeTile> {
             source: LocalCoordinateSource::LocalLinearInvocation,
             participants: range,
         },
+        // One pass over the phases. The tree stages each participant's partial
+        // once and reads the set back once, so no slot is ever rewritten and the
+        // tile carries no anti-dependency.
+        rounds: 1,
         staging: vec![WorkgroupStaging {
             id: staging,
             element: StagedElement::F32,

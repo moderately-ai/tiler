@@ -1977,6 +1977,7 @@ fn cooperative_region() -> VerifiedScheduledRegion {
                     contributors_per_partition: 2,
                 },
                 tile: CooperativeTile {
+                    rounds: 1,
                     coordinates: LocalCoordinates {
                         source: LocalCoordinateSource::LocalLinearInvocation,
                         participants: ParticipantRange { first: 0, count: 3 },
@@ -2322,6 +2323,101 @@ fn each_kernel_synchronization_rule_refuses_its_own_defect() {
         ),
     ] {
         assert_eq!(cooperative_body(change), expected, "{change:?}");
+    }
+}
+
+/// The same region with its phases run twice and its slots rewritten.
+///
+/// Built by re-verifying the single-round fixture's own region rather than by a
+/// second literal, so the only differences are the ones the capability requires:
+/// each participant now folds one contributor per round instead of two, both
+/// points name the round-loop convergence derivation, and a round boundary
+/// discharges the rewrite.
+fn multi_round_cooperative_region() -> VerifiedScheduledRegion {
+    let mut region = cooperative_region().region().clone();
+    let ReductionTopology::CooperativeWorkgroup {
+        partition, tile, ..
+    } = &mut region.schedule.reduction
+    else {
+        panic!("the cooperative fixture builds a cooperative topology")
+    };
+    partition.contributors_per_partition = 1;
+    tile.rounds = 2;
+    tile.synchronization[0].convergence = ConvergenceEvidence::EveryParticipantExecutesEveryRound;
+    tile.synchronization.push(SynchronizationPoint {
+        id: SyncPointId::new(1),
+        placement: SynchronizationPlacement::RoundBoundary,
+        convergence: ConvergenceEvidence::EveryParticipantExecutesEveryRound,
+        ..cooperative_point()
+    });
+    ScheduledRegionBuilder::from_region(region)
+        .build()
+        .expect("the loop-carried region verifies")
+}
+
+/// A loop-carried tile is representable and deliberately not lowered.
+///
+/// The maturity claim, stated as a test rather than as a comment. The schedule
+/// admits the rewrite and derives its anti-dependency; this lowering has no
+/// canonical body for it, because the body needs an accumulator that survives
+/// both the iteration guard and the round loop's back edge, and a predicated
+/// region in this vocabulary produces no values. Refusing by name is what keeps
+/// "representable" and "lowered" apart instead of emitting the nearest thing.
+///
+/// The refusal is over-determined, deliberately: `cooperative_plan`'s explicit
+/// round check and its one-point destructuring both reject this tile, and
+/// `lower.rs` records why the second is what currently fires and why the first
+/// is kept anyway.
+#[test]
+fn a_loop_carried_tile_is_representable_and_not_yet_lowered() {
+    let scheduled = multi_round_cooperative_region();
+    assert_eq!(
+        crate::schedule::cooperative_tile(&scheduled.region().schedule.reduction)
+            .expect("the region carries a tile")
+            .anti_dependency_edges()
+            .len(),
+        1
+    );
+    assert_eq!(
+        lower_scheduled_region(&scheduled),
+        Err(KernelLoweringError::Verification(
+            KernelDiagnostic::CooperativeLoweringShape
+        ))
+    );
+}
+
+/// The barrier-convergence rule admits exactly the nesting a tile authorizes.
+///
+/// Driven over the predicate directly, because the acceptance rows have no
+/// producer yet: no lowering emits a round loop, so a body could not exercise
+/// them and a rule with only its refusals driven would be half-evidenced. The
+/// refusals are additionally driven end to end through a real body by
+/// `each_kernel_synchronization_rule_refuses_its_own_defect`'s
+/// `FenceInsideTheGuard` row.
+#[test]
+fn the_barrier_convergence_rule_admits_only_the_nesting_a_tile_authorizes() {
+    for (block_depth, loop_depth, rounds, admitted) in [
+        // A single-round tile authorizes the top level and nothing else.
+        (0, 0, 1, true),
+        (1, 0, 1, false),
+        (1, 1, 1, false),
+        (2, 1, 1, false),
+        // A loop-carried tile authorizes exactly one enclosing loop.
+        (1, 1, 2, true),
+        (0, 0, 2, false),
+        (2, 2, 2, false),
+        // A predicate on the path is refused whatever the round count: the
+        // difference between the two depths counts the predicates, and any of
+        // them admits a dynamic subset of the participants.
+        (1, 0, 2, false),
+        (2, 1, 2, false),
+        (3, 1, 2, false),
+    ] {
+        assert_eq!(
+            super::verify::barrier_is_convergent(block_depth, loop_depth, rounds),
+            admitted,
+            "block {block_depth}, loop {loop_depth}, rounds {rounds}"
+        );
     }
 }
 

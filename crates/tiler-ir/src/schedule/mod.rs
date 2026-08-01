@@ -144,9 +144,9 @@ mod synchronization;
 
 pub use builder::ScheduledRegionBuilder;
 pub use cooperative::{
-    ContributorArrival, CooperativePhase, CooperativeTile, LocalCoordinateSource, LocalCoordinates,
-    ParticipantRange, StagedElement, StagedRead, StagedSpan, StagedWrite, VisibilityEdge,
-    WorkgroupStaging, workgroup_tree_tile,
+    AntiDependencyEdge, ContributorArrival, CooperativePhase, CooperativeTile,
+    LocalCoordinateSource, LocalCoordinates, ParticipantRange, StagedElement, StagedRead,
+    StagedSpan, StagedWrite, VisibilityEdge, WorkgroupStaging, workgroup_tree_tile,
 };
 pub use error::{
     ContributorError, CooperativeTileRule, ElementCountOverflow, ScheduleBuildError,
@@ -205,12 +205,25 @@ pub const MAX_COOPERATIVE_PARTICIPANTS: u64 = 4_096;
 pub const MAX_COOPERATIVE_STAGING_SLOTS: u64 = 65_536;
 /// Maximum phases admitted by one cooperative workgroup tile.
 pub const MAX_COOPERATIVE_PHASES: usize = 64;
+/// Maximum rounds one cooperative workgroup tile's phase sequence may execute.
+///
+/// Deliberately *not* an enumeration bound like the three above. Nothing walks a
+/// tile's rounds: the phase sequence is verified once and the round count only
+/// says how many times it repeats, so an unbounded count would not make
+/// verification unbounded. What it bounds is arithmetic and emission — a
+/// consumer multiplies the round count into its contributor coverage, and a
+/// lowering emits it as a loop trip count — so the bound is what keeps a
+/// declared round count from overflowing a product or naming a loop no launch
+/// could finish. It is not a hardware claim; nothing here asserts a target can
+/// run this many rounds.
+pub const MAX_COOPERATIVE_ROUNDS: u64 = 65_536;
 /// Maximum staged accesses admitted by one cooperative phase.
 pub const MAX_COOPERATIVE_PHASE_ACCESSES: usize = 64;
 /// Maximum synchronization points admitted by one cooperative workgroup tile.
 ///
-/// A point sits at a boundary between consecutive phases, so a tile can need at
-/// most one fewer point than it has phases; the bound is stated separately
-/// anyway, because the verifier enumerates points against edges and a bound
-/// derived from another bound is one a reader has to reconstruct.
+/// A point sits at a boundary between consecutive phases or at the round
+/// boundary, so a tile can need at most as many points as it has phases; the
+/// bound is stated separately anyway, because the verifier enumerates points
+/// against edges and a bound derived from another bound is one a reader has to
+/// reconstruct.
 pub const MAX_COOPERATIVE_SYNCHRONIZATION_POINTS: usize = 64;

@@ -20,7 +20,9 @@ use super::numerics::{
     NumericalRealization, SubnormalFreedom, SubnormalMode, ValueDomainProvenance,
 };
 use super::pointwise::{PointwiseF32Expression, PointwiseF32Node};
-use super::synchronization::{SynchronizationPoint, SynchronizationSubject, required_subject};
+use super::synchronization::{
+    SynchronizationPlacement, SynchronizationPoint, SynchronizationSubject, required_subject,
+};
 
 /// The role a boundary tensor plays for one scheduled region.
 ///
@@ -634,15 +636,35 @@ pub enum ReductionTopology {
     /// the invocations of *one* workgroup and stages the partials in
     /// workgroup-shared memory, so the handoff needs visibility that no dispatch
     /// boundary supplies — which is exactly what
-    /// [`CooperativeTile::visibility_edges`] states and what no schedule can yet
-    /// authorize.
+    /// [`CooperativeTile::visibility_edges`] states, and which the tile's own
+    /// [`SynchronizationPoint`]s authorize: the schedule verifier requires
+    /// exactly one point to discharge each edge, and the structured-kernel
+    /// verifier separately proves the emitted body puts that point's barrier
+    /// between the staged write and the staged read. A tile whose phases repeat
+    /// carries a second class, [`super::AntiDependencyEdge`], under the same
+    /// rule.
+    ///
+    /// What no schedule authorizes is the *machine*: whether a target can
+    /// perform the realization those points require is a feasibility question
+    /// composed against a target profile's own declaration, and a schedule
+    /// proving its own ordering is not a claim that any device offers it.
     ///
     /// The split is a reassociation of the declared contributor sequence and
     /// never a permutation of it, for the reason [`ContributorPartition`]
     /// records: participant `p` combines the contiguous contributor range that
     /// partition owns, and the staged partials are combined in ascending `p`.
     CooperativeWorkgroup {
-        /// How one output's contributor sequence is split across participants.
+        /// How one output's contributor sequence is split across participants,
+        /// per round.
+        ///
+        /// `contributors_per_partition` is what one participant folds on *one*
+        /// round, so the sequence this split covers is
+        /// `partitions * contributors_per_partition * tile.rounds`. On a
+        /// single-round tile that is the plain product and the field means
+        /// exactly what it does for [`Self::MultiPass`]; on a loop-carried one,
+        /// participant `p` of round `r` owns the contiguous range at index
+        /// `r * partitions + p`, which is why the coverage stays ascending and
+        /// the strategy still consumes reassociation alone.
         partition: ContributorPartition,
         /// The cross-invocation dataflow that split requires.
         tile: CooperativeTile,
@@ -1645,18 +1667,38 @@ fn push_synchronization_subject(bytes: &mut Vec<u8>, subject: SynchronizationSub
     bytes.push(subject.ordering.tag());
 }
 
+/// Encodes where in a cooperative tile one point sits.
+///
+/// A tag byte, then the ordinals the placement carries — two for a phase
+/// boundary and none for a round boundary, whose separated phases are the tile's
+/// own last and first. Written as an exhaustive match over a
+/// non-`#[non_exhaustive]` enum so a widened placement vocabulary is a build
+/// error here rather than a position encoded under another's bytes.
+fn push_synchronization_placement(bytes: &mut Vec<u8>, placement: SynchronizationPlacement) {
+    bytes.push(placement.tag());
+    match placement {
+        SynchronizationPlacement::PhaseBoundary {
+            preceding,
+            following,
+        } => {
+            bytes.extend_from_slice(&preceding.get().to_be_bytes());
+            bytes.extend_from_slice(&following.get().to_be_bytes());
+        }
+        SynchronizationPlacement::RoundBoundary => {}
+    }
+}
+
 /// Encodes one synchronization point of a cooperative tile.
 ///
 /// The discharged edge set is deliberately *not* encoded, for the reason the
 /// visibility edges are not: it is a total function of the placement and the
 /// phases already written, so encoding it would add bytes no two distinguishable
-/// tiles differ in.
+/// tiles differ in. That covers both evidence classes — the anti-dependencies a
+/// point discharges follow from the same placement and phases.
 fn push_synchronization_point(bytes: &mut Vec<u8>, point: &SynchronizationPoint) {
     bytes.extend_from_slice(&point.id.get().to_be_bytes());
     push_synchronization_subject(bytes, point.subject);
-    bytes.push(point.placement.tag());
-    bytes.extend_from_slice(&point.placement.preceding().get().to_be_bytes());
-    bytes.extend_from_slice(&point.placement.following().get().to_be_bytes());
+    push_synchronization_placement(bytes, point.placement);
     push_participant_range(bytes, point.participants);
     bytes.push(point.convergence.tag());
 }
@@ -1671,12 +1713,14 @@ fn push_synchronization_point(bytes: &mut Vec<u8>, point: &SynchronizationPoint)
 /// The synchronization points *are* encoded, and the distinction is the whole
 /// difference between a derivation and an authority: which boundary a producer
 /// chose to order a handoff at is a physical decision with more than one legal
-/// answer, so two tiles differing only in it are two schedules. They are written
-/// last inside this payload, ahead of the topology's remaining fields, which
-/// shifts no earlier subject's bytes: the payload is reachable only from the
-/// appended `0x35` topology tag, and no cooperative region has ever been
-/// encodable into a retained identity — the structured-kernel verifier refused
-/// every one before a kernel, program, artifact, or cache entry could hold it.
+/// answer, so two tiles differing only in it are two schedules.
+///
+/// The round count is written beside the coordinates, before any staging or
+/// phase record, because it scopes every one of them: a phase runs `rounds`
+/// times and an allocation's declared lifetime is a within-round one. That
+/// placement *inserts* into the payload rather than appending to it, and it is
+/// what `tiler.schedule.v4` exists for — see [`encode_identity`] for why an
+/// append here would not have been safe either.
 fn push_cooperative_tile(bytes: &mut Vec<u8>, tile: &CooperativeTile) {
     let LocalCoordinates {
         source,
@@ -1684,6 +1728,7 @@ fn push_cooperative_tile(bytes: &mut Vec<u8>, tile: &CooperativeTile) {
     } = tile.coordinates;
     bytes.push(source.tag());
     push_participant_range(bytes, participants);
+    bytes.extend_from_slice(&tile.rounds.to_be_bytes());
     push_len(bytes, tile.staging.len());
     for staging in &tile.staging {
         push_workgroup_staging(bytes, staging);
@@ -1771,12 +1816,11 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
             bytes.push(accumulation.tag());
             bytes.push(u8::from(*permits_reassociation));
             bytes.push(u8::from(*permits_permutation));
-            // Appended at the end of the `0x35` arm rather than beside
-            // `accumulation`, where it belongs by meaning. Every earlier field
-            // of this arm keeps its offset, so the append is checkable by
-            // inspection instead of by trusting that no cooperative region has
-            // been persisted — and `tiler.schedule.v3` holds because `0x35` is
-            // itself an appended tag no earlier region could carry.
+            // At the end of the `0x35` arm rather than beside `accumulation`,
+            // where it belongs by meaning. It was appended there while the arm
+            // was young enough for that to move nothing a reader had; the `v4`
+            // step has since made the position free, and it is left alone
+            // because moving it would churn bytes for no gain.
             bytes.push(arrival.tag());
         }
     }
@@ -1794,9 +1838,32 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
 /// versioned domain separator (ADR 0074 convention 3). This encoder was the
 /// only site that omitted the terminator.
 ///
-/// # Why this is a `v3` step
+/// # Why this is a `v4` step
 ///
-/// `v3` gives [`TensorRole::Input`] an ordinal and [`PointwiseF32Node::Input`]
+/// `v4` gives [`CooperativeTile`] its round count, so a tile can state that its
+/// phase sequence repeats and that its staging is rewritten between rounds. The
+/// field lands *inside* the `0x35` topology payload, ahead of the staging and
+/// phase records, so every cooperative region's bytes move.
+///
+/// **The append that would have avoided it is not available, and the reason is
+/// worth stating because the arm's earlier extensions did rely on it.** Both
+/// `TAG_REDUCTION_COOPERATIVE_WORKGROUP` and the `arrival` byte after it were
+/// justified by "no cooperative region has ever reached a retained identity", a
+/// premise the single-workgroup tree strategy has since expired: a cooperative
+/// region now lowers to a verified kernel, emits a checked-in Metal golden, and
+/// folds into an artifact identity and a cache subject. Once bytes are retained,
+/// the question stops being "does anything hold the old bytes" and becomes "can
+/// an old identity equal a new one", and adding eight bytes anywhere inside this
+/// arm does not answer it: the arm ends in `axes`, whose own length prefix and
+/// four-byte elements can absorb the shift, so an old region with axes
+/// `[0, 1, 2]` encodes the same bytes a new region with axes `[2]` and three
+/// rounds does. Nothing in the *encoding* separates them; only the verifier's
+/// requirement that the topology's axes repeat the access's does, and an
+/// identity encoder that leans on a verifier invariant has stopped being
+/// injective on its own terms. Stepping the domain is what restores that, and it
+/// costs the retained corpus a miss rather than a wrong hit.
+///
+/// `v3` gave [`TensorRole::Input`] an ordinal and [`PointwiseF32Node::Input`]
 /// the ordinal it reads, so a region can name several distinct input tensors.
 /// Both fields land *inside* records that repeat — every access, every bounds
 /// proof, every expression node — so a `v2` reader would consume the following
@@ -1808,7 +1875,7 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
 /// the domain.
 pub(super) fn encode_identity(region: &ScheduledRegion) -> CanonicalScheduledRegionIdentity {
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"tiler.schedule.v3\0");
+    bytes.extend_from_slice(b"tiler.schedule.v4\0");
     push_shape(&mut bytes, &region.index.iteration_shape);
     push_len(&mut bytes, region.index.accesses.len());
     for access in &region.index.accesses {

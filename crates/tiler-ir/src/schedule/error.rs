@@ -178,6 +178,16 @@ pub enum CooperativeTileRule {
     /// Disjointness and coverage are decided by enumerating addressed slots, so
     /// the bound is what keeps that decision finite.
     StructuralLimit,
+    /// The tile's round count is zero or beyond the governed bound.
+    ///
+    /// Separate from [`Self::StructuralLimit`] because a round count is not an
+    /// enumeration bound: nothing walks the rounds, so an oversized one does not
+    /// make verification unbounded. What it does is overflow the contributor
+    /// arithmetic a consumer performs against it and name a loop trip count no
+    /// launch could finish — and a count of *zero* is not a bound failure at all
+    /// but a tile whose phases never run, which would derive staged accesses and
+    /// a synchronization requirement for a program that executes nothing.
+    RoundStructure,
     /// The split, the participants, and the contributor sequence disagree.
     ContributorSplit,
     /// The contributor domain is empty, so nothing is staged.
@@ -223,6 +233,7 @@ impl CooperativeTileRule {
             Self::NoVisibilityEdge => "cooperative-no-visibility-edge",
             Self::CommitOwnership => "cooperative-commit-ownership",
             Self::StructuralLimit => "cooperative-structural-limit",
+            Self::RoundStructure => "cooperative-round-structure",
             Self::ContributorSplit => "cooperative-contributor-split",
             Self::EmptyContributorDomain => "cooperative-empty-contributor-domain",
             Self::ArrivalPermission => "cooperative-arrival-permission",

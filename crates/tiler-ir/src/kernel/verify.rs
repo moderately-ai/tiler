@@ -112,7 +112,51 @@ enum SyncEvent {
         point: SyncPointId,
         /// Lexical block depth, `0` at the kernel's top level.
         block_depth: u32,
+        /// Enclosing loop nesting, `0` outside every loop.
+        ///
+        /// Carried beside the block depth rather than folded into it because the
+        /// two answer different questions: the block depth counts every
+        /// enclosing region and the loop depth counts only the ones every
+        /// invocation enters. Their difference is the number of predicates on
+        /// the path, which is what decides convergence.
+        loop_depth: u32,
     },
+}
+
+/// Returns whether a barrier at this nesting is reached by every participant.
+///
+/// Two facts, and both are needed.
+///
+/// **No predicate may enclose it.** A barrier inside a predicated region is
+/// reached by whichever invocations the predicate admits, and one not reached by
+/// every participant is undefined execution on every target. `block_depth`
+/// counts every enclosing region and `loop_depth` only the loops, so their
+/// equality is exactly "nothing on the path is a predicate" — the two counts
+/// were always tracked separately and this is the rule that reads the
+/// difference.
+///
+/// **The loop nesting must be the one the tile's round structure authorizes.** A
+/// [`SerialLoopSpec`](super::model::SerialLoopSpec) carries `start` and `end` as
+/// `u64` *literals*, not values, so every invocation of a workgroup runs an
+/// identical trip count and a barrier in that body is reached by all of them at
+/// the same dynamic instance — which is why a loop, unlike a predicate, can
+/// enclose one at all. What a loop level still needs is a *reason*: the tile's
+/// round loop is the only repetition its schedule declares, so a tile with
+/// several rounds authorizes exactly one enclosing loop and a single-round tile
+/// authorizes none. A barrier inside a contributor fold would otherwise be
+/// admitted, and it would synchronize once per contributor for a point the
+/// schedule places once between two phases.
+///
+/// This proves convergence, not that the enclosing loop is the *right* loop:
+/// matching its trip count against the declared round count is an obligation on
+/// whatever lowers a loop-carried tile, and no lowering emits one yet.
+pub(super) const fn barrier_is_convergent(block_depth: u32, loop_depth: u32, rounds: u64) -> bool {
+    block_depth == loop_depth && loop_depth == authorized_barrier_loop_depth(rounds)
+}
+
+/// Returns the loop nesting a tile of `rounds` rounds authorizes for a barrier.
+const fn authorized_barrier_loop_depth(rounds: u64) -> u32 {
+    if rounds > 1 { 1 } else { 0 }
 }
 
 #[derive(Debug, Default)]
@@ -358,9 +402,9 @@ fn barrier_subject(spec: &BarrierSpec) -> Option<SynchronizationSubject> {
 ///    point, so any barrier in its body is unauthorized by construction.
 /// 2. Every barrier names a declared point, every declared point is realized
 ///    exactly once, and the realizations appear in ascending point order.
-/// 3. Every barrier sits at the kernel's top level, so every invocation reaches
-///    it. A barrier inside a predicate or a loop is reached by a dynamic subset
-///    of the participants — undefined execution rather than unsupported.
+/// 3. Every barrier sits where its tile's round structure makes it convergent —
+///    outside every predicate, and inside the round loop exactly when there is
+///    one. See [`barrier_is_convergent`] for the derivation.
 /// 4. Every barrier's declared spelling projects onto its point's subject.
 /// 5. Every staged access is authorized by the phase it names, and every
 ///    visibility edge's write precedes, and its read follows, the barrier
@@ -398,8 +442,12 @@ fn verify_synchronization(
             .iter()
             .filter(|event| matches!(event, SyncEvent::Barrier { .. })),
     ) {
-        if let SyncEvent::Barrier { block_depth, .. } = event
-            && *block_depth != 0
+        if let SyncEvent::Barrier {
+            block_depth,
+            loop_depth,
+            ..
+        } = event
+            && !barrier_is_convergent(*block_depth, *loop_depth, tile.rounds)
         {
             return Err(KernelDiagnostic::SynchronizationConvergence);
         }
@@ -611,6 +659,7 @@ fn visit_block(
                 walk.sync.push(SyncEvent::Barrier {
                     point: spec.point,
                     block_depth,
+                    loop_depth,
                 });
             }
             OperationKind::StagedStore { staging, phase, .. } => {
