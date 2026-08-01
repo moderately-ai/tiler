@@ -16,7 +16,7 @@ The crate's one constant-or-symbol extent vocabulary lives where its components 
 
 ## Why this exists
 
-**Fact.** `SourcedExtent`'s own documentation calls it "the crate's *one* constant-or-symbol vocabulary for an index-layer magnitude", and states the ground: "a second divisor enum would give a frontend two ways to spell the same fact, two encodings to fold into identity, and two places to extend when a third source kind arrives." Reproduce with `grep -n "one\* constant-or-symbol\|one\` constant-or-symbol" crates/tiler-ir/src/index/sourced.rs`, or read the type's doc comment directly.
+**Fact.** `SourcedExtent`'s own documentation calls it "the crate's *one* constant-or-symbol vocabulary for an index-layer magnitude", and states the ground: "a second divisor enum would give a frontend two ways to spell the same fact, two encodings to fold into identity, and two places to extend when a third source kind arrives." Reproduce with `grep -n "constant-or-symbol vocabulary" crates/tiler-ir/src/index/sourced.rs`, which returns line 144.
 
 **Inference.** The scoping phrase "index-layer" is a fact about where the type currently sits, not about what it is: `SourcedExtent` is `Extent | ShapeSymbol` and both live in `crate::shape`. [The symbolic-semantic-extents record](../docs/research/shapes/symbolic-semantic-extents.md) eliminates a semantic-layer mirror on exactly this ground, which leaves relocation as the only way for two layers to share one vocabulary.
 
