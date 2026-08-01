@@ -1,7 +1,7 @@
 ---
 id: deliver-several-artifact-families-from-one-expansion
 title: Deliver several artifact families from one expansion
-status: in-progress
+status: todo
 priority: p2
 dependencies: [prototype-inline-aot-integration-proof, first-authoritative-ios-metal-compile-declaration, carry-one-payload-per-artifact-family-in-one-envelope]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/frontend, implementation/build, implementation/metal-aot
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, inline-dx, artifacts]
-claimed_from: todo
-assignee: worker-deliver-seve
-lease_expires_at: 1785564763
 ---
 ## Why this exists
 
