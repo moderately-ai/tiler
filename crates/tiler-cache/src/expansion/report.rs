@@ -219,6 +219,14 @@ pub enum MissReason {
     Rejected(EntryRejection),
     /// The namespace itself could not be used.
     Unavailable(CacheUnavailable),
+    /// This cache stores nothing, so there is no content path to read.
+    ///
+    /// Distinct from [`Self::Absent`], which reports that a *content path* held
+    /// no entry. A cache built by
+    /// [`ExpansionCache::disabled`](crate::expansion::ExpansionCache::disabled)
+    /// has no root and therefore no content path at all, and reporting an
+    /// absence would describe a lookup that never happened.
+    Disabled,
 }
 
 impl fmt::Display for MissReason {
@@ -227,6 +235,9 @@ impl fmt::Display for MissReason {
             Self::Absent => formatter.write_str("no cache entry exists for this key"),
             Self::Rejected(rejection) => write!(formatter, "{rejection}"),
             Self::Unavailable(unavailable) => write!(formatter, "{unavailable}"),
+            Self::Disabled => {
+                formatter.write_str("the expansion cache is disabled, so nothing is stored to read")
+            }
         }
     }
 }
@@ -234,7 +245,7 @@ impl fmt::Display for MissReason {
 impl std::error::Error for MissReason {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Absent => None,
+            Self::Absent | Self::Disabled => None,
             Self::Rejected(rejection) => Some(rejection),
             Self::Unavailable(unavailable) => Some(unavailable),
         }
@@ -279,6 +290,17 @@ pub enum PublicationRefusal {
         /// The final path it would have been renamed to.
         entry: PathBuf,
     },
+    /// This cache stores nothing, so no publication was attempted.
+    ///
+    /// The one variant here that is not a failure. Every other means a
+    /// publication was tried and did not complete; this one means the caller
+    /// asked for a cache that shares nothing, so there was never a temporary
+    /// file, a lock, or a rename — see
+    /// [`ExpansionCache::disabled`](crate::expansion::ExpansionCache::disabled).
+    /// It is reported rather than left as `None`, because
+    /// [`CacheReport::publication_refusal`] returning `None` states that the
+    /// result *was* published.
+    Disabled,
 }
 
 impl fmt::Display for PublicationRefusal {
@@ -301,6 +323,9 @@ impl fmt::Display for PublicationRefusal {
                 temporary.display(),
                 entry.display(),
             ),
+            Self::Disabled => formatter.write_str(
+                "the expansion cache is disabled, so the validated result was not stored",
+            ),
         }
     }
 }
@@ -311,7 +336,7 @@ impl std::error::Error for PublicationRefusal {
             Self::Unavailable(unavailable) => Some(unavailable),
             Self::Oversize(rejection) => Some(rejection),
             Self::TemporaryRejected(rejection) => Some(rejection),
-            Self::CrossesFilesystems { .. } => None,
+            Self::CrossesFilesystems { .. } | Self::Disabled => None,
         }
     }
 }

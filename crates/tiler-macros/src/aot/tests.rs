@@ -29,7 +29,7 @@ use tiler_metal_aot::family::{
 use tiler_metal_aot::input::{ApplePlatform, DeploymentMinimum, MslVersion};
 
 use super::{AotRefusal, CONTRACT, OPTIMIZATION, RouteFacts, deliver};
-use crate::cache_root::RootEnvironment;
+use crate::cache_root::{DISABLE_VALUE, RootEnvironment};
 use crate::delivery::{NamedProfile, byte_string_literal};
 
 /// The approved region `in a: f32[4], b: f32[4], c: f32[4]; out (a * b) + c`.
@@ -140,6 +140,104 @@ fn a_delivering_expansion_publishes_and_then_hits() {
         "the plan must embed the artifact as one byte-string literal",
     );
     let _ = std::fs::remove_dir_all(root);
+}
+
+/// `TILER_EXPANSION_CACHE_DIR=off` compiles and embeds the region, and stores
+/// nothing.
+///
+/// ADR 0089 spells `off` as "expand, compile, embed, and cache nothing", so the
+/// claim has two halves and each needs its own evidence. That the region is
+/// *delivered* is the returned plan: it carries the same embedded bytes the
+/// stated-root expansion produces, which a refusal or a fallback could not
+/// match. That nothing is *stored* is the directory.
+///
+/// One scratch directory is watched both ways, in that order, because either
+/// half alone is vacuous. "The directory is empty after `off`" would also be
+/// what a broken publication reported, and "the directory holds a bundle after a
+/// stated root" says nothing about `off`. Running them over one directory with
+/// one program makes the environment value the only difference between them, so
+/// the first assertion demonstrably fails when handed the second's environment —
+/// which is the deliberate perturbation this test is written around.
+#[test]
+fn a_disabled_cache_delivers_the_region_and_publishes_no_file() {
+    let root = scratch("cache-disabled");
+    let program = approved_region();
+    let toolchain = Toolchain::system();
+
+    let disabled = deliver(
+        Some(&program),
+        macos_selection(),
+        &RootEnvironment::new(Some(std::ffi::OsString::from(DISABLE_VALUE)), None),
+        &toolchain,
+    )
+    .expect("`off` compiles and embeds rather than refusing");
+    assert!(
+        disabled.route_facts.is_some(),
+        "`off` must produce an artifact for a route to name, not a retained diagnostic",
+    );
+    assert!(
+        disabled.plan.items_source().contains(&format!(
+            "const {}: &[u8] = b\"",
+            crate::delivery::ARTIFACT_BINDING
+        )),
+        "`off` must still embed the compiled artifact",
+    );
+    assert_eq!(
+        published_bundles(&root),
+        Vec::<PathBuf>::new(),
+        "a disabled expansion must publish no file",
+    );
+
+    // The control, over the same directory and the same program: only the stated
+    // environment differs, and now exactly one bundle exists. Without it the
+    // assertion above would pass on a host where publication never works.
+    let stated = deliver(
+        Some(&program),
+        macos_selection(),
+        &stating(&root),
+        &toolchain,
+    )
+    .expect("a stated root delivers");
+    assert_eq!(
+        published_bundles(&root).len(),
+        1,
+        "the same expansion under a stated root must publish exactly one bundle",
+    );
+    assert_eq!(
+        stated.plan.items_source(),
+        disabled.plan.items_source(),
+        "`off` must embed the same bytes a cached expansion embeds",
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// Every published cache bundle under one root, as the cache's own layout files
+/// them.
+///
+/// A missing namespace is an empty list rather than a failure: a root nothing
+/// published to has no `v1/entries` tree, which is exactly the state the
+/// disabled half of the test above asserts.
+fn published_bundles(root: &std::path::Path) -> Vec<PathBuf> {
+    let Ok(shards) = std::fs::read_dir(root.join("v1/entries")) else {
+        return Vec::new();
+    };
+    let mut found: Vec<PathBuf> = shards
+        .filter_map(Result::ok)
+        .flat_map(|shard| {
+            std::fs::read_dir(shard.path())
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok)
+                .map(|file| file.path())
+                .collect::<Vec<_>>()
+        })
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "bundle")
+        })
+        .collect();
+    found.sort();
+    found
 }
 
 /// The identity that names the bytes exists before the compilation that
@@ -696,29 +794,18 @@ fn a_damaged_entry_is_quarantined_and_rebuilt() {
     )
     .expect("the first expansion builds");
 
-    let entry = std::fs::read_dir(root.join("v1/entries"))
-        .expect("the cache published under its own layout")
-        .filter_map(Result::ok)
-        .flat_map(|shard| {
-            std::fs::read_dir(shard.path())
-                .expect("a shard directory")
-                .filter_map(Result::ok)
-                .map(|file| file.path())
-                .collect::<Vec<_>>()
-        })
-        .find(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "bundle")
-        })
-        .expect("one published bundle");
+    let published = published_bundles(&root);
+    let [entry] = published.as_slice() else {
+        panic!("the cache published exactly one bundle under its own layout");
+    };
 
     // One interior byte, well past the frame header, so the damage is caught by
     // a section digest rather than by the magic — the case a check that only
     // read the header would miss.
-    let mut bytes = std::fs::read(&entry).expect("the bundle is readable");
+    let mut bytes = std::fs::read(entry).expect("the bundle is readable");
     let victim = bytes.len() / 2;
     bytes[victim] ^= 0xff;
-    std::fs::write(&entry, &bytes).expect("the bundle is writable");
+    std::fs::write(entry, &bytes).expect("the bundle is writable");
 
     let second = deliver(
         Some(&program),
@@ -732,7 +819,7 @@ fn a_damaged_entry_is_quarantined_and_rebuilt() {
         second.plan.items_source(),
         "the rebuilt entry must embed the same bytes the damaged one claimed to hold",
     );
-    let repaired = std::fs::read(&entry).expect("the bundle was republished");
+    let repaired = std::fs::read(entry).expect("the bundle was republished");
     assert_ne!(
         repaired, bytes,
         "the damaged entry must be replaced rather than read again",

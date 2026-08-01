@@ -500,9 +500,16 @@ impl ExpansionCache {
     /// Returns [`CacheUnavailable`] when the entries tree exists and cannot be
     /// listed. A namespace that does not exist yet is an empty cache rather than
     /// an error, matching [`ExpansionCache::open`], which also creates nothing.
+    /// A cache built by [`ExpansionCache::disabled`] has no namespace to scan
+    /// and accounts for nothing, which is also what makes
+    /// [`ExpansionCache::collect`] and [`ExpansionCache::purge`] total over it
+    /// without stating the mode themselves.
     pub fn account(&self) -> Result<CacheAccounting, CacheUnavailable> {
+        let Some(layout) = self.layout() else {
+            return Ok(CacheAccounting::default());
+        };
         let mut accounting = CacheAccounting::default();
-        let entries_root = self.layout().entries_root();
+        let entries_root = layout.entries_root();
         for shard in shards(&entries_root)? {
             for file in files(&shard)? {
                 let metadata = match fs::metadata(&file) {
@@ -539,7 +546,7 @@ impl ExpansionCache {
             }
         }
 
-        let quarantine_root = self.layout().quarantine_root();
+        let quarantine_root = layout.quarantine_root();
         for shard in shards(&quarantine_root)? {
             for file in files(&shard)? {
                 if let Ok(metadata) = fs::metadata(&file)
@@ -695,7 +702,15 @@ impl ExpansionCache {
         &self,
         fact: &EntryFact,
     ) -> Result<Disposition, CacheUnavailable> {
-        let lock_path = self.layout().lock_path(&fact.key);
+        // A cache that stores nothing produces no [`EntryFact`], so a selection
+        // over it is empty and this is unreachable from [`Self::collect`].
+        // Reported rather than asserted: the disposition is exactly true — there
+        // was no entry — and a panic would be the wrong failure mode for a seam
+        // whose whole contract is that a removal it cannot perform is named.
+        let Some(layout) = self.layout() else {
+            return Ok(Disposition::AlreadyAbsent);
+        };
+        let lock_path = layout.lock_path(&fact.key);
         // Not `prepare_directories`: a collector creates nothing. A key with a
         // published entry already has its lock shard, and one that does not is
         // reported rather than repaired.
@@ -711,7 +726,7 @@ impl ExpansionCache {
             }
         };
 
-        let entry = self.layout().entry_path(&fact.key);
+        let entry = layout.entry_path(&fact.key);
         let disposition = match fs::metadata(&entry) {
             Ok(metadata)
                 if metadata.len() == fact.bytes && metadata.modified().ok() == fact.published =>
@@ -802,17 +817,21 @@ impl ExpansionCache {
     /// listed, or when the live namespace exists and cannot be retired. A tree
     /// that is retired but cannot be removed is recorded in
     /// [`PurgeReport::failed`] and does not fail the purge, because it is
-    /// already out of service.
+    /// already out of service. A cache built by [`ExpansionCache::disabled`] has
+    /// no namespace to retire and reclaims nothing.
     pub fn purge(&self) -> Result<PurgeReport, CacheUnavailable> {
+        let Some(layout) = self.layout() else {
+            return Ok(PurgeReport::default());
+        };
         let mut report = PurgeReport::default();
-        let version_root = self.layout().version_root();
+        let version_root = layout.version_root();
 
         match fs::metadata(&version_root) {
             Ok(_) => {
                 let nonce = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .map_or(0, |elapsed| elapsed.as_nanos());
-                let retired = self.layout().out_of_service_path(nonce);
+                let retired = layout.out_of_service_path(nonce);
                 match fs::rename(&version_root, &retired) {
                     Ok(()) => report.retired = Some(retired),
                     // Retired by a concurrent purge between the `stat` and the
@@ -840,13 +859,13 @@ impl ExpansionCache {
 
         // Reclaim every retired tree, including any an earlier purge left behind
         // by dying between its rename and its removal.
-        let listing = match fs::read_dir(self.root()) {
+        let listing = match fs::read_dir(layout.root()) {
             Ok(listing) => listing,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(report),
             Err(error) => {
                 return Err(CacheUnavailable::new(
                     CacheOperation::ScanDirectory,
-                    self.root().to_path_buf(),
+                    layout.root().to_path_buf(),
                     error,
                 ));
             }
