@@ -434,14 +434,15 @@ fn build_split_core(
     let partial_view = builder.push_whole_view(partial_value)?;
     let output_view = builder.push_whole_view(output)?;
     let contributor_bytes = abi.first_input_bytes()?;
-    let contributor_elements = abi.first_input_elements()?;
     prologue_accesses.push(write(temporary_view, contributor_bytes));
+    let map_launch = HostAbi::launch(&mut builder, pointwise)?;
     let map_stage = builder.push_stage(
         &lower(pointwise)?,
         &covered(subject.members.pointwise()),
         &prologue_accesses,
-        abi.launch(contributor_elements),
+        map_launch,
     )?;
+    let partial_launch = HostAbi::launch(&mut builder, partial)?;
     let partial_stage = builder.push_stage(
         &lower(partial)?,
         &covered(subject.members.reduction()),
@@ -449,11 +450,12 @@ fn build_split_core(
             read(temporary_view, contributor_bytes),
             write(partial_view, partial_abi.bytes),
         ],
-        abi.launch(partial_abi.elements),
+        partial_launch,
     )?;
     // The final pass covers nothing: the reduction occurrence it realizes is
     // already claimed by the partial pass, and claiming it twice would
     // double-cover the semantic graph.
+    let final_launch = HostAbi::launch(&mut builder, combine)?;
     let final_stage = builder.push_stage(
         &lower(combine)?,
         &[],
@@ -461,7 +463,7 @@ fn build_split_core(
             read(partial_view, partial_abi.bytes),
             write(output_view, abi.output_bytes),
         ],
-        abi.launch(abi.output_elements),
+        final_launch,
     )?;
     builder.push_data_dependency(map_stage, partial_stage, temporary)?;
     // The dispatch boundary *is* the pass boundary: this ordinary data edge is
@@ -551,14 +553,15 @@ fn build_materialized_core(
     let temporary_view = builder.push_whole_view(temporary)?;
     let output_view = builder.push_whole_view(output)?;
     let contributor_bytes = abi.first_input_bytes()?;
-    let contributor_elements = abi.first_input_elements()?;
     prologue_accesses.push(write(temporary_view, contributor_bytes));
+    let map_launch = HostAbi::launch(&mut builder, pointwise)?;
     let map_stage = builder.push_stage(
         &lower(pointwise)?,
         &covered(subject.members.pointwise()),
         &prologue_accesses,
-        abi.launch(contributor_elements),
+        map_launch,
     )?;
+    let reduce_launch = HostAbi::launch(&mut builder, reduction)?;
     let reduce_stage = builder.push_stage(
         &lower(reduction)?,
         &covered(subject.members.reduction()),
@@ -566,7 +569,7 @@ fn build_materialized_core(
             read(temporary_view, contributor_bytes),
             write(output_view, abi.output_bytes),
         ],
-        abi.launch(abi.output_elements),
+        reduce_launch,
     )?;
     builder.push_data_dependency(map_stage, reduce_stage, temporary)?;
     builder.push_output(subject.output_key.clone(), output)?;
@@ -675,12 +678,8 @@ fn build_fused_core(
         .map(|(view, bytes)| read(view, bytes))
         .collect();
     accesses.push(write(output_view, abi.output_bytes));
-    builder.push_stage(
-        &lower(scheduled)?,
-        &covered(&members),
-        &accesses,
-        abi.launch(abi.output_elements),
-    )?;
+    let launch = HostAbi::launch(&mut builder, scheduled)?;
+    builder.push_stage(&lower(scheduled)?, &covered(&members), &accesses, launch)?;
     builder.push_output(output_key, output)?;
     declare_routing_commit(&mut builder)?;
     finish_core(builder)
@@ -705,22 +704,50 @@ fn build_fused_core(
 struct HostAbi {
     input_bytes: Vec<AbiExprId>,
     output_bytes: AbiExprId,
-    input_elements: Vec<AbiExprId>,
-    output_elements: AbiExprId,
-    threads_per_workgroup: AbiExprId,
 }
 
 impl HostAbi {
-    /// Returns the launch of a stage whose work items are `grid_threads`.
+    /// Returns the launch one stage declares, read from the schedule it lowers.
     ///
-    /// Every current region uses the profile's fixed workgroup width; the width
-    /// the *kernel* requires is what the program builder proves the declared
-    /// expression against.
-    const fn launch(&self, grid_threads: AbiExprId) -> StageLaunch {
-        StageLaunch {
-            grid_threads,
-            threads_per_workgroup: self.threads_per_workgroup,
-        }
+    /// **Both quantities come from the schedule, and both used to come from
+    /// somewhere else.** The width was one literal `1` shared by every stage of a
+    /// program, and the grid was whichever declared element count happened to
+    /// equal the region's work items — the output count for a reduction, the
+    /// contributor count for a pointwise stage. Both were true of every region
+    /// that runs one independent invocation per result element, and both are
+    /// false for a cooperative one: a single-workgroup tree launches one
+    /// invocation *per participant* inside one workgroup, so its work items are
+    /// the participant count and its width is too, while its output count is one.
+    ///
+    /// The effect was not a wrong dispatch — `verify_stage_abi` below and the
+    /// shared kernel-program builder each prove the declared launch against the
+    /// schedule, so the whole compilation failed as invalid compiler output the
+    /// first time a tree reached a kernel program. Deriving the declaration from
+    /// the same schedule those proofs compare against is what makes the agreement
+    /// structural instead of coincidental.
+    ///
+    /// **What this gives up, stated rather than hidden.** The grid was previously
+    /// an ABI *expression* over a declared element count, which is the shape a
+    /// dynamic-shape subject would need — the count would become an `InputExtent`
+    /// root resolving at live-device preflight and the launch would follow it.
+    /// Nothing is lost today, because this profile's shapes are static and every
+    /// declared extent is already an `UnsignedLiteral`; a dynamic subject will
+    /// need the launch to be a formula over the *schedule's* own extents rather
+    /// than a re-use of an operand's, which is the same derivation this reads.
+    ///
+    /// The arena deduplicates by content, so stages sharing a launch declare one
+    /// node for each of its quantities.
+    fn launch(
+        builder: &mut KernelProgramBuilder,
+        scheduled: &VerifiedScheduledRegion,
+    ) -> Result<StageLaunch, ProgramError> {
+        let schedule = &scheduled.region().schedule;
+        Ok(StageLaunch {
+            grid_threads: builder.push_abi_root(AbiRoot::UnsignedLiteral(schedule.work_items))?,
+            threads_per_workgroup: builder.push_abi_root(AbiRoot::UnsignedLiteral(u64::from(
+                schedule.threads_per_workgroup,
+            )))?,
+        })
     }
 
     /// Returns the byte count of the first declared input, or refuses.
@@ -732,11 +759,6 @@ impl HostAbi {
     /// that declared no input from silently sizing a stage by nothing.
     fn first_input_bytes(&self) -> Result<AbiExprId, ProgramError> {
         Self::first(&self.input_bytes)
-    }
-
-    /// Returns the element count of the first declared input, or refuses.
-    fn first_input_elements(&self) -> Result<AbiExprId, ProgramError> {
-        Self::first(&self.input_elements)
     }
 
     fn first(expressions: &[AbiExprId]) -> Result<AbiExprId, ProgramError> {
@@ -761,16 +783,19 @@ fn declare_host_abi(
 ) -> Result<HostAbi, ProgramError> {
     // The element byte width every accessible range scales by.
     let element_bytes = builder.push_abi_root(AbiRoot::UnsignedLiteral(element_bytes()))?;
-    let mut declared_elements = Vec::with_capacity(input_elements.len());
     let mut declared_bytes = Vec::with_capacity(input_elements.len());
     for elements in input_elements {
+        // The element count is declared as its own arena node and reached only
+        // as an operand of the byte expression above it. It stopped being a
+        // field of the record when the launch stopped being derived from it: a
+        // stage's grid is a property of the schedule it lowers, not of an
+        // operand whose extent happened to equal it.
         let elements = builder.push_abi_root(AbiRoot::UnsignedLiteral(*elements))?;
         declared_bytes.push(builder.push_abi_binary(
             AbiBinaryOp::CheckedMultiply,
             element_bytes,
             elements,
         )?);
-        declared_elements.push(elements);
     }
     let output_elements = builder.push_abi_root(AbiRoot::UnsignedLiteral(output_elements))?;
     let abi = HostAbi {
@@ -780,9 +805,6 @@ fn declare_host_abi(
             element_bytes,
             output_elements,
         )?,
-        input_elements: declared_elements,
-        output_elements,
-        threads_per_workgroup: builder.push_abi_root(AbiRoot::UnsignedLiteral(1))?,
     };
     // The bounded profile admits every governed target unconditionally, so the
     // guard is a constant. It is still declared rather than assumed, because a
@@ -795,7 +817,6 @@ fn declare_host_abi(
 /// The ABI quantities naming one split's staged partial tensor.
 #[derive(Clone, Copy, Debug)]
 struct PartialAbi {
-    elements: AbiExprId,
     bytes: AbiExprId,
 }
 
@@ -812,7 +833,6 @@ fn declare_partial_abi(
     let element_bytes = builder.push_abi_root(AbiRoot::UnsignedLiteral(element_bytes()))?;
     let elements = builder.push_abi_root(AbiRoot::UnsignedLiteral(partial_elements))?;
     Ok(PartialAbi {
-        elements,
         bytes: builder.push_abi_binary(AbiBinaryOp::CheckedMultiply, element_bytes, elements)?,
     })
 }

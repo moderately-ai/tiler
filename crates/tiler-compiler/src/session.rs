@@ -56,8 +56,8 @@ use tiler_ir::kernel::VerifiedKernel;
 use tiler_ir::program::abi::{AvailabilityPhase, ExprNode, PreparedEntryTargetRequirement};
 use tiler_ir::program::{StageRef, VerifiedKernelProgram};
 use tiler_ir::schedule::{
-    ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, MaterializationRounding,
-    NumericalPermission, SubnormalMode,
+    ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign,
+    MaterializationRounding, NumericalPermission, SubnormalMode,
 };
 use tiler_ir::semantic::{ProviderIdentity, ResolvedValueType, SemanticProgram};
 
@@ -68,11 +68,10 @@ use crate::pipeline::{
     CompilationProduct, CompileError, NoFeasiblePlanError, ProgramAlternative,
     ProgramAlternativeKind, TargetCompilationOutcome, compile as compile_internal,
 };
-use crate::policy::NumericalPolicyPreset;
 use crate::program::KernelProgram;
 use crate::request::{
     CompilationRequest, CompilerCapabilitySnapshot, ContractRejection,
-    DTypeDispatchRefusalDisposition, LoweringProviderIdentity,
+    DTypeDispatchRefusalDisposition, ExceptionalValueDimensionKind, LoweringProviderIdentity,
     MAX_NUMERICAL_CONTRACT_PREFERENCES as INTERNAL_MAX_NUMERICAL_CONTRACT_PREFERENCES,
     NumericalContractPreference, RequestError, StrictF32NumericalContract,
 };
@@ -724,12 +723,17 @@ impl std::error::Error for TargetCompileFailure {
 impl Compilation {
     /// The governed keys of the contracts this compilation was told to accept.
     ///
-    /// Keys rather than the public [`NumericalContract`] enum, and deliberately:
-    /// mapping a resolved contract back onto that enum needs an inverse of
-    /// `resolve`, and the only total spelling of it absorbs an unrecognized key
-    /// into one of the three variants — a silently wrong answer about which
-    /// numerics a program was compiled under. ADR 0076 makes the key a
-    /// contract's governed name, so it is the value that identifies one.
+    /// Keys rather than [`NumericalContract`] values, and the reason survived the
+    /// enum this used to argue against. While the type was a four-value
+    /// enumeration, mapping a resolved contract back onto it needed an inverse of
+    /// the resolution whose only total spelling absorbed an unrecognized key into
+    /// some variant — a silently wrong answer about which numerics a program was
+    /// compiled under. The composed type has a genuine inverse, so that hazard is
+    /// gone; what remains is that ADR 0076 makes the *key* a contract's governed
+    /// name, and a caller comparing what it stated against what an artifact or a
+    /// cache entry records is comparing keys. A caller that wants the dimensions
+    /// back reads them off the [`NumericalContract`] it stated, whose
+    /// [`NumericalContract::key`] is this same string.
     ///
     /// In the caller's stated order, which is the order bound into the request
     /// subject. The first entry is not necessarily the one that was used — read
@@ -1254,34 +1258,86 @@ const fn rule_of(error: &RequestError) -> &'static str {
     }
 }
 
-/// A named numerical policy preset this build registers.
+/// The resolved numerical contract a caller states, composed from its
+/// independent dimensions.
 ///
-/// Stating one is **required**, not defaulted. These are different *contracts*
-/// rather than one contract at three strictness settings: each carries its own
-/// versioned key, so the same program under each has different canonical
-/// identities, artifacts, and cache entries. The choice belongs to the caller
-/// because it decides what the program *means*, and no authority below may
-/// narrow, weaken, or substitute it to make a target feasible.
-///
-/// **Naming a laxer preset is not a way to make a strict program compile.** It
-/// states a different program, which feasibility then assesses on its own terms;
-/// an unhonourable request is a typed rejection naming the dimension, the
+/// Stating one is **required**, not defaulted. A contract decides what the
+/// program *means*, so the choice belongs to the caller and no authority below
+/// may narrow, weaken, or substitute it to make a target feasible: an
+/// unhonourable request is a typed rejection naming the dimension, the
 /// arithmetic type, the required behaviour, the behaviour the target declares,
 /// and the declaring profile — never a downgrade and never a cost.
 ///
-/// Every preset resolves one arithmetic type, `f32`, and says so in its key.
-/// Subnormal behaviour is measurably per-dtype — one Apple row flushes in `f32`
-/// and preserves in `f16` — so a preset that spoke for every width at once would
-/// be stating something already known to be false.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[non_exhaustive]
-pub enum NumericalContract {
+/// # Composed, because the axes were already decided independent
+///
+/// This was a four-value preset enumeration. Every axis it spanned had already
+/// been decided independent — ADR 0011 holds that one permission never implies
+/// another, ADR 0014 split ordered regrouping from contributor permutation on
+/// evidence, ADR 0080 added a third independent dimension — and the target side
+/// already declares honourability and refuses per dimension. The enumeration was
+/// the one point-shaped surface left, and it produced its predictable failure the
+/// first time real hardware needed a corner no preset named: Apple `f32`
+/// arithmetic flushes subnormals in every measured math mode, both reassociating
+/// presets required them preserved, and so no parallel reduction was statable on
+/// the one measured Apple row — for want of a contract a caller could name, not
+/// for want of a target fact.
+///
+/// A caller now resolves each dimension directly through
+/// [`NumericalContractBuilder`], and the combination is a stated contract rather
+/// than a filed blocker.
+///
+/// # Omission never widens
+///
+/// A composition starts at [`NumericalContractBuilder::strict_f32`], every
+/// dimension at its strict resolution, and a caller resolves the ones it means to
+/// move. An unstated dimension is therefore forbidden rather than unconstrained,
+/// and a dimension added to the vocabulary later arrives forbidden in every
+/// contract written before it existed.
+///
+/// # Statable exceeds tested, permanently
+///
+/// The number of statable contracts is the size of the dimension space, and this
+/// build's conformance evidence covers a handful of points in it. That gap is
+/// permanent and is not closed by narrowing what a caller may say — it is closed
+/// per dimension, at the target: feasibility assesses every dimension of a stated
+/// contract against a profile's measured honourability declaration, and an
+/// unmeasured resolution is `Unknown` rather than assumed, so an untested
+/// combination fails closed with a typed refusal naming the dimension. Two
+/// further gates sit before it — a self-contradictory vector is refused by
+/// [`NumericalContractBuilder::build`], and a dimension whose stated resolution
+/// no scheduled region can record is refused by the request boundary with the
+/// dimension, the behaviour this build realizes, and the operation that would
+/// consume it.
+///
+/// # One arithmetic type
+///
+/// Every resolution is stated for `f32`. Subnormal behaviour is measurably
+/// per-dtype — one Apple row flushes in `f32`, preserves in `f16`, and flushes in
+/// `bf16` — so a contract that spoke for every width at once would be stating
+/// something already known to be false for one of them.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct NumericalContract {
+    input_subnormals: SubnormalMode,
+    result_subnormals: SubnormalMode,
+    contraction: NumericalPermission,
+    reassociation: NumericalPermission,
+    permutation: NumericalPermission,
+    signed_zero: NumericalPermission,
+    reciprocal_transform: NumericalPermission,
+    approximate_intrinsics: ApproximationEnvelope,
+    nan_assumptions: ExceptionalValueAssumption,
+    infinity_assumptions: ExceptionalValueAssumption,
+    materialization_rounding: MaterializationRounding,
+}
+
+impl NumericalContract {
     /// Every freedom refused; subnormals preserved on both dimensions.
     ///
     /// Not deliverable on any governed Apple family, whose `f32` arithmetic
     /// flushes subnormals in every math mode. A caller states it when it needs
     /// preservation and would rather not run than run wrong.
-    StrictF32,
+    pub const STRICT_F32: Self = NumericalContractBuilder::strict_f32().resolved();
+
     /// Strict, except that both subnormal dimensions flush to the
     /// sign-preserving zero.
     ///
@@ -1289,7 +1345,15 @@ pub enum NumericalContract {
     /// running there a choice the caller made rather than a compromise made on
     /// its behalf. It widens exactly two dimensions: accepting flushing does not
     /// thereby accept reassociated sums.
-    FlushSubnormalsToZeroF32,
+    ///
+    /// `PreservesSign` because that is what the hardware measurably does —
+    /// `0x80400000 * 2.0f` returns `0x80000000` — and a contract must name which
+    /// zero it accepts, since the two zeros are observably different results.
+    pub const FLUSH_SUBNORMALS_TO_ZERO_F32: Self = NumericalContractBuilder::strict_f32()
+        .input_subnormals(SIGN_PRESERVING_FLUSH)
+        .result_subnormals(SIGN_PRESERVING_FLUSH)
+        .resolved();
+
     /// Subnormals preserved, and the reshaping freedoms this build can express
     /// authorized: fused-multiply-add contraction, ordered reassociation of one
     /// same-operation operand sequence, reciprocal replacement of division, and
@@ -1297,51 +1361,450 @@ pub enum NumericalContract {
     ///
     /// Operand permutation, signed-zero elimination, and assuming NaNs or
     /// infinities absent are deliberately *not* authorized. Each is a freedom an
-    /// admitted operation could consume and none is carried by the region IR, so
-    /// two programs differing only there would share one identity; stating one is
-    /// refused by name rather than compiled ambiguously.
-    RelaxedF32,
+    /// admitted operation could consume, so widening one here would broaden this
+    /// contract's established meaning rather than record a new one.
+    pub const RELAXED_F32: Self = NumericalContractBuilder::strict_f32()
+        .contraction(NumericalPermission::Permitted)
+        .reassociation(NumericalPermission::Permitted)
+        .reciprocal_transform(NumericalPermission::Permitted)
+        .approximate_intrinsics(ApproximationEnvelope::BackendElementary)
+        .resolved();
+
     /// Strict, except that ordered regrouping of one same-operation operand
     /// sequence is authorized — a reduction's contributor sequence included.
     ///
     /// This is what a caller states to make a split reduction a legal
     /// implementation of its program while keeping every rounding boundary the
-    /// strict reading has. It is not a narrower [`Self::RelaxedF32`]: the
-    /// presets are not ordered by strength, and the difference is which
-    /// observable results the caller has agreed to. Contraction in particular
-    /// stays forbidden, which ADR 0015 makes an independent choice — permission
-    /// to regroup an operand sequence is not permission to fuse a multiply into
-    /// an add.
-    ///
-    /// Reachable on a target that declares it: the compiler's own bounded
-    /// prototype profile declares both resolutions of reassociation, and the
-    /// measured Apple compile profile declares only the forbidden one, so
-    /// stating this there is a typed refusal naming the dimension rather than a
-    /// silent downgrade.
-    ReassociateF32,
-}
+    /// strict reading has. It is not a narrower [`Self::RELAXED_F32`]: contracts
+    /// are not ordered by strength, and the difference is which observable
+    /// results the caller has agreed to. Contraction in particular stays
+    /// forbidden, which ADR 0015 makes an independent choice — permission to
+    /// regroup an operand sequence is not permission to fuse a multiply into an
+    /// add.
+    pub const REASSOCIATE_F32: Self = NumericalContractBuilder::strict_f32()
+        .reassociation(NumericalPermission::Permitted)
+        .resolved();
 
-impl NumericalContract {
-    /// Resolves this preset into the complete contract it names.
+    /// Sign-preserving subnormal flushing **and** ordered regrouping.
     ///
-    /// Routed through the internal preset table rather than naming each
-    /// constructor again, so the public spelling and the registered contract set
-    /// cannot drift apart: a preset added to one and not the other fails to
-    /// compile here.
-    const fn resolve(self) -> StrictF32NumericalContract {
-        self.preset().contract()
+    /// **The corner the preset enumeration could not name.** Every parallel
+    /// reduction strategy regroups the declared contributor sequence, and the
+    /// measured Apple `f32` row flushes subnormals in every math mode, so this is
+    /// the contract under which a split or a workgroup tree is a legal
+    /// implementation of a program on that hardware. Under the four-preset
+    /// enumeration it was unstatable, and the gap read as a missing target fact
+    /// rather than as a missing contract.
+    ///
+    /// It widens exactly three dimensions, and each is an independent statement:
+    /// contraction, permutation, signed-zero elimination, reciprocal
+    /// replacement, approximate intrinsics, and both exceptional-value
+    /// assumptions stay at their strict resolution.
+    pub const FLUSH_AND_REASSOCIATE_F32: Self = NumericalContractBuilder::strict_f32()
+        .input_subnormals(SIGN_PRESERVING_FLUSH)
+        .result_subnormals(SIGN_PRESERVING_FLUSH)
+        .reassociation(NumericalPermission::Permitted)
+        .resolved();
+
+    /// The treatment of subnormal operands before arithmetic.
+    #[must_use]
+    pub const fn input_subnormals(self) -> SubnormalMode {
+        self.input_subnormals
     }
 
-    /// The internal preset this public name denotes.
-    const fn preset(self) -> NumericalPolicyPreset {
+    /// The treatment of newly produced subnormal results.
+    #[must_use]
+    pub const fn result_subnormals(self) -> SubnormalMode {
+        self.result_subnormals
+    }
+
+    /// Whether fusing a multiply into an adjacent add is permitted.
+    #[must_use]
+    pub const fn contraction(self) -> NumericalPermission {
+        self.contraction
+    }
+
+    /// Whether ordered regrouping of one same-operation operand sequence is
+    /// permitted.
+    #[must_use]
+    pub const fn reassociation(self) -> NumericalPermission {
+        self.reassociation
+    }
+
+    /// Whether changing a reduction's logical contributor order is permitted.
+    #[must_use]
+    pub const fn permutation(self) -> NumericalPermission {
+        self.permutation
+    }
+
+    /// Whether eliminating the two signed zeros' distinction is permitted.
+    #[must_use]
+    pub const fn signed_zero(self) -> NumericalPermission {
+        self.signed_zero
+    }
+
+    /// Whether replacing a division by a reciprocal multiplication is permitted.
+    #[must_use]
+    pub const fn reciprocal_transform(self) -> NumericalPermission {
+        self.reciprocal_transform
+    }
+
+    /// The maximum accuracy envelope an approximate intrinsic may consume.
+    #[must_use]
+    pub const fn approximate_intrinsics(self) -> ApproximationEnvelope {
+        self.approximate_intrinsics
+    }
+
+    /// Whether NaN operands may be assumed absent, and on what evidence.
+    #[must_use]
+    pub const fn nan_assumptions(self) -> ExceptionalValueAssumption {
+        self.nan_assumptions
+    }
+
+    /// Whether infinite operands may be assumed absent, and on what evidence.
+    #[must_use]
+    pub const fn infinity_assumptions(self) -> ExceptionalValueAssumption {
+        self.infinity_assumptions
+    }
+
+    /// The rounding an observable materialization boundary applies.
+    #[must_use]
+    pub const fn materialization_rounding(self) -> MaterializationRounding {
+        self.materialization_rounding
+    }
+
+    /// The canonical, injective key identifying this contract.
+    ///
+    /// **Derived from the dimension vector, not chosen.** Two contracts that
+    /// resolve any dimension differently have different keys, and two callers
+    /// that resolve every dimension alike produce the same key — which is what
+    /// lets an artifact, a cache entry, and an explain trace name the contract
+    /// they were produced under without a table of names that could never have
+    /// covered the space. This is the same string
+    /// [`Compilation::resolved_numerical_contract_key`] reports.
+    #[must_use]
+    pub fn key(self) -> &'static str {
+        self.resolve().key
+    }
+
+    /// Resolves this stated contract into the complete internal contract.
+    ///
+    /// `pub(crate)` because the named constants above are the **one** spelling of
+    /// each named contract: the internal constructors in `request` resolve
+    /// through them rather than repeating a vector, so a named point cannot be
+    /// widened in one place and not the other.
+    pub(crate) fn resolve(self) -> StrictF32NumericalContract {
+        StrictF32NumericalContract {
+            input_subnormals: self.input_subnormals,
+            result_subnormals: self.result_subnormals,
+            contraction: self.contraction,
+            reassociation: self.reassociation,
+            permutation: self.permutation,
+            signed_zero: self.signed_zero,
+            reciprocal_transform: self.reciprocal_transform,
+            approximate_intrinsics: self.approximate_intrinsics,
+            nan_assumptions: self.nan_assumptions,
+            infinity_assumptions: self.infinity_assumptions,
+            materialization_rounding: self.materialization_rounding,
+            ..StrictF32NumericalContract::governed()
+        }
+        .keyed()
+    }
+}
+
+/// The flush behaviour the measured Apple `f32` row delivers.
+const SIGN_PRESERVING_FLUSH: SubnormalMode = SubnormalMode::FlushToZero {
+    zero_sign: FlushedZeroSign::PreservesSign,
+};
+
+/// Resolves a numerical contract one dimension at a time.
+///
+/// **Checked construction, so an incoherent contract is not a value that
+/// exists.** [`Self::build`] is the only way to reach a [`NumericalContract`]
+/// that is not one of the named constants, and it refuses a self-contradictory
+/// vector by name. A caller therefore never holds a contract that has not been
+/// assessed for coherence, and no boundary below has to re-derive the question.
+///
+/// Every resolver is `const` and consumes and returns the builder, so a
+/// composition reads as the strict contract with the dimensions the caller moved
+/// named beside it — which is exactly the sentence a reader has to be able to
+/// write about a program's meaning.
+///
+/// ```
+/// use tiler_compiler::session::{NumericalContract, NumericalContractBuilder};
+/// use tiler_ir::schedule::{FlushedZeroSign, NumericalPermission, SubnormalMode};
+///
+/// let flush = SubnormalMode::FlushToZero {
+///     zero_sign: FlushedZeroSign::PreservesSign,
+/// };
+/// let composed = NumericalContractBuilder::strict_f32()
+///     .input_subnormals(flush)
+///     .result_subnormals(flush)
+///     .reassociation(NumericalPermission::Permitted)
+///     .build()
+///     .expect("flushing and regrouping are independent dimensions");
+/// assert_eq!(composed, NumericalContract::FLUSH_AND_REASSOCIATE_F32);
+/// ```
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct NumericalContractBuilder(NumericalContract);
+
+impl NumericalContractBuilder {
+    /// Starts a composition with every dimension at its strict resolution.
+    ///
+    /// There is deliberately no other entry point. Starting from a laxer
+    /// contract would make an omitted dimension inherit a freedom the caller
+    /// never stated, which is the one direction a numerical default must not
+    /// have.
+    #[must_use]
+    pub const fn strict_f32() -> Self {
+        Self(NumericalContract {
+            input_subnormals: SubnormalMode::Preserve,
+            result_subnormals: SubnormalMode::Preserve,
+            contraction: NumericalPermission::Forbidden,
+            reassociation: NumericalPermission::Forbidden,
+            permutation: NumericalPermission::Forbidden,
+            signed_zero: NumericalPermission::Forbidden,
+            reciprocal_transform: NumericalPermission::Forbidden,
+            approximate_intrinsics: ApproximationEnvelope::Forbidden,
+            nan_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+            infinity_assumptions: ExceptionalValueAssumption::MakeNoAssumption,
+            materialization_rounding: MaterializationRounding::NearestTiesToEven,
+        })
+    }
+
+    /// Resolves the treatment of subnormal operands before arithmetic.
+    #[must_use]
+    pub const fn input_subnormals(mut self, mode: SubnormalMode) -> Self {
+        self.0.input_subnormals = mode;
+        self
+    }
+
+    /// Resolves the treatment of newly produced subnormal results.
+    ///
+    /// Independent of [`Self::input_subnormals`] (ADR 0019): a target that
+    /// couples the two in one execution mode declares that coupling on its own
+    /// profile and never collapses the semantic dimensions here.
+    #[must_use]
+    pub const fn result_subnormals(mut self, mode: SubnormalMode) -> Self {
+        self.0.result_subnormals = mode;
+        self
+    }
+
+    /// Resolves whether fusing a multiply into an adjacent add is permitted.
+    #[must_use]
+    pub const fn contraction(mut self, permission: NumericalPermission) -> Self {
+        self.0.contraction = permission;
+        self
+    }
+
+    /// Resolves whether ordered regrouping of one same-operation operand
+    /// sequence is permitted.
+    ///
+    /// This is the dimension every parallel reduction strategy consumes: a
+    /// multi-pass split and a single-workgroup tree both regroup the declared
+    /// contributor sequence while retaining its leaves and their order.
+    #[must_use]
+    pub const fn reassociation(mut self, permission: NumericalPermission) -> Self {
+        self.0.reassociation = permission;
+        self
+    }
+
+    /// Resolves whether changing a reduction's logical contributor order is
+    /// permitted.
+    ///
+    /// Independent of [`Self::reassociation`] (ADR 0014). A permuted contributor
+    /// sequence folded strictly left to right is a well-defined different sum
+    /// that consumes no regrouping at all, so neither permission carries the
+    /// other.
+    #[must_use]
+    pub const fn permutation(mut self, permission: NumericalPermission) -> Self {
+        self.0.permutation = permission;
+        self
+    }
+
+    /// Resolves whether eliminating the two signed zeros' distinction is
+    /// permitted.
+    #[must_use]
+    pub const fn signed_zero(mut self, permission: NumericalPermission) -> Self {
+        self.0.signed_zero = permission;
+        self
+    }
+
+    /// Resolves whether replacing a division by a reciprocal multiplication is
+    /// permitted.
+    #[must_use]
+    pub const fn reciprocal_transform(mut self, permission: NumericalPermission) -> Self {
+        self.0.reciprocal_transform = permission;
+        self
+    }
+
+    /// Resolves the maximum accuracy envelope an approximate intrinsic may
+    /// consume.
+    ///
+    /// An envelope rather than a boolean, because an unbounded approximation is
+    /// not a contract a reference evaluation or a backend intrinsic can be
+    /// checked against.
+    #[must_use]
+    pub const fn approximate_intrinsics(mut self, envelope: ApproximationEnvelope) -> Self {
+        self.0.approximate_intrinsics = envelope;
+        self
+    }
+
+    /// Resolves whether NaN operands may be assumed absent, and on what
+    /// evidence.
+    #[must_use]
+    pub const fn nan_assumptions(mut self, assumption: ExceptionalValueAssumption) -> Self {
+        self.0.nan_assumptions = assumption;
+        self
+    }
+
+    /// Resolves whether infinite operands may be assumed absent, and on what
+    /// evidence.
+    #[must_use]
+    pub const fn infinity_assumptions(mut self, assumption: ExceptionalValueAssumption) -> Self {
+        self.0.infinity_assumptions = assumption;
+        self
+    }
+
+    /// Resolves the rounding an observable materialization boundary applies.
+    #[must_use]
+    pub const fn materialization_rounding(mut self, rounding: MaterializationRounding) -> Self {
+        self.0.materialization_rounding = rounding;
+        self
+    }
+
+    /// Assesses the composed vector and returns the contract it states.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IncoherentNumericalContract`] when the composed dimensions
+    /// contradict each other. The enumeration is small and its derivation —
+    /// including the combinations that were considered and are *not*
+    /// contradictions — is on that type.
+    pub fn build(self) -> Result<NumericalContract, IncoherentNumericalContract> {
+        // Assessed on the resolved internal contract rather than on the public
+        // vector, so the coherence rule has exactly one implementation and an
+        // internally constructed contract is held to the same statement.
+        crate::request::coherence(&self.0.resolve()).map_err(|cause| match cause {
+            crate::request::IncoherentContract::UnfoundedValueDomainProvenance {
+                dimension,
+                provenance,
+            } => IncoherentNumericalContract::UnfoundedValueDomainProvenance {
+                dimension: match dimension {
+                    ExceptionalValueDimensionKind::Nan => ExceptionalValueDimension::Nan,
+                    ExceptionalValueDimensionKind::Infinity => ExceptionalValueDimension::Infinity,
+                },
+                provenance,
+            },
+        })?;
+        Ok(self.0)
+    }
+
+    /// Returns the composed contract without assessing it.
+    ///
+    /// `const`, and reachable only from this module's own named constants, which
+    /// resolve no exceptional-value assumption at all and therefore cannot be
+    /// incoherent. `named_contracts_are_coherent` drives every one of them
+    /// through [`Self::build`] so the claim is checked rather than asserted.
+    const fn resolved(self) -> NumericalContract {
+        self.0
+    }
+}
+
+/// Which exceptional value an absence was stated about.
+///
+/// A typed pair rather than the internal dimension vocabulary, because these are
+/// the only two dimensions an absence can be stated on and a caller branching on
+/// the refusal should not have to match a wider set than the refusal can carry.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ExceptionalValueDimension {
+    /// NaN operands.
+    Nan,
+    /// Infinite operands.
+    Infinity,
+}
+
+impl ExceptionalValueDimension {
+    /// The stable diagnostic key naming this dimension.
+    #[must_use]
+    pub const fn key(self) -> &'static str {
         match self {
-            Self::StrictF32 => NumericalPolicyPreset::Strict,
-            Self::FlushSubnormalsToZeroF32 => NumericalPolicyPreset::FlushSubnormalsToZero,
-            Self::RelaxedF32 => NumericalPolicyPreset::Relaxed,
-            Self::ReassociateF32 => NumericalPolicyPreset::PermitReassociation,
+            Self::Nan => "numerics.nan-assumptions",
+            Self::Infinity => "numerics.infinity-assumptions",
         }
     }
 }
+
+/// Why a composed dimension vector is not a contract this build will hold.
+///
+/// **Enumerated, not discovered.** Composition lets a caller state combinations
+/// a four-value enumeration could not, so the combinations that are *not*
+/// contracts are named here rather than found in the field. The enumeration is
+/// deliberately small, and the eliminations are stated so a reader can refute the
+/// list rather than only read it.
+///
+/// **What survives.** Exactly one: a contract may not assert a value-domain
+/// absence on evidence it is not the author of. Compiler-proven provenance names
+/// a conclusion this compiler reaches from verified producers, constants, or
+/// analysis; runtime-validated provenance names a guard that runs before any
+/// plan relying on it executes, which this build neither emits nor checks. A
+/// caller-stated absence therefore carries
+/// [`tiler_ir::schedule::ValueDomainProvenance::CallerDeclaredUnvalidated`], and
+/// a caller asserting either of the other two is claiming somebody else's
+/// evidence.
+///
+/// **What was eliminated.** Assuming NaNs absent does not contradict the
+/// canonical arithmetic NaN pattern (one governs an operand, the other a produced
+/// value). Assuming one exceptional value absent and not the other is independent
+/// by ADR 0011. Permitted signed-zero elimination does not contradict a
+/// sign-preserving flush, because the flush's zero sign is carried on the
+/// behaviour precisely so no permission can leave it unspecified; nor does a
+/// forbidden signed-zero elimination contradict a flush to always-positive zero,
+/// because a declared flush is a stated result rather than a rewrite. Permitted
+/// contraction with forbidden reassociation is ADR 0015's separation, and
+/// permitted permutation with forbidden reassociation is ADR 0014's.
+///
+/// **What this is not.** A contract this build cannot *realize* is a different
+/// refusal — [`CompileFailureClass::InvalidRequest`] with rule
+/// `compile.request.numerics.unrepresentable`, naming the dimension, the
+/// behaviour this build realizes, and the operation that would consume it — and a
+/// contract a *target* cannot honour is a third, reported per dimension by
+/// [`TargetCompileRefusal::NumericalContract`]. Coherence is about the statement
+/// alone.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum IncoherentNumericalContract {
+    /// A stated absence claims provenance the caller cannot be the author of.
+    UnfoundedValueDomainProvenance {
+        /// The exceptional-value dimension the absence was stated on.
+        dimension: ExceptionalValueDimension,
+        /// The provenance class the composition asserted.
+        provenance: tiler_ir::schedule::ValueDomainProvenance,
+    },
+}
+
+impl fmt::Display for IncoherentNumericalContract {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnfoundedValueDomainProvenance {
+                dimension,
+                provenance,
+            } => write!(
+                formatter,
+                "{} states an absence on {} provenance, which a caller is not the author of",
+                dimension.key(),
+                match provenance {
+                    tiler_ir::schedule::ValueDomainProvenance::CompilerProven => "compiler-proven",
+                    tiler_ir::schedule::ValueDomainProvenance::RuntimeValidated =>
+                        "runtime-validated",
+                    tiler_ir::schedule::ValueDomainProvenance::CallerDeclaredUnvalidated =>
+                        "caller-declared-unvalidated",
+                }
+            ),
+        }
+    }
+}
+
+impl std::error::Error for IncoherentNumericalContract {}
 
 /// The installed lowering authority a compilation resolves occurrences through.
 ///
@@ -1912,7 +2375,7 @@ mod tests {
     #[test]
     fn a_governed_program_compiles_to_alternatives_carrying_kernels() {
         let program = semantic_program();
-        let compilation = compile_governed(&program, NumericalContract::StrictF32)
+        let compilation = compile_governed(&program, NumericalContract::STRICT_F32)
             .expect("the governed program compiles");
         assert!(!compilation.target_profile_key().is_empty());
 
@@ -1964,7 +2427,7 @@ mod tests {
     #[test]
     fn the_selection_names_a_retained_alternative() {
         let program = semantic_program();
-        let compilation = compile_governed(&program, NumericalContract::StrictF32)
+        let compilation = compile_governed(&program, NumericalContract::STRICT_F32)
             .expect("the governed program compiles");
         let selected = compilation.selected().expect("a selected alternative");
         assert!(
@@ -1978,7 +2441,7 @@ mod tests {
     #[test]
     fn a_compilation_renders_its_explain_trace() {
         let program = semantic_program();
-        let compilation = compile_governed(&program, NumericalContract::StrictF32)
+        let compilation = compile_governed(&program, NumericalContract::STRICT_F32)
             .expect("the governed program compiles");
         assert_eq!(compilation.explain().semantic_candidate_count(), 1);
         let rendered = compilation.explain().render();
@@ -2029,7 +2492,7 @@ mod tests {
             .unwrap();
         let program = builder.build().unwrap();
 
-        let failure = compile_governed(&program, NumericalContract::StrictF32)
+        let failure = compile_governed(&program, NumericalContract::STRICT_F32)
             .expect_err("the bounded profile does not admit an identity program");
         assert!(
             matches!(
@@ -2056,8 +2519,8 @@ mod tests {
         let request = CompileRequest::preferring(
             &program,
             [
-                NumericalContract::FlushSubnormalsToZeroF32,
-                NumericalContract::StrictF32,
+                NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
+                NumericalContract::STRICT_F32,
             ],
             governed_targets(),
         )
@@ -2089,8 +2552,8 @@ mod tests {
         let reversed = CompileRequest::preferring(
             &program,
             [
-                NumericalContract::StrictF32,
-                NumericalContract::FlushSubnormalsToZeroF32,
+                NumericalContract::STRICT_F32,
+                NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
             ],
             governed_targets(),
         )
@@ -2131,7 +2594,7 @@ mod tests {
 
         let batch = compile(CompileRequest::new(
             &program,
-            NumericalContract::StrictF32,
+            NumericalContract::STRICT_F32,
             targets,
         ))
         .expect("a target-local refusal does not discard the other target");
@@ -2347,7 +2810,7 @@ mod tests {
             .unwrap();
         let program = builder.build().unwrap();
 
-        let failure = compile_governed(&program, NumericalContract::StrictF32)
+        let failure = compile_governed(&program, NumericalContract::STRICT_F32)
             .expect_err("the bounded profile does not admit an identity program");
         assert!(
             matches!(
@@ -2370,7 +2833,7 @@ mod tests {
     #[test]
     fn a_compilation_names_its_target_profile_and_its_feasibility_rules() {
         let program = semantic_program();
-        let compilation = compile_governed(&program, NumericalContract::StrictF32).unwrap();
+        let compilation = compile_governed(&program, NumericalContract::STRICT_F32).unwrap();
 
         // Both halves of the profile reference, neither invented by a consumer.
         assert!(!compilation.target_profile_key().is_empty());
@@ -2414,7 +2877,7 @@ mod tests {
     #[test]
     fn an_alternative_names_its_capabilities_and_exposes_its_abi_inputs() {
         let program = semantic_program();
-        let compilation = compile_governed(&program, NumericalContract::StrictF32).unwrap();
+        let compilation = compile_governed(&program, NumericalContract::STRICT_F32).unwrap();
         let selected = compilation.selected().expect("a selected alternative");
 
         // Every resolved capability is named by a governed key, never blank.

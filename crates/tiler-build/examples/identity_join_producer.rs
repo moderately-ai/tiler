@@ -502,7 +502,7 @@ fn compilation_for(program: &SemanticProgram, grid_axis_threads: u64) -> Compila
     let profile = declare_profile(PROFILE_KEY, grid_axis_threads).expect("the profile declares");
     compile(CompileRequest::new(
         program,
-        NumericalContract::StrictF32,
+        NumericalContract::STRICT_F32,
         TargetRequest::new([profile]).expect("a singleton target request"),
     ))
     .expect("the program compiles against the scalar-host profile")

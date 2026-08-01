@@ -144,7 +144,7 @@
 //!
 //! # The contract this runs under
 //!
-//! `NumericalContract::FlushSubnormalsToZeroF32`, stated rather than defaulted.
+//! `NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32`, stated rather than defaulted.
 //! Apple `f32` arithmetic flushes subnormals to the sign-preserving zero in
 //! every math mode, so the strict contract is not deliverable here and emission
 //! refuses it. Stating the flush contract makes running on this hardware a
@@ -335,7 +335,7 @@ fn compile_under(
         TargetRequest::new([declaration.profile().clone()]).map_err(ProofError::TargetRequest)?;
     let batch = compile(CompilerRequest::new(
         program,
-        NumericalContract::FlushSubnormalsToZeroF32,
+        NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
         targets,
     ))
     .map_err(ProofError::Compile)?;

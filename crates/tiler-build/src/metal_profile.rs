@@ -248,7 +248,7 @@ mod tests {
         let profile = builder.build().unwrap();
         let batch = compile(CompileRequest::new(
             &arithmetic_program(),
-            NumericalContract::StrictF32,
+            NumericalContract::STRICT_F32,
             TargetRequest::new([profile]).unwrap(),
         ))
         .unwrap();

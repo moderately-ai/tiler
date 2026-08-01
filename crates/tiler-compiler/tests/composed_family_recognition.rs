@@ -64,11 +64,12 @@ use tiler_ir::shape::{Axis, Shape};
 /// files state it: the outcome of *recognition* is structural, so a contract
 /// that changed it would mean the boundary moved for a reason this file does not
 /// model.
-const CONTRACTS: [NumericalContract; 4] = [
-    NumericalContract::StrictF32,
-    NumericalContract::FlushSubnormalsToZeroF32,
-    NumericalContract::RelaxedF32,
-    NumericalContract::ReassociateF32,
+const CONTRACTS: [NumericalContract; 5] = [
+    NumericalContract::STRICT_F32,
+    NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
+    NumericalContract::RELAXED_F32,
+    NumericalContract::REASSOCIATE_F32,
+    NumericalContract::FLUSH_AND_REASSOCIATE_F32,
 ];
 
 /// The one contract that permits arithmetic contraction.
@@ -76,7 +77,7 @@ const CONTRACTS: [NumericalContract; 4] = [
 /// A mixed multiply/add body is declined under it, which the sibling
 /// `multi_input_elementwise_boundary` file pins and owns. Named here so the one
 /// case below that skips it does so for that stated reason rather than silently.
-const CONTRACTION_PERMITTED: NumericalContract = NumericalContract::RelaxedF32;
+const CONTRACTION_PERMITTED: NumericalContract = NumericalContract::RELAXED_F32;
 
 /// The contributor domain of every fixture below.
 ///

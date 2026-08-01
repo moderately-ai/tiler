@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::index::FrozenScalarRegistry;
@@ -23,14 +23,14 @@ use tiler_ir::shape::{Axis, Extent, Shape};
 // IR (ADR 0070); the compiler contract references it rather than duplicating it.
 pub(crate) use tiler_ir::schedule::{
     ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign,
-    MaterializationRounding, NumericalPermission, SubnormalMode,
+    MaterializationRounding, NumericalPermission, SubnormalMode, ValueDomainProvenance,
 };
 
 use crate::capability::{
     CanonicalLoweringRegistryIdentity, FrozenLoweringCapabilityRegistry, LoweringCapabilityRevision,
 };
 use crate::governed::{governed_lowering_capabilities, governed_scalars};
-use crate::policy::{NumericalPolicyPreset, UnrepresentableDimension};
+use crate::policy::UnrepresentableDimension;
 use crate::region::SemanticMemberId;
 use crate::target::DTypeDispatchabilityResolution;
 use crate::target::honourability::{
@@ -40,45 +40,130 @@ use crate::target::honourability::{
 pub(crate) use crate::target::{TargetProfile, TargetProfileKey};
 
 const REQUEST_SCHEMA_VERSION: u32 = 1;
-pub(crate) const NUMERICAL_CONTRACT_KEY: &str = "tiler.strict-f32.v1";
-/// Versioned key of the governed contract that accepts sign-preserving flushing.
+
+/// The versioned domain of the canonical numerical-contract key scheme.
 ///
-/// A distinct key rather than a flag on the strict one: the two contracts give
-/// the same program different observable results, so they must give it
-/// different canonical identities, artifacts, and cache entries.
-pub(crate) const FLUSH_CONTRACT_KEY: &str = "tiler.flush-f32.v1";
-/// Versioned key of the governed contract that authorizes the reshaping
-/// freedoms this build can express.
+/// **A scheme rather than a name, and that is the change this domain records.**
+/// Four hand-written strings — `tiler.strict-f32.v1` and its three siblings —
+/// used to be the whole contract vocabulary, because a caller could only name
+/// one of four presets. A caller now resolves the dimensions directly, so the
+/// number of statable contracts is the size of the dimension space and no
+/// hand-written name can cover it. The key is therefore *derived* from the
+/// dimension vector by [`canonical_contract_key`], and this domain is the
+/// version of that derivation.
 ///
-/// A third key for the same reason: a program compiled under it may return
-/// different bits than the strict one, so the two must not share an identity.
-///
-/// `pub(crate)` like its siblings: `component_cost`'s memory-traffic arm
-/// matches recognized contract keys to derive an element width fail-closed, and
-/// a key it cannot see falls to `Unknown` — which is safe but would silently
-/// stop sizing every relaxed-contract plan. Keep the arm's key list in sync
-/// when adding a fifth.
-pub(crate) const RELAXED_CONTRACT_KEY: &str = "tiler.relaxed-f32.v1";
-/// Versioned key of the governed contract that authorizes ordered regrouping
-/// and nothing else.
-///
-/// A fourth key for the reason the other three have their own: a program
-/// compiled under it may return different bits than the strict one — a
-/// reassociated reduction is a different sum — so the two must not share an
-/// identity. It is equally not the relaxed key: contraction, reciprocal
-/// replacement, and approximate intrinsics stay refused here, and a contract
-/// that resolved them differently while sharing a key would put two meanings
-/// behind one artifact.
-pub(crate) const REASSOCIATE_CONTRACT_KEY: &str = "tiler.reassociate-f32.v1";
+/// The version is `v2` because a `v1` key named a preset and a `v2` key spells a
+/// vector: a reader holding either can tell which it has from the prefix, and no
+/// `v1` key is reachable any more. The domain moves whenever the rendering
+/// moves, which is what keeps a key minted by one build comparable to a key
+/// minted by another — the whole reason a contract has a key at all.
+pub(crate) const CONTRACT_KEY_DOMAIN: &str = "tiler.contract.f32.v2";
+
 /// Maximum distinct numerical contracts admitted in one preference.
 ///
-/// Derived from the preset table rather than spelled as a literal. A stated
-/// preference admits no duplicate (`NumericalContractPreference::ordered`
-/// refuses one), and a caller can only name a registered preset, so the longest
-/// well-formed list is exactly one entry per registered preset. A literal that
-/// happened to agree with the table would silently start refusing a legitimate
-/// complete preference the first time the table grew.
-pub(crate) const MAX_NUMERICAL_CONTRACT_PREFERENCES: usize = NumericalPolicyPreset::ALL.len();
+/// **Four, and now retained rather than derived.** It used to be
+/// `NumericalPolicyPreset::ALL.len()`, on the argument that a preference admits
+/// no duplicate and a caller could only name a registered preset, so the longest
+/// well-formed list was one entry per preset. Composition removes that ceiling
+/// outright: the statable space is the dimension space, and a bound derived from
+/// it would be thousands.
+///
+/// So the number is now a deliberate request-shape bound rather than a table's
+/// length. Every stated entry is resolved against every target in the caller's
+/// order and every entry enters the request subject, so the ladder is bounded to
+/// keep resolution and identity work small and to keep a stated fallback
+/// readable. Four is retained because it is the value the accepted public
+/// boundary already carries and nothing measured asks for more; moving it is a
+/// public-boundary decision rather than an implementation detail.
+pub(crate) const MAX_NUMERICAL_CONTRACT_PREFERENCES: usize = 4;
+
+/// Returns whether one key was minted by the current `f32` contract scheme.
+///
+/// **A prefix test that includes the separator, deliberately.** Matching
+/// [`CONTRACT_KEY_DOMAIN`] alone would also match a hypothetical
+/// `tiler.contract.f32.v20`, so the `.` that always follows the domain is part
+/// of the test. The direction that matters is the failing one: a key minted
+/// under a different domain — a widened dtype vocabulary, a later scheme — does
+/// not match, and every caller of this predicate declines to answer rather than
+/// carrying the `f32` assumption into a contract that never stated it.
+pub(crate) fn is_f32_contract_key(key: &str) -> bool {
+    key.len() > CONTRACT_KEY_DOMAIN.len()
+        && key.starts_with(CONTRACT_KEY_DOMAIN)
+        && key.as_bytes()[CONTRACT_KEY_DOMAIN.len()] == b'.'
+}
+
+/// Every distinct contract key this process has minted.
+///
+/// **Why an intern table exists at all.** A scheduled region's
+/// [`tiler_ir::schedule::NumericalRealization`] carries its governing contract
+/// key as a `&'static str`, which is what keeps that record `Copy` and
+/// `const fn`-constructible across the schedule layer's value-semantic call
+/// sites. While a caller could only name one of four presets, every key was a
+/// literal and the lifetime was free. A composed contract's key is a function of
+/// its dimension vector, so it cannot be a literal — and it must still be
+/// `'static`, because the IR record's spelling is not this crate's to change.
+///
+/// Interning is what reconciles the two, and its cost is bounded rather than
+/// open: the statable space is finite (the product of the governed dimensions'
+/// resolutions), each key is minted at most once, and a key's *content* is a
+/// pure function of the vector, so nothing observable depends on which
+/// invocation minted it. Only content is ever encoded; the pointer is never an
+/// identity input.
+static CONTRACT_KEYS: OnceLock<Mutex<BTreeSet<&'static str>>> = OnceLock::new();
+
+/// Returns the process-lifetime `&'static str` spelling one contract key.
+fn intern_contract_key(key: String) -> &'static str {
+    let table = CONTRACT_KEYS.get_or_init(|| Mutex::new(BTreeSet::new()));
+    // Poisoning carries no information here: the guarded value is a set of
+    // immutable strings that only grows, so a panic elsewhere cannot have left
+    // it half-written. Recovering the inner set keeps a poisoned lock from
+    // turning every later compilation into a panic.
+    let mut table = table.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(existing) = table.get(key.as_str()) {
+        return existing;
+    }
+    let leaked: &'static str = Box::leak(key.into_boxed_str());
+    table.insert(leaked);
+    leaked
+}
+
+/// Renders the canonical, injective key of one resolved contract.
+///
+/// **Injective because the bytes it renders are.** The preimage is the same
+/// exhaustive per-dimension encoding [`encode_contract`] writes into a request
+/// subject: the arithmetic type's tag, the canonical arithmetic NaN bits, and
+/// then, in [`crate::target::honourability::CANONICAL_DIMENSIONS`] order, each
+/// dimension's own tag followed by
+/// [`crate::target::honourability::DimensionBehaviour::encode`]. Every one of
+/// those matches is exhaustive, so a widened behaviour space is a build error at
+/// the encoder rather than a silent key collision, and the per-dimension tag
+/// prefix keeps two behaviours of different dimensions from framing alike.
+///
+/// The key omits the contract key itself, for the obvious reason: it is what is
+/// being derived. It includes the arithmetic type and the NaN bits, which
+/// [`StrictF32NumericalContract::behaviour`] deliberately does not project,
+/// because two contracts resolving the same dimensions for different dtypes or
+/// producing different NaN patterns are different contracts (ADR 0076 item 6).
+fn canonical_contract_key(contract: &StrictF32NumericalContract) -> String {
+    let mut preimage = Vec::new();
+    preimage.push(contract.arithmetic.tag());
+    preimage.extend_from_slice(&contract.canonical_arithmetic_nan_bits.to_be_bytes());
+    for dimension in crate::target::honourability::CANONICAL_DIMENSIONS {
+        preimage.push(dimension.tag());
+        contract.behaviour(dimension).encode(&mut preimage);
+    }
+    let mut key = String::with_capacity(CONTRACT_KEY_DOMAIN.len() + 1 + preimage.len() * 2);
+    key.push_str(CONTRACT_KEY_DOMAIN);
+    key.push('.');
+    for byte in preimage {
+        // Lowercase hex, two digits per byte, so the rendering is fixed-width
+        // per byte and the whole key stays inside the ASCII lowercase, digit,
+        // and `.` alphabet every governed key in this workspace is spelled in.
+        key.push(char::from_digit((byte >> 4).into(), 16).unwrap_or('0'));
+        key.push(char::from_digit((byte & 0x0f).into(), 16).unwrap_or('0'));
+    }
+    key
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct StaticShapeEnvironment {
@@ -132,67 +217,66 @@ pub(crate) struct StrictF32NumericalContract {
 }
 
 impl StrictF32NumericalContract {
-    /// The strict preset: every freedom refused, both subnormal dimensions
-    /// preserved.
-    pub(crate) const fn governed() -> Self {
+    /// Rebinds this contract's key to the canonical encoding of its dimensions.
+    ///
+    /// **The one place a key is minted.** Every constructor below composes a
+    /// dimension vector and ends here, so a widened dimension changes the key
+    /// without anyone remembering to change a string — which is exactly the
+    /// failure the four hand-written names could not prevent, and the reason
+    /// [`Self::is_governed`] can now check a contract against its own key
+    /// instead of against a table of four.
+    pub(crate) fn keyed(mut self) -> Self {
+        self.key = intern_contract_key(canonical_contract_key(&self));
+        self
+    }
+
+    /// The strict resolution of every governed dimension, for `f32`.
+    ///
+    /// **The base every other contract is composed from, and the fail-closed
+    /// default.** An unstated dimension resolves here, so omission never widens
+    /// a contract: a caller that says nothing about reassociation has forbidden
+    /// it, and a dimension added to the vocabulary later arrives forbidden in
+    /// every contract that predates it rather than silently permitted.
+    pub(crate) fn governed() -> Self {
         crate::policy::strict_contract(
-            NUMERICAL_CONTRACT_KEY,
             ArithmeticType::F32,
             tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS,
         )
+        .keyed()
     }
 
-    /// The governed contract that accepts sign-preserving subnormal flushing.
+    /// The named contract that accepts sign-preserving subnormal flushing.
     ///
-    /// A **different contract, not a relaxation**: its own versioned key, so a
-    /// program compiled under it has a different identity. A caller states it to
-    /// say that flushing subnormals to the sign-preserving zero is part of what
-    /// its program means — which is what makes running on Apple hardware a
-    /// choice the caller made rather than a compromise a planner made for it.
+    /// The vector lives on
+    /// [`crate::session::NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32`], which
+    /// is the one place it is spelled, and this is the internal alias the
+    /// compiler's own call sites and tests use. A **different contract, not a
+    /// relaxation**: its key is derived from its dimensions, so a program
+    /// compiled under it has a different identity from the strict one.
     ///
-    /// `PreservesSign` because that is what the hardware measurably does
-    /// (`0x80400000 * 2.0f` returns `0x80000000`), and a contract must name
-    /// which zero it accepts: the two zeros are observably different results.
-    ///
-    /// Every other dimension is the strict resolution. This widens exactly two
-    /// dimensions — visibly, by overriding exactly two fields of the strict
-    /// contract — so accepting flushing does not silently accept reassociation.
-    pub(crate) const fn governed_flush_to_zero() -> Self {
-        let flush = SubnormalMode::FlushToZero {
-            zero_sign: FlushedZeroSign::PreservesSign,
-        };
-        Self {
-            input_subnormals: flush,
-            result_subnormals: flush,
-            ..crate::policy::strict_contract(
-                FLUSH_CONTRACT_KEY,
-                ArithmeticType::F32,
-                tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS,
-            )
-        }
+    /// `#[cfg(test)]`, like its three siblings and [`Self::named_profile`]: the
+    /// compile path takes whatever contract the caller stated and never mints a
+    /// named one, so these exist for the crate's own tests and for the doc link
+    /// above. A named contract reaching the compile path would mean some
+    /// authority below the request boundary had chosen a meaning for the caller.
+    #[cfg(test)]
+    pub(crate) fn governed_flush_to_zero() -> Self {
+        crate::session::NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32.resolve()
     }
 
-    /// The governed contract that authorizes the reshaping freedoms this build
-    /// can express.
+    /// The named contract that authorizes the reshaping freedoms this build can
+    /// express.
     ///
     /// Contraction, reassociation, reciprocal replacement, and approximate
     /// intrinsics within a named envelope. Subnormals stay preserved, and operand
     /// permutation, signed-zero elimination, and both exceptional-value
-    /// assumptions stay refused — see [`crate::policy::NumericalPolicyPreset`]
-    /// for why, and `crate::policy::unrepresentable_dimension` for the rule that
-    /// enforces it rather than leaving it to this comment.
-    pub(crate) const fn governed_relaxed() -> Self {
-        Self {
-            contraction: NumericalPermission::Permitted,
-            reassociation: NumericalPermission::Permitted,
-            reciprocal_transform: NumericalPermission::Permitted,
-            approximate_intrinsics: crate::policy::RELAXED_APPROXIMATION_ENVELOPE,
-            ..crate::policy::strict_contract(
-                RELAXED_CONTRACT_KEY,
-                ArithmeticType::F32,
-                tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS,
-            )
-        }
+    /// assumptions stay refused — see
+    /// [`crate::session::NumericalContract::RELAXED_F32`] for the vector, and
+    /// `crate::policy::unrepresentable_dimension` for the rule that enforces
+    /// representability rather than leaving it to this comment.
+    #[cfg(test)]
+    pub(crate) fn governed_relaxed() -> Self {
+        crate::session::NumericalContract::RELAXED_F32.resolve()
     }
 
     /// The governed contract that authorizes ordered regrouping and nothing
@@ -205,9 +289,10 @@ impl StrictF32NumericalContract {
     /// split reduction a legal implementation of its program without also
     /// stating that a multiply feeding an add may round once.
     ///
-    /// **Every dimension, derived rather than defaulted.** The constructor
-    /// overrides exactly one field of [`crate::policy::strict_contract`], so
-    /// "this preset widens exactly one dimension" is a readable property of the
+    /// **Every dimension, derived rather than defaulted.** The vector on
+    /// [`crate::session::NumericalContract::REASSOCIATE_F32`] resolves exactly
+    /// one dimension away from [`crate::policy::strict_contract`], so "this
+    /// contract widens exactly one dimension" is a readable property of the
     /// code; the derivation of the other ten is here because a reader must be
     /// able to refute it:
     ///
@@ -234,9 +319,9 @@ impl StrictF32NumericalContract {
     /// - `signed_zero` — `Forbidden`. A regrouped sum still distinguishes the
     ///   two zeros; nothing about the split needs them collapsed.
     /// - `reciprocal_transform`, `approximate_intrinsics` — `Forbidden` and
-    ///   `ApproximationEnvelope::Forbidden`. The relaxed preset authorizes both
+    ///   `ApproximationEnvelope::Forbidden`. The relaxed contract authorizes both
     ///   because it is the "every reshaping freedom this build can express"
-    ///   claim; this preset is the narrow one, and an authorization no operation
+    ///   claim; this one is the narrow one, and an authorization no operation
     ///   here consumes would still be a different stated meaning.
     /// - `nan_assumptions`, `infinity_assumptions` — `MakeNoAssumption`. A split
     ///   still canonicalizes every arithmetic NaN and still evaluates every
@@ -246,46 +331,77 @@ impl StrictF32NumericalContract {
     ///   boundary — the staged partial tensor — so this is the dimension that
     ///   says the partials are stored and reloaded without a rounding change.
     ///
-    /// Its own versioned key follows, because the resolution above is a
-    /// different meaning and not a setting of one of the other three.
-    pub(crate) const fn governed_reassociating() -> Self {
-        Self {
-            reassociation: NumericalPermission::Permitted,
-            ..crate::policy::strict_contract(
-                REASSOCIATE_CONTRACT_KEY,
-                ArithmeticType::F32,
-                tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS,
-            )
-        }
+    /// Its own key follows from that vector, because the resolution above is a
+    /// different meaning and not a setting of one of its siblings.
+    #[cfg(test)]
+    pub(crate) fn governed_reassociating() -> Self {
+        crate::session::NumericalContract::REASSOCIATE_F32.resolve()
     }
 
-    /// Returns every contract this build registers.
+    /// The governed contract that flushes subnormals *and* permits ordered
+    /// regrouping.
     ///
-    /// Admission is membership in this set rather than equality with one
-    /// constant. Three separate sites previously compared against `governed()`
-    /// directly — the request boundary, the per-target verification, and the
-    /// physical schedule verifier — so registering a second contract meant
-    /// finding all three. This is the single authority they now share, and it is
-    /// derived from the preset table so that a registered preset and an admitted
-    /// contract cannot diverge.
+    /// **The combination that composition exists for, and it is not a fifth
+    /// preset.** It is the strict resolution with two independent dimensions
+    /// resolved away from it — sign-preserving subnormal flushing, which the
+    /// measured Apple `f32` row delivers in every math mode, and permitted
+    /// ordered regrouping of one same-operation operand sequence, which every
+    /// parallel reduction strategy consumes. Under the four-preset enumeration
+    /// neither of the two contracts granting regrouping could accept flushing,
+    /// so a parallel reduction was unstatable on the one measured Apple row and
+    /// no target fact was missing.
     ///
-    /// The length is the preset table's own, so a preset registered there and
-    /// omitted here is a build error rather than a contract that resolves for a
-    /// caller and is then refused as ungoverned.
-    pub(crate) const fn governed_profile() -> [Self; NumericalPolicyPreset::ALL.len()] {
+    /// Contraction, permutation, signed-zero elimination, reciprocal
+    /// replacement, approximate intrinsics, and both exceptional-value
+    /// assumptions stay at their strict resolution, because widening a dimension
+    /// is a statement about meaning and this contract states exactly two.
+    ///
+    /// Named here beside its four siblings because it is a *retained named
+    /// point*, not because the space has five points: a caller may resolve any
+    /// coherent vector, and these five are the ones this build documents.
+    #[cfg(test)]
+    pub(crate) fn governed_flush_and_reassociate() -> Self {
+        crate::session::NumericalContract::FLUSH_AND_REASSOCIATE_F32.resolve()
+    }
+
+    /// Returns the named contracts this build documents.
+    ///
+    /// **Documentation and test population, no longer an admission authority.**
+    /// While a caller could only name one of four presets, admission was
+    /// membership in this set. A caller now resolves the dimensions directly, so
+    /// membership would refuse every contract nobody had thought to name — the
+    /// exact failure that filed this work. [`Self::is_governed`] carries
+    /// admission now, and this set is what the named points are enumerated from.
+    #[cfg(test)]
+    pub(crate) fn named_profile() -> [Self; 5] {
         [
-            NumericalPolicyPreset::Strict.contract(),
-            NumericalPolicyPreset::FlushSubnormalsToZero.contract(),
-            NumericalPolicyPreset::Relaxed.contract(),
-            NumericalPolicyPreset::PermitReassociation.contract(),
+            Self::governed(),
+            Self::governed_flush_to_zero(),
+            Self::governed_relaxed(),
+            Self::governed_reassociating(),
+            Self::governed_flush_and_reassociate(),
         ]
     }
 
-    /// Returns whether this contract is one this build registers.
+    /// Returns whether this contract is one this build admits.
+    ///
+    /// **Three conditions, and each rules out a different way a contract can be
+    /// wrong.** The key must be the canonical encoding of the very dimensions
+    /// beside it, so a record whose key and vector disagree — a mutated field, a
+    /// key carried across a widening — is refused rather than compiled under a
+    /// name that no longer describes it. The vector must be coherent, so a
+    /// self-contradictory contract cannot reach a plan through an internal
+    /// construction site that bypassed the public builder. And every dimension
+    /// must be one this build can realize, so a contract whose meaning no
+    /// scheduled region can record is refused before it gives two meanings one
+    /// identity.
+    ///
+    /// Membership in a table of four is deliberately *not* among them: that test
+    /// is what made an unnamed corner unreachable.
     pub(crate) fn is_governed(&self) -> bool {
-        Self::governed_profile()
-            .iter()
-            .any(|admitted| admitted == self)
+        self.key == canonical_contract_key(self)
+            && coherence(self).is_ok()
+            && crate::policy::unrepresentable_dimension(self).is_none()
     }
 
     /// This contract's resolution of one governed dimension.
@@ -353,6 +469,153 @@ impl StrictF32NumericalContract {
             self.infinity_assumptions,
         )
     }
+}
+
+/// Why one composed dimension vector is not a contract this build will hold.
+///
+/// **Enumerated, not discovered.** A composed contract can state combinations a
+/// four-preset enumeration could not, so the combinations that are *not*
+/// contracts have to be named before a caller finds one. The enumeration below
+/// is deliberately small, and the eliminations matter as much as the survivor —
+/// a reader must be able to refute the list rather than only read it.
+///
+/// **What survives.** Exactly one: a contract may not assert a value-domain
+/// absence on evidence it is not the author of.
+/// `docs/numerical-semantics.md`'s value-assumption section defines
+/// compiler-proven as "derived soundly from verified producers, constants, or
+/// analysis" and runtime-validated as "established by a guard or validation
+/// computation before any plan that relies on it executes". Neither is a claim a
+/// caller is in a position to make: the first is a conclusion this compiler
+/// reaches, and the second names a guard this build neither emits nor checks. A
+/// caller-stated `AssumeAbsent` therefore carries
+/// [`ValueDomainProvenance::CallerDeclaredUnvalidated`] or it is asserting
+/// somebody else's evidence — which is the same failure the same document's own
+/// example names, that replacing `x / x` with `1` "requires more than a caller's
+/// unchecked claim".
+///
+/// **What was eliminated, and why each elimination holds.**
+///
+/// - *NaN absence against the canonical arithmetic NaN pattern.* Not
+///   contradictory: the pattern governs a NaN this build *produces*, the
+///   assumption governs a NaN an *operand* may carry, and
+///   [`ExceptionalValueAssumption`]'s own definition keeps the two apart.
+/// - *NaN absence against infinity presence, in either direction.* ADR 0011
+///   makes every permission independent; one never implies another, and refusing
+///   the pair would re-couple two dimensions a decision separated.
+/// - *Permitted signed-zero elimination against a sign-preserving flush.* The
+///   flush's zero sign is carried on the behaviour precisely so that no
+///   permission can leave it unspecified —
+///   [`tiler_ir::schedule::FlushedZeroSign`] says so — so the two are
+///   independent by construction rather than in tension.
+/// - *A flush to always-positive zero against forbidden signed-zero
+///   elimination.* A declared flush behaviour is a stated, checkable result, not
+///   a rewrite; forbidding the *elimination* of a distinction does not forbid an
+///   operation whose defined result happens to produce one zero.
+/// - *Permitted contraction against forbidden reassociation, and permitted
+///   permutation against forbidden reassociation.* ADR 0015 separates fusing a
+///   multiply into an add from regrouping an operand sequence, and ADR 0014
+///   separates permuting a reduction's contributors from regrouping them: a
+///   permuted sequence folded strictly left to right is a well-defined sum that
+///   consumes no regrouping at all.
+///
+/// **What this is not.** A contract this build cannot *realize* is a different
+/// refusal with a different owner —
+/// [`RequestError::UnrepresentableNumericalDimension`] names the dimension, the
+/// behaviour the build realizes, and the operation that would consume it — and a
+/// contract a *target* cannot honour is a third, named per dimension by
+/// feasibility. Coherence is about the statement alone.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum IncoherentContract {
+    /// A stated absence claims provenance the caller cannot be the author of.
+    UnfoundedValueDomainProvenance {
+        /// The exceptional-value dimension the absence was stated on.
+        dimension: ExceptionalValueDimensionKind,
+        /// The provenance class the contract asserted.
+        provenance: ValueDomainProvenance,
+    },
+}
+
+/// Which exceptional value an absence was stated about.
+///
+/// Narrower than [`NumericalDimension`] deliberately: only two dimensions carry
+/// an [`ExceptionalValueAssumption`], so a refusal that could name any of the
+/// eleven would force every consumer to handle nine cases it can never see.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ExceptionalValueDimensionKind {
+    /// NaN operands.
+    Nan,
+    /// Infinite operands.
+    Infinity,
+}
+
+impl ExceptionalValueDimensionKind {
+    /// The stable diagnostic key naming this dimension.
+    pub(crate) const fn key(self) -> &'static str {
+        match self {
+            Self::Nan => NumericalDimension::NanAssumptions.key(),
+            Self::Infinity => NumericalDimension::InfinityAssumptions.key(),
+        }
+    }
+}
+
+impl fmt::Display for IncoherentContract {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnfoundedValueDomainProvenance {
+                dimension,
+                provenance,
+            } => write!(
+                formatter,
+                "{} states an absence on {} provenance, which a caller is not the author of; \
+                 a caller-stated absence carries caller-declared-unvalidated provenance",
+                dimension.key(),
+                match provenance {
+                    ValueDomainProvenance::CompilerProven => "compiler-proven",
+                    ValueDomainProvenance::RuntimeValidated => "runtime-validated",
+                    ValueDomainProvenance::CallerDeclaredUnvalidated =>
+                        "caller-declared-unvalidated",
+                }
+            ),
+        }
+    }
+}
+
+impl Error for IncoherentContract {}
+
+/// Returns the first incoherence in one composed dimension vector.
+///
+/// The two exceptional-value dimensions are walked in canonical order, so the
+/// reported cause is a function of the contract rather than of iteration order,
+/// and the provenance match is exhaustive rather than a negated comparison, so a
+/// widened [`ValueDomainProvenance`] is a build error here instead of arriving
+/// classified with whichever arm a wildcard covered.
+///
+/// It reads the two fields directly rather than projecting through
+/// [`StrictF32NumericalContract::behaviour`]: only those two carry an
+/// [`ExceptionalValueAssumption`], and a walk over every dimension would have to
+/// skip nine behaviours it can say nothing about.
+pub(crate) fn coherence(contract: &StrictF32NumericalContract) -> Result<(), IncoherentContract> {
+    for (dimension, assumption) in [
+        (ExceptionalValueDimensionKind::Nan, contract.nan_assumptions),
+        (
+            ExceptionalValueDimensionKind::Infinity,
+            contract.infinity_assumptions,
+        ),
+    ] {
+        let ExceptionalValueAssumption::AssumeAbsent { provenance } = assumption else {
+            continue;
+        };
+        match provenance {
+            ValueDomainProvenance::CallerDeclaredUnvalidated => {}
+            ValueDomainProvenance::CompilerProven | ValueDomainProvenance::RuntimeValidated => {
+                return Err(IncoherentContract::UnfoundedValueDomainProvenance {
+                    dimension,
+                    provenance,
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// An ordered, nonempty caller preference over numerical contracts.
@@ -2958,6 +3221,352 @@ mod tests {
         ProviderDiagnosticCode::new(value).unwrap()
     }
 
+    /// Every resolution of every governed dimension, in canonical order.
+    ///
+    /// The population is counted rather than described: an enumeration that
+    /// silently lost a resolution would make every claim below pass over a
+    /// smaller space than it names, which is the failure mode a uniform pass
+    /// hides. Each row's length is asserted where it is consumed.
+    fn statable_contracts() -> Vec<StrictF32NumericalContract> {
+        let subnormals = [
+            SubnormalMode::Preserve,
+            SubnormalMode::FlushToZero {
+                zero_sign: FlushedZeroSign::PreservesSign,
+            },
+            SubnormalMode::FlushToZero {
+                zero_sign: FlushedZeroSign::AlwaysPositive,
+            },
+        ];
+        let permissions = [
+            NumericalPermission::Forbidden,
+            NumericalPermission::Permitted,
+        ];
+        let envelopes = [
+            ApproximationEnvelope::Forbidden,
+            ApproximationEnvelope::BackendElementary,
+        ];
+        let assumptions = [
+            ExceptionalValueAssumption::MakeNoAssumption,
+            ExceptionalValueAssumption::AssumeAbsent {
+                provenance: ValueDomainProvenance::CompilerProven,
+            },
+            ExceptionalValueAssumption::AssumeAbsent {
+                provenance: ValueDomainProvenance::RuntimeValidated,
+            },
+            ExceptionalValueAssumption::AssumeAbsent {
+                provenance: ValueDomainProvenance::CallerDeclaredUnvalidated,
+            },
+        ];
+        let roundings = [MaterializationRounding::NearestTiesToEven];
+        let mut contracts = Vec::new();
+        for input in subnormals {
+            for result in subnormals {
+                for contraction in permissions {
+                    for reassociation in permissions {
+                        for permutation in permissions {
+                            for signed_zero in permissions {
+                                for reciprocal_transform in permissions {
+                                    for approximate_intrinsics in envelopes {
+                                        for nan_assumptions in assumptions {
+                                            for infinity_assumptions in assumptions {
+                                                for materialization_rounding in roundings {
+                                                    contracts.push(
+                                                        StrictF32NumericalContract {
+                                                            input_subnormals: input,
+                                                            result_subnormals: result,
+                                                            contraction,
+                                                            reassociation,
+                                                            permutation,
+                                                            signed_zero,
+                                                            reciprocal_transform,
+                                                            approximate_intrinsics,
+                                                            nan_assumptions,
+                                                            infinity_assumptions,
+                                                            materialization_rounding,
+                                                            ..StrictF32NumericalContract::governed()
+                                                        }
+                                                        .keyed(),
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        contracts
+    }
+
+    /// The size of the statable space, spelled as its factors.
+    ///
+    /// Written as the product rather than as `9216` so a widened behaviour space
+    /// changes the expected count at the factor that moved, and a reader can
+    /// check the arithmetic against the vocabulary instead of trusting a
+    /// literal. The factors, in canonical dimension order: three subnormal
+    /// resolutions twice, two transform permissions five times, two
+    /// approximation envelopes, and four exceptional-value assumptions twice.
+    /// Materialization rounding contributes no factor because it has exactly one
+    /// resolution, so its absence here is the note rather than a `* 1` term.
+    const STATABLE_CONTRACTS: usize = 3 * 3 * 2 * 2 * 2 * 2 * 2 * 2 * 4 * 4;
+
+    /// The canonical key separates every statable contract from every other.
+    ///
+    /// **Exhaustive finite evidence, not a sample.** The key is the contract's
+    /// standing identity: `legality::NumericalContractIdentity`, the fusion
+    /// legality content identity, and the scheduled region's `profile_key` each
+    /// carry it *alone*, with no dimension beside it, so two contracts sharing a
+    /// key would give two stated meanings one artifact and one cache entry. The
+    /// space is finite and small enough to walk, so it is walked.
+    #[test]
+    fn the_canonical_key_is_injective_over_the_statable_space() {
+        let contracts = statable_contracts();
+        assert_eq!(
+            contracts.len(),
+            STATABLE_CONTRACTS,
+            "the enumeration does not cover the space it names",
+        );
+        let mut keys: Vec<&str> = contracts.iter().map(|contract| contract.key).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(
+            keys.len(),
+            STATABLE_CONTRACTS,
+            "two statable contracts share one key",
+        );
+    }
+
+    /// Every minted key is spelled in the governed key alphabet.
+    ///
+    /// A key is compared byte for byte against one minted by a build that never
+    /// met this one and is printed in rejections a reader copies back out, so the
+    /// alphabet is part of what a key is: ASCII lowercase, digits, and `.`, with
+    /// no case, whitespace, or control byte. It is also carried into an explain
+    /// `SubjectKey`, which refuses anything longer than 255 bytes.
+    #[test]
+    fn every_minted_key_is_spelled_in_the_governed_alphabet() {
+        let contracts = statable_contracts();
+        assert_eq!(contracts.len(), STATABLE_CONTRACTS);
+        for contract in contracts {
+            let key = contract.key;
+            assert!(
+                crate::explain::SubjectKey::new(key).is_ok(),
+                "{key} is not admissible as an explain subject",
+            );
+            assert!(key.len() <= 255, "{key} exceeds the explain key bound");
+            assert!(
+                key.bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'.'),
+                "{key} leaves the governed key alphabet",
+            );
+            assert!(
+                is_f32_contract_key(key),
+                "{key} is not recognized as an f32 contract key",
+            );
+        }
+    }
+
+    /// The domain prefix test says no, and says it for the right reason.
+    ///
+    /// Driven against cases that must fail, because a predicate that only ever
+    /// sees keys it accepts is indistinguishable from one that returns `true`.
+    #[test]
+    fn the_contract_key_domain_test_refuses_a_key_from_another_domain() {
+        assert!(is_f32_contract_key(
+            StrictF32NumericalContract::governed().key
+        ));
+        for refused in [
+            "",
+            CONTRACT_KEY_DOMAIN,
+            "tiler.contract.f32.v20.0011",
+            "tiler.contract.f16.v2.0011",
+            "tiler.strict-f32.v1",
+            crate::policy::UNKEYED_CONTRACT,
+        ] {
+            assert!(!is_f32_contract_key(refused), "{refused} was admitted");
+        }
+    }
+
+    /// Omission resolves strict on every dimension, so it can never widen.
+    ///
+    /// Checked against the *canonical dimension walk* rather than field by
+    /// field, so a dimension added to the vocabulary is covered by this claim the
+    /// moment it exists rather than when someone remembers to add a line.
+    #[test]
+    fn an_unstated_dimension_resolves_strict() {
+        let strict = StrictF32NumericalContract::governed();
+        for dimension in crate::target::honourability::CANONICAL_DIMENSIONS {
+            let behaviour = strict.behaviour(dimension);
+            let is_strict = match behaviour {
+                DimensionBehaviour::Subnormals(mode) => mode == SubnormalMode::Preserve,
+                DimensionBehaviour::Transform(permission) => {
+                    permission == NumericalPermission::Forbidden
+                }
+                DimensionBehaviour::Approximation(envelope) => {
+                    envelope == ApproximationEnvelope::Forbidden
+                }
+                DimensionBehaviour::ExceptionalValue(assumption) => {
+                    assumption == ExceptionalValueAssumption::MakeNoAssumption
+                }
+                DimensionBehaviour::Rounding(rounding) => {
+                    rounding == MaterializationRounding::NearestTiesToEven
+                }
+            };
+            assert!(
+                is_strict,
+                "{} does not resolve strict when unstated",
+                dimension.key()
+            );
+        }
+    }
+
+    /// A caller-stated absence on evidence it is not the author of is refused.
+    ///
+    /// Both dimensions and both refused provenance classes, and the accepted
+    /// class beside them, so the check is shown saying yes and no rather than
+    /// only yes.
+    #[test]
+    fn an_absence_on_unfounded_provenance_is_incoherent() {
+        for (dimension, apply) in [
+            (
+                ExceptionalValueDimensionKind::Nan,
+                (|contract: &mut StrictF32NumericalContract,
+                  assumption: ExceptionalValueAssumption| {
+                    contract.nan_assumptions = assumption;
+                })
+                    as fn(&mut StrictF32NumericalContract, ExceptionalValueAssumption),
+            ),
+            (
+                ExceptionalValueDimensionKind::Infinity,
+                |contract, assumption| {
+                    contract.infinity_assumptions = assumption;
+                },
+            ),
+        ] {
+            for provenance in [
+                ValueDomainProvenance::CompilerProven,
+                ValueDomainProvenance::RuntimeValidated,
+            ] {
+                let mut contract = StrictF32NumericalContract::governed();
+                apply(
+                    &mut contract,
+                    ExceptionalValueAssumption::AssumeAbsent { provenance },
+                );
+                assert_eq!(
+                    coherence(&contract),
+                    Err(IncoherentContract::UnfoundedValueDomainProvenance {
+                        dimension,
+                        provenance,
+                    }),
+                );
+                assert!(!contract.keyed().is_governed());
+            }
+            let mut declared = StrictF32NumericalContract::governed();
+            apply(
+                &mut declared,
+                ExceptionalValueAssumption::AssumeAbsent {
+                    provenance: ValueDomainProvenance::CallerDeclaredUnvalidated,
+                },
+            );
+            assert_eq!(coherence(&declared), Ok(()));
+        }
+    }
+
+    /// The eliminated combinations are coherent, and each is named.
+    ///
+    /// The enumeration on [`IncoherentContract`] is only refutable if the
+    /// combinations it *rejected as candidates* are driven: a later change that
+    /// quietly started refusing one of these would be narrowing what a caller may
+    /// state without anyone deciding to.
+    #[test]
+    fn the_eliminated_combinations_are_coherent() {
+        let flush_preserving = SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::PreservesSign,
+        };
+        let flush_positive = SubnormalMode::FlushToZero {
+            zero_sign: FlushedZeroSign::AlwaysPositive,
+        };
+        let declared = ExceptionalValueAssumption::AssumeAbsent {
+            provenance: ValueDomainProvenance::CallerDeclaredUnvalidated,
+        };
+        let cases: [(&str, StrictF32NumericalContract); 6] = [
+            (
+                "assumed-absent NaNs beside a canonical arithmetic NaN pattern",
+                StrictF32NumericalContract {
+                    nan_assumptions: declared,
+                    ..StrictF32NumericalContract::governed()
+                },
+            ),
+            (
+                "one exceptional value assumed absent and the other not",
+                StrictF32NumericalContract {
+                    infinity_assumptions: declared,
+                    ..StrictF32NumericalContract::governed()
+                },
+            ),
+            (
+                "permitted signed-zero elimination beside a sign-preserving flush",
+                StrictF32NumericalContract {
+                    input_subnormals: flush_preserving,
+                    signed_zero: NumericalPermission::Permitted,
+                    ..StrictF32NumericalContract::governed()
+                },
+            ),
+            (
+                "forbidden signed-zero elimination beside an always-positive flush",
+                StrictF32NumericalContract {
+                    result_subnormals: flush_positive,
+                    ..StrictF32NumericalContract::governed()
+                },
+            ),
+            (
+                "permitted contraction with forbidden reassociation",
+                StrictF32NumericalContract {
+                    contraction: NumericalPermission::Permitted,
+                    ..StrictF32NumericalContract::governed()
+                },
+            ),
+            (
+                "permitted permutation with forbidden reassociation",
+                StrictF32NumericalContract {
+                    permutation: NumericalPermission::Permitted,
+                    ..StrictF32NumericalContract::governed()
+                },
+            ),
+        ];
+        for (name, contract) in cases {
+            assert_eq!(coherence(&contract), Ok(()), "{name} was refused");
+        }
+    }
+
+    /// A key that does not describe the vector beside it is not admitted.
+    ///
+    /// The direction that matters: a contract carrying a name from before a
+    /// dimension moved would otherwise reach a plan under a key that describes a
+    /// different meaning.
+    #[test]
+    fn a_contract_whose_key_does_not_describe_it_is_refused() {
+        let strict = StrictF32NumericalContract::governed();
+        assert!(strict.is_governed());
+        let mutated = StrictF32NumericalContract {
+            reassociation: NumericalPermission::Permitted,
+            ..strict
+        };
+        assert!(
+            !mutated.is_governed(),
+            "a widened contract kept the strict key and was admitted",
+        );
+        assert!(mutated.keyed().is_governed());
+        let unkeyed = crate::policy::strict_contract(
+            ArithmeticType::F32,
+            tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS,
+        );
+        assert!(!unkeyed.is_governed(), "an unkeyed contract was admitted");
+    }
+
     pub(super) fn program() -> SemanticProgram {
         program_with_builder(SemanticProgramBuilder::try_standard().unwrap())
     }
@@ -3851,7 +4460,7 @@ mod tests {
             .into_iter()
             .filter(|dimension| crate::policy::is_consumable(*dimension))
             .count();
-        for contract in StrictF32NumericalContract::governed_profile() {
+        for contract in StrictF32NumericalContract::named_profile() {
             let outcome = crate::physical::assess_contract(&target, contract).unwrap();
             let crate::target::feasibility::FeasibilityOutcome::Proven(evidence) = outcome else {
                 panic!("the baseline honours {}", contract.key);

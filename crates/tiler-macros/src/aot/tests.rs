@@ -299,18 +299,36 @@ fn the_second_expansion_of_one_subject_compiles_nothing() {
     let _ = std::fs::remove_dir_all(directory);
 }
 
-/// Exactly one numerical contract is admissible for the bound declaration.
+/// Two named numerical contracts are admissible, and `CONTRACT` is one of them.
 ///
-/// This is what makes `CONTRACT` a derivation rather than a preference. If the
-/// declaration ever admits a second, this test fails and the frontend has a real
-/// choice to put to Tom instead of a silent one it already made.
+/// **This test's predecessor asserted one, and it fired exactly as designed.**
+/// While a caller chose from four presets, the bound declaration admitted only
+/// the flush-to-zero one — the two granting regrouping required preserved
+/// subnormals this hardware measurably flushes — so `CONTRACT` was a derivation
+/// rather than a preference, and the assertion said so. `NumericalContract` is
+/// now composed from its dimensions, so flushing and regrouping can be resolved
+/// together, and this declaration admits that combination too.
+///
+/// **So the frontend now has a real choice, and it is not this test's to make.**
+/// `CONTRACT` stays at the flush-to-zero contract because that is the meaning
+/// every expansion has been delivering, and moving it would change what every
+/// `tensor!` program *means* rather than how it is planned — a decision that
+/// belongs to Tom.
+/// [`decide-the-inline-frontend-numerical-contract`](../../../../tickets/decide-the-inline-frontend-numerical-contract.md)
+/// owns it, with the eliminations and the consequence of each option.
+///
+/// What this pins meanwhile is the pair, not a count: the population is named
+/// rather than counted, so a *third* admissible contract still fails here rather
+/// than passing under a loosened bound, and `CONTRACT` must remain one of the
+/// admitted ones rather than a contract the declaration cannot honour.
 #[test]
-fn only_one_numerical_contract_is_admissible_for_the_bound_declaration() {
-    const CONTRACTS: [NumericalContract; 4] = [
-        NumericalContract::StrictF32,
-        NumericalContract::FlushSubnormalsToZeroF32,
-        NumericalContract::RelaxedF32,
-        NumericalContract::ReassociateF32,
+fn the_bound_declaration_admits_the_two_flushing_contracts() {
+    const CONTRACTS: [NumericalContract; 5] = [
+        NumericalContract::STRICT_F32,
+        NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
+        NumericalContract::RELAXED_F32,
+        NumericalContract::REASSOCIATE_F32,
+        NumericalContract::FLUSH_AND_REASSOCIATE_F32,
     ];
     let program = approved_region();
     let declaration =
@@ -328,11 +346,17 @@ fn only_one_numerical_contract_is_admissible_for_the_bound_declaration() {
         })
         .collect();
     assert_eq!(
-        admitted.len(),
-        1,
-        "the frontend states one contract because one is admissible; admitted {admitted:?}",
+        admitted,
+        [
+            NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
+            NumericalContract::FLUSH_AND_REASSOCIATE_F32,
+        ],
+        "the admitted set moved; the frontend's contract is a decision, not a derivation",
     );
-    assert_eq!(admitted[0], CONTRACT);
+    assert!(
+        admitted.contains(&CONTRACT),
+        "the frontend compiles under a contract this declaration cannot honour",
+    );
 }
 
 /// A region carrying a symbolic extent refuses rather than compiling something

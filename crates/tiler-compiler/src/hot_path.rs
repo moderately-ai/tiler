@@ -81,13 +81,13 @@ fn hot_path_compile_time_by_shape() {
         // Warm the allocator and the branch predictors so the first timed run is
         // not measuring first-touch page faults.
         for _ in 0..8 {
-            let _ = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32);
+            let _ = compile_governed(&program, NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32);
         }
         let mut best = std::time::Duration::MAX;
         let total = Instant::now();
         for _ in 0..REPEATS {
             let start = Instant::now();
-            let _ = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32);
+            let _ = compile_governed(&program, NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32);
             best = best.min(start.elapsed());
         }
         println!(
@@ -137,7 +137,7 @@ fn hot_path_profile_loop() {
     let mut compiles = 0_u64;
     while Instant::now() < deadline {
         for _ in 0..64 {
-            let _ = compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32);
+            let _ = compile_governed(&program, NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32);
         }
         compiles += 64;
     }
@@ -149,8 +149,8 @@ fn hot_path_profile_loop() {
 #[test]
 fn hot_path_planning_share() {
     let program = program(4, 3);
-    let compilation =
-        compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32).expect("compiles");
+    let compilation = compile_governed(&program, NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32)
+        .expect("compiles");
     let rendered = compilation.explain().render();
     println!(
         "MEASURE alternatives: {}, explain records: {}, explain bytes: {}",
@@ -179,7 +179,7 @@ fn the_request_subject_rebuild_count_does_not_regress() {
 
     let program = program(4, 3);
     let (compiled, rebuilds) = REQUEST_SUBJECT_REBUILDS
-        .observe(|| compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32));
+        .observe(|| compile_governed(&program, NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32));
     compiled.expect("the governed program compiles");
     println!(
         "MEASURE {}s per compile: {rebuilds}",
@@ -202,7 +202,7 @@ fn the_request_subject_rebuild_count_does_not_regress() {
 fn one_compile_builds_the_region_graph_once() {
     let program = program(4, 3);
     let (compiled, builds) = REGION_GRAPH_BUILDS
-        .observe(|| compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32));
+        .observe(|| compile_governed(&program, NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32));
     compiled.expect("the governed program compiles");
     println!(
         "MEASURE {}s per compile: {builds}",
@@ -236,7 +236,7 @@ fn one_compile_enumerates_each_distinct_region_subject_once() {
 
     let program = program(4, 3);
     let (compiled, enumerations) = FRONTIER_ENUMERATIONS
-        .observe(|| compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32));
+        .observe(|| compile_governed(&program, NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32));
     compiled.expect("the governed program compiles");
     println!(
         "MEASURE {}s per compile: {enumerations}",
@@ -269,7 +269,7 @@ fn one_compile_enumerates_each_distinct_region_subject_once() {
 fn one_compile_derives_the_region_formation_once() {
     let program = program(4, 3);
     let (compiled, formations) = REGION_FORMATIONS
-        .observe(|| compile_governed(&program, NumericalContract::FlushSubnormalsToZeroF32));
+        .observe(|| compile_governed(&program, NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32));
     compiled.expect("the governed program compiles");
     println!(
         "MEASURE {}s per compile: {formations}",

@@ -75,7 +75,7 @@
 //!
 //! It could not be invoked at all until recently, and the reason was measured at
 //! `b623670`: the approved region over three `f32[4]` inputs was refused by
-//! `compile_governed` under all four `NumericalContract` values with
+//! `compile_governed` under every named `NumericalContract` value with
 //! `UnsupportedCapability { rule: "signature" }` before any target-qualified
 //! trace, because both recognized program shapes opened with
 //! `program.input_count() != 1`. That refusal is gone — the scheduled-region
