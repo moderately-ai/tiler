@@ -128,6 +128,34 @@ const REGION_FACTS_BINDING: &str = "__TILER_REGION_FACTS";
 /// single result expression, built from the declared operands with `*` and `+`.
 /// Both statements may be repeated, and `out` is terminal.
 ///
+/// # Artifact-family delivery
+///
+/// A `deliver` statement states which Apple artifact families this invocation's
+/// build compiles for, in the declaration block beside `sym` and `in`, at most
+/// once:
+///
+/// ```text
+/// deliver macos-and-ios;        // a named profile
+/// deliver macos 14.0, ios 17.0; // a family list, when a floor must be stated
+/// ```
+///
+/// The profiles are `fallback-only`, `macos`, `ios`, and `macos-and-ios`, and
+/// each fixes every family it names to that family's governed floor for the
+/// Metal language standard Tiler compiles with. A family list states a
+/// deployment minimum per family instead, for a consumer whose own floor is
+/// higher; the families it may name are `macos` and `ios`, and `ios` covers the
+/// iOS device and the iOS simulator together. A minimum below the governed floor
+/// is refused at the version that stated it.
+///
+/// Stating nothing is `fallback-only`: every consumer target runs the semantic
+/// fallback and no backend compiler is invoked.
+///
+/// **A statement selecting a family is refused today.** No expansion runs the
+/// offline Metal driver yet, so there is no compiled payload to deliver, and
+/// delivering the fallback instead would silently give a target that asked for
+/// an artifact the very thing it asked not to have. The refusal names the
+/// families and lands on the `deliver` keyword.
+///
 /// # What it evaluates to
 ///
 /// `Result<A::Value, tiler::value::BindError<A::Error>>` — the consumer's own
@@ -157,10 +185,20 @@ fn expand(trees: &[tokens::Tree<Span>], region: Span) -> Result<TokenStream, Ref
     // the region. Emitting anyway would be the one thing ADR 0053 forbids
     // outright: a selected family "cannot silently turn a selected-family build
     // failure into fallback on the matching target".
-    let delivery = delivery::stated_delivery(delivery::stated_policy())
+    //
+    // A statement-level refusal names its own token; anything the driver refuses
+    // about the resolved selection lands on the `deliver` keyword, and on the
+    // invocation only when the region stated no `deliver` at all — where no
+    // token is responsible, because the policy is then this frontend's default.
+    let policy = delivery::stated_policy(syntax.delivery.as_ref())?;
+    let stated_at = syntax
+        .delivery
+        .as_ref()
+        .map_or(region, |delivery| delivery.keyword);
+    let delivery = delivery::stated_delivery(policy)
         .and_then(delivery::stated_plan)
         .map_err(|source| Refusal::Delivery {
-            span: region,
+            span: stated_at,
             source,
         })?;
 
@@ -171,6 +209,9 @@ fn expand(trees: &[tokens::Tree<Span>], region: Span) -> Result<TokenStream, Ref
 enum Refusal {
     /// The tokens are not a region this frontend admits.
     Region(RegionError<Span>),
+    /// The `deliver` statement names a profile, family, or deployment minimum
+    /// this frontend cannot resolve.
+    DeliveryStatement(delivery::StatementRefusal<Span>),
     /// The artifact-family delivery policy this expansion states is not one it
     /// can deliver.
     Delivery {
@@ -198,6 +239,7 @@ impl Refusal {
     const fn span(&self) -> Span {
         match self {
             Self::Region(source) => *source.span(),
+            Self::DeliveryStatement(source) => *source.span(),
             Self::Delivery { span, .. } | Self::MalformedEmission { span, .. } => *span,
         }
     }
@@ -207,6 +249,7 @@ impl fmt::Display for Refusal {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Region(source) => source.fmt(formatter),
+            Self::DeliveryStatement(source) => source.fmt(formatter),
             Self::Delivery { source, .. } => source.fmt(formatter),
             Self::MalformedEmission { source, .. } => write!(
                 formatter,
@@ -220,6 +263,12 @@ impl fmt::Display for Refusal {
 impl From<RegionError<Span>> for Refusal {
     fn from(source: RegionError<Span>) -> Self {
         Self::Region(source)
+    }
+}
+
+impl From<delivery::StatementRefusal<Span>> for Refusal {
+    fn from(source: delivery::StatementRefusal<Span>) -> Self {
+        Self::DeliveryStatement(source)
     }
 }
 
@@ -237,8 +286,10 @@ impl From<RegionError<Span>> for Refusal {
 ///
 /// The delivery items are `delivery::DeliveryPlan::items_source`'s, placed in
 /// the same block so a `#[cfg]`-gated payload selector is scoped to the one
-/// region that selected it. Every expansion states `FallbackOnly` today, whose
-/// plan contributes nothing, so the block is exactly the two statements above.
+/// region that selected it. Every expansion that reaches this function delivers
+/// `FallbackOnly`, whose plan contributes nothing, so the block is exactly the
+/// two statements above: a region stating a selected family is refused before
+/// emission, because no expansion compiles a payload for one yet.
 ///
 /// The operand identifiers carry the spans the region's own `in` list wrote
 /// them at, so a value that is not in scope is reported at the declaration that

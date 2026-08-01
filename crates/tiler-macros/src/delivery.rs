@@ -15,25 +15,35 @@
 //! comes into being, on this side of the boundary as on the driver's. The
 //! consumer-target predicate a family is gated by is [`crate::family_cfg`]'s.
 //!
-//! # What every region states today, and why it is `FallbackOnly`
+//! # What a region states, and what it gets today
 //!
-//! The approved region grammar has no syntax for naming an artifact family or a
-//! [`NamedProfile`], so every invocation's tokens resolve to the same policy.
-//! ADR 0053 makes that an explicit policy rather than an absence: "`FallbackOnly`
-//! is an explicit valid policy and invokes no backend compiler". Saying it in the
-//! type is what distinguishes it from a producer that assembled a selection and
-//! forgot to put a family in it — which the driver rejects as `EmptySelection` —
-//! so every expansion states `FallbackOnly` outright instead of leaving its
-//! delivery unstated. [`DeliveryPlan::items_source`] emits nothing for it, so a
-//! `FallbackOnly` expansion is token-for-token what it was before this module
-//! could emit anything at all.
+//! Tom accepted the consumer-visible spelling on 2026-07-31 under
+//! `accept-the-inline-artifact-family-profile-syntax`: a `deliver` statement in
+//! the region's declaration block, naming either a [`NamedProfile`] or a list of
+//! artifact families with their own deployment minimums. [`stated_policy`] is
+//! where those tokens become an [`ArtifactDeliveryPolicy`], and it is the only
+//! place either vocabulary is resolved.
 //!
-//! Adding the syntax is a public-boundary decision rather than an omission here:
-//! it publishes Apple family, deployment-minimum, and language-standard
-//! vocabulary — or a profile name — on the consumer-facing region surface, which
-//! ADR 0075 reserves to Tom. The machinery the syntax would drive is complete and
-//! tested below; what is missing is only the way a consumer says which profile it
-//! wants.
+//! A region stating none resolves to `FallbackOnly`. ADR 0053 makes that an
+//! explicit policy rather than an absence: "`FallbackOnly` is an explicit valid
+//! policy and invokes no backend compiler". Saying it in the type is what
+//! distinguishes it from a producer that assembled a selection and forgot to put
+//! a family in it — which the driver rejects as `EmptySelection`. And
+//! [`DeliveryPlan::items_source`] emits nothing for it, so a region with no
+//! `deliver` statement is token-for-token what it was before this module could
+//! emit anything at all.
+//!
+//! **A region stating a selected family is refused, and that is the honest
+//! outcome rather than a gap.** No expansion runs the offline driver yet: the
+//! compiler boundary refuses this frontend's multi-input elementwise programs,
+//! which `admit-multi-input-elementwise-programs-at-the-compiler-boundary` owns,
+//! so there is no compiled payload for any family to deliver. [`stated_delivery`]
+//! therefore returns [`DeliveryRefusal::BackendCompilationUnavailable`] at the
+//! `deliver` keyword. The alternative — emitting the semantic fallback anyway —
+//! is the one thing ADR 0053 forbids outright, because a selected family is
+//! *required* on a matching consumer target and a quiet fallback there is a
+//! wrong answer with no diagnostic. The delivery machinery below is complete and
+//! is what the slice that first compiles a family consumes.
 //!
 //! # The delivery half
 //!
@@ -72,9 +82,12 @@ use tiler_metal_aot::family::{
     ArtifactDeliveryPolicy, ArtifactFamilySelection, FamilyRequirement, FamilySelectionError,
     SelectedFamily,
 };
-use tiler_metal_aot::input::{ApplePlatform, DeploymentMinimum, MslVersion};
+use tiler_metal_aot::input::{
+    ApplePlatform, DeploymentMinimum, MetalTarget, MetalTargetError, MslVersion,
+};
 
 use crate::family_cfg::consumer_cfg;
+use crate::grammar::{DeliverySyntax, FamilyMinimumSyntax, StatedDelivery};
 
 /// The block-local name holding the one embedded artifact envelope.
 ///
@@ -94,16 +107,100 @@ const SELECTED_PAYLOAD_BINDING: &str = "__TILER_SELECTED_PAYLOAD";
 /// to that standard's floor.
 const PROFILE_MSL_VERSION: MslVersion = MslVersion::Metal3_1;
 
+/// An artifact family a consumer may name, and the driver families it covers.
+///
+/// This is the vocabulary Tom accepted on the consumer-facing surface, and it is
+/// deliberately *not* [`ApplePlatform`]: `ios` covers the iOS device and the iOS
+/// simulator together, because a developer building for iOS builds for the
+/// simulator too and a name covering only the device would leave every simulator
+/// build silently on the fallback path. Publishing `ios-device` and
+/// `ios-simulator` instead would put two driver identifiers on the region
+/// surface to express the case that always wants both.
+///
+/// It is one vocabulary rather than two: [`NamedProfile`] names its families
+/// through these values, so `deliver ios;` and `deliver ios 17.0;` cannot come
+/// to disagree about which families `ios` means.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DeliveredFamily {
+    /// macOS.
+    MacOs,
+    /// iOS device and the iOS simulator.
+    IOs,
+}
+
+impl DeliveredFamily {
+    /// Every artifact family a `deliver` list may name.
+    pub(crate) const ALL: [Self; 2] = [Self::MacOs, Self::IOs];
+
+    /// Returns the stable name a consumer states this family by.
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::MacOs => "macos",
+            Self::IOs => "ios",
+        }
+    }
+
+    /// Resolves a stated family name, or nothing.
+    ///
+    /// Matched exactly, for [`NamedProfile::parse`]'s reason: a name that is
+    /// nearly a family decides which targets a consumer's build compiles for.
+    pub(crate) fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|family| family.as_str() == name)
+    }
+
+    /// Returns the driver families this name covers, in the driver's own
+    /// vocabulary.
+    const fn platforms(self) -> &'static [ApplePlatform] {
+        match self {
+            Self::MacOs => &[ApplePlatform::MacOs],
+            Self::IOs => &[ApplePlatform::IOsDevice, ApplePlatform::IOsSimulator],
+        }
+    }
+
+    /// Returns the governed floor for [`PROFILE_MSL_VERSION`] on this family.
+    ///
+    /// The number a [`NamedProfile`] uses when a consumer states no floor of its
+    /// own. It is the driver's table restated at one site rather than derived,
+    /// because the driver publishes no accessor for a governed floor;
+    /// `every_profile_family_sits_on_its_governed_language_floor` is what holds
+    /// the two in agreement, by requiring one minor version lower to be refused
+    /// by the driver.
+    const fn governed_minimum(self) -> DeploymentMinimum {
+        match self {
+            Self::MacOs => DeploymentMinimum::new(14, 0),
+            Self::IOs => DeploymentMinimum::new(17, 0),
+        }
+    }
+
+    /// Expands this family to the driver's selected families at one minimum.
+    fn selected(self, deployment_minimum: DeploymentMinimum) -> Vec<SelectedFamily> {
+        self.platforms()
+            .iter()
+            .map(|platform| SelectedFamily {
+                family: *platform,
+                deployment_minimum,
+                msl_version: PROFILE_MSL_VERSION,
+            })
+            .collect()
+    }
+}
+
 /// An ergonomic named delivery profile.
 ///
 /// `docs/integration/frontends.md` permits one — "A frontend may offer an
 /// ergonomic literal default profile, but the resolved selection is still
-/// explicit compiler input" — and Q-ART-008 asks that named profiles expand to a
-/// canonical [`ArtifactFamilySelection`]. That is exactly what [`Self::selection`]
-/// does: a profile is a spelling, never a second encoder. Every deployment
-/// minimum below is the governed floor for [`PROFILE_MSL_VERSION`] rather than a
-/// number chosen here, so a profile excludes no OS version it could have
-/// included and the driver would reject anything lower.
+/// explicit compiler input" — and it is the ergonomic half of what a consumer
+/// writes: `deliver macos-and-ios;` states three families and no version at all.
+/// A profile is a spelling, never a second encoder — [`Self::policy`] states a
+/// policy, and [`stated_delivery`] validates it through
+/// [`ArtifactFamilySelection::new`] like every other stated policy. Every
+/// deployment minimum is [`DeliveredFamily::governed_minimum`], the governed
+/// floor for [`PROFILE_MSL_VERSION`] rather than a number chosen here, so a
+/// profile excludes no OS version it could have included and the driver would
+/// reject anything lower.
+///
+/// A consumer needing a *higher* floor states the family list instead; that is
+/// the escape hatch the profile vocabulary is affordable because of.
 ///
 /// # Why Mac Catalyst is in no profile
 ///
@@ -114,15 +211,10 @@ const PROFILE_MSL_VERSION: MslVersion = MslVersion::Metal3_1;
 /// every other family in it to MSL 4.0 as well. A Catalyst consumer consequently
 /// matches no profile's selected family and takes the semantic fallback, which is
 /// the only correct outcome: `docs/backends/metal.md` forbids relabelling an
-/// iOS-device or macOS payload as Catalyst-compatible.
-#[allow(
-    dead_code,
-    reason = "the profiles are the resolved half of Q-ART-008 and are complete and tested. \
-              Nothing constructs one during an expansion because the approved region grammar has \
-              no syntax for stating a profile, and inventing that syntax is a consumer-visible \
-              public boundary ADR 0075 reserves to Tom. The surface reserved is the profile names \
-              and the exact selection each expands to."
-)]
+/// iOS-device or macOS payload as Catalyst-compatible. The family list cannot
+/// reach it either, because [`DeliveredFamily`] publishes no Catalyst spelling;
+/// admitting one is `Q-ART-012` in `docs/open-questions.md`, which is deferred
+/// until an explicit trigger.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NamedProfile {
     /// Build nothing; every consumer target uses the semantic fallback.
@@ -139,11 +231,6 @@ pub(crate) enum NamedProfile {
     MacOsAndIOs,
 }
 
-#[allow(
-    dead_code,
-    reason = "see the reason on `NamedProfile` itself: the profiles resolve Q-ART-008 and are \
-              reached only by their tests until a consumer can state one."
-)]
 impl NamedProfile {
     /// Every profile this frontend names.
     pub(crate) const ALL: [Self; 4] = [
@@ -174,46 +261,36 @@ impl NamedProfile {
             .find(|profile| profile.as_str() == name)
     }
 
+    /// Returns the artifact families this profile names.
+    const fn families(self) -> &'static [DeliveredFamily] {
+        match self {
+            Self::FallbackOnly => &[],
+            Self::MacOs => &[DeliveredFamily::MacOs],
+            Self::IOs => &[DeliveredFamily::IOs],
+            Self::MacOsAndIOs => &[DeliveredFamily::MacOs, DeliveredFamily::IOs],
+        }
+    }
+
     /// Returns the delivery policy this profile spells.
+    ///
+    /// A policy rather than an [`ArtifactFamilySelection`], because a profile is
+    /// a *spelling* and never a second encoder: the one canonical constructor
+    /// validates it, on the production path through [`stated_delivery`] like any
+    /// other stated policy, so no profile can reach a selection the driver would
+    /// have refused.
     pub(crate) fn policy(self) -> ArtifactDeliveryPolicy {
-        let families: Vec<SelectedFamily> = match self {
-            Self::FallbackOnly => return ArtifactDeliveryPolicy::FallbackOnly,
-            Self::MacOs => vec![selected(ApplePlatform::MacOs, 14, 0)],
-            Self::IOs => vec![
-                selected(ApplePlatform::IOsDevice, 17, 0),
-                selected(ApplePlatform::IOsSimulator, 17, 0),
-            ],
-            Self::MacOsAndIOs => vec![
-                selected(ApplePlatform::MacOs, 14, 0),
-                selected(ApplePlatform::IOsDevice, 17, 0),
-                selected(ApplePlatform::IOsSimulator, 17, 0),
-            ],
-        };
+        let families: Vec<SelectedFamily> = self
+            .families()
+            .iter()
+            .flat_map(|family| family.selected(family.governed_minimum()))
+            .collect();
+        if families.is_empty() {
+            return ArtifactDeliveryPolicy::FallbackOnly;
+        }
         ArtifactDeliveryPolicy::SelectedFamilies {
             families,
             requirement: FamilyRequirement::RequiredWhenTargetMatches,
         }
-    }
-
-    /// Expands this profile to the canonical selection it names.
-    ///
-    /// # Errors
-    ///
-    /// Returns whatever [`ArtifactFamilySelection::new`] returns. Every profile
-    /// is a valid selection, so this is a propagated impossibility rather than a
-    /// reachable failure — and it is propagated rather than unwrapped because the
-    /// governed floors that make it impossible live in the driver, not here.
-    pub(crate) fn selection(self) -> Result<ArtifactFamilySelection, FamilySelectionError> {
-        ArtifactFamilySelection::new(self.policy())
-    }
-}
-
-/// Builds one selected family at [`PROFILE_MSL_VERSION`].
-fn selected(family: ApplePlatform, major: u16, minor: u16) -> SelectedFamily {
-    SelectedFamily {
-        family,
-        deployment_minimum: DeploymentMinimum::new(major, minor),
-        msl_version: PROFILE_MSL_VERSION,
     }
 }
 
@@ -224,11 +301,14 @@ fn selected(family: ApplePlatform, major: u16, minor: u16) -> SelectedFamily {
 /// meaning "not attempted" would be the quiet fallback wearing a name.
 #[allow(
     dead_code,
-    reason = "an outcome is constructed by whoever ran the driver, and no expansion runs it yet: \
-              every expansion states `FallbackOnly`, which ADR 0053 defines as invoking no \
-              backend compiler, so every production plan is empty. The emission both variants \
-              drive is complete and is what the slice that first compiles a selected family \
-              consumes."
+    reason = "an outcome is constructed by whoever ran the driver, and no expansion runs it. A \
+              region can now state a selected family — the `deliver` statement is accepted and \
+              implemented — but `stated_delivery` refuses one, because the compiler boundary \
+              admits none of this frontend's programs and there is therefore no payload to \
+              report an outcome for. Every plan an expansion builds is consequently \
+              `FallbackOnly`'s, which names no family and carries no outcome. \
+              `admit-multi-input-elementwise-programs-at-the-compiler-boundary` is what makes \
+              these variants reachable; the emission they drive is complete and tested below."
 )]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FamilyDelivery {
@@ -449,16 +529,184 @@ fn byte_string_literal(bytes: &[u8]) -> String {
     literal
 }
 
-/// The delivery policy an invocation's tokens resolve to.
+/// Why a `deliver` statement names no policy this frontend can state.
 ///
-/// Nullary rather than a function of the parsed region, and that is the honest
-/// signature: the approved grammar admits neither a family statement nor a
-/// [`NamedProfile`] name, so every region resolves to
-/// [`ArtifactDeliveryPolicy::FallbackOnly`] and a parameter it ignored would
-/// claim a dependence that does not exist. It becomes a function of the region
-/// when Tom accepts the syntax a consumer would state a profile in.
-pub(crate) const fn stated_policy() -> ArtifactDeliveryPolicy {
-    ArtifactDeliveryPolicy::FallbackOnly
+/// Every variant carries the span of the token that caused it, because the
+/// statement's tokens are the only thing a consumer can act on: an unknown name
+/// is reported at the name, and a floor the driver's governed table refuses is
+/// reported at the version that stated it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum StatementRefusal<S> {
+    /// The statement names a profile this frontend does not publish.
+    UnknownProfile {
+        /// The name as written.
+        name: String,
+        /// The token.
+        span: S,
+    },
+    /// A family list names a family this frontend does not publish.
+    UnknownFamily {
+        /// The name as written.
+        name: String,
+        /// The token.
+        span: S,
+    },
+    /// A family list names one family twice.
+    RepeatedFamily {
+        /// The family's stable name.
+        name: &'static str,
+        /// The repeated token.
+        span: S,
+    },
+    /// A stated family and deployment minimum are not a governed target.
+    ///
+    /// The driver's own rejection is carried rather than flattened (ADR 0074
+    /// convention 1), so a floor below the governed minimum still names the
+    /// minimum it needed.
+    UngovernedTarget {
+        /// The driver's target-level reason.
+        source: MetalTargetError,
+        /// The deployment-minimum token.
+        span: S,
+    },
+}
+
+impl<S> fmt::Display for StatementRefusal<S> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownProfile { name, .. } => write!(
+                formatter,
+                "`{name}` is not a delivery profile; this frontend names {}, or state a family \
+                 list such as `deliver macos 14.0, ios 17.0;` to choose a deployment minimum of \
+                 your own",
+                rendered_profiles(),
+            ),
+            Self::UnknownFamily { name, .. } => write!(
+                formatter,
+                "`{name}` is not an artifact family a `deliver` list may name; this frontend names \
+                 {}",
+                rendered_families(),
+            ),
+            Self::RepeatedFamily { name, .. } => write!(
+                formatter,
+                "the `{name}` artifact family is stated twice; one `deliver` statement states each \
+                 family once, because two entries for one family disagree about its deployment \
+                 minimum whenever they differ"
+            ),
+            Self::UngovernedTarget { source, .. } => write!(
+                formatter,
+                "this artifact family and deployment minimum are not a governed Metal target: \
+                 {source}"
+            ),
+        }
+    }
+}
+
+impl<S> StatementRefusal<S> {
+    /// Returns the span this refusal must be reported at.
+    pub(crate) const fn span(&self) -> &S {
+        match self {
+            Self::UnknownProfile { span, .. }
+            | Self::UnknownFamily { span, .. }
+            | Self::RepeatedFamily { span, .. }
+            | Self::UngovernedTarget { span, .. } => span,
+        }
+    }
+}
+
+/// Renders the profile vocabulary a diagnostic offers.
+fn rendered_profiles() -> String {
+    rendered_names(NamedProfile::ALL.map(NamedProfile::as_str).as_slice())
+}
+
+/// Renders the artifact-family vocabulary a diagnostic offers.
+fn rendered_families() -> String {
+    rendered_names(DeliveredFamily::ALL.map(DeliveredFamily::as_str).as_slice())
+}
+
+/// Renders one vocabulary the way a diagnostic lists it.
+fn rendered_names(names: &[&str]) -> String {
+    names
+        .iter()
+        .map(|name| format!("`{name}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The delivery policy one region's tokens resolve to.
+///
+/// A function of the parsed region since Tom accepted the `deliver` statement on
+/// 2026-07-31; it was a constant `FallbackOnly` while no region could say
+/// otherwise. `None` is a region that states no `deliver` statement, and it
+/// resolves to [`ArtifactDeliveryPolicy::FallbackOnly`] — the policy every region
+/// stated before the statement existed, which is what keeps a region written
+/// without one expanding to the tokens it always did.
+///
+/// # Errors
+///
+/// Returns the [`StatementRefusal`] carrying the span of the token that caused
+/// it. The policy is *stated* here and validated by [`stated_delivery`]; the
+/// per-family check below runs early only so a refused floor lands on the
+/// version that stated it rather than on the statement as a whole, and it calls
+/// the driver's own [`MetalTarget::new`] rather than restating a floor.
+pub(crate) fn stated_policy<S: Copy>(
+    stated: Option<&DeliverySyntax<S>>,
+) -> Result<ArtifactDeliveryPolicy, StatementRefusal<S>> {
+    let Some(delivery) = stated else {
+        return Ok(ArtifactDeliveryPolicy::FallbackOnly);
+    };
+    match &delivery.stated {
+        StatedDelivery::Profile(name) => NamedProfile::parse(&name.text)
+            .map(NamedProfile::policy)
+            .ok_or_else(|| StatementRefusal::UnknownProfile {
+                name: name.text.clone(),
+                span: name.span,
+            }),
+        StatedDelivery::Families(stated) => stated_family_list(stated),
+    }
+}
+
+/// Resolves one `deliver` family list into the policy it states.
+fn stated_family_list<S: Copy>(
+    stated: &[FamilyMinimumSyntax<S>],
+) -> Result<ArtifactDeliveryPolicy, StatementRefusal<S>> {
+    let mut named: Vec<DeliveredFamily> = Vec::with_capacity(stated.len());
+    let mut families: Vec<SelectedFamily> = Vec::new();
+    for entry in stated {
+        let family = DeliveredFamily::parse(&entry.name.text).ok_or_else(|| {
+            StatementRefusal::UnknownFamily {
+                name: entry.name.text.clone(),
+                span: entry.name.span,
+            }
+        })?;
+        // The driver rejects a duplicate too, at the family it canonicalized to.
+        // Refusing the repeated *spelling* here is what puts the diagnostic on
+        // the second `ios` a consumer wrote rather than on the invocation.
+        if named.contains(&family) {
+            return Err(StatementRefusal::RepeatedFamily {
+                name: family.as_str(),
+                span: entry.name.span,
+            });
+        }
+        named.push(family);
+
+        let minimum = DeploymentMinimum::new(entry.minimum.major, entry.minimum.minor);
+        for selected in family.selected(minimum) {
+            MetalTarget::new(selected.family, minimum, selected.msl_version).map_err(|source| {
+                StatementRefusal::UngovernedTarget {
+                    source,
+                    span: entry.minimum.span,
+                }
+            })?;
+            families.push(selected);
+        }
+    }
+    // The grammar admits no empty list, so `EmptySelection` is unreachable from
+    // a stated one; `stated_delivery` remains the authority that says so.
+    Ok(ArtifactDeliveryPolicy::SelectedFamilies {
+        families,
+        requirement: FamilyRequirement::RequiredWhenTargetMatches,
+    })
 }
 
 /// Why this expansion cannot deliver a stated policy.
@@ -477,6 +725,11 @@ pub(crate) enum DeliveryRefusal {
     /// *required* when the consumer target matches it, so an expansion that
     /// emitted its fallback anyway would silently turn a required artifact into
     /// fallback on exactly the target that was owed one.
+    ///
+    /// This is what a consumer writing `deliver macos;` gets today. It is
+    /// reachable rather than defensive: the grammar admits the statement, and
+    /// `admit-multi-input-elementwise-programs-at-the-compiler-boundary` is what
+    /// makes a compiled payload exist for it to deliver.
     BackendCompilationUnavailable {
         /// The selected families' stable identifiers, in canonical order.
         families: Vec<&'static str>,
@@ -494,12 +747,17 @@ impl fmt::Display for DeliveryRefusal {
             ),
             Self::BackendCompilationUnavailable { families } => write!(
                 formatter,
-                "`tiler::tensor!` states an artifact-family selection naming {}, but this \
-                 expansion performs no backend compilation yet and a selected family must not \
-                 silently become fallback on a matching target; the family syntax that would \
-                 state one is a public boundary, and the `#[cfg]`-gated delivery it drives is \
-                 already implemented",
+                "this `deliver` statement selects the {} artifact {}, but no expansion runs the \
+                 offline Metal driver yet, so there is no payload to deliver; a selected family \
+                 must not silently become fallback on a matching target, so this is a refusal \
+                 rather than a quiet downgrade. Remove the statement, or state `fallback-only`, \
+                 to expand with the semantic fallback on every target",
                 families.join(", "),
+                if families.len() == 1 {
+                    "family"
+                } else {
+                    "families"
+                },
             ),
             Self::MalformedPlan(source) => write!(
                 formatter,

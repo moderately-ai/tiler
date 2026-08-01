@@ -14,7 +14,7 @@ ticket: "synthesize-artifact-contracts"
 
 **Status:** accepted inline AOT contract; rust-analyzer performance remains unmeasured
 
-`implementation_status` moved from `not-started` to `partial` on 2026-07-31, and the boundary of that word is narrow. What exists is the crate pair this contract's inline delivery routes through — `tiler` and `tiler-macros`, admitted by [ADR 0088](../decisions/0088-admit-tiler-and-tiler-macros-as-the-frontend-pair.md) — and one clause of the target policy below: an expansion states a delivery policy, validates it through the single canonical `ArtifactFamilySelection` constructor, and refuses rather than silently falling back when it cannot deliver a selected family. The cache-root policy the Compiler cache section states exactly is decided and implemented as a crate-private resolver in `tiler-macros`, but it is not delivered behaviour: nothing calls it, because no expansion opens a cache. The symbol-binding and runtime-value boundary the section below describes is implemented and compile-checked, and it is delivered behaviour only in the same narrow sense: nothing constructs a region's declarations from real tokens, because there is still no grammar to parse them from. Nothing else here is implemented. There is no region grammar, no semantic translation, no expansion-time AOT flow, no byte embedding, and no fallback expression; every other example in this document describes the contract rather than reporting a landed path.
+`implementation_status` moved from `not-started` to `partial` on 2026-07-31, and the boundary of that word is narrow. What exists is the crate pair this contract's inline delivery routes through — `tiler` and `tiler-macros`, admitted by [ADR 0088](../decisions/0088-admit-tiler-and-tiler-macros-as-the-frontend-pair.md) — the approved region grammar `prototype-inline-proc-macro-frontend` delivered that same day, the symbol-binding and runtime-value boundary the section below describes, and the target policy's stating half: an expansion parses a region from real tokens, resolves it against the governed semantic operation registry, states a delivery policy — including the `deliver` statement a consumer writes — validates it through the single canonical `ArtifactFamilySelection` constructor, and refuses rather than silently falling back when it cannot deliver a selected family. The cache-root policy the Compiler cache section states exactly is decided and implemented as a crate-private resolver in `tiler-macros`, but it is not delivered behaviour: nothing calls it, because no expansion opens a cache. What is *not* implemented is everything downstream of the semantic program: no optimization or scheduling, no expansion-time AOT flow, no byte embedding of a compiled payload, and no compiled/fallback selection — the `#[cfg]`-gated delivery machinery is complete and tested but reaches no expansion, because nothing compiles a payload for it to deliver. Every other example in this document describes the contract rather than reporting a landed path.
 
 Frontends translate user-facing tensor languages into Tiler's public semantic
 tensor graph. `candle-einops` is the first proposed frontend. For that Rust
@@ -268,14 +268,41 @@ consumer-neutral boundary. Nothing a consumer writes needs the type: a policy is
 stated in region syntax, and generated tokens name `#[cfg]` predicates and byte
 literals.
 
-For each selected family, successful expansion embeds its payload under the
-family's governed consumer-target `#[cfg]`. If that family cannot be built on
-the macro host, expansion emits the retained toolchain/compiler diagnostic as a
-`#[cfg]`-gated `compile_error!` item and emits the semantic fallback for
-nonmatching targets. Thus a Linux host building Linux can use the same portable
-source without Metal, while a Linux host cross-building a selected macOS family
-gets a deterministic unsupported-cross-AOT error. The proc macro does not need
-to observe the consumer target to make either decision.
+### The accepted spelling
+
+Tom accepted the consumer-visible spelling on 2026-07-31 under [`accept-the-inline-artifact-family-profile-syntax`](../../tickets/accept-the-inline-artifact-family-profile-syntax.md), which closed Q-ART-008. An inline region states its delivery policy with a `deliver` statement in the declaration block beside `sym` and `in`, at most once, in either of two productions:
+
+```text
+sym n;
+in a: f32[n], b: f32[n];
+deliver macos-and-ios;        // a named profile
+out a * b
+```
+
+```text
+sym n;
+in a: f32[n], b: f32[n];
+deliver macos 14.0, ios 17.0; // a family list, when a floor must be stated
+out a * b
+```
+
+The profile vocabulary is `fallback-only`, `macos`, `ios`, and `macos-and-ios`; a profile fixes every family it names to that family's governed floor for the Metal language standard Tiler compiles with, which is why it publishes no version. The family-list vocabulary is `macos` and `ios`, each with a `<major>.<minor>` deployment minimum, and `ios` covers the iOS device and the iOS simulator together — a name covering only the device would leave every simulator build silently on the fallback path. The two productions share one vocabulary rather than defining two: a list stating the governed floors resolves to the identical selection as the profile that names the same families. A minimum below the governed floor is the driver's own typed refusal, reported at the version token that stated it.
+
+**Stating nothing is `fallback-only`.** The statement's absence resolves to the same explicit policy, so a region written without it is unchanged token-for-token, and no consumer is required to state a policy to get one.
+
+The statement is where the "ergonomic literal default profile" this contract permits actually lives, and the list is what keeps that affordable: the profile names publish no Apple deployment-minimum vocabulary on the mandatory path, and a consumer whose own floor is higher can still state it without waiting for a second profile to be minted. The second axis this surface reserves — a separate explicit "acceleration required" policy — remains statable as its own statement in the same block. It is not `#[tiler::deliver(macos)]`: a `#[proc_macro]` cannot see attributes outside its own token stream, so an attribute form would need a second macro entry point and would break the accepted "each invocation is a self-contained AOT and embedding unit".
+
+**A statement selecting a family is refused today, and the refusal is the contract working.** No expansion runs the offline driver yet — the compiler boundary admits none of the frontend's multi-input elementwise programs, which [`admit-multi-input-elementwise-programs-at-the-compiler-boundary`](../../tickets/admit-multi-input-elementwise-programs-at-the-compiler-boundary.md) owns — so there is no compiled payload for a selected family to deliver. Expansion therefore fails closed with a spanned `compile_error!` at the `deliver` keyword naming the selected families, rather than emitting the semantic fallback: a selected family is *required* when the consumer target matches it, and a quiet fallback there is exactly what this contract forbids. `deliver fallback-only;` and the statement's absence are consequently the only spellings an expansion completes, and the compile-pass and compile-fail fixtures under `crates/tiler/tests/facade/` pin both halves.
+
+**One envelope, N payloads** (Tom, 2026-07-25). A selection naming several families produces one artifact carrying one payload per built family, so the whole selection has one identity and a partial delivery is impossible by construction. The bytes are therefore embedded **once and unconditionally**, and what the family's governed consumer-target `#[cfg]` gates is the *position* of that family's payload within the envelope the consumer already holds — not the bytes. An earlier revision of this sentence said expansion "embeds its payload under the family's `#[cfg]`", which describes one artifact per family and is superseded by that decision; the accepted cost of the current shape is that a consumer needing one family carries the bytes for all of them. The selector is total by construction — one arm per built family plus a `not(any(…))` arm — so an overlapping or missing predicate is a build error in the consumer's own compilation rather than a wrong payload.
+
+If a family cannot be built on the macro host, expansion emits the retained
+toolchain/compiler diagnostic as a `#[cfg]`-gated `compile_error!` item and emits
+the semantic fallback for nonmatching targets. Thus a Linux host building Linux
+can use the same portable source without Metal, while a Linux host
+cross-building a selected macOS family gets a deterministic unsupported-cross-AOT
+error. The proc macro does not need to observe the consumer target to make
+either decision.
 
 An unselected family intentionally uses fallback. `FallbackOnly` is a valid
 explicit profile and performs no backend compiler work. A frontend may expose a
@@ -340,7 +367,7 @@ let y = tiler::tensor! {
 };
 ```
 
-`tiler::tensor!` is the ratified public path, fixed by Tom on 2026-07-30 and recorded in [ADR 0088](../decisions/0088-admit-tiler-and-tiler-macros-as-the-frontend-pair.md); an earlier revision of this example spelled the macro `tiler!`, which was an illustrative spelling rather than a second decision. The region body above is still illustrative: `tensor!` has no grammar, and input like this is rejected today with a spanned `compile_error!` naming the tickets that own the syntax.
+`tiler::tensor!` is the ratified public path, fixed by Tom on 2026-07-30 and recorded in [ADR 0088](../decisions/0088-admit-tiler-and-tiler-macros-as-the-frontend-pair.md); an earlier revision of this example spelled the macro `tiler!`, which was an illustrative spelling rather than a second decision. The region body above is still illustrative, but for a narrower reason than it once was: `tensor!` now has a grammar — a declaration block of `sym`, `in`, and `deliver` statements followed by one `out` expression — and that grammar admits neither a `let` binding, nor a named operation call such as `einops(…)` or `gelu(…)`, nor any operator beyond `*` and `+`. Each of those is refused at the token that spells it, with the named-call form reserved rather than filled, because the governed semantic profile registers no operation without an operator spelling.
 
 This preserves inline DX while making the whole fusion region explicit. Cross-
 invocation whole-program fusion would require a compiler plugin or runtime

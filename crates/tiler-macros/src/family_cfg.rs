@@ -65,9 +65,11 @@
 //! against `rustc`'s own answer rather than against this module's reading of it.
 //!
 //! The version does not yet reach an identity subject, because the frontend
-//! computes no artifact identity: every expansion states `FallbackOnly`, which
-//! ADR 0053 defines as invoking no backend compiler. The slice that first
-//! compiles a selected family is what folds it in.
+//! computes no artifact identity. A region can state a selected family since
+//! Tom accepted the `deliver` statement, but no expansion compiles one — the
+//! statement is refused before emission — so every expansion delivers
+//! `FallbackOnly`, which ADR 0053 defines as invoking no backend compiler. The
+//! slice that first compiles a selected family is what folds it in.
 
 use tiler_metal_aot::input::ApplePlatform;
 
@@ -79,8 +81,10 @@ use tiler_metal_aot::input::ApplePlatform;
     dead_code,
     reason = "the version names the table for the tests that pin it and for the compilation \
               identity that will fold it in. Nothing reads it during an expansion yet because \
-              every expansion states `FallbackOnly`, so no expansion embeds a predicate at all; \
-              the slice that first compiles a selected family is what makes it an identity input."
+              every expansion delivers `FallbackOnly` — a stated selected family is refused \
+              before emission, since nothing compiles one — so no expansion embeds a predicate \
+              at all; the slice that first compiles a selected family is what makes it an \
+              identity input."
 )]
 pub(crate) const MAP_VERSION: &str = "tiler.frontend.family-consumer-cfg.v1";
 

@@ -54,7 +54,7 @@ error: `tiler::tensor!` was given no region; a region declares its operands and 
    |
    = note: this error originates in the macro `tiler::tensor` (in Nightly builds, run with -Z macro-backtrace for more info)
 
-error: expected `sym`, `in`, or `out` and found `let`; a region is a declaration block followed by one `out` expression
+error: expected `sym`, `in`, `deliver`, or `out` and found `let`; a region is a declaration block followed by one `out` expression
   --> tests/facade/fail/region_syntax_diagnostics.rs:68:9
    |
 68 |         let a = 1;

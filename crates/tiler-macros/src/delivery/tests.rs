@@ -18,11 +18,69 @@ use tiler_metal_aot::input::{
 };
 
 use super::{
-    DeliveryPlan, DeliveryRefusal, FamilyDelivery, NamedProfile, PlanRefusal, byte_string_literal,
-    stated_delivery, stated_plan, stated_policy,
+    DeliveredFamily, DeliveryPlan, DeliveryRefusal, FamilyDelivery, NamedProfile, PlanRefusal,
+    StatementRefusal, byte_string_literal, stated_delivery, stated_plan, stated_policy,
 };
 use crate::family_cfg::consumer_cfg;
 use crate::family_cfg::tests::{evaluate, target_cfg};
+use crate::grammar::{
+    DeliverySyntax, DeploymentMinimumSyntax, FamilyMinimumSyntax, Name, StatedDelivery,
+};
+
+/// A span a test can construct and assert on, as in `crate::grammar::tests`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct At(u32);
+
+/// The `deliver` keyword's span in every statement built below.
+const KEYWORD: At = At(1);
+
+fn spelled(text: &str, at: u32) -> Name<At> {
+    Name {
+        text: text.to_owned(),
+        span: At(at),
+    }
+}
+
+/// `deliver <profile>;`, with the profile name at span `at`.
+fn profile_statement(name: &str, at: u32) -> DeliverySyntax<At> {
+    DeliverySyntax {
+        keyword: KEYWORD,
+        stated: StatedDelivery::Profile(spelled(name, at)),
+    }
+}
+
+/// `deliver <family> <major>.<minor>, …;`, each entry naming its own spans.
+fn family_statement(entries: &[(&str, u32, u16, u16, u32)]) -> DeliverySyntax<At> {
+    DeliverySyntax {
+        keyword: KEYWORD,
+        stated: StatedDelivery::Families(
+            entries
+                .iter()
+                .map(
+                    |&(name, name_at, major, minor, minimum_at)| FamilyMinimumSyntax {
+                        name: spelled(name, name_at),
+                        minimum: DeploymentMinimumSyntax {
+                            major,
+                            minor,
+                            span: At(minimum_at),
+                        },
+                    },
+                )
+                .collect(),
+        ),
+    }
+}
+
+/// The families one stated policy names, in the driver's canonical order.
+fn resolved(statement: &DeliverySyntax<At>) -> Vec<&'static str> {
+    let policy = stated_policy(Some(statement)).expect("the statement resolves");
+    ArtifactFamilySelection::new(policy)
+        .expect("a stated policy is a valid selection")
+        .families()
+        .iter()
+        .map(|selected| selected.family.as_str())
+        .collect()
+}
 
 /// The five consumer targets `docs/correctness-and-testing.md` names.
 const NORMATIVE_TARGETS: [&str; 5] = [
@@ -153,13 +211,18 @@ fn gated_items(source: &str) -> Vec<GatedItem> {
     items
 }
 
-/// The current expansion states `FallbackOnly`, and that is deliverable.
+/// A region stating no `deliver` statement states `FallbackOnly`, and that is
+/// deliverable.
 ///
-/// This is the policy `tensor!` actually routes on today, so the anchor it
-/// emits is a *stated* no-AOT decision rather than an unstated one.
+/// This is the policy `tensor!` routes on for every region written without the
+/// statement, so the absence is a *stated* no-AOT decision rather than an
+/// unstated one — and it is what keeps such a region expanding to exactly the
+/// tokens it expanded to before the statement existed.
 #[test]
-fn the_current_expansion_states_a_deliverable_fallback_only_policy() {
-    let selection = stated_delivery(stated_policy()).expect("FallbackOnly is deliverable");
+fn a_region_stating_no_delivery_states_a_deliverable_fallback_only_policy() {
+    let policy = stated_policy::<At>(None).expect("absence resolves");
+    assert_eq!(policy, ArtifactDeliveryPolicy::FallbackOnly);
+    let selection = stated_delivery(policy).expect("FallbackOnly is deliverable");
     assert!(!selection.invokes_backend_compiler());
     assert!(selection.families().is_empty());
     assert_eq!(
@@ -172,15 +235,313 @@ fn the_current_expansion_states_a_deliverable_fallback_only_policy() {
 /// The production expansion plans no delivery, so its tokens are unchanged.
 ///
 /// The delivery half is complete, and this is what says it is also inert: an
-/// expansion that states `FallbackOnly` contributes no item, so `FallbackOnly`
+/// expansion that delivers `FallbackOnly` contributes no item, so `FallbackOnly`
 /// still performs no backend compiler work and still expands to exactly the
-/// block it expanded to before any of this existed.
+/// block it expanded to before any of this existed. Both spellings of it are
+/// checked, because `deliver fallback-only;` is a stated policy a consumer can
+/// write and must be inert in exactly the same way as writing nothing.
 #[test]
 fn the_production_expansion_plans_no_delivery_items() {
-    let selection = stated_delivery(stated_policy()).expect("FallbackOnly is deliverable");
-    let plan = stated_plan(selection).expect("FallbackOnly plans nothing");
-    assert_eq!(plan.items_source(), "");
-    assert!(gated_items(&plan.items_source()).is_empty());
+    let inert: [Option<DeliverySyntax<At>>; 2] =
+        [None, Some(profile_statement("fallback-only", 2))];
+    assert_eq!(
+        inert.len(),
+        2,
+        "the population this test covers is every spelling of no delivery, counted",
+    );
+    for stated in inert {
+        let policy = stated_policy(stated.as_ref()).expect("no-delivery resolves");
+        assert_eq!(policy, ArtifactDeliveryPolicy::FallbackOnly);
+        let selection = stated_delivery(policy).expect("FallbackOnly is deliverable");
+        let plan = stated_plan(selection).expect("FallbackOnly plans nothing");
+        assert_eq!(plan.items_source(), "");
+        assert!(gated_items(&plan.items_source()).is_empty());
+    }
+}
+
+/// Every profile a consumer states resolves to that profile's own families.
+///
+/// The statement is the consumer-visible half of
+/// `every_named_profile_expands_to_a_canonical_selection` below: that one checks
+/// what a profile *means*, and this one checks that stating its accepted name in
+/// a region reaches it.
+#[test]
+fn every_profile_name_a_region_states_resolves_to_its_families() {
+    let expected: [(&str, &[&str]); 4] = [
+        ("fallback-only", &[]),
+        ("macos", &["macos"]),
+        ("ios", &["ios-device", "ios-simulator"]),
+        ("macos-and-ios", &["ios-device", "ios-simulator", "macos"]),
+    ];
+    assert_eq!(
+        expected.len(),
+        NamedProfile::ALL.len(),
+        "the population this test covers is every accepted profile name, counted",
+    );
+    for (spelling, families) in expected {
+        assert_eq!(
+            resolved(&profile_statement(spelling, 2)),
+            families.to_vec(),
+            "`deliver {spelling};` must resolve to these families",
+        );
+    }
+}
+
+/// A family list resolves to the families it names, at the floors it states.
+///
+/// The escape hatch's whole purpose: the same families a profile names, at a
+/// deployment minimum the consumer chose. `ios` expands to two driver families
+/// from one stated entry, because a developer building for iOS builds for the
+/// simulator too.
+#[test]
+fn a_family_list_resolves_to_its_families_at_the_floors_it_states() {
+    let statement = family_statement(&[("macos", 2, 15, 4, 3), ("ios", 4, 18, 0, 5)]);
+    let policy = stated_policy(Some(&statement)).expect("the statement resolves");
+    let ArtifactDeliveryPolicy::SelectedFamilies {
+        families,
+        requirement,
+    } = ArtifactFamilySelection::new(policy)
+        .expect("the list is a valid selection")
+        .policy()
+        .clone()
+    else {
+        panic!("a family list states selected families");
+    };
+    assert_eq!(requirement, FamilyRequirement::RequiredWhenTargetMatches);
+    assert_eq!(
+        families,
+        vec![
+            selected(ApplePlatform::IOsDevice, 18, 0),
+            selected(ApplePlatform::IOsSimulator, 18, 0),
+            selected(ApplePlatform::MacOs, 15, 4),
+        ],
+        "one stated `ios` entry is two driver families, and each carries the stated floor",
+    );
+}
+
+/// A stated floor at the governed minimum is the profile's own selection.
+///
+/// The two productions are one vocabulary rather than two: writing the floors a
+/// profile would have chosen must reach the identical selection, or `ios` would
+/// mean one thing as a profile and another as a family.
+#[test]
+fn a_family_list_on_the_governed_floors_equals_the_profile_that_names_them() {
+    let listed = stated_policy(Some(&family_statement(&[
+        ("macos", 2, 14, 0, 3),
+        ("ios", 4, 17, 0, 5),
+    ])))
+    .expect("the statement resolves");
+    assert_eq!(
+        ArtifactFamilySelection::new(listed).expect("valid"),
+        ArtifactFamilySelection::new(NamedProfile::MacOsAndIOs.policy()).expect("valid"),
+    );
+}
+
+/// A profile a region states but this frontend does not name is refused at the
+/// name.
+///
+/// The near misses matter more than the hit: a profile decides which families a
+/// consumer's build compiles for, so a name that is nearly one must refuse
+/// rather than pick. `fallback_only` is included because it is the spelling a
+/// consumer reaches for when the hyphen looks like an identifier problem.
+#[test]
+fn an_unknown_profile_is_refused_at_the_name() {
+    for unknown in ["fallback_only", "macOS", "mac", "apple", "ios-device"] {
+        let refusal = stated_policy(Some(&profile_statement(unknown, 7)))
+            .expect_err("an unknown profile is refused");
+        assert_eq!(
+            refusal,
+            StatementRefusal::UnknownProfile {
+                name: unknown.to_owned(),
+                span: At(7),
+            },
+        );
+        let rendered = refusal.to_string();
+        for offered in NamedProfile::ALL {
+            assert!(
+                rendered.contains(offered.as_str()),
+                "the refusal must offer `{}`: {rendered}",
+                offered.as_str(),
+            );
+        }
+    }
+    // The accepting neighbour differs only in the name.
+    assert_eq!(resolved(&profile_statement("macos", 7)), vec!["macos"]);
+}
+
+/// A family list naming a family this frontend does not publish is refused at
+/// the name.
+///
+/// `ios-device` and `mac-catalyst` are the driver's own identifiers, and their
+/// refusal is the boundary: the consumer surface names `macos` and `ios`, and a
+/// driver identifier leaking into a region would publish a vocabulary Tom did
+/// not accept.
+#[test]
+fn an_unknown_family_is_refused_at_the_name() {
+    for unknown in [
+        "ios-device",
+        "ios-simulator",
+        "mac-catalyst",
+        "fallback-only",
+    ] {
+        assert_eq!(
+            stated_policy(Some(&family_statement(&[(unknown, 9, 17, 0, 10)])))
+                .expect_err("an unknown family is refused"),
+            StatementRefusal::UnknownFamily {
+                name: unknown.to_owned(),
+                span: At(9),
+            },
+        );
+    }
+    // The accepting neighbours differ only in the name.
+    for family in DeliveredFamily::ALL {
+        let minimum = family.governed_minimum();
+        let statement =
+            family_statement(&[(family.as_str(), 9, minimum.major(), minimum.minor(), 10)]);
+        assert!(
+            !resolved(&statement).is_empty(),
+            "`{}` is a family a list may name",
+            family.as_str(),
+        );
+    }
+}
+
+/// One family stated twice is refused at the repetition.
+#[test]
+fn a_repeated_family_is_refused_at_the_second_spelling() {
+    assert_eq!(
+        stated_policy(Some(&family_statement(&[
+            ("macos", 2, 14, 0, 3),
+            ("macos", 4, 15, 0, 5),
+        ])))
+        .expect_err("one family is stated twice"),
+        StatementRefusal::RepeatedFamily {
+            name: "macos",
+            span: At(4),
+        },
+    );
+    // The accepting neighbour differs only in the second family's name.
+    assert_eq!(
+        resolved(&family_statement(&[
+            ("macos", 2, 14, 0, 3),
+            ("ios", 4, 17, 0, 5),
+        ])),
+        vec!["ios-device", "ios-simulator", "macos"],
+    );
+}
+
+/// A stated floor below the governed one is refused at the version that stated
+/// it, carrying the driver's own reason.
+///
+/// The frontend forwards `MetalTarget::new`'s rejection rather than restating a
+/// floor, and it runs that check per entry so the refusal lands on the version
+/// token rather than on the statement. `ios 16.0` is checked as well as
+/// `macos 13.0` because one stated `ios` entry is two driver families, and the
+/// first of them in canonical order is what must be named.
+#[test]
+fn a_floor_below_the_governed_minimum_is_refused_at_the_version() {
+    /// One entry stated below its floor, and the first driver family it covers.
+    struct BelowFloor {
+        /// The governed entry stated first, so the refusal cannot be the
+        /// statement's.
+        governed: (&'static str, u32, u16, u16, u32),
+        /// The family stated second, and the floor it states.
+        family: &'static str,
+        major: u16,
+        minor: u16,
+        /// The driver family the refusal must name, in canonical order.
+        platform: ApplePlatform,
+        /// The minimum the governed table required.
+        required: DeploymentMinimum,
+    }
+
+    let cases = [
+        BelowFloor {
+            governed: ("ios", 2, 17, 0, 3),
+            family: "macos",
+            major: 13,
+            minor: 0,
+            platform: ApplePlatform::MacOs,
+            required: DeploymentMinimum::new(14, 0),
+        },
+        BelowFloor {
+            governed: ("macos", 2, 14, 0, 3),
+            family: "ios",
+            major: 16,
+            minor: 0,
+            platform: ApplePlatform::IOsDevice,
+            required: DeploymentMinimum::new(17, 0),
+        },
+    ];
+    for case in cases {
+        // Stated second, after a governed entry, so a refusal at the *statement*
+        // would be indistinguishable from one at the entry that is wrong.
+        let statement =
+            family_statement(&[case.governed, (case.family, 4, case.major, case.minor, 5)]);
+        assert_eq!(
+            stated_policy(Some(&statement)).expect_err("the floor is below the governed minimum"),
+            StatementRefusal::UngovernedTarget {
+                source: MetalTargetError::DeploymentMinimumTooLow {
+                    platform: case.platform,
+                    language: MslVersion::Metal3_1,
+                    requested: DeploymentMinimum::new(case.major, case.minor),
+                    required: case.required,
+                },
+                span: At(5),
+            },
+        );
+    }
+
+    // The accepting neighbours differ only in the minor version: exactly the
+    // governed floor is admitted, so the refusal is a floor and not a gap.
+    assert_eq!(
+        resolved(&family_statement(&[
+            ("macos", 2, 14, 0, 3),
+            ("ios", 4, 17, 0, 5),
+        ])),
+        vec!["ios-device", "ios-simulator", "macos"],
+    );
+}
+
+/// A region stating a selected family is refused at its `deliver` keyword, and
+/// the refusal says what is not wired rather than delivering a fallback.
+///
+/// This is what `deliver macos;` produces today, checked through the same two
+/// steps the expansion takes. Both productions reach it, because both name a
+/// family and nothing compiles one.
+#[test]
+fn a_stated_selected_family_is_refused_rather_than_quietly_delivered() {
+    let stated: [(&str, DeliverySyntax<At>, Vec<&str>); 2] = [
+        (
+            "deliver macos;",
+            profile_statement("macos", 2),
+            vec!["macos"],
+        ),
+        (
+            "deliver macos 14.0, ios 17.0;",
+            family_statement(&[("macos", 2, 14, 0, 3), ("ios", 4, 17, 0, 5)]),
+            vec!["ios-device", "ios-simulator", "macos"],
+        ),
+    ];
+    for (spelling, statement, families) in stated {
+        let policy = stated_policy(Some(&statement)).expect("the statement resolves");
+        let refusal = stated_delivery(policy)
+            .expect_err("no expansion compiles a selected family, so none is deliverable");
+        assert_eq!(
+            refusal,
+            DeliveryRefusal::BackendCompilationUnavailable { families },
+            "`{spelling}` must refuse rather than deliver",
+        );
+        let rendered = refusal.to_string();
+        assert!(
+            rendered.contains("no payload to deliver"),
+            "the refusal must say what is missing: {rendered}",
+        );
+        assert!(
+            rendered.contains("fallback-only"),
+            "the refusal must name the remedy: {rendered}",
+        );
+    }
 }
 
 /// A valid selection naming families is refused rather than silently
@@ -283,9 +644,10 @@ fn declaration_order_does_not_change_what_the_frontend_states() {
 /// Every named profile expands to a canonical selection, and to the families it
 /// names.
 ///
-/// This is Q-ART-008's close condition at the type level: a profile is a
-/// spelling that resolves through `ArtifactFamilySelection::new`, never a second
-/// encoder that could disagree with it about ordering or validity.
+/// This was Q-ART-008's close condition at the type level, and it stays checked
+/// after the question closed: a profile is a spelling that resolves through
+/// `ArtifactFamilySelection::new`, never a second encoder that could disagree
+/// with it about ordering or validity.
 #[test]
 fn every_named_profile_expands_to_a_canonical_selection() {
     assert_eq!(
@@ -304,8 +666,7 @@ fn every_named_profile_expands_to_a_canonical_selection() {
         ),
     ];
     for (profile, families) in expected {
-        let selection = profile
-            .selection()
+        let selection = ArtifactFamilySelection::new(profile.policy())
             .expect("every profile is a valid selection");
         let named: Vec<&str> = selection
             .families()
@@ -362,7 +723,10 @@ fn every_profile_name_round_trips_and_a_near_miss_refuses() {
 fn every_profile_family_sits_on_its_governed_language_floor() {
     let mut checked = 0_usize;
     for profile in NamedProfile::ALL {
-        for family in profile.selection().expect("valid").families() {
+        for family in ArtifactFamilySelection::new(profile.policy())
+            .expect("valid")
+            .families()
+        {
             checked += 1;
             let minimum = family.deployment_minimum;
             assert!(
@@ -406,7 +770,10 @@ fn every_profile_family_sits_on_its_governed_language_floor() {
 #[test]
 fn no_profile_names_mac_catalyst_and_the_governed_table_is_why() {
     for profile in NamedProfile::ALL {
-        for family in profile.selection().expect("valid").families() {
+        for family in ArtifactFamilySelection::new(profile.policy())
+            .expect("valid")
+            .families()
+        {
             assert_ne!(
                 family.family,
                 ApplePlatform::MacCatalyst,
@@ -415,6 +782,10 @@ fn no_profile_names_mac_catalyst_and_the_governed_table_is_why() {
             );
         }
     }
+    // Nor can the escape hatch reach it: the family list publishes the same two
+    // names, so no spelling a consumer writes selects Catalyst.
+    assert_eq!(DeliveredFamily::parse("mac-catalyst"), None);
+    assert_eq!(DeliveredFamily::parse("catalyst"), None);
     assert_eq!(
         MetalTarget::new(
             ApplePlatform::MacCatalyst,

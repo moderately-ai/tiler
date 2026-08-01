@@ -84,6 +84,9 @@ fn approved_region(axes: impl Fn() -> Vec<AxisSyntax<At>>) -> RegionSyntax<At> {
             operand("b", 20, "f32", axes()),
             operand("c", 30, "f32", axes()),
         ],
+        // A region's delivery policy decides nothing about what it means, which
+        // is why every case in this file states none.
+        delivery: None,
         out: At(40),
         body: approved_body(),
     }
@@ -313,6 +316,7 @@ fn a_region_without_operands_is_refused() {
         region: REGION,
         symbols: Vec::new(),
         operands: Vec::new(),
+        delivery: None,
         out: At(40),
         body: reference("a", 52),
     };
