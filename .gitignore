@@ -10,7 +10,7 @@
 /.loops/
 __pycache__/
 *.py[cod]
-/target/
+target/
 /.worktrees/
 # Compiler crash reports are regenerable diagnostics, not repository evidence.
 /rustc-ice-*.txt

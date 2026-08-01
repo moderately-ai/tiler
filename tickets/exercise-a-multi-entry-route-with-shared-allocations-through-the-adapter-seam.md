@@ -1,7 +1,7 @@
 ---
 id: exercise-a-multi-entry-route-with-shared-allocations-through-the-adapter-seam
 title: Exercise a multi-entry route with shared allocations through the adapter seam
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: worker-multi-entry
-lease_expires_at: 1785563203
 ---
 ## User-visible outcome
 
