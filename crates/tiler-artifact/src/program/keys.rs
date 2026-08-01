@@ -79,11 +79,12 @@
 //! `tiler_compiler::feasibility` records that its bytes *are* the descriptor
 //! identity rather than a hash of it, and it is under
 //! [`MAX_OPAQUE_IDENTITY_BYTES`], which for that subject is a **codec resource
-//! ceiling rather than a claim about profiles**: `tiler_compiler` publishes
-//! `MAX_TARGET_PROFILE_DESCRIPTOR_BYTES` and refuses where a descriptor is
-//! minted, so a governed producer cannot reach this bound and a value that does
-//! reach it was not minted by one. This crate still refuses it, because it
-//! validates what it is handed rather than trusting where it came from.
+//! ceiling rather than a claim about profiles**: `tiler_compiler` bounds a
+//! descriptor with its crate-private `MAX_TARGET_PROFILE_DESCRIPTOR_BYTES` and
+//! refuses where a descriptor is minted, so a governed producer cannot reach
+//! this bound and a value that does reach it was not minted by one. This crate
+//! still refuses it, because it validates what it is handed rather than
+//! trusting where it came from.
 
 use std::fmt;
 
