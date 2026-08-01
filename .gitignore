@@ -10,7 +10,11 @@
 /.loops/
 __pycache__/
 *.py[cod]
-target/
+# Anchored, plus the spike workspaces' own build directories: an unanchored
+# `target/` also swallows source modules named `target`, and a file added under
+# `crates/*/src/target/` would silently vanish from `git add`.
+/target/
+spikes/*/*/target/
 /.worktrees/
 # Compiler crash reports are regenerable diagnostics, not repository evidence.
 /rustc-ice-*.txt
