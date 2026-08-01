@@ -1,7 +1,7 @@
 ---
 id: restore-the-two-path-dependent-spikes-to-a-running-state
 title: Restore the two path-dependent spikes to a running state
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [reconcile-the-two-target-profile-key-grammars]
@@ -9,6 +9,9 @@ scopes: [research/target-profiles, research/cache]
 shared_scopes: []
 paths: []
 tags: [spikes, evidence, artifacts]
+claimed_from: todo
+assignee: worker-restore-the-
+lease_expires_at: 1785562405
 ---
 ## User-visible outcome
 

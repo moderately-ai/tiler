@@ -1,7 +1,7 @@
 ---
 id: produce-a-custom-backend-payload-through-the-build-orchestrator
 title: Produce a custom backend payload through the build orchestrator
-status: todo
+status: in-progress
 priority: p1
 dependencies: [accept-the-public-backend-provider-composition-boundary]
 related: [drive-the-build-orchestrator-from-a-checked-compiler-plan, assemble-prepared-metal-artifacts-in-tiler-build]
@@ -9,6 +9,9 @@ scopes: [implementation/build, implementation/compiler, implementation/artifact,
 shared_scopes: [project/tickets]
 paths: []
 tags: [backend-providers, pluggability, implementation, build, artifacts]
+claimed_from: todo
+assignee: worker-produce-a-cu
+lease_expires_at: 1785562404
 ---
 ## User-visible outcome
 
