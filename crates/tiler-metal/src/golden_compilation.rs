@@ -85,6 +85,14 @@
 //! -ffp-contract=off`, and the four-entry-point portfolio unit links into one
 //! library carrying all four `tiler_kernel_*` symbols.
 //!
+//! **The cooperative fixture is the newest and the one that moved the boundary.**
+//! `cooperative_workgroup_reduction.metal` is the first golden whose entry point
+//! declares threadgroup storage, reads `[[thread_index_in_threadgroup]]`, stages
+//! values, and carries a `threadgroup_barrier` — so this run is the measurement
+//! that the Apple toolchain accepts the staged, fenced body this backend now
+//! emits, rather than only the flat per-invocation bodies it emitted before.
+//! Recorded on the same host and toolchain as the row above.
+//!
 //! Library size is deliberately **not** asserted. A 14,620-byte link of the
 //! four goldens was recorded at commit `59060b5`; after `e24f4c5` changed the
 //! emitted source the same command yields 14,716 bytes. A byte count is a
@@ -119,7 +127,7 @@ const REQUIRE_TOOLCHAIN: &str = "TILER_REQUIRE_METAL_TOOLCHAIN";
 /// `every_checked_in_golden_is_compiled_by_this_module` proves this list covers
 /// the whole `goldens/` directory, so a new fixture cannot be added without
 /// being compiled.
-const GOLDENS: [(&str, &str); 4] = [
+const GOLDENS: [(&str, &str); 6] = [
     (
         "pointwise_scale_bias.metal",
         include_str!("../goldens/pointwise_scale_bias.metal"),
@@ -135,6 +143,18 @@ const GOLDENS: [(&str, &str); 4] = [
     (
         "reduction_fused_multiply_add.metal",
         include_str!("../goldens/reduction_fused_multiply_add.metal"),
+    ),
+    (
+        "contraction_strict_tensor.metal",
+        include_str!("../goldens/contraction_strict_tensor.metal"),
+    ),
+    // The one fixture whose entry point declares threadgroup storage, reads a
+    // local invocation coordinate, and carries a barrier. Compiling it is what
+    // turns "the emitter produces this text" into "the Metal compiler accepts a
+    // cooperative kernel", which no other golden can say.
+    (
+        "cooperative_workgroup_reduction.metal",
+        include_str!("../goldens/cooperative_workgroup_reduction.metal"),
     ),
 ];
 
@@ -507,6 +527,65 @@ fn a_golden_whose_helper_is_renamed_is_rejected_when_a_toolchain_resolves() {
     let error = toolchain
         .compile(&golden_request(&broken))
         .expect_err("an undeclared function call must not compile");
+    match error {
+        DriverError::ToolFailure { stage, stderr, .. } => {
+            assert_eq!(stage, CompileStage::Metal);
+            assert!(
+                !stderr.is_empty(),
+                "the compiler must explain the rejection"
+            );
+        }
+        other => panic!("expected a metal-stage ToolFailure, got {other:?}"),
+    }
+}
+
+/// A cooperative golden stripped of its workgroup storage must be rejected.
+///
+/// The sibling of `a_golden_whose_helper_is_renamed_is_rejected_when_a_toolchain_resolves`,
+/// and it exists for the same reason at the one construct that test cannot
+/// reach. The cooperative fixture is the only one whose entry point declares
+/// threadgroup storage, and its declaration is emitted by a different code path
+/// from every other line in the file — so "the goldens compile" would stay green
+/// if that path emitted nothing at all and the fixture were rebaselined to
+/// match. Deleting the declaration leaves every staged access referring to an
+/// undeclared identifier, which is exactly the failure a byte-stability golden
+/// cannot see.
+///
+/// This is what makes the cooperative fixture's compile evidence non-vacuous:
+/// it shows the Metal compiler is actually reading the staged body, not merely
+/// accepting a file that happens to parse.
+#[test]
+fn a_cooperative_golden_without_its_staging_is_rejected_when_a_toolchain_resolves() {
+    const DECLARATION: &str = "    threadgroup float tg0[3];\n";
+
+    let Some(toolchain) = resolved_toolchain() else {
+        return;
+    };
+    let name = "cooperative_workgroup_reduction.metal";
+    let source = GOLDENS
+        .iter()
+        .find(|(fixture, _)| *fixture == name)
+        .map(|(_, source)| *source)
+        .expect("the cooperative fixture is compiled by this module");
+    assert!(
+        source.contains(DECLARATION),
+        "{name}: the fixture must declare the tile's workgroup storage"
+    );
+    let uses = source.matches("tg0").count();
+    assert!(
+        uses > 1,
+        "{name}: the staging must be declared and then accessed"
+    );
+    let broken = source.replacen(DECLARATION, "", 1);
+    assert_eq!(
+        broken.matches("tg0").count(),
+        uses - 1,
+        "only the declaration may be removed, so the staged accesses stay undeclared"
+    );
+
+    let error = toolchain
+        .compile(&golden_request(&broken))
+        .expect_err("a staged access to an undeclared allocation must not compile");
     match error {
         DriverError::ToolFailure { stage, stderr, .. } => {
             assert_eq!(stage, CompileStage::Metal);

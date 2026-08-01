@@ -26,12 +26,13 @@ use tiler_ir::kernel::{
 };
 use tiler_ir::schedule::{
     Access, AccessMode, ArithmeticType, BoundsProof, BoundsProofKind, BoundsWitnessId,
-    ContractionAxisSource, ContributorOrder, ExceptionalValueAssumption, ExecutionBinding,
-    FlushedZeroSign, InputOrdinal, KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission,
-    NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
-    PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionTopology, RegionId,
-    ScalarProgram, ScheduledRegionBuilder, SubnormalFreedom, SubnormalMode, SyncPointId,
-    TailPolicy, TensorRole, ValueDomainProvenance, VerifiedScheduledRegion, element_count,
+    ContractionAxisSource, ContributorArrival, ContributorOrder, ContributorPartition,
+    ExceptionalValueAssumption, ExecutionBinding, FlushedZeroSign, InputOrdinal, KernelSchedule,
+    LaunchPlan, LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof,
+    OwnershipProofKind, OwnershipWitnessId, PointwiseF32Expression, PointwiseF32ExpressionBuilder,
+    ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalFreedom,
+    SubnormalMode, SyncPointId, TailPolicy, TensorRole, ValueDomainProvenance,
+    VerifiedScheduledRegion, element_count, workgroup_tree_tile,
 };
 use tiler_ir::semantic::RMS_NORM_F32_QWEN3_EPS_BITS;
 use tiler_ir::semantic::{
@@ -769,6 +770,135 @@ pub(crate) fn contraction_kernel() -> VerifiedKernel {
         .expect("bounded contraction fixture lowers")
 }
 
+/// The single-workgroup tree realization of a `[2, 6] -> [2]` strict sum.
+///
+/// Three participants per workgroup, each folding two contributors into its own
+/// staging slot, all three reading the staged set back, one committing. The tile
+/// comes from [`workgroup_tree_tile`] rather than being spelled out here, so this
+/// fixture cannot drift from the canonical dataflow the schedule verifier and
+/// the structured-kernel lowering are both written against.
+///
+/// This is the *only* fixture in this crate whose kernel names a local
+/// invocation coordinate, declares workgroup storage, stages values, and carries
+/// a barrier — so it is what makes the staged and local-index emission paths
+/// reachable at all.
+fn cooperative_region(id: RegionId) -> VerifiedScheduledRegion {
+    const PARTICIPANTS: u64 = 3;
+    const CONTRIBUTORS_PER_PARTITION: u64 = 2;
+    let input = Shape::from_dims([2, 6]);
+    let output = Shape::from_dims([2]);
+    let axes = vec![Axis::new(1)];
+    let output_elements = element_count(&output).unwrap();
+    let work_items = output_elements * PARTICIPANTS;
+
+    let mut builder = ScheduledRegionBuilder::new(id);
+    builder.iteration_shape(Shape::from_dims([2, 3])).unwrap();
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Intermediate,
+            component_role: None,
+            mode: AccessMode::Read,
+            map: LogicalAccess::ReductionContributor {
+                input_shape: input.clone(),
+                output_shape: output.clone(),
+                axes: axes.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+            },
+            bounds: BoundsWitnessId::new(0),
+            ownership: None,
+        })
+        .unwrap();
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Output,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(1),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        })
+        .unwrap();
+    builder
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(0),
+            tensor: TensorRole::Intermediate,
+            component_role: None,
+            kind: BoundsProofKind::ReductionDomain {
+                input_shape: input,
+                output_shape: output,
+                axes: axes.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+            },
+        })
+        .unwrap();
+    builder
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(1),
+            tensor: TensorRole::Output,
+            component_role: None,
+            kind: BoundsProofKind::LinearRange {
+                element_count: output_elements,
+            },
+        })
+        .unwrap();
+    builder
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                output_count: output_elements,
+            },
+        })
+        .unwrap();
+    builder
+        .scalar_program(ScalarProgram::StrictSerialSum {
+            axes: axes.clone(),
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: NAN_BITS,
+            empty_identity_bits: 0.0_f32.to_bits(),
+        })
+        .unwrap();
+    // A cooperative split regroups the declared contributor sequence, so the
+    // contract has to permit reassociation or the schedule verifier refuses the
+    // topology outright. Every other dimension stays strict.
+    builder
+        .numerical(NumericalRealization {
+            reassociation: NumericalPermission::Permitted,
+            ..numerical(NAN_BITS)
+        })
+        .unwrap();
+    builder
+        .schedule(KernelSchedule {
+            threads_per_workgroup: u32::try_from(PARTICIPANTS).unwrap(),
+            reduction: ReductionTopology::CooperativeWorkgroup {
+                partition: ContributorPartition {
+                    partitions: PARTICIPANTS,
+                    contributors_per_partition: CONTRIBUTORS_PER_PARTITION,
+                },
+                tile: workgroup_tree_tile(PARTICIPANTS).expect("the canonical tree tile"),
+                axes,
+                order: ContributorOrder::OriginalAxisLexicographic,
+                accumulation: ArithmeticType::F32,
+                permits_reassociation: true,
+                permits_permutation: false,
+                arrival: ContributorArrival::AscendingParticipant,
+            },
+            launch: LaunchPlan {
+                grid_threads: work_items,
+                threads_per_workgroup: u32::try_from(PARTICIPANTS).unwrap(),
+                zero_work_skips_dispatch: true,
+            },
+            ..linear_schedule(work_items)
+        })
+        .unwrap();
+    builder.build().unwrap()
+}
+
+pub(crate) fn cooperative_kernel() -> VerifiedKernel {
+    lower_scheduled_region(&cooperative_region(RegionId::new(10)))
+        .expect("bounded cooperative fixture lowers")
+}
+
 pub(crate) fn pointwise_kernel() -> VerifiedKernel {
     lower_scheduled_region(&pointwise_region(
         RegionId::new(0),
@@ -924,6 +1054,91 @@ fn fused_reduction_matches_its_golden_source() {
         "reduction_fused_multiply_add.metal",
         include_str!("../goldens/reduction_fused_multiply_add.metal"),
         &emit_one(&fused_reduction_kernel()),
+    );
+}
+
+#[test]
+fn contraction_matches_its_golden_source() {
+    assert_golden(
+        "contraction_strict_tensor.metal",
+        include_str!("../goldens/contraction_strict_tensor.metal"),
+        &emit_one(&contraction_kernel()),
+    );
+}
+
+#[test]
+fn cooperative_workgroup_reduction_matches_its_golden_source() {
+    assert_golden(
+        "cooperative_workgroup_reduction.metal",
+        include_str!("../goldens/cooperative_workgroup_reduction.metal"),
+        &emit_one(&cooperative_kernel()),
+    );
+}
+
+/// The cooperative kernel emits every construct its tile requires, and no other.
+///
+/// Stated over the emitted text rather than left to the golden alone: a golden
+/// proves the bytes did not change, and this proves *which* bytes have to be
+/// there. If threadgroup storage, the local coordinate, the staged handoff, or
+/// the fence were dropped, the golden would simply be rebaselined by whoever
+/// broke it, and nothing would say the result was still a cooperative kernel.
+#[test]
+fn the_cooperative_kernel_emits_storage_a_local_index_a_handoff_and_a_fence() {
+    let source = emit_one(&cooperative_kernel());
+    assert!(
+        source.contains("threadgroup float tg0[3];"),
+        "the tile's workgroup storage must be declared in the entry point: {source}"
+    );
+    assert!(
+        source.contains("uint tiler_local_invocation_index [[thread_index_in_threadgroup]]"),
+        "a cooperative kernel must name its participants' local coordinate: {source}"
+    );
+    assert!(
+        source.contains("tg0[") && source.contains("] = "),
+        "the producing phase must store into staging: {source}"
+    );
+    assert!(
+        source.contains("threadgroup_barrier(mem_flags::mem_threadgroup);"),
+        "the staged handoff must be fenced: {source}"
+    );
+    // The fence separates the two phases, so the barrier must sit between the
+    // staged store and the staged load in the emitted order — the property the
+    // structured-kernel verifier proves and the emitter must not reorder.
+    let store = source.find("  // tile phase 0").expect("a staged store");
+    let fence = source
+        .find("threadgroup_barrier")
+        .expect("the discharging barrier");
+    let load = source.find("  // tile phase 1").expect("a staged load");
+    assert!(
+        store < fence && fence < load,
+        "the barrier must separate the staged write from the staged read: {source}"
+    );
+}
+
+/// Staging is declared inside the entry point, never in the argument table.
+///
+/// The ordinals are positional, so admitting workgroup storage as a
+/// `[[buffer(N)]]` parameter would re-base every later index and change what an
+/// existing signature position means. This pins that the cooperative kernel's
+/// two boundary tensors still occupy buffers 0 and 1.
+#[test]
+fn workgroup_staging_takes_no_argument_table_position() {
+    let source = emit_one(&cooperative_kernel());
+    assert!(
+        source.contains("device const float *b0 [[buffer(0)]]"),
+        "{source}"
+    );
+    assert!(
+        source.contains("device float *b1 [[buffer(1)]]"),
+        "{source}"
+    );
+    assert!(
+        !source.contains("[[buffer(2)]]"),
+        "workgroup staging must not claim an argument-table ordinal: {source}"
+    );
+    assert!(
+        !source.contains("[[threadgroup("),
+        "statically extended staging is a function-scope declaration, not a binding: {source}"
     );
 }
 
