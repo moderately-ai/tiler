@@ -3748,7 +3748,18 @@ mod tests {
                 // admits a different set of scale values is a different
                 // request. The trace's own two record lines are unchanged;
                 // nothing about explain's content moved.
-                "tiler-explain-v7 request=bae4788d2fc79631\n",
+                // Rebaselined from `bae4788d2fc79631` when the standard semantic
+                // registry began registering `tiler::constant-bf16@1`,
+                // `tiler::multiply-bf16@1`, and `tiler::add-bf16@1`. Only the
+                // semantic half of the subject moves: the snapshot admits three
+                // further operation families, each with its own schema, facts,
+                // and normative reference. Nothing on the compiler side moved
+                // with it — no capability row, no lowering capability, and no
+                // target declaration names bf16 — so a bf16 program still fails
+                // closed everywhere past the semantic layer, and this digest is
+                // the only pin that moved. The trace's own two record lines are
+                // unchanged; nothing about explain's content moved.
+                "tiler-explain-v7 request=b610aff7e1907c00\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

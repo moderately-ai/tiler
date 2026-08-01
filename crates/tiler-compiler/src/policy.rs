@@ -177,11 +177,20 @@ impl OperationNumericalCapability {
 /// Every semantic operation family this build admits, with what it can consume.
 ///
 /// **Fact.** The governed semantic registry admits the four scalar `f32`
-/// operations plus strict-affine association, quantization, and dequantization.
-/// The affine operations' exact behavior is carried by the encoded value and
-/// operation contracts rather than selected from the caller's generic policy.
-/// None of the admitted operations permits a reciprocal substitution or
+/// operations, the strict tensor contraction, `Reindex` and `Broadcast`, and
+/// strict-affine association, quantization, and dequantization; every one has a
+/// row below. The affine operations' exact behavior is carried by the encoded
+/// value and operation contracts rather than selected from the caller's generic
+/// policy. None of the admitted operations permits a reciprocal substitution or
 /// approximate intrinsic.
+///
+/// **Fact.** The registry also admits `tiler::constant-bf16@1`,
+/// `tiler::multiply-bf16@1`, and `tiler::add-bf16@1`, and none of the three has
+/// a row here. That is deliberate and is checked by
+/// `every_unplanned_operation_is_registered_and_consumes_no_dimension`: a BF16
+/// operation consumes no numerical freedom, so every rewrite that asks for one
+/// declines, and adding a row would widen `is_consumable`'s union for an
+/// operation no target profile can even state a numerical contract for.
 ///
 /// **Inference.** `ReciprocalTransform` needs a division to replace,
 /// `ApproximateIntrinsics` needs an elementary function to approximate, and
@@ -623,7 +632,7 @@ mod tests {
         ExceptionalValueAssumption, NumericalPermission, ValueDomainProvenance,
     };
     use tiler_ir::semantic::{
-        FrozenSemanticRegistry, add_f32_op, constant_f32_op, multiply_f32_op,
+        FrozenSemanticRegistry, OpKey, add_f32_op, constant_f32_op, multiply_f32_op,
     };
 
     /// Every registered preset states a contract this build can actually realize.
@@ -653,6 +662,23 @@ mod tests {
         assert_eq!(unrepresentable_dimension(&contract), None);
     }
 
+    /// Operations the semantic registry admits and this build cannot plan.
+    ///
+    /// A registered operation with no capability row consumes no numerical
+    /// freedom and is declined by every rewrite that asks for one. For BF16 that
+    /// is the correct state rather than a gap to be filled: a row would enter
+    /// each dimension it listed into `is_consumable`'s union, which is what
+    /// decides whether a *contract* may permit that dimension at all, so writing
+    /// one would widen this build's numerical surface on the strength of an
+    /// operation nothing downstream can realize. `ScalarArithmetic` admits only
+    /// the governed `f32` association, so no BF16 numerical row can be stated on
+    /// a target profile either.
+    const UNPLANNED_OPERATIONS: &[&str] = &[
+        "tiler::add-bf16@1",
+        "tiler::constant-bf16@1",
+        "tiler::multiply-bf16@1",
+    ];
+
     /// The capability table names the operations the registry actually admits.
     ///
     /// Both directions. A key spelled differently from the registry's would put a
@@ -662,6 +688,11 @@ mod tests {
     /// its first spelling used underscores where the registry uses hyphens, which
     /// is precisely why this compares against the keys rather than against a
     /// second list.
+    ///
+    /// The one admitted absence is [`UNPLANNED_OPERATIONS`], subtracted by name
+    /// rather than by a predicate over the key text, so a newly registered
+    /// operation still has to be added to the capability table or listed there
+    /// deliberately. Neither direction weakened.
     #[test]
     fn the_capability_table_names_exactly_the_admitted_operations() {
         let mut declared: Vec<_> = operation_capabilities()
@@ -672,10 +703,61 @@ mod tests {
         let mut expected: Vec<_> = registry
             .operation_definitions()
             .map(|definition| definition.key().to_string())
+            .filter(|key| !UNPLANNED_OPERATIONS.contains(&key.as_str()))
             .collect();
         declared.sort();
         expected.sort();
         assert_eq!(declared, expected);
+    }
+
+    /// Every unplanned operation is registered, rowless, and consumes nothing.
+    ///
+    /// Without this the subtraction above degrades silently: a name matching no
+    /// registered operation would exclude nothing and read as a pass, and a
+    /// capability row appearing later for one of these would go unnoticed.
+    #[test]
+    fn every_unplanned_operation_is_registered_and_consumes_no_dimension() {
+        let registry = FrozenSemanticRegistry::standard().expect("the governed registry composes");
+        let registered: Vec<String> = registry
+            .operation_definitions()
+            .map(|definition| definition.key().to_string())
+            .collect();
+        assert!(
+            registered.len() > UNPLANNED_OPERATIONS.len(),
+            "the subtraction leaves a nonempty population to compare"
+        );
+        for key in UNPLANNED_OPERATIONS {
+            assert!(
+                registered.iter().any(|candidate| candidate == key),
+                "{key} is subtracted from the capability comparison, so it must be registered"
+            );
+            assert!(
+                operation_capabilities()
+                    .iter()
+                    .all(|capability| capability.key() != *key),
+                "{key} must carry no capability row"
+            );
+            let operation = OpKey::new(
+                "tiler",
+                key.trim_start_matches("tiler::").trim_end_matches("@1"),
+                1,
+            )
+            .expect("an unplanned operation key is well formed");
+            assert!(
+                operation_capability(&operation).is_none(),
+                "{key} resolves to no capability, so every rewrite asking for one declines"
+            );
+            for dimension in CANONICAL_DIMENSIONS {
+                assert!(
+                    !operation_capabilities()
+                        .iter()
+                        .any(|capability| capability.key() == *key
+                            && capability.can_consume(dimension)),
+                    "{key} consumes no {}",
+                    dimension.key()
+                );
+            }
+        }
     }
 
     /// Each of the four widened dimensions is representable.

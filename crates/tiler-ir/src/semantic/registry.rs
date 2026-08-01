@@ -8,6 +8,7 @@ use std::sync::{Arc, OnceLock};
 use crate::identity::{push_len, push_slice};
 use crate::shape::Axis;
 
+use super::bf16::register_standard_bf16;
 use super::broadcast::register_standard_broadcast;
 use super::catalog::register_builtin_dtype_catalog;
 use super::contraction::register_standard_contraction;
@@ -2110,6 +2111,10 @@ impl SemanticRegistryProvider for StandardSemantics {
             Arc::new(StrictSerialSumF32),
         ))?;
         register_standard_contraction(registrar)?;
+        // BF16 is a second scalar float beside F32, never a widening of it: its
+        // three keys name their operand type and no F32 signature above admits a
+        // BF16 operand or the reverse.
+        register_standard_bf16(registrar)?;
         // The two structural families sit between the arithmetic and quantized
         // registrations for a reader's benefit alone: registration order fixes
         // nothing about semantics, and the frozen snapshot's identity is

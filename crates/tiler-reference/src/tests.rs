@@ -15,13 +15,14 @@ use super::registry::ReferenceRegistrationBatch;
 use super::standard::StandardReferenceProvider;
 use super::*;
 use tiler_ir::semantic::{
-    AttributeFieldId, CanonicalField, CanonicalValue, CanonicalValueKind, F32, F32Add, F32Constant,
-    F32Multiply, InputKey, NormativeDefinitionRef, OperationArity, OperationAttributeSchema,
-    OperationConformance, OperationDefinition, OperationDefinitionFacts, OperationEffect,
-    OperationInferenceError, OperationInferencer, OperationSchema, OutputKey,
-    SemanticProgramBuilder, SemanticRegistryBuilder, SemanticRegistryProvider,
-    SemanticRegistryRegistrar, StrictSerialF32Sum, TypeDefinitionFacts, Value, ValueTypeDefinition,
-    ValueTypeDefinitionKey,
+    AttributeFieldId, Bf16Add, Bf16Constant, Bf16Multiply, CanonicalField, CanonicalValue,
+    CanonicalValueKind, F32, F32Add, F32Constant, F32Multiply, InputKey, NormativeDefinitionRef,
+    OperationArity, OperationAttributeSchema, OperationConformance, OperationDefinition,
+    OperationDefinitionFacts, OperationEffect, OperationInferenceError, OperationInferencer,
+    OperationSchema, OutputKey, SemanticProgramBuilder, SemanticRegistryBuilder,
+    SemanticRegistryProvider, SemanticRegistryRegistrar, StrictSerialF32Sum, TypeDefinitionFacts,
+    Value, ValueTypeDefinition, ValueTypeDefinitionKey, add_bf16_op, constant_bf16_op,
+    multiply_bf16_op,
 };
 use tiler_ir::semantic::{
     FrozenSemanticRegistry, OpKey, OperationAttributes, ProviderIdentity, ResolvedValueType,
@@ -826,6 +827,67 @@ fn missing_and_external_reference_capabilities_are_explicit() {
         evaluator.evaluate(&program, &bindings).unwrap(),
         vec![tensor]
     );
+}
+
+/// Registering the BF16 signatures did not make a BF16 program evaluable.
+///
+/// The semantic layer now verifies these programs, which is exactly why this
+/// check exists: "the graph builds" is the step that most easily reads as "the
+/// dtype works". The standard reference provider registers no BF16 capability,
+/// so each of the three keys fails closed by name rather than evaluating through
+/// an F32 evaluator that would silently compute at the wrong precision.
+#[test]
+fn the_registered_bf16_operations_are_not_reference_evaluable() {
+    for build in [
+        (|graph: &mut SemanticProgramBuilder| Bf16Constant::apply(graph, 0x3f80).unwrap().erase())
+            as fn(&mut SemanticProgramBuilder) -> tiler_ir::semantic::ValueId,
+        |graph: &mut SemanticProgramBuilder| {
+            let left = Bf16Constant::apply(graph, 0x3f80).unwrap();
+            let right = Bf16Constant::apply(graph, 0x4000).unwrap();
+            Bf16Multiply::apply(graph, left, right).unwrap().erase()
+        },
+        |graph: &mut SemanticProgramBuilder| {
+            let left = Bf16Constant::apply(graph, 0x3f80).unwrap();
+            let right = Bf16Constant::apply(graph, 0x4000).unwrap();
+            Bf16Add::apply(graph, left, right).unwrap().erase()
+        },
+    ] {
+        let mut graph = SemanticProgramBuilder::try_standard().unwrap();
+        let result = build(&mut graph);
+        graph
+            .output_resolved(OutputKey::new("result").unwrap(), result)
+            .unwrap();
+        // The semantic layer verifies it. Nothing below the semantic layer does.
+        let program = graph.build().unwrap();
+
+        let error = ReferenceEvaluator::standard()
+            .unwrap()
+            .evaluate(&program, &[])
+            .unwrap_err();
+        let EvaluationError::MissingCapability { operation, .. } = error else {
+            panic!("a bf16 program fails closed on a missing capability, not {error}");
+        };
+        assert!(
+            [constant_bf16_op(), multiply_bf16_op(), add_bf16_op()].contains(&operation),
+            "the refusal names a bf16 operation, found {operation}"
+        );
+    }
+
+    // The neighbour that proves the evaluator is alive: the same shape of
+    // program in f32 evaluates.
+    let mut graph = SemanticProgramBuilder::try_standard().unwrap();
+    let left = constant(&mut graph, 1.0);
+    let right = constant(&mut graph, 2.0);
+    let sum = add(&mut graph, left, right);
+    graph
+        .output_resolved(OutputKey::new("result").unwrap(), sum.erase())
+        .unwrap();
+    let program = graph.build().unwrap();
+    let outputs = ReferenceEvaluator::standard()
+        .unwrap()
+        .evaluate(&program, &[])
+        .unwrap();
+    assert_eq!(f32_values(&outputs[0]), [3.0]);
 }
 
 #[test]

@@ -3,12 +3,13 @@
 use crate::shape::{Axis, ShapeEvidence, StaticShape};
 
 use super::{
-    BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, BuildError,
-    CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField, CanonicalValue,
+    BF16_CONSTANT_BITS_ATTRIBUTE, BROADCAST_AXIS_MAPPING_ATTRIBUTE, Bf16, BroadcastAxisMapping,
+    BuildError, CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField, CanonicalValue,
     ContractionIndexStructure, F32, F32_CONSTANT_BITS_ATTRIBUTE, OperationAttributes,
     REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, ReindexForm, SemanticProgramBuilder,
-    ShapedValue, Value, add_f32_op, broadcast_f32_op, constant_f32_op, multiply_f32_op,
-    reindex_f32_op, strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
+    ShapedValue, Value, add_bf16_op, add_f32_op, broadcast_f32_op, canonical_bf16_bits,
+    constant_bf16_op, constant_f32_op, multiply_bf16_op, multiply_f32_op, reindex_f32_op,
+    strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
 };
 
 /// Exact binary32 constant from its IEEE-754 payload.
@@ -350,6 +351,137 @@ impl F32Broadcast {
         .map_err(BuildError::InvalidOperationAttributes)?;
         apply_single(builder, broadcast_f32_op(), attributes, &[input.erase()])
     }
+}
+
+/// Exact BF16 constant from its payload in the ratified RISC-V BF16 operand format.
+///
+/// Not a peer that widens [`F32Constant`]: the two build different operations
+/// whose payload formats are separate identities, and neither accepts the
+/// other's bits.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Bf16Constant;
+
+impl Bf16Constant {
+    /// Applies the registered BF16 scalar constant semantics.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed construction error without mutating the graph on
+    /// failure.
+    pub fn apply(
+        builder: &mut SemanticProgramBuilder,
+        bits: u16,
+    ) -> Result<Value<Bf16>, BuildError> {
+        builder.apply_typed_single(constant_bf16_op(), bf16_constant_attributes(bits)?, &[])
+    }
+
+    /// Applies the BF16 scalar constant semantics and preserves its exact shape.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed construction error without mutating the graph on
+    /// failure.
+    pub fn apply_shaped(
+        builder: &mut SemanticProgramBuilder,
+        bits: u16,
+    ) -> Result<ShapedValue<Bf16, StaticShape<0, { [] }>>, BuildError> {
+        builder.apply_shaped_single(constant_bf16_op(), bf16_constant_attributes(bits)?, &[])
+    }
+}
+
+/// Separate BF16 multiplication with scalar broadcast.
+///
+/// Separate in the ADR 0015 sense: this multiply is not fusable with an adjacent
+/// add, and no fused BF16 primitive exists to fuse it into.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Bf16Multiply;
+
+impl Bf16Multiply {
+    /// Applies the registered BF16 multiplication semantics.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed construction error without mutating the graph on
+    /// failure, including the named refusal when an operand is not BF16.
+    pub fn apply(
+        builder: &mut SemanticProgramBuilder,
+        left: Value<Bf16>,
+        right: Value<Bf16>,
+    ) -> Result<Value<Bf16>, BuildError> {
+        builder.apply_typed_single(
+            multiply_bf16_op(),
+            OperationAttributes::empty(),
+            &[left.erase(), right.erase()],
+        )
+    }
+
+    /// Applies BF16 multiplication and rechecks the shared operand evidence on
+    /// its result.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed construction or shape-refinement error.
+    pub fn apply_shaped<E: ShapeEvidence>(
+        builder: &mut SemanticProgramBuilder,
+        left: ShapedValue<Bf16, E>,
+        right: ShapedValue<Bf16, E>,
+    ) -> Result<ShapedValue<Bf16, E>, BuildError> {
+        builder.apply_shaped_single(
+            multiply_bf16_op(),
+            OperationAttributes::empty(),
+            &[left.weaken().erase(), right.weaken().erase()],
+        )
+    }
+}
+
+/// Separate BF16 addition with scalar broadcast.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Bf16Add;
+
+impl Bf16Add {
+    /// Applies the registered BF16 addition semantics.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed construction error without mutating the graph on
+    /// failure, including the named refusal when an operand is not BF16.
+    pub fn apply(
+        builder: &mut SemanticProgramBuilder,
+        left: Value<Bf16>,
+        right: Value<Bf16>,
+    ) -> Result<Value<Bf16>, BuildError> {
+        builder.apply_typed_single(
+            add_bf16_op(),
+            OperationAttributes::empty(),
+            &[left.erase(), right.erase()],
+        )
+    }
+
+    /// Applies BF16 addition and rechecks the shared operand evidence on its
+    /// result.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed construction or shape-refinement error.
+    pub fn apply_shaped<E: ShapeEvidence>(
+        builder: &mut SemanticProgramBuilder,
+        left: ShapedValue<Bf16, E>,
+        right: ShapedValue<Bf16, E>,
+    ) -> Result<ShapedValue<Bf16, E>, BuildError> {
+        builder.apply_shaped_single(
+            add_bf16_op(),
+            OperationAttributes::empty(),
+            &[left.weaken().erase(), right.weaken().erase()],
+        )
+    }
+}
+
+fn bf16_constant_attributes(bits: u16) -> Result<OperationAttributes, BuildError> {
+    OperationAttributes::new([CanonicalField::new(
+        BF16_CONSTANT_BITS_ATTRIBUTE,
+        canonical_bf16_bits(bits),
+    )])
+    .map_err(BuildError::InvalidOperationAttributes)
 }
 
 fn apply_single(

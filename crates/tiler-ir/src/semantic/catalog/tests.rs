@@ -1,11 +1,13 @@
 use std::collections::BTreeSet;
 
 use super::*;
+use crate::semantic::BF16_CONSTANT_BITS_ATTRIBUTE;
 use crate::semantic::{
     AttributeFieldId, BuildError, EncodedComponentDeclaration, EncodedComponentRole,
     EncodedComponentShape, EncodedNumericContract, FrozenSemanticRegistry, InputKey,
     OperationAttributes, OutputKey, ParameterIndexMap, ProviderIdentity, SemanticProgramBuilder,
-    SemanticRegistryBuilder, SemanticRegistryProvider, StrictAffineU4, U4, ValueFact, add_f32_op,
+    SemanticRegistryBuilder, SemanticRegistryProvider, StrictAffineU4, U4, ValueFact, add_bf16_op,
+    add_f32_op, canonical_bf16_bits, constant_bf16_op, multiply_bf16_op,
 };
 use crate::shape::Shape;
 
@@ -741,6 +743,12 @@ fn microscaling_schemes_are_recognized_and_refuse_every_static_contract() {
 /// the only path by which a value type acquires an operation signature. The
 /// operation set is read from the frozen registry rather than listed, so a
 /// newly registered operation is covered without editing this test.
+///
+/// `bf16` left this population when `tiler::constant-bf16@1`,
+/// `tiler::multiply-bf16@1`, and `tiler::add-bf16@1` were registered. It is not
+/// silently dropped: the sibling test below asserts that exactly those three
+/// keys admit it and that every other registered operation still refuses it, so
+/// the promotion is bounded rather than a hole in this population.
 #[test]
 fn no_registered_operation_admits_a_recognized_but_unsupported_identity() {
     let registry = standard();
@@ -758,7 +766,6 @@ fn no_registered_operation_admits_a_recognized_but_unsupported_identity() {
         nominal("i8"),
         nominal("u16"),
         nominal("f16"),
-        nominal("bf16"),
         nominal("f64"),
         nominal("f8e4m3fn"),
         nominal("f8e8m0fnu"),
@@ -784,6 +791,82 @@ fn no_registered_operation_admits_a_recognized_but_unsupported_identity() {
                     "{operation} admitted {subject:?} at arity {arity}"
                 );
             }
+        }
+    }
+}
+
+/// `bf16`'s promotion out of that population is exactly three keys wide.
+///
+/// Counted rather than spot-checked: the operation set is read from the frozen
+/// registry, every key is classified, and the admitting set is compared against
+/// the three by name. A fourth operation quietly admitting `bf16` — or one of
+/// these three ceasing to — fails here, which is the property the population
+/// above gave up when `bf16` left it.
+#[test]
+fn exactly_the_three_bf16_keys_admit_the_bf16_identity() {
+    let registry = standard();
+    let bf16 = nominal("bf16");
+    assert!(registry.contains(&bf16));
+
+    let admitting: BTreeSet<String> = registry
+        .operation_definitions()
+        .map(|definition| definition.key().clone())
+        .filter(|operation| {
+            // The bf16 constant takes zero operands and a required attribute,
+            // so no arity in this sweep can accept it; it is classified by name
+            // below instead of by an application this loop cannot construct.
+            (0..=3_usize).any(|arity| {
+                let operands: Vec<_> =
+                    std::iter::repeat_n(ValueFact::new(bf16.clone(), Shape::from_dims([2])), arity)
+                        .collect();
+                registry
+                    .infer_operation(operation, &operands, &OperationAttributes::empty())
+                    .is_ok()
+            })
+        })
+        .map(|operation| operation.to_string())
+        .collect();
+    assert_eq!(
+        admitting,
+        BTreeSet::from([
+            "tiler::add-bf16@1".to_owned(),
+            "tiler::multiply-bf16@1".to_owned(),
+        ]),
+        "only the two bf16 arithmetics admit a bf16 operand"
+    );
+
+    // The constant produces the identity rather than consuming it, so it is
+    // reached through its own attribute rather than through an operand sweep.
+    let produced = registry
+        .infer_operation(
+            &constant_bf16_op(),
+            &[],
+            &OperationAttributes::new([CanonicalField::new(
+                BF16_CONSTANT_BITS_ATTRIBUTE,
+                canonical_bf16_bits(0x3f80),
+            )])
+            .unwrap(),
+        )
+        .expect("the bf16 constant is registered and admits an exact bf16 payload");
+    assert_eq!(produced[0].resolved_type(), &bf16);
+
+    // And the promotion did not reach the identity's neighbours: `f16` and
+    // `f64` share `bf16`'s width or its class and remain unsupported.
+    for neighbour in [nominal("f16"), nominal("f64")] {
+        for operation in [multiply_bf16_op(), add_bf16_op()] {
+            assert!(
+                registry
+                    .infer_operation(
+                        &operation,
+                        &[
+                            ValueFact::new(neighbour.clone(), Shape::from_dims([2])),
+                            ValueFact::new(neighbour.clone(), Shape::from_dims([2])),
+                        ],
+                        &OperationAttributes::empty(),
+                    )
+                    .is_err(),
+                "{operation} refuses {neighbour:?}"
+            );
         }
     }
 }

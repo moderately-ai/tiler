@@ -8,6 +8,7 @@
 /// The typed transcendental accuracy-contract vocabulary of ADRs 0016 and 0042.
 pub mod accuracy;
 
+mod bf16;
 mod broadcast;
 mod catalog;
 mod contraction;
@@ -25,6 +26,17 @@ mod shape_evidence;
 mod standard_operations;
 mod types;
 
+pub use bf16::{
+    BF16_CONSTANT_BITS_ATTRIBUTE, BF16_CONSTANT_FACT_PAYLOAD_RULE, BF16_FACT_ACCUMULATOR_TYPE,
+    BF16_FACT_ARITHMETIC_CONTRACTION_PERMITTED, BF16_FACT_CANONICAL_NAN_BITS,
+    BF16_FACT_COMPUTATION_TYPE, BF16_FACT_FUSED_MULTIPLY_ADD_PERMITTED,
+    BF16_FACT_IMPLICIT_PROMOTION_PERMITTED, BF16_FACT_INFINITY_AND_OVERFLOW,
+    BF16_FACT_INTERMEDIATE_MATERIALIZATION_TYPE, BF16_FACT_MIXED_PRECISION_PERMITTED,
+    BF16_FACT_NAN_BEHAVIOUR, BF16_FACT_REASSOCIATION_PERMITTED, BF16_FACT_RESULT_TYPE,
+    BF16_FACT_ROUNDING, BF16_FACT_SIGNED_ZERO, BF16_FACT_SUBNORMALS, Bf16,
+    CANONICAL_BF16_ARITHMETIC_NAN_BITS, add_bf16_op, arithmetic_bf16_facts, canonical_bf16_bits,
+    constant_bf16_facts, constant_bf16_op, multiply_bf16_op,
+};
 pub use broadcast::{
     BROADCAST_AXIS_MAPPING_ATTRIBUTE, BROADCAST_FACT_ADMITTED_RELATIONS,
     BROADCAST_FACT_MAPPING_CLASS, BROADCAST_FACT_STORAGE_CLAIM, BROADCAST_FACT_VALUE_BEHAVIOUR,
@@ -129,8 +141,8 @@ pub use reindex::{
 };
 pub use shape_evidence::{SameShape, ShapePredicate, ShapeWitness, ShapedValue};
 pub use standard_operations::{
-    F32Add, F32Broadcast, F32Constant, F32Multiply, F32Reindex, F32TensorContraction,
-    StrictSerialF32Sum,
+    Bf16Add, Bf16Constant, Bf16Multiply, F32Add, F32Broadcast, F32Constant, F32Multiply,
+    F32Reindex, F32TensorContraction, StrictSerialF32Sum,
 };
 pub use types::{
     AttributeFieldId, CanonicalField, CanonicalFloatBitsRef, CanonicalIntegerWidth,
