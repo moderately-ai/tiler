@@ -1,7 +1,7 @@
 ---
 id: admit-the-first-typed-synchronization-point-and-atomic-target-authority
 title: Admit the first typed synchronization point and atomic target authority
-status: in-progress
+status: done
 priority: p1
 dependencies: [replace-or-justify-the-barrier-count-axis, represent-cooperative-workgroup-reduction-dataflow]
 related: [construct-and-bind-the-first-authoritative-metal-compile-profile]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler, implementation/artifact, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [synchronization, feasibility, target-profiles, correctness]
-claimed_from: todo
-assignee: worker-sync-authority
-lease_expires_at: 1785589250
 ---
 ## User-visible outcome
 
