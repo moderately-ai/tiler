@@ -210,6 +210,20 @@ pub enum ArtifactBuildError {
         /// Maximum admitted byte length.
         limit: usize,
     },
+    /// A governed key carried a byte outside the governed-key alphabet.
+    ///
+    /// Raised only for a governed key, never for a received opaque identity:
+    /// those are another authority's derived bytes, which this crate carries
+    /// rather than spells. `super::keys` states the alphabet and why it is the
+    /// same one `tiler_compiler::target::TargetProfileKey` admits.
+    NoncanonicalKeyByte {
+        /// Rejected key subject.
+        kind: ArtifactKeyKind,
+        /// Zero-based byte offset of the refused byte.
+        index: usize,
+        /// Refused byte value.
+        value: u8,
+    },
     /// A provider was selected that the compilation environment never offered.
     ///
     /// An artifact may only attribute work to authority it was actually given.
@@ -481,6 +495,7 @@ impl Error for ArtifactBuildError {
             | Self::StructuralLimit { .. }
             | Self::EmptyKey { .. }
             | Self::KeyTooLong { .. }
+            | Self::NoncanonicalKeyByte { .. }
             | Self::ProviderNotAvailable { .. }
             | Self::DuplicateSelectedProvider { .. }
             | Self::DuplicatePayload

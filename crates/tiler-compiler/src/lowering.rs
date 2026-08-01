@@ -548,6 +548,24 @@ fn occurrence_signature(
 /// deciding a bounded signature encoding for this key first, which is a decision
 /// someone makes rather than a property that quietly stops holding
 /// (`resolve-capability-key-signature-conflation`).
+///
+/// # This composition can mint a key the artifact layer refuses
+///
+/// The two interpolated components come from an `OpKey`, whose validator
+/// (`tiler_ir::semantic::types`) admits ASCII *alphanumeric* — uppercase
+/// included — and 255 bytes per component. `tiler_artifact::program`'s governed
+/// keys admit ASCII lowercase within 256 bytes total. So a legal `OpKey` such
+/// as `Acme::MyOp`, registered through the public `register_scalar_lowering`,
+/// composes a capability key that `CapabilityKey::new` refuses at packaging
+/// time, and two long components compose one past the byte bound. This function
+/// is infallible and cannot report either, so the refusal lands at the
+/// packaging call rather than at the registration that caused it.
+///
+/// Refusing is correct — an uppercase key would compare unequal to the one a
+/// reader sees — but the site is wrong, and choosing between narrowing the
+/// operation-identity grammar and making this composition fallible is a public
+/// boundary decision. `reconcile-the-operation-identity-and-governed-key-grammars`
+/// owns it.
 fn governed_capability_key(resolved: &ResolvedLoweringCapability) -> String {
     let operation = resolved.operation();
     format!(

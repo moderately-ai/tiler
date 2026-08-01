@@ -18,6 +18,48 @@
 //! [`super::CanonicalArtifactProgramIdentity`] is derived only by this crate's
 //! encoder and has no public constructor.
 //!
+//! # A governed key is spelled in one alphabet
+//!
+//! Being the authority for a governed key settles its spelling as well as its
+//! bound. Every one of these keys exists to be compared byte for byte, and the
+//! comparisons join keys minted by producers that never met: a payload's
+//! backend and representation pair against a loading host's, a packaged profile
+//! against the profile a host declares, a route feature against the one its
+//! owning backend answers. So [`validate_key`] admits ASCII lowercase, ASCII
+//! digits, `.`, `-`, and `_`, and refuses every other byte with
+//! [`ArtifactBuildError::NoncanonicalKeyByte`].
+//!
+//! What that forbids is what a byte comparison cannot express and a reader
+//! cannot reproduce. Case would leave `tiler.Metal` and `tiler.metal` two
+//! backend families that every reader sees as one and every comparison sees as
+//! two. A space, a control byte, or a NUL would put a key into a rejection, an
+//! explain output, or a trace in a form nobody can copy back — which defeats
+//! the point of failing closed with an explainable error, since the explanation
+//! is the part a consumer acts on.
+//!
+//! `tiler_compiler::target::TargetProfileKey` admits exactly this alphabet, for
+//! this reason, and the two are deliberately equal so that every profile key
+//! that compiler mints is packageable here. Neither crate depends on the other,
+//! so widening either alphabet requires checking both.
+//!
+//! # The byte bounds deliberately do not reconcile with the alphabet
+//!
+//! [`MAX_GOVERNED_KEY_BYTES`] is 256 while `tiler_compiler::target`'s
+//! `MAX_TARGET_PROFILE_KEY_BYTES` is 128, and that difference stays. An
+//! alphabet is part of what a governed key *is*, so every producer owes it. A
+//! byte bound is a resource ceiling, and this layer sets its own because key
+//! minting is open ([ADR 0090](../../../../docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md)
+//! item 10) and a producer that is not that compiler is not bounded by that
+//! compiler's number — the same reasoning as the section below, one step
+//! further out.
+//!
+//! The direction is what makes the difference safe rather than a gap. The
+//! smaller number is the *minting* bound, so every key that compiler can name
+//! fits here; a key between the two is one this layer holds and that compiler
+//! could not have minted, which is a fact about which producer named it rather
+//! than a value anything mishandles. Were the inequality the other way, a
+//! legally minted key would be unpackageable.
+//!
 //! # An opaque identity's bound belongs to whoever mints it
 //!
 //! Not being the authority for a subject settles its byte bound too: the number
@@ -70,6 +112,15 @@ pub const MAX_OPAQUE_IDENTITY_BYTES: usize = 1_024;
 /// bound; neither crate depends on the other, so a change requires checking both.
 pub const MAX_TARGET_PROFILE_DESCRIPTOR_BYTES: usize = 64 * 1_024;
 
+/// Whether one byte is admitted by the governed-key alphabet.
+///
+/// Equal to `tiler_compiler::target::TargetProfileKey`'s admitted set by
+/// design; the module documentation states why the alphabets reconcile and the
+/// byte bounds deliberately do not.
+fn admits(byte: u8) -> bool {
+    byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'-' | b'_')
+}
+
 fn validate_key(value: &str, kind: ArtifactKeyKind) -> Result<(), ArtifactBuildError> {
     if value.is_empty() {
         return Err(ArtifactBuildError::EmptyKey { kind });
@@ -79,6 +130,13 @@ fn validate_key(value: &str, kind: ArtifactKeyKind) -> Result<(), ArtifactBuildE
             kind,
             bytes: value.len(),
             limit: MAX_GOVERNED_KEY_BYTES,
+        });
+    }
+    if let Some((index, byte)) = value.bytes().enumerate().find(|(_, byte)| !admits(*byte)) {
+        return Err(ArtifactBuildError::NoncanonicalKeyByte {
+            kind,
+            index,
+            value: byte,
         });
     }
     Ok(())
@@ -113,9 +171,12 @@ macro_rules! governed_key {
             ///
             /// # Errors
             ///
-            /// Returns [`ArtifactBuildError::EmptyKey`] for an empty key, or
+            /// Returns [`ArtifactBuildError::EmptyKey`] for an empty key,
             /// [`ArtifactBuildError::KeyTooLong`] beyond
-            /// [`MAX_GOVERNED_KEY_BYTES`].
+            /// [`MAX_GOVERNED_KEY_BYTES`], or
+            /// [`ArtifactBuildError::NoncanonicalKeyByte`] for a byte outside
+            /// the governed-key alphabet of ASCII lowercase, ASCII digits,
+            /// `.`, `-`, and `_`.
             pub fn new(value: impl AsRef<str>) -> Result<Self, ArtifactBuildError> {
                 let value = value.as_ref();
                 validate_key(value, $kind)?;
