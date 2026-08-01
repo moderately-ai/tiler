@@ -1,7 +1,7 @@
 ---
 id: propagate-the-d10-resolution-into-the-contract-corpus
 title: Propagate the D-10 resolution into the contract corpus
-status: todo
+status: in-progress
 priority: p2
 dependencies: [admit-the-reindex-and-broadcast-operation-families]
 related: [design-attention-program-vertical, scope-the-sequence-extending-tensor-family, compose-rotary-position-embedding-from-reindex-and-broadcast, own-operation-family-support-matrix]
@@ -9,6 +9,9 @@ scopes: [contracts/foundation, research/program-planning, research/shapes]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, semantics, structural]
+claimed_from: todo
+assignee: worker-propagate-th
+lease_expires_at: 1785564765
 ---
 ## User-visible outcome
 
