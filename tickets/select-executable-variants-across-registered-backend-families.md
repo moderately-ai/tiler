@@ -1,7 +1,7 @@
 ---
 id: select-executable-variants-across-registered-backend-families
 title: Select executable variants across registered backend families
-status: in-progress
+status: done
 priority: p1
 dependencies: [produce-a-custom-backend-payload-through-the-build-orchestrator, route-a-custom-backend-through-an-independently-selected-adapter]
 related: [prototype-complete-physical-plan-selection, promote-artifact-family-selection-for-the-frontend]
@@ -9,9 +9,6 @@ scopes: [implementation/runtime, implementation/artifact, implementation/compile
 shared_scopes: [project/tickets]
 paths: []
 tags: [backend-providers, pluggability, implementation, selection, runtime]
-claimed_from: todo
-assignee: worker-variant-sel
-lease_expires_at: 1785565152
 ---
 ## User-visible outcome
 
@@ -57,3 +54,5 @@ Selection is now **eligibility, then priority**. `DecodedProgram::select_variant
 **Verification.** `make full` green on the committed tree: `cargo fmt --all --check`, `cargo check --workspace --all-targets --locked`, workspace Clippy with `-D warnings`, `cargo nextest run --workspace --locked` (1873 passed, 5 skipped), `cargo test --workspace --doc --locked`, `RUSTDOCFLAGS="-D warnings" cargo doc`, the release-profile numerical tests (636 passed), `tkt lint`, and shellcheck. `git diff --check` clean; `tkt guard --base 6b14e6a` verdict ok.
 
 **Filed rather than absorbed.** `retire-the-removed-loader-compatibility-refusals-outside-the-runtime-scope` covers the four call sites in `spikes/target-profiles/scalar-cpu-vertical/src/vertical.rs`, that spike's README-recorded refusal classes, and the `runtime.unexecutable-payload` citation in `docs/research/extensions/backend-provider-composition.md` and ADR 0090 item 8. All four live outside this ticket's declared scopes; the spike is its own workspace that no `make` target reaches, so nothing in the gate catches it. The recorded outcomes of already-closed tickets are left as history.
+
+**Provisional boundary acceptance (2026-08-01, overnight mode).** The coordinator provisionally accepted the loader vocabulary change: `VariantIneligibility`/`FilteredVariant`/`NoEligibleVariant` added, the superseded `UnexecutablePayload`/`IncompatibleTarget`/`TargetDeclaration` removed (pre-alpha superseded-path discipline; the finer vocabulary subsumes them with the filtered-vs-failed distinction the old classes could not carry). Recorded for Tom's morning review.
