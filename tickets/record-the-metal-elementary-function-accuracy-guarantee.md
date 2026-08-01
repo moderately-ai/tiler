@@ -1,0 +1,49 @@
+---
+id: record-the-metal-elementary-function-accuracy-guarantee
+title: Record the Metal normative elementary-function accuracy guarantee
+status: todo
+priority: p1
+dependencies: []
+related: [admit-the-silu-activation-family, admit-the-rms-normalization-family, admit-the-softmax-family, scope-transformer-nonlinear-normalization-and-reductions, implement-the-typed-accuracy-contract-vocabulary, numerical-policy-contract, own-operation-family-support-matrix]
+scopes: [research/numerics, research/apple-targets, contracts/navigation]
+shared_scopes: [project/tickets]
+paths: []
+tags: [research, numerics, transcendental, accuracy, metal, language-model]
+---
+## User-visible outcome
+
+The backend half of **D-4** — the accuracy contract for `Exp` and `Rsqrt`, which the [L3′ derivation](../docs/research/numerics/transformer-nonlinear-normalization-and-reductions.md) calls "the single largest gap between this record and an admissible `Softmax`, `RmsNorm`, or `SiLU` key" — stops being `Unknown`. It closes by *reading a primary source already retained in this repository*, not by opening a device.
+
+## Why this ticket exists
+
+**Fact — the evidence was located while scoping [`admit-the-silu-activation-family`](admit-the-silu-activation-family.md) and is not recorded anywhere in the corpus.** [Transcendental accuracy precedents](../docs/research/numerics/transcendental-accuracy-precedents.md) says only that Metal's "current tables include ULP bounds, absolute-error regions, input-dependent formulas, and undefined regions" and quotes no entry. The [emission probe](../spikes/numerics/metal_transcendental_emission/README.md) establishes *which intrinsic* a flag set selects and stops there by design. Nobody read §8.4 of the retained specification, so D-4 was carried as if it needed a device measurement when a normative vendor guarantee was already on disk.
+
+## Evidence prerequisite
+
+**Fact — the table, quoted.** Metal Shading Language Specification v4.1 (2026-06-04), retained at `docs/research/apple-targets/sources/apple-metal-shading-language-specification-v4.1-2026-06-04.pdf` (SHA-256 `41538b30d2f1140a5b2a0c84ce0a9f7b67bf0c707e224cfea0bfe5a44aa26cf5`), chapter 8 "Numerical Compliance", §8.4 "ULPs and Relative Error", Table 8.1 "Accuracy of single-precision floating-point operations and functions", pages 368–370. The entries the three L3′ verticals need: `exp` ≤ 4 ulp; `x / y` **correctly rounded**; `1.0 / x` **correctly rounded**; `x + y`, `x - y`, `x * y`, `fma` **correctly rounded**; `rsqrt` **correctly rounded**; `sqrt` correctly rounded; `fmax`/`fmin` 0 ulp. For contrast: `pow` ≤ 16 ulp, `tanh` ≤ 5 ulp, `sin`/`cos` ≤ 4 ulp.
+
+**Fact — the guarantee is stable across both retained revisions.** The same entries appear in the retained v4 specification (2025-10-23, SHA-256 `eed87a82…`), which is the revision matching the pinned toolchain's `-std=metal4.0`. Exact check: `pdftotext -layout` each PDF and read §8.4; `exp <= 4 ulp` and `rsqrt Correctly rounded` appear in Table 8.1 of both.
+
+**Fact — the fast-math table is a different contract and ADR 0042 already routes it elsewhere.** Table 8.2 gives `exp(x) ≤ 3 + floor(fabs(2 * x)) ulp`, `rsqrt ≤ 2 ulp`, `x / y ≤ 0.6 ulp for y in the domain of 2^-126 to 2^126`, a piecewise absolute-then-relative `log` with an undefined region for `x ≤ 0`, and several entries stated as *implementations* rather than bounds (`sqrt(x)` "Implemented as x * rsqrt(x)", `tanh(x)` "Implemented as (t – 1.0)/(t + 1.0), where t = exp(2.0 * x)", `pow`/`powr` "Implemented as exp2(y * log2(x))"). ADR 0042 sends an input-dependent formula to a `NamedElementaryProfileKey` plus a descriptor digest rather than approximating it into a constant, so Table 8.2 is a named-profile candidate and Table 8.1 is a constant-rational candidate. They are two contracts, not one operation with a mode.
+
+**Inference — under Table 8.1 the only inexact element of the pinned SiLU formula is the exponential, which is exactly what the L3′ record predicted from ADR 0024's side.** `y = x / (1 + Exp(-x))` uses one addition and one division, both correctly rounded by Table 8.1, so the composition's open tolerance is `Exp`'s alone and it now has a normative constant bound rather than an `Unknown`.
+
+## Required delivery
+
+A research record (or an extension of the existing precedents record) plus the navigation updates, carrying:
+
+- **The quoted entries and their exact provenance** — document identity, retained digest, revision, chapter, section, table, and page — for every function the three L3′ verticals and the workload need, with Table 8.1 and Table 8.2 kept visibly separate.
+- **Three named gaps that stop the number being adopted as-is.** Each is a reason the record must not simply write `Ulp(tiler::ulp-reference-gap@1, 4)` and move on.
+  1. **The metric definition differs and ADR 0042 forbids silent translation.** §8.4 defines: "If x is a real number that lies between two finite consecutive floating-point numbers a and b, without being equal to one of them, then ulp(x) = |b − a|, otherwise ulp(x) is the distance between the two nonequal finite floating-point numbers nearest x. Moreover, ulp(NaN) is NaN." `tiler::ulp-reference-gap@1` resolves the representable case explicitly — "where predecessor and successor gaps differ, the smaller gap is used" — and is *defined only* when `r` and `z` are finite. Apple's second clause does not say which gap applies at a power of two, and it defines `ulp(NaN)`, which Tiler's metric deliberately leaves outside its domain. Adopting the bound needs either a separate `apple::msl-ulp@…` metric key with an explicitly registered implication, or a derivation showing the two agree over the domain in use. The corpus's own precedents record already warns that "several definitions differ" and cites Muller for it.
+  2. **The applicability clause names a flag spelling Tiler does not use.** Table 8.2's caption is "with fast math enabled (which is the default unless you specify `-fno-fast-math`)", so Table 8.1 is the non-fast-math table. The governed baseline is `-fmetal-math-mode=safe -fmetal-math-fp32-functions=precise -ffp-contract=off`, and the emission probe measured that this selects `air.exp.f32` while the compiler default selects `air.fast_exp.f32`. Matching intrinsics is strong evidence that Table 8.1 is the applicable row; it is an inference, and the record must label it one rather than quoting it as a fact.
+  3. **The table states accuracy and no exceptional-value contract.** There is no edge-case table for math functions. §8.1 says denormal inputs and outputs "**may** be flushed to zero" — permissive, not determinate, so it does not license declaring either behaviour. §8.3 says floating-point exceptions are disabled. §8.5 says that in flush-to-zero mode a function may return any of four results and that "if an operand or result is flushed to zero, **the sign of the zero is undefined**". ADR 0042 requires exceptional-value, signed-zero, and subnormal policies to be stated independently of the error metric, so for `exp` they stay `Unknown` from the specification and need their own evidence.
+- **Which corpus expectations §8.5 does and does not reach**, because getting this wrong in either direction is the failure mode. It **does** reach softmax's underflow band, where a contributor far below the row maximum drives `Exp` to a subnormal that a flushing target replaces with a zero of undefined sign while the L3′ measurement records exactly `+0.0`; and RMS normalization's subnormal row, which normalizes to zeros on a flushing target. It does **not** reach SiLU's `-88.73` band: there `Exp(-x)` overflows to `+inf` and the result is finite ÷ infinity, an exact `-0.0` under the correctly-rounded division of Table 8.1 and §8.1's guarantee that INF is supported with fast math disabled — no subnormal is produced and no flush is involved.
+- **The Q-SEM-004 and D-4 consequences, written where they are read.** [Q-SEM-004](../docs/open-questions.md#q-sem-004--first-profile-transcendental-tuples) asks for an operation/dtype/accuracy allowlist with reference *and backend* conformance evidence; this supplies the backend half for `exp`, `rsqrt`, and division at F32 on this target and leaves the reference half open. The [support matrix](../docs/roadmap.md#operation-family-support-matrix) transcendentals row and the L3′ record's D-4 entry both say the question closes on "an applicable normative guarantee"; say what was found and what it does not cover.
+
+## Non-goals
+
+Declaring the honourability fact on the Metal target profile, implementing any contract carrier, admitting any operation, and running anything on a device. This ticket converts a retained primary source into recorded evidence; [`implement-the-typed-accuracy-contract-vocabulary`](implement-the-typed-accuracy-contract-vocabulary.md) owns the carrier and the three L3′ verticals own the operations. Do not promote a table entry to a Tiler contract inside this ticket — the metric reconciliation above is the reason.
+
+## Reconsideration trigger
+
+Active now: three filed verticals are gated on D-4 and the evidence is already on disk. Re-derive from the newest retained revision if Apple publishes one whose Table 8.1 differs, and re-open the applicability inference if a measurement ever shows the governed flag set selecting an intrinsic Table 8.1 does not govern.
