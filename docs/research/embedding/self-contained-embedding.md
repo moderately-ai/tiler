@@ -83,15 +83,15 @@ The harness is [`spikes/embedding/self_contained.py`](../../../spikes/embedding/
 
 | Axis | Driver | Expansions | Reads | Cache | Seconds | What it says |
 | --- | --- | ---: | ---: | --- | ---: | --- |
-| source edit, cold | cargo | 1 | 1 | published | 7.5 | fresh target directory and empty cache |
+| source edit, cold | cargo | 1 | 1 | published | 14.9 | fresh target directory and empty cache |
 | source edit, warm | cargo | 1 | 0 | hit | 0.2 | an edit always re-expands; the cache spares the read |
-| toolchain change | cargo | 1 | 0 | hit | 8.5 | a changed compiler re-expands exactly as a changed source does |
-| repeated across crates | cargo | 2 | 1 | 1 published, 1 hit | 13.1 | the second crate reuses |
-| unique across crates | cargo | 2 | 2 | 2 published | 11.0 | no contention; each key is its own |
-| repeated across crates, cold | rust-analyzer | 2 | 1 | 1 published, 1 hit | 6.4 | one server process, same reuse |
+| toolchain change | cargo | 1 | 0 | hit | 18.0 | a changed compiler re-expands exactly as a changed source does |
+| repeated across crates | cargo | 2 | 1 | 1 published, 1 hit | 7.5 | the second crate reuses |
+| unique across crates | cargo | 2 | 2 | 2 published | 10.8 | no contention; each key is its own |
+| repeated across crates, cold | rust-analyzer | 2 | 1 | 1 published, 1 hit | 19.7 | one server process, same reuse |
 | repeated across crates, warm | rust-analyzer | 2 | 0 | 2 hits | 5.3 | entries published by Cargo are hit by the analyzer |
-| unique across crates, cold | rust-analyzer | 2 | 2 | 2 published | 5.3 | one server, two keys, two reads |
-| toolchain change | rust-analyzer | 2 | 0 | 2 hits | 16.0 | a different proc-macro server hits the pin's entries |
+| unique across crates, cold | rust-analyzer | 2 | 2 | 2 published | 5.4 | one server, two keys, two reads |
+| toolchain change | rust-analyzer | 2 | 0 | 2 hits | 12.0 | a different proc-macro server hits the pin's entries |
 
 **The `seconds` column is a scenario duration, and is not a timing claim.** Each is one observation of a whole scenario, and every row but the two warm ones is dominated by compiling the fixture's dependencies or by the analyzer loading a crate graph, not by expansion. Cargo's cross-crate rows also wipe their target directory to reach the cold state the axis names. The column is recorded because a scenario's cost is worth knowing and a missing column reads as a hidden one; the quantities this note draws conclusions from are `expansions` and `reads`, which are counts of observed events. [The cost note](embedded-artifact-costs.md) owns build-time measurement, with repetitions and medians.
 
@@ -107,7 +107,7 @@ The harness is [`spikes/embedding/self_contained.py`](../../../spikes/embedding/
 
 ### Size
 
-**Measurement.** The largest artifact this slice produces is **47,803 bytes**. The ceiling is **1,048,576 bytes (1 MiB) per invocation**, restated unchanged from [the cost note](embedded-artifact-costs.md), which also sets the second gate at 32 invocations or 3,355,443 bytes (3.2 MiB) of direct bytes in one consumer package, whichever is reached first. The largest real artifact is therefore **4.56%** of the per-invocation ceiling, and the one measured here (36,838 bytes) is **3.51%**.
+**Measurement.** The largest artifact this slice produces is **47,803 bytes**. The ceiling is **1,048,576 bytes (1 MiB) per invocation**, restated unchanged from [the cost note](embedded-artifact-costs.md), which also sets the second gate at 32 invocations or 3.2 MiB of direct bytes in one consumer package, whichever is reached first — stated in that note as a round figure, and quoted here as one rather than converted to a byte count it never gave. The largest real artifact is therefore **4.56%** of the per-invocation ceiling, and the one measured here (36,838 bytes) is **3.51%**.
 
 **Measurement.** One byte-string literal of 36,838 payload bytes renders as 68,076 bytes of source text, a ratio of **1.848**. Extrapolated to the ceiling, a 1 MiB payload is roughly 1.85 MiB of source text handed to rustc as a single token.
 
@@ -186,6 +186,8 @@ uv run --with pytest pytest spikes/embedding/test_self_contained.py
 ```
 
 The run installed, selected, and changed no toolchain component. It is an observation about one host and one set of tool versions, not a portable guarantee.
+
+**Measurement, and what reproducing it showed.** The recorded fixture was produced twice on this host, the second time after deleting the fixture's `Cargo.lock` and target directory so the run rebuilt from nothing. Every count reproduced exactly — expansions, envelope reads, cache outcomes, processes, overlaps, working directories, the payload sizes, and the 68,076-byte literal — and every diagnostic reproduced byte for byte apart from the run root's own path. Only the `seconds` column moved, by as much as 3× on the dependency-dominated rows, which is the concrete reason section 4 declines to draw a conclusion from it. A third run failed outright with `No space left on device` on a nearly full disk, and stopped rather than recording a scenario it had not completed; the harness now uses three target directories instead of six, and [the spike README](../../../spikes/embedding/README.md) states the space it needs.
 
 ## 9. Outcomes
 

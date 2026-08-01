@@ -845,7 +845,7 @@ def scenario_standalone(run: Run, oracle: tuple[int, int]) -> tuple[Outcome, Pat
             "-p",
             CONSUMERS[0],
             "--target-dir",
-            str(run.target("expand")),
+            str(run.target("main")),
             "--",
             "-Zunpretty=expanded",
         ],
@@ -936,7 +936,7 @@ def rendered_diagnostic(run: Run, label: str, env: dict[str, str]) -> str:
     asserted from the type.
     """
     touch_sources()
-    result = cargo_build(run, "diagnostic", env=env, check=False, label=label)
+    result = cargo_build(run, "main", env=env, check=False, label=label)
     require(
         result.returncode != 0,
         f"diagnostic {label}: the build succeeded, so this failure class is unreachable "
@@ -1135,7 +1135,7 @@ def main() -> int:
         oracle = (len(oracle_bytes), fnv1a(oracle_bytes))
         members = " ".join(f"{name}={size}B" for name, size in sizes.items())
         print(f"# members {members} ceiling={CEILING_BYTES}B", flush=True)
-        prebuild(run, ("main", "cross", "diagnostic", "expand"))
+        prebuild(run, ("main", "cross"))
         print(HEADER, flush=True)
 
         def record(outcome: Outcome) -> None:

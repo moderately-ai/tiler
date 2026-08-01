@@ -118,6 +118,16 @@ cache, target directories, and the generated standalone crate — and removes it
 unless `--keep-root` is given. The fixture's `Cargo.lock` is generated once and
 gitignored; every build after that is `--offline`.
 
+It needs roughly 1 GiB free under `$TMPDIR`, or under `--root` when one is
+given. Three target directories are unavoidable — the cross-crate axes must
+race in their own, and the source-edit axis wipes its own to reach the cold
+state it names — and the toolchain axis compiles the dependency graph a second
+time under the other compiler. An earlier version used six and exhausted a
+nearly full disk mid-run; the failure was loud (`No space left on device`) and
+the run stopped rather than recording a scenario it had not completed, but the
+cost was a wasted twenty minutes. `--keep-root` leaves all of it behind, so
+clean up after using it.
+
 What it records, and where. Fifteen scenario rows go to
 `results/self-contained-embedding-<label>.tsv`: cold and warm embedding, the
 three deletion cases, the standalone rebuild, and the four axes under both
