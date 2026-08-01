@@ -146,6 +146,7 @@ pub use error::{
     ScheduleLimitKind, ScheduledRegionBuildError, ScheduledRegionDiagnostic,
 };
 pub use handles::{BoundsWitnessId, InputOrdinal, OwnershipWitnessId, RegionId};
+pub(crate) use model::subnormal_freedom_of;
 pub use model::{
     Access, AccessMode, BoundsProof, BoundsProofKind, CanonicalScheduledRegionIdentity,
     ContributorOrder, ContributorPartition, ExecutionBinding, IndexRegion, KernelSchedule,
@@ -156,8 +157,8 @@ pub use model::{
 };
 pub use numerics::{
     ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign,
-    MaterializationRounding, NumericalPermission, NumericalRealization, SubnormalMode,
-    ValueDomainProvenance,
+    MaterializationRounding, NumericalPermission, NumericalRealization, SubnormalFreedom,
+    SubnormalMode, ValueDomainProvenance,
 };
 pub use pointwise::{
     MAX_POINTWISE_F32_EXPRESSION_NODES, PointwiseF32Expression,

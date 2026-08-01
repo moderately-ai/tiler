@@ -20,7 +20,7 @@ use super::{
     SemanticPreconditionDeclarations, SemanticRegistryRegistrar, TypeDefinitionFacts,
     TypeInstanceError, TypeKey, ValueFact, ValueTypeDefinition, ValueTypeDefinitionKey,
     ValueTypeInstanceValidator, ValueTypeMarker, no_nan_predicate,
-    positive_finite_scalar_predicate,
+    positive_finite_scalar_predicate, positive_normal_scalar_predicate,
 };
 
 /// Static-contract field naming the primitive code value type.
@@ -43,10 +43,20 @@ pub const ENCODED_NUMERIC_NAN_BEHAVIOR: AttributeFieldId = AttributeFieldId::new
 pub const ENCODED_NUMERIC_DECODE_EVALUATION: AttributeFieldId = AttributeFieldId::new(9);
 /// Static-contract field naming observable materialization behavior.
 pub const ENCODED_NUMERIC_MATERIALIZATION: AttributeFieldId = AttributeFieldId::new(10);
+/// Static-contract field naming the admissible domain of the scale component.
+///
+/// This is where the normal-scale guarantee lives, and the choice of carrier is
+/// the point rather than an implementation detail: the guarantee is a property
+/// of the *type*, while the obligations that establish it are properties of the
+/// producers, [`assemble_strict_affine_op`] and [`quantize_strict_affine_op`].
+/// The derivation, and the elimination of the two other candidate carriers, are
+/// recorded on this module's private `strict_affine_type`, beside the contract
+/// it builds.
+pub const ENCODED_NUMERIC_SCALE_DOMAIN: AttributeFieldId = AttributeFieldId::new(11);
 
 /// Primary integer-code component of a strict affine value.
 pub const STRICT_AFFINE_CODES_ROLE: EncodedComponentRole = EncodedComponentRole::new(1);
-/// Positive finite scale component of a strict affine value.
+/// Positive normal scale component of a strict affine value.
 pub const STRICT_AFFINE_SCALE_ROLE: EncodedComponentRole = EncodedComponentRole::new(2);
 /// In-range integer zero-point component of a strict affine value.
 pub const STRICT_AFFINE_ZERO_POINT_ROLE: EncodedComponentRole = EncodedComponentRole::new(3);
@@ -157,7 +167,7 @@ pub(super) fn register_standard_quantization(
         3,
         "component association without numeric conversion",
         "zero-point-in-code-domain; exact-component-preservation",
-        SemanticPreconditionDeclarations::empty(),
+        scale_domain_preconditions("strict-affine-assemble"),
         Arc::new(AssembleStrictAffine),
     )?;
     register_operation(
@@ -169,6 +179,16 @@ pub(super) fn register_standard_quantization(
         quantize_preconditions(),
         Arc::new(QuantizeStrictAffine),
     )?;
+    // `preserve-subnormals` stays declared and unweakened: it is what the decode
+    // *means*, and substituting a flushing realization for it would be the
+    // authority substitution ADR 0076 forbids. What changed is that it became
+    // dischargeable — the scale domain the type now declares makes every operand
+    // and result of this evaluation either a zero or at least the scale in
+    // magnitude, so a flushing and a preserving `f32` return identical bits. The
+    // derivation is on `strict_affine_type` and
+    // [`positive_normal_scalar_predicate`]; a target-side consumer of the
+    // discharge is `crate::schedule::SubnormalFreedom`. This operation declares
+    // no precondition of its own, and that doc explains why.
     register_operation(
         registrar,
         &dequantize_strict_affine_op(),
@@ -226,27 +246,60 @@ fn register_operation(
 }
 
 fn quantize_preconditions() -> SemanticPreconditionDeclarations {
-    SemanticPreconditionDeclarations::new([
-        SemanticPreconditionDeclaration::new(
+    SemanticPreconditionDeclarations::new(
+        [SemanticPreconditionDeclaration::new(
             no_nan_predicate(),
             OperationOperandIndex::new(0),
             SemanticLogicalView::WholeValue,
             SemanticInvalidInputCode::new("tiler", "strict-affine-quantize-nan", 1)
                 .expect("governed invalid-input code is valid"),
-        ),
+        )]
+        .into_iter()
+        .chain(scale_domain_declarations("strict-affine-quantize")),
+    )
+    .expect("governed strict-affine preconditions are bounded and distinct")
+}
+
+/// Declares the scale-operand value domain of one strict-affine producer.
+///
+/// **Both predicates are declared, and neither subsumes the other's
+/// diagnostic.** [`positive_normal_scalar_predicate`] is logically strictly
+/// stronger, so a single declaration of it would reject every value this pair
+/// rejects — and would report one code for two unrelated causes. "The scale is
+/// zero, negative, infinite, or NaN" is a caller supplying a value that is not
+/// a scale at all; "the scale is subnormal" is a caller supplying a real scale
+/// that is too small for the decode to remain target-honourable. The fixes
+/// differ, so the codes differ.
+///
+/// Static disproof priority is `(invalid-input code, declaration ordinal)`, and
+/// the codes are named so the *general* cause wins when both fail:
+/// `…-scale-not-positive-finite` orders before `…-scale-subnormal`, so a zero
+/// or negative scale — which is subnormal-free only by being invalid — reports
+/// the invalidity rather than the narrower magnitude complaint.
+fn scale_domain_declarations(operation: &str) -> [SemanticPreconditionDeclaration; 2] {
+    let code = |name: &str| {
+        SemanticInvalidInputCode::new("tiler", format!("{operation}-{name}"), 1)
+            .expect("governed invalid-input code is valid")
+    };
+    [
         SemanticPreconditionDeclaration::new(
             positive_finite_scalar_predicate(),
             OperationOperandIndex::new(1),
             SemanticLogicalView::WholeValue,
-            SemanticInvalidInputCode::new(
-                "tiler",
-                "strict-affine-quantize-scale-not-positive-finite",
-                1,
-            )
-            .expect("governed invalid-input code is valid"),
+            code("scale-not-positive-finite"),
         ),
-    ])
-    .expect("governed strict-affine preconditions are bounded and distinct")
+        SemanticPreconditionDeclaration::new(
+            positive_normal_scalar_predicate(),
+            OperationOperandIndex::new(1),
+            SemanticLogicalView::WholeValue,
+            code("scale-subnormal"),
+        ),
+    ]
+}
+
+fn scale_domain_preconditions(operation: &str) -> SemanticPreconditionDeclarations {
+    SemanticPreconditionDeclarations::new(scale_domain_declarations(operation))
+        .expect("governed strict-affine preconditions are bounded and distinct")
 }
 
 fn strict_affine_family_facts() -> CanonicalValue {
@@ -269,6 +322,38 @@ fn strict_affine_family_facts() -> CanonicalValue {
     .expect("strict-affine family facts are canonical")
 }
 
+/// Builds one complete strict-affine contract.
+///
+/// # Where the normal-scale obligation attaches, and why it is here
+///
+/// The obligation has three candidate homes, and they are not interchangeable.
+///
+/// **`Dequantize` cannot carry it.** Its single operand is the already-assembled
+/// compound value, and a decode that receives one cannot re-derive where its
+/// scale came from: the scalar producer is no longer an operand, the only
+/// logical view is [`SemanticLogicalView::WholeValue`], and the sole static
+/// proof basis reads the exact bits of a governed `f32` *scalar* constant. A
+/// declaration there could never be proven at compile time, so every decode —
+/// including one whose scale is a governed constant — would carry a residual
+/// obligation, and the target-honourability question would still have no
+/// answer at the point it is asked.
+///
+/// **The producers carry the obligations.** [`assemble_strict_affine_op`] and
+/// [`quantize_strict_affine_op`] each take the scale as a typed rank-zero `f32`
+/// operand whose producer *is* visible, so a governed constant proves the
+/// predicate statically and a runtime value becomes an exact residual
+/// obligation. Both declare it; assembly is not the weaker route.
+///
+/// **The type carries the guarantee, which is this field.** A value's
+/// admissible component domain is part of what its encoded-numeric type *is*,
+/// not a fact about one operation that produced it, and the decode consumes the
+/// type. Recording it here is what lets a consumer — including a backend
+/// deciding whether it can honour the declared subnormal behaviour — rely on
+/// the narrowed domain without inspecting provenance it cannot reach. A value
+/// bound at the program boundary rather than produced by an operation is
+/// subject to the same declared domain; enforcing it against a real payload is
+/// runtime validation and is owned by the semantic-precondition enforcement
+/// work, not by this contract.
 fn strict_affine_type(code_type: ResolvedValueType, maximum: u8) -> ResolvedValueType {
     ResolvedValueType::encoded_numeric(
         strict_affine_scheme(),
@@ -316,6 +401,11 @@ fn strict_affine_type(code_type: ResolvedValueType, maximum: u8) -> ResolvedValu
                     ENCODED_NUMERIC_MATERIALIZATION,
                     CanonicalValue::utf8("preserve-exact-codes-and-associated-parameters")
                         .expect("materialization contract is bounded"),
+                ),
+                CanonicalField::new(
+                    ENCODED_NUMERIC_SCALE_DOMAIN,
+                    CanonicalValue::utf8("positive-normal-f32")
+                        .expect("scale-domain contract is bounded"),
                 ),
             ],
             [
@@ -525,10 +615,13 @@ fn op_error(code: &'static str, message: &'static str) -> OperationInferenceErro
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
     use crate::semantic::{
         BuildError, F32Constant, FrozenSemanticRegistry, InputKey, OperationAttributes, OutputKey,
-        RegistryError, SemanticPreconditionStatus, SemanticProgram, SemanticProgramBuilder,
+        RegistryError, SemanticPreconditionStatus, SemanticPredicateIdentity, SemanticProgram,
+        SemanticProgramBuilder,
     };
 
     #[test]
@@ -652,36 +745,98 @@ mod tests {
         );
     }
 
-    #[test]
-    fn strict_quantize_declares_both_semantic_value_preconditions_exactly() {
-        let registry = FrozenSemanticRegistry::standard().unwrap();
-        let definition = registry
-            .operation_definition(&quantize_strict_affine_op())
-            .unwrap();
-        let declarations = definition.semantic_preconditions().as_slice();
-        assert_eq!(declarations.len(), 2);
-        assert_eq!(declarations[0].predicate(), &no_nan_predicate());
-        assert_eq!(declarations[0].operand(), OperationOperandIndex::new(0));
-        assert_eq!(declarations[0].view(), SemanticLogicalView::WholeValue);
-        assert_eq!(
-            declarations[0].invalid_input_code(),
-            &SemanticInvalidInputCode::new("tiler", "strict-affine-quantize-nan", 1).unwrap()
-        );
-        assert_eq!(
-            declarations[1].predicate(),
-            &positive_finite_scalar_predicate()
-        );
-        assert_eq!(declarations[1].operand(), OperationOperandIndex::new(1));
-        assert_eq!(declarations[1].view(), SemanticLogicalView::WholeValue);
-        assert_eq!(
-            declarations[1].invalid_input_code(),
-            &SemanticInvalidInputCode::new(
-                "tiler",
-                "strict-affine-quantize-scale-not-positive-finite",
-                1,
-            )
+    fn declared_preconditions(
+        operation: &OpKey,
+    ) -> Vec<(SemanticPredicateIdentity, u32, SemanticInvalidInputCode)> {
+        FrozenSemanticRegistry::standard()
             .unwrap()
+            .operation_definition(operation)
+            .unwrap()
+            .semantic_preconditions()
+            .as_slice()
+            .iter()
+            .map(|declaration| {
+                assert_eq!(declaration.view(), SemanticLogicalView::WholeValue);
+                (
+                    declaration.predicate().clone(),
+                    declaration.operand().get(),
+                    declaration.invalid_input_code().clone(),
+                )
+            })
+            .collect()
+    }
+
+    fn code(name: &str) -> SemanticInvalidInputCode {
+        SemanticInvalidInputCode::new("tiler", name, 1).unwrap()
+    }
+
+    #[test]
+    fn strict_quantize_declares_its_three_semantic_value_preconditions_exactly() {
+        assert_eq!(
+            declared_preconditions(&quantize_strict_affine_op()),
+            vec![
+                (no_nan_predicate(), 0, code("strict-affine-quantize-nan")),
+                (
+                    positive_finite_scalar_predicate(),
+                    1,
+                    code("strict-affine-quantize-scale-not-positive-finite"),
+                ),
+                (
+                    positive_normal_scalar_predicate(),
+                    1,
+                    code("strict-affine-quantize-scale-subnormal"),
+                ),
+            ]
         );
+    }
+
+    /// Assembly is not the weaker route into an encoded value.
+    ///
+    /// A quantized language-model weight reaches a decode by being *assembled*
+    /// from stored codes and parameters, never by being quantized on device, so
+    /// an obligation declared only by `Quantize` would leave the profile's own
+    /// path unconstrained.
+    #[test]
+    fn strict_assemble_declares_the_same_scale_domain_under_its_own_codes() {
+        assert_eq!(
+            declared_preconditions(&assemble_strict_affine_op()),
+            vec![
+                (
+                    positive_finite_scalar_predicate(),
+                    1,
+                    code("strict-affine-assemble-scale-not-positive-finite"),
+                ),
+                (
+                    positive_normal_scalar_predicate(),
+                    1,
+                    code("strict-affine-assemble-scale-subnormal"),
+                ),
+            ]
+        );
+    }
+
+    /// The decode declares none, and the reason is structural rather than an
+    /// omission: its only operand is the assembled compound value, whose scale
+    /// is no longer a scalar a static proof basis or a runtime obligation could
+    /// name. The guarantee it consumes is the type's.
+    #[test]
+    fn strict_dequantize_declares_no_precondition_and_the_type_carries_the_domain() {
+        assert_eq!(declared_preconditions(&dequantize_strict_affine_op()), []);
+        for resolved in [
+            StrictAffineU4::resolved_type(),
+            StrictAffineU8::resolved_type(),
+        ] {
+            let (_, contract) = resolved.encoded_numeric_parts().unwrap();
+            let domain = contract
+                .fields()
+                .iter()
+                .find(|field| field.id() == ENCODED_NUMERIC_SCALE_DOMAIN)
+                .unwrap();
+            assert_eq!(
+                domain.value(),
+                &CanonicalValue::utf8("positive-normal-f32").unwrap()
+            );
+        }
     }
 
     fn runtime_quantize_program_with_zero_type(zero_type: ResolvedValueType) -> SemanticProgram {
@@ -716,8 +871,14 @@ mod tests {
         builder.build().unwrap()
     }
 
+    /// A runtime scale leaves the normal-scale obligation residual, in order.
+    ///
+    /// This is the second of the two paths the strengthened predicate has to
+    /// support: a governed constant proves it outright, and a value only known
+    /// at run time becomes an exact obligation with its own canonical identity,
+    /// for runtime validation to discharge. Nothing here enforces a payload.
     #[test]
-    fn runtime_unknown_u4_and_u8_quantize_inputs_retain_two_ordered_residuals() {
+    fn runtime_unknown_u4_and_u8_quantize_inputs_retain_three_ordered_residuals() {
         for (zero_type, expected_result_type) in [
             (U4::resolved_type(), StrictAffineU4::resolved_type()),
             (U8::resolved_type(), StrictAffineU8::resolved_type()),
@@ -730,28 +891,42 @@ mod tests {
             let result = program.value(operation.results().next().unwrap()).unwrap();
             assert_eq!(result.resolved_type(), &expected_result_type);
             let preconditions: Vec<_> = operation.semantic_preconditions().collect();
-            assert_eq!(preconditions.len(), 2);
-            assert_eq!(preconditions[0].declaration_ordinal().get(), 0);
-            assert_eq!(preconditions[0].predicate(), &no_nan_predicate());
             assert_eq!(
-                preconditions[0].status(),
-                SemanticPreconditionStatus::Residual
+                preconditions
+                    .iter()
+                    .map(|precondition| (
+                        precondition.declaration_ordinal().get(),
+                        precondition.predicate().clone(),
+                        precondition.status(),
+                    ))
+                    .collect::<Vec<_>>(),
+                vec![
+                    (0, no_nan_predicate(), SemanticPreconditionStatus::Residual),
+                    (
+                        1,
+                        positive_finite_scalar_predicate(),
+                        SemanticPreconditionStatus::Residual,
+                    ),
+                    (
+                        2,
+                        positive_normal_scalar_predicate(),
+                        SemanticPreconditionStatus::Residual,
+                    ),
+                ]
             );
-            assert!(preconditions[0].obligation_identity().is_some());
-            assert_eq!(preconditions[1].declaration_ordinal().get(), 1);
-            assert_eq!(
-                preconditions[1].predicate(),
-                &positive_finite_scalar_predicate()
-            );
-            assert_eq!(
-                preconditions[1].status(),
-                SemanticPreconditionStatus::Residual
-            );
-            assert!(preconditions[1].obligation_identity().is_some());
-            assert!(std::ptr::eq(
-                preconditions[0].obligation_identity().unwrap(),
-                preconditions[0].obligation_identity().unwrap(),
-            ));
+            // Three obligations, three distinct identities: the scale bears two
+            // and they must not collapse into one runtime check.
+            let identities: BTreeSet<_> = preconditions
+                .iter()
+                .map(|precondition| {
+                    precondition
+                        .obligation_identity()
+                        .expect("a residual precondition carries an obligation identity")
+                        .as_bytes()
+                        .to_vec()
+                })
+                .collect();
+            assert_eq!(identities.len(), 3);
         }
     }
 
@@ -776,11 +951,17 @@ mod tests {
         Ok(builder.build().unwrap())
     }
 
+    /// A governed constant scale proves every predicate statically.
+    ///
+    /// The scale corpus is the boundary rather than a sample: `MIN_POSITIVE` is
+    /// the smallest value the strengthened predicate admits, and the largest
+    /// subnormal one bit below it is disproved by
+    /// `exact_nan_and_invalid_scale_constants_disprove_transactionally`.
     #[test]
     fn exact_governed_constants_prove_each_predicate_without_an_obligation() {
         for expressed in [0.0_f32, -0.0_f32, 1.0_f32, f32::NEG_INFINITY, f32::INFINITY] {
             let program =
-                constant_quantize_program(expressed.to_bits(), f32::from_bits(1).to_bits())
+                constant_quantize_program(expressed.to_bits(), f32::MIN_POSITIVE.to_bits())
                     .unwrap();
             let quantize = program
                 .operations()
@@ -795,7 +976,7 @@ mod tests {
                 assert!(precondition.obligation_identity().is_none());
             }
         }
-        for scale in [f32::from_bits(1), 0.5_f32, f32::MAX] {
+        for scale in [f32::MIN_POSITIVE, 0.5_f32, f32::MAX] {
             let program = constant_quantize_program(1.0_f32.to_bits(), scale.to_bits()).unwrap();
             let quantize = program
                 .operations()
@@ -873,6 +1054,10 @@ mod tests {
                     positive_finite_scalar_predicate(),
                     SemanticPreconditionStatus::Residual,
                 ),
+                (
+                    positive_normal_scalar_predicate(),
+                    SemanticPreconditionStatus::Residual,
+                ),
             ]
         );
 
@@ -889,6 +1074,10 @@ mod tests {
                 (no_nan_predicate(), SemanticPreconditionStatus::Residual),
                 (
                     positive_finite_scalar_predicate(),
+                    SemanticPreconditionStatus::Proven,
+                ),
+                (
+                    positive_normal_scalar_predicate(),
                     SemanticPreconditionStatus::Proven,
                 ),
             ]
@@ -936,6 +1125,52 @@ mod tests {
             );
             assert_eq!(disproof.declaration_ordinal().get(), 1);
         }
+    }
+
+    /// The two scale-domain causes report two different codes.
+    ///
+    /// A caller that supplied `0.0` has to be told to supply a scale at all; a
+    /// caller that supplied `1e-40` supplied a real scale and has to be told it
+    /// is too small for the decode to stay target-honourable. One shared code
+    /// would send both to the wrong fix, which is why the stronger predicate is
+    /// a second declaration rather than a tightening of the first.
+    ///
+    /// The corpus straddles the boundary exactly: the largest subnormal is
+    /// rejected and the smallest normal one bit above it is accepted, so this
+    /// pins where the domain ends rather than that it ends somewhere.
+    #[test]
+    fn a_subnormal_scale_is_disproved_under_its_own_code_not_the_finiteness_one() {
+        for scale_bits in [
+            0x0000_0001,                     // smallest positive subnormal
+            0x0000_ffff,                     // an interior subnormal
+            f32::MIN_POSITIVE.to_bits() - 1, // largest positive subnormal
+        ] {
+            let error = constant_quantize_program(1.0_f32.to_bits(), scale_bits).unwrap_err();
+            let BuildError::SemanticPreconditionDisproved(disproof) = error else {
+                panic!("a subnormal scale must be a typed semantic precondition disproof")
+            };
+            assert_eq!(disproof.predicate(), &positive_normal_scalar_predicate());
+            assert_eq!(
+                disproof.invalid_input_code(),
+                &code("strict-affine-quantize-scale-subnormal"),
+                "{scale_bits:#010x} must report the subnormal cause, not the finiteness one",
+            );
+            assert_eq!(disproof.declaration_ordinal().get(), 2);
+        }
+
+        // One bit higher is the smallest admitted scale, and it builds.
+        constant_quantize_program(1.0_f32.to_bits(), f32::MIN_POSITIVE.to_bits()).unwrap();
+
+        // A negative subnormal fails both predicates. The general cause wins,
+        // by the code ordering the declarations were named for.
+        let error = constant_quantize_program(1.0_f32.to_bits(), 0x8000_0001).unwrap_err();
+        let BuildError::SemanticPreconditionDisproved(disproof) = error else {
+            panic!("a negative subnormal scale must be a typed disproof")
+        };
+        assert_eq!(
+            disproof.invalid_input_code(),
+            &code("strict-affine-quantize-scale-not-positive-finite"),
+        );
     }
 
     #[test]
@@ -1115,15 +1350,13 @@ mod tests {
         );
         assert_eq!(obligations(&ordered), obligations(&reversed));
         let identities = obligations(&ordered);
-        assert_eq!(identities.len(), 4);
+        // Two occurrences, three declarations each. The two scale predicates
+        // share an operand and differ only in predicate and code, so this also
+        // proves the encoding separates declarations that agree on everything
+        // else.
+        assert_eq!(identities.len(), 6);
         assert_ne!(identities[0], identities[1]);
-        assert_eq!(
-            identities
-                .iter()
-                .collect::<std::collections::BTreeSet<_>>()
-                .len(),
-            4
-        );
+        assert_eq!(identities.iter().collect::<BTreeSet<_>>().len(), 6);
     }
 
     #[test]

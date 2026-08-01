@@ -13,7 +13,7 @@ use super::error::{ContributorError, ElementCountOverflow};
 use super::handles::{BoundsWitnessId, InputOrdinal, OwnershipWitnessId, RegionId};
 use super::numerics::{
     ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
-    NumericalRealization, SubnormalMode, ValueDomainProvenance,
+    NumericalRealization, SubnormalFreedom, SubnormalMode, ValueDomainProvenance,
 };
 use super::pointwise::{PointwiseF32Expression, PointwiseF32Node};
 
@@ -246,8 +246,10 @@ pub enum ScalarProgram {
     /// Strict per-tensor affine U4-to-F32 dequantization.
     ///
     /// Codes use packed U4 in LSB-first, zero-tail U8 carriers; scale is an
-    /// unpacked positive finite F32 scalar; zero point is an unpacked U8
-    /// carrier whose semantic value is in `0..=15`.
+    /// unpacked positive *normal* F32 scalar, as the governed strict-affine
+    /// value contract requires; zero point is an unpacked U8 carrier whose
+    /// semantic value is in `0..=15`. The normality of the scale is what
+    /// [`super::VerifiedScheduledRegion::subnormal_freedom`] rests on.
     StrictAffineU4Dequantize {
         /// Role of the logical-shape code component.
         codes_role: EncodedComponentRole,
@@ -671,6 +673,42 @@ impl VerifiedScheduledRegion {
     #[must_use]
     pub const fn canonical_identity(&self) -> &CanonicalScheduledRegionIdentity {
         &self.identity
+    }
+
+    /// Returns whether this region's arithmetic is bounded away from subnormals.
+    ///
+    /// Derived from the *verified* scalar program, which is why this is a method
+    /// on the verified product rather than a field a producer supplies.
+    /// `verify_strict_affine_u4_dequantize` already proved, before this region
+    /// existed, that the decode arm names exactly the three governed
+    /// strict-affine component roles of one input tensor and preserves the
+    /// strict realization; the governed value contract those roles belong to
+    /// declares its scale `positive-normal-f32`. The freedom follows from those
+    /// two checked facts, so nothing here has to be trusted separately.
+    ///
+    /// Every other scalar program reads dense tensor payloads whose value
+    /// domain nothing bounds, and the match is exhaustive so a new program is a
+    /// build error here rather than an unproven freedom silently inheriting an
+    /// answer.
+    #[must_use]
+    pub const fn subnormal_freedom(&self) -> SubnormalFreedom {
+        subnormal_freedom_of(&self.region.index.scalar_program)
+    }
+}
+
+/// Classifies one scalar program's subnormal freedom.
+///
+/// The single definition both [`VerifiedScheduledRegion::subnormal_freedom`]
+/// and the structured-kernel lowering read, so a kernel's answer cannot drift
+/// from the region's.
+pub(crate) const fn subnormal_freedom_of(program: &ScalarProgram) -> SubnormalFreedom {
+    match program {
+        ScalarProgram::StrictAffineU4Dequantize { .. } => {
+            SubnormalFreedom::StrictAffineNormalScaleDecode
+        }
+        ScalarProgram::PointwiseF32(_)
+        | ScalarProgram::StrictSerialSum { .. }
+        | ScalarProgram::FusedMultiplyAddSerialSum { .. } => SubnormalFreedom::Unproven,
     }
 }
 

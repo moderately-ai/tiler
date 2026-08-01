@@ -89,6 +89,85 @@ pub enum SubnormalMode {
     },
 }
 
+/// Whether a region's arithmetic is bounded away from the subnormal range.
+///
+/// A declared [`SubnormalMode`] states what a region's arithmetic *means*; this
+/// states whether that meaning is observable at all. When no operand and no
+/// result of a region's arithmetic in some type can be subnormal, every
+/// resolution of that type's subnormal dimensions returns identical bits, so a
+/// target whose behaviour differs from the declared one has nothing to differ
+/// about. This is a value-domain fact, not a permission: it never authorizes a
+/// substitution, it records that the substitution question is vacuous.
+///
+/// # Derived, never declared
+///
+/// Nothing constructs this from a caller's assertion. It is a total function of
+/// a [`super::VerifiedScheduledRegion`]
+/// ([`super::VerifiedScheduledRegion::subnormal_freedom`]), computed from the
+/// region's *verified* scalar program, and a region that does not carry the
+/// evidence gets [`Self::Unproven`]. A settable witness would let a producer
+/// declare a freedom its values do not have, which is the one failure this type
+/// must not permit.
+///
+/// Not `#[non_exhaustive]`, for the reason stated at the top of this module.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum SubnormalFreedom {
+    /// Nothing bounds this region's arithmetic away from the subnormal range.
+    ///
+    /// The declared subnormal modes are obligations a target must realize, and
+    /// a target that resolves either dimension differently is a hard gap.
+    Unproven,
+    /// Strict-affine decoding of a value whose scale the type requires normal.
+    ///
+    /// **Exhaustive over the finite code domain, not sampled.** The `i32`
+    /// subtraction of two codes in the inclusive `u8` domain is exact and
+    /// cannot overflow. Converting a value of magnitude at most 255 to `f32` is
+    /// exact, so the converted operand is `+0.0` or has magnitude at least
+    /// `1.0`, and is never subnormal. The remaining operation is the multiply
+    /// by the scale: when the codes are equal the exact product is `+0.0`,
+    /// which the registered exceptional contract already requires, and
+    /// otherwise the product has magnitude at least the scale. So a product
+    /// below the `f32` minimum normal requires a scale below it, and
+    /// `crate::semantic::ENCODED_NUMERIC_SCALE_DOMAIN` declares the scale
+    /// `positive-normal-f32`.
+    ///
+    /// **Measurement.** Finding 32 of
+    /// `docs/research/apple-targets/numerical-behaviour.md`, run 2026-07-31 on
+    /// the `apple9-f32-unified-msl4-macos26` row, dispatched this exact chain:
+    /// all 1,310,720 normal-scale cells returned bits identical to the exact
+    /// rational reference, `code == zero_point` returned `+0.0` in 256/256
+    /// diagonal cells of every case, and at a subnormal scale the flush acted
+    /// on the *operand* — where the derivation places it — while at the minimum
+    /// normal nothing flushed. The boundary is that finding's: one GPU family,
+    /// one toolchain and flag row, `u8` codes, one non-overflowing subtraction,
+    /// no packed extraction, no timing.
+    ///
+    /// The claim is about `f32` and nothing else; see [`Self::discharges`].
+    StrictAffineNormalScaleDecode,
+}
+
+impl SubnormalFreedom {
+    /// Returns whether this freedom discharges the subnormal obligation for one
+    /// arithmetic type.
+    ///
+    /// Typed rather than boolean, and both matches are exhaustive, because a
+    /// freedom established for one type says nothing about another: the decode
+    /// derivation rests on `f32`'s exponent range and on integers up to 255
+    /// being exactly representable in `f32`, and neither premise transfers to a
+    /// narrower format. A region emitting `f16` arithmetic under a decode's
+    /// freedom must still record its gap.
+    #[must_use]
+    pub const fn discharges(self, arithmetic: ArithmeticType) -> bool {
+        match self {
+            Self::Unproven => false,
+            Self::StrictAffineNormalScaleDecode => match arithmetic {
+                ArithmeticType::F32 => true,
+                ArithmeticType::F16 | ArithmeticType::Bf16 | ArithmeticType::F64 => false,
+            },
+        }
+    }
+}
+
 /// Whether a numeric-reshaping transform is permitted by the contract.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum NumericalPermission {

@@ -25,12 +25,13 @@ use tiler_ir::kernel::{
     MemoryScope, VerifiedKernel, lower_scheduled_region,
 };
 use tiler_ir::schedule::{
-    Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
-    ExceptionalValueAssumption, ExecutionBinding, FlushedZeroSign, InputOrdinal, KernelSchedule,
-    LaunchPlan, LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof,
-    OwnershipProofKind, OwnershipWitnessId, PointwiseF32Expression, PointwiseF32ExpressionBuilder,
-    ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy,
-    TensorRole, ValueDomainProvenance, VerifiedScheduledRegion, element_count,
+    Access, AccessMode, ArithmeticType, BoundsProof, BoundsProofKind, BoundsWitnessId,
+    ContributorOrder, ExceptionalValueAssumption, ExecutionBinding, FlushedZeroSign, InputOrdinal,
+    KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission, NumericalRealization,
+    OwnershipProof, OwnershipProofKind, OwnershipWitnessId, PointwiseF32Expression,
+    PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
+    ScheduledRegionBuilder, SubnormalFreedom, SubnormalMode, TailPolicy, TensorRole,
+    ValueDomainProvenance, VerifiedScheduledRegion, element_count,
 };
 use tiler_ir::semantic::{
     STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
@@ -933,19 +934,105 @@ fn subnormal_preservation_is_recorded_as_an_unrealizable_gap() {
     assert!(unit.source().contains("//   f32: flushes-to-zero"));
 }
 
+/// The strict-affine decode is honourable on the measured Apple profile.
+///
+/// This kernel used to be refused with `SubnormalFlushInArithmetic`, and the
+/// refusal was correct while the value contract admitted a subnormal scale: the
+/// decode declares subnormal preservation, and this row flushes. The contract
+/// now admits only a positive *normal* scale, which makes every operand and
+/// result of the decode's multiply either `+0.0` or at least the scale in
+/// magnitude — so the flush has nothing to act on and the two behaviours return
+/// identical bits.
+///
+/// **The contract was not weakened to get here.** The kernel still declares
+/// `Preserve` on both dimensions, and `pointwise_kernel` declaring exactly the
+/// same thing is still refused below, which is what shows this is a decision
+/// about the value domain rather than a relaxed comparison.
 #[test]
-fn strict_affine_u4_dequantization_is_refused_on_the_measured_apple_profile() {
+fn strict_affine_u4_dequantization_is_honoured_on_the_measured_apple_profile() {
     let kernel = strict_affine_u4_dequantize_kernel();
+    assert_eq!(
+        kernel.subnormal_freedom(),
+        SubnormalFreedom::StrictAffineNormalScaleDecode,
+    );
+    assert_eq!(kernel.numerical().input_subnormals, SubnormalMode::Preserve);
+    assert_eq!(
+        kernel.numerical().result_subnormals,
+        SubnormalMode::Preserve
+    );
+
     let unit = emit_translation_unit(&[&kernel], &target()).expect("mechanical translation");
     assert!(unit.source().contains("& 0x0fu"));
     assert!(unit.source().contains("int("));
     assert!(unit.source().contains("float("));
+    assert!(unit.numerical_gaps().is_empty());
+    unit.require_declared_realization()
+        .expect("a normal-scale decode honours its declared subnormal contract");
+
+    // The same declaration, on a kernel with no such freedom, is still refused.
+    let pointwise = pointwise_kernel();
+    assert_eq!(pointwise.subnormal_freedom(), SubnormalFreedom::Unproven);
     assert_eq!(
-        unit.require_declared_realization().unwrap_err(),
+        emit_translation_unit(&[&pointwise], &target())
+            .unwrap()
+            .require_declared_realization()
+            .unwrap_err(),
         MetalEmitError::UnrealizableNumericalObligation {
             gap: MetalNumericalGap::SubnormalFlushInArithmetic,
         }
     );
+}
+
+/// A discharged obligation does not need the target to have stated a fact.
+///
+/// Where no subnormal can occur, the target's `f32` behaviour is not merely
+/// agreeable — it is unobservable, so an *unmeasured* row answers the decode
+/// just as well as the measured one. Asserting this pins the order of the two
+/// checks: consulting the freedom after resolving the fact would report the
+/// decode as using an arithmetic type with no stated behaviour and fail closed
+/// on a question that has no content.
+#[test]
+fn a_discharged_decode_needs_no_stated_subnormal_fact() {
+    let kernel = strict_affine_u4_dequantize_kernel();
+    let mut facts = target();
+    facts.subnormal_arithmetic = MetalSubnormalArithmeticFacts::unmeasured();
+    let unit = emit_translation_unit(&[&kernel], &facts).expect("mechanical translation");
+    assert!(unit.unstated_subnormal_arithmetic().is_empty());
+    assert!(unit.numerical_gaps().is_empty());
+    unit.require_declared_realization().unwrap();
+
+    // Non-vacuity: the same unmeasured row refuses a kernel without the freedom.
+    let unstated = emit_translation_unit(&[&pointwise_kernel()], &facts).unwrap();
+    assert_eq!(
+        unstated.unstated_subnormal_arithmetic(),
+        [MetalFloatArithmeticType::F32],
+    );
+    assert_eq!(
+        unstated.require_declared_realization().unwrap_err().rule(),
+        "unstated-subnormal-arithmetic",
+    );
+}
+
+/// The freedom is typed, and the type it does not cover still records its gap.
+///
+/// The decode's derivation rests on `f32`'s exponent range and on integers up
+/// to 255 being exactly representable in `f32`; neither premise transfers to a
+/// narrower format. Nothing emits `f16` arithmetic today, so this exercises the
+/// discrimination directly rather than through a kernel that cannot exist.
+#[test]
+fn a_decode_freedom_discharges_f32_alone() {
+    let freedom = SubnormalFreedom::StrictAffineNormalScaleDecode;
+    assert!(freedom.discharges(ArithmeticType::F32));
+    for other in [
+        ArithmeticType::F16,
+        ArithmeticType::Bf16,
+        ArithmeticType::F64,
+    ] {
+        assert!(!freedom.discharges(other), "{other:?} must not be covered");
+    }
+    for arithmetic in ArithmeticType::ALL {
+        assert!(!SubnormalFreedom::Unproven.discharges(arithmetic));
+    }
 }
 
 /// Every arithmetic type occupies its own slot in the facts record.

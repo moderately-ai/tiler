@@ -40,6 +40,46 @@ pub fn positive_finite_scalar_predicate() -> SemanticPredicateIdentity {
         .expect("the governed PositiveFiniteScalar predicate identity is valid")
 }
 
+/// Returns the governed predicate which requires one positive *normal* scalar.
+///
+/// Strictly stronger than [`positive_finite_scalar_predicate`]: it admits
+/// nothing that predicate rejects, and additionally rejects the subnormal
+/// range. The two are declared together rather than merged, because "the value
+/// is zero, negative, infinite, or NaN" and "the value is subnormal" are two
+/// causes with two different fixes, and a diagnostic that shares one code
+/// cannot tell a caller which one it hit.
+///
+/// # What the strengthening buys
+///
+/// A positive normal scale is what makes the strict-affine decode's numerical
+/// obligation dischargeable on a target whose `f32` arithmetic flushes
+/// subnormals. The derivation is exhaustive over the finite code domain rather
+/// than sampled: the `i32` subtraction of two codes in `[0, 255]` is exact and
+/// cannot overflow; converting a value of magnitude at most 255 to `f32` is
+/// exact, so the converted operand is `+0.0` or has magnitude at least `1.0`
+/// and is never subnormal; the product with the scale is `+0.0` when the codes
+/// are equal, and otherwise has magnitude at least the scale, so it is
+/// subnormal only if the scale is. A normal scale therefore makes the decode
+/// bit-identical under a flushing and under a subnormal-preserving `f32`, and
+/// the flush has nothing to act on.
+///
+/// **Measurement.** Finding 32 of `docs/research/apple-targets/numerical-behaviour.md`
+/// ran that chain on the `apple9-f32-unified-msl4-macos26` row on 2026-07-31:
+/// all 1,310,720 normal-scale cells returned bits identical to the exact
+/// rational reference, `code == zero_point` returned `+0.0` in every diagonal
+/// cell, and at a deliberately subnormal scale the flush acted on the operand —
+/// exactly where the derivation places it. The boundary is that finding's: one
+/// GPU family, one toolchain and flag row, `u8` codes, no packed extraction.
+///
+/// # Panics
+///
+/// Panics only if Tiler's hard-coded governed identity is invalid.
+#[must_use]
+pub fn positive_normal_scalar_predicate() -> SemanticPredicateIdentity {
+    SemanticPredicateIdentity::new("tiler", "positive-normal-scalar", 1)
+        .expect("the governed PositiveNormalScalar predicate identity is valid")
+}
+
 /// Stable namespaced semantic meaning of one value predicate.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SemanticPredicateIdentity(TypeKey);
@@ -434,6 +474,14 @@ pub(super) fn assess_static_precondition(
         }
     } else if declaration.predicate == positive_finite_scalar_predicate() {
         if value.is_finite() && value > 0.0 {
+            StaticAssessment::Proven(SemanticPreconditionProofBasis::StandardConstantF32BitsV1)
+        } else {
+            StaticAssessment::Disproved
+        }
+    } else if declaration.predicate == positive_normal_scalar_predicate() {
+        // `f32::is_normal` is already false for zero, subnormal, infinite, and
+        // NaN values, so the sign test is the only thing it does not cover.
+        if value.is_normal() && value > 0.0 {
             StaticAssessment::Proven(SemanticPreconditionProofBasis::StandardConstantF32BitsV1)
         } else {
             StaticAssessment::Disproved

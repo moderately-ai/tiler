@@ -14,7 +14,7 @@
 use crate::schedule::{BoundsWitnessId, OwnershipWitnessId};
 use crate::schedule::{
     CanonicalScheduledRegionIdentity, NumericalRealization, RegionId, ResourceRequirements,
-    ScheduledRegion, VerifiedScheduledRegion,
+    ScheduledRegion, VerifiedScheduledRegion, subnormal_freedom_of,
 };
 
 use super::error::{
@@ -582,10 +582,16 @@ impl KernelBuilder {
         )
         .and_then(|()| encode_identity(&self.schedule_identity, &data));
         match verified {
+            // The freedom is read from the region this builder was opened
+            // against, never declared: `KernelBuilder::new` is the only path
+            // that reaches `build`, and it takes a `VerifiedScheduledRegion`,
+            // so the scalar program classified here is one the intrinsic
+            // schedule verifier already accepted.
             Ok(identity) => Ok(VerifiedKernel {
                 owner: self.owner.verified_owner(),
                 region: self.region,
                 schedule_identity: self.schedule_identity,
+                subnormal_freedom: subnormal_freedom_of(&self.schedule.index.scalar_program),
                 data,
                 identity,
             }),
