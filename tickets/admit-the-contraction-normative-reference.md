@@ -1,7 +1,7 @@
 ---
 id: admit-the-contraction-normative-reference
 title: Admit the contraction normative reference and its exceptional-value corpus
-status: in-progress
+status: done
 priority: p1
 dependencies: [admit-the-contraction-semantic-profile]
 related: [implement-parallel-reduction-strategies, reduction-semantics-contract]
@@ -9,9 +9,6 @@ scopes: [implementation/reference, implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, reference, numerics, contraction, reductions]
-claimed_from: todo
-assignee: worker-admit-the-cont
-lease_expires_at: 1785550315
 ---
 ## User-visible outcome
 
@@ -90,3 +87,5 @@ That *only* those two failed is itself the finding: the other seven corpus cases
 **Deliberately not done.** No schedule, backend, or model-level tolerance. No canonical spelling was invented for a seeded contraction: `ContractionSeed::Initial` is expressible by the fold — which is what the seed regression compares against — but no fact record can declare it, because inventing that spelling would introduce a semantics the normative text has not defined.
 
 **Bounded remainder, filed:** `bound-the-reference-contraction-iteration-space`. The multiply-accumulate work bound added here reuses `ReferenceOperationError::ShapeTooLarge`, whose documented meaning is shape arithmetic rather than iteration-space work. It refuses correctly; the diagnostic is imprecise, and the fix is a public error variant.
+
+**Boundary acceptance (2026-07-31).** Tom accepted the three public items as reviewed — `strict_tensor_contraction_f32_facts()`, `UnsupportedContractionDeclaration`, and the `UnsupportedContraction` variant — and the stated judgment that per-combine NaN canonicalization admits no value-comparison test in this evaluator.
