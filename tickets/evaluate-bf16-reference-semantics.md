@@ -1,7 +1,7 @@
 ---
 id: evaluate-bf16-reference-semantics
 title: Evaluate BF16 reference semantics from an exact-rational oracle
-status: todo
+status: in-progress
 priority: p1
 dependencies: [register-the-bf16-semantic-operation-signatures]
 related: [spike-bf16-through-the-second-dtype-seams, preserve-primary-dtype-standards-evidence]
@@ -9,6 +9,9 @@ scopes: [implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, bf16, reference, numerics]
+claimed_from: todo
+assignee: worker-bf16-ref
+lease_expires_at: 1785580761
 ---
 ## User-visible outcome
 
