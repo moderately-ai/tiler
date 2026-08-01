@@ -1,7 +1,7 @@
 ---
 id: design-autoregressive-state-and-kv-cache
 title: Design autoregressive state and KV-cache ownership
-status: in-progress
+status: done
 priority: p1
 dependencies: [design-attention-program-vertical]
 related: [device-placement-and-memory-domain-contract, transfer-synchronization-and-resource-lifetime-contract, prototype-candle-metal-adapter, admit-the-sequence-extension-concatenate-family, admit-an-additive-extent-relation, define-the-runtime-kv-state-boundary, bind-the-kv-cache-through-the-artifact-and-runtime-interface, execute-the-stateful-prefill-path, execute-the-decode-step-path, integrate-the-autoregressive-decode-loop, test-the-autoregressive-state-failure-cases, prove-the-c1-stateful-attention-vertical, scope-a-windowed-kv-append-into-retained-capacity, admit-a-position-selecting-slice-for-the-rotary-table, scope-the-sequence-extending-tensor-family]
@@ -9,9 +9,6 @@ scopes: [research/runtime, contracts/integrations, contracts/foundation]
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [design, runtime, kv-cache, prefill, decode, language-model]
-claimed_from: todo
-assignee: worker-kv-cache
-lease_expires_at: 1785558508
 ---
 ## User-visible outcome
 
