@@ -16,7 +16,10 @@ from a *regenerated* one:
     or extremum disagrees with the row it summarizes, a rotary table whose two
     halves are no longer the duplication the pinned source builds, a mask entry
     that is neither of L4's two admitted values or that is admitted at a
-    position causality forbids;
+    position causality forbids, a joint band that is not the maximum over the
+    rows it summarizes, a P-elem size that is no longer its registered
+    contract's, and a P-flush term state that does not follow from its own
+    controls;
   * `--logit-dir` and `--attribution-dir` additionally re-hash the regenerable
     F32 bytes against the retained per-slice digests, when they happen to be
     present locally.
@@ -45,6 +48,18 @@ TOP_K = 32
 EXPECTED_POSITIONS = len(PROMPT_IDS) + DECODE_STEPS
 ENVELOPE_VARIANTS = {"f64_unmodified", "f64_promoted"}
 
+# The joint band's variants and the two registered accuracy contracts it is
+# sized from. The exponential's 12 is the registered `Ulp(tiler::ulp-reference-
+# gap@1, 12)` and deliberately not Table 8.1's 4; the reciprocal square root's 1
+# is the supremum of the `Faithful` band.
+ELEM_SIGN_POLICIES = ("outward", "alternating")
+JOINT_ORDERINGS = ("unmodified", "promoted")
+JOINT_VARIANTS = {
+    f"joint_{ordering}_{policy}" for ordering in JOINT_ORDERINGS for policy in ELEM_SIGN_POLICIES
+}
+ELEM_EXP_ULPS = 12
+ELEM_RSQRT_ULPS = 1
+
 # The attribution surface's shape, from L1's config facts and L6's arithmetic.
 NUM_LAYERS = 28
 HIDDEN_SIZE = 1024
@@ -66,6 +81,8 @@ RESULT_FILES = [
     "positions.tsv",
     "top32.tsv",
     "envelope.tsv",
+    "joint.tsv",
+    "perturbation.tsv",
     "hidden.tsv",
     "hidden_top.tsv",
     "cache.tsv",
@@ -372,6 +389,236 @@ def verify(directory: Path, logit_dir: Path | None, attribution_dir: Path | None
             f"envelope position {row['position']} {row['variant']}: malformed agreement flag",
         )
     report.note(f"envelope: {len(envelope)} rows over {len(variants)} variants")
+
+    # --- joint band ---------------------------------------------------------
+    # The joint deviation is one relation between two complete computations, so
+    # every check here is a structural identity or a recomputation from values
+    # the record already carries. None of them asserts a magnitude: the band is
+    # the measurement, and a threshold over it belongs to the corpus and
+    # regression tickets rather than to this validator.
+    joint = read_tsv(directory / "joint.tsv")
+    joint_variants = {row["variant"] for row in joint}
+    report.require(
+        joint_variants == JOINT_VARIANTS,
+        f"joint carries variants {sorted(joint_variants)}, expected {sorted(JOINT_VARIANTS)}",
+    )
+    report.require(
+        len(joint) == EXPECTED_POSITIONS * len(JOINT_VARIANTS),
+        f"joint has {len(joint)} rows, expected {EXPECTED_POSITIONS * len(JOINT_VARIANTS)}",
+    )
+    greedy_of = {row["position"]: row["greedy_token"] for row in positions}
+    gap_of = {row["position"]: row["runner_up_gap"] for row in positions}
+    joint_agreeing = 0
+    for row in joint:
+        label = f"joint {row['variant']} position {row['position']}"
+        report.require(
+            0 <= int(row["bit_identical_logits"]) <= VOCAB_SIZE,
+            f"{label}: implausible bit-identical count",
+        )
+        report.require(float(row["max_abs_deviation"]) >= 0.0, f"{label}: negative deviation")
+        report.require(
+            float(row["top32_max_abs_deviation"]) <= float(row["max_abs_deviation"]),
+            f"{label}: the top-32 deviation exceeds the whole-vocabulary deviation it is a subset of",
+        )
+        report.require(
+            int(row["top32_max_ulp_deviation"]) <= int(row["max_ulp_deviation"]),
+            f"{label}: the top-32 ULP deviation exceeds the whole-vocabulary one",
+        )
+        report.require(
+            row["runner_up_gap"] == gap_of.get(row["position"]),
+            f"{label}: the recorded gap {row['runner_up_gap']} is not the gap positions.tsv "
+            f"records for that position ({gap_of.get(row['position'])})",
+        )
+        report.require(
+            row["deviation_over_gap"]
+            == repr(float(row["max_abs_deviation"]) / float(row["runner_up_gap"])),
+            f"{label}: the recorded ratio is not the deviation divided by the recorded gap",
+        )
+        agrees = row["greedy_token"] == greedy_of.get(row["position"])
+        report.require(
+            row["greedy_token_agrees"] == str(agrees).lower(),
+            f"{label}: the agreement flag disagrees with the greedy token positions.tsv records",
+        )
+        joint_agreeing += 1 if row["greedy_token_agrees"] == "true" else 0
+    report.note(
+        f"joint: {len(joint)} rows over {len(joint_variants)} variants, "
+        f"{joint_agreeing} agreeing greedy tokens"
+    )
+
+    # --- the perturbation record --------------------------------------------
+    perturbation = read_kv(directory / "perturbation.tsv")
+    report.require(
+        perturbation.get("pelem.exp.ulps") == str(ELEM_EXP_ULPS),
+        f"the record sizes the exponential perturbation at {perturbation.get('pelem.exp.ulps')} ULPs; "
+        f"the registered Ulp(tiler::ulp-reference-gap@1, {ELEM_EXP_ULPS}) contract is {ELEM_EXP_ULPS}",
+    )
+    report.require(
+        perturbation.get("pelem.exp.contract") == "Ulp(tiler::ulp-reference-gap@1, 12)",
+        f"the record names exponential contract {perturbation.get('pelem.exp.contract')}",
+    )
+    report.require(
+        perturbation.get("pelem.rsqrt.ulps") == str(ELEM_RSQRT_ULPS)
+        and perturbation.get("pelem.rsqrt.contract") == "Faithful",
+        "the record does not size the reciprocal square root from the Faithful contract",
+    )
+    report.require(
+        set(perturbation.get("joint.variants", "").split(",")) == JOINT_VARIANTS,
+        f"perturbation.tsv names variants {perturbation.get('joint.variants')}",
+    )
+    report.require(
+        environment.get("joint.variants") == perturbation.get("joint.variants"),
+        "environment.tsv and perturbation.tsv name different joint variants",
+    )
+    report.require(
+        environment.get("joint.exp_ulps") == perturbation.get("pelem.exp.ulps")
+        and environment.get("joint.rsqrt_ulps") == perturbation.get("pelem.rsqrt.ulps")
+        and environment.get("joint.sign_policies") == perturbation.get("pelem.sign_policies"),
+        "environment.tsv and perturbation.tsv disagree about the P-elem sizes or sign policies",
+    )
+
+    band = max(float(row["max_abs_deviation"]) for row in joint)
+    report.require(
+        perturbation.get("joint.band.max_abs_deviation") == repr(band),
+        f"the recorded band {perturbation.get('joint.band.max_abs_deviation')} is not the maximum "
+        f"over joint.tsv, {band!r}",
+    )
+    report.require(
+        perturbation.get("joint.band.top32_max_abs_deviation")
+        == repr(max(float(row["top32_max_abs_deviation"]) for row in joint)),
+        "the recorded top-32 band is not the maximum over joint.tsv",
+    )
+    report.require(
+        perturbation.get("joint.band.max_ulp_deviation")
+        == str(max(int(row["max_ulp_deviation"]) for row in joint)),
+        "the recorded ULP band is not the maximum over joint.tsv",
+    )
+    report.require(
+        perturbation.get("joint.band.top32_max_ulp_deviation")
+        == str(max(int(row["top32_max_ulp_deviation"]) for row in joint)),
+        "the recorded top-32 ULP band is not the maximum over joint.tsv",
+    )
+    report.require(
+        perturbation.get("joint.band.rows") == str(len(joint)),
+        "the recorded joint population disagrees with joint.tsv",
+    )
+    report.require(
+        perturbation.get("joint.band.greedy_agreeing_rows") == str(joint_agreeing),
+        "the recorded greedy-agreement count disagrees with joint.tsv",
+    )
+    report.require(
+        perturbation.get("joint.band.greedy_agrees_everywhere")
+        == str(joint_agreeing == len(joint)).lower(),
+        "the recorded everywhere-agrees flag disagrees with its own count",
+    )
+
+    smallest_gap = min(float(row["runner_up_gap"]) for row in positions)
+    report.require(
+        perturbation.get("joint.band.smallest_runner_up_gap") == repr(smallest_gap),
+        f"the record's smallest runner-up gap is not the minimum over positions.tsv, {smallest_gap!r}",
+    )
+    report.require(
+        perturbation.get("joint.band.gap_ratio") == repr(band / smallest_gap),
+        "the recorded gap ratio is not the band divided by the smallest runner-up gap",
+    )
+    report.require(
+        perturbation.get("joint.band.exact_greedy_gate_holds") == str(band < smallest_gap).lower(),
+        "the recorded gate verdict disagrees with the band it is derived from",
+    )
+
+    # The P-flush mechanism is a claim about a measurement, so the record must
+    # carry both arms of both controls and a term state that follows from them.
+    controls_passed = True
+    for label in ("elementwise", "blas"):
+        for suffix in (
+            "mode_off_returned_the_exact_subnormal",
+            "mode_on_flushed_to_zero",
+            "flush_preserved_the_sign",
+        ):
+            key = f"pflush.control.{label}.{suffix}"
+            value = perturbation.get(key)
+            report.require(value in ("true", "false"), f"perturbation.tsv carries no verdict at {key}")
+            controls_passed = controls_passed and value == "true"
+        off = perturbation.get(f"pflush.control.{label}.mode_off_hex", "")
+        on = perturbation.get(f"pflush.control.{label}.mode_on_hex", "")
+        report.require(
+            off == perturbation.get(f"pflush.control.{label}.exact_subnormal_hex")
+            or perturbation.get(f"pflush.control.{label}.mode_off_returned_the_exact_subnormal") == "false",
+            f"the {label} control claims the mode-off arm returned the exact subnormal but records {off}",
+        )
+        report.require(
+            on in ("0x00000000", "0x80000000")
+            or perturbation.get(f"pflush.control.{label}.mode_on_flushed_to_zero") == "false",
+            f"the {label} control claims a flush but records {on}",
+        )
+        report.require(
+            off != on,
+            f"the {label} control's two arms returned the same bit pattern, so it cannot say no",
+        )
+    report.require(
+        perturbation.get("pflush.controls_passed") == str(controls_passed).lower(),
+        "the recorded control verdict disagrees with the individual control rows",
+    )
+
+    reachable = perturbation.get("pflush.f32_reachability.bit_identical_positions")
+    report.require(
+        perturbation.get("pflush.f32_reachability.positions") == str(EXPECTED_POSITIONS),
+        "the flush-reachability population is not the row's 18 positions",
+    )
+    if not controls_passed:
+        expected_state = "unknown"
+    elif reachable == str(EXPECTED_POSITIONS):
+        expected_state = "established, and measured to be the identity on this row"
+    else:
+        expected_state = "unknown in the joint carrier"
+    report.require(
+        perturbation.get("pflush.term_state") == expected_state,
+        f"the recorded P-flush term state {perturbation.get('pflush.term_state')!r} does not follow "
+        f"from its own controls and reachability count ({expected_state!r})",
+    )
+    report.require(
+        perturbation.get("joint.terms_carried")
+        == ("P-reorder, P-flush, P-elem" if expected_state.startswith("established") else "P-reorder, P-elem"),
+        "the terms the band claims to carry disagree with the P-flush term state",
+    )
+    # A perturbation that moved nothing would leave the band indistinguishable
+    # from the unperturbed re-spelling, so the control is required to have moved.
+    controlled_variant = perturbation.get("pelem.control.elem_zero.controlled_variant", "")
+    controlled_rows = [row for row in joint if row["variant"] == controlled_variant]
+    report.require(
+        len(controlled_rows) == EXPECTED_POSITIONS,
+        f"the control names variant {controlled_variant!r}, which joint.tsv has "
+        f"{len(controlled_rows)} rows for",
+    )
+    if controlled_rows:
+        controlled_band = max(float(row["max_abs_deviation"]) for row in controlled_rows)
+        report.require(
+            perturbation.get("pelem.control.elem_zero.controlled_variant_max_abs_deviation")
+            == repr(controlled_band),
+            "the control's recorded variant maximum is not the maximum over that variant's joint.tsv rows",
+        )
+        # The control is the same pass at zero ULPs, so it must be compared
+        # against the variant it controls: a perturbation that reached nothing
+        # there would otherwise hide behind another variant's deviation.
+        report.require(
+            float(perturbation.get("pelem.control.elem_zero.max_abs_deviation", "inf")) < controlled_band,
+            "the zero-magnitude control's deviation is not below the variant it controls",
+        )
+        report.require(
+            perturbation.get("pelem.control.elem_zero.band_moved")
+            == str(
+                controlled_band
+                > float(perturbation.get("pelem.control.elem_zero.max_abs_deviation", "inf"))
+            ).lower(),
+            "the recorded band-moved flag disagrees with the two deviations it is derived from",
+        )
+    report.require(
+        perturbation.get("pelem.control.elem_zero.band_moved") == "true",
+        "the zero-magnitude P-elem control did not move the band, so the perturbation reached nothing",
+    )
+    report.note(
+        f"perturbation: {len(perturbation)} keys; both P-flush controls in both arms, "
+        f"P-flush term {perturbation.get('pflush.term_state')!r}"
+    )
 
     # --- attribution: per-layer hidden states -------------------------------
     # The digest proves exact regeneration and the head carries the values a

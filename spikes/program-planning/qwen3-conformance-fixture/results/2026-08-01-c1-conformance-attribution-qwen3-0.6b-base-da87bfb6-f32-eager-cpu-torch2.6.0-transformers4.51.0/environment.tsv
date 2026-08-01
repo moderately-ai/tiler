@@ -21,6 +21,11 @@ run.logit_byte_order	little-endian IEEE-754 binary32, C-contiguous
 envelope.variants	f64_unmodified,f64_promoted
 envelope.rounding_point	logits cast to float32 at the observable
 envelope.decode_input	teacher-forced on the F32 pass token sequence
+joint.variants	joint_unmodified_outward,joint_unmodified_alternating,joint_promoted_outward,joint_promoted_alternating
+joint.perturbations	P-reorder, P-flush, P-elem applied together; see perturbation.tsv
+joint.exp_ulps	12
+joint.rsqrt_ulps	1
+joint.sign_policies	outward,alternating
 attribution.pass	the F32 pass only; the float64 passes carry no hooks
 attribution.observation	forward hooks on each Qwen3DecoderLayer and on Qwen3RotaryEmbedding
 attribution.layers	28

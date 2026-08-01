@@ -27,6 +27,13 @@ What the run produces, in order:
    reference's own sensitivity envelope; see ENVELOPE below for why there are
    two float64 passes rather than one. The float64 passes carry no hooks: the
    attribution surface describes the F32 pass and nothing else.
+6. The P-flush mechanism is proved by two positive controls in this same
+   process, each watched in both arms, before anything relies on it.
+7. Four further passes apply P-reorder, P-flush and P-elem *together* and
+   retain the joint deviation against the plain F32 pass; see JOINT below.
+   Three further passes are controls on that measurement rather than terms of
+   it: the F32 trajectory re-evaluated under the flush, the joint pass with the
+   perturbation at zero, and the joint pass with the flush mode off.
 
 Run it by hand from this directory; no `make` target reaches a spike:
 
@@ -180,12 +187,76 @@ WIDENED_WEIGHT_BYTES = 2_384_199_680
 # owns that. Both are Measurements bound to the host row recorded beside them.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# JOINT -- the three named perturbations, applied together.
+#
+# The L8 qualification record (drafted at
+# `tickets/design-model-level-qualification-and-optimization.md`, section "The
+# bound: three named perturbations", pending its carrier) fixes both the terms
+# and the method. The admissible bound is the *joint* perturbation measured
+# once; three separately measured maxima added together is the per-operation
+# composition `docs/research/numerics/region-accuracy-contract.md` forbids, and
+# it would be simultaneously unsound and needlessly loose.
+#
+#   P-reorder -- an independently legal F32 ordering. Already implemented as the
+#       `f64_unmodified` and `f64_promoted` variants above; the joint passes
+#       reuse those two orderings rather than introducing a third.
+#   P-flush   -- F32 subnormal inputs and results flushed to sign-preserving
+#       zero at every arithmetic site, which is what the qualified
+#       `apple9-f32-unified-msl4-macos26` row is measured to do and what the CPU
+#       reference does not. Its mechanism is proved by positive control below,
+#       never assumed from a return value.
+#   P-elem    -- each subordinate elementary function moved to the edge of the
+#       band its *registered* accuracy contract admits.
+#
+# The authority for P-elem is the registered contract and not Table 8.1
+# directly. The Metal Shading Language Specification bounds `exp` at 4 ULP under
+# Apple's own ULP definition; the corpus crosses that metric gap through the one
+# registered `ScaledMetric` implication whose derivation carries a factor of
+# three, so what Tiler promises is 12 ULP under `tiler::ulp-reference-gap@1`. A
+# perturbation sized at 4 would measure a bound Tiler does not claim.
+# ---------------------------------------------------------------------------
+
+# `Ulp(tiler::ulp-reference-gap@1, 12)` for the exponential subordinate to both
+# `tiler::softmax-f32@1` and `tiler::silu-f32@1`.
+ELEM_EXP_ULPS = 12
+# `Faithful` for the reciprocal square root subordinate to
+# `tiler::rms-norm-f32@1`. A faithful result is one of the two F32 values
+# bracketing the exact one, so its deviation is strictly below one ULP; one ULP
+# is the supremum of that band and is what the perturbation uses.
+ELEM_RSQRT_ULPS = 1
+
+# Which way each perturbed elementary result is moved. Neither policy searches
+# the 2^N assignment of per-element signs -- that is combinatorial and per
+# output -- so each is a full-magnitude sample of the admitted band, and the two
+# are kept because they are worst for opposite structures. `outward` moves every
+# result away from zero, which is maximally correlated and therefore worst where
+# a perturbation propagates through a sum (the SiLU gate into `down_proj`, the
+# RMS scale across the whole hidden vector) and exactly cancelling inside a
+# softmax normalization. `alternating` takes the sign from the result's own low
+# mantissa bit, which is decorrelated from magnitude and therefore does not
+# cancel in a softmax. The retained band is the maximum over both.
+ELEM_SIGN_POLICIES = ("outward", "alternating")
+
+JOINT_ORDERINGS = ("unmodified", "promoted")
+JOINT_VARIANTS = tuple(
+    f"joint_{ordering}_{policy}" for ordering in JOINT_ORDERINGS for policy in ELEM_SIGN_POLICIES
+)
+
+# L1's measured smallest runner-up gap across all 18 C1 positions, transcribed
+# from the retained `positions.tsv` of this same record. The exact-greedy gate
+# the qualification record derives holds only while the measured band stays
+# below it, which is a condition this run checks rather than assumes.
+SMALLEST_RUNNER_UP_GAP = 0.2660789489746094
+
 RESULT_FILES = [
     "environment.tsv",
     "sequence.tsv",
     "positions.tsv",
     "top32.tsv",
     "envelope.tsv",
+    "joint.tsv",
+    "perturbation.tsv",
     "hidden.tsv",
     "hidden_top.tsv",
     "cache.tsv",
@@ -385,6 +456,217 @@ def promote_reference_to_float64(modeling):
     modeling.Qwen3RMSNorm.forward = rms_norm_forward
     modeling.eager_attention_forward = eager_attention_forward
     modeling.Qwen3RotaryEmbedding.forward = rotary_forward
+
+
+def perturb_to_contract_edge(values, ulps: int, policy: str):
+    """Move each elementary-function result to the edge of its admitted band.
+
+    The band is expressed in ULPs of the F32 result the target would produce, so
+    the step is computed in F32 and applied in the pass's own dtype: the
+    reordering perturbation already stands in for the F32 rounding of the pass
+    as a whole, and re-rounding here would count it twice.
+    """
+    import torch
+
+    if ulps == 0:
+        return values
+    narrow = values.to(torch.float32).contiguous()
+    step = (torch.nextafter(narrow, torch.full_like(narrow, float("inf"))) - narrow).to(values.dtype)
+    if not bool(torch.isfinite(step).all()):
+        fail(
+            f"a P-elem step under the {policy} policy was not finite; an elementary result reached "
+            "the F32 range limit"
+        )
+    if policy == "outward":
+        direction = torch.where(values < 0, -1.0, 1.0).to(values.dtype)
+    elif policy == "alternating":
+        direction = torch.where((narrow.view(torch.int32) & 1) == 0, 1.0, -1.0).to(values.dtype)
+    else:
+        fail(f"unknown P-elem sign policy {policy!r}")
+    return values + direction * float(ulps) * step
+
+
+def install_joint_perturbation(modeling, compute_dtype, promote_rope: bool, exp_ulps: int, rsqrt_ulps: int, policy: str):
+    """Install P-elem at the three subordinate elementary-function sites.
+
+    Each replacement is the pinned source line for line, with the compute dtype
+    spelled as `compute_dtype` and one perturbation inserted. The softmax and the
+    SiLU are expanded because the pinned spellings are fused kernels with no
+    reachable exponential: that expansion is itself another legal ordering, which
+    is admissible here precisely because these passes are already carrying
+    P-reorder. `elem_zero` below measures what the expansion alone costs.
+    """
+    import torch
+    from torch import nn
+
+    if promote_rope:
+        promote_reference_to_float64(modeling)
+
+    def rms_norm_forward(self, hidden_states):  # modeling_qwen3.py:71-76
+        input_dtype = hidden_states.dtype
+        hidden_states = hidden_states.to(compute_dtype)
+        variance = hidden_states.pow(2).mean(-1, keepdim=True)
+        scale = perturb_to_contract_edge(
+            torch.rsqrt(variance + self.variance_epsilon), rsqrt_ulps, policy
+        )
+        hidden_states = hidden_states * scale
+        return self.weight * hidden_states.to(input_dtype)
+
+    def eager_attention_forward(  # modeling_qwen3.py:144-167
+        module, query, key, value, attention_mask, scaling, dropout=0.0, **kwargs
+    ):
+        key_states = modeling.repeat_kv(key, module.num_key_value_groups)
+        value_states = modeling.repeat_kv(value, module.num_key_value_groups)
+
+        attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
+        if attention_mask is not None:
+            causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
+            attn_weights = attn_weights + causal_mask
+
+        # `softmax(x)` expanded so that its subordinate exponential is reachable.
+        # The maximum subtraction is the same stabilization the pinned kernel
+        # performs, so the exponent arguments are the ones the target would see.
+        wide = attn_weights.to(compute_dtype)
+        maximum = wide.max(dim=-1, keepdim=True).values
+        exponentials = perturb_to_contract_edge(torch.exp(wide - maximum), exp_ulps, policy)
+        attn_weights = (exponentials / exponentials.sum(dim=-1, keepdim=True)).to(query.dtype)
+        attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
+        attn_output = torch.matmul(attn_weights, value_states)
+        attn_output = attn_output.transpose(1, 2).contiguous()
+
+        return attn_output, attn_weights
+
+    modeling.Qwen3RMSNorm.forward = rms_norm_forward
+    modeling.eager_attention_forward = eager_attention_forward
+
+
+def install_perturbed_activation(model, exp_ulps: int, policy: str) -> None:
+    """Replace each MLP's SiLU with one whose subordinate exponential is perturbed.
+
+    The activation is reached through the module attribute rather than by copying
+    `Qwen3MLP.forward`, because `self.act_fn = ACT2FN[config.hidden_act]` binds a
+    fresh instance per module and replacing it changes nothing else about the
+    layer. The identity of what is replaced is checked rather than assumed: a
+    checkpoint declaring another activation would otherwise be silently perturbed
+    as if it were a SiLU.
+
+    `sigmoid` is spelled by its two stable branches so that exactly one
+    exponential is evaluated per element, on an argument in `(-inf, 0]`, which is
+    the shape a real implementation has and the one the contract bounds.
+    """
+    import torch
+    from torch import nn
+
+    class PerturbedSiLU(nn.Module):
+        """A `nn.Module` because `act_fn` is a registered child; a plain function is refused."""
+
+        def forward(self, x):
+            exponential = perturb_to_contract_edge(torch.exp(-torch.abs(x)), exp_ulps, policy)
+            sigmoid = torch.where(x >= 0, 1.0 / (1.0 + exponential), exponential / (1.0 + exponential))
+            return x * sigmoid
+
+    replaced = 0
+    for layer in model.model.layers:
+        if not isinstance(layer.mlp.act_fn, nn.SiLU):
+            fail(
+                f"layer {replaced} declares activation {type(layer.mlp.act_fn).__name__}, not SiLU; "
+                "P-elem is derived from `tiler::silu-f32@1` and applies to nothing else"
+            )
+        layer.mlp.act_fn = PerturbedSiLU()
+        replaced += 1
+    if replaced != NUM_LAYERS:
+        fail(f"the perturbed activation reached {replaced} layers, the model has {NUM_LAYERS}")
+
+
+def measure_flush_controls():
+    """Prove the P-flush mechanism by positive control, in both arms, twice over.
+
+    `torch.set_flush_denormal`'s return value is not the verification -- it
+    reports `True` for both directions on this host, so a run that trusted it
+    would report a flush it never performed. Two expressions whose exact F32
+    result is subnormal are evaluated with the mode off and on in this same
+    process: an elementwise product, and a contraction that goes through the
+    BLAS path, checked separately because the two paths need not share the mode.
+    Watching the mode-off arm return the exact subnormal is what shows the
+    control can say no.
+
+    The BLAS control is built so that the sign of the flushed zero is decided by
+    the flush and not by the accumulator. A negative subnormal *product* summed
+    against a `+0` accumulator yields `+0` by IEEE addition whether or not the
+    flush preserved the sign, so the control instead contracts two normal terms
+    whose exact sum is the negative subnormal `-2^-133`, leaving the flush of the
+    result as the only step that can set the sign.
+    """
+    import torch
+
+    def bits(tensor) -> str:
+        return f"0x{tensor.contiguous().view(torch.int32).flatten()[0].item() & 0xFFFFFFFF:08x}"
+
+    def both_arms(evaluate):
+        torch.set_flush_denormal(False)
+        off = bits(evaluate())
+        torch.set_flush_denormal(True)
+        on = bits(evaluate())
+        torch.set_flush_denormal(False)
+        return off, on
+
+    def elementwise():
+        return torch.full((64,), -1e-38, dtype=torch.float32) * 0.01
+
+    def contraction():
+        # Exact per-term products 2^-110 and -(2^-110 + 2^-133); every input and
+        # intermediate is normal, and the exact sum -2^-133 is subnormal.
+        left = torch.zeros((64, 2), dtype=torch.float32)
+        left[:, 0] = 2.0**-110
+        left[:, 1] = -(2.0**-110)
+        right = torch.zeros((2, 64), dtype=torch.float32)
+        right[0, :] = 1.0
+        right[1, :] = 1.0 + 2.0**-23
+        return left @ right
+
+    returned_true = bool(torch.set_flush_denormal(True))
+    returned_false_call = bool(torch.set_flush_denormal(False))
+
+    records = [
+        ("pflush.mechanism", "torch.set_flush_denormal, which sets ARM FPCR.FZ on this host"),
+        ("pflush.set_flush_denormal_true_returned", str(returned_true).lower()),
+        ("pflush.set_flush_denormal_false_returned", str(returned_false_call).lower()),
+        (
+            "pflush.return_value_is_not_the_verification",
+            "true; both directions return the same value, so only the controls below decide",
+        ),
+    ]
+
+    verdicts = []
+    for label, expression, evaluate, exact_hex in (
+        ("elementwise", "float32 (-1e-38) * 0.01, exact result -1e-40", elementwise, "0x800116c2"),
+        (
+            "blas",
+            "float32 [64,2] @ [2,64] with exact sum -2^-133 through torch.matmul",
+            contraction,
+            "0x80010000",
+        ),
+    ):
+        off, on = both_arms(evaluate)
+        unflushed = off == exact_hex
+        flushed = on in ("0x00000000", "0x80000000")
+        sign_preserved = on == "0x80000000"
+        verdicts.append(unflushed and flushed and sign_preserved)
+        records.extend(
+            [
+                (f"pflush.control.{label}.expression", expression),
+                (f"pflush.control.{label}.exact_subnormal_hex", exact_hex),
+                (f"pflush.control.{label}.mode_off_hex", off),
+                (f"pflush.control.{label}.mode_on_hex", on),
+                (f"pflush.control.{label}.mode_off_returned_the_exact_subnormal", str(unflushed).lower()),
+                (f"pflush.control.{label}.mode_on_flushed_to_zero", str(flushed).lower()),
+                (f"pflush.control.{label}.flush_preserved_the_sign", str(sign_preserved).lower()),
+            ]
+        )
+
+    established = all(verdicts)
+    records.append(("pflush.controls_passed", str(established).lower()))
+    return records, established
 
 
 def load_model(snapshot: Path, dtype):
@@ -620,20 +902,54 @@ def evaluate(model, forced_tokens=None, attribution=None):
     return rows, generated, terminated_on
 
 
+def monotone(bits):
+    """Map IEEE-754 binary32 bit patterns to a monotone integer for ULP distance."""
+    import numpy as np
+
+    signed = bits.astype(np.int64)
+    return np.where(signed & 0x80000000, 0x80000000 - (signed & 0x7FFFFFFF), signed + 0x80000000)
+
+
+def descending_order(values):
+    """Rank by descending logit, ties broken toward the lower vocabulary index."""
+    import numpy as np
+
+    return np.lexsort((np.arange(VOCAB_SIZE), -values))
+
+
+def deviation_record(reference, compared):
+    """The per-position deviation between two complete logit vectors.
+
+    One relation between two complete computations, which is what an error bound
+    is; nothing here is composed from per-operation tolerances. The top-32
+    restriction indexes the *reference's* own order rather than re-ranking the
+    compared vector, so it names the entries a decision actually turns on.
+    """
+    import numpy as np
+
+    wide_reference = reference.astype(np.float64)
+    wide_compared = compared.astype(np.float64)
+    difference = np.abs(wide_reference - wide_compared)
+    ulp = np.abs(monotone(reference.view(np.uint32)) - monotone(compared.view(np.uint32)))
+    scale = np.maximum(np.abs(wide_reference), np.abs(wide_compared))
+    relative = np.where(scale > 0.0, difference / np.where(scale > 0.0, scale, 1.0), 0.0)
+    top_order = descending_order(reference)[:TOP_K]
+
+    return {
+        "bit_identical_logits": int(np.count_nonzero(difference == 0.0)),
+        "max_abs_deviation": repr(float(difference.max())),
+        "max_ulp_deviation": int(ulp.max()),
+        "max_rel_deviation": repr(float(relative.max())),
+        "top32_max_abs_deviation": repr(float(difference[top_order].max())),
+        "top32_max_ulp_deviation": int(ulp[top_order].max()),
+    }
+
+
 def analyse(rows, envelope_rows, logit_dir: Path):
     """Turn raw logit rows into the retained per-position, top-32 and envelope records."""
     import numpy as np
 
     logit_dir.mkdir(parents=True, exist_ok=True)
-
-    def monotone(bits):
-        """Map IEEE-754 binary32 bit patterns to a monotone integer for ULP distance."""
-        signed = bits.astype(np.int64)
-        return np.where(signed & 0x80000000, 0x80000000 - (signed & 0x7FFFFFFF), signed + 0x80000000)
-
-    def descending_order(values):
-        """Rank by descending logit, ties broken toward the lower vocabulary index."""
-        return np.lexsort((np.arange(VOCAB_SIZE), -values))
 
     positions = []
     top32 = []
@@ -687,31 +1003,73 @@ def analyse(rows, envelope_rows, logit_dir: Path):
         if len(compared_rows) != len(baseline):
             fail(f"{label} produced {len(compared_rows)} positions, the baseline has {len(baseline)}")
         for index, (reference, compared) in enumerate(zip(baseline, compared_rows)):
-            wide_reference = reference.astype(np.float64)
-            wide_compared = compared.astype(np.float64)
-            difference = np.abs(wide_reference - wide_compared)
-            ulp = np.abs(monotone(reference.view(np.uint32)) - monotone(compared.view(np.uint32)))
-            scale = np.maximum(np.abs(wide_reference), np.abs(wide_compared))
-            relative = np.where(scale > 0.0, difference / np.where(scale > 0.0, scale, 1.0), 0.0)
-            top_order = descending_order(reference)[:TOP_K]
+            record = {"position": index, "variant": label}
+            record.update(deviation_record(reference, compared))
+            record["greedy_token_agrees"] = str(
+                int(descending_order(reference)[0]) == int(descending_order(compared)[0])
+            ).lower()
+            envelope.append(record)
 
-            envelope.append(
-                {
-                    "position": index,
-                    "variant": label,
-                    "bit_identical_logits": int(np.count_nonzero(difference == 0.0)),
-                    "max_abs_deviation": repr(float(difference.max())),
-                    "max_ulp_deviation": int(ulp.max()),
-                    "max_rel_deviation": repr(float(relative.max())),
-                    "top32_max_abs_deviation": repr(float(difference[top_order].max())),
-                    "top32_max_ulp_deviation": int(ulp[top_order].max()),
-                    "greedy_token_agrees": str(
-                        int(descending_order(reference)[0]) == int(descending_order(compared)[0])
-                    ).lower(),
-                }
-            )
+    return positions, top32, envelope, baseline
 
-    return positions, top32, envelope
+
+def check_joint_population(joint_rows) -> None:
+    """Stop unless every declared joint variant produced a pass, and no other did.
+
+    A named function rather than an inline comparison so that it can be driven
+    with a deliberately short population and watched to fail: a guard nobody has
+    seen refuse is a guard that may be counting nothing.
+    """
+    if set(joint_rows) != set(JOINT_VARIANTS):
+        fail(f"the joint passes produced {sorted(joint_rows)}, expected {sorted(JOINT_VARIANTS)}")
+
+
+def check_transcribed_gap(positions) -> float:
+    """Stop unless this run's own smallest runner-up gap is the transcribed one.
+
+    The exact-greedy gate is derived against `SMALLEST_RUNNER_UP_GAP`, so a run
+    whose measured minimum moved would be comparing its band against a gap that
+    is no longer this row's. Returning the measured value rather than the
+    constant keeps the retained record a measurement.
+    """
+    measured = min(float(row["runner_up_gap"]) for row in positions)
+    if repr(measured) != repr(SMALLEST_RUNNER_UP_GAP):
+        fail(
+            f"this run's smallest runner-up gap is {measured!r}, the transcribed figure the "
+            f"exact-greedy gate is derived against is {SMALLEST_RUNNER_UP_GAP!r}"
+        )
+    return measured
+
+
+def analyse_joint(baseline, joint_rows, positions):
+    """The joint band: one deviation per position and joint variant, against plain F32.
+
+    The retained quantity is the deviation of a pass carrying P-reorder, P-flush
+    and P-elem *together*. Three separately measured maxima are not the
+    deliverable and are not produced here; the maxima this function reports are
+    maxima over positions and variants of one jointly perturbed quantity.
+
+    Each row also carries the position's own runner-up gap and the ratio against
+    it, because the exact-greedy gate holds only while the band stays below the
+    gap and the ratio is what makes that checkable per position rather than only
+    against the smallest one.
+    """
+    joint = []
+    for label in sorted(joint_rows):
+        compared_rows = joint_rows[label]
+        if len(compared_rows) != len(baseline):
+            fail(f"{label} produced {len(compared_rows)} positions, the baseline has {len(baseline)}")
+        for index, (reference, compared) in enumerate(zip(baseline, compared_rows)):
+            record = {"position": index, "variant": label}
+            record.update(deviation_record(reference, compared))
+            greedy = int(descending_order(compared)[0])
+            gap = float(positions[index]["runner_up_gap"])
+            record["greedy_token"] = greedy
+            record["greedy_token_agrees"] = str(greedy == positions[index]["greedy_token"]).lower()
+            record["runner_up_gap"] = repr(gap)
+            record["deviation_over_gap"] = repr(float(record["max_abs_deviation"]) / gap)
+            joint.append(record)
+    return joint
 
 
 def analyse_attribution(attribution, sequence_ids, attribution_dir: Path):
@@ -1088,6 +1446,12 @@ def produce(out_dir: Path, logit_dir: Path, attribution_dir: Path) -> None:
         "attn": modeling_qwen3.eager_attention_forward,
         "rope": modeling_qwen3.Qwen3RotaryEmbedding.forward,
     }
+
+    def restore_reference() -> None:
+        modeling_qwen3.Qwen3RMSNorm.forward = saved["rms"]
+        modeling_qwen3.eager_attention_forward = saved["attn"]
+        modeling_qwen3.Qwen3RotaryEmbedding.forward = saved["rope"]
+
     try:
         promote_reference_to_float64(modeling_qwen3)
         model = load_model(snapshot, torch.float64)
@@ -1095,11 +1459,228 @@ def produce(out_dir: Path, logit_dir: Path, attribution_dir: Path) -> None:
         del model
         gc.collect()
     finally:
-        modeling_qwen3.Qwen3RMSNorm.forward = saved["rms"]
-        modeling_qwen3.eager_attention_forward = saved["attn"]
-        modeling_qwen3.Qwen3RotaryEmbedding.forward = saved["rope"]
+        restore_reference()
 
-    positions, top32, envelope = analyse(rows, envelope_rows, logit_dir)
+    def perturbed_pass(ordering: str, policy: str, exp_ulps: int, rsqrt_ulps: int, flush: bool):
+        """One pass carrying P-reorder, P-elem, and the P-flush mechanism together."""
+        print(
+            f"  pass: ordering={ordering} policy={policy} exp={exp_ulps}ulp "
+            f"rsqrt={rsqrt_ulps}ulp flush={'on' if flush else 'off'}",
+            flush=True,
+        )
+        try:
+            install_joint_perturbation(
+                modeling_qwen3,
+                compute_dtype=torch.float64 if ordering == "promoted" else torch.float32,
+                promote_rope=ordering == "promoted",
+                exp_ulps=exp_ulps,
+                rsqrt_ulps=rsqrt_ulps,
+                policy=policy,
+            )
+            model = load_model(snapshot, torch.float64)
+            install_perturbed_activation(model, exp_ulps, policy)
+            torch.set_flush_denormal(flush)
+            try:
+                produced = evaluate(model, forced_tokens=generated)[0]
+            finally:
+                torch.set_flush_denormal(False)
+            del model
+            gc.collect()
+            return [numpy.ascontiguousarray(row, dtype=numpy.float32) for _, row in produced]
+        finally:
+            restore_reference()
+
+    # --- P-flush: the mechanism, proved in this process before it is relied on -
+    flush_records, flush_established = measure_flush_controls()
+
+    # Whether the mechanism can reach this workload *at F32*, which is the
+    # precision the qualified target row flushes at. The plain F32 pass is
+    # re-evaluated with the mode in force and compared bit for bit against the
+    # baseline: if no bit moves, no arithmetic site in this row produced or
+    # consumed an F32 subnormal, and P-flush is the identity on this row.
+    model = load_model(snapshot, torch.float32)
+    torch.set_flush_denormal(True)
+    try:
+        flushed_f32 = evaluate(model, forced_tokens=generated)[0]
+    finally:
+        torch.set_flush_denormal(False)
+    del model
+    gc.collect()
+
+    # --- the joint passes ----------------------------------------------------
+    joint_rows = {}
+    for ordering in JOINT_ORDERINGS:
+        for policy in ELEM_SIGN_POLICIES:
+            joint_rows[f"joint_{ordering}_{policy}"] = perturbed_pass(
+                ordering, policy, ELEM_EXP_ULPS, ELEM_RSQRT_ULPS, flush=True
+            )
+    check_joint_population(joint_rows)
+
+    # Two controls on the joint passes themselves, each of which must be able to
+    # say no. `elem_zero` removes only P-elem, so a band that did not move under
+    # it would be a band the perturbation never reached. `flush_off` removes only
+    # the P-flush mode, so a pass that is byte-identical without it is a pass the
+    # mode never touched.
+    elem_zero = perturbed_pass("unmodified", ELEM_SIGN_POLICIES[0], 0, 0, flush=True)
+    flush_off = perturbed_pass("unmodified", ELEM_SIGN_POLICIES[0], ELEM_EXP_ULPS, ELEM_RSQRT_ULPS, flush=False)
+
+    positions, top32, envelope, baseline = analyse(rows, envelope_rows, logit_dir)
+    joint = analyse_joint(baseline, joint_rows, positions)
+
+    check_transcribed_gap(positions)
+
+    band = max(float(row["max_abs_deviation"]) for row in joint)
+    band_top32 = max(float(row["top32_max_abs_deviation"]) for row in joint)
+    band_ulp = max(int(row["max_ulp_deviation"]) for row in joint)
+    band_top32_ulp = max(int(row["top32_max_ulp_deviation"]) for row in joint)
+    agreeing = sum(1 for row in joint if row["greedy_token_agrees"] == "true")
+
+    # P-flush reachability at the precision the target row flushes at.
+    flushed_baseline = [numpy.ascontiguousarray(row, dtype=numpy.float32) for _, row in flushed_f32]
+    flush_identical = sum(
+        1 for plain, flushed in zip(baseline, flushed_baseline) if plain.tobytes() == flushed.tobytes()
+    )
+    flush_f32_deviation = max(
+        float(deviation_record(plain, flushed)["max_abs_deviation"])
+        for plain, flushed in zip(baseline, flushed_baseline)
+    )
+    carrier_identical = all(
+        left.tobytes() == right.tobytes()
+        for left, right in zip(joint_rows[f"joint_unmodified_{ELEM_SIGN_POLICIES[0]}"], flush_off)
+    )
+    # The control is the *same* pass at zero ULPs, so it is compared against the
+    # variant it controls rather than against the band, which the other ordering
+    # and the other sign policy also feed. Comparing against the band would let a
+    # perturbation that reached nothing in this variant hide behind another's.
+    elem_zero_band = max(
+        float(deviation_record(reference, compared)["max_abs_deviation"])
+        for reference, compared in zip(baseline, elem_zero)
+    )
+    controlled_variant = f"joint_unmodified_{ELEM_SIGN_POLICIES[0]}"
+    controlled_band = max(
+        float(row["max_abs_deviation"]) for row in joint if row["variant"] == controlled_variant
+    )
+
+    if not flush_established:
+        # The ticket's stop condition: the mechanism is not established, so the
+        # term is left Unknown rather than approximated.
+        pflush_state = "unknown"
+        pflush_reason = "a positive control failed; see the control rows above"
+    elif flush_identical == EXPECTED_POSITIONS:
+        pflush_state = "established, and measured to be the identity on this row"
+        pflush_reason = (
+            "the mechanism is proved by both controls, and the plain F32 pass re-evaluated with the "
+            "mode in force is bit-identical to the baseline at every position, so no arithmetic site "
+            "of this row produced or consumed an F32 subnormal and the joint band carries all three terms"
+        )
+    else:
+        pflush_state = "unknown in the joint carrier"
+        pflush_reason = (
+            "the mechanism is proved by both controls, but it flushes at the precision the pass is "
+            "evaluated in, and the passes carrying P-reorder are float64. The F32 trajectory does move "
+            "under the mode, so the flush is a real term this carrier cannot hold: the retained band is "
+            "the two-term P-reorder-with-P-elem joint measurement and the gap is stated"
+        )
+
+    perturbation = [
+        (
+            "joint.method",
+            "one deviation between two complete computations, per position and variant; three "
+            "separately measured maxima are not produced and would be a forbidden composition",
+        ),
+        ("joint.authority", "the L8 qualification record, drafted at design-model-level-qualification-and-optimization pending its carrier"),
+        ("joint.variants", ",".join(JOINT_VARIANTS)),
+        ("joint.baseline", "the plain F32 pass retained in positions.tsv"),
+        ("joint.decode_input", "teacher-forced on the F32 pass token sequence"),
+        ("preorder.mechanism", "the fixture's existing f64_unmodified and f64_promoted orderings, reused rather than a third"),
+        ("pelem.exp.contract", "Ulp(tiler::ulp-reference-gap@1, 12)"),
+        ("pelem.exp.ulps", str(ELEM_EXP_ULPS)),
+        (
+            "pelem.exp.authority",
+            "the registered contract, not Table 8.1's 4 ULP: that bound is stated under Apple's own "
+            "ULP definition and crosses to Tiler's metric through the one registered ScaledMetric "
+            "implication, whose derivation carries a factor of three",
+        ),
+        ("pelem.exp.sites", "the exponential subordinate to tiler::softmax-f32@1 and to tiler::silu-f32@1"),
+        ("pelem.rsqrt.contract", "Faithful"),
+        ("pelem.rsqrt.ulps", str(ELEM_RSQRT_ULPS)),
+        (
+            "pelem.rsqrt.authority",
+            "a faithful result is one of the two F32 values bracketing the exact one, so its deviation "
+            "is strictly below one ULP; one ULP is the supremum of that band",
+        ),
+        ("pelem.rsqrt.sites", "the reciprocal square root subordinate to tiler::rms-norm-f32@1"),
+        ("pelem.sign_policies", ",".join(ELEM_SIGN_POLICIES)),
+        (
+            "pelem.sign_policy_boundary",
+            "each policy is a full-magnitude sample of the admitted band, not a search over the 2^N "
+            "per-element sign assignments; the true worst case within these contracts is at least the "
+            "measured band and is not bounded above by it",
+        ),
+        ("pelem.control.elem_zero.variant", f"{controlled_variant} at 0 ULPs"),
+        ("pelem.control.elem_zero.max_abs_deviation", repr(elem_zero_band)),
+        ("pelem.control.elem_zero.controlled_variant", controlled_variant),
+        ("pelem.control.elem_zero.controlled_variant_max_abs_deviation", repr(controlled_band)),
+        (
+            "pelem.control.elem_zero.band_moved",
+            str(controlled_band > elem_zero_band).lower(),
+        ),
+    ]
+    perturbation.extend(flush_records)
+    perturbation.extend(
+        [
+            (
+                "pflush.f32_reachability.method",
+                "the plain F32 pass re-evaluated with the mode in force, compared bit for bit against "
+                "the baseline at every position",
+            ),
+            ("pflush.f32_reachability.bit_identical_positions", str(flush_identical)),
+            ("pflush.f32_reachability.positions", str(EXPECTED_POSITIONS)),
+            ("pflush.f32_reachability.max_abs_deviation", repr(flush_f32_deviation)),
+            (
+                "pflush.carrier_control.method",
+                f"joint_unmodified_{ELEM_SIGN_POLICIES[0]} re-evaluated with the mode off, compared byte for byte",
+            ),
+            ("pflush.carrier_control.byte_identical", str(carrier_identical).lower()),
+            (
+                "pflush.carrier_precision",
+                "FPCR.FZ flushes at the precision each arithmetic site is evaluated in; the joint "
+                "passes carry P-reorder as float64, whose subnormal range this workload never reaches",
+            ),
+            ("pflush.term_state", pflush_state),
+            ("pflush.term_reason", pflush_reason),
+            (
+                "joint.terms_carried",
+                "P-reorder, P-flush, P-elem" if pflush_state.startswith("established") else "P-reorder, P-elem",
+            ),
+            ("joint.band.max_abs_deviation", repr(band)),
+            ("joint.band.top32_max_abs_deviation", repr(band_top32)),
+            ("joint.band.max_ulp_deviation", str(band_ulp)),
+            ("joint.band.top32_max_ulp_deviation", str(band_top32_ulp)),
+            ("joint.band.rows", str(len(joint))),
+            ("joint.band.greedy_agreeing_rows", str(agreeing)),
+            (
+                "joint.band.greedy_agrees_everywhere",
+                str(agreeing == len(joint)).lower(),
+            ),
+            ("joint.band.smallest_runner_up_gap", repr(SMALLEST_RUNNER_UP_GAP)),
+            ("joint.band.gap_ratio", repr(band / SMALLEST_RUNNER_UP_GAP)),
+            (
+                "joint.band.exact_greedy_gate_holds",
+                str(band < SMALLEST_RUNNER_UP_GAP).lower(),
+            ),
+            (
+                "joint.band.boundary",
+                "one host, one checkpoint revision, one reference revision, one prompt, 18 positions, "
+                "batch 1, greedy, F32; it qualifies no B1-length row, no other prompt, and no quantized path",
+            ),
+            (
+                "joint.band.reading",
+                "admissibility, not proof: a result outside the band is a defect, a result inside it is "
+                "only indistinguishable at the model boundary from a legal realization",
+            ),
+        ]
+    )
 
     sequence = [
         {"index": index, "role": "prompt", "token_id": token} for index, token in enumerate(PROMPT_IDS)
@@ -1137,6 +1718,11 @@ def produce(out_dir: Path, logit_dir: Path, attribution_dir: Path) -> None:
         ("envelope.variants", "f64_unmodified,f64_promoted"),
         ("envelope.rounding_point", "logits cast to float32 at the observable"),
         ("envelope.decode_input", "teacher-forced on the F32 pass token sequence"),
+        ("joint.variants", ",".join(JOINT_VARIANTS)),
+        ("joint.perturbations", "P-reorder, P-flush, P-elem applied together; see perturbation.tsv"),
+        ("joint.exp_ulps", str(ELEM_EXP_ULPS)),
+        ("joint.rsqrt_ulps", str(ELEM_RSQRT_ULPS)),
+        ("joint.sign_policies", ",".join(ELEM_SIGN_POLICIES)),
         ("attribution.pass", "the F32 pass only; the float64 passes carry no hooks"),
         ("attribution.observation", "forward hooks on each Qwen3DecoderLayer and on Qwen3RotaryEmbedding"),
         ("attribution.layers", str(NUM_LAYERS)),
@@ -1209,6 +1795,25 @@ def produce(out_dir: Path, logit_dir: Path, attribution_dir: Path) -> None:
             "greedy_token_agrees",
         ],
     )
+    write_tsv(
+        out_dir / "joint.tsv",
+        joint,
+        [
+            "position",
+            "variant",
+            "bit_identical_logits",
+            "max_abs_deviation",
+            "max_ulp_deviation",
+            "max_rel_deviation",
+            "top32_max_abs_deviation",
+            "top32_max_ulp_deviation",
+            "greedy_token",
+            "greedy_token_agrees",
+            "runner_up_gap",
+            "deviation_over_gap",
+        ],
+    )
+    write_kv_tsv(out_dir / "perturbation.tsv", perturbation)
     write_tsv(
         out_dir / "hidden.tsv",
         hidden,
