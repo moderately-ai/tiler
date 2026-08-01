@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: [route-an-embedded-artifact-through-a-consumer-storage-seam]
 related: [route-an-embedded-artifact-through-a-consumer-storage-seam, prototype-candle-metal-adapter]
-scopes: [implementation/frontend]
+scopes: [implementation/frontend, research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, inline-dx, runtime, metal, public-boundary]
@@ -57,6 +57,8 @@ One inline `tiler::tensor!` invocation in an ordinary crate produces a running M
 The ticket reserved this to Tom and named two options. **The elimination has one survivor, so there was no question to ask.** Option 2 — relaxing the workspace `unsafe_code = "forbid"` for one named crate — is itself an act AGENTS.md reserves to Tom, so it is not an option a worker may *choose*; proposing it is the most a ticket can do. Option 1 — an out-of-tree spike with its own `[workspace]` table — spends nothing already decided, is the ticket's own recommendation, and is an additive directory that reverts by deletion. With option 2 unchoosable, option 1 is the only candidate that survives, and asking would have spent Tom's time on a decision the constraints already made.
 
 The coordinator resolved it under the overnight operating mode and it reaches Tom in the morning packet. Nothing about option 2 is foreclosed: an in-gate test remains available if Tom later relaxes `forbid`, and the spike is what would be superseded.
+
+**Correction to the dispatch brief.** It stated that spikes are outside the scope map. They are not: `ticketsplease.toml:72` maps `research/runtime` to `["docs/research/runtime/**", "spikes/runtime/**"]`, so `tkt guard` reported `UNDER-DECLARED: research/runtime` against the declared pair. `research/runtime` was added to this ticket before the guard passed, which is what AGENTS.md asks for — a scope added before a mapped contract area is touched, rather than a `paths` entry standing in for one. `implementation/frontend` stays declared and shows as unaffected: the seam was already complete and `crates/tiler` needed no change, which is itself the result the ticket predicted.
 
 ### What the run establishes
 
