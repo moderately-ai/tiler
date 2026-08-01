@@ -1,4 +1,11 @@
-//! The reference as bit-exact oracle for all six L3 contraction profile cells.
+//! Both reference oracles as bit-exact checks on the L3 contraction profile cells.
+//!
+//! Two independent implementations answer the same six cells here: the
+//! registered `tiler::strict-tensor-contraction-f32@1` evaluator, whose fold is
+//! staged in output slabs, and the verified index-region oracle, whose walk is
+//! staged in spans of parallel points. Each was blocked by a *different* bound
+//! and each is reached without moving one; the second half starts at
+//! [`contraction_region`].
 //!
 //! # The question this file closes
 //!
@@ -62,6 +69,35 @@
 //! unchecked between deliberate runs, and all six cells share one fold: an
 //! arithmetic change that moved them would move the two the gate runs.
 //!
+//! # The index-region oracle costs about fifty times more per step
+//!
+//! [`the_staged_index_region_oracle_reaches_the_vocabulary_cell`] is `#[ignore]`d
+//! on the same terms and for the same reason, with a worse constant: the region
+//! oracle allocates a rank-zero tensor per scalar value, resolves a registered
+//! capability per application and revalidates every result, where the
+//! contraction evaluator reads two floats and multiplies. It shares the
+//! invocation above, and both `#[ignore]`d tests run under it.
+//!
+//! **Measurement — Apple M4 Max, 2026-08-01, nightly-2026-07-19, dev profile,
+//! `--no-capture` (which nextest runs serially).** The region step rate is read
+//! off the refusal rather than estimated, because the refusal's step count is
+//! exact: one span over `w_vocab_slice`'s region is declined after 16,777,216
+//! steps in 8.66 s, which is **516 ns per step** against the contraction fold's
+//! 9. Walking the same region's 8,192 parallel points in 16 spans of 512 takes
+//! 55.6 s and reproduces the retained `direct` digest; the whole test is 64.4 s.
+//! The same run reproduced this file's other `#[ignore]`d test at its recorded
+//! per-cell times (`w_prefill_mlp_in` 4,019 ms against 3,799), so the two
+//! measurements are on one footing rather than one host apart.
+//!
+//! What runs by default is [`span_boundaries_do_not_change_any_region_value`] and
+//! [`an_incomplete_staged_walk_is_refused_rather_than_finished`], on a 33-point
+//! region, in 26 ms together. The step budget's refusal is deliberately not
+//! restated here at gate cost: `tiler-compiler`'s
+//! `the_index_region_oracle_refuses_the_vocabulary_cell_under_its_step_budget`
+//! already spends 8.3 s per run watching it, on the region the governed lowering
+//! actually emits, and a second 16,777,216-step refusal would buy time and
+//! nothing else.
+//!
 //! # Why the digest helper is written out here
 //!
 //! `sha2` is a workspace dependency, but adding it to this crate would edit
@@ -74,13 +110,19 @@
 use std::fmt::Write as _;
 use std::time::Instant;
 
+use tiler_ir::index::{
+    DomainRole, FrozenScalarRegistry, IndexInteger, IndexRegionBuilder, ScalarAttributes,
+    TensorRole, VerifiedIndexRegion, add_f32_scalar_op, multiply_f32_scalar_op,
+};
 use tiler_ir::semantic::{
     ContractionIndex, ContractionIndexStructure, F32, F32TensorContraction, InputKey, OutputKey,
     SemanticProgramBuilder,
 };
-use tiler_ir::shape::Shape;
+use tiler_ir::shape::{Extent, Shape};
 use tiler_reference::{
-    FloatBitOrder, InputBinding, ReferenceElement, ReferenceEvaluator, ReferenceOperationError,
+    FloatBitOrder, FrozenReferenceRegistry, FrozenScalarReferenceRegistry, IndexReferenceResource,
+    IndexRegionAuthority, IndexRegionEvaluation, IndexRegionEvaluationError, IndexRegionEvaluator,
+    IndexRegionInput, InputBinding, ReferenceElement, ReferenceEvaluator, ReferenceOperationError,
     StagedContractionError, StagedStrictTensorContractionF32, Tensor, TensorPayloadView,
 };
 
@@ -562,6 +604,371 @@ fn a_slab_wider_than_the_work_bound_admits_is_refused() {
     assert_eq!(
         planned.evaluate_slab(planned.slab_count()),
         Err(ReferenceOperationError::InvalidApplication)
+    );
+}
+
+// The second oracle: the same cells through the verified index region.
+
+/// Builds the region `tiler_compiler::governed`'s contraction lowering emits.
+///
+/// A hand-written mirror for the same reason `index_region_oracle.rs`'s
+/// `governed` module states: `tiler-reference` is a dependency of
+/// `tiler-compiler` and cannot import it, and inverting that edge would put the
+/// reference oracle downstream of the compiler. It follows
+/// `GovernedStrictTensorContractionF32::lower` step for step for a contracted
+/// space of rank one, which is what every cell of this profile has:
+///
+/// - the parallel domain is the output shape `[m, n]`, in that order;
+/// - the accumulator seeds at the product at contracted offset zero, never at
+///   `+0.0` — the family declares no seed, and the two differ observably where
+///   every product is `-0.0`;
+/// - the reduction runs over a tail dimension of `k - 1` whose contributor is the
+///   product at offset `tail + 1`, which for a rank-one contracted space is the
+///   contracted coordinate itself (`decode_contracted` neither wraps nor divides
+///   at position zero with stride one);
+/// - the product and the sum are separate governed applications, so each rounds
+///   separately; and
+/// - no result-boundary canonicalization is emitted, because every value the
+///   region can commit is already a governed multiply's or add's result.
+fn contraction_region(
+    scalars: &FrozenScalarRegistry,
+    cell: &Cell,
+) -> Result<VerifiedIndexRegion, Box<dyn std::error::Error>> {
+    assert!(
+        cell.k > 1,
+        "a rank-one contracted space of one point folds nothing, and this mirror does not emit the governed singleton form"
+    );
+    let f32_type = F32::resolved_type();
+    let mut builder = IndexRegionBuilder::new(scalars.clone())?;
+    let t = builder.dimension(DomainRole::Parallel, Extent::new(cell.m))?;
+    let o = builder.dimension(DomainRole::Parallel, Extent::new(cell.n))?;
+    let left = builder.tensor(
+        TensorRole::Input,
+        f32_type.clone(),
+        Shape::from_dims([cell.m, cell.k]),
+    )?;
+    let right = builder.tensor(
+        TensorRole::Input,
+        f32_type.clone(),
+        Shape::from_dims([cell.n, cell.k]),
+    )?;
+    let out = builder.tensor(
+        TensorRole::Output,
+        f32_type,
+        Shape::from_dims([cell.m, cell.n]),
+    )?;
+    let row = builder.dimension_expr(t)?;
+    let column = builder.dimension_expr(o)?;
+
+    let zero = builder.constant(IndexInteger::from_u64(0))?;
+    let seed_left = builder.read(left, &[t, o], &[row, zero])?;
+    let seed_right = builder.read(right, &[t, o], &[column, zero])?;
+    let seed = builder
+        .apply(
+            multiply_f32_scalar_op(),
+            ScalarAttributes::empty(),
+            &[seed_left, seed_right],
+        )?
+        .get(0)
+        .ok_or("the governed multiply produces one result")?;
+
+    let tail = builder.dimension(DomainRole::Reduction, Extent::new(cell.k - 1))?;
+    let induction = builder.dimension_expr(tail)?;
+    let one = IndexInteger::from_u64(1);
+    let offset = builder.linear_combination(one.clone(), &[(one, induction)])?;
+    let tail_left = builder.read(left, &[t, o, tail], &[row, offset])?;
+    let tail_right = builder.read(right, &[t, o, tail], &[column, offset])?;
+    let contributor = builder
+        .apply(
+            multiply_f32_scalar_op(),
+            ScalarAttributes::empty(),
+            &[tail_left, tail_right],
+        )?
+        .get(0)
+        .ok_or("the governed multiply produces one result")?;
+
+    let folded = builder
+        .reduce(&[tail], &[seed], &[contributor], |body| {
+            let accumulated = body.apply(
+                add_f32_scalar_op(),
+                ScalarAttributes::empty(),
+                &[
+                    body.state(0).expect("one state parameter"),
+                    body.contributor(0).expect("one contributor parameter"),
+                ],
+            )?;
+            body.yield_values(&[accumulated
+                .get(0)
+                .expect("the governed add produces one result")])
+        })?
+        .get(0)
+        .ok_or("the reduction produces one result")?;
+    let write = builder.write(out, &[t, o], &[row, column])?;
+    builder.output(write, folded)?;
+    Ok(builder.build()?)
+}
+
+fn region_evaluator() -> IndexRegionEvaluator {
+    IndexRegionEvaluator::new(
+        FrozenReferenceRegistry::standard().expect("the governed value profile composes"),
+        FrozenScalarReferenceRegistry::standard().expect("the governed scalar oracle composes"),
+    )
+}
+
+fn region_inputs<'a>(
+    region: &VerifiedIndexRegion,
+    left: &'a Tensor,
+    right: &'a Tensor,
+) -> Vec<IndexRegionInput<'a>> {
+    let ids: Vec<_> = region
+        .tensors()
+        .filter(|tensor| tensor.role() == TensorRole::Input)
+        .map(tiler_ir::index::TensorRef::id)
+        .collect();
+    vec![
+        IndexRegionInput::new(ids[0], left),
+        IndexRegionInput::new(ids[1], right),
+    ]
+}
+
+/// Returns the dense elements of one region evaluation's single output.
+fn region_elements(evaluation: &IndexRegionEvaluation) -> Vec<ReferenceElement> {
+    let TensorPayloadView::Dense(elements) = evaluation.outputs()[0].payload() else {
+        panic!("a contraction region writes a dense f32 output")
+    };
+    elements.to_vec()
+}
+
+/// Walks one region in spans of `span` parallel points and returns its output.
+///
+/// This *is* the staged procedure: stage once, then loop until the walk reports
+/// it is done. The loop is the authorization — no call inside it is allowed more
+/// steps than the whole-region path would have been.
+fn staged_region_result(
+    region: &VerifiedIndexRegion,
+    scalars: &FrozenScalarRegistry,
+    left: &Tensor,
+    right: &Tensor,
+    span: u64,
+) -> Vec<ReferenceElement> {
+    let evaluator = region_evaluator();
+    let inputs = region_inputs(region, left, right);
+    let mut staged = evaluator
+        .stage(region, IndexRegionAuthority::new(scalars), &inputs)
+        .expect("the governed authority admits the region");
+    let expected = staged
+        .parallel_point_count()
+        .expect("a profile cell's parallel space is counted");
+    while staged
+        .evaluate_points(span)
+        .expect("every span of this width is under the step budget")
+        > 0
+    {}
+    assert_eq!(
+        staged.evaluated_points(),
+        expected,
+        "the spans must cover the parallel space exactly once"
+    );
+    region_elements(&staged.finish().expect("the walked region finishes"))
+}
+
+/// Span boundaries are unobservable in the values a region commits.
+///
+/// The executable half of the argument in `StagedIndexRegionEvaluation`'s
+/// documentation. Five partitions of one `[3, 7] x [11, 7] -> [3, 11]` region —
+/// a width of one, a width dividing the 33-point parallel space exactly, two
+/// that do not, and one wider than the whole space — commit identical bit
+/// patterns, and the whole-region path commits them too.
+///
+/// The cross-check against `unstaged_result` is the part a second implementation
+/// of the same arithmetic could not fake: the region and the registered
+/// contraction reach the same bits by different code.
+///
+/// The perturbation is what stops this passing vacuously. With one operand
+/// element advanced by a single representable value every partition must move
+/// and must still agree; without it, a region evaluator returning a constant, or
+/// one whose spans walked nothing, would satisfy every equality above.
+#[test]
+fn span_boundaries_do_not_change_any_region_value() {
+    let scalars = FrozenScalarRegistry::standard().expect("the governed scalar authority composes");
+    let cell = Cell {
+        id: "span-equivalence",
+        m: 3,
+        n: 11,
+        k: 7,
+        steps: 231,
+        result_sha256: "",
+    };
+    let region = contraction_region(&scalars, &cell).expect("the mirrored region verifies");
+    let (left, right) = operands(&cell);
+
+    let baseline = unstaged_result(&cell, &left, &right).expect("a small fold is admitted");
+    assert!(
+        baseline.windows(2).any(|pair| pair[0] != pair[1]),
+        "a degenerate constant result would satisfy every equality below"
+    );
+    for span in [1_u64, 3, 5, 11, 64] {
+        assert_eq!(
+            staged_region_result(&region, &scalars, &left, &right, span),
+            baseline,
+            "a span of {span} parallel points changed a committed value"
+        );
+    }
+
+    let TensorPayloadView::Dense(elements) = left.payload() else {
+        panic!("a dense operand")
+    };
+    let mut perturbed = elements.to_vec();
+    let last = perturbed.len() - 1;
+    let bits = u32::from_be_bytes(
+        <[u8; 4]>::try_from(perturbed[last].as_bytes()).expect("an f32 element is four bytes"),
+    );
+    perturbed[last] = ReferenceElement::from_float_bits(
+        (bits + 1).to_be_bytes(),
+        FloatBitOrder::MostSignificantByteFirst,
+    )
+    .expect("the perturbed pattern is four bytes");
+    let left = Tensor::dense(
+        F32::resolved_type(),
+        Shape::from_dims([cell.m, cell.k]),
+        perturbed,
+    )
+    .expect("the perturbed operand is well formed");
+
+    let moved = unstaged_result(&cell, &left, &right).expect("a small fold is admitted");
+    assert_ne!(moved, baseline, "the region ignored a contributing element");
+    for span in [1_u64, 3, 5, 11, 64] {
+        assert_eq!(
+            staged_region_result(&region, &scalars, &left, &right, span),
+            moved,
+            "a span of {span} parallel points changed a perturbed committed value"
+        );
+    }
+}
+
+/// A staged walk that does not cover its parallel space cannot be finished.
+///
+/// Two caller errors that would otherwise produce a partial result wearing a
+/// whole one's type. A span of no points is refused where it is asked for, and a
+/// walk stopped early is refused at `finish` — before the output planner's own
+/// `IncompleteWrite` would have reported the same gap as a region defect, which
+/// it is not.
+#[test]
+fn an_incomplete_staged_walk_is_refused_rather_than_finished() {
+    let scalars = FrozenScalarRegistry::standard().expect("the governed scalar authority composes");
+    let cell = Cell {
+        id: "span-refusal",
+        m: 3,
+        n: 11,
+        k: 7,
+        steps: 231,
+        result_sha256: "",
+    };
+    let region = contraction_region(&scalars, &cell).expect("the mirrored region verifies");
+    let (left, right) = operands(&cell);
+    let evaluator = region_evaluator();
+    let inputs = region_inputs(&region, &left, &right);
+    let mut staged = evaluator
+        .stage(&region, IndexRegionAuthority::new(&scalars), &inputs)
+        .expect("the governed authority admits the region");
+
+    assert_eq!(staged.parallel_point_count(), Some(33));
+    assert_eq!(
+        staged.evaluate_points(0),
+        Err(IndexRegionEvaluationError::EmptyStagedSpan),
+        "a span that walks nothing is refused at the call that asked for it"
+    );
+    assert_eq!(staged.evaluate_points(30), Ok(30));
+    assert!(!staged.is_exhausted());
+    assert_eq!(
+        staged
+            .finish()
+            .expect_err("three parallel points remain, so there is no whole result to return"),
+        IndexRegionEvaluationError::IncompleteStagedWalk { evaluated: 30 },
+    );
+
+    // The neighbour: the same walk completed. Without it the refusal above would
+    // be consistent with a `finish` that never returns a result at all.
+    let mut staged = evaluator
+        .stage(&region, IndexRegionAuthority::new(&scalars), &inputs)
+        .expect("the governed authority admits the region");
+    assert_eq!(staged.evaluate_points(30), Ok(30));
+    assert_eq!(staged.evaluate_points(30), Ok(3));
+    assert_eq!(staged.evaluate_points(30), Ok(0));
+    assert!(staged.is_exhausted());
+    assert_eq!(
+        region_elements(&staged.finish().expect("the covered walk finishes")),
+        unstaged_result(&cell, &left, &right).expect("a small fold is admitted"),
+    );
+}
+
+/// The staged region oracle reaches the vocabulary cell, which one span refuses.
+///
+/// The cell this file's sibling boundary statement named as out of reach.
+/// `w_vocab_slice`'s region walks 8,192 parallel points, each folding 1,023
+/// contributors through separate governed scalar applications, and the whole walk
+/// costs far more than `MAX_EVALUATION_STEPS` admits in one span — so
+/// `IndexRegionEvaluator::evaluate` refuses it, and
+/// `tiler-compiler`'s `the_index_region_oracle_refuses_the_vocabulary_cell_under_its_step_budget`
+/// asserts that refusal on the region the governed lowering actually emits.
+///
+/// The pairing is the content: **the same region and the same operands** are
+/// refused in one span and walked in spans of 512 parallel points to a result
+/// whose SHA-256 is the one an Apple M4 Max produced for the `direct` kernel. A
+/// frozen golden could assert the second half; only a live oracle can assert both
+/// against one region.
+///
+/// `#[ignore]`d for cost, not for doubt — see the module documentation for the
+/// invocation and the measured run.
+#[test]
+#[ignore = "~64 s of exact scalar region evaluation at 516 ns a step; run deliberately, see the module documentation"]
+fn the_staged_index_region_oracle_reaches_the_vocabulary_cell() {
+    the_digest_helper_reproduces_the_published_vectors();
+    let cell = &PROFILE_CELLS[5];
+    assert_eq!(cell.id, "w_vocab_slice");
+    let scalars = FrozenScalarRegistry::standard().expect("the governed scalar authority composes");
+    let region = contraction_region(&scalars, cell).expect("the mirrored region verifies");
+    let (left, right) = operands(cell);
+
+    // The protection, watched on the cell the staging reaches: one span over the
+    // whole parallel space is still refused, under the step budget's own variant
+    // carrying the exact step it declined at rather than another resource.
+    let inputs = region_inputs(&region, &left, &right);
+    let refused = Instant::now();
+    let error = region_evaluator()
+        .evaluate(&region, IndexRegionAuthority::new(&scalars), &inputs)
+        .expect_err("one span over this region exceeds the step budget");
+    let refusal = refused.elapsed();
+    assert_eq!(
+        error,
+        IndexRegionEvaluationError::ResourceExceeded {
+            resource: IndexReferenceResource::EvaluationSteps,
+            limit: 16_777_216,
+            actual: 16_777_217,
+        },
+        "the refusal must name the step budget at its first excess step"
+    );
+
+    let started = Instant::now();
+    let elements = staged_region_result(&region, &scalars, &left, &right, 512);
+    let elapsed = started.elapsed();
+    assert_eq!(
+        elements.len(),
+        usize::try_from(cell.m * cell.n).expect("a profile cell's result is bounded"),
+        "every output element is committed"
+    );
+    assert_eq!(
+        digest_of(&elements),
+        cell.result_sha256,
+        "the staged region does not reproduce the retained `direct` result"
+    );
+    println!(
+        "{}: one span refused after 16777216 steps in {} ms ({} ns/step); \
+         8192 parallel points walked in 16 spans of 512 in {} ms",
+        cell.id,
+        refusal.as_millis(),
+        refusal.as_nanos() / 16_777_216,
+        elapsed.as_millis(),
     );
 }
 

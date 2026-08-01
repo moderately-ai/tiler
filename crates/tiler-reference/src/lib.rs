@@ -75,7 +75,7 @@ pub use oracle::{
     IndexRegionEvaluationError, IndexRegionEvaluator, IndexRegionInput,
     ScalarCapabilityAttribution, ScalarReferenceOperation, ScalarReferenceOutputs,
     ScalarReferenceRegistryBuilder, ScalarReferenceRegistryError, ScalarReferenceRequest,
-    UnsupportedRegionFeature,
+    StagedIndexRegionEvaluation, UnsupportedRegionFeature,
 };
 pub use registry::{
     CanonicalReferenceRegistryIdentity, FrozenReferenceRegistry, ReferenceCapabilityRevision,
