@@ -1,7 +1,7 @@
 ---
 id: specify-the-consumer-neutral-backend-provider-composition-contract
 title: Specify the consumer-neutral backend-provider composition contract
-status: todo
+status: in-progress
 priority: p1
 dependencies: [define-backend-device-and-execution-context-vocabulary, prototype-a-forkless-custom-metal-physical-provider, prototype-a-bounded-scalar-cpu-backend-vertical]
 related: [draft-public-extension-seam-ownership-adr, runtime-execution-contract, target-profile-feasibility-model]
@@ -55,3 +55,29 @@ From `prototype-a-forkless-custom-metal-physical-provider`, evidence at commit `
 - Release `draft-the-backend-provider-composition-adr` only after both evidence spikes and the vocabulary contract are complete.
 - File narrow feasibility tickets for any missing verifier or identity authority; do not hide them inside a proposed universal abstraction.
 - Keep public visibility unchanged in this ticket.
+
+## Outcome
+
+The record is [`docs/research/extensions/backend-provider-composition.md`](../docs/research/extensions/backend-provider-composition.md), authored against base `e6a47d9`. No visibility, signature, or behaviour changed; nothing was accepted.
+
+**What it establishes.** A thirteen-row responsibility/identity/lifecycle matrix separating the subjects that are compared (lowering capability key at resolution, target-profile key *and* exact descriptor at load, backend family and representation as a pair, program canonical identity at bind) from those retained as provenance only (semantic admission, registry snapshot, physical-provider identity, payload provenance) and those independently selected (backend emitter, build orchestration, runtime adapter, live device and execution context). The central negative result is that **no `BackendProvider` type is needed**: ten of the thirteen rows already have a mechanism, both spikes wanted strict subsets, and a monolithic trait would have to re-mediate an emitter edge that a Cargo dependency already checks at compile time. The three without one are physical-provider installation, opaque-call registration on the compile path, and build-time orchestration; the runtime adapter's lack of a registry is not a fourth, because independent selection is its mechanism.
+
+**The one row with no seam at all is `tiler-build`.** Verified by full read rather than inferred: `tiler-metal` and `tiler-metal-aot` are unconditional dependencies, all six modules are `metal_*`, the backend and representation are `&str` constants at `metal_assembly.rs:27-28`, and `accept_or_publish_metal_plan` is Metal-typed in its signature. `grep -rniE "(backend|emitter)[_ ]?(registry|register|factory|plugin|dispatcher|selector)" --include='*.rs' crates/` returns nothing; the positive control, the same grep with `lowering`, returns 69 lines. The useful half is that the neutral seam already exists in private — `metal_plan.rs:266`'s `assemble_artifact` takes a `declare_payload` closure and names Metal nowhere — so this is a promotion, not a design. The CPU vertical could only run because it skipped `tiler-build` entirely.
+
+**Eleven atomic decisions** are enumerated for `draft-the-backend-provider-composition-adr`, with D1 (scheduling knowledge as data, code, or a checked combination) prior to D2 and D3, and D3 flagged as one sentence from Tom. Each carries a recommendation and what would refute it.
+
+**Eliminated alternatives**, each with grounds: the monolithic `Device`/`BackendProvider` trait, global discovery, registration-order precedence, last-wins replacement, ambient mutation of a frozen registry, joining producer to adapter by a Rust object or `TypeId`, requiring adapter identity to match producer identity, a mandatory `prepare` stage, treating installed and visible as one obligation, provider-declared cost models, provider-stamped provenance, and an unrestricted scoring callback.
+
+**Findings beyond the two spikes' six and eleven, each verified by full read with a reproducible check and a positive control.**
+
+- A fifth instance of the installation asymmetry, and it is in-crate: the sole production `enumerate_frontier` call site constructs an empty `OpaqueCallRegistry` inline (`pipeline/planning.rs:228`), so no opaque call reaches `session::compile` from any caller. Distinct from ADR 0078's correction, which is about out-of-crate registration. Filed as `register-opaque-calls-on-the-compile-path`.
+- **A correction to the CPU vertical's finding 2.** It reports the governed keys as validating "length and alphabet only". `crates/tiler-artifact/src/program/keys.rs:73` validates non-empty and ≤256 bytes and nothing else; the alphabet lives in the *separate same-named* `tiler_compiler::target::TargetProfileKey` (`target.rs:224-241`), and `metal_plan.rs:333` launders the strict spelling into the permissive one. Reproduce with `grep -rn "is_ascii\|InvalidByte" crates/tiler-artifact/src/` (empty); positive control is the identical grep over `crates/tiler-compiler/src/target.rs` (six lines). Filed as `reconcile-the-two-target-profile-key-grammars`.
+- `CapabilityAxis` is `pub(crate)` with seven variants reachable only through `declare_*` methods that hard-code their own axis, so the CPU vertical's missing axes are inexpressible rather than merely undeclared.
+- `ArtifactExecutionPolicy::RequiresDeviceTranslation` is refused outright by the device-free loader (`load.rs:468-473`), so the two-valued vocabulary is effectively one-valued at the load boundary.
+- The exact `preflight`-versus-`prepare` condition: `preflight` suffices iff zero deferred predicates **and** zero route requirements, and once `prepare` is entered both device stages are mandatory even when empty.
+- A runtime adapter reports facts and never adjudicates them: the loader refuses a foreign-owned backend requirement before consulting any adapter, and performs the comparison itself on the adapter's observation.
+- The propose-then-reverify split is five gates, of which one is public (`ScheduledRegionBuilder::build`), two are correctly host-only (request authority, request-subject binding), and two are half-reachable in the same shape — the provider holds one operand and the host holds the comparison. That asymmetry is atomic decision D6.
+
+**Graph maintenance executed.** `draft-the-backend-provider-composition-adr` needs no release action: all three prerequisites are `done` by reading (`define-backend-device-and-execution-context-vocabulary`, `prototype-a-forkless-custom-metal-physical-provider`, `prototype-a-bounded-scalar-cpu-backend-vertical`), and its dependency list names this ticket alone, so it becomes ready on this ticket's closure. Three narrow tickets filed rather than absorbed: `register-opaque-calls-on-the-compile-path`, `name-a-host-process-availability-phase`, `reconcile-the-two-target-profile-key-grammars`.
+
+**Deliberately not done.** The CPU vertical's experiment record cannot gain a `supports` edge to this research record, because `spikes/target-profiles/**` maps to `research/target-profiles`, outside this ticket's scopes; the citation is prose only, and the edge is a one-line frontmatter addition for whoever next holds that scope. `docs/document-metadata.md:114` asserts that `validate_links` "resolves every local link in every governed document, so a decision citing a harness that has moved or been deleted fails the repository gate", while the same document's own validation section says there is no validator; `grep -rn "validate_links" .` finds the name only in prose. That contradiction is in `contracts/navigation` and unrelated to this ticket's subject, so it is left for a navigation-scoped ticket rather than swept in here.
