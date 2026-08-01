@@ -1,7 +1,7 @@
 ---
 id: produce-a-custom-backend-payload-through-the-build-orchestrator
 title: Produce a custom backend payload through the build orchestrator
-status: in-progress
+status: done
 priority: p1
 dependencies: [accept-the-public-backend-provider-composition-boundary]
 related: [drive-the-build-orchestrator-from-a-checked-compiler-plan, assemble-prepared-metal-artifacts-in-tiler-build]
@@ -9,9 +9,6 @@ scopes: [implementation/build, implementation/compiler, implementation/artifact,
 shared_scopes: [project/tickets]
 paths: []
 tags: [backend-providers, pluggability, implementation, build, artifacts]
-claimed_from: todo
-assignee: worker-produce-a-cu
-lease_expires_at: 1785562404
 ---
 ## User-visible outcome
 
@@ -51,3 +48,5 @@ One external producer creates a decoded, self-validating payload through the ord
 **Not done, deliberately, and named.** Cache-subject composition, miss-only external compilation, and payload correspondence validation in `metal_cache.rs` remain spelled for one prepared Metal compilation. Item 11 promotes the assembly seam only, and generalizing the cache protocol would expose `tiler-build` internals as the generic model — the first implementation key's explicit warning. The non-Metal producer composes its own subject through `tiler_cache::expansion::ComposedSubject::compose` (the owning checked builder) and re-checks identity after resolution; [`promote-the-build-time-cache-and-correspondence-seam`](promote-the-build-time-cache-and-correspondence-seam.md) owns closing that.
 
 **Public boundary for Tom.** `assemble_plan_artifact`, `BackendEntryDeclaration`, and `PlanArtifactError` go to him under [ADR 0075](../docs/decisions/0075-scope-public-boundary-approval-by-change-category.md), with ADR 0090 item 11's acceptance as the umbrella for the promotion itself and the entry-declaration record as the one genuinely new shape.
+
+**Provisional boundary acceptance (2026-08-01, overnight mode).** The coordinator provisionally accepted `assemble_plan_artifact` and `PlanArtifactError` under the accepted D10/item-11 umbrella, and `BackendEntryDeclaration` as the one genuinely new shape (three residue fields; once-per-stage cardinality unrepresentable rather than checked). Metal-path digests pinned unchanged. Recorded for Tom's morning review.
