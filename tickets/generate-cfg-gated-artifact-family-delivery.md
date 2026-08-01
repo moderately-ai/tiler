@@ -6,7 +6,7 @@ priority: p1
 dependencies: [prototype-inline-proc-macro-frontend, prototype-artifact-family-delivery]
 related: [prototype-macro-embedding-and-cargo-behavior, record-that-the-frontend-axis-is-review-gated]
 scopes: [implementation/frontend]
-shared_scopes: [contracts/navigation]
+shared_scopes: [contracts/navigation, implementation/cargo-lock]
 paths: []
 tags: [implementation, apple-targets, inline-dx, frontend]
 claimed_from: todo
