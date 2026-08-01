@@ -1,7 +1,7 @@
 ---
 id: correct-the-warm-expansion-xcrun-requirement-in-the-testing-contract
 title: Correct the warm-expansion xcrun requirement in the testing contract
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [avoid-toolchain-resolution-on-a-warm-expansion-cache-hit, refresh-the-inline-aot-vertical-status-and-remaining-checks, correct-the-stale-xcrun-call-count-in-the-macro-aot-module-doc]
@@ -9,9 +9,6 @@ scopes: [contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, testing, macro-aot]
-claimed_from: todo
-assignee: worker-warm-xcrun
-lease_expires_at: 1785609801
 ---
 ## User-visible outcome
 
