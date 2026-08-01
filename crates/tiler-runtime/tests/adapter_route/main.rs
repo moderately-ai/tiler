@@ -31,7 +31,7 @@ mod fixture;
 mod image;
 
 use adapter::{Perturbation, ScalarHostAdapter, Stage};
-use fixture::{FixtureSpec, assemble};
+use fixture::{FixtureSpec, PackagedPlan, assemble, assemble_portfolio};
 use image::{ScalarEntry, ScalarImage, ScalarPayloadRefusal, encode};
 
 use tiler_artifact::program::{
@@ -42,7 +42,9 @@ use tiler_reference::{
     FloatBitOrder, InputBinding, ReferenceElement, ReferenceEvaluator, Tensor, TensorPayloadView,
 };
 use tiler_runtime::adapter::{AdapterRouteFailure, route_with_adapter};
-use tiler_runtime::load::{DecodedProgram, LoadRejection, TargetCompatibility, TargetDeclaration};
+use tiler_runtime::load::{
+    DecodedProgram, LoadRejection, TargetCompatibility, VariantIneligibility,
+};
 
 /// The operand bits every routed case runs over.
 ///
@@ -261,59 +263,88 @@ fn a_foreign_expected_identity_is_a_program_mismatch() {
     );
 }
 
-/// A context reporting another target family refuses the variant's declaration.
+/// Returns the sole reason a one-variant portfolio was filtered out entirely.
+///
+/// Every case below asserts the *reason* rather than only that nothing routed.
+/// A single-variant artifact this host cannot execute produces the same class as
+/// a whole foreign portfolio — that uniformity is the point of the filter — so
+/// the class alone no longer says which host-relative subject excluded it, and
+/// the reason is what a reader repairs against.
+fn sole_exclusion(outcome: Outcome, packaged: usize) -> VariantIneligibility {
+    let Err(AdapterRouteFailure::Load(LoadRejection::NoEligibleVariant {
+        packaged: reported,
+        filtered,
+    })) = outcome
+    else {
+        panic!(
+            "expected every packaged variant to be filtered, got {:?}",
+            outcome.map(|_| ()),
+        );
+    };
+    assert_eq!(
+        reported, packaged,
+        "the refusal names the artifact's own count"
+    );
+    assert_eq!(
+        filtered.len(),
+        packaged,
+        "no eligible variant means every one of them was filtered",
+    );
+    let [only] = filtered.as_slice() else {
+        panic!("this fixture packages one variant, and {filtered:?} names another number");
+    };
+    assert_eq!(only.variant, 0);
+    only.reason.clone()
+}
+
+/// A context reporting another target family filters the variant's declaration.
 #[test]
-fn another_profile_key_is_an_incompatible_variant_target() {
+fn another_profile_key_filters_the_variant_on_its_assessed_profile() {
     let (outcome, host) = route(
         &FixtureSpec::default(),
         ScalarHostAdapter::new(&OPERANDS).perturbed(Perturbation::ForeignProfileKey),
     );
-    let Err(AdapterRouteFailure::Load(LoadRejection::IncompatibleTarget {
-        declaration,
-        classification,
-    })) = outcome
-    else {
-        panic!("expected an incompatible target");
-    };
-    assert_eq!(declaration, TargetDeclaration::Variant);
-    assert!(matches!(
-        classification,
-        TargetCompatibility::ProfileKeyMismatch { .. }
-    ));
+    assert!(
+        matches!(
+            sole_exclusion(outcome, 1),
+            VariantIneligibility::AssessedProfile {
+                classification: TargetCompatibility::ProfileKeyMismatch { .. },
+            },
+        ),
+        "a foreign family excludes the plan on the profile it was assessed against",
+    );
     assert_eq!(host.stages, [Stage::Bind]);
 }
 
-/// The same family under another exact descriptor is a *separate* refusal.
+/// The same family under another exact descriptor is a *separate* exclusion.
 ///
 /// ADR 0043's whole point, carried onto the adapter path: a key alone is not
 /// evidence, and a caller that could not tell a rebuild from a wrong artifact
 /// would go and fix the wrong thing.
 #[test]
-fn another_profile_descriptor_is_an_incompatible_variant_target() {
+fn another_profile_descriptor_filters_the_variant_on_its_assessed_profile() {
     let (outcome, host) = route(
         &FixtureSpec::default(),
         ScalarHostAdapter::new(&OPERANDS).perturbed(Perturbation::ForeignProfileDescriptor),
     );
-    let Err(AdapterRouteFailure::Load(LoadRejection::IncompatibleTarget {
-        declaration,
-        classification,
-    })) = outcome
-    else {
-        panic!("expected an incompatible target");
-    };
-    assert_eq!(declaration, TargetDeclaration::Variant);
-    assert!(matches!(
-        classification,
-        TargetCompatibility::DescriptorMismatch { .. }
-    ));
+    assert!(
+        matches!(
+            sole_exclusion(outcome, 1),
+            VariantIneligibility::AssessedProfile {
+                classification: TargetCompatibility::DescriptorMismatch { .. },
+            },
+        ),
+        "the same family under another descriptor is a rebuild, not a wrong artifact",
+    );
     assert_eq!(host.stages, [Stage::Bind]);
 }
 
 /// The backend family and the representation are compared **as a pair**.
 ///
-/// Each half alone is enough to refuse, and both refuse as the same class:
-/// "this host cannot execute these bytes" is one finding with one remedy, and it
-/// stays distinct from "this artifact is for another target" above.
+/// Each half alone is enough to exclude, and both exclude under the same
+/// subject: "this host cannot execute these bytes" is one finding with one
+/// remedy, and it stays distinct from "this artifact is for another target"
+/// above.
 ///
 /// The fixture declares no route requirement here, and that is not tidying. The
 /// loader checks a backend-scoped requirement's *owner* before it routes any
@@ -321,7 +352,7 @@ fn another_profile_descriptor_is_an_incompatible_variant_target() {
 /// row owned by the real one refuses as a foreign owner first — a correct
 /// ordering, and one that would hide the pair comparison this case is about.
 #[test]
-fn either_half_of_the_backend_representation_pair_is_an_unexecutable_payload() {
+fn either_half_of_the_backend_representation_pair_filters_the_variant() {
     let spec = FixtureSpec {
         route_requirements: Vec::new(),
         ..FixtureSpec::default()
@@ -334,34 +365,36 @@ fn either_half_of_the_backend_representation_pair_is_an_unexecutable_payload() {
             &spec,
             ScalarHostAdapter::new(&OPERANDS).perturbed(perturbation),
         );
-        let Err(AdapterRouteFailure::Load(LoadRejection::UnexecutablePayload {
+        let VariantIneligibility::UnsupportedRepresentation {
+            entry,
             declared_backend,
             declared_representation,
             host_backend,
             host_representation,
-        })) = outcome
+        } = sole_exclusion(outcome, 1)
         else {
-            panic!("{perturbation:?}: expected an unexecutable payload");
+            panic!("{perturbation:?}: expected an unsupported representation");
         };
+        assert_eq!(entry, 0, "{perturbation:?}");
         assert_eq!(declared_backend, fixture::BACKEND_KEY);
         assert_eq!(declared_representation, fixture::REPRESENTATION_KEY);
         assert!(
             host_backend != fixture::BACKEND_KEY
                 || host_representation != fixture::REPRESENTATION_KEY,
-            "{perturbation:?}: the refusal must name what this host reported",
+            "{perturbation:?}: the exclusion must name what this host reported",
         );
         assert_eq!(host.stages, [Stage::Bind], "{perturbation:?}");
     }
 }
 
-/// A payload built for another profile refuses separately from the variant's.
+/// A payload built for another profile excludes separately from the variant's.
 ///
 /// Two declarations, classified apart. Deriving either from the other is the
 /// inference `BackendPayloadDescriptor::compatibility` exists to forbid, and a
 /// caller that saw only one class could not tell a plan *assessed* for another
 /// profile from an object *built* for one.
 #[test]
-fn a_payload_built_for_another_profile_refuses_as_the_payload_declaration() {
+fn a_payload_built_for_another_profile_filters_on_the_payload_declaration() {
     let spec = FixtureSpec {
         payload_profile: fixture::profile_named(
             fixture::PROFILE_KEY,
@@ -370,18 +403,16 @@ fn a_payload_built_for_another_profile_refuses_as_the_payload_declaration() {
         ..FixtureSpec::default()
     };
     let (outcome, host) = route(&spec, ScalarHostAdapter::new(&OPERANDS));
-    let Err(AdapterRouteFailure::Load(LoadRejection::IncompatibleTarget {
-        declaration,
-        classification,
-    })) = outcome
-    else {
-        panic!("expected an incompatible target");
-    };
-    assert_eq!(declaration, TargetDeclaration::Payload);
-    assert!(matches!(
-        classification,
-        TargetCompatibility::DescriptorMismatch { .. }
-    ));
+    assert!(
+        matches!(
+            sole_exclusion(outcome, 1),
+            VariantIneligibility::PayloadProfile {
+                entry: 0,
+                classification: TargetCompatibility::DescriptorMismatch { .. },
+            },
+        ),
+        "the plan was assessed for this host and its emitted object was not",
+    );
     assert_eq!(host.stages, [Stage::Bind]);
 }
 
@@ -1125,6 +1156,351 @@ fn a_halt_in_the_second_entry_is_a_post_commit_failure_naming_that_entry() {
         written,
         vec![reference_bits()[0], 0],
         "the halted entry wrote the one row it ran and left the rest as allocated",
+    );
+}
+
+// -------------------------------------------------------------------------
+// Selecting across backend families
+// -------------------------------------------------------------------------
+
+/// Routes one portfolio device-free and returns the entries it selected.
+///
+/// Deliberately `preflight` rather than the adapter path. Selection is decided
+/// before a device is bound and before any adapter is consulted, so asserting it
+/// through a value that no adapter contributed to is what makes the result a
+/// statement about the loader. The members used here defer nothing and require
+/// nothing, so `preflight` reaches a `Preflight` rather than publishing rows.
+fn select(
+    members: &[FixtureSpec],
+    host: &tiler_runtime::load::ExecutionEnvironment,
+) -> Vec<String> {
+    let built = assemble_portfolio(members);
+    let mut program = DecodedProgram::decode(&built.bytes).expect("the portfolio decodes");
+    let facts = bind_facts(&program);
+    let preflight = program
+        .preflight(host, &built.expected, &facts)
+        .unwrap_or_else(|rejection| panic!("the portfolio must select a route: {rejection}"));
+    // The entry symbols, because they name the plan rather than the family: a
+    // filter that selected the right backend and the wrong plan would agree with
+    // an assertion made on the payload alone.
+    preflight
+        .entries()
+        .iter()
+        .map(|entry| entry.entry_symbol().to_owned())
+        .collect()
+}
+
+/// Returns a portfolio member that defers nothing and requires nothing.
+///
+/// Both are answered after selection, and a member carrying either would refuse
+/// on the device-free path before a selection assertion could be made. Stripping
+/// them is what keeps these cases about which variant was chosen.
+fn selectable(spec: FixtureSpec) -> FixtureSpec {
+    FixtureSpec {
+        route_requirements: Vec::new(),
+        deferred_predicates: Vec::new(),
+        ..spec
+    }
+}
+
+/// An incompatible first variant does not hide a later one this host can run.
+///
+/// **The case the previous selection order got wrong.** It took the first
+/// variant whose guard held and compared the host against that variant's payload
+/// afterwards, so this portfolio refused on the Metal member — on a host that
+/// could run the scalar member packaged directly behind it. Ineligibility is now
+/// a filter, so the Metal member is never a candidate and rank 1 is selected.
+#[test]
+fn a_later_variant_is_selected_when_the_earlier_family_is_not_this_host() {
+    let portfolio = [
+        selectable(FixtureSpec::metal(PackagedPlan::Fused)),
+        selectable(FixtureSpec::materialized()),
+    ];
+    assert_eq!(
+        select(&portfolio, &fixture::scalar_host()),
+        [fixture::POINTWISE_SYMBOL, fixture::REDUCTION_SYMBOL],
+        "the scalar host must route to the scalar member behind the Metal one",
+    );
+}
+
+/// The same portfolio selects the Metal member on a Metal host.
+///
+/// The other half of the previous case, and the one that shows the filter is not
+/// simply "prefer the last variant": nothing about the artifact changed, only
+/// what the host stated about itself, and the selection followed it.
+#[test]
+fn the_same_portfolio_selects_the_other_family_on_a_host_that_states_it() {
+    let portfolio = [
+        selectable(FixtureSpec::metal(PackagedPlan::Fused)),
+        selectable(FixtureSpec::materialized()),
+    ];
+    assert_eq!(
+        select(&portfolio, &fixture::metal_host()),
+        [fixture::ENTRY_SYMBOL],
+        "the Metal host must route to the Metal member ahead of the scalar one",
+    );
+}
+
+/// Stable priority decides among the eligible, and only among the eligible.
+///
+/// Two members of one family, both executable here, in both declaration orders.
+/// The selected plan follows the order the producer packaged rather than
+/// anything about the plans themselves — which a test fixing one order could not
+/// distinguish from a loader that happened to prefer fused or materialized
+/// plans.
+#[test]
+fn stable_priority_selects_the_first_eligible_variant_in_declaration_order() {
+    let fused = selectable(FixtureSpec::default());
+    let materialized = selectable(FixtureSpec::materialized());
+    assert_eq!(
+        select(
+            &[fused.clone(), materialized.clone()],
+            &fixture::scalar_host()
+        ),
+        [fixture::ENTRY_SYMBOL],
+        "rank 0 wins when both are eligible",
+    );
+    assert_eq!(
+        select(&[materialized, fused], &fixture::scalar_host()),
+        [fixture::POINTWISE_SYMBOL, fixture::REDUCTION_SYMBOL],
+        "reversing the packaging reverses the choice, so order is meaning",
+    );
+}
+
+/// Filtering removes candidates without reordering the ones that remain.
+///
+/// A foreign member ahead of two eligible ones. The answer must be the *first*
+/// eligible member rather than the last, which is what separates a filter from a
+/// search for something that fits.
+#[test]
+fn filtering_an_earlier_variant_does_not_reorder_the_eligible_ones() {
+    let portfolio = [
+        selectable(FixtureSpec::metal(PackagedPlan::FusedInapplicable)),
+        selectable(FixtureSpec::default()),
+        selectable(FixtureSpec::materialized()),
+    ];
+    assert_eq!(
+        select(&portfolio, &fixture::scalar_host()),
+        [fixture::ENTRY_SYMBOL],
+        "the highest-ranked *eligible* member is selected, not the last one standing",
+    );
+}
+
+/// An eligible variant the producer's guard excludes still falls through.
+///
+/// The guard-driven fallthrough the filter had to preserve rather than replace.
+/// Rank 0 here is a plan this host can execute and the producer packaged under a
+/// guard that never holds; rank 1 is the same host and an applicable guard.
+#[test]
+fn an_eligible_variant_whose_guard_is_false_falls_through_to_the_next() {
+    let portfolio = [
+        selectable(FixtureSpec::for_plan(PackagedPlan::FusedInapplicable)),
+        selectable(FixtureSpec::materialized()),
+    ];
+    assert_eq!(
+        select(&portfolio, &fixture::scalar_host()),
+        [fixture::POINTWISE_SYMBOL, fixture::REDUCTION_SYMBOL],
+        "a guard that does not hold is the producer's own answer, and the walk continues",
+    );
+}
+
+/// A portfolio of one foreign family fails closed and names every exclusion.
+#[test]
+fn a_portfolio_this_host_cannot_execute_fails_closed() {
+    let built = assemble_portfolio(&[
+        selectable(FixtureSpec::metal(PackagedPlan::Fused)),
+        selectable(FixtureSpec::metal(PackagedPlan::Materialized)),
+    ]);
+    let mut program = DecodedProgram::decode(&built.bytes).expect("the portfolio decodes");
+    let facts = bind_facts(&program);
+    let Err(LoadRejection::NoEligibleVariant { packaged, filtered }) =
+        program.preflight(&fixture::scalar_host(), &built.expected, &facts)
+    else {
+        panic!("a portfolio of another backend family must not route on this host");
+    };
+    assert_eq!(packaged, 2);
+    assert_eq!(
+        filtered
+            .iter()
+            .map(|entry| entry.variant)
+            .collect::<Vec<_>>(),
+        [0, 1],
+        "every packaged variant is named, in routing-rank order",
+    );
+    for excluded in &filtered {
+        assert!(
+            matches!(
+                excluded.reason,
+                VariantIneligibility::UnsupportedRepresentation {
+                    ref declared_backend,
+                    ..
+                } if declared_backend == fixture::METAL_BACKEND_KEY,
+            ),
+            "each exclusion names the family this host is not: {excluded}",
+        );
+    }
+}
+
+/// An eligible portfolio whose guards all say no is a *different* refusal.
+///
+/// The distinction the two selection classes exist for. This host can execute
+/// what is packaged and the producer excluded it, which is the opposite repair
+/// from the case above — and a loader that reported one class for both would
+/// send a reader to find another build when the fix is to bind different facts.
+#[test]
+fn an_eligible_portfolio_with_no_applicable_guard_refuses_as_inapplicable() {
+    let built = assemble_portfolio(&[
+        selectable(FixtureSpec::metal(PackagedPlan::Fused)),
+        selectable(FixtureSpec::for_plan(PackagedPlan::FusedInapplicable)),
+    ]);
+    let mut program = DecodedProgram::decode(&built.bytes).expect("the portfolio decodes");
+    let facts = bind_facts(&program);
+    let Err(LoadRejection::NoApplicableVariant { packaged, filtered }) =
+        program.preflight(&fixture::scalar_host(), &built.expected, &facts)
+    else {
+        panic!("an eligible variant whose guard is false is not an ineligible portfolio");
+    };
+    assert_eq!(packaged, 2);
+    let [excluded] = filtered.as_slice() else {
+        panic!("exactly the Metal member is filtered here, got {filtered:?}");
+    };
+    assert_eq!(
+        excluded.variant, 0,
+        "the refusal still says which variant this host could not have run",
+    );
+}
+
+/// An **eligible** variant's unanswerable guard aborts rather than falling through.
+///
+/// The fail-closed property the filter had to preserve. Rank 0 is a plan this
+/// host can execute, packaged under a guard that reads the input extent, and the
+/// caller binds nothing — so the guard is *unanswerable* rather than false. A
+/// walk that skipped it would route to rank 1, silently substituting a plan the
+/// producer ranked lower because the caller bound too little, and report a
+/// successful route.
+///
+/// The subject is asserted, not just the class: the whole value of the rejection
+/// is naming which formula went unanswered, and a refusal that pointed at rank 1
+/// would send a reader to the wrong guard.
+#[test]
+fn an_eligible_variants_unanswerable_guard_refuses_instead_of_falling_through() {
+    let built = assemble_portfolio(&[
+        selectable(FixtureSpec::for_plan(PackagedPlan::FusedExtentGuarded)),
+        selectable(FixtureSpec::materialized()),
+    ]);
+    let mut program = DecodedProgram::decode(&built.bytes).expect("the portfolio decodes");
+    // Deliberately nothing bound. Every other case in this suite reads the
+    // artifact's own declared interface; this one is about the caller that did
+    // not.
+    let unbound = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight).build();
+    let outcome = program.preflight(&fixture::scalar_host(), &built.expected, &unbound);
+    assert!(
+        matches!(
+            outcome,
+            Err(LoadRejection::AbiEvaluation {
+                subject: tiler_runtime::load::AbiSubject::ApplicabilityGuard { variant: 0 },
+                ..
+            }),
+        ),
+        "an unanswerable guard on an eligible variant must refuse, naming its own rank: {:?}",
+        outcome.map(|_| ()),
+    );
+}
+
+/// An **ineligible** variant's unanswerable guard is never evaluated at all.
+///
+/// The other side of the same coin, and the one the filter changed. The same
+/// under-bound caller, the same unanswerable guard — but on a variant of a
+/// backend family this host is not, so it is not a candidate and substitutes
+/// nothing. Aborting here would let a portfolio's Metal member make a scalar host
+/// unroutable through a formula that host was never going to evaluate.
+#[test]
+fn an_ineligible_variants_unanswerable_guard_does_not_abort_the_walk() {
+    let built = assemble_portfolio(&[
+        selectable(FixtureSpec::metal(PackagedPlan::FusedExtentGuarded)),
+        selectable(FixtureSpec::materialized()),
+    ]);
+    let mut program = DecodedProgram::decode(&built.bytes).expect("the portfolio decodes");
+    let unbound = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight).build();
+    let preflight = program
+        .preflight(&fixture::scalar_host(), &built.expected, &unbound)
+        .expect("a filtered variant's guard is not the caller's obligation to answer");
+    assert_eq!(
+        preflight
+            .entries()
+            .iter()
+            .map(tiler_runtime::load::RoutedEntry::entry_symbol)
+            .collect::<Vec<_>>(),
+        [fixture::POINTWISE_SYMBOL, fixture::REDUCTION_SYMBOL],
+    );
+}
+
+/// A selected cross-family route executes end to end through the adapter.
+///
+/// Selection is not a separate stage a consumer opts into: the same
+/// `route_with_adapter` path that the single-variant cases take carries a
+/// portfolio through, and the bits it returns agree with the same oracle. A
+/// filter that chose correctly and then routed the *other* member's payload
+/// would pass every assertion above and fail this one.
+#[test]
+fn a_portfolio_routes_its_selected_member_through_the_adapter_to_the_reference() {
+    let built = assemble_portfolio(&[
+        FixtureSpec::metal(PackagedPlan::Fused),
+        FixtureSpec::materialized(),
+    ]);
+    let mut program = DecodedProgram::decode(&built.bytes).expect("the portfolio decodes");
+    let facts = bind_facts(&program);
+    let mut host = ScalarHostAdapter::new(&OPERANDS);
+    let completion = route_with_adapter(&mut program, &mut host, &built.expected, &facts)
+        .expect("the scalar member of the portfolio routes");
+    assert_eq!(
+        completion.result_bits,
+        reference_bits(),
+        "the selected member must agree with the independent oracle bit for bit",
+    );
+    assert_eq!(
+        host.stages, MATERIALIZED_ROUTE,
+        "the two-entry member was the one dispatched, and every per-entry stage ran twice",
+    );
+}
+
+/// A filtered portfolio refuses before the adapter is asked anything, and a
+/// fallback is still permitted.
+///
+/// Where selection sits relative to the routing commit, asserted through the
+/// stage log rather than through the returned error. Eligibility is decided from
+/// what the adapter reported when it bound a context and from nothing after it,
+/// so a portfolio this host cannot execute must cost one `bind` and no payload
+/// validation, no preparation, and no allocation — and ADR 0051 still permits
+/// the caller to try another artifact.
+#[test]
+fn a_filtered_portfolio_refuses_at_binding_and_still_permits_a_fallback() {
+    let built = assemble_portfolio(&[
+        FixtureSpec::metal(PackagedPlan::Fused),
+        FixtureSpec::metal(PackagedPlan::Materialized),
+    ]);
+    let mut program = DecodedProgram::decode(&built.bytes).expect("the portfolio decodes");
+    let facts = bind_facts(&program);
+    let mut host = ScalarHostAdapter::new(&OPERANDS);
+    let outcome = route_with_adapter(&mut program, &mut host, &built.expected, &facts);
+    let Err(failure) = outcome else {
+        panic!("a portfolio of another backend family must not route here");
+    };
+    assert!(
+        matches!(
+            failure,
+            AdapterRouteFailure::Load(LoadRejection::NoEligibleVariant { .. }),
+        ),
+        "expected the loader's own selection refusal: {failure}",
+    );
+    assert!(
+        failure.fallback_permitted(),
+        "selection is decided long before the commit: {failure}",
+    );
+    assert_eq!(
+        host.stages,
+        [Stage::Bind],
+        "nothing is validated, prepared, or allocated for a portfolio this host cannot execute",
     );
 }
 
