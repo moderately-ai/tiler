@@ -1,7 +1,7 @@
 ---
 id: admit-the-contraction-normative-reference
 title: Admit the contraction normative reference and its exceptional-value corpus
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-the-contraction-semantic-profile]
 related: [implement-parallel-reduction-strategies, reduction-semantics-contract]
@@ -9,6 +9,9 @@ scopes: [implementation/reference, implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, reference, numerics, contraction, reductions]
+claimed_from: todo
+assignee: worker-admit-the-cont
+lease_expires_at: 1785550315
 ---
 ## User-visible outcome
 
