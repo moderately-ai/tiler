@@ -1,7 +1,7 @@
 ---
 id: accept-the-inline-artifact-family-profile-syntax
 title: Decide how a consumer states an artifact-family delivery profile
-status: in-progress
+status: done
 priority: p1
 dependencies: [generate-cfg-gated-artifact-family-delivery]
 related: [prototype-inline-aot-integration-proof, prototype-inline-proc-macro-frontend]
@@ -9,9 +9,6 @@ scopes: [implementation/frontend]
 shared_scopes: [contracts/navigation, contracts/integrations, project/tickets]
 paths: []
 tags: [decision, public-boundary, inline-dx, frontend, apple-targets]
-claimed_from: todo
-assignee: worker-deliver-syntax
-lease_expires_at: 1785554584
 ---
 ## Why this is a ticket and not a line of code
 
