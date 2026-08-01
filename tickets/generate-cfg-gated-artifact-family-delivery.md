@@ -1,7 +1,7 @@
 ---
 id: generate-cfg-gated-artifact-family-delivery
 title: Generate the cfg-gated delivery half of the artifact-family selection
-status: todo
+status: in-progress
 priority: p1
 dependencies: [prototype-inline-proc-macro-frontend, prototype-artifact-family-delivery]
 related: [prototype-macro-embedding-and-cargo-behavior, record-that-the-frontend-axis-is-review-gated]
@@ -9,6 +9,9 @@ scopes: [implementation/frontend]
 shared_scopes: [contracts/navigation]
 paths: []
 tags: [implementation, apple-targets, inline-dx, frontend]
+claimed_from: todo
+assignee: worker-generate-cfg
+lease_expires_at: 1785552290
 ---
 `prototype-artifact-family-delivery` landed the driver-side half of ADR 0049 and ADR 0053 — the canonical typed `ArtifactFamilySelection`, its `SelectedFamilies`/`FallbackOnly` delivery policy, and the fan-out to one `MetalTarget` per selected family — as a crate-private draft in `crates/tiler-metal-aot/src/family.rs`. This ticket owns the half that could not land with it, and the reason is a boundary rather than an omission.
 
