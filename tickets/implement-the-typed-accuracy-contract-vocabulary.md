@@ -1,7 +1,7 @@
 ---
 id: implement-the-typed-accuracy-contract-vocabulary
 title: Implement the typed transcendental accuracy-contract vocabulary
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [admit-the-silu-activation-family, admit-the-rms-normalization-family, admit-the-softmax-family, record-the-metal-elementary-function-accuracy-guarantee, numerical-policy-contract, own-operation-family-support-matrix, scope-transformer-nonlinear-normalization-and-reductions]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/reference, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, semantics, numerics, transcendental, accuracy, boundary]
+claimed_from: todo
+assignee: worker-accuracy
+lease_expires_at: 1785557885
 ---
 ## User-visible outcome
 
