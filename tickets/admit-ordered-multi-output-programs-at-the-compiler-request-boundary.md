@@ -16,7 +16,9 @@ A semantic program declaring several ordered named outputs compiles, so the conf
 
 ## Why this exists
 
-**Fact — four guards make single-output a boundary invariant.** `crates/tiler-compiler/src/request.rs:2184`, `:2377`, and `:2581` each open with `if program.output_count() != 1`, one per recognized whole-program strategy, and `crates/tiler-compiler/src/program.rs:1206` carries the same condition on the program-assembly path. A program with two ordered outputs is refused before a strategy is selected.
+**Fact — two guards make single-output a boundary invariant.** `crates/tiler-compiler/src/request.rs:2228` opens `select_supported_strategy` with `if program.output_count() != 1`, and `crates/tiler-compiler/src/program.rs:1234` carries the same condition on the program-assembly path. A program with two ordered outputs is refused before a strategy is selected.
+
+*Corrected by [`admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary`](admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary.md).* This paragraph read "four guards" at `request.rs:2184`, `:2377`, and `:2581` — one per whole-program template. The general recognizer replaced those three templates with one occurrence walk, so the three per-template guards became the single program-wide one above, checked once before the output's producing occurrence is classified. The count changed; the invariant did not, and neither did this ticket's obligation.
 
 **Fact — the conformance gate's multi-output row is therefore a permanent negative test.** `docs/correctness-and-testing.md:106-111` requires the optimizer conformance owner to exercise "non-isomorphic and fan-out or multi-output graphs" *before the public compiler facade is accepted*; `:117` records the consequence in the gate's own words — "Ordered multi-output programs are rejected explicitly rather than compiled, so the multi-output row of the requirement above is a negative test." The test is `ordered_multi_output_programs_reject_explicitly` at `crates/tiler-compiler/src/pipeline/conformance.rs:389`.
 

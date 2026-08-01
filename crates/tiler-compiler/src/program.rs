@@ -397,23 +397,27 @@ fn build_split_core(
     let mut builder = open_core_builder(semantic, request)?;
     let abi = declare_host_abi(
         &mut builder,
-        &[subject.input_elements],
+        &vec![subject.input_elements; subject.input_keys.len()],
         subject.output_elements,
     )?;
-    let input_bytes_abi = abi.sole_input_bytes()?;
-    let input_elements_abi = abi.sole_input_elements()?;
     let partial_abi = declare_partial_abi(&mut builder, partial_elements)?;
-    let external = builder.push_allocation(storage(input_bytes, AllocationOwnership::External))?;
     let temporary_storage =
         builder.push_allocation(storage(input_bytes, AllocationOwnership::Program))?;
     let partial_storage =
         builder.push_allocation(storage(partial_bytes, AllocationOwnership::Program))?;
     let output_storage =
         builder.push_allocation(storage(output_bytes, AllocationOwnership::Program))?;
-    let input = builder.push_value(
-        program_input(subject.input_key.clone(), subject.input_shape.clone()),
-        external,
-    )?;
+    let mut prologue_accesses = Vec::with_capacity(subject.input_keys.len() + 1);
+    for (key, bytes) in subject.input_keys.iter().zip(&abi.input_bytes) {
+        let external =
+            builder.push_allocation(storage(input_bytes, AllocationOwnership::External))?;
+        let input = builder.push_value(
+            program_input(key.clone(), subject.input_shape.clone()),
+            external,
+        )?;
+        let view = builder.push_whole_view(input)?;
+        prologue_accesses.push(read(view, *bytes));
+    }
     let temporary = builder.push_value(
         internal(ValueRole::Temporary, subject.input_shape.clone()),
         temporary_storage,
@@ -426,24 +430,23 @@ fn build_split_core(
         internal(ValueRole::Output, subject.output_shape.clone()),
         output_storage,
     )?;
-    let input_view = builder.push_whole_view(input)?;
     let temporary_view = builder.push_whole_view(temporary)?;
     let partial_view = builder.push_whole_view(partial_value)?;
     let output_view = builder.push_whole_view(output)?;
+    let contributor_bytes = abi.first_input_bytes()?;
+    let contributor_elements = abi.first_input_elements()?;
+    prologue_accesses.push(write(temporary_view, contributor_bytes));
     let map_stage = builder.push_stage(
         &lower(pointwise)?,
         &covered(subject.members.pointwise()),
-        &[
-            read(input_view, input_bytes_abi),
-            write(temporary_view, input_bytes_abi),
-        ],
-        abi.launch(input_elements_abi),
+        &prologue_accesses,
+        abi.launch(contributor_elements),
     )?;
     let partial_stage = builder.push_stage(
         &lower(partial)?,
         &covered(subject.members.reduction()),
         &[
-            read(temporary_view, input_bytes_abi),
+            read(temporary_view, contributor_bytes),
             write(partial_view, partial_abi.bytes),
         ],
         abi.launch(partial_abi.elements),
@@ -514,20 +517,29 @@ fn build_materialized_core(
     let mut builder = open_core_builder(semantic, request)?;
     let abi = declare_host_abi(
         &mut builder,
-        &[subject.input_elements],
+        // One entry per declared input, in declaration order: the recognized
+        // prologue may read several tensors, and the prologue stage's accesses
+        // bind to its kernel's buffers positionally.
+        &vec![subject.input_elements; subject.input_keys.len()],
         subject.output_elements,
     )?;
-    let input_bytes_abi = abi.sole_input_bytes()?;
-    let input_elements_abi = abi.sole_input_elements()?;
-    let external = builder.push_allocation(storage(input_bytes, AllocationOwnership::External))?;
     let temporary_storage =
         builder.push_allocation(storage(input_bytes, AllocationOwnership::Program))?;
     let output_storage =
         builder.push_allocation(storage(output_bytes, AllocationOwnership::Program))?;
-    let input = builder.push_value(
-        program_input(subject.input_key.clone(), subject.input_shape.clone()),
-        external,
-    )?;
+    let mut prologue_accesses = Vec::with_capacity(subject.input_keys.len() + 1);
+    for (key, bytes) in subject.input_keys.iter().zip(&abi.input_bytes) {
+        let external =
+            builder.push_allocation(storage(input_bytes, AllocationOwnership::External))?;
+        // Every declared input is read at the contributor domain, which is the
+        // one shape the recognized prologue governs.
+        let input = builder.push_value(
+            program_input(key.clone(), subject.input_shape.clone()),
+            external,
+        )?;
+        let view = builder.push_whole_view(input)?;
+        prologue_accesses.push(read(view, *bytes));
+    }
     let temporary = builder.push_value(
         internal(ValueRole::Temporary, subject.input_shape.clone()),
         temporary_storage,
@@ -536,23 +548,22 @@ fn build_materialized_core(
         internal(ValueRole::Output, subject.output_shape.clone()),
         output_storage,
     )?;
-    let input_view = builder.push_whole_view(input)?;
     let temporary_view = builder.push_whole_view(temporary)?;
     let output_view = builder.push_whole_view(output)?;
+    let contributor_bytes = abi.first_input_bytes()?;
+    let contributor_elements = abi.first_input_elements()?;
+    prologue_accesses.push(write(temporary_view, contributor_bytes));
     let map_stage = builder.push_stage(
         &lower(pointwise)?,
         &covered(subject.members.pointwise()),
-        &[
-            read(input_view, input_bytes_abi),
-            write(temporary_view, input_bytes_abi),
-        ],
-        abi.launch(input_elements_abi),
+        &prologue_accesses,
+        abi.launch(contributor_elements),
     )?;
     let reduce_stage = builder.push_stage(
         &lower(reduction)?,
         &covered(subject.members.reduction()),
         &[
-            read(temporary_view, input_bytes_abi),
+            read(temporary_view, contributor_bytes),
             write(output_view, abi.output_bytes),
         ],
         abi.launch(abi.output_elements),
@@ -614,11 +625,22 @@ fn build_fused_core(
     } else {
         let subject = request.serial_sum();
         (
-            vec![(
-                subject.input_key.clone(),
-                subject.input_shape.clone(),
-                subject.input_elements,
-            )],
+            // Every declared input at the contributor domain, in declaration
+            // order. A fused region and a prologue-less reduction both declare
+            // one, but the list is derived rather than spelled: the arity is the
+            // recognizer's, and a single-region shape that read two tensors
+            // would otherwise bind the second to nothing.
+            subject
+                .input_keys
+                .iter()
+                .map(|key| {
+                    (
+                        key.clone(),
+                        subject.input_shape.clone(),
+                        subject.input_elements,
+                    )
+                })
+                .collect(),
             subject.output_key.clone(),
             subject.output_shape.clone(),
             subject.output_elements,
@@ -701,20 +723,26 @@ impl HostAbi {
         }
     }
 
-    /// Returns the byte count of the one declared input, or refuses.
-    fn sole_input_bytes(&self) -> Result<AbiExprId, ProgramError> {
-        Self::sole(&self.input_bytes)
+    /// Returns the byte count of the first declared input, or refuses.
+    ///
+    /// It is also the *contributor domain's* byte count in every reduced
+    /// program: each declared input of such a program is read at the one shape
+    /// the recognized prologue governs, which is the shape the staged temporary
+    /// carries. Refusing on an empty list rather than indexing keeps a program
+    /// that declared no input from silently sizing a stage by nothing.
+    fn first_input_bytes(&self) -> Result<AbiExprId, ProgramError> {
+        Self::first(&self.input_bytes)
     }
 
-    /// Returns the element count of the one declared input, or refuses.
-    fn sole_input_elements(&self) -> Result<AbiExprId, ProgramError> {
-        Self::sole(&self.input_elements)
+    /// Returns the element count of the first declared input, or refuses.
+    fn first_input_elements(&self) -> Result<AbiExprId, ProgramError> {
+        Self::first(&self.input_elements)
     }
 
-    fn sole(expressions: &[AbiExprId]) -> Result<AbiExprId, ProgramError> {
+    fn first(expressions: &[AbiExprId]) -> Result<AbiExprId, ProgramError> {
         match expressions {
-            [expression] => Ok(*expression),
-            _ => Err(ProgramError::Structure {
+            [expression, ..] => Ok(*expression),
+            [] => Err(ProgramError::Structure {
                 rule: "host-abi-input-arity",
             }),
         }

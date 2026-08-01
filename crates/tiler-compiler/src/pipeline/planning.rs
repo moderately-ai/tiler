@@ -144,9 +144,16 @@ pub(super) fn enumerate_complete_plans(
 
     // A whole-program candidate whose fusion is legal additionally carries the
     // strict-`f32` numerical equivalence proof the trace cites as a sound proof.
+    //
+    // Gated on the fused region being *spellable*, not merely on the program
+    // being a reduction. The proof asserts `MultiplyThenAdd` as the fused
+    // region's atomic operations, which is a positive claim about a region that
+    // exists only for the affine prologue this vocabulary can fuse; a general
+    // prologue has no fused region, and recording the claim anyway would put a
+    // sound-proof label on a statement about nothing.
     let mut numerical = None;
     let mut numerical_cause = legality_cause;
-    if verified.try_serial_sum().is_some()
+    if crate::physical::fused_prologue_constants(verified).is_some()
         && let Some(candidate) = formation.whole_program_candidate()
         && !illegal.contains(candidate.occurrence())
     {
