@@ -1,7 +1,7 @@
 ---
 id: correct-the-roadmap-rows-falsified-by-the-contraction-and-accuracy-landings
 title: Correct the roadmap rows falsified by the contraction and accuracy landings
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary, bound-the-reference-contraction-comparison-for-the-profile-cells, re-audit-adr-implementation-status-after-the-runtime-and-metal-landings]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, roadmap, graph-repair]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785613494
 ---
 ## User-visible outcome
 

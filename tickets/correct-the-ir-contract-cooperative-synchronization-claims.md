@@ -1,7 +1,7 @@
 ---
 id: correct-the-ir-contract-cooperative-synchronization-claims
 title: Correct the IR contract's expired cooperative-synchronization claims
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [implement-the-single-workgroup-synchronized-reduction-strategy, admit-loop-carried-cooperative-staging]
@@ -9,9 +9,6 @@ scopes: [contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785613494
 ---
 ## What is wrong
 
