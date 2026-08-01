@@ -331,12 +331,10 @@ optimizer tests remain platform-independent.
 
 ## Proc-macro AOT tests
 
-- An inline invocation cold-compiles and embeds a loadable manifest/metallib
+- An inline invocation cold-compiles and embeds a loadable artifact envelope
   without consumer `build.rs` or a prebuild command.
-- Equivalent warm expansions perform no `xcrun` work, including across rustc
-  processes.
-- Manifest and metallib are emitted as byte-string literal tokens; generated
-  Rust contains no compiler-cache path or `OUT_DIR` dependency.
+- Equivalent warm expansions perform no *compilation* work — neither `metal` nor `metallib` runs, and nothing is published — including across rustc processes. Resolving the Apple toolchain is not compilation work — it is identity work every expansion pays, warm or cold, for the structural reason stated after this list.
+- The artifact envelope carrying the manifest and every built family's metallib is emitted as exactly one byte-string literal token; generated Rust contains no compiler-cache path or `OUT_DIR` dependency.
 - Cache deletion, `cargo clean`, incremental compilation, compiler upgrades,
   toolchain changes, lock contention, and stale-lock recovery are safe.
 - rust-analyzer and `cargo check` cold/warm behavior is measured and preserves
@@ -345,15 +343,15 @@ optimizer tests remain platform-independent.
   time/memory and binary-size measurements.
 - Many identical invocations establish whether linker constant merging occurs;
   correctness never depends on it.
-- Generated consumer-`cfg` tests cover macOS, iOS device, iOS simulator,
-  Catalyst, and an unrelated non-Apple target. A selected matching family
-  embeds its payload or emits its retained actionable compile error; a
-  nonmatching target compiles the semantic fallback; `FallbackOnly` performs
-  no backend compiler work.
+- Generated consumer-`cfg` tests cover macOS, iOS device, iOS simulator, Catalyst, and an unrelated non-Apple target. The envelope's bytes are embedded once and unconditionally, so what a selected matching family's `#[cfg]` decides is its payload's *position* within them — or, when that family did not build, its retained actionable compile error. A nonmatching target selects no position and compiles the semantic fallback; `FallbackOnly` performs no backend compiler work.
 - A capable macOS host's selected-family work while compiling an unrelated
   target is measured; the content cache bounds it, and correctness never
   depends on proc-macro consumer-target discovery.
 - External Metal errors preserve invocation spans and retained canonical MSL.
+
+**Why the warm requirement states compilation rather than `xcrun`.** [Frontend and proc-macro integration](integration/frontends.md) corrected that bullet's frontend counterpart on 2026-08-01 and carries the derivation, the two eliminated alternatives, and the measured cost; only the consequence for this list is restated here. The compiler fingerprint is an *input* to compilation identity, so the toolchain must be observed before a lookup exists to skip — an entry reached without observing it would be keyed on something other than the compiler that would build a miss, the incomplete-key failure [ADR 0050](decisions/0050-use-immutable-self-validating-expansion-cache-entries.md) exists to exclude. The invariant that replaces "avoid `xcrun`" is narrower and stronger: identity folds a fingerprint read by executing the binaries the same prepared token will execute. A resolution on every expansion is therefore structural, and a test demanding its absence would be demanding a broken key.
+
+**Evidence.** `a_checked_plan_publishes_then_hits_without_recompiling` (`tiler-build`) is the direct assertion: a launcher shim whose fake `metal` and `metallib` append one line per *compile* invocation and none for a `--version` probe, three resolutions of one subject, and exactly two lines required — so the two hits ran the fingerprint probes and no compilation. `the_second_expansion_of_one_subject_compiles_nothing` (`tiler-macros`) makes the same claim against the real Apple toolchain by asserting the resolutions are `["published", "hit"]`, which a design computing identity after compiling could not produce. `concurrent_processes_on_one_key_compile_once` (`tiler-cache`) is the cross-process half: racing OS processes are held at a barrier until every one has looked and found nothing, and one compilation is then the lock excluding something rather than the scheduling. The one-envelope requirements above are pinned by `one_built_family_emits_its_gated_selector_and_a_total_catch_all` and `the_emitted_arms_select_exactly_one_payload_per_consumer_target`, the second of which evaluates the emitted predicates against `rustc`'s own `cfg` answer for exactly the five targets that bullet names.
 
 ## Candle integration tests
 
