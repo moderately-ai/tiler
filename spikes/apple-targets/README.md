@@ -387,15 +387,31 @@ all and run everywhere, including on a host with neither an Apple toolchain nor
 `git`.
 
 **What it costs the gate, in case counts, which are the only exact figures here.**
-The covering matrix the gate runs is **402 offline cases** across three families
-and **368 runtime cases** across the two families that dispatch; the exhaustive
-matrix is **663 offline cases**. The third dtype accounts for 90 of those offline
-cases (30 per family) and 96 of the runtime ones (48 per dispatching family), and
-171 of the exhaustive offline cases. Of the 368 runtime cases, **320 are actually
-dispatched**: the iOS Simulator's 48 `bf16` runtime cases are refused before
-dispatch and recorded as such, and so are its 30 offline `bf16` cases on the
-device side, whose compile side still runs. The figures the second dtype left
-were 312 offline, 272 runtime, and 492 exhaustive offline.
+Counted from the retained records rather than from memory, because the previous
+figures in this paragraph had drifted below the matrix they described. The
+covering matrix the gate runs is **579 offline cases** across three families
+(193 per family) and **484 runtime cases** across the two families that dispatch
+(242 per dispatching family); the exhaustive matrix is **903 offline cases**
+(301 per family). The third dtype accounts for 153 of those offline cases (51 per
+family) and 132 of the runtime ones (66 per dispatching family), and 261 of the
+exhaustive offline cases (87 per family). Of the 484 runtime cases, **418 are
+actually dispatched**: the iOS Simulator's 66 `bf16` runtime cases are refused
+before dispatch and recorded as such, and so are its 51 offline `bf16` cases on
+the device side, whose compile side still runs.
+
+Reproduce each figure against the retained covering record:
+
+```sh
+cd spikes/apple-targets/results/2026-07-31-numerics-covering-xcode26.6-metal32023.883
+grep -c '\.compile_options' record.tsv                      # 579 offline cases
+grep -c '\.applied_options' record.tsv                      # 418 runtime cases dispatched
+grep '\.refusal' record.tsv | grep -c '\.runtime\.'         # 66 runtime refusals
+grep '\.refusal' record.tsv | grep -vc '\.runtime\.'        # 51 offline refusals
+grep '\.compile_options' record.tsv | grep -c bf16          # 153 bf16 offline cases
+```
+
+418 dispatched plus 66 refused is the 484 above; the exhaustive figures come from
+the same two commands against the `-exhaustive-` record beside it.
 
 **Wall-clock figures are deliberately not carried forward.** Every measurement of
 this suite has been taken with a different number of other worktrees running

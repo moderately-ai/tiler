@@ -47,6 +47,7 @@ Most harnesses are standard library plus `pytest`. Four are not, and each says s
 
 ### Numerical operations
 
+- [BF16 through the second-dtype seams](numerics/bf16-second-dtype/README.md) — reproducible; executable-model, exhaustive-finite, bounded-measurement; supports: [Mature tensor dtype taxonomy](../docs/research/numerics/mature-dtype-taxonomy.md), [Apple GPU numerical behaviour](../docs/research/apple-targets/numerical-behaviour.md)
 - [Reduction contract probe](numerics/reduction_contract/README.md) — reproducible; executable-model, exhaustive-finite; supports: [Reduction semantics and legality](../docs/research/numerics/reduction-semantics-and-legality.md)
 - [Region accuracy observation probe](numerics/region_accuracy/README.md) — reproducible; bounded-measurement; supports: [Region accuracy contracts and analyzable error budgets](../docs/research/numerics/region-accuracy-contract.md)
 - [Qwen3-0.6B-Base candidate quantization profile probe](numerics/qwen3-weight-quantization-profiles/README.md) — reproducible; bounded-measurement; supports: [First quantized language-model profile](../docs/research/numerics/first-quantized-lm-profile.md)
