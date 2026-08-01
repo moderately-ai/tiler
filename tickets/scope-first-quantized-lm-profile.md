@@ -1,7 +1,7 @@
 ---
 id: scope-first-quantized-lm-profile
 title: Scope the first workload-backed quantized language-model profile
-status: todo
+status: in-progress
 priority: p2
 dependencies: [define-first-metal-lm-workload, spike-first-metal-contraction-vertical, prototype-quantized-value-vertical]
 related: [implement-first-quantized-backend-profile, define-initial-affine-quantization-semantics, define-quantized-value-binding-contract, implement-workload-selected-quantized-parameter-maps, own-the-dtype-support-maturity-matrix]
@@ -9,6 +9,9 @@ scopes: [research/numerics, research/scheduling, research/apple-targets, contrac
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, quantization, language-model, matmul, metal]
+claimed_from: todo
+assignee: worker-quant-profile
+lease_expires_at: 1785546674
 ---
 ## User-visible outcome
 

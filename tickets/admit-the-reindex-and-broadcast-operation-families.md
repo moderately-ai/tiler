@@ -1,7 +1,7 @@
 ---
 id: admit-the-reindex-and-broadcast-operation-families
 title: Admit the Reindex and Broadcast operation families
-status: todo
+status: in-progress
 priority: p1
 dependencies: [derive-transformer-operation-and-shape-surface]
 related: [own-operation-family-support-matrix, scope-transformer-nonlinear-normalization-and-reductions, design-attention-program-vertical, compose-rotary-position-embedding-from-reindex-and-broadcast, admit-the-grouped-query-head-layout-reindex-profile]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/reference, implementation/compiler, i
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, semantics, structural, language-model, breadth]
+claimed_from: todo
+assignee: worker-reindex
+lease_expires_at: 1785546674
 ---
 ## User-visible outcome
 
