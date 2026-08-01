@@ -1,0 +1,56 @@
+key	value
+host.rotary.shape	[18, 128]
+host.rotary.cos_bytes	9216
+host.rotary.cos_sha256	cda3858270aead085a638ae9ec3ed1db354b5f7b6a72b407034eba0d512c9496
+host.rotary.sin_bytes	9216
+host.rotary.sin_sha256	f8f187482d01fe56695dc43e0fb6c73c761bda780d00bef1c87309f1f589709e
+host.rotary.retained	in full, one row per (position, lane), in rotary.tsv
+host.mask.masked_entry	0xff7fffff
+host.mask.attended_entry	0x80000000
+host.mask.passes	9
+host.mask.retained	in full, one row per (pass, query, key), in mask.tsv
+host.mask.prefill.shape	[10, 10]
+host.mask.prefill.bytes	400
+host.mask.prefill.sha256	901e82cdbe1a6dda8df3ae9996e5a57b323836834a0c3df15039105c51963f3b
+host.mask.prefill.attended_entries	55
+host.mask.decode-1.shape	[1, 11]
+host.mask.decode-1.bytes	44
+host.mask.decode-1.sha256	9d7eecab39c1fce840b49959d7712efcfab24e7839cb33dd0c525d2de8579fca
+host.mask.decode-1.attended_entries	11
+host.mask.decode-2.shape	[1, 12]
+host.mask.decode-2.bytes	48
+host.mask.decode-2.sha256	c68e39df6b119d8332160198d47bab18d220a81247c10e376aa18897e6be6043
+host.mask.decode-2.attended_entries	12
+host.mask.decode-3.shape	[1, 13]
+host.mask.decode-3.bytes	52
+host.mask.decode-3.sha256	62d580287eb00f1c8b53eff8c3062778988e845f9c92a88831b6c65b2e796fae
+host.mask.decode-3.attended_entries	13
+host.mask.decode-4.shape	[1, 14]
+host.mask.decode-4.bytes	56
+host.mask.decode-4.sha256	8aa8405d0c8ceb0e0d063be81af3d5a8667ec6ef4088e1d3b4ebc631660dd995
+host.mask.decode-4.attended_entries	14
+host.mask.decode-5.shape	[1, 15]
+host.mask.decode-5.bytes	60
+host.mask.decode-5.sha256	e87d4d3ac884481ae91cc58853c92770de0531e6223e45e8dffabb11535eaef0
+host.mask.decode-5.attended_entries	15
+host.mask.decode-6.shape	[1, 16]
+host.mask.decode-6.bytes	64
+host.mask.decode-6.sha256	e934b9aeb6eaf0271902e69a0cfcda47707bc09759059ff16a160179bbb8f72a
+host.mask.decode-6.attended_entries	16
+host.mask.decode-7.shape	[1, 17]
+host.mask.decode-7.bytes	68
+host.mask.decode-7.sha256	4b68645ee244ff013d775efa338f967077569d880733449e01ed78e6c4117814
+host.mask.decode-7.attended_entries	17
+host.mask.decode-8.shape	[1, 18]
+host.mask.decode-8.bytes	72
+host.mask.decode-8.sha256	2cb189779f2af0f896724564228bc27696b8d5caf3a48f07a2e138adea4318d2
+host.mask.decode-8.attended_entries	18
+host.tokens.count	18
+host.tokens.serialization	little-endian int32, C-contiguous, in sequence order
+host.tokens.bytes	72
+host.tokens.sha256	b73ee5a996d51016b158811b2e0a0d6f06306ef83c6611192c5687a8bd315984
+weights.widened.tensor_count	310
+weights.widened.bytes	2384199680
+weights.widened.absorption	per tensor in lexicographic name order: name UTF-8, one NUL, little-endian C-contiguous F32 bytes
+weights.widened.sha256	828aca073ca22a313d15ef9b891eb693f8f2f08cc15f61be1217e206362b56ae
+weights.widening_bit_exact_tensors	310
