@@ -63,8 +63,8 @@ use tiler_reference::{
     FloatBitOrder, InputBinding, ReferenceElement, ReferenceEvaluator, Tensor, TensorPayloadView,
 };
 use tiler_runtime::load::{
-    DecodedProgram, ExecutionEnvironment, LoadRejection, Preflight, TargetCompatibility,
-    TargetDeclaration,
+    DecodedProgram, ExecutionEnvironment, FilteredVariant, LoadRejection, Preflight,
+    TargetCompatibility, VariantIneligibility,
 };
 
 use crate::host::{HostExecutionContext, HostRefusal};
@@ -814,10 +814,9 @@ pub fn run() -> Result<Report, VerticalError> {
     // this vertical is one process, so the assertion is a tautology here, and
     // spelling it the way a cold consumer would is what keeps the spike a
     // measurement of the loader's boundary rather than of an in-process shortcut.
-    let expected = RecordedArtifactProgramIdentity::from_bytes(
-        artifact.canonical_identity().as_bytes(),
-    )
-    .map_err(VerticalError::RecordedIdentity)?;
+    let expected =
+        RecordedArtifactProgramIdentity::from_bytes(artifact.canonical_identity().as_bytes())
+            .map_err(VerticalError::RecordedIdentity)?;
     let envelope = artifact.encode().map_err(|_| VerticalError::Encode)?;
     println!(
         "packaged {} envelope byte(s), artifact identity {} byte(s)",
@@ -1010,6 +1009,36 @@ fn refused(probe: &'static str, outcome: String) -> VerticalError {
     VerticalError::NotFailedClosed { probe, outcome }
 }
 
+/// Returns the one host-relative exclusion a refusal reports, when it excluded
+/// this spike's whole portfolio and nothing else.
+///
+/// Host-relative ineligibility is a *filter* applied before any applicability
+/// guard rather than a terminal mismatch after one, so a probe that perturbs
+/// what this host states does not get a rejection naming its own subject: it
+/// gets [`LoadRejection::NoEligibleVariant`] carrying the reason each excluded
+/// variant was filtered under. Pinning the class alone would therefore let all
+/// four envelope probes below pass on each other's perturbation.
+///
+/// `packaged: 1` and the single-element slice are both asserted rather than one
+/// standing in for the other. This spike packages exactly one variant, so a
+/// probe that excluded the portfolio must report exactly one reason at rank 0;
+/// reading only the first element would accept a longer list, and reading only
+/// the length would depend on the loader's own `filtered.len() == packaged`
+/// invariant rather than on what this artifact declares.
+fn sole_ineligibility(rejection: &LoadRejection) -> Option<&VariantIneligibility> {
+    let LoadRejection::NoEligibleVariant {
+        packaged: 1,
+        filtered,
+    } = rejection
+    else {
+        return None;
+    };
+    let [FilteredVariant { variant: 0, reason }] = filtered.as_slice() else {
+        return None;
+    };
+    Some(reason)
+}
+
 /// Proves the loader accepts the unperturbed subject, before anything is
 /// perturbed.
 fn probe_baseline(subject: &ProbeSubject<'_>) -> Result<String, VerticalError> {
@@ -1118,12 +1147,18 @@ fn probe_fail_closed(subject: &ProbeSubject<'_>) -> Result<Vec<String>, Vertical
     };
     outcomes.push(
         match decoded.preflight(&other_descriptor, subject.expected, subject.abi) {
-            Err(
-                rejection @ LoadRejection::IncompatibleTarget {
-                    declaration: TargetDeclaration::Variant,
-                    classification: TargetCompatibility::DescriptorMismatch { .. },
-                },
-            ) => format!("a host offering another profile descriptor: {rejection}"),
+            Err(rejection)
+                if sole_ineligibility(&rejection).is_some_and(|reason| {
+                    matches!(
+                        reason,
+                        VariantIneligibility::AssessedProfile {
+                            classification: TargetCompatibility::DescriptorMismatch { .. },
+                        },
+                    )
+                }) =>
+            {
+                format!("a host offering another profile descriptor: {rejection}")
+            }
             Err(other) => return Err(refused("another profile descriptor", other.to_string())),
             Ok(_) => {
                 return Err(refused(
@@ -1151,12 +1186,18 @@ fn probe_fail_closed(subject: &ProbeSubject<'_>) -> Result<Vec<String>, Vertical
     };
     outcomes.push(
         match decoded.preflight(&metal_family, subject.expected, subject.abi) {
-            Err(
-                rejection @ LoadRejection::IncompatibleTarget {
-                    declaration: TargetDeclaration::Variant,
-                    classification: TargetCompatibility::ProfileKeyMismatch { .. },
-                },
-            ) => format!("a host stating another target family: {rejection}"),
+            Err(rejection)
+                if sole_ineligibility(&rejection).is_some_and(|reason| {
+                    matches!(
+                        reason,
+                        VariantIneligibility::AssessedProfile {
+                            classification: TargetCompatibility::ProfileKeyMismatch { .. },
+                        },
+                    )
+                }) =>
+            {
+                format!("a host stating another target family: {rejection}")
+            }
             Err(other) => return Err(refused("another target family", other.to_string())),
             Ok(_) => {
                 return Err(refused(
@@ -1167,9 +1208,10 @@ fn probe_fail_closed(subject: &ProbeSubject<'_>) -> Result<Vec<String>, Vertical
         },
     );
 
-    // A host that executes Metal. Refused on the payload's backend family alone,
-    // with the profile still exactly the one the variant was assessed against,
-    // so the refusal cannot come from the compatibility classification.
+    // A host that executes Metal. Filtered on the backend and representation
+    // pair the entry's payload declares, with the profile still exactly the one
+    // the variant was assessed against, so the exclusion cannot come from either
+    // compatibility classification.
     let mut decoded =
         DecodedProgram::decode(subject.bytes).map_err(VerticalError::ProbeBaseline)?;
     let metal_host = ExecutionEnvironment {
@@ -1180,7 +1222,19 @@ fn probe_fail_closed(subject: &ProbeSubject<'_>) -> Result<Vec<String>, Vertical
     };
     outcomes.push(
         match decoded.preflight(&metal_host, subject.expected, subject.abi) {
-            Err(rejection @ LoadRejection::UnexecutablePayload { .. }) => {
+            Err(rejection)
+                if sole_ineligibility(&rejection).is_some_and(|reason| {
+                    matches!(
+                        reason,
+                        VariantIneligibility::UnsupportedRepresentation {
+                            entry: 0,
+                            host_backend,
+                            host_representation,
+                            ..
+                        } if host_backend == "tiler.metal" && host_representation == "metallib",
+                    )
+                }) =>
+            {
                 format!("a host that executes metallibs: {rejection}")
             }
             Err(other) => return Err(refused("a Metal host", other.to_string())),
@@ -1190,9 +1244,11 @@ fn probe_fail_closed(subject: &ProbeSubject<'_>) -> Result<Vec<String>, Vertical
         },
     );
 
-    // A host stating this backend family and Metal's representation. The pair is
-    // checked together rather than either alone, so a backend that widened its
-    // representation set would have to say so.
+    // A host stating this backend family and a later version of its own
+    // representation. The pair is checked together rather than either half
+    // alone, so a backend that widened its representation set would have to say
+    // so — and the host half is pinned here precisely because this exclusion and
+    // the Metal one above now report the same class.
     let mut decoded =
         DecodedProgram::decode(subject.bytes).map_err(VerticalError::ProbeBaseline)?;
     let other_representation = ExecutionEnvironment {
@@ -1203,7 +1259,20 @@ fn probe_fail_closed(subject: &ProbeSubject<'_>) -> Result<Vec<String>, Vertical
     };
     outcomes.push(
         match decoded.preflight(&other_representation, subject.expected, subject.abi) {
-            Err(rejection @ LoadRejection::UnexecutablePayload { .. }) => {
+            Err(rejection)
+                if sole_ineligibility(&rejection).is_some_and(|reason| {
+                    matches!(
+                        reason,
+                        VariantIneligibility::UnsupportedRepresentation {
+                            entry: 0,
+                            host_backend,
+                            host_representation,
+                            ..
+                        } if host_backend == profile::BACKEND_KEY
+                            && host_representation == "tiler.cpu.scalar-image-v2",
+                    )
+                }) =>
+            {
                 format!("a host consuming another representation version: {rejection}")
             }
             Err(other) => return Err(refused("another representation", other.to_string())),
