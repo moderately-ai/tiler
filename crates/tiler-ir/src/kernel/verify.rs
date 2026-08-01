@@ -139,13 +139,20 @@ fn verify_signature(
         .buffers
         .split_last()
         .ok_or(KernelDiagnostic::BufferContract)?;
-    let expected_types: &[KernelType] = match schedule.index.scalar_program {
+    // The strict-affine signature is fixed by its three named components; the
+    // reduction families read one contributor domain. A pointwise region reads
+    // one dense `f32` tensor per expression leaf, so its expected signature is
+    // as wide as its own access list rather than a constant — and the schedule
+    // verifier already proved that width equals the expression's input count.
+    let expected_types: Vec<KernelType> = match schedule.index.scalar_program {
         crate::schedule::ScalarProgram::StrictAffineU4Dequantize { .. } => {
-            &[KernelType::U8, KernelType::F32, KernelType::U8]
+            vec![KernelType::U8, KernelType::F32, KernelType::U8]
         }
-        crate::schedule::ScalarProgram::PointwiseF32(_)
-        | crate::schedule::ScalarProgram::StrictSerialSum { .. }
-        | crate::schedule::ScalarProgram::FusedMultiplyAddSerialSum { .. } => &[KernelType::F32],
+        crate::schedule::ScalarProgram::PointwiseF32(_) => vec![KernelType::F32; reads.len()],
+        crate::schedule::ScalarProgram::StrictSerialSum { .. }
+        | crate::schedule::ScalarProgram::FusedMultiplyAddSerialSum { .. } => {
+            vec![KernelType::F32]
+        }
     };
     let expected_elements = reads
         .iter()

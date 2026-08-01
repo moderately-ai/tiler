@@ -13,7 +13,7 @@ use super::error::{
     ScheduleBuildError, ScheduleComponent, ScheduleLimitKind, ScheduledRegionBuildError,
     ScheduledRegionDiagnostic,
 };
-use super::handles::RegionId;
+use super::handles::{InputOrdinal, RegionId};
 use super::model::{
     Access, AccessMode, BoundsProof, BoundsProofKind, CanonicalScheduledRegionIdentity,
     ExecutionBinding, IndexRegion, KernelSchedule, LogicalAccess, OwnershipProof,
@@ -280,6 +280,17 @@ const fn incomplete(component: ScheduleComponent) -> ScheduledRegionDiagnostic {
     ScheduledRegionDiagnostic::IncompleteRegion { component }
 }
 
+/// The boundary role of a region that reads exactly one program input tensor.
+///
+/// Named once rather than spelled at each site because these families are
+/// *defined* by reading a single tensor: the strict-affine dequantize reads three
+/// components of one encoded tensor, and the reduction families read one
+/// contributor domain. A second input tensor in either is a different scalar
+/// program, not a wider spelling of these.
+const FIRST_INPUT: TensorRole = TensorRole::Input {
+    ordinal: InputOrdinal::FIRST,
+};
+
 /// Runs the intrinsic schedule verifier over an assembled region.
 fn verify_intrinsic(region: &ScheduledRegion) -> Result<(), ScheduledRegionDiagnostic> {
     let iteration_count = element_count(&region.index.iteration_shape)
@@ -302,15 +313,78 @@ fn verify_intrinsic(region: &ScheduledRegion) -> Result<(), ScheduledRegionDiagn
             };
             verify_strict_affine_u4_dequantize(region, codes, scale, zero_point, write)
         }
-        ScalarProgram::PointwiseF32(_)
-        | ScalarProgram::StrictSerialSum { .. }
-        | ScalarProgram::FusedMultiplyAddSerialSum { .. } => {
+        // A pointwise region reads one boundary tensor per expression leaf, so
+        // its access count is a property of its scalar program rather than a
+        // constant. The reduction families still read exactly one tensor: their
+        // multi-input stories are separately owned, and a second read here would
+        // leave the contributor domain unable to say which access it counts.
+        ScalarProgram::PointwiseF32(expression) => {
+            let Some((write, reads)) = region.index.accesses.split_last() else {
+                return Err(ScheduledRegionDiagnostic::AccessCount);
+            };
+            verify_pointwise_f32(region, expression, reads, write)
+        }
+        ScalarProgram::StrictSerialSum { .. } | ScalarProgram::FusedMultiplyAddSerialSum { .. } => {
             let [read, write] = region.index.accesses.as_slice() else {
                 return Err(ScheduledRegionDiagnostic::AccessCount);
             };
             verify_access_and_semantics(region, read, write)
         }
     }
+}
+
+/// Verifies an N-input physical `f32` pointwise region.
+///
+/// The obligation that makes the widening safe is the *correspondence*: read
+/// access `i` must be `TensorRole::Input { ordinal: i }`, and there must be
+/// exactly as many reads as the expression has input leaves. Both halves are
+/// needed. Without the count, an expression could read an ordinal no access
+/// binds — a load through a buffer the signature never declares. Without the
+/// per-position role, two accesses could name one tensor while a third went
+/// unread, and every consumer that binds buffers positionally would bind the
+/// wrong one without noticing.
+///
+/// The expression's own verifier already proved its ordinals are the dense
+/// `0..n`, so pairing by position is exhaustive rather than a sample.
+fn verify_pointwise_f32(
+    region: &ScheduledRegion,
+    expression: &super::pointwise::PointwiseF32Expression,
+    reads: &[Access],
+    write: &Access,
+) -> Result<(), ScheduledRegionDiagnostic> {
+    if reads.is_empty() || reads.len() != expression.input_count() {
+        return Err(ScheduledRegionDiagnostic::AccessCount);
+    }
+    if reads
+        .iter()
+        .any(|read| read.mode != AccessMode::Read || read.ownership.is_some())
+        || write.mode != AccessMode::Write
+        || write.map != LogicalAccess::LinearIdentity
+        || write.ownership != Some(region.schedule.output_owner)
+    {
+        return Err(ScheduledRegionDiagnostic::AccessContract);
+    }
+    let read_refs: Vec<&Access> = reads.iter().collect();
+    verify_proof_records(region, &read_refs, write)?;
+    let ordinals_bind_in_order = reads.iter().enumerate().all(|(position, read)| {
+        u32::try_from(position).is_ok_and(|ordinal| {
+            read.tensor
+                == TensorRole::Input {
+                    ordinal: InputOrdinal::new(ordinal),
+                }
+        })
+    });
+    if !expression.is_valid()
+        || !matches!(region.schedule.reduction, ReductionTopology::None)
+        || !matches!(write.tensor, TensorRole::Intermediate | TensorRole::Output)
+        || !ordinals_bind_in_order
+        || reads
+            .iter()
+            .any(|read| read.map != LogicalAccess::LinearIdentity)
+    {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+    Ok(())
 }
 
 fn verify_strict_affine_u4_dequantize(
@@ -332,7 +406,7 @@ fn verify_strict_affine_u4_dequantize(
     if *codes_role != STRICT_AFFINE_CODES_ROLE
         || *scale_role != STRICT_AFFINE_SCALE_ROLE
         || *zero_point_role != STRICT_AFFINE_ZERO_POINT_ROLE
-        || codes.tensor != TensorRole::Input
+        || codes.tensor != FIRST_INPUT
         || codes.component_role != Some(*codes_role)
         || codes.mode != AccessMode::Read
         || codes.ownership.is_some()
@@ -340,12 +414,12 @@ fn verify_strict_affine_u4_dequantize(
             != (LogicalAccess::PackedU4LsbZeroTail {
                 logical_elements: region.schedule.work_items,
             })
-        || scale.tensor != TensorRole::Input
+        || scale.tensor != FIRST_INPUT
         || scale.component_role != Some(*scale_role)
         || scale.mode != AccessMode::Read
         || scale.ownership.is_some()
         || scale.map != LogicalAccess::ScalarBroadcast
-        || zero_point.tensor != TensorRole::Input
+        || zero_point.tensor != FIRST_INPUT
         || zero_point.component_role != Some(*zero_point_role)
         || zero_point.mode != AccessMode::Read
         || zero_point.ownership.is_some()
@@ -396,13 +470,6 @@ fn verify_access_and_semantics(
         &region.schedule.reduction,
         &read.map,
     ) {
-        (
-            ScalarProgram::PointwiseF32(expression),
-            ReductionTopology::None,
-            LogicalAccess::LinearIdentity,
-        ) if expression.is_valid()
-            && read.tensor == TensorRole::Input
-            && matches!(write.tensor, TensorRole::Intermediate | TensorRole::Output) => {}
         (
             ScalarProgram::StrictSerialSum {
                 axes,
@@ -463,7 +530,7 @@ fn verify_access_and_semantics(
             && *empty_identity_bits == 0.0_f32.to_bits()
             && output_shape == &region.index.iteration_shape
             && input_shape.without_axes(axes) == *output_shape
-            && read.tensor == TensorRole::Input
+            && read.tensor == FIRST_INPUT
             && write.tensor == TensorRole::Output => {}
         _ => return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement),
     }
@@ -534,7 +601,7 @@ fn verify_multi_pass_semantics(
                 ..
             },
             ReductionPass::Partial,
-        ) if !contraction => (axes, order, *empty_identity_bits, TensorRole::Input),
+        ) if !contraction => (axes, order, *empty_identity_bits, FIRST_INPUT),
         _ => return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement),
     };
 
@@ -714,10 +781,15 @@ mod tests {
     ///
     /// The pointwise program is encoded as a typed, framed topological graph,
     /// so its exact operand order, constants, root, and physical `f32` family are all pinned.
-    /// This pin was intentionally rebaselined when the old
-    /// `ScalarProgram::MultiplyThenAdd` tag (`0x21`) became the exact
+    ///
+    /// Rebaselined deliberately at the `tiler.schedule.v3` step, which gave
+    /// `TensorRole::Input` and `PointwiseF32Node::Input` their input ordinals:
+    /// the domain separator itself moves, every input access and bounds proof
+    /// gains four ordinal bytes, and the input leaf's framed length grows from
+    /// nine to twenty-one. An earlier rebaseline recorded the old
+    /// `ScalarProgram::MultiplyThenAdd` tag (`0x21`) becoming the exact
     /// `ScalarProgram::PointwiseF32` expression encoding (`0x24`).
-    const STRICT_F32_REGION_IDENTITY_HEX: &str = "74696c65722e7363686564756c652e763200000000000000000200000000000000020000000000000003000000000000000201000101000000000002000201000000010100000000000000000000000200000000010011000000000000000600000001020011000000000000000600000000020000000000000006240000000000000005000000000000000900000000000000010100000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc0000001010101010101010100000000000000060000000101000000003100000000000000060000000101";
+    const STRICT_F32_REGION_IDENTITY_HEX: &str = "74696c65722e7363686564756c652e7633000000000000000002000000000000000200000000000000030000000000000002010000000000010100000000000200020100000001010000000000000000000000020000000001000000000011000000000000000600000001020011000000000000000600000000020000000000000006240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc0000001010101010101010100000000000000060000000101000000003100000000000000060000000101";
 
     fn strict_numerical() -> NumericalRealization {
         NumericalRealization::new(
@@ -739,7 +811,7 @@ mod tests {
         bias_bits: u32,
     ) -> super::super::PointwiseF32Expression {
         let mut expression = PointwiseF32ExpressionBuilder::new();
-        let input = expression.input().unwrap();
+        let input = expression.input(InputOrdinal::FIRST).unwrap();
         let scale = expression.constant(scale_bits).unwrap();
         let product = expression.multiply(input, scale).unwrap();
         let bias = expression.constant(bias_bits).unwrap();
@@ -752,7 +824,9 @@ mod tests {
         builder.iteration_shape(shape).unwrap();
         builder
             .push_access(Access {
-                tensor: TensorRole::Input,
+                tensor: TensorRole::Input {
+                    ordinal: InputOrdinal::FIRST,
+                },
                 component_role: None,
                 mode: AccessMode::Read,
                 map: LogicalAccess::LinearIdentity,
@@ -773,7 +847,9 @@ mod tests {
         builder
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(0),
-                tensor: TensorRole::Input,
+                tensor: TensorRole::Input {
+                    ordinal: InputOrdinal::FIRST,
+                },
                 component_role: None,
                 kind: BoundsProofKind::LinearRange {
                     element_count: elements,
@@ -890,12 +966,215 @@ mod tests {
         assert!(builder.build().is_ok());
 
         let mut rejected = pointwise_builder(RegionId::new(0), Shape::from_dims([2, 3]), 6);
-        rejected.accesses[1].tensor = TensorRole::Input;
-        rejected.bounds_proofs[1].tensor = TensorRole::Input;
-        rejected.ownership_proof.as_mut().unwrap().tensor = TensorRole::Input;
+        rejected.accesses[1].tensor = TensorRole::Input {
+            ordinal: InputOrdinal::FIRST,
+        };
+        rejected.bounds_proofs[1].tensor = TensorRole::Input {
+            ordinal: InputOrdinal::FIRST,
+        };
+        rejected.ownership_proof.as_mut().unwrap().tensor = TensorRole::Input {
+            ordinal: InputOrdinal::FIRST,
+        };
         assert_eq!(
             rejected.build().unwrap_err().diagnostics(),
             [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
+        );
+    }
+
+    /// Builds the approved `(a * b) + c` region over three input tensors.
+    ///
+    /// The three reads carry ordinals `0`, `1`, and `2` in access order, one
+    /// bounds proof each, and a write of the program output.
+    fn three_input_builder(elements: u64) -> ScheduledRegionBuilder {
+        let mut expression = PointwiseF32ExpressionBuilder::new();
+        let a = expression.input(InputOrdinal::new(0)).unwrap();
+        let b = expression.input(InputOrdinal::new(1)).unwrap();
+        let c = expression.input(InputOrdinal::new(2)).unwrap();
+        let product = expression.multiply(a, b).unwrap();
+        let root = expression.add(product, c).unwrap();
+        let expression = expression.build(root).unwrap();
+
+        let mut builder = ScheduledRegionBuilder::new(RegionId::new(0));
+        builder
+            .iteration_shape(Shape::from_dims([elements]))
+            .unwrap();
+        for ordinal in 0..3 {
+            builder
+                .push_access(Access {
+                    tensor: TensorRole::Input {
+                        ordinal: InputOrdinal::new(ordinal),
+                    },
+                    component_role: None,
+                    mode: AccessMode::Read,
+                    map: LogicalAccess::LinearIdentity,
+                    bounds: BoundsWitnessId::new(ordinal),
+                    ownership: None,
+                })
+                .unwrap();
+        }
+        builder
+            .push_access(Access {
+                tensor: TensorRole::Output,
+                component_role: None,
+                mode: AccessMode::Write,
+                map: LogicalAccess::LinearIdentity,
+                bounds: BoundsWitnessId::new(3),
+                ownership: Some(OwnershipWitnessId::new(0)),
+            })
+            .unwrap();
+        for ordinal in 0..3 {
+            builder
+                .push_bounds_proof(BoundsProof {
+                    id: BoundsWitnessId::new(ordinal),
+                    tensor: TensorRole::Input {
+                        ordinal: InputOrdinal::new(ordinal),
+                    },
+                    component_role: None,
+                    kind: BoundsProofKind::LinearRange {
+                        element_count: elements,
+                    },
+                })
+                .unwrap();
+        }
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(3),
+                tensor: TensorRole::Output,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange {
+                    element_count: elements,
+                },
+            })
+            .unwrap();
+        builder
+            .ownership_proof(OwnershipProof {
+                id: OwnershipWitnessId::new(0),
+                tensor: TensorRole::Output,
+                kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                    output_count: elements,
+                },
+            })
+            .unwrap();
+        builder
+            .scalar_program(ScalarProgram::PointwiseF32(expression))
+            .unwrap();
+        builder.numerical(strict_numerical()).unwrap();
+        builder
+            .schedule(linear_schedule(elements, OwnershipWitnessId::new(0)))
+            .unwrap();
+        builder
+    }
+
+    #[test]
+    fn a_three_input_pointwise_region_verifies_and_binds_one_buffer_per_read() {
+        let verified = three_input_builder(4).build().unwrap();
+        assert_eq!(verified.requirements().buffer_bindings, 4);
+        assert_eq!(verified.region().index.accesses.len(), 4);
+    }
+
+    /// Read `i` must be input `i`: a permuted binding is a different program.
+    ///
+    /// Swapping two ordinals leaves every other fact — access count, modes,
+    /// proofs, expression — intact, so this isolates the correspondence rule
+    /// from the arity rule below.
+    #[test]
+    fn read_accesses_must_carry_their_own_ordinal_in_order() {
+        let mut permuted = three_input_builder(4);
+        permuted.accesses.swap(0, 1);
+        permuted.bounds_proofs.swap(0, 1);
+        assert_eq!(
+            permuted.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
+        );
+
+        // A repeated ordinal leaves one input unbound while two reads name one
+        // tensor, which the same rule refuses.
+        let mut repeated = three_input_builder(4);
+        repeated.accesses[2].tensor = TensorRole::Input {
+            ordinal: InputOrdinal::new(1),
+        };
+        repeated.bounds_proofs[2].tensor = TensorRole::Input {
+            ordinal: InputOrdinal::new(1),
+        };
+        assert_eq!(
+            repeated.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement]
+        );
+    }
+
+    /// An expression leaf with no read access behind it is refused by count.
+    ///
+    /// Without this the kernel lowering would look up input `2` among two
+    /// loaded values, and the region would have promised a buffer its signature
+    /// never declares.
+    #[test]
+    fn a_pointwise_region_reads_exactly_one_tensor_per_expression_leaf() {
+        let mut short = three_input_builder(4);
+        short.accesses.remove(2);
+        short.bounds_proofs.remove(2);
+        assert_eq!(
+            short.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::AccessCount]
+        );
+
+        // The converse: an access no leaf reads is refused by the same rule.
+        let mut long = three_input_builder(4);
+        long.accesses.insert(
+            3,
+            Access {
+                tensor: TensorRole::Input {
+                    ordinal: InputOrdinal::new(3),
+                },
+                component_role: None,
+                mode: AccessMode::Read,
+                map: LogicalAccess::LinearIdentity,
+                bounds: BoundsWitnessId::new(4),
+                ownership: None,
+            },
+        );
+        long.bounds_proofs.insert(
+            3,
+            BoundsProof {
+                id: BoundsWitnessId::new(4),
+                tensor: TensorRole::Input {
+                    ordinal: InputOrdinal::new(3),
+                },
+                component_role: None,
+                kind: BoundsProofKind::LinearRange { element_count: 4 },
+            },
+        );
+        assert_eq!(
+            long.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::AccessCount]
+        );
+    }
+
+    /// Two regions differing only in which input a leaf reads differ in identity.
+    ///
+    /// `(a * b) + c` and `(a * a) + c` compute different things, and before the
+    /// ordinal reached the encoding neither the role nor the leaf could say so.
+    #[test]
+    fn input_ordinals_separate_canonical_scheduled_region_identity() {
+        let three = three_input_builder(4).build().unwrap();
+
+        let mut expression = PointwiseF32ExpressionBuilder::new();
+        let a = expression.input(InputOrdinal::new(0)).unwrap();
+        let b = expression.input(InputOrdinal::new(1)).unwrap();
+        // The same shape of program, but the product squares its first input.
+        let product = expression.multiply(a.clone(), a).unwrap();
+        let root = expression.add(product, b).unwrap();
+        let squared = expression.build(root).unwrap();
+
+        let mut builder = three_input_builder(4);
+        builder.accesses.remove(2);
+        builder.bounds_proofs.remove(2);
+        builder.accesses[2].bounds = BoundsWitnessId::new(3);
+        builder.scalar_program = Some(ScalarProgram::PointwiseF32(squared));
+        let two = builder.build().unwrap();
+
+        assert_ne!(
+            three.canonical_identity().as_bytes(),
+            two.canonical_identity().as_bytes()
         );
     }
 
@@ -916,7 +1195,7 @@ mod tests {
     fn pointwise_identity_canonicalizes_ready_order_and_separates_semantics() {
         fn ready_order(reverse: bool) -> super::super::PointwiseF32Expression {
             let mut builder = PointwiseF32ExpressionBuilder::new();
-            let input = builder.input().unwrap();
+            let input = builder.input(InputOrdinal::FIRST).unwrap();
             let (two, three) = if reverse {
                 let three = builder.constant(3.0_f32.to_bits()).unwrap();
                 let two = builder.constant(2.0_f32.to_bits()).unwrap();
@@ -947,7 +1226,7 @@ mod tests {
 
         let association = {
             let mut builder = PointwiseF32ExpressionBuilder::new();
-            let input = builder.input().unwrap();
+            let input = builder.input(InputOrdinal::FIRST).unwrap();
             let two = builder.constant(2.0_f32.to_bits()).unwrap();
             let three = builder.constant(3.0_f32.to_bits()).unwrap();
             let inner = builder.add(two, three).unwrap();
@@ -958,7 +1237,7 @@ mod tests {
 
         let operand_order = {
             let mut builder = PointwiseF32ExpressionBuilder::new();
-            let input = builder.input().unwrap();
+            let input = builder.input(InputOrdinal::FIRST).unwrap();
             let two = builder.constant(2.0_f32.to_bits()).unwrap();
             let three = builder.constant(3.0_f32.to_bits()).unwrap();
             let add = builder.add(two, input.clone()).unwrap();
@@ -970,7 +1249,7 @@ mod tests {
 
         let constant_bits = {
             let mut builder = PointwiseF32ExpressionBuilder::new();
-            let input = builder.input().unwrap();
+            let input = builder.input(InputOrdinal::FIRST).unwrap();
             let two = builder.constant((-2.0_f32).to_bits()).unwrap();
             let three = builder.constant(3.0_f32.to_bits()).unwrap();
             let add = builder.add(input.clone(), two).unwrap();
@@ -985,7 +1264,7 @@ mod tests {
     fn pointwise_identity_separates_signed_zero_and_nan_payload_bits() {
         fn literal_identity(bits: u32) -> Vec<u8> {
             let mut builder = PointwiseF32ExpressionBuilder::new();
-            let input = builder.input().unwrap();
+            let input = builder.input(InputOrdinal::FIRST).unwrap();
             let constant = builder.constant(bits).unwrap();
             let root = builder.add(input, constant).unwrap();
             identity_with_pointwise_expression(builder.build(root).unwrap())

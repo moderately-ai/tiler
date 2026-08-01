@@ -10,7 +10,7 @@ use crate::semantic::EncodedComponentRole;
 use crate::shape::{Axis, Shape};
 
 use super::error::{ContributorError, ElementCountOverflow};
-use super::handles::{BoundsWitnessId, OwnershipWitnessId, RegionId};
+use super::handles::{BoundsWitnessId, InputOrdinal, OwnershipWitnessId, RegionId};
 use super::numerics::{
     ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
     NumericalRealization, SubnormalMode, ValueDomainProvenance,
@@ -18,10 +18,30 @@ use super::numerics::{
 use super::pointwise::{PointwiseF32Expression, PointwiseF32Node};
 
 /// The role a boundary tensor plays for one scheduled region.
+///
+/// A region may read several distinct input tensors, so `Input` names *which*
+/// one. The ordinal lives on the role rather than beside it because the role is
+/// what travels: a buffer parameter, a bounds proof, a boundary requirement, and
+/// an opaque call binding each carry a `TensorRole` and nothing else that could
+/// separate two reads, and two facts that must always travel together are one
+/// value. The sibling [`crate::index`] region reaches the same separation by
+/// computing a positional ordinal among same-role tensors when it encodes
+/// identity; this states it instead of deriving it.
+///
+/// **Do not add `#[non_exhaustive]`.** This is an ADR 0074 convention 5b type
+/// for the same reason [`AccessMode`] is: `tensor_role_tag` in `tiler-compiler`'s
+/// `selection.rs` and `frontier.rs`, and `tensor_role_name` in its
+/// `call_registry.rs`, map it *totally* onto identity tags and subject strings
+/// from outside this crate with no wildcard arm. A wildcard there would have to
+/// invent a tag the variant alone determines, so a variant added later would
+/// encode under some other variant's bytes instead of failing the build.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum TensorRole {
-    /// A program input consumed by the region.
-    Input,
+    /// One named program input consumed by the region.
+    Input {
+        /// Which of the region's input tensors this is.
+        ordinal: InputOrdinal,
+    },
     /// A materialized intermediate produced or consumed by the region.
     Intermediate,
     /// A program output produced by the region.
@@ -793,8 +813,8 @@ const TAG_REDUCTION_NONE: u8 = 0x31;
 const TAG_REDUCTION_SERIAL: u8 = 0x32;
 /// Reduction-topology tag of a split, multi-dispatch reduction pass.
 ///
-/// Appended rather than inserted, and the `tiler.schedule.v2` domain
-/// deliberately does not step with it: no previously encodable region's bytes
+/// Appended rather than inserted, and the schedule domain
+/// deliberately did not step with it: no previously encodable region's bytes
 /// move, because `None` and `Serial` keep their tags and every other field
 /// keeps its position. Injectivity is what a domain separator protects, and a
 /// fresh tag byte preserves it — a reader that reaches `0x33` is reading a
@@ -821,12 +841,22 @@ fn push_order(bytes: &mut Vec<u8>, order: ContributorOrder) {
     bytes.push(0x01);
 }
 
+/// Encodes one boundary tensor role.
+///
+/// The input ordinal follows its tag rather than being folded into it, so the
+/// role tags stay a three-value table and the ordinal keeps its own fixed width.
+/// Two reads of two different input tensors therefore differ in these bytes,
+/// which is the whole point: a region reading `a * b` and one reading `a * a`
+/// are different computations and must not share identity.
 fn push_tensor_role(bytes: &mut Vec<u8>, role: TensorRole) {
-    bytes.push(match role {
-        TensorRole::Input => 0x01,
-        TensorRole::Intermediate => 0x02,
-        TensorRole::Output => 0x03,
-    });
+    match role {
+        TensorRole::Input { ordinal } => {
+            bytes.push(0x01);
+            bytes.extend_from_slice(&ordinal.get().to_be_bytes());
+        }
+        TensorRole::Intermediate => bytes.push(0x02),
+        TensorRole::Output => bytes.push(0x03),
+    }
 }
 
 fn push_logical_access(bytes: &mut Vec<u8>, access: &LogicalAccess) {
@@ -982,8 +1012,9 @@ fn push_pointwise_f32_node(bytes: &mut Vec<u8>, node: &PointwiseF32Node) {
     const U32_FIELD_BYTES: usize = LENGTH_BYTES + size_of::<u32>();
 
     let encoded_len = match node {
-        PointwiseF32Node::Input => TAG_FIELD_BYTES,
-        PointwiseF32Node::Constant { .. } => TAG_FIELD_BYTES + U32_FIELD_BYTES,
+        PointwiseF32Node::Input { .. } | PointwiseF32Node::Constant { .. } => {
+            TAG_FIELD_BYTES + U32_FIELD_BYTES
+        }
         PointwiseF32Node::Add { .. } | PointwiseF32Node::Multiply { .. } => {
             TAG_FIELD_BYTES + 2 * U32_FIELD_BYTES
         }
@@ -991,7 +1022,10 @@ fn push_pointwise_f32_node(bytes: &mut Vec<u8>, node: &PointwiseF32Node) {
     push_len(bytes, encoded_len);
     let start = bytes.len();
     match node {
-        PointwiseF32Node::Input => push_slice(bytes, &[0x01]),
+        PointwiseF32Node::Input { ordinal } => {
+            push_slice(bytes, &[0x01]);
+            push_slice(bytes, &ordinal.get().to_be_bytes());
+        }
         PointwiseF32Node::Constant { bits } => {
             push_slice(bytes, &[0x02]);
             push_slice(bytes, &bits.to_be_bytes());
@@ -1117,9 +1151,22 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
 /// The domain tag is NUL-terminated, which is the workspace's one form for a
 /// versioned domain separator (ADR 0074 convention 3). This encoder was the
 /// only site that omitted the terminator.
+///
+/// # Why this is a `v3` step
+///
+/// `v3` gives [`TensorRole::Input`] an ordinal and [`PointwiseF32Node::Input`]
+/// the ordinal it reads, so a region can name several distinct input tensors.
+/// Both fields land *inside* records that repeat — every access, every bounds
+/// proof, every expression node — so a `v2` reader would consume the following
+/// bytes at the old offset and lose framing, and every region ever encoded maps
+/// to different bytes now. That is exactly the case the domain separator exists
+/// for: a cache or artifact holding a `v2` identity must miss rather than match.
+/// Contrast `TAG_REDUCTION_MULTI_PASS` above, which is an appended tag byte that
+/// moves no previously encodable region's bytes and deliberately did not step
+/// the domain.
 pub(super) fn encode_identity(region: &ScheduledRegion) -> CanonicalScheduledRegionIdentity {
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"tiler.schedule.v2\0");
+    bytes.extend_from_slice(b"tiler.schedule.v3\0");
     push_shape(&mut bytes, &region.index.iteration_shape);
     push_len(&mut bytes, region.index.accesses.len());
     for access in &region.index.accesses {

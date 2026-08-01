@@ -75,15 +75,21 @@ enum ReadAddressing {
 }
 
 /// Everything the canonical emission needs, resolved before any operation.
+///
+/// `reads` and `read_elements` are parallel and complete: a pointwise region
+/// declares one buffer per read, so a plan that carried only the first read's
+/// facts would emit a signature narrower than the region it lowers. The single
+/// `addressing` and `contributors` describe the *reduction* families, which read
+/// exactly one tensor; the pointwise path addresses every read by the invocation
+/// index directly and consults neither.
 #[derive(Clone, Debug)]
 struct CanonicalPlan<'a> {
     scalar: &'a ScalarProgram,
     reads: &'a [Access],
     write: &'a Access,
     numerical: NumericalRealization,
-    read_tensor: TensorRole,
     write_tensor: TensorRole,
-    read_elements: u64,
+    read_elements: Vec<u64>,
     write_elements: u64,
     work_items: u64,
     read_bounds: BoundsWitnessId,
@@ -165,9 +171,11 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
         reads,
         write,
         numerical: schedule.index.numerical,
-        read_tensor: read.tensor,
         write_tensor: write.tensor,
-        read_elements: access_elements(read, schedule)?,
+        read_elements: reads
+            .iter()
+            .map(|read| access_elements(read, schedule))
+            .collect::<Result<Vec<_>, _>>()?,
         write_elements: access_elements(write, schedule)?,
         work_items: schedule.schedule.work_items,
         read_bounds: read.bounds,
@@ -303,14 +311,21 @@ fn emit(
     if matches!(plan.scalar, ScalarProgram::StrictAffineU4Dequantize { .. }) {
         return emit_strict_affine_u4_dequantize(builder, plan, requirements);
     }
-    let read_buffer = builder.declare_buffer(BufferParameter {
-        tensor: plan.read_tensor,
-        component_role: None,
-        element_type: KernelType::F32,
-        address_space: AddressSpace::Device,
-        access: BufferAccess::Read,
-        element_count: plan.read_elements,
-    })?;
+    // One buffer per read, in access order. The component role stays `None`
+    // rather than being copied from the access: these families read dense
+    // values, and `verify_signature` compares the two, so copying it would make
+    // that comparison agree with itself instead of checking anything.
+    let mut read_buffers = Vec::with_capacity(plan.reads.len());
+    for (read, elements) in plan.reads.iter().zip(&plan.read_elements) {
+        read_buffers.push(builder.declare_buffer(BufferParameter {
+            tensor: read.tensor,
+            component_role: None,
+            element_type: KernelType::F32,
+            address_space: AddressSpace::Device,
+            access: BufferAccess::Read,
+            element_count: *elements,
+        })?);
+    }
     let write_buffer = builder.declare_buffer(BufferParameter {
         tensor: plan.write_tensor,
         component_role: None,
@@ -327,7 +342,7 @@ fn emit(
     let extent = builder.constant(KernelConstant::Index(plan.work_items))?;
     let active = builder.compare(CompareOp::IndexLessThan, invocation, extent)?;
     builder.predicated(active, |builder| {
-        emit_guarded(builder, plan, read_buffer, write_buffer, invocation)
+        emit_guarded(builder, plan, &read_buffers, write_buffer, invocation)
     })?;
     Ok(())
 }
@@ -335,14 +350,29 @@ fn emit(
 fn emit_guarded(
     builder: &mut KernelBuilder,
     plan: &CanonicalPlan<'_>,
-    read_buffer: KernelBufferId,
+    read_buffers: &[KernelBufferId],
     write_buffer: KernelBufferId,
     invocation: KernelValueId,
 ) -> Result<(), KernelBuildError> {
+    // The reduction families read exactly one tensor, which the schedule
+    // verifier proved before this plan existed. Resolving that here as a typed
+    // handle error rather than by indexing keeps a widened region from lowering
+    // against whichever buffer happened to be first.
+    let sole_read_buffer = || {
+        let [buffer] = read_buffers else {
+            return Err(KernelBuildError::InvalidHandle {
+                entity: super::error::KernelEntityKind::Buffer,
+            });
+        };
+        Ok(*buffer)
+    };
     match plan.scalar {
         ScalarProgram::PointwiseF32(expression) => {
-            let loaded = builder.load(read_buffer, invocation, plan.read_bounds)?;
-            let mapped = emit_pointwise(builder, expression, loaded)?;
+            let mut inputs = Vec::with_capacity(read_buffers.len());
+            for (buffer, read) in read_buffers.iter().zip(plan.reads) {
+                inputs.push(builder.load(*buffer, invocation, read.bounds)?);
+            }
+            let mapped = emit_pointwise(builder, expression, &inputs)?;
             builder.store(
                 write_buffer,
                 invocation,
@@ -360,7 +390,7 @@ fn emit_guarded(
         } => emit_reduction(
             builder,
             plan,
-            read_buffer,
+            sole_read_buffer()?,
             write_buffer,
             invocation,
             *empty_identity_bits,
@@ -374,7 +404,7 @@ fn emit_guarded(
         } => emit_reduction(
             builder,
             plan,
-            read_buffer,
+            sole_read_buffer()?,
             write_buffer,
             invocation,
             *empty_identity_bits,
@@ -399,7 +429,7 @@ fn emit_strict_affine_u4_dequantize(
         element_type: KernelType::U8,
         address_space: AddressSpace::Device,
         access: BufferAccess::Read,
-        element_count: plan.read_elements,
+        element_count: plan.read_elements.first().copied().unwrap_or(0),
     })?;
     let scale_buffer = builder.declare_buffer(BufferParameter {
         tensor: scale.tensor,
@@ -456,15 +486,28 @@ fn emit_strict_affine_u4_dequantize(
     Ok(())
 }
 
+/// Emits the scalar body of a pointwise expression over its loaded inputs.
+///
+/// `inputs` is indexed by the leaf's own ordinal, not by the order the leaves
+/// appear: canonicalization orders nodes by root-first discovery, so a leaf's
+/// position among the nodes says nothing about which tensor it reads. An ordinal
+/// with no loaded value is a region whose reads and expression disagree, which
+/// the schedule verifier rejects — this reports it as an invalid handle rather
+/// than reading whichever value sits at that index.
 fn emit_pointwise(
     builder: &mut KernelBuilder,
     expression: &PointwiseF32Expression,
-    input: KernelValueId,
+    inputs: &[KernelValueId],
 ) -> Result<KernelValueId, KernelBuildError> {
     let mut values = Vec::with_capacity(expression.nodes().len());
     for node in expression.nodes() {
         let value = match node {
-            PointwiseF32Node::Input => input,
+            PointwiseF32Node::Input { ordinal } => usize::try_from(ordinal.get())
+                .ok()
+                .and_then(|ordinal| inputs.get(ordinal).copied())
+                .ok_or(KernelBuildError::InvalidHandle {
+                    entity: super::error::KernelEntityKind::Buffer,
+                })?,
             PointwiseF32Node::Constant { bits } => {
                 builder.constant(KernelConstant::F32Bits(*bits))?
             }

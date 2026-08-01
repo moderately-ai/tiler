@@ -70,7 +70,7 @@
 //!     LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof,
 //!     OwnershipProofKind, OwnershipWitnessId, PointwiseF32ExpressionBuilder, RegionId,
 //!     ReductionTopology, ScalarProgram, ScheduledRegionBuilder, SubnormalMode,
-//!     TailPolicy, TensorRole,
+//!     InputOrdinal, TailPolicy, TensorRole,
 //! };
 //! use tiler_ir::shape::Shape;
 //!
@@ -78,7 +78,9 @@
 //! let mut builder = ScheduledRegionBuilder::new(RegionId::new(0));
 //! builder.iteration_shape(Shape::from_dims([4]))?;
 //! builder.push_access(Access {
-//!     tensor: TensorRole::Input,
+//!     tensor: TensorRole::Input {
+//!         ordinal: InputOrdinal::FIRST,
+//!     },
 //!     component_role: None,
 //!     mode: AccessMode::Read,
 //!     map: LogicalAccess::LinearIdentity,
@@ -95,7 +97,9 @@
 //! })?;
 //! builder.push_bounds_proof(BoundsProof {
 //!     id: BoundsWitnessId::new(0),
-//!     tensor: TensorRole::Input,
+//!     tensor: TensorRole::Input {
+//!         ordinal: InputOrdinal::FIRST,
+//!     },
 //!     component_role: None,
 //!     kind: BoundsProofKind::LinearRange { element_count: 4 },
 //! })?;
@@ -111,7 +115,7 @@
 //!     kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 4 },
 //! })?;
 //! let mut expression = PointwiseF32ExpressionBuilder::new();
-//! let input = expression.input()?;
+//! let input = expression.input(InputOrdinal::FIRST)?;
 //! let scale = expression.constant(2.0_f32.to_bits())?;
 //! let product = expression.multiply(input, scale)?;
 //! let bias = expression.constant(1.0_f32.to_bits())?;

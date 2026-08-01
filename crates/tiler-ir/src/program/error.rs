@@ -286,14 +286,14 @@ pub enum KernelProgramBuildError {
         /// Declared mode.
         actual: StageAccessMode,
     },
-    /// One stage access binds a value whose role is not the buffer's tensor role.
+    /// One stage access binds a value whose role cannot fill the buffer's.
     StageTensorRole {
         /// Ordered access position.
         position: usize,
         /// Tensor role the kernel buffer binds.
         expected: TensorRole,
-        /// Tensor role implied by the bound value's role.
-        actual: TensorRole,
+        /// Program role of the bound materialized value.
+        actual: ValueRole,
     },
     /// A stage buffer targeted the wrong semantic component role.
     StageComponentRole {

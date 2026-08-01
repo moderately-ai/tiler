@@ -11,8 +11,8 @@ use std::cell::Cell;
 use super::*;
 use crate::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
-    ExceptionalValueAssumption, ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess,
-    NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
+    ExceptionalValueAssumption, ExecutionBinding, InputOrdinal, KernelSchedule, LaunchPlan,
+    LogicalAccess, NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
     OwnershipWitnessId, PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionPass,
     ReductionTopology, RegionId, ScalarProgram, ScheduledRegionBuilder, SubnormalMode, TailPolicy,
     TensorRole, VerifiedScheduledRegion,
@@ -65,7 +65,9 @@ fn strict_affine_u4_dequantize_region() -> VerifiedScheduledRegion {
         .unwrap();
     for access in [
         Access {
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: Some(STRICT_AFFINE_CODES_ROLE),
             mode: AccessMode::Read,
             map: LogicalAccess::PackedU4LsbZeroTail { logical_elements },
@@ -73,7 +75,9 @@ fn strict_affine_u4_dequantize_region() -> VerifiedScheduledRegion {
             ownership: None,
         },
         Access {
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: Some(STRICT_AFFINE_SCALE_ROLE),
             mode: AccessMode::Read,
             map: LogicalAccess::ScalarBroadcast,
@@ -81,7 +85,9 @@ fn strict_affine_u4_dequantize_region() -> VerifiedScheduledRegion {
             ownership: None,
         },
         Access {
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: Some(STRICT_AFFINE_ZERO_POINT_ROLE),
             mode: AccessMode::Read,
             map: LogicalAccess::ScalarBroadcast,
@@ -115,7 +121,9 @@ fn strict_affine_u4_dequantize_region() -> VerifiedScheduledRegion {
                 tensor: if id == 3 {
                     TensorRole::Output
                 } else {
-                    TensorRole::Input
+                    TensorRole::Input {
+                        ordinal: InputOrdinal::FIRST,
+                    }
                 },
                 component_role: role,
                 kind: BoundsProofKind::LinearRange {
@@ -268,7 +276,7 @@ fn strict_affine_dequantization_rejects_exceptional_value_absence_assumptions() 
 
 fn scale_bias_expression(scale_bits: u32, bias_bits: u32) -> PointwiseF32Expression {
     let mut expression = PointwiseF32ExpressionBuilder::new();
-    let input = expression.input().unwrap();
+    let input = expression.input(InputOrdinal::FIRST).unwrap();
     let scale = expression.constant(scale_bits).unwrap();
     let product = expression.multiply(input, scale).unwrap();
     let bias = expression.constant(bias_bits).unwrap();
@@ -291,7 +299,9 @@ fn pointwise_expression_region(
     builder.iteration_shape(shape.clone()).unwrap();
     builder
         .push_access(Access {
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: None,
             mode: AccessMode::Read,
             map: LogicalAccess::LinearIdentity,
@@ -309,7 +319,15 @@ fn pointwise_expression_region(
             ownership: Some(OwnershipWitnessId::new(0)),
         })
         .unwrap();
-    for (witness, tensor) in [(0, TensorRole::Input), (1, TensorRole::Intermediate)] {
+    for (witness, tensor) in [
+        (
+            0,
+            TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
+        ),
+        (1, TensorRole::Intermediate),
+    ] {
         builder
             .push_bounds_proof(BoundsProof {
                 id: BoundsWitnessId::new(witness),
@@ -340,12 +358,148 @@ fn pointwise_expression_region(
     builder.build().unwrap()
 }
 
+/// The approved `(a * b) + c` region over three distinct input tensors.
+fn three_input_region(elements: u64) -> VerifiedScheduledRegion {
+    let mut expression = PointwiseF32ExpressionBuilder::new();
+    let a = expression.input(InputOrdinal::new(0)).unwrap();
+    let b = expression.input(InputOrdinal::new(1)).unwrap();
+    let c = expression.input(InputOrdinal::new(2)).unwrap();
+    let product = expression.multiply(a, b).unwrap();
+    let root = expression.add(product, c).unwrap();
+    let expression = expression.build(root).unwrap();
+
+    let mut builder = ScheduledRegionBuilder::new(RegionId::new(0));
+    builder
+        .iteration_shape(Shape::from_dims([elements]))
+        .unwrap();
+    for ordinal in 0..3 {
+        builder
+            .push_access(Access {
+                tensor: TensorRole::Input {
+                    ordinal: InputOrdinal::new(ordinal),
+                },
+                component_role: None,
+                mode: AccessMode::Read,
+                map: LogicalAccess::LinearIdentity,
+                bounds: BoundsWitnessId::new(ordinal),
+                ownership: None,
+            })
+            .unwrap();
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(ordinal),
+                tensor: TensorRole::Input {
+                    ordinal: InputOrdinal::new(ordinal),
+                },
+                component_role: None,
+                kind: BoundsProofKind::LinearRange {
+                    element_count: elements,
+                },
+            })
+            .unwrap();
+    }
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Output,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(3),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        })
+        .unwrap();
+    builder
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(3),
+            tensor: TensorRole::Output,
+            component_role: None,
+            kind: BoundsProofKind::LinearRange {
+                element_count: elements,
+            },
+        })
+        .unwrap();
+    builder
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                output_count: elements,
+            },
+        })
+        .unwrap();
+    builder
+        .scalar_program(ScalarProgram::PointwiseF32(expression))
+        .unwrap();
+    builder.numerical(numerical()).unwrap();
+    builder
+        .schedule(linear_schedule(elements, OwnershipWitnessId::new(0)))
+        .unwrap();
+    builder.build().unwrap()
+}
+
+/// A three-input region lowers to a four-buffer kernel that loads each input.
+///
+/// The loads are checked against the *buffers they address*, not merely counted:
+/// the leaf ordinal is what chooses among the loaded values, and a lowering that
+/// reused one load for every leaf would still emit the right operation count.
+#[test]
+fn a_three_input_pointwise_region_lowers_to_one_buffer_and_load_per_input() {
+    let scheduled = three_input_region(4);
+    let kernel = lower_scheduled_region(&scheduled).expect("the widened region lowers");
+
+    let declared: Vec<_> = kernel.declared_buffers().collect();
+    assert_eq!(declared.len(), 4);
+    for (position, (_, parameter)) in declared.iter().take(3).enumerate() {
+        let ordinal = u32::try_from(position).unwrap();
+        assert_eq!(
+            parameter.tensor,
+            TensorRole::Input {
+                ordinal: InputOrdinal::new(ordinal)
+            }
+        );
+        assert_eq!(parameter.access, BufferAccess::Read);
+        assert_eq!(parameter.element_type, KernelType::F32);
+    }
+    assert_eq!(declared[3].1.tensor, TensorRole::Output);
+    assert_eq!(declared[3].1.access, BufferAccess::Write);
+
+    // Every read buffer is loaded, in declaration order, exactly once — so no
+    // input is bound and then never read, and none is read twice in another's
+    // place.
+    let expected: Vec<_> = declared.iter().take(3).map(|(id, _)| *id).collect();
+    assert_eq!(loaded_buffers(&kernel), expected);
+}
+
+/// Returns, in body order, the buffer each load in the kernel addresses.
+fn loaded_buffers(kernel: &VerifiedKernel) -> Vec<VerifiedBufferId> {
+    fn walk(block: BlockRef<'_>, loads: &mut Vec<VerifiedBufferId>) {
+        for operation in block.operations() {
+            match operation.view() {
+                OperationView::Load { buffer, .. } => loads.push(buffer),
+                OperationView::Predicated { body, .. } => walk(body, loads),
+                OperationView::SerialLoop(serial) => walk(serial.body(), loads),
+                OperationView::Builtin { .. }
+                | OperationView::Constant { .. }
+                | OperationView::Binary { .. }
+                | OperationView::Compare { .. }
+                | OperationView::Convert { .. }
+                | OperationView::PackedExtract { .. }
+                | OperationView::Store { .. }
+                | OperationView::Barrier { .. } => {}
+            }
+        }
+    }
+    let mut loads = Vec::new();
+    walk(kernel.body(), &mut loads);
+    loads
+}
+
 #[test]
 fn pointwise_lowering_preserves_left_and_right_operands_and_canonicalizes_each_operation() {
     let expressions = [
         {
             let mut expression = PointwiseF32ExpressionBuilder::new();
-            let input = expression.input().unwrap();
+            let input = expression.input(InputOrdinal::FIRST).unwrap();
             let two = expression.constant(2.0_f32.to_bits()).unwrap();
             let sum = expression.add(input, two).unwrap();
             let three = expression.constant(3.0_f32.to_bits()).unwrap();
@@ -354,7 +508,7 @@ fn pointwise_lowering_preserves_left_and_right_operands_and_canonicalizes_each_o
         },
         {
             let mut expression = PointwiseF32ExpressionBuilder::new();
-            let input = expression.input().unwrap();
+            let input = expression.input(InputOrdinal::FIRST).unwrap();
             let two = expression.constant(2.0_f32.to_bits()).unwrap();
             let sum = expression.add(two, input).unwrap();
             let three = expression.constant(3.0_f32.to_bits()).unwrap();
@@ -526,7 +680,9 @@ fn pointwise_signature(
 ) -> (KernelBufferId, KernelBufferId) {
     let read = builder
         .declare_buffer(BufferParameter {
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
@@ -624,7 +780,9 @@ fn canonical_lowering_produces_a_verified_backend_consumable_kernel() {
         buffers,
         [
             BufferParameter {
-                tensor: TensorRole::Input,
+                tensor: TensorRole::Input {
+                    ordinal: InputOrdinal::FIRST,
+                },
                 component_role: None,
                 element_type: KernelType::F32,
                 address_space: AddressSpace::Device,
@@ -913,7 +1071,9 @@ fn buffer_contract_rejects_a_signature_that_misstates_the_scheduled_access() {
     let mut builder = KernelBuilder::new(&scheduled).unwrap();
     let read = builder
         .declare_buffer(BufferParameter {
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
@@ -959,7 +1119,9 @@ fn address_space_contract_rejects_a_space_the_schedule_does_not_provide() {
     let mut builder = KernelBuilder::new(&scheduled).unwrap();
     let read = builder
         .declare_buffer(BufferParameter {
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Workgroup,
@@ -1008,7 +1170,9 @@ fn builtin_contract_rejects_a_kernel_that_never_admits_the_execution_binding() {
     let mut builder = KernelBuilder::new(&scheduled).unwrap();
     let read = builder
         .declare_buffer(BufferParameter {
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
@@ -1056,7 +1220,9 @@ fn numerical_and_resource_declarations_must_equal_the_schedule() {
     let mut drifted = KernelBuilder::new(&scheduled).unwrap();
     let read = drifted
         .declare_buffer(BufferParameter {
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
@@ -1103,7 +1269,9 @@ fn numerical_and_resource_declarations_must_equal_the_schedule() {
     let mut inflated = KernelBuilder::new(&scheduled).unwrap();
     let read = inflated
         .declare_buffer(BufferParameter {
-            tensor: TensorRole::Input,
+            tensor: TensorRole::Input {
+                ordinal: InputOrdinal::FIRST,
+            },
             component_role: None,
             element_type: KernelType::F32,
             address_space: AddressSpace::Device,
