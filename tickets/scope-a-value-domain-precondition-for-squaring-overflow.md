@@ -1,7 +1,7 @@
 ---
 id: scope-a-value-domain-precondition-for-squaring-overflow
 title: Scope a value-domain precondition for a squaring overflow
-status: in-progress
+status: deferred
 priority: p2
 dependencies: []
 related: [admit-the-rms-normalization-family, admit-the-softmax-family]
@@ -9,9 +9,6 @@ scopes: [research/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, numerics, normalization, preconditions]
-claimed_from: todo
-assignee: worker-sq-overflow
-lease_expires_at: 1785582802
 ---
 ## User-visible outcome
 
