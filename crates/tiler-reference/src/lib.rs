@@ -17,6 +17,7 @@
 //!
 //! | module | authority |
 //! | --- | --- |
+//! | `accuracy` | certified enclosures and the transcendental conformance decision |
 //! | `tensor` | what a reference value *is* — elements, components, tensors |
 //! | `registry` | the semantic capability registry and its dispatch vocabulary |
 //! | `evaluate` | executing a semantic program against that registry |
@@ -33,6 +34,7 @@
 //! they carry different identities and different extension obligations, so a
 //! shared mechanism would erase a distinction the contracts depend on.
 
+mod accuracy;
 mod arithmetic;
 mod conformance;
 mod contraction;
@@ -46,6 +48,11 @@ mod standard;
 mod structural;
 mod tensor;
 
+pub use accuracy::{
+    CertifiedEnclosure, ConformanceDecision, EnclosureError, EnclosurePrecision,
+    UndecidedConformance, decide_contract, decide_predicate, exact_binary32_candidate,
+    exp_enclosure, rsqrt_enclosure,
+};
 pub use conformance::{ReferenceNumericalConformance, UnsupportedReferenceContract};
 pub use error::{
     EvaluationError, ReferenceOperationError, ReferenceRegistryError, ReferenceRegistryResource,
