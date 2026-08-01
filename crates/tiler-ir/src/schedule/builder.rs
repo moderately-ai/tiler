@@ -334,6 +334,7 @@ fn verify_intrinsic(region: &ScheduledRegion) -> Result<(), ScheduledRegionDiagn
         }
         ScalarProgram::StrictSerialSum { .. }
         | ScalarProgram::SquaredSerialSum { .. }
+        | ScalarProgram::StrictSerialMaximum { .. }
         | ScalarProgram::FusedMultiplyAddSerialSum { .. } => {
             let [read, write] = region.index.accesses.as_slice() else {
                 return Err(ScheduledRegionDiagnostic::AccessCount);
@@ -742,7 +743,55 @@ fn verify_access_and_semantics(
             && input_shape.without_axes(axes) == *output_shape
             && read.tensor == FIRST_INPUT
             && write.tensor == TensorRole::Output => {}
+        // The extrema fold. Every obligation the sums carry is carried here too
+        // *except* the empty-domain identity, which this family has no field for
+        // and no correct value of — the non-emptiness check below replaces it.
+        // Its read binds the first input tensor, because `tiler::softmax-f32@1`'s
+        // maximum pass reads the original scores rather than an intermediate.
+        //
+        // The two order permissions are still required to agree with the
+        // realization, and that is deliberate rather than an oversight: this fold
+        // is order-*insensitive*, so the permissions do not constrain what a
+        // schedule may do to it — but the region still declares them, and a
+        // declaration that disagreed with its own realization would be
+        // incoherent whatever the fold's legality.
+        (
+            ScalarProgram::StrictSerialMaximum { axes, order, .. },
+            ReductionTopology::Serial {
+                axes: scheduled_axes,
+                order: scheduled_order,
+                permits_reassociation,
+                permits_permutation,
+            },
+            LogicalAccess::ReductionContributor {
+                input_shape,
+                output_shape,
+                axes: access_axes,
+                order: access_order,
+            },
+        ) if axes == scheduled_axes
+            && axes == access_axes
+            && order == scheduled_order
+            && order == access_order
+            && *permits_reassociation == numerical.permits_reassociation()
+            && *permits_permutation == numerical.permits_permutation()
+            && output_shape == &region.index.iteration_shape
+            && input_shape.without_axes(axes) == *output_shape
+            && read.tensor == FIRST_INPUT
+            && write.tensor == TensorRole::Output => {}
         _ => return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement),
+    }
+    // The one precondition the extrema fold has and no sum does. The family is
+    // identity-less, so a reduced domain with no contributors has no value the
+    // region could commit — the same shape of refusal the contraction states for
+    // its unseeded fold, checked on the contributor count rather than on the rank
+    // because a rank-zero reduced domain has one contributor, not none.
+    if let ScalarProgram::StrictSerialMaximum { axes, .. } = &region.index.scalar_program {
+        let contributors = contributor_count(axes, &read.map)
+            .map_err(|_| ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?;
+        if contributors == 0 {
+            return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+        }
     }
     Ok(())
 }
@@ -962,6 +1011,14 @@ fn verify_cooperative_semantics(
         ScalarProgram::PointwiseF32(_)
         | ScalarProgram::StrictAffineU4Dequantize { .. }
         | ScalarProgram::StrictTensorContraction { .. }
+        // The extrema fold is refused here structurally rather than by policy:
+        // this destructuring binds an `empty_identity_bits` every admitted
+        // program must carry, and the identity-less family has no such field. A
+        // cooperative extrema tile is legal in principle — the fold is
+        // order-insensitive — and admitting one needs a staged-partial contract
+        // that does not rest on an identity, which is the reduction-strategies
+        // work rather than a widening this variant may assume.
+        | ScalarProgram::StrictSerialMaximum { .. }
         | ScalarProgram::FusedMultiplyAddSerialSum { .. } => {
             return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
         }
@@ -2379,6 +2436,214 @@ mod tests {
             })
             .unwrap();
         builder
+    }
+
+    /// Builds a `[2, 6] -> [2]` serial reduction over the first input tensor.
+    ///
+    /// The shape the extrema fixtures below share. A *serial* topology rather
+    /// than a split, because the serial arm is the only one the identity-less
+    /// fold is admitted under; the refusal of every other topology is asserted
+    /// separately rather than assumed.
+    fn serial_reduction_builder(scalar: ScalarProgram) -> ScheduledRegionBuilder {
+        let input = Shape::from_dims([2, 6]);
+        let output = Shape::from_dims([2]);
+        let mut builder = ScheduledRegionBuilder::new(RegionId::new(41));
+        builder.iteration_shape(output.clone()).unwrap();
+        builder
+            .push_access(Access {
+                tensor: FIRST_INPUT,
+                component_role: None,
+                mode: AccessMode::Read,
+                map: LogicalAccess::ReductionContributor {
+                    input_shape: input.clone(),
+                    output_shape: output.clone(),
+                    axes: vec![Axis::new(1)],
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                },
+                bounds: BoundsWitnessId::new(0),
+                ownership: None,
+            })
+            .unwrap();
+        builder
+            .push_access(Access {
+                tensor: TensorRole::Output,
+                component_role: None,
+                mode: AccessMode::Write,
+                map: LogicalAccess::LinearIdentity,
+                bounds: BoundsWitnessId::new(1),
+                ownership: Some(OwnershipWitnessId::new(0)),
+            })
+            .unwrap();
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(0),
+                tensor: FIRST_INPUT,
+                component_role: None,
+                kind: BoundsProofKind::ReductionDomain {
+                    input_shape: input,
+                    output_shape: output,
+                    axes: vec![Axis::new(1)],
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                },
+            })
+            .unwrap();
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(1),
+                tensor: TensorRole::Output,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange { element_count: 2 },
+            })
+            .unwrap();
+        builder
+            .ownership_proof(OwnershipProof {
+                id: OwnershipWitnessId::new(0),
+                tensor: TensorRole::Output,
+                kind: OwnershipProofKind::OneGlobalInvocationPerOutput { output_count: 2 },
+            })
+            .unwrap();
+        builder.scalar_program(scalar).unwrap();
+        builder.numerical(strict_numerical()).unwrap();
+        builder
+            .schedule(KernelSchedule {
+                reduction: ReductionTopology::Serial {
+                    axes: vec![Axis::new(1)],
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    permits_reassociation: false,
+                    permits_permutation: false,
+                },
+                ..linear_schedule(2, OwnershipWitnessId::new(0))
+            })
+            .unwrap();
+        builder
+    }
+
+    /// The extrema fold this family embeds, over the shared fixture shape.
+    fn maximum_scalar() -> ScalarProgram {
+        ScalarProgram::StrictSerialMaximum {
+            axes: vec![Axis::new(1)],
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: 0x7fc0_0000,
+        }
+    }
+
+    /// The extrema fold verifies as a serial pass reading the original input.
+    #[test]
+    fn the_extrema_fold_verifies_as_a_serial_pass() {
+        let region = serial_reduction_builder(maximum_scalar())
+            .build()
+            .expect("an extrema serial pass verifies");
+        assert!(matches!(
+            region.region().index.scalar_program,
+            ScalarProgram::StrictSerialMaximum { .. }
+        ));
+    }
+
+    /// The extrema fold does not share identity with the bare serial sum.
+    ///
+    /// The two regions differ in nothing but their scalar program — same access
+    /// relation, same contributor order, same numerical realization — so an
+    /// appended scalar-program tag that had collided with an existing one would
+    /// make these equal. It is the check behind "the schedule domain did not
+    /// step": the new tag separates, and every earlier tag keeps its meaning.
+    ///
+    /// The sum reads an intermediate where the extrema fold reads the first
+    /// input, so the bare-sum control is built with that one field changed and
+    /// nothing else.
+    #[test]
+    fn the_extrema_fold_has_its_own_canonical_identity() {
+        let maximum = serial_reduction_builder(maximum_scalar())
+            .build()
+            .expect("the extrema pass verifies");
+        let mut bare = serial_reduction_builder(ScalarProgram::StrictSerialSum {
+            axes: vec![Axis::new(1)],
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: 0x7fc0_0000,
+            empty_identity_bits: 0.0_f32.to_bits(),
+        });
+        bare.accesses[0].tensor = TensorRole::Intermediate;
+        bare.bounds_proofs[0].tensor = TensorRole::Intermediate;
+        let bare = bare.build().expect("the bare pass verifies");
+        assert_ne!(maximum.canonical_identity(), bare.canonical_identity());
+    }
+
+    /// An empty reduced domain is refused, because the family has no identity.
+    ///
+    /// **This is the one obligation the extrema fold has and no sum does.** A sum
+    /// commits `+0.0`; `Maximum` has no value it could commit, so the region is
+    /// refused rather than given a default. The control is the *same shape* under
+    /// the bare sum, which verifies — so the refusal is about the family and not
+    /// about the zero extent.
+    #[test]
+    fn an_empty_reduced_domain_is_refused_for_the_identity_less_fold() {
+        let empty_input = Shape::from_dims([2, 0]);
+        let widen = |builder: &mut ScheduledRegionBuilder| {
+            let LogicalAccess::ReductionContributor { input_shape, .. } =
+                &mut builder.accesses[0].map
+            else {
+                panic!("the fixture reads a reduction contributor");
+            };
+            *input_shape = empty_input.clone();
+            let BoundsProofKind::ReductionDomain { input_shape, .. } =
+                &mut builder.bounds_proofs[0].kind
+            else {
+                panic!("the fixture proves a reduction domain");
+            };
+            *input_shape = empty_input.clone();
+        };
+
+        let mut maximum = serial_reduction_builder(maximum_scalar());
+        widen(&mut maximum);
+        assert_eq!(
+            maximum.build().unwrap_err().diagnostics(),
+            [ScheduledRegionDiagnostic::NumericalOrAccessRefinement],
+            "an identity-less fold over an empty domain has no value to commit"
+        );
+
+        // The control: the identical region under the bare sum verifies, because
+        // that family declares `+0.0` for the empty case.
+        let mut bare = serial_reduction_builder(ScalarProgram::StrictSerialSum {
+            axes: vec![Axis::new(1)],
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: 0x7fc0_0000,
+            empty_identity_bits: 0.0_f32.to_bits(),
+        });
+        bare.accesses[0].tensor = TensorRole::Intermediate;
+        bare.bounds_proofs[0].tensor = TensorRole::Intermediate;
+        widen(&mut bare);
+        assert!(bare.build().is_ok());
+    }
+
+    /// Every topology but the serial one is refused for the extrema fold.
+    ///
+    /// **Fail-closed rather than a legality claim**, and the distinction is worth
+    /// stating: the fold is order-insensitive, so a split or a cooperative tile
+    /// over it is legal in principle. What is missing is a staged-partial
+    /// contract that does not rest on an empty-domain identity, which is
+    /// `implement-parallel-reduction-strategies`' work. Refusing until then is
+    /// the conservative direction, and this asserts the refusal so that widening
+    /// it has to be deliberate.
+    #[test]
+    fn every_topology_but_the_serial_one_is_refused_for_the_extrema_fold() {
+        let mut split = serial_reduction_builder(maximum_scalar());
+        split.schedule.as_mut().unwrap().reduction = ReductionTopology::MultiPass {
+            pass: ReductionPass::Partial,
+            partition: SPLIT,
+            axes: vec![Axis::new(1)],
+            order: ContributorOrder::OriginalAxisLexicographic,
+            accumulation: ArithmeticType::F32,
+            permits_reassociation: true,
+            permits_permutation: false,
+        };
+        assert!(split.build().is_err());
+
+        let mut none = serial_reduction_builder(maximum_scalar());
+        none.schedule.as_mut().unwrap().reduction = ReductionTopology::None;
+        assert!(none.build().is_err());
+
+        // The control: the unmodified serial fixture verifies, so the refusals
+        // above are about the topology rather than about the fixture.
+        assert!(serial_reduction_builder(maximum_scalar()).build().is_ok());
     }
 
     /// Builds the final pass that combines those partials into `[2]`.

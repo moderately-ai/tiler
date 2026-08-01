@@ -75,9 +75,11 @@ use tiler_ir::semantic::accuracy::{
 };
 use tiler_ir::semantic::{
     F32, NormativeDefinitionRef, OpKey, SILU_F32_EXPONENTIAL_ARGUMENT_CEILING_BITS,
-    rms_norm_f32_op, rms_norm_f32_rsqrt_exceptional_contract,
-    rms_norm_f32_rsqrt_reference_semantics, silu_f32_exponential_exceptional_contract,
-    silu_f32_exponential_reference_semantics, silu_f32_op,
+    SOFTMAX_F32_EXPONENTIAL_ARGUMENT_CEILING_BITS, rms_norm_f32_op,
+    rms_norm_f32_rsqrt_exceptional_contract, rms_norm_f32_rsqrt_reference_semantics,
+    silu_f32_exponential_exceptional_contract, silu_f32_exponential_reference_semantics,
+    silu_f32_op, softmax_f32_exponential_exceptional_contract,
+    softmax_f32_exponential_reference_semantics, softmax_f32_op,
 };
 
 use super::honourability::FactSourceProvenance;
@@ -206,6 +208,125 @@ pub(crate) fn metal_f32_exponential_contract() -> AccuracyContract {
             AccuracyDomain::new([ordinary], [clause]).expect("the declared domain is canonical"),
         ),
         silu_f32_exponential_exceptional_contract(),
+    )
+}
+
+/// Returns the accuracy contract the Metal realization of the softmax states.
+///
+/// **The same Table 8.1 entry as the activation's, declared over a narrower
+/// region.** `refines` compares operation, dtype signature, reference semantics,
+/// exceptional-value contract, and admitted domain before it reaches the bound,
+/// and *any* of them differing is an outright `Unknown` — so this is a second
+/// declaration rather than a reuse of [`metal_f32_exponential_contract`], and it
+/// has to be: that one names `tiler::silu-f32@1`, and
+/// [`assess_elementary_accuracy`] skips a realization whose operation is not the
+/// required contract's.
+///
+/// **What is shared is the translation, not the declaration.** The bound is
+/// stated under [`apple_msl_ulp_metric_key`] at
+/// [`APPLE_MSL_EXP_F32_ULP_BOUND`] exactly as the activation's is, and the *one*
+/// registered `RegisteredImplication::ScaledMetric` in
+/// [`installed_implication_registry`] is what crosses it for both. This vertical
+/// registers no second implication row, and
+/// `the_softmax_needs_no_second_registered_implication` is the check.
+///
+/// **The domain stops at zero, which is narrower than Table 8.1 supports.** The
+/// specification bounds `exp` over its whole argument range; the maximum
+/// subtraction confines this operation's arguments to the non-positive reals, so
+/// the declaration is restricted to the region the operation reaches. Declaring
+/// less than the specification supports is safe in the direction that matters —
+/// the target promises at least this — and it is what lets the declaration match
+/// the requirement's admitted domain exactly, which is what `refines` compares.
+///
+/// # Panics
+///
+/// Panics only if this crate's compile-time contract violates the grammar the
+/// accuracy vocabulary defines.
+#[must_use]
+pub(crate) fn metal_f32_softmax_exponential_contract() -> AccuracyContract {
+    let ceiling = ExactRational::from_f32(f32::from_bits(
+        SOFTMAX_F32_EXPONENTIAL_ARGUMENT_CEILING_BITS,
+    ))
+    .expect("the governed exponential ceiling is a finite binary32 value");
+    let ordinary = DomainInterval::new(
+        OperandOrdinal::new(0),
+        DomainBound::Unbounded,
+        DomainBound::Closed(ceiling),
+    )
+    .expect("the declared domain admits every non-positive argument");
+    let clause = AccuracyDomainClause::new(
+        [(OperandOrdinal::new(0), ordinary.clone())],
+        ReferenceResultConstraint::new(
+            [ReferenceResultClass::Positive],
+            None,
+            Some(
+                NormativeDefinitionRef::new(
+                    "e^t is strictly positive at every real t, so the reference result is never \
+                     zero and never negative on this clause's whole region",
+                )
+                .expect("the positivity justification is canonical"),
+            ),
+        )
+        .expect("the reference-result constraint is canonical"),
+        AccuracyPredicate::ulp(
+            apple_msl_ulp_metric_key(),
+            ExactTolerance::from_integer(APPLE_MSL_EXP_F32_ULP_BOUND),
+        ),
+    )
+    .expect("the declared clause is canonical");
+    AccuracyContract::new(
+        softmax_f32_op(),
+        vec![F32::resolved_type()],
+        F32::resolved_type(),
+        softmax_f32_exponential_reference_semantics(),
+        AccuracyContractForm::BoundedPiecewise(
+            AccuracyDomain::new([ordinary], [clause]).expect("the declared domain is canonical"),
+        ),
+        softmax_f32_exponential_exceptional_contract(),
+    )
+}
+
+/// Returns the empirical record behind the softmax's exceptional behaviour.
+///
+/// An `EmpiricalQualification` for the same reason the activation's is, over this
+/// family's own corpus rather than that one's: the two operations reach different
+/// arguments, so a shared record would qualify a population neither measured.
+///
+/// # Errors
+///
+/// Returns [`ConformanceEvidenceError`] only if this crate's own compile-time
+/// record violates the record's stated obligations.
+pub(crate) fn metal_f32_softmax_exceptional_value_evidence()
+-> Result<ConformanceEvidence, ConformanceEvidenceError> {
+    let reference = |text: &str| {
+        NormativeDefinitionRef::new(text).expect("a compile-time evidence field is canonical")
+    };
+    ConformanceEvidence::new(
+        ConformanceEvidenceClass::EmpiricalQualification,
+        reference(
+            "the exceptional-value, signed-zero, and subnormal behaviour of tiler::softmax-f32@1 \
+             at binary32; the Metal specification supplies no edge-case contract for exp, so \
+             nothing normative covers this half",
+        ),
+        reference("Metal shading language on one measured Apple GPU row"),
+        reference(
+            "air.exp.f32 with the operator division and the emitted extrema fixup, under the \
+             governed flag set",
+        ),
+        reference("Apple metal version 32023.883, macOS 27.0, -std=metal4.0"),
+        Some(reference("Apple M4 Max")),
+        Some(reference(
+            "crates/tiler-reference softmax_f32, whose exponential is the same certified \
+             enclosure the activation uses and whose row maximum is the exact IEEE 754-2019 \
+             maximum rather than the host's number-preferring one",
+        )),
+        Some(reference(
+            "the bounded corpus of crates/tiler-reference/src/softmax/tests.rs: the retained \
+             worked example, a row of equal large scores, the underflow band at 87, 88, and 104 \
+             below the maximum, a fully masked row under both mask conventions, a NaN row, a \
+             signed-zero row, and the empty reduced axis, at reduced extents 0, 2, 3, 4, and 10",
+        )),
+        b"corpus:softmax-f32-boundary-v1",
     )
 }
 
@@ -601,15 +722,19 @@ pub(crate) fn assess_elementary_accuracy(
 
 /// Returns the elementary realizations this build installs.
 ///
-/// Two rows, one per registered family. Each Metal declaration is caller-vouched
+/// Three rows, one per registered family. Each Metal declaration is caller-vouched
 /// in exactly the sense ADR 0076's `tiler-build` projection is: the accuracy half
 /// rests on a quoted specification and the exceptional half on a bounded corpus,
 /// and neither is authenticated here.
 ///
-/// The two rows state their accuracy in *different contract forms*, which is the
-/// point rather than an inconsistency: the exponential's is a ULP bound needing a
-/// registered cross-metric implication, and the reciprocal square root's is a
-/// faithful result set needing none.
+/// The rows state their accuracy in *two different contract forms*, which is the
+/// point rather than an inconsistency: the two exponentials' are ULP bounds
+/// needing the registered cross-metric implication, and the reciprocal square
+/// root's is a faithful result set needing none. The two exponential rows differ
+/// from each other only in the operation they name and in their admitted domain —
+/// the softmax's maximum subtraction confines its arguments to the non-positive
+/// reals — and they share the single registered implication rather than each
+/// installing one.
 ///
 /// # Panics
 ///
@@ -631,6 +756,19 @@ pub(crate) fn installed_elementary_realizations() -> Vec<ElementaryRealization> 
             metal_f32_reciprocal_square_root_bound_evidence()
                 .expect("the normative record is well formed"),
             metal_f32_normalization_exceptional_value_evidence()
+                .expect("the empirical record is well formed"),
+            super::honourability::governed_profile_source(),
+        ),
+        // The softmax's exponential shares the activation's *bound record* —
+        // it is the same quoted Table 8.1 entry at the same digest — and carries
+        // its own empirical record, because the two operations reach different
+        // arguments and a shared corpus record would qualify a population neither
+        // measured.
+        ElementaryRealization::new(
+            softmax_f32_op(),
+            metal_f32_softmax_exponential_contract(),
+            metal_f32_exponential_bound_evidence().expect("the normative record is well formed"),
+            metal_f32_softmax_exceptional_value_evidence()
                 .expect("the empirical record is well formed"),
             super::honourability::governed_profile_source(),
         ),

@@ -25,6 +25,7 @@ mod reindex;
 mod rms_norm;
 mod shape_evidence;
 mod silu;
+mod softmax;
 mod standard_operations;
 mod types;
 
@@ -168,9 +169,25 @@ pub use silu::{
     silu_f32_exponential_exceptional_contract, silu_f32_exponential_reference_semantics,
     silu_f32_facts, silu_f32_op, silu_f32_reference_semantics,
 };
+pub use softmax::{
+    SOFTMAX_F32_EXPONENTIAL_ARGUMENT_CEILING_BITS, SOFTMAX_F32_EXPONENTIAL_ULP_TOLERANCE,
+    SOFTMAX_F32_FACT_ACCUMULATOR_TYPE, SOFTMAX_F32_FACT_APPROXIMATE_INTRINSIC_PERMITTED,
+    SOFTMAX_F32_FACT_ARITHMETIC_CONTRACTION_PERMITTED, SOFTMAX_F32_FACT_CANONICAL_NAN_BITS,
+    SOFTMAX_F32_FACT_COMPUTATION_TYPE, SOFTMAX_F32_FACT_EMPTY_REDUCED_AXIS,
+    SOFTMAX_F32_FACT_EVALUATION_ORDER, SOFTMAX_F32_FACT_EXPONENTIAL_ACCURACY_CONTRACT,
+    SOFTMAX_F32_FACT_FULLY_MASKED_ROW, SOFTMAX_F32_FACT_MAXIMUM_EXTREMA_FAMILY,
+    SOFTMAX_F32_FACT_MAXIMUM_FOLD_LEGALITY, SOFTMAX_F32_FACT_NAN_BEHAVIOUR,
+    SOFTMAX_F32_FACT_NORMALIZATION_FORM, SOFTMAX_F32_FACT_ONLINE_SINGLE_PASS_FORM,
+    SOFTMAX_F32_FACT_RECIPROCAL_TRANSFORM_PERMITTED, SOFTMAX_F32_FACT_RESULT_TYPE,
+    SOFTMAX_F32_FACT_ROW_SUM, SOFTMAX_F32_FACT_SIGNED_ZERO, SOFTMAX_F32_FACT_SUBNORMALS,
+    SOFTMAX_F32_FACT_SUM_FOLD_ORDER, SOFTMAX_REDUCED_AXES_ATTRIBUTE, softmax_f32_axis_attribute,
+    softmax_f32_exponential_accuracy_contract, softmax_f32_exponential_exceptional_contract,
+    softmax_f32_exponential_reference_semantics, softmax_f32_facts, softmax_f32_op,
+    softmax_f32_reference_semantics,
+};
 pub use standard_operations::{
     Bf16Add, Bf16Constant, Bf16Multiply, F32Add, F32Broadcast, F32Constant, F32Multiply,
-    F32Reindex, F32RmsNorm, F32Silu, F32TensorContraction, StrictSerialF32Sum,
+    F32Reindex, F32RmsNorm, F32Silu, F32Softmax, F32TensorContraction, StrictSerialF32Sum,
 };
 pub use types::{
     AttributeFieldId, CanonicalField, CanonicalFloatBitsRef, CanonicalIntegerWidth,

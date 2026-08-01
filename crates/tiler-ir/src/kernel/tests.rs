@@ -897,6 +897,7 @@ fn body_shaping_vocabulary_is_closed(
             ScalarProgram::FusedMultiplyAddSerialSum { .. } => "fused-multiply-add-serial-sum",
             ScalarProgram::SquaredSerialSum { .. } => "squared-serial-sum",
             ScalarProgram::StrictTensorContraction { .. } => "strict-tensor-contraction",
+            ScalarProgram::StrictSerialMaximum { .. } => "strict-serial-maximum",
         },
     )
 }
@@ -2617,4 +2618,170 @@ fn a_zero_extent_reduction_commits_its_identity_without_a_loop_or_a_barrier() {
     assert_eq!(loops, 0);
     assert_eq!(barriers, 0);
     assert_eq!(stored, Some(KernelConstant::F32Bits(0.0_f32.to_bits())));
+}
+
+/// The extrema fold lowers to a bounded loop whose combine is a `Maximum`.
+///
+/// The shape is the serial sum's — a seed load, a loop over the remaining
+/// contributors, a canonicalization after each combine, and one owning store —
+/// and the only difference is the combine's operation. That is asserted rather
+/// than described, because a lowering that reused `F32Add` here would produce a
+/// structurally identical kernel computing a different function.
+#[test]
+fn the_extrema_fold_lowers_to_a_bounded_loop_combining_with_a_maximum() {
+    let scheduled = maximum_reduction_region(RegionId::new(30));
+    let kernel = lower_scheduled_region(&scheduled).expect("the extrema region lowers");
+    assert_eq!(
+        binary_op_counts(&kernel, BinaryOp::F32Maximum),
+        1,
+        "one combine per loop iteration, emitted once"
+    );
+    assert_eq!(
+        binary_op_counts(&kernel, BinaryOp::F32Add),
+        0,
+        "the extrema fold combines with a maximum and never with an addition"
+    );
+
+    // The control: the bare serial sum over the same shape emits the reverse.
+    let sum = lower_scheduled_region(&reduction_region(
+        RegionId::new(31),
+        &Shape::from_dims([2, 3]),
+        &[Axis::new(1)],
+    ))
+    .expect("the bare sum lowers");
+    assert_eq!(binary_op_counts(&sum, BinaryOp::F32Maximum), 0);
+    assert_eq!(binary_op_counts(&sum, BinaryOp::F32Add), 1);
+}
+
+/// The appended binary tag separates kernel identity from the addition's.
+///
+/// Two kernels differing in nothing but the combine's operation. An appended tag
+/// that had collided with `F32Add`'s would make these identities equal, which is
+/// the concrete form of "the kernel identity domain did not step": the new tag
+/// separates, and every tag below it keeps its meaning.
+#[test]
+fn the_maximum_tag_separates_kernel_identity_from_the_addition() {
+    let maximum = lower_scheduled_region(&maximum_reduction_region(RegionId::new(32)))
+        .expect("the extrema region lowers");
+    let sum = lower_scheduled_region(&reduction_region(
+        RegionId::new(32),
+        &Shape::from_dims([2, 3]),
+        &[Axis::new(1)],
+    ))
+    .expect("the bare sum lowers");
+    assert_ne!(
+        maximum.canonical_identity().as_bytes(),
+        sum.canonical_identity().as_bytes()
+    );
+}
+
+/// A `[2, 3] -> [2]` extrema fold over the first input tensor.
+fn maximum_reduction_region(id: RegionId) -> VerifiedScheduledRegion {
+    let input = Shape::from_dims([2, 3]);
+    let axes = [Axis::new(1)];
+    let output = input.without_axes(&axes);
+    let output_elements = crate::schedule::element_count(&output).expect("bounded fixture shape");
+    let tensor = TensorRole::Input {
+        ordinal: InputOrdinal::FIRST,
+    };
+    let mut builder = ScheduledRegionBuilder::new(id);
+    builder.iteration_shape(output.clone()).unwrap();
+    builder
+        .push_access(Access {
+            tensor,
+            component_role: None,
+            mode: AccessMode::Read,
+            map: LogicalAccess::ReductionContributor {
+                input_shape: input.clone(),
+                output_shape: output.clone(),
+                axes: axes.to_vec(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+            },
+            bounds: BoundsWitnessId::new(0),
+            ownership: None,
+        })
+        .unwrap();
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Output,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(1),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        })
+        .unwrap();
+    builder
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(0),
+            tensor,
+            component_role: None,
+            kind: BoundsProofKind::ReductionDomain {
+                input_shape: input,
+                output_shape: output,
+                axes: axes.to_vec(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+            },
+        })
+        .unwrap();
+    builder
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(1),
+            tensor: TensorRole::Output,
+            component_role: None,
+            kind: BoundsProofKind::LinearRange {
+                element_count: output_elements,
+            },
+        })
+        .unwrap();
+    builder
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                output_count: output_elements,
+            },
+        })
+        .unwrap();
+    builder
+        .scalar_program(ScalarProgram::StrictSerialMaximum {
+            axes: axes.to_vec(),
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: NAN_BITS,
+        })
+        .unwrap();
+    builder.numerical(numerical()).unwrap();
+    builder
+        .schedule(KernelSchedule {
+            reduction: ReductionTopology::Serial {
+                axes: axes.to_vec(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                permits_reassociation: false,
+                permits_permutation: false,
+            },
+            ..linear_schedule(output_elements, OwnershipWitnessId::new(0))
+        })
+        .unwrap();
+    builder.build().unwrap()
+}
+
+/// Counts the binary operations a kernel body contains, nested blocks included.
+///
+/// The same traversal `loaded_buffers` performs, over a different operation kind:
+/// a combine emitted inside the fold's serial loop is what this has to reach, and
+/// a walk that stopped at the top level would count zero for every reduction.
+fn binary_op_counts(kernel: &VerifiedKernel, wanted: BinaryOp) -> usize {
+    fn walk(block: BlockRef<'_>, wanted: BinaryOp, found: &mut usize) {
+        for operation in block.operations() {
+            match operation.view() {
+                OperationView::Binary { op, .. } if op == wanted => *found += 1,
+                OperationView::Predicated { body, .. } => walk(body, wanted, found),
+                OperationView::SerialLoop(serial) => walk(serial.body(), wanted, found),
+                _ => {}
+            }
+        }
+    }
+    let mut found = 0;
+    walk(kernel.body(), wanted, &mut found);
+    found
 }

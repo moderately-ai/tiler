@@ -1662,12 +1662,18 @@ fn verify_region_subject_binding(
                 // None of these is produced by the recognized whole-program
                 // shapes this arm verifies. The strict-affine one is refused
                 // upstream; the squaring-prologue sum belongs to
-                // `tiler::rms-norm-f32@1`, which the recognizer does not admit;
+                // `tiler::rms-norm-f32@1` and the extrema fold to
+                // `tiler::softmax-f32@1`, neither of which the recognizer admits;
                 // and a contraction binds to its own subject variant above, so a
                 // serial-sum subject claiming one is a forged pairing. Answering
                 // `false` is the fail-closed answer rather than a deferral.
+                //
+                // The extrema fold could not bind here even if the recognizer
+                // admitted it: this arm's subject carries an empty-domain
+                // identity, and the identity-less family has none to compare.
                 ScalarProgram::StrictAffineU4Dequantize { .. }
                 | ScalarProgram::SquaredSerialSum { .. }
+                | ScalarProgram::StrictSerialMaximum { .. }
                 | ScalarProgram::StrictTensorContraction { .. } => false,
             }
         }

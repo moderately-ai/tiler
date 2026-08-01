@@ -857,7 +857,8 @@ const fn boundary_carrier(program: &ScalarProgram) -> Option<StorageScalar> {
         | ScalarProgram::StrictSerialSum { .. }
         | ScalarProgram::SquaredSerialSum { .. }
         | ScalarProgram::FusedMultiplyAddSerialSum { .. }
-        | ScalarProgram::StrictTensorContraction { .. } => Some(StorageScalar::F32),
+        | ScalarProgram::StrictTensorContraction { .. }
+        | ScalarProgram::StrictSerialMaximum { .. } => Some(StorageScalar::F32),
         // The one program in the vocabulary whose boundary values disagree:
         // `tiler-ir`'s `verify_signature` fixes its reads at `[U8, F32, U8]`,
         // and its code component is bit-packed rather than unpacked. The

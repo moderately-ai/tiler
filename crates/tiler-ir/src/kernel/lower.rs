@@ -693,6 +693,13 @@ fn emit_guarded(
             *empty_identity_bits,
             ReductionPrologue::Square,
         ),
+        ScalarProgram::StrictSerialMaximum { .. } => emit_maximum_reduction(
+            builder,
+            plan,
+            (sole_read_buffer()?, sole_read()?),
+            write_buffer,
+            invocation,
+        ),
         ScalarProgram::StrictTensorContraction { .. } => {
             let ([left, right], [left_read, right_read]) = (read_buffers, plan.reads) else {
                 return Err(KernelBuildError::InvalidHandle {
@@ -1059,7 +1066,17 @@ const fn reduction_prologue(program: &ScalarProgram) -> Option<ReductionPrologue
         }),
         ScalarProgram::PointwiseF32(_)
         | ScalarProgram::StrictAffineU4Dequantize { .. }
-        | ScalarProgram::StrictTensorContraction { .. } => None,
+        | ScalarProgram::StrictTensorContraction { .. }
+        // The maximum reduction answers `None` for a different reason from the
+        // three above: it *is* a fold, but it is not a fold this function's
+        // caller can drive. `ReductionPrologue` is the per-contributor expression
+        // of a *sum*, and the cooperative lowering that reads it seeds partials
+        // with `+0.0`-compatible arithmetic; an extrema fold has no identity and
+        // no prologue, so the honest answer is that no prologue describes it.
+        // The cooperative topology is separately refused for this program by the
+        // schedule verifier, which is what makes this arm unreachable rather than
+        // merely conservative.
+        | ScalarProgram::StrictSerialMaximum { .. } => None,
     }
 }
 
@@ -1344,6 +1361,81 @@ fn emit_reduction(
                 let sum = builder.binary(BinaryOp::F32Add, accumulator, contributor)?;
                 let sum = builder.convert(ConvertOp::CanonicalizeF32Nan, sum)?;
                 Ok(vec![sum])
+            },
+        )?;
+        results
+            .get(0)
+            .ok_or(KernelBuildError::EmptyLoopAccumulators)?
+    };
+    builder.store(
+        write_buffer,
+        invocation,
+        total,
+        plan.write_bounds,
+        plan.ownership,
+    )
+}
+
+/// Emits the guarded body of one strict serial `Maximum` reduction.
+///
+/// The same shape as [`emit_reduction`] with two deliberate differences, and both
+/// are the extrema family's rather than this lowering's.
+///
+/// **There is no empty-domain path.** A sum commits its identity when the reduced
+/// domain is empty; `Maximum` has no identity, so there is no value to commit and
+/// the only correct answer is to refuse. The schedule verifier refuses such a
+/// region before it reaches here, and this restates the refusal where the
+/// lowering could still emit — a fold over zero contributors is exactly the empty
+/// iteration range [`KernelBuildError::InvalidLoopRange`] names.
+///
+/// **There is no prologue.** The softmax's subtraction and exponential belong to
+/// the pointwise pass that *consumes* this reduction's result, not to the fold
+/// itself, so folding them in here would make one region carry two iteration
+/// domains — the same reason `SquaredSerialSum` carries no epilogue.
+///
+/// The result-boundary canonicalization is emitted on the single-contributor path
+/// exactly as the bare sum's is, and for the same reason: the boundary value is
+/// then an uncombined load whose NaN payload would otherwise leak through an
+/// arithmetic reduction. The combining path needs none of its own, because every
+/// combine is already followed by one.
+fn emit_maximum_reduction(
+    builder: &mut KernelBuilder,
+    plan: &CanonicalPlan<'_>,
+    read: (KernelBufferId, BoundsWitnessId),
+    write_buffer: KernelBufferId,
+    invocation: KernelValueId,
+) -> Result<(), KernelBuildError> {
+    let (read_buffer, read_bounds) = read;
+    let addressing = plan
+        .addressing
+        .first()
+        .ok_or(KernelBuildError::InvalidHandle {
+            entity: super::error::KernelEntityKind::Buffer,
+        })?;
+    if plan.contributors == 0 {
+        return Err(KernelBuildError::InvalidLoopRange { start: 0, end: 0 });
+    }
+    let first_offset = emit_offset(builder, addressing, invocation, None)?;
+    let seed = builder.load(read_buffer, first_offset, read_bounds)?;
+    let total = if plan.contributors == 1 {
+        builder.convert(ConvertOp::CanonicalizeF32Nan, seed)?
+    } else {
+        let results = builder.serial_loop(
+            SerialLoopSpec {
+                start: 1,
+                end: plan.contributors,
+            },
+            &[seed],
+            |builder, parameters| {
+                let induction = parameters.induction();
+                let accumulator = parameters
+                    .accumulator(0)
+                    .ok_or(KernelBuildError::EmptyLoopAccumulators)?;
+                let offset = emit_offset(builder, addressing, invocation, Some(induction))?;
+                let loaded = builder.load(read_buffer, offset, read_bounds)?;
+                let combined = builder.binary(BinaryOp::F32Maximum, accumulator, loaded)?;
+                let combined = builder.convert(ConvertOp::CanonicalizeF32Nan, combined)?;
+                Ok(vec![combined])
             },
         )?;
         results

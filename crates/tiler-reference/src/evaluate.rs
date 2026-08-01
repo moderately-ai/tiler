@@ -586,6 +586,73 @@ pub(crate) fn row_major_strides(shape: &Shape) -> Result<Vec<usize>, ReferenceOp
     Ok(strides)
 }
 
+/// The row decomposition one reduced axis induces over a dense tensor.
+///
+/// Three counts rather than a coordinate walk, because the reduced axis is a
+/// single axis of a row-major layout: everything before it varies the row's outer
+/// position, everything after it varies the row's inner position, and the axis
+/// itself is the contributor sequence. Deriving them once per occurrence keeps
+/// the per-element index arithmetic exact and total.
+///
+/// Shared by every family whose identity carries *one* reduced axis and whose
+/// result is shape-preserving or row-scoped — `tiler::rms-norm-f32@1` and
+/// `tiler::softmax-f32@1` today. It lives here beside the other dense-payload
+/// helpers rather than in either family's module, because a copy in each would
+/// let one family's corpus pass against index arithmetic the other never runs.
+/// The *arithmetic* stays with each family; only the decomposition is shared.
+pub(crate) struct RowGeometry {
+    /// Contributors of one row, the extent of the reduced axis.
+    pub(crate) extent: usize,
+    /// Product of the extents after the reduced axis.
+    pub(crate) inner: usize,
+    /// Number of rows in the tensor.
+    pub(crate) rows: usize,
+}
+
+impl RowGeometry {
+    pub(crate) fn derive(shape: &Shape, axis: Axis) -> Result<Self, ReferenceOperationError> {
+        let position =
+            usize::try_from(axis.get()).map_err(|_| ReferenceOperationError::InvalidApplication)?;
+        let extents = shape.extents();
+        let Some(extent) = extents.get(position) else {
+            return Err(ReferenceOperationError::InvalidApplication);
+        };
+        let extent =
+            usize::try_from(extent.get()).map_err(|_| ReferenceOperationError::ShapeTooLarge)?;
+        let mut inner = 1_usize;
+        for later in &extents[position.saturating_add(1)..] {
+            let later =
+                usize::try_from(later.get()).map_err(|_| ReferenceOperationError::ShapeTooLarge)?;
+            inner = inner
+                .checked_mul(later)
+                .ok_or(ReferenceOperationError::ShapeTooLarge)?;
+        }
+        let mut outer = 1_usize;
+        for earlier in &extents[..position] {
+            let earlier = usize::try_from(earlier.get())
+                .map_err(|_| ReferenceOperationError::ShapeTooLarge)?;
+            outer = outer
+                .checked_mul(earlier)
+                .ok_or(ReferenceOperationError::ShapeTooLarge)?;
+        }
+        let rows = outer
+            .checked_mul(inner)
+            .ok_or(ReferenceOperationError::ShapeTooLarge)?;
+        Ok(Self {
+            extent,
+            inner,
+            rows,
+        })
+    }
+
+    /// Returns the dense element index of one contributor of one row.
+    pub(crate) const fn element_index(&self, row: usize, position: usize) -> usize {
+        let outer = row / self.inner;
+        let inner = row % self.inner;
+        (outer * self.extent + position) * self.inner + inner
+    }
+}
+
 pub(crate) fn f32_elements(
     tensor: &Tensor,
 ) -> Result<&[ReferenceElement], ReferenceOperationError> {
