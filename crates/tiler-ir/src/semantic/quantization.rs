@@ -1359,6 +1359,421 @@ mod tests {
         assert_eq!(identities.iter().collect::<BTreeSet<_>>().len(), 6);
     }
 
+    /// One row of the Assemble scale-class table: the class name, the exact
+    /// scale bits, and the refusal the class must take — predicate,
+    /// invalid-input code name, and declaration ordinal — or `None` when the
+    /// class proves both declarations statically.
+    type ScaleClass = (
+        &'static str,
+        u32,
+        Option<(SemanticPredicateIdentity, &'static str, u32)>,
+    );
+
+    /// Every `f32` class the scale operand can take, and its Assemble outcome.
+    ///
+    /// The table is exhaustive over the classes `f32` distinguishes — both
+    /// signed zeros, negative and positive finite normals, the subnormal range
+    /// at both ends and in its interior, both signed subnormals, both
+    /// infinities, and a quiet and a signalling NaN — rather than a sample of
+    /// them, because a domain check that admits one unlisted class admits a
+    /// value the decode's derivation does not cover.
+    ///
+    /// The ordinals are the reason this table is
+    /// checked on Assemble rather than shared with Quantize: Assemble declares
+    /// no `NoNaN`, so its scale predicates sit at ordinals 0 and 1 where
+    /// Quantize's sit at 1 and 2, and an assertion reused across the two would
+    /// pass against a subject bound to the wrong occurrence.
+    fn assemble_scale_classes() -> Vec<ScaleClass> {
+        let not_positive_finite = || {
+            Some((
+                positive_finite_scalar_predicate(),
+                "strict-affine-assemble-scale-not-positive-finite",
+                0,
+            ))
+        };
+        let subnormal = || {
+            Some((
+                positive_normal_scalar_predicate(),
+                "strict-affine-assemble-scale-subnormal",
+                1,
+            ))
+        };
+        vec![
+            ("positive zero", 0.0_f32.to_bits(), not_positive_finite()),
+            ("negative zero", (-0.0_f32).to_bits(), not_positive_finite()),
+            (
+                "negative finite normal",
+                (-1.0_f32).to_bits(),
+                not_positive_finite(),
+            ),
+            (
+                "largest negative finite",
+                f32::MIN.to_bits(),
+                not_positive_finite(),
+            ),
+            ("negative subnormal", 0x8000_0001, not_positive_finite()),
+            (
+                "positive infinity",
+                f32::INFINITY.to_bits(),
+                not_positive_finite(),
+            ),
+            (
+                "negative infinity",
+                f32::NEG_INFINITY.to_bits(),
+                not_positive_finite(),
+            ),
+            ("quiet NaN", 0x7fc0_0000, not_positive_finite()),
+            ("signalling NaN", 0x7f80_0001, not_positive_finite()),
+            ("smallest positive subnormal", 0x0000_0001, subnormal()),
+            ("interior positive subnormal", 0x0000_ffff, subnormal()),
+            (
+                "largest positive subnormal",
+                f32::MIN_POSITIVE.to_bits() - 1,
+                subnormal(),
+            ),
+            (
+                "smallest positive normal",
+                f32::MIN_POSITIVE.to_bits(),
+                None,
+            ),
+            ("interior positive normal", 0.5_f32.to_bits(), None),
+            ("largest positive normal", f32::MAX.to_bits(), None),
+        ]
+    }
+
+    /// Each scale class takes its exact Assemble outcome, transactionally.
+    ///
+    /// Transactionality is asserted per class rather than once: a disproved
+    /// apply must leave the builder's retained canonical work exactly where it
+    /// was, so no partial operation or result survives a refusal, and the
+    /// builder stays usable for the classes that follow.
+    #[test]
+    fn every_exact_constant_scale_class_takes_its_assemble_outcome_transactionally() {
+        for (code_type, encoded_type) in [
+            (U4::resolved_type(), StrictAffineU4::resolved_type()),
+            (U8::resolved_type(), StrictAffineU8::resolved_type()),
+        ] {
+            let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+            let codes = builder
+                .input_resolved(
+                    InputKey::new("codes").unwrap(),
+                    Shape::from_dims([2]),
+                    code_type.clone(),
+                )
+                .unwrap();
+            let zero = builder
+                .input_resolved(
+                    InputKey::new("zero").unwrap(),
+                    Shape::new([]),
+                    code_type.clone(),
+                )
+                .unwrap();
+            let mut proved = Vec::new();
+            for (class, scale_bits, refusal) in assemble_scale_classes() {
+                let scale = F32Constant::apply(&mut builder, scale_bits)
+                    .unwrap()
+                    .erase();
+                let committed = builder.retained_canonical_work_bytes();
+                let applied = builder.apply(
+                    assemble_strict_affine_op(),
+                    OperationAttributes::empty(),
+                    &[codes, scale, zero],
+                );
+                let Some((predicate, invalid_input_code, ordinal)) = refusal else {
+                    proved.push(
+                        applied.unwrap_or_else(|error| panic!("{class} must assemble: {error:?}"))
+                            [0],
+                    );
+                    continue;
+                };
+                let Err(BuildError::SemanticPreconditionDisproved(disproof)) = applied else {
+                    panic!("{class} must be a typed semantic precondition disproof")
+                };
+                assert_eq!(disproof.predicate(), &predicate, "{class}");
+                assert_eq!(
+                    disproof.invalid_input_code(),
+                    &code(invalid_input_code),
+                    "{class}",
+                );
+                assert_eq!(disproof.declaration_ordinal().get(), ordinal, "{class}");
+                assert_eq!(
+                    builder.retained_canonical_work_bytes(),
+                    committed,
+                    "{class} must commit no canonical work",
+                );
+            }
+
+            assert_eq!(proved.len(), 3);
+            for (ordinal, result) in proved.iter().enumerate() {
+                builder
+                    .output_resolved(
+                        OutputKey::new(format!("assembled-{ordinal}")).unwrap(),
+                        *result,
+                    )
+                    .unwrap();
+            }
+            let program = builder.build().unwrap();
+            let assembled: Vec<_> = program
+                .operations()
+                .filter(|operation| operation.key() == &assemble_strict_affine_op())
+                .collect();
+            assert_eq!(assembled.len(), 3);
+            for operation in assembled {
+                let result = program.value(operation.results().next().unwrap()).unwrap();
+                assert_eq!(result.resolved_type(), &encoded_type);
+                let assessments: Vec<_> = operation.semantic_preconditions().collect();
+                assert_eq!(assessments.len(), 2);
+                for assessment in assessments {
+                    assert_eq!(assessment.status(), SemanticPreconditionStatus::Proven);
+                    assert_eq!(
+                        assessment.proof_basis(),
+                        Some(
+                            super::super::SemanticPreconditionProofBasis::StandardConstantF32BitsV1
+                        )
+                    );
+                    assert!(assessment.obligation_identity().is_none());
+                }
+            }
+        }
+    }
+
+    /// A runtime scale leaves exactly two ordered residuals on Assemble.
+    ///
+    /// Two, not one: the scale bears both predicates, and collapsing them into
+    /// a single runtime check would lose the ability to report which of the two
+    /// causes a bound payload hit.
+    #[test]
+    fn runtime_unknown_u4_and_u8_assemble_scales_retain_two_ordered_residuals() {
+        for (code_type, encoded_type) in [
+            (U4::resolved_type(), StrictAffineU4::resolved_type()),
+            (U8::resolved_type(), StrictAffineU8::resolved_type()),
+        ] {
+            let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+            let codes = builder
+                .input_resolved(
+                    InputKey::new("codes").unwrap(),
+                    Shape::from_dims([2]),
+                    code_type.clone(),
+                )
+                .unwrap();
+            let scale = builder
+                .input_resolved(
+                    InputKey::new("scale").unwrap(),
+                    Shape::new([]),
+                    F32::resolved_type(),
+                )
+                .unwrap();
+            let zero = builder
+                .input_resolved(InputKey::new("zero").unwrap(), Shape::new([]), code_type)
+                .unwrap();
+            let result = builder
+                .apply(
+                    assemble_strict_affine_op(),
+                    OperationAttributes::empty(),
+                    &[codes, scale, zero],
+                )
+                .unwrap()[0];
+            builder
+                .output_resolved(OutputKey::new("assembled").unwrap(), result)
+                .unwrap();
+            let program = builder.build().unwrap();
+            let operation = program
+                .operations()
+                .find(|operation| operation.key() == &assemble_strict_affine_op())
+                .unwrap();
+            assert_eq!(
+                program
+                    .value(operation.results().next().unwrap())
+                    .unwrap()
+                    .resolved_type(),
+                &encoded_type
+            );
+            let preconditions: Vec<_> = operation.semantic_preconditions().collect();
+            assert_eq!(
+                preconditions
+                    .iter()
+                    .map(|precondition| (
+                        precondition.declaration_ordinal().get(),
+                        precondition.predicate().clone(),
+                        precondition.status(),
+                    ))
+                    .collect::<Vec<_>>(),
+                vec![
+                    (
+                        0,
+                        positive_finite_scalar_predicate(),
+                        SemanticPreconditionStatus::Residual,
+                    ),
+                    (
+                        1,
+                        positive_normal_scalar_predicate(),
+                        SemanticPreconditionStatus::Residual,
+                    ),
+                ]
+            );
+            let identities: BTreeSet<_> = preconditions
+                .iter()
+                .map(|precondition| {
+                    precondition
+                        .obligation_identity()
+                        .expect("a residual precondition carries an obligation identity")
+                        .as_bytes()
+                        .to_vec()
+                })
+                .collect();
+            assert_eq!(identities.len(), 2);
+        }
+    }
+
+    #[test]
+    fn dead_assemble_assessments_are_removed_by_output_compaction() {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let codes = builder
+            .input_resolved(
+                InputKey::new("codes").unwrap(),
+                Shape::from_dims([2]),
+                U4::resolved_type(),
+            )
+            .unwrap();
+        let scale = builder
+            .input_resolved(
+                InputKey::new("scale").unwrap(),
+                Shape::new([]),
+                F32::resolved_type(),
+            )
+            .unwrap();
+        let zero = builder
+            .input_resolved(
+                InputKey::new("zero").unwrap(),
+                Shape::new([]),
+                U4::resolved_type(),
+            )
+            .unwrap();
+        builder
+            .apply(
+                assemble_strict_affine_op(),
+                OperationAttributes::empty(),
+                &[codes, scale, zero],
+            )
+            .unwrap();
+        builder
+            .output_resolved(OutputKey::new("codes").unwrap(), codes)
+            .unwrap();
+        let program = builder.build().unwrap();
+        assert_eq!(program.operation_count(), 0);
+        assert_eq!(
+            program
+                .operations()
+                .flat_map(super::super::operation::OperationRef::semantic_preconditions)
+                .count(),
+            0
+        );
+    }
+
+    /// An Assemble obligation belongs to its occurrence, not to its subject.
+    ///
+    /// Both occurrences take the *same* scale value, so their four scale
+    /// declarations agree on predicate, operand index, logical view, subject
+    /// value, resolved type, shape, and declaration ordinal — the occurrence
+    /// coordinate is the only thing separating the pairs, and an encoding that
+    /// folded it out would let one runtime discharge satisfy the other
+    /// occurrence's obligation. This is the Assemble counterpart of
+    /// [`obligation_identity_is_occurrence_exact_and_topological_order_independent`],
+    /// which pins the same property over two Quantize occurrences.
+    ///
+    /// The Quantize occurrence sharing the same scale is included to check the
+    /// cross-operation claim end to end. That claim is over-determined — the
+    /// two operations' declarations already differ in ordinal *and*
+    /// invalid-input code, so no single dropped field collapses them — and the
+    /// declaration-level guarantee it rests on is the one pinned by
+    /// [`strict_assemble_declares_the_same_scale_domain_under_its_own_codes`].
+    #[test]
+    fn assemble_obligations_are_occurrence_exact_over_one_shared_scale() {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let expressed = builder
+            .input_resolved(
+                InputKey::new("expressed").unwrap(),
+                Shape::from_dims([2]),
+                F32::resolved_type(),
+            )
+            .unwrap();
+        let scale = builder
+            .input_resolved(
+                InputKey::new("scale").unwrap(),
+                Shape::new([]),
+                F32::resolved_type(),
+            )
+            .unwrap();
+        let zero = builder
+            .input_resolved(
+                InputKey::new("zero").unwrap(),
+                Shape::new([]),
+                U4::resolved_type(),
+            )
+            .unwrap();
+        let mut assembled = Vec::new();
+        for name in ["left", "right"] {
+            let codes = builder
+                .input_resolved(
+                    InputKey::new(format!("codes-{name}")).unwrap(),
+                    Shape::from_dims([2]),
+                    U4::resolved_type(),
+                )
+                .unwrap();
+            assembled.push(
+                builder
+                    .apply(
+                        assemble_strict_affine_op(),
+                        OperationAttributes::empty(),
+                        &[codes, scale, zero],
+                    )
+                    .unwrap()[0],
+            );
+        }
+        let quantized = builder
+            .apply(
+                quantize_strict_affine_op(),
+                OperationAttributes::empty(),
+                &[expressed, scale, zero],
+            )
+            .unwrap()[0];
+        for (ordinal, value) in assembled.iter().chain([&quantized]).enumerate() {
+            builder
+                .output_resolved(OutputKey::new(format!("out-{ordinal}")).unwrap(), *value)
+                .unwrap();
+        }
+        let program = builder.build().unwrap();
+
+        let obligations = |key: &OpKey| -> Vec<Vec<u8>> {
+            program
+                .operations()
+                .filter(|operation| operation.key() == key)
+                .flat_map(super::super::operation::OperationRef::semantic_preconditions)
+                .filter_map(super::super::SemanticPreconditionRef::obligation_identity)
+                .map(|identity| identity.as_bytes().to_vec())
+                .collect()
+        };
+        let assemble_obligations = obligations(&assemble_strict_affine_op());
+        assert_eq!(assemble_obligations.len(), 4);
+        assert_eq!(
+            assemble_obligations.iter().collect::<BTreeSet<_>>().len(),
+            4,
+            "two Assemble occurrences over one scale must not share an obligation",
+        );
+
+        let quantize_obligations = obligations(&quantize_strict_affine_op());
+        assert_eq!(quantize_obligations.len(), 3);
+        assert_eq!(
+            assemble_obligations
+                .iter()
+                .chain(&quantize_obligations)
+                .collect::<BTreeSet<_>>()
+                .len(),
+            7,
+            "an Assemble obligation is never a Quantize obligation",
+        );
+    }
+
     #[test]
     fn parameter_shape_check_reaches_its_failure_path() {
         let registry = FrozenSemanticRegistry::standard().unwrap();

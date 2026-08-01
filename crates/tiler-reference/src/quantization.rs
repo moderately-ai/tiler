@@ -887,6 +887,118 @@ mod tests {
         }
     }
 
+    /// The Assemble reference route agrees with the Assemble declaration.
+    ///
+    /// `assemble` reaches `read_scale` on its own line rather than through the
+    /// compound validator, so the classes the typed declaration refuses have to
+    /// be refused *there* too: a residual obligation that no reference path
+    /// enforces is a semantic claim the normative evaluator does not keep. The
+    /// corpus is the same exhaustive class table the typed declaration is
+    /// checked against — both signed zeros, negative finite, both signed
+    /// subnormals and the interior of that range, both infinities, and a quiet
+    /// and a signalling NaN — plus the smallest admitted normal one bit above
+    /// the largest subnormal, so this pins the boundary rather than that one
+    /// exists.
+    #[test]
+    fn residual_bearing_u4_and_u8_assemble_graphs_reject_every_invalid_runtime_scale_class() {
+        for (code_type, maximum) in [(U4::resolved_type(), 15_u8), (U8::resolved_type(), u8::MAX)] {
+            let codes_key = InputKey::new("codes").unwrap();
+            let scale_key = InputKey::new("scale").unwrap();
+            let zero_key = InputKey::new("zero").unwrap();
+            let mut graph = SemanticProgramBuilder::try_standard().unwrap();
+            let codes = graph
+                .input_resolved(codes_key.clone(), Shape::from_dims([2]), code_type.clone())
+                .unwrap();
+            let scale = graph
+                .input_resolved(scale_key.clone(), Shape::new([]), F32::resolved_type())
+                .unwrap();
+            let zero_value = graph
+                .input_resolved(zero_key.clone(), Shape::new([]), code_type.clone())
+                .unwrap();
+            let assembled = graph
+                .apply(
+                    assemble_strict_affine_op(),
+                    OperationAttributes::empty(),
+                    &[codes, scale, zero_value],
+                )
+                .unwrap()[0];
+            graph
+                .output_resolved(OutputKey::new("assembled").unwrap(), assembled)
+                .unwrap();
+            let program = graph.build().unwrap();
+            assert_eq!(
+                program
+                    .operations()
+                    .find(|operation| operation.key() == &assemble_strict_affine_op())
+                    .unwrap()
+                    .semantic_preconditions()
+                    .filter(|precondition| {
+                        precondition.status()
+                            == tiler_ir::semantic::SemanticPreconditionStatus::Residual
+                    })
+                    .count(),
+                2
+            );
+
+            let codes_payload = Tensor::dense(
+                code_type.clone(),
+                Shape::from_dims([2]),
+                vec![element([0]), element([maximum])],
+            )
+            .unwrap();
+            let zero = Tensor::scalar(code_type, element([maximum / 2])).unwrap();
+            let evaluator = ReferenceEvaluator::standard().unwrap();
+            let evaluate = |scale: &Tensor| {
+                evaluator.evaluate(
+                    &program,
+                    &[
+                        InputBinding::new(&codes_key, &codes_payload),
+                        InputBinding::new(&scale_key, scale),
+                        InputBinding::new(&zero_key, &zero),
+                    ],
+                )
+            };
+            for invalid_scale_bits in [
+                0.0_f32.to_bits(),
+                (-0.0_f32).to_bits(),
+                (-1.0_f32).to_bits(),
+                f32::MIN.to_bits(),
+                0x8000_0001,
+                f32::INFINITY.to_bits(),
+                f32::NEG_INFINITY.to_bits(),
+                0x7fc0_0000,
+                0x7f80_0001,
+                0x0000_0001,
+                0x0000_ffff,
+                f32::MIN_POSITIVE.to_bits() - 1,
+            ] {
+                let error = evaluate(&f32_scalar(f32::from_bits(invalid_scale_bits))).unwrap_err();
+                assert!(
+                    matches!(
+                        &error,
+                        EvaluationError::Operation {
+                            operation,
+                            source: ReferenceOperationError::InvalidApplication,
+                            ..
+                        } if operation == &assemble_strict_affine_op()
+                    ),
+                    "{invalid_scale_bits:#010x} must be refused by assemble: {error:?}",
+                );
+            }
+            for admitted in [f32::MIN_POSITIVE, 0.5, f32::MAX] {
+                let outputs = evaluate(&f32_scalar(admitted)).unwrap();
+                let TensorPayloadView::Compound(components) = outputs[0].payload() else {
+                    panic!("assembled output must be one compound value")
+                };
+                assert_eq!(
+                    dense_f32(components[1].tensor()).unwrap()[0].to_bits(),
+                    admitted.to_bits(),
+                    "assembly preserves the exact scale bits it admitted",
+                );
+            }
+        }
+    }
+
     #[test]
     fn unsupported_scheme_is_named_by_the_typed_missing_capability() {
         let registry = FrozenReferenceRegistry::standard().unwrap();
