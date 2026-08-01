@@ -1,7 +1,7 @@
 ---
 id: state-the-backend-payload-validation-obligation-normatively
 title: State the backend payload-validation obligation normatively
-status: in-progress
+status: review
 priority: p2
 dependencies: []
 related: [route-a-custom-backend-through-an-independently-selected-adapter, generalize-payload-provenance-beyond-the-apple-shape]
@@ -38,3 +38,11 @@ Write the obligation into `docs/artifact-abi.md` as normative text: **a backend 
 ## Closes when
 
 `docs/artifact-abi.md` states the obligation normatively with its derivation, the deferral sentence at `:101` is replaced rather than left beside its own discharge, and a reader can tell from the contract alone what a backend owes and at which validation stage — without reading `tiler-runtime` or naming any draft type.
+
+## Outcome
+
+Two **Normative** paragraphs now sit immediately after the monotonic validation stages in `docs/artifact-abi.md`. The first states that the backend whose representation a payload carries validates that payload from its own bytes, and derives it from what this layer's checks actually reach: the section digest addresses the object's bytes and the descriptor digest binds the compilation subject, while artifact identity excludes the object entirely — so an artifact built over a defective object and one built over a sound object are the same artifact by identity. The second fixes the schedule: once per routed entry, in execution order, after the route publishes that entry's carried object, before the first live-device question, and therefore before `RoutingCommit`, whose one-way property under ADR 0051 is why a payload first read when it is dispatched has nowhere left to fail safely.
+
+The derivation was checked against source rather than taken from the record. `crates/tiler-runtime/src/adapter.rs` sequences `prepare`, payload validation, then `resolve_live_device_requirements`; `crates/tiler-runtime/tests/adapter_route/main.rs`'s `every_payload_defect_is_the_backends_refusal_and_the_artifact_layer_accepts_the_bytes` asserts equal artifact identity across eight damaged objects, a decode that accepts each, a refusal arriving while fallback is still permitted, and a stage trace that ends before the first live-device question. That test is cited in the contract as the evidence.
+
+The `:101` deferral is replaced rather than left standing: the paragraph that carried it now enumerates ADR 0090's three obligations with the first pointing at the normative statement instead of restating its derivation, and its closing sentence records the landing that met the condition. `proposes three obligations` also became `decides`, which the record's own accepted status supports. No draft type is named — the surface a runtime asks through is described only as a reviewed draft that comes to Tom under ADR 0075.
