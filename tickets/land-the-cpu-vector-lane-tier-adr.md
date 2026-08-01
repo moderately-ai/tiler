@@ -9,9 +9,6 @@ scopes: [contracts/decisions, contracts/navigation, research/scheduling, researc
 shared_scopes: [project/tickets]
 paths: []
 tags: [contracts, adr, scheduling, cpu, simd]
-claimed_from: todo
-assignee: worker-acceptances
-lease_expires_at: 1785599681
 ---
 ## User-visible outcome
 
