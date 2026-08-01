@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: [replace-or-justify-the-barrier-count-axis, represent-cooperative-workgroup-reduction-dataflow]
 related: [construct-and-bind-the-first-authoritative-metal-compile-profile]
-scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/metal, implementation/build, contracts/foundation, contracts/optimizer, contracts/artifacts, contracts/navigation]
+scopes: [implementation/ir, implementation/compiler, implementation/artifact, implementation/metal, implementation/build, contracts/foundation, contracts/optimizer, contracts/artifacts, contracts/navigation, implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [synchronization, feasibility, target-profiles, correctness]
