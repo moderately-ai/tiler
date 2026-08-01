@@ -38,3 +38,11 @@ A semantic program with several tensor inputs and an elementwise expression over
 ## Closes when
 
 The measurement above is re-run against the widened boundary and the approved three-input region compiles, or the ticket records with evidence why a frontend must not invoke the compiler for such a program.
+
+## Independently reproduced at `e6a47d9`, 2026-07-31
+
+**Measurement.** `prototype-inline-aot-integration-proof` re-ran this ticket's measurement from a fresh temporary integration test at base `e6a47d9` on `nightly-2026-07-19`. The approved three-input region still refuses under all four `NumericalContract` values with `UnsupportedCapability { rule: "signature" }` and `explain: "absent (refused before a target-qualified trace)"`. The same probe compiled `(a * 2.0f32) * 3.0f32` — one input, two `F32Constant` operations, four operations total — successfully, so the boundary refuses this program specifically rather than refusing everything.
+
+**Fact, and the consequence that raises this ticket's priority.** The gap is wider than "the frontend cannot invoke the compiler for the approved region": *no* region the approved grammar can express is admitted, for any operand count. `crates/tiler-macros/src/grammar.rs:113-128` gives the region body exactly two productions, `Expression::Operand` and `Expression::Binary` over `*` and `+`, so a region has N tensor inputs and zero constant operations; both recognized normalizations require exactly one tensor input plus constants (`normalize_pointwise`, `crates/tiler-compiler/src/request.rs:1959-2079`) or a `strict_serial_sum_f32_op` reduction the grammar cannot spell (`normalize_serial_sum`, `:2092`). The intersection of "expressible" and "compilable" is empty.
+
+**Inference.** This ticket is therefore the critical path for `prototype-inline-aot-integration-proof`, which now declares it as a dependency: the AOT, cache, embedding, and runtime halves that proof needs are all verified ready, and the only missing piece is a program a consumer can write that the compiler will accept. The alternative route — giving the region grammar a scalar-literal production so a consumer can write the one-input shape that already compiles — is a change to `tensor!`'s observable public surface and is Tom's under ADR 0075, not a worker's.

@@ -1,7 +1,7 @@
 ---
 id: generate-cfg-gated-artifact-family-delivery
 title: Generate the cfg-gated delivery half of the artifact-family selection
-status: blocked
+status: todo
 priority: p1
 dependencies: [prototype-inline-proc-macro-frontend, prototype-artifact-family-delivery]
 related: [prototype-macro-embedding-and-cargo-behavior, record-that-the-frontend-axis-is-review-gated]
@@ -68,3 +68,13 @@ Do not let a nonmatching target receive another family's bytes, and do not rely 
 **The implementation blockers were rechecked on 2026-07-30.** Neither `crates/tiler-macros/**` nor `crates/tiler-frontend-*/**`, the paths `ticketsplease.toml` maps for `implementation/frontend`, exists yet. `prototype-inline-proc-macro-frontend` is now `todo` after Tom approved the extensible region syntax, while `prototype-artifact-family-delivery` remains the other declared dependency. `status: blocked` is therefore still correct until those dependencies deliver, but no unresolved frontend decision remains.
 
 **The 2026-07-25 decision's supporting fact still holds.** `push_carried_payload` (`crates/tiler-artifact/src/program/builder.rs:368-374`) still takes a per-payload `compatibility: TargetProfileRef`, so the one-envelope-N-payloads shape remains expressible in the artifact builder exactly as the decision claimed.
+
+## Unparked 2026-07-31 — both declared dependencies delivered
+
+**Fact.** `grep -m1 '^status:' tickets/prototype-inline-proc-macro-frontend.md tickets/prototype-artifact-family-delivery.md` reports `done` for both. The "Status re-verified against HEAD (2026-07-28)" section above conditioned `status: blocked` on exactly those two dependencies delivering, and they have; `status` is therefore corrected to `todo` from `prototype-inline-aot-integration-proof` at base `e6a47d9`.
+
+**Fact — the implementation blocker recorded on 2026-07-30 is also stale.** That section states "Neither `crates/tiler-macros/**` nor `crates/tiler-frontend-*/**`, the paths `ticketsplease.toml` maps for `implementation/frontend`, exists yet." `crates/tiler-macros/` now exists with seven modules, and `crates/tiler/` is an accepted public boundary (Tom, 2026-07-31, `admit-the-tiler-facade-and-proc-macro-crate-boundary`). The owning crate this ticket needed no longer has to be created.
+
+**Fact — one blocker recorded above does still stand, and it is a scope rather than a decision.** Reaching a selected family means `tiler-macros` gaining `tiler-build`/`tiler-cache`/`tiler-compiler` edges, and `Cargo.lock:419-424` currently records only `tiler-ir` and `tiler-metal-aot` for that package. Whoever dispatches this ticket must add `implementation/cargo-lock` to its scopes, and `implementation/workspace` if a new member is admitted.
+
+**Fact — a second, independent gap now sits in front of this ticket's user-visible value.** `prototype-inline-aot-integration-proof`'s Outcome records the measurement: no region the approved grammar can express is admitted by `tiler_compiler`'s strategy selection, because both recognized normalizations require exactly one tensor input plus constant operations and the grammar has neither a scalar-literal nor a reduction production. Compiling a selected family is therefore implementable here, but nothing a consumer can currently write will exercise it until `admit-multi-input-elementwise-programs-at-the-compiler-boundary` lands or the grammar gains constant syntax (a `tensor!` public-boundary change, Tom's under ADR 0075).
