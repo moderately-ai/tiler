@@ -1,7 +1,7 @@
 ---
 id: retain-the-c1-model-attribution-fixture
 title: Retain the C1 model attribution fixture
-status: in-progress
+status: done
 priority: p1
 dependencies: [retain-the-qwen-conformance-reference-logit-fixture]
 related: [design-model-ingestion-and-complete-execution, define-first-metal-lm-workload, prove-the-c1-complete-model-execution, design-model-level-qualification-and-optimization]
@@ -9,9 +9,6 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, fixture, conformance, attribution, language-model]
-claimed_from: todo
-assignee: worker-c1-attribution
-lease_expires_at: 1785573030
 ---
 ## User-visible outcome
 
