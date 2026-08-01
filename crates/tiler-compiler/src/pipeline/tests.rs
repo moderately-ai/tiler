@@ -4068,10 +4068,17 @@ fn the_widened_budgets_admit_the_split_program_and_still_refuse_a_narrower_reque
     // And the program-side check still bites: a request stating exactly the
     // widened buffer budget admits the split, one stating less does not reach
     // it at all, so the value that separates them is the one that moved.
+    //
+    // The budget is `6` rather than the `4` this test first pinned because the
+    // recognizer now admits an elementwise prologue over several declared
+    // inputs. The *requirement* this one-input program places on it is still
+    // four — every declared input, the prologue's temporary, the split's staged
+    // partial tensor, and the output — and `verify_program` derives that from
+    // the declared arity, which is what the `buffers: 3` refusal above drives.
     let (semantic, request) = split_request(Shape::from_dims([1, 4]));
     let scheduled = split_regions(&request);
     assert!(build_split_kernel_program(&semantic, &request, &scheduled).is_ok());
-    assert_eq!(request.budgets().buffers, 4);
+    assert_eq!(request.budgets().buffers, 6);
     assert_eq!(request.budgets().regions, 3);
 }
 

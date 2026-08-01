@@ -6,7 +6,10 @@ use std::sync::OnceLock;
 use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::index::FrozenScalarRegistry;
 use tiler_ir::program::abi::AvailabilityPhase;
-use tiler_ir::schedule::InputOrdinal;
+use tiler_ir::schedule::{
+    InputOrdinal, PointwiseF32Expression, PointwiseF32ExpressionBuilder, PointwiseF32Node,
+    PointwiseF32Value,
+};
 use tiler_ir::semantic::{
     CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalIntegerWidth, CanonicalValueView,
     ContractionIndex, ContractionIndexStructure, F32, F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey,
@@ -76,10 +79,6 @@ pub(crate) const REASSOCIATE_CONTRACT_KEY: &str = "tiler.reassociate-f32.v1";
 /// happened to agree with the table would silently start refusing a legitimate
 /// complete preference the first time the table grew.
 pub(crate) const MAX_NUMERICAL_CONTRACT_PREFERENCES: usize = NumericalPolicyPreset::ALL.len();
-/// Recognized operation count when both pointwise constants are one shared value.
-const RECOGNIZED_OPERATIONS_MIN: usize = 4;
-/// Recognized operation count when each pointwise constant is a distinct value.
-const RECOGNIZED_OPERATIONS_MAX: usize = 5;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct StaticShapeEnvironment {
@@ -462,12 +461,22 @@ impl DeterministicBudgets {
     /// The bounded profile's deterministic budgets.
     ///
     /// **`regions` and `buffers` are sized for the largest program shape this
-    /// profile assembles, which is the split reduction.** They were `2` and `3`
-    /// — the materialized pointwise-then-reduce program's two stages and its
-    /// input, temporary, and output. A split replaces the single reduction
-    /// dispatch with a partial pass and a final pass, so its program is three
-    /// stages over four values: the input, the pointwise temporary, the partial
-    /// tensor, and the output.
+    /// profile assembles, which is the split reduction.** `regions` was `2` —
+    /// the materialized pointwise-then-reduce program's two stages — and a split
+    /// replaces the single reduction dispatch with a partial pass and a final
+    /// pass, so its program is three stages.
+    ///
+    /// `buffers` was `3`, then `4`, and is now `6`, and each step is the same
+    /// derivation over a wider recognized program. Three was the one-input
+    /// materialized program's input, temporary, and output; four added the
+    /// split's staged partial tensor. Six is that same split over the widest
+    /// prologue the *target* side admits: the governed profile declares four
+    /// buffer bindings and an elementwise region binds one per declared input
+    /// plus its write, so a three-input prologue is the widest feasible one, and
+    /// its split program declares three inputs, the temporary, the partial
+    /// tensor, and the output. It is a bound rather than a requirement —
+    /// `verify_program` refuses a request whose declared arity needs more — so
+    /// widening it admits program shapes and never demands them.
     ///
     /// The widening is a *deliberate* decision and not a test-enabling edit,
     /// because both numbers are inside the canonical request subject
@@ -491,7 +500,7 @@ impl DeterministicBudgets {
             semantic_operations: 8,
             regions: 3,
             host_expression_nodes: 32,
-            buffers: 4,
+            buffers: 6,
             normalization_rewrites: 8,
             region_members: 32,
             region_boundary_outputs: 8,
@@ -723,9 +732,15 @@ impl CompilationRequest<'_> {
 /// operations, so the exact occurrences it matched are retained instead of being
 /// re-encoded as a fixed role vocabulary downstream. Only the ascending member
 /// sets are retained: two programs that `tiler-ir` gives one canonical graph
-/// identity may store the pointwise constants in either order, and the recognized
-/// coverage must not depend on which spelling the caller authored. A shared
-/// pointwise constant simply contributes one member instead of two.
+/// identity may store the prologue's constants in either order, and the
+/// recognized coverage must not depend on which spelling the caller authored. A
+/// shared constant simply contributes one member instead of two.
+///
+/// The prologue set is always nonempty. A reduction whose contributor tensor is
+/// a declared input needs no prologue region, but the schedule IR's
+/// `StrictSerialSum` region requires its contributor access to read
+/// `TensorRole::Intermediate`, so this profile has no region for that shape and
+/// [`recognize_reduction`] refuses it at the boundary instead.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RecognizedSerialSumMembers {
     pointwise: Vec<SemanticMemberId>,
@@ -733,10 +748,14 @@ pub(crate) struct RecognizedSerialSumMembers {
 }
 
 impl RecognizedSerialSumMembers {
-    fn new(scale_constant: u32, multiply: u32, bias_constant: u32, add: u32, sum: u32) -> Self {
+    /// Binds the recognized prologue's occurrences and the reduction's own.
+    fn new(pointwise: Vec<SemanticMemberId>, reduction: u32) -> Self {
+        let mut pointwise = pointwise;
+        pointwise.sort_unstable();
+        pointwise.dedup();
         Self {
-            pointwise: ascending([scale_constant, multiply, bias_constant, add]),
-            reduction: ascending([sum]),
+            pointwise,
+            reduction: vec![SemanticMemberId(reduction)],
         }
     }
 
@@ -764,87 +783,50 @@ impl RecognizedSerialSumMembers {
     }
 }
 
-fn ascending<const N: usize>(ordinals: [u32; N]) -> Vec<SemanticMemberId> {
-    let mut ordinals = ordinals;
-    ordinals.sort_unstable();
-    let mut members: Vec<_> = ordinals.into_iter().map(SemanticMemberId).collect();
-    members.dedup();
-    members
-}
-
+/// A verified N-input, one-output `f32` program whose output is a strict serial
+/// reduction of a recognized elementwise contributor expression.
+///
+/// **The prologue is a general expression, not a template.** It is whatever
+/// [`recognize_elementwise`] found between the declared inputs and the
+/// reduction's operand — any depth, any mix of the recognized families, any
+/// number of declared inputs, and shared reads. `input_keys` and `inputs` are
+/// parallel and in declaration order, which is the order the expression's input
+/// ordinals index and the order the assembled program binds its buffers in.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NormalizedSerialSum {
-    pub(crate) input_key: InputKey,
+    pub(crate) input_keys: Vec<InputKey>,
     pub(crate) output_key: OutputKey,
+    /// The contributor domain: the shape the prologue writes and the fold reads.
     pub(crate) input_shape: Shape,
     pub(crate) output_shape: Shape,
     pub(crate) reduction_axes: Vec<Axis>,
-    pub(crate) scale_bits: u32,
-    pub(crate) bias_bits: u32,
+    /// The recognized elementwise prologue the fold's contributors come from.
+    pub(crate) prologue: PointwiseF32Expression,
     pub(crate) members: RecognizedSerialSumMembers,
-    pub(crate) input: ValueId,
+    pub(crate) inputs: Vec<ValueId>,
     pub(crate) pointwise_result: ValueId,
     pub(crate) output: ValueId,
     pub(crate) input_elements: u64,
     pub(crate) output_elements: u64,
 }
 
-/// One ordered leaf of the bounded standalone pointwise expression.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum NormalizedPointwiseLeaf {
-    /// One of the program's tensor inputs, by declaration order.
-    Input(InputOrdinal),
-    /// One exact binary32 scalar constant.
-    Constant(u32),
-}
-
-/// One recognized operation family of a bounded standalone pointwise chain.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum NormalizedPointwiseOperation {
-    Add,
-    Multiply,
-}
-
-/// Classifies one operation as a recognized pointwise family, or declines.
-///
-/// The two families are named here rather than compared at each site so the
-/// root and the child are recognized by one rule; they are independent, and a
-/// chain mixing them is the approved region's own shape.
-fn pointwise_family(
-    operation: &tiler_ir::semantic::OperationRef<'_>,
-) -> Option<NormalizedPointwiseOperation> {
-    if operation.key() == &add_f32_op() {
-        Some(NormalizedPointwiseOperation::Add)
-    } else if operation.key() == &multiply_f32_op() {
-        Some(NormalizedPointwiseOperation::Multiply)
-    } else {
-        None
-    }
-}
-
-/// The exact ordered association of a three-leaf pointwise chain.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum NormalizedPointwiseAssociation {
-    Left,
-    Right,
-}
-
-/// A verified N-input, one-output, three-leaf pointwise `f32` program.
+/// A verified N-input, one-output elementwise `f32` program.
 ///
 /// `input_keys` and `inputs` are parallel and in the program's declaration
-/// order, which is the order a [`NormalizedPointwiseLeaf::Input`] ordinal
-/// indexes and the order the assembled program binds its buffers in. One
-/// `shape` governs every input and the output, so a single element count sizes
-/// the whole region.
+/// order, which is the order the expression's input ordinals index and the order
+/// the assembled program binds its buffers in. One `shape` governs every input
+/// and the output, so a single element count sizes the whole region.
+///
+/// **`expression` is the recognized program, not a projection of it.** It is the
+/// general [`PointwiseF32Expression`] vocabulary rather than a fixed leaf count
+/// and association, so what the recognizer admits is bounded by what the
+/// physical expression can spell rather than by a shape it was taught.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NormalizedPointwise {
     pub(crate) input_keys: Vec<InputKey>,
     pub(crate) output_key: OutputKey,
     pub(crate) shape: Shape,
-    pub(crate) root_operation: NormalizedPointwiseOperation,
-    pub(crate) child_operation: NormalizedPointwiseOperation,
-    pub(crate) association: NormalizedPointwiseAssociation,
-    pub(crate) leaves: [NormalizedPointwiseLeaf; 3],
+    pub(crate) expression: PointwiseF32Expression,
     pub(crate) members: Vec<SemanticMemberId>,
     pub(crate) inputs: Vec<ValueId>,
     pub(crate) output: ValueId,
@@ -943,7 +925,11 @@ impl NormalizedProgram {
     pub(crate) fn input_elements_at(&self, ordinal: InputOrdinal) -> Option<u64> {
         let ordinal = usize::try_from(ordinal.get()).ok()?;
         match self {
-            Self::SerialSum(normalized) => (ordinal == 0).then_some(normalized.input_elements),
+            // Every declared input of a reduced program is read at the
+            // contributor domain, which is the one shape its prologue governs.
+            Self::SerialSum(normalized) => {
+                (ordinal < normalized.input_keys.len()).then_some(normalized.input_elements)
+            }
             Self::Pointwise(normalized) => {
                 (ordinal < normalized.input_keys.len()).then_some(normalized.elements)
             }
@@ -1069,13 +1055,12 @@ pub(crate) struct VerifiedRequestSubject {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NormalizedSerialSumSubject {
-    input_key: InputKey,
+    input_keys: Vec<InputKey>,
     output_key: OutputKey,
     input_shape: Shape,
     output_shape: Shape,
     reduction_axes: Vec<Axis>,
-    scale_bits: u32,
-    bias_bits: u32,
+    prologue: PointwiseF32Expression,
     members: RecognizedSerialSumMembers,
     input_elements: u64,
     output_elements: u64,
@@ -1194,7 +1179,15 @@ impl VerifiedRequestSubject {
 
     pub(crate) fn canonical_explain_subject_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
-        bytes.extend_from_slice(b"tiler.compiler.request-subject.v2\0");
+        // The enclosing domain steps to `v3` rather than only the per-arm
+        // sub-tags, because this recognizer moved two of the three arms' shapes
+        // at once *and* gave the serial-sum arm its first sub-tag. A same-domain
+        // re-tag would have to argue that a newly tagged arm cannot be read as
+        // the untagged one it replaced — the old arm opened with a length-framed
+        // input key, and a caller may name an input whatever it likes — and that
+        // argument does not close. Stepping the domain makes the separation
+        // structural instead.
+        bytes.extend_from_slice(b"tiler.compiler.request-subject.v3\0");
         push_slice(&mut bytes, self.semantic_identity.graph().as_bytes());
         push_slice(
             &mut bytes,
@@ -1210,7 +1203,11 @@ impl VerifiedRequestSubject {
         );
         match &self.normalized {
             NormalizedProgramSubject::SerialSum(normalized) => {
-                push_slice(&mut bytes, normalized.input_key.as_str().as_bytes());
+                push_slice(&mut bytes, b"serial-sum-f32.v2");
+                push_len(&mut bytes, normalized.input_keys.len());
+                for key in &normalized.input_keys {
+                    push_slice(&mut bytes, key.as_str().as_bytes());
+                }
                 push_slice(&mut bytes, normalized.output_key.as_str().as_bytes());
                 encode_explain_shape(&mut bytes, &normalized.input_shape);
                 encode_explain_shape(&mut bytes, &normalized.output_shape);
@@ -1218,8 +1215,7 @@ impl VerifiedRequestSubject {
                 for axis in &normalized.reduction_axes {
                     bytes.extend_from_slice(&axis.get().to_be_bytes());
                 }
-                bytes.extend_from_slice(&normalized.scale_bits.to_be_bytes());
-                bytes.extend_from_slice(&normalized.bias_bits.to_be_bytes());
+                encode_pointwise_expression(&mut bytes, &normalized.prologue);
                 for members in [
                     normalized.members.pointwise(),
                     normalized.members.reduction(),
@@ -1233,41 +1229,19 @@ impl VerifiedRequestSubject {
                 bytes.extend_from_slice(&normalized.output_elements.to_be_bytes());
             }
             NormalizedProgramSubject::Pointwise(normalized) => {
-                // The sub-tag steps to `v2` because this arm's shape changed:
-                // one input key became a counted run of them, and an input leaf
-                // grew its ordinal. Stepping it rather than the enclosing
-                // `request-subject.v2` domain is what the tag table is for — the
-                // serial-sum arm's bytes do not move, and a `v1` pointwise
-                // subject can never be read as a `v2` one.
-                push_slice(&mut bytes, b"pointwise-f32.v2");
+                // The sub-tag steps to `v3` because this arm's shape changed
+                // again: a fixed root family, child family, association, and
+                // three leaves became the general expression the recognizer now
+                // admits. A `v2` pointwise subject can never be read as a `v3`
+                // one.
+                push_slice(&mut bytes, b"pointwise-f32.v3");
                 push_len(&mut bytes, normalized.input_keys.len());
                 for key in &normalized.input_keys {
                     push_slice(&mut bytes, key.as_str().as_bytes());
                 }
                 push_slice(&mut bytes, normalized.output_key.as_str().as_bytes());
                 encode_explain_shape(&mut bytes, &normalized.shape);
-                for operation in [normalized.root_operation, normalized.child_operation] {
-                    bytes.push(match operation {
-                        NormalizedPointwiseOperation::Add => 0x01,
-                        NormalizedPointwiseOperation::Multiply => 0x02,
-                    });
-                }
-                bytes.push(match normalized.association {
-                    NormalizedPointwiseAssociation::Left => 0x01,
-                    NormalizedPointwiseAssociation::Right => 0x02,
-                });
-                for leaf in normalized.leaves {
-                    match leaf {
-                        NormalizedPointwiseLeaf::Input(ordinal) => {
-                            bytes.push(0x01);
-                            bytes.extend_from_slice(&ordinal.get().to_be_bytes());
-                        }
-                        NormalizedPointwiseLeaf::Constant(bits) => {
-                            bytes.push(0x02);
-                            bytes.extend_from_slice(&bits.to_be_bytes());
-                        }
-                    }
-                }
+                encode_pointwise_expression(&mut bytes, &normalized.expression);
                 push_len(&mut bytes, normalized.members.len());
                 for member in &normalized.members {
                     bytes.extend_from_slice(&member.0.to_be_bytes());
@@ -1404,6 +1378,58 @@ pub(crate) const fn permission_tag(permission: NumericalPermission) -> u8 {
     }
 }
 
+/// Appends one recognized elementwise expression's complete canonical encoding.
+///
+/// **Complete, and structural rather than summarized.** The node run is written
+/// in the expression's own canonical order with each node's operand ordinals, so
+/// two expressions that differ in association, in which leaf an operand reads,
+/// or in the sharing of a subexpression encode differently — all three are
+/// different binary32 functions, and a subject that could not tell them apart
+/// would let one artifact stand for two programs.
+///
+/// The per-node tag is an exhaustive match rather than a discriminant cast, for
+/// the reason [`subnormal_tag`] states: a node added to the vocabulary must stop
+/// the build here rather than silently encode under a neighbour's tag.
+fn encode_pointwise_expression(bytes: &mut Vec<u8>, expression: &PointwiseF32Expression) {
+    push_len(bytes, expression.nodes().len());
+    for node in expression.nodes() {
+        match node {
+            PointwiseF32Node::Input { ordinal } => {
+                bytes.push(0x01);
+                bytes.extend_from_slice(&ordinal.get().to_be_bytes());
+            }
+            PointwiseF32Node::Constant { bits } => {
+                bytes.push(0x02);
+                bytes.extend_from_slice(&bits.to_be_bytes());
+            }
+            PointwiseF32Node::Add { lhs, rhs } => encode_binary_node(bytes, 0x03, *lhs, *rhs),
+            PointwiseF32Node::Multiply { lhs, rhs } => encode_binary_node(bytes, 0x04, *lhs, *rhs),
+            PointwiseF32Node::Divide { lhs, rhs } => encode_binary_node(bytes, 0x05, *lhs, *rhs),
+            PointwiseF32Node::Exp { argument } => {
+                bytes.push(0x06);
+                bytes.extend_from_slice(&argument.index().to_be_bytes());
+            }
+            PointwiseF32Node::Rsqrt { argument } => {
+                bytes.push(0x07);
+                bytes.extend_from_slice(&argument.index().to_be_bytes());
+            }
+        }
+    }
+    bytes.extend_from_slice(&expression.root().index().to_be_bytes());
+}
+
+/// Appends one ordered binary expression node under its canonical tag.
+fn encode_binary_node(
+    bytes: &mut Vec<u8>,
+    tag: u8,
+    lhs: tiler_ir::schedule::PointwiseF32NodeId,
+    rhs: tiler_ir::schedule::PointwiseF32NodeId,
+) {
+    bytes.push(tag);
+    bytes.extend_from_slice(&lhs.index().to_be_bytes());
+    bytes.extend_from_slice(&rhs.index().to_be_bytes());
+}
+
 fn encode_explain_shape(output: &mut Vec<u8>, shape: &Shape) {
     push_len(output, shape.rank());
     for extent in shape.extents() {
@@ -1421,11 +1447,9 @@ impl NormalizedSerialSumSubject {
     pub(crate) fn reduction_axes(&self) -> &[Axis] {
         &self.reduction_axes
     }
-    pub(crate) const fn scale_bits(&self) -> u32 {
-        self.scale_bits
-    }
-    pub(crate) const fn bias_bits(&self) -> u32 {
-        self.bias_bits
+    /// The recognized elementwise prologue the fold's contributors come from.
+    pub(crate) const fn prologue(&self) -> &PointwiseF32Expression {
+        &self.prologue
     }
     pub(crate) const fn members(&self) -> &RecognizedSerialSumMembers {
         &self.members
@@ -1570,13 +1594,12 @@ fn request_subject(
     let normalized = match normalized {
         NormalizedProgram::SerialSum(normalized) => {
             NormalizedProgramSubject::SerialSum(NormalizedSerialSumSubject {
-                input_key: normalized.input_key.clone(),
+                input_keys: normalized.input_keys.clone(),
                 output_key: normalized.output_key.clone(),
                 input_shape: normalized.input_shape.clone(),
                 output_shape: normalized.output_shape.clone(),
                 reduction_axes: normalized.reduction_axes.clone(),
-                scale_bits: normalized.scale_bits,
-                bias_bits: normalized.bias_bits,
+                prologue: normalized.prologue.clone(),
                 members: normalized.members.clone(),
                 input_elements: normalized.input_elements,
                 output_elements: normalized.output_elements,
@@ -2038,20 +2061,30 @@ fn verify_program(
     // program's pointwise, partial, and final stages over its input, temporary,
     // partial, and output values.
     check_budget("regions", budgets.regions, 3)?;
-    // Nine, and the contraction reaches the same nine by a different route: the
-    // element width, one element count and one byte count per declared input,
-    // the output's pair, the workgroup width, and the applicability guard. A
-    // strategy declaring a third input would exceed it, which is why this is
-    // re-derived here rather than left as the split program's number.
-    check_budget("host-expression-nodes", budgets.host_expression_nodes, 9)?;
-    // A standalone pointwise program binds one buffer per declared input plus
-    // its output, which can exceed the split program's four. Taking the larger
-    // keeps this an upper bound over every plan the request could reach, which
-    // is what lets it be checked before a strategy has been chosen.
+    // Derived from the declared input arity rather than spelled, because it is
+    // an upper bound over every plan the request could reach and the widest of
+    // those grows with the arity: the element width, one element count and one
+    // byte count per declared input, the output's pair, the staged partial
+    // tensor's pair, the workgroup width, and the applicability guard. One
+    // input reaches nine, which is what the split program declared when this was
+    // a literal, and the two-input contraction reaches nine as well by a
+    // different route — it declares no partial tensor and one further input.
+    check_budget(
+        "host-expression-nodes",
+        budgets.host_expression_nodes,
+        program.input_count().saturating_mul(2).saturating_add(7),
+    )?;
+    // The widest buffer count any plan for this request could reach: every
+    // declared input, the prologue's materialized temporary, a split's staged
+    // partial tensor, and the output. A standalone elementwise program binds
+    // only the first and last of those and a contraction only two inputs and an
+    // output, so this bounds them too — which is what lets it be checked before
+    // a strategy has been chosen. One input reaches four, the split program's
+    // own number before this was derived.
     check_budget(
         "buffers",
         budgets.buffers,
-        4.max(program.input_count().saturating_add(1)),
+        program.input_count().saturating_add(3),
     )?;
     Ok((
         select_supported_strategy(program)?,
@@ -2123,39 +2156,433 @@ fn resolve_numerical_contract(
     })
 }
 
-/// Selects the one recognized strategy a program admits, or explains the refusal.
+/// Recognizes one verified semantic program, or explains what it could not
+/// recognize.
 ///
-/// The strategies are disjoint by the operation key each is built around, so the
-/// order below decides nothing about which one wins — a program reaching the
-/// second recognizer is one the first has already refused, and it can only be
-/// admitted by the second if it carries that recognizer's own root operation.
-/// What the order does decide is *which* refusal a rejected program reports, and
-/// that is settled by the key the program actually contains rather than by
-/// enumeration order: a program mentioning the serial sum gets the serial sum's
-/// reason, one mentioning the contraction gets the contraction's, and one
-/// mentioning neither gets the pointwise reason, which is the recognizer whose
-/// vocabulary it was closest to.
+/// # What generalized, and what the generalization rests on
+///
+/// This is **not** a match against whole-program templates. The program-wide
+/// properties every recognized program shares — at least one declared input,
+/// exactly one output, `f32` throughout — are checked once and each names its
+/// own rule, and the program's shape is then decided by *the occurrence that
+/// produces the output*, walked outward through the occurrences that feed it.
+/// A program whose exact shape nothing here was taught is admitted when every
+/// occurrence it contains is one the physical layer can realize and they compose
+/// into a region chain it can assemble; nothing asks whether the whole graph
+/// matches a spelling.
+///
+/// Concretely, the elementwise dimension is now the general
+/// [`PointwiseF32Expression`] vocabulary rather than a leaf count. A reduction
+/// over `(a * b) + c` with three declared inputs, a whole-program
+/// `((a * 2.0) + b) * c` over two, and a chain sharing one subexpression at
+/// several places are all admitted by the same walk that admits the scale-bias
+/// program the old template spelled, and none of them was a shape this boundary
+/// had been taught.
+///
+/// # What is still refused, and where the wall actually is
+///
+/// Recognition may only admit what the physical layer can express, so three
+/// walls below this boundary are refused *at* it, each under its own rule:
+///
+/// - **Multiple outputs** (`output-arity`). Every region builder writes one
+///   owning tensor; `admit-ordered-multi-output-programs-at-the-compiler-request-boundary`
+///   owns the widening and depends on this ticket.
+/// - **An operation the region vocabulary cannot spell** (`operation-set`).
+///   `tiler::silu-f32@1`, `tiler::reindex-f32@1`, and `tiler::broadcast-f32@1`
+///   each have a registered *lowering* capability, but no
+///   [`tiler_ir::schedule::ScalarProgram`] or
+///   [`tiler_ir::schedule::LogicalAccess`] spells them, and decomposing one here
+///   into expression nodes would be this boundary re-deriving a provider's
+///   lowering — exactly what occurrence refinement exists to prevent.
+///   `admit-the-registered-unary-families-at-the-compiler-request-boundary`
+///   owns it.
+/// - **An elementwise stage reading a materialized intermediate**
+///   (`operation-set` from the contraction cover, `elementwise-shape` or
+///   `operation-set` from the elementwise walk). Every elementwise region this
+///   profile builds reads declared input tensors and nothing else, so a
+///   contraction or a reduction feeding an elementwise epilogue has no region
+///   to be assembled into. That is a gap in the physical layer rather than in
+///   the schedule vocabulary — `tiler_ir::schedule::TensorRole::Intermediate`
+///   is a per-region role, so nothing about it forbids the chain — which is
+///   exactly why it is refused here instead of admitted and then dropped
+///   mid-pipeline. `admit-elementwise-epilogues-over-a-materialized-intermediate`
+///   owns the widening.
+/// - **A reduction reading a declared input directly** (`reduction-prologue`).
+///   `tiler-ir`'s schedule verifier requires a `StrictSerialSum` region's
+///   contributor access to read `TensorRole::Intermediate`, so this profile has
+///   no region for `sum(x)`; `admit-a-reduction-over-a-declared-input-tensor`
+///   owns it.
+///
+/// Which refusal a rejected program reports is settled by the occurrence it
+/// actually ends in rather than by enumeration order: a program whose output is
+/// a reduction gets the reduction's reason, one whose output is a contraction
+/// gets the contraction's, and any other gets the elementwise walk's.
 fn select_supported_strategy(program: &SemanticProgram) -> Result<NormalizedProgram, RequestError> {
-    let serial_error = match normalize_serial_sum(program) {
-        Ok(normalized) => return Ok(NormalizedProgram::SerialSum(normalized)),
-        Err(error) => error,
-    };
-    let contraction_error = match normalize_contraction(program) {
-        Ok(normalized) => return Ok(NormalizedProgram::Contraction(Box::new(normalized))),
-        Err(error) => error,
-    };
-    let pointwise_error = match normalize_pointwise(program) {
-        Ok(normalized) => return Ok(NormalizedProgram::Pointwise(normalized)),
-        Err(error) => error,
-    };
-    let mentions = |key: &OpKey| program.operations().any(|operation| operation.key() == key);
-    if mentions(&strict_serial_sum_f32_op()) {
-        Err(serial_error)
-    } else if mentions(&strict_tensor_contraction_f32_op()) {
-        Err(contraction_error)
-    } else {
-        Err(pointwise_error)
+    // Program-wide properties first, each under the rule that names it. A
+    // program failing one of these fails it for every shape below, so reporting
+    // it here is both the more specific statement and the only one that does not
+    // depend on which occurrence happens to produce the output.
+    if program.input_count() == 0 {
+        return mismatch("input-arity");
     }
+    if program.output_count() != 1 {
+        return mismatch("output-arity");
+    }
+    if program
+        .values()
+        .any(|value| value.resolved_type() != &F32::resolved_type())
+    {
+        return mismatch("dtype-f32");
+    }
+    let output = program
+        .outputs()
+        .next()
+        .ok_or(RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule: "missing-output",
+        })?;
+    // A program whose output *is* a declared input computes nothing: it names no
+    // operation for any region to realize. The property that was not recognized
+    // is its operation set, so it is reported under that rule rather than as the
+    // missing producer a bare graph walk would report.
+    if program
+        .inputs()
+        .any(|input| input.value() == output.value())
+    {
+        return mismatch("operation-set");
+    }
+    let (member, root) = producer_for_value(program, output.value())?;
+    if root.key() == &strict_serial_sum_f32_op() {
+        recognize_reduction(program, &output, member, &root).map(NormalizedProgram::SerialSum)
+    } else if root.key() == &strict_tensor_contraction_f32_op() {
+        normalize_contraction(program)
+            .map(|normalized| NormalizedProgram::Contraction(Box::new(normalized)))
+    } else {
+        recognize_pointwise(program, &output).map(NormalizedProgram::Pointwise)
+    }
+}
+
+/// One recognized elementwise expression and the occurrences it covers.
+struct RecognizedElementwise {
+    expression: PointwiseF32Expression,
+    members: Vec<SemanticMemberId>,
+}
+
+/// The elementwise operation families this recognizer spells directly.
+///
+/// Exactly the families that are both a registered lowering capability *and* a
+/// node of the physical expression vocabulary. `tiler::silu-f32@1` fails the
+/// second half — it lowers to a subtree rather than a node — and is refused
+/// under `operation-set` rather than expanded here.
+#[derive(Clone, Copy)]
+enum ElementwiseFamily {
+    Add,
+    Multiply,
+}
+
+/// Classifies one operation as a recognized elementwise family, or declines.
+fn elementwise_family(
+    operation: &tiler_ir::semantic::OperationRef<'_>,
+) -> Option<ElementwiseFamily> {
+    if operation.key() == &add_f32_op() {
+        Some(ElementwiseFamily::Add)
+    } else if operation.key() == &multiply_f32_op() {
+        Some(ElementwiseFamily::Multiply)
+    } else {
+        None
+    }
+}
+
+/// Recognizes the elementwise expression rooted at one value.
+///
+/// **General over the graph rather than over a taught shape.** Each operand is
+/// classified independently — a declared input tensor becomes the leaf that
+/// reads it, a `tiler.constant-f32` occurrence becomes an exact constant leaf,
+/// and a recognized elementwise occurrence is walked in turn — so depth, arity,
+/// family mixing, and shared subexpressions are properties of the caller's
+/// program rather than of a template. Two operands naming one value share the
+/// node already minted, which is what makes `(a * a) + b` one read of `a`.
+///
+/// `shape` is the region's iteration domain, and every tensor read must carry
+/// it: the region binds one linear-identity access per read, so an operand at a
+/// different shape would be sized by a domain it does not have. A constant is
+/// rank-zero and is a literal node rather than a read, so it is deliberately not
+/// held to it.
+///
+/// The walk is iterative over an explicit worklist rather than recursive. The
+/// depth is the caller's own longest elementwise chain, and a recognizer that
+/// consumed host stack proportional to it would turn an input property into a
+/// crash rather than a refusal.
+///
+/// # Errors
+///
+/// Returns [`RequestError::UnsupportedCapability`] naming the exact property
+/// that was not recognized: `operation-set` for a family the expression
+/// vocabulary cannot spell, `elementwise-shape` for a read at another domain,
+/// `elementwise-attributes` for an attribute this projection would drop,
+/// `elementwise-arity` for an operand count the vocabulary has no node for, and
+/// `elementwise-expression` when the assembled expression is not one a region
+/// can bind.
+fn recognize_elementwise(
+    program: &SemanticProgram,
+    root: ValueId,
+    declared: &[ValueId],
+    shape: &Shape,
+) -> Result<RecognizedElementwise, RequestError> {
+    let mut builder = PointwiseF32ExpressionBuilder::new();
+    let mut minted: Vec<(ValueId, PointwiseF32Value)> = Vec::new();
+    let mut members: Vec<SemanticMemberId> = Vec::new();
+    let mut reads: BTreeSet<u32> = BTreeSet::new();
+    let mut pending = vec![(root, false)];
+    while let Some((value, operands_visited)) = pending.pop() {
+        if minted.iter().any(|(seen, _)| *seen == value) {
+            continue;
+        }
+        if let Some(position) = declared.iter().position(|input| *input == value) {
+            let ordinal =
+                u32::try_from(position).map_err(|_| RequestError::UnsupportedCapability {
+                    phase: "strategy",
+                    rule: "input-ordinal",
+                })?;
+            if program.shape(value).ok() != Some(shape) {
+                return mismatch("elementwise-shape");
+            }
+            let leaf = builder
+                .input(InputOrdinal::new(ordinal))
+                .map_err(|_| expression_bound())?;
+            reads.insert(ordinal);
+            minted.push((value, leaf));
+            continue;
+        }
+        let (member, operation) = producer_for_value(program, value)?;
+        if operation.results().collect::<Vec<_>>() != [value] {
+            return mismatch("elementwise-result-arity");
+        }
+        if operation.key() == &constant_f32_op() {
+            let (bits, _) = constant_bits(program, value)?;
+            let leaf = builder.constant(bits).map_err(|_| expression_bound())?;
+            members.push(SemanticMemberId(member));
+            minted.push((value, leaf));
+            continue;
+        }
+        let Some(family) = elementwise_family(&operation) else {
+            return mismatch("operation-set");
+        };
+        // A recognized elementwise operation of this profile is attribute-free.
+        // An attribute is a semantic fact the expression does not carry forward,
+        // so admitting one would silently drop it.
+        if !operation.attributes().fields().is_empty() {
+            return mismatch("elementwise-attributes");
+        }
+        // The region's domain, or rank zero. The second arm is not a relaxation:
+        // the expression's nodes are *per-point values*, so a subexpression over
+        // constants alone — which the semantic inferencer types as rank zero —
+        // is evaluated exactly like a constant leaf and reads no tensor. It is
+        // also reachable rather than defensive: reassociating `(a * 2.0) * 3.0`
+        // into `a * (2.0 * 3.0)` is an alternative the algebraic exploration
+        // proposes under a contract that permits it, and its inner product is
+        // rank zero. Refusing every rank would have lost that alternative to a
+        // check with no correctness content behind it.
+        let value_shape = program.shape(value).ok();
+        if value_shape != Some(shape) && value_shape.map(Shape::rank) != Some(0) {
+            return mismatch("elementwise-shape");
+        }
+        let operands: Vec<ValueId> = operation.operands().collect();
+        let [lhs, rhs] = operands.as_slice() else {
+            return mismatch("elementwise-arity");
+        };
+        if !operands_visited {
+            pending.push((value, true));
+            pending.push((*rhs, false));
+            pending.push((*lhs, false));
+            continue;
+        }
+        let lhs = minted_value(&minted, *lhs)?;
+        let rhs = minted_value(&minted, *rhs)?;
+        let node = match family {
+            ElementwiseFamily::Add => builder.add(lhs, rhs),
+            ElementwiseFamily::Multiply => builder.multiply(lhs, rhs),
+        }
+        .map_err(|_| expression_bound())?;
+        members.push(SemanticMemberId(member));
+        minted.push((value, node));
+    }
+    // Every declared input must be read. One that is not would bind a buffer the
+    // kernel never loads, and the expression's own dense-ordinal rule would
+    // refuse the assembled expression anyway — this reports the property rather
+    // than the consequence.
+    if reads.len() != declared.len() {
+        return mismatch("elementwise-reads");
+    }
+    let root = minted_value(&minted, root)?;
+    let expression = builder
+        .build(root)
+        .map_err(|_| RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule: "elementwise-expression",
+        })?;
+    members.sort_unstable();
+    members.dedup();
+    Ok(RecognizedElementwise {
+        expression,
+        members,
+    })
+}
+
+/// Returns the expression node already minted for one recognized value.
+fn minted_value(
+    minted: &[(ValueId, PointwiseF32Value)],
+    value: ValueId,
+) -> Result<PointwiseF32Value, RequestError> {
+    minted
+        .iter()
+        .find(|(seen, _)| *seen == value)
+        .map(|(_, node)| node.clone())
+        .ok_or(RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule: "elementwise-operand",
+        })
+}
+
+/// The refusal for an expression that exceeds the physical vocabulary's bound.
+///
+/// Distinct from every structural rule above: the program is elementwise and
+/// well formed, and what it exceeds is
+/// [`tiler_ir::schedule::MAX_POINTWISE_F32_EXPRESSION_NODES`]. Reporting it as an
+/// unrecognized operation set would name the wrong property.
+const fn expression_bound() -> RequestError {
+    RequestError::UnsupportedCapability {
+        phase: "strategy",
+        rule: "elementwise-node-limit",
+    }
+}
+
+/// Recognizes a whole-program elementwise `f32` expression.
+///
+/// # Errors
+///
+/// Returns [`RequestError::UnsupportedCapability`] naming the unrecognized
+/// property: `elementwise-rank` for a rank-zero domain no region iterates,
+/// `operation-set` when a reachable occurrence is outside the recognized
+/// expression, and every rule [`recognize_elementwise`] reports.
+fn recognize_pointwise(
+    program: &SemanticProgram,
+    output: &tiler_ir::semantic::ProgramOutputRef<'_>,
+) -> Result<NormalizedPointwise, RequestError> {
+    let declared: Vec<ValueId> = program.inputs().map(|input| input.value()).collect();
+    let shape = program
+        .shape(output.value())
+        .map_err(|_| RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule: "output-handle",
+        })?
+        .clone();
+    if shape.rank() == 0 {
+        return mismatch("elementwise-rank");
+    }
+    let recognized = recognize_elementwise(program, output.value(), &declared, &shape)?;
+    // The recognized occurrences must cover the program exactly. A built program
+    // retains only output-reachable operations, so an uncovered one is work this
+    // region would silently drop.
+    if recognized.members.len() != program.operation_count() {
+        return mismatch("operation-set");
+    }
+    let elements = element_count_u64(&shape, "input")?;
+    Ok(NormalizedPointwise {
+        input_keys: program.inputs().map(|input| input.key().clone()).collect(),
+        output_key: output.key().clone(),
+        shape,
+        expression: recognized.expression,
+        members: recognized.members,
+        inputs: declared,
+        output: output.value(),
+        elements,
+    })
+}
+
+/// Recognizes a strict serial reduction and whatever elementwise expression
+/// feeds it.
+///
+/// The prologue is recognized by the same general walk a whole-program
+/// elementwise expression is, so what composes with the reduction is bounded by
+/// the expression vocabulary rather than by the scale-then-bias shape the
+/// superseded template spelled.
+///
+/// # Errors
+///
+/// Returns [`RequestError::UnsupportedCapability`] naming the unrecognized
+/// property: `sum-signature`, `sum-output`, `sum-shape`, `sum-axes*`, and
+/// `input-rank` for the reduction itself, `reduction-prologue` when the fold
+/// reads a declared input and this profile has no region for it,
+/// `operation-set` when the recognized occurrences do not cover the program, and
+/// every rule [`recognize_elementwise`] reports for the prologue.
+fn recognize_reduction(
+    program: &SemanticProgram,
+    output: &tiler_ir::semantic::ProgramOutputRef<'_>,
+    sum_member: u32,
+    sum: &tiler_ir::semantic::OperationRef<'_>,
+) -> Result<NormalizedSerialSum, RequestError> {
+    let declared: Vec<ValueId> = program.inputs().map(|input| input.value()).collect();
+    let sum_operands: Vec<_> = sum.operands().collect();
+    let [contributor] = sum_operands.as_slice() else {
+        return mismatch("sum-signature");
+    };
+    if sum.results().collect::<Vec<_>>() != [output.value()] {
+        return mismatch("sum-output");
+    }
+    let axes = reduction_axes(sum.attributes())?;
+    let input_shape = program
+        .shape(*contributor)
+        .map_err(|_| RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule: "input-handle",
+        })?
+        .clone();
+    if input_shape.rank() == 0 {
+        return mismatch("input-rank");
+    }
+    check_canonical_reduction_axes(&axes, input_shape.rank())?;
+    let output_shape = input_shape.without_axes(&axes);
+    if program.shape(output.value()).ok() != Some(&output_shape) {
+        return mismatch("sum-shape");
+    }
+
+    // The fold's contributors come from an elementwise prologue this recognizer
+    // materializes.
+    //
+    // A reduction whose operand is a *declared input* — `sum(x)`, the simplest
+    // fold there is — is refused here rather than admitted, and the wall is
+    // below this boundary rather than in this vocabulary: `tiler-ir`'s
+    // `verify_access_and_semantics` requires a `ScalarProgram::StrictSerialSum`
+    // region's contributor access to read `TensorRole::Intermediate`, so a
+    // region reading the input directly is rejected as malformed by the schedule
+    // verifier. Synthesizing an identity prologue to satisfy it is not the
+    // alternative: that would add a materialization, and its observable rounding
+    // boundary, that the caller's program never asked for.
+    // `admit-a-reduction-over-a-declared-input-tensor` owns the widening.
+    if declared.contains(contributor) {
+        return mismatch("reduction-prologue");
+    }
+    let prologue = recognize_elementwise(program, *contributor, &declared, &input_shape)?;
+    let members = RecognizedSerialSumMembers::new(prologue.members, sum_member);
+    check_recognized_operation_cover(program, &members)?;
+
+    let input_elements = element_count_u64(&input_shape, "input")?;
+    let output_elements = element_count_u64(&output_shape, "output")?;
+    Ok(NormalizedSerialSum {
+        input_keys: program.inputs().map(|input| input.key().clone()).collect(),
+        output_key: output.key().clone(),
+        input_shape,
+        output_shape,
+        reduction_axes: axes,
+        prologue: prologue.expression,
+        members,
+        inputs: declared,
+        pointwise_result: *contributor,
+        output: output.value(),
+        input_elements,
+        output_elements,
+    })
 }
 
 /// Recognized operation count of the bounded contraction strategy.
@@ -2181,17 +2608,14 @@ fn normalize_contraction(program: &SemanticProgram) -> Result<NormalizedContract
     if program.input_count() != 2 {
         return mismatch("input-arity");
     }
-    if program.output_count() != 1 {
-        return mismatch("output-arity");
-    }
+    // Exactly the contraction occurrence and nothing else. An elementwise
+    // epilogue over a contraction result is a two-region chain this profile
+    // cannot assemble: every elementwise region it builds reads declared input
+    // tensors, and none reads a materialized intermediate. Refusing here is
+    // what keeps the boundary from admitting a program that dies mid-pipeline;
+    // `admit-elementwise-epilogues-over-a-materialized-intermediate` owns it.
     if program.operation_count() != CONTRACTION_OPERATIONS {
         return mismatch("operation-set");
-    }
-    if program
-        .values()
-        .any(|value| value.resolved_type() != &F32::resolved_type())
-    {
-        return mismatch("dtype-f32");
     }
     let output = program
         .outputs()
@@ -2359,206 +2783,6 @@ fn normalize_contraction(program: &SemanticProgram) -> Result<NormalizedContract
     })
 }
 
-/// Recognized operation counts of the bounded standalone pointwise strategy.
-///
-/// The body is two binary operations over three leaves, and each leaf is either
-/// a program input or a constant — a constant being an operation, an input not.
-/// Three inputs is therefore two operations and three constants is five, and any
-/// count between them is one of the mixed programs. The exact count is pinned to
-/// the distinct recognized set once the structural walk has identified it, by
-/// the member cover below.
-const POINTWISE_OPERATIONS_MIN: usize = 2;
-const POINTWISE_OPERATIONS_MAX: usize = 5;
-
-fn normalize_pointwise(program: &SemanticProgram) -> Result<NormalizedPointwise, RequestError> {
-    if program.input_count() == 0 {
-        return mismatch("input-arity");
-    }
-    if program.output_count() != 1 {
-        return mismatch("output-arity");
-    }
-    if !(POINTWISE_OPERATIONS_MIN..=POINTWISE_OPERATIONS_MAX).contains(&program.operation_count()) {
-        return mismatch("operation-set");
-    }
-    if program
-        .values()
-        .any(|value| value.resolved_type() != &F32::resolved_type())
-    {
-        return mismatch("dtype-f32");
-    }
-    let output = program
-        .outputs()
-        .next()
-        .ok_or(RequestError::UnsupportedCapability {
-            phase: "strategy",
-            rule: "missing-output",
-        })?;
-    let (root_ordinal, root) = producer_for_value(program, output.value())?;
-    let Some(root_operation) = pointwise_family(&root) else {
-        return mismatch("operation-family");
-    };
-    let mut root_operands = root.operands();
-    let (Some(root_left), Some(root_right), None) = (
-        root_operands.next(),
-        root_operands.next(),
-        root_operands.next(),
-    ) else {
-        return mismatch("pointwise-arity");
-    };
-    // The two operations may be different families. `(a * b) + c` is the driving
-    // shape of the approved region, and requiring the child to repeat the root's
-    // key admitted only homogeneous chains like `(a * 2.0) * 3.0`.
-    let child_at = |value: ValueId| {
-        producer_for_value(program, value)
-            .ok()
-            .and_then(|(ordinal, operation)| {
-                pointwise_family(&operation).map(|family| (ordinal, operation, family))
-            })
-    };
-    let (association, child_ordinal, child, child_operation, leaf_values) =
-        if let Some((ordinal, child, family)) = child_at(root_left) {
-            (
-                NormalizedPointwiseAssociation::Left,
-                ordinal,
-                child,
-                family,
-                [
-                    child.operands().next(),
-                    child.operands().nth(1),
-                    Some(root_right),
-                ],
-            )
-        } else if let Some((ordinal, child, family)) = child_at(root_right) {
-            (
-                NormalizedPointwiseAssociation::Right,
-                ordinal,
-                child,
-                family,
-                [
-                    Some(root_left),
-                    child.operands().next(),
-                    child.operands().nth(1),
-                ],
-            )
-        } else {
-            return mismatch("pointwise-association");
-        };
-    // The families may now differ, but neither may carry an attribute the other
-    // does not: a recognized elementwise operation of this profile is
-    // attribute-free, and an attribute is a semantic fact this normalization
-    // does not carry forward and therefore must not silently drop.
-    if !child.attributes().fields().is_empty()
-        || !root.attributes().fields().is_empty()
-        || child.results().len() != 1
-    {
-        return mismatch("pointwise-operation");
-    }
-    let [Some(first), Some(second), Some(third)] = leaf_values else {
-        return mismatch("pointwise-arity");
-    };
-    let mut members = vec![
-        SemanticMemberId(root_ordinal),
-        SemanticMemberId(child_ordinal),
-    ];
-    // Input ordinals follow the program's own declaration order, not the order
-    // the leaves happen to mention them. Declaration order is what the ABI binds
-    // in, and it is stable under any restructuring of the expression, so two
-    // spellings of one program normalize to one region rather than to two that
-    // differ only in which buffer holds which tensor.
-    let declared: Vec<ValueId> = program.inputs().map(|input| input.value()).collect();
-    let mut normalize_leaf = |value: ValueId| {
-        if let Some(position) = declared.iter().position(|declared| *declared == value) {
-            let ordinal =
-                u32::try_from(position).map_err(|_| RequestError::UnsupportedCapability {
-                    phase: "strategy",
-                    rule: "input-ordinal",
-                })?;
-            Ok(NormalizedPointwiseLeaf::Input(InputOrdinal::new(ordinal)))
-        } else {
-            let (bits, ordinal) = constant_bits(program, value)?;
-            members.push(SemanticMemberId(ordinal));
-            Ok(NormalizedPointwiseLeaf::Constant(bits))
-        }
-    };
-    let leaves = [
-        normalize_leaf(first)?,
-        normalize_leaf(second)?,
-        normalize_leaf(third)?,
-    ];
-    members.sort_unstable();
-    members.dedup();
-    // Every declared input must be read and every recognized operation covered.
-    // A declared input no leaf mentions would bind a buffer the kernel never
-    // loads, and an uncovered operation would be work this region silently
-    // drops.
-    //
-    // Both arms are **reservations, not tested guarantees**, and this profile
-    // cannot reach either. A frozen program retains only output-reachable
-    // declarations and operations; every reachable operation is the root, the
-    // child, or a constant feeding one of the three leaves; and every reachable
-    // input is an operand of the root or the child, hence a leaf. They are kept
-    // because the first widening that admits a deeper body or a non-leaf
-    // operand makes them reachable, and both failures they name are silent
-    // rather than loud.
-    let read: BTreeSet<InputOrdinal> = leaves
-        .iter()
-        .filter_map(|leaf| match leaf {
-            NormalizedPointwiseLeaf::Input(ordinal) => Some(*ordinal),
-            NormalizedPointwiseLeaf::Constant(_) => None,
-        })
-        .collect();
-    if read.len() != declared.len() || members.len() != program.operation_count() {
-        return mismatch("pointwise-leaves");
-    }
-    let shape = program
-        .shape(
-            *declared
-                .first()
-                .ok_or(RequestError::UnsupportedCapability {
-                    phase: "strategy",
-                    rule: "missing-input",
-                })?,
-        )
-        .map_err(|_| RequestError::UnsupportedCapability {
-            phase: "strategy",
-            rule: "input-handle",
-        })?
-        .clone();
-    // One shape governs the whole region: the iteration domain, every read's
-    // element count, and the write's.
-    //
-    // The per-input arm is a **reservation, not a tested guarantee.** Today it
-    // cannot fail: every declared input is a leaf (the cover above proves the
-    // read set is the declared set), every leaf is an operand of one of the two
-    // operations, and the semantic schema requires those operands to agree in
-    // shape — so no constructible program reaches it with a disagreeing input.
-    // It is kept because the first widening that admits a broadcast or reindex
-    // operand makes it reachable, and the failure it would then prevent is
-    // sizing the whole region by whichever input happened to be declared first.
-    if shape.rank() == 0
-        || program.shape(output.value()).ok() != Some(&shape)
-        || declared
-            .iter()
-            .any(|input| program.shape(*input).ok() != Some(&shape))
-    {
-        return mismatch("pointwise-shape");
-    }
-    let elements = element_count_u64(&shape, "input")?;
-    Ok(NormalizedPointwise {
-        input_keys: program.inputs().map(|input| input.key().clone()).collect(),
-        output_key: output.key().clone(),
-        shape,
-        root_operation,
-        child_operation,
-        association,
-        leaves,
-        members,
-        inputs: declared,
-        output: output.value(),
-        elements,
-    })
-}
-
 fn check_budget(resource: &'static str, limit: u32, actual: usize) -> Result<(), RequestError> {
     if u64::try_from(actual).map_or(true, |actual| actual > u64::from(limit)) {
         return Err(RequestError::BudgetExceeded {
@@ -2568,110 +2792,6 @@ fn check_budget(resource: &'static str, limit: u32, actual: usize) -> Result<(),
         });
     }
     Ok(())
-}
-
-fn normalize_serial_sum(program: &SemanticProgram) -> Result<NormalizedSerialSum, RequestError> {
-    // The recognized structure is exactly one reduction, two pointwise
-    // operations, and one or two constants; a shared constant is the normalized
-    // spelling of the same program. The exact count is pinned against the
-    // distinct recognized set once the structural walk has identified it.
-    if program.input_count() != 1 {
-        return mismatch("input-arity");
-    }
-    if program.output_count() != 1 {
-        return mismatch("output-arity");
-    }
-    if !(RECOGNIZED_OPERATIONS_MIN..=RECOGNIZED_OPERATIONS_MAX).contains(&program.operation_count())
-    {
-        return mismatch("operation-set");
-    }
-    if program
-        .values()
-        .any(|value| value.resolved_type() != &F32::resolved_type())
-    {
-        return mismatch("dtype-f32");
-    }
-
-    let input = program
-        .inputs()
-        .next()
-        .ok_or(RequestError::UnsupportedCapability {
-            phase: "strategy",
-            rule: "missing-input",
-        })?;
-    let output = program
-        .outputs()
-        .next()
-        .ok_or(RequestError::UnsupportedCapability {
-            phase: "strategy",
-            rule: "missing-output",
-        })?;
-    let (sum_operation, sum) = producer(program, output.value(), &strict_serial_sum_f32_op())?;
-    let sum_operands: Vec<_> = sum.operands().collect();
-    let sum_results: Vec<_> = sum.results().collect();
-    let [pointwise_result] = sum_operands.as_slice() else {
-        return mismatch("sum-signature");
-    };
-    if sum_results.as_slice() != [output.value()] {
-        return mismatch("sum-output");
-    }
-
-    let (add_operation, add) = producer(program, *pointwise_result, &add_f32_op())?;
-    let (multiply_result, bias) = split_tensor_and_scalar(program, &add)?;
-    let (multiply_operation, multiply) = producer(program, multiply_result, &multiply_f32_op())?;
-    let (tensor_input, scale) = split_tensor_and_scalar(program, &multiply)?;
-    if tensor_input != input.value() {
-        return mismatch("pointwise-input");
-    }
-    let (scale, scale_operation) = constant_bits(program, scale)?;
-    let (bias, bias_operation) = constant_bits(program, bias)?;
-    let members = RecognizedSerialSumMembers::new(
-        scale_operation,
-        multiply_operation,
-        bias_operation,
-        add_operation,
-        sum_operation,
-    );
-
-    check_recognized_operation_cover(program, &members)?;
-    let axes = reduction_axes(sum.attributes())?;
-
-    let input_shape = program
-        .shape(input.value())
-        .map_err(|_| RequestError::UnsupportedCapability {
-            phase: "strategy",
-            rule: "input-handle",
-        })?
-        .clone();
-    if input_shape.rank() == 0 {
-        return mismatch("input-rank");
-    }
-    check_canonical_reduction_axes(&axes, input_shape.rank())?;
-    if program.shape(*pointwise_result).ok() != Some(&input_shape) {
-        return mismatch("pointwise-shape");
-    }
-    let output_shape = input_shape.without_axes(&axes);
-    if program.shape(output.value()).ok() != Some(&output_shape) {
-        return mismatch("sum-shape");
-    }
-    let input_elements = element_count_u64(&input_shape, "input")?;
-    let output_elements = element_count_u64(&output_shape, "output")?;
-
-    Ok(NormalizedSerialSum {
-        input_key: input.key().clone(),
-        output_key: output.key().clone(),
-        input_shape,
-        output_shape,
-        reduction_axes: axes,
-        scale_bits: scale,
-        bias_bits: bias,
-        members,
-        input: input.value(),
-        pointwise_result: *pointwise_result,
-        output: output.value(),
-        input_elements,
-        output_elements,
-    })
 }
 
 /// Requires reduction axes to be in range and in strictly ascending order.
@@ -2694,13 +2814,14 @@ fn check_canonical_reduction_axes(axes: &[Axis], rank: usize) -> Result<(), Requ
     Ok(())
 }
 
-/// Requires the recognized operations to cover the whole program exactly.
+/// Requires the recognized occurrences to cover the whole program exactly.
 ///
 /// A built program retains only output-reachable operations, so demanding that
 /// the reachable count equal the distinct recognized set rejects any operation
-/// outside this exact structure. One constant shared by both pointwise operands
-/// is the normalized spelling of the same program and covers four distinct
-/// operations instead of five.
+/// the recognized prologue and reduction do not claim. One constant shared by
+/// two operands is the normalized spelling of the same program and contributes
+/// one member rather than two, which is why this compares against the
+/// deduplicated set rather than against a spelled-out count.
 fn check_recognized_operation_cover(
     program: &SemanticProgram,
     recognized: &RecognizedSerialSumMembers,
@@ -2740,24 +2861,6 @@ fn producer_for_value(
         rule: "operation-ordinal",
     })?;
     Ok((ordinal, operation))
-}
-
-fn split_tensor_and_scalar(
-    program: &SemanticProgram,
-    operation: &tiler_ir::semantic::OperationRef<'_>,
-) -> Result<(ValueId, ValueId), RequestError> {
-    let operands: Vec<_> = operation.operands().collect();
-    let [left, right] = operands.as_slice() else {
-        return mismatch("pointwise-arity");
-    };
-    match (
-        program.shape(*left).map(Shape::rank),
-        program.shape(*right).map(Shape::rank),
-    ) {
-        (Ok(left_rank), Ok(0)) if left_rank > 0 => Ok((*left, *right)),
-        (Ok(0), Ok(right_rank)) if right_rank > 0 => Ok((*right, *left)),
-        _ => mismatch("scalar-broadcast"),
-    }
 }
 
 fn constant_bits(program: &SemanticProgram, value: ValueId) -> Result<(u32, u32), RequestError> {
@@ -2874,83 +2977,50 @@ mod tests {
         builder.build().unwrap()
     }
 
-    fn apply_pointwise_family(
-        builder: &mut SemanticProgramBuilder,
-        family: NormalizedPointwiseOperation,
-        left: tiler_ir::semantic::Value<F32>,
-        right: tiler_ir::semantic::Value<F32>,
-    ) -> tiler_ir::semantic::Value<F32> {
-        match family {
-            NormalizedPointwiseOperation::Add => F32Add::apply(builder, left, right),
-            NormalizedPointwiseOperation::Multiply => F32Multiply::apply(builder, left, right),
-        }
-        .unwrap()
-    }
-
-    fn pointwise_program(
-        family: NormalizedPointwiseOperation,
-        association: NormalizedPointwiseAssociation,
-        input_position: usize,
-    ) -> (SemanticProgram, [NormalizedPointwiseLeaf; 3]) {
+    /// Builds one whole-program elementwise fixture and its expected nodes.
+    ///
+    /// `(first * second) + third` over three declared inputs. It is deliberately
+    /// *not* a shape the superseded template could spell: two of its leaves are
+    /// distinct input tensors rather than constants, and the old recognizer
+    /// demanded exactly one input.
+    fn three_input_elementwise() -> SemanticProgram {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
-        let input = builder
-            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
-            .unwrap();
-        let first_bits = 2.0_f32.to_bits();
-        let second_bits = 1.0_f32.to_bits();
-        let first = F32Constant::apply(&mut builder, first_bits).unwrap();
-        let second = F32Constant::apply(&mut builder, second_bits).unwrap();
-        let (values, leaves) = match input_position {
-            0 => (
-                [input, first, second],
-                [
-                    NormalizedPointwiseLeaf::Input(InputOrdinal::FIRST),
-                    NormalizedPointwiseLeaf::Constant(first_bits),
-                    NormalizedPointwiseLeaf::Constant(second_bits),
-                ],
-            ),
-            1 => (
-                [first, input, second],
-                [
-                    NormalizedPointwiseLeaf::Constant(first_bits),
-                    NormalizedPointwiseLeaf::Input(InputOrdinal::FIRST),
-                    NormalizedPointwiseLeaf::Constant(second_bits),
-                ],
-            ),
-            2 => (
-                [first, second, input],
-                [
-                    NormalizedPointwiseLeaf::Constant(first_bits),
-                    NormalizedPointwiseLeaf::Constant(second_bits),
-                    NormalizedPointwiseLeaf::Input(InputOrdinal::FIRST),
-                ],
-            ),
-            _ => panic!("the three-leaf fixture has positions 0, 1, and 2"),
-        };
-        let root = match association {
-            NormalizedPointwiseAssociation::Left => {
-                let child = apply_pointwise_family(&mut builder, family, values[0], values[1]);
-                apply_pointwise_family(&mut builder, family, child, values[2])
-            }
-            NormalizedPointwiseAssociation::Right => {
-                let child = apply_pointwise_family(&mut builder, family, values[1], values[2]);
-                apply_pointwise_family(&mut builder, family, values[0], child)
-            }
-        };
+        let inputs: Vec<_> = ["a", "b", "c"]
+            .into_iter()
+            .map(|key| {
+                builder
+                    .input::<F32>(InputKey::new(key).unwrap(), Shape::from_dims([2, 3]))
+                    .unwrap()
+            })
+            .collect();
+        let product = F32Multiply::apply(&mut builder, inputs[0], inputs[1]).unwrap();
+        let root = F32Add::apply(&mut builder, product, inputs[2]).unwrap();
         builder
             .output(OutputKey::new("result").unwrap(), root)
             .unwrap();
-        (builder.build().unwrap(), leaves)
+        builder.build().unwrap()
     }
 
-    fn assert_pointwise_rejection(program: &SemanticProgram, rule: &'static str) {
-        assert_eq!(
-            normalize_pointwise(program),
-            Err(RequestError::UnsupportedCapability {
+    /// Builds the five-node `input * scale + bias` expression a forgery swaps in.
+    fn affine_expression(scale_bits: u32, bias_bits: u32) -> PointwiseF32Expression {
+        let mut expression = PointwiseF32ExpressionBuilder::new();
+        let input = expression.input(InputOrdinal::FIRST).unwrap();
+        let scale = expression.constant(scale_bits).unwrap();
+        let product = expression.multiply(input, scale).unwrap();
+        let bias = expression.constant(bias_bits).unwrap();
+        let root = expression.add(product, bias).unwrap();
+        expression.build(root).unwrap()
+    }
+
+    /// Recognizes one program through the whole boundary, or reports the rule.
+    fn recognize(program: &SemanticProgram) -> Result<NormalizedProgram, &'static str> {
+        select_supported_strategy(program).map_err(|error| match error {
+            RequestError::UnsupportedCapability {
                 phase: "strategy",
                 rule,
-            }),
-        );
+            } => rule,
+            other => panic!("recognition refuses under the strategy phase, got {other:?}"),
+        })
     }
 
     #[derive(Clone, Copy)]
@@ -3146,10 +3216,25 @@ mod tests {
         assert_eq!(normalized.input_shape, Shape::from_dims([2, 3]));
         assert_eq!(normalized.output_shape, Shape::from_dims([2]));
         assert_eq!(normalized.reduction_axes, [Axis::new(1)]);
-        assert_eq!(normalized.scale_bits, 2.0_f32.to_bits());
-        assert_eq!(normalized.bias_bits, 1.0_f32.to_bits());
         assert_eq!(normalized.input_elements, 6);
         assert_eq!(normalized.output_elements, 2);
+        assert_eq!(normalized.input_keys, [InputKey::new("input").unwrap()]);
+        // The prologue is the recognized expression, not two constants: it is
+        // `input * 2.0 + 1.0` in the physical node vocabulary, and the affine
+        // pair the fused region needs is recovered from it rather than stored
+        // beside it.
+        let prologue = &normalized.prologue;
+        assert_eq!(prologue.input_count(), 1);
+        assert!(matches!(
+            prologue.nodes(),
+            [
+                PointwiseF32Node::Input { .. },
+                PointwiseF32Node::Constant { bits: scale },
+                PointwiseF32Node::Multiply { .. },
+                PointwiseF32Node::Constant { bits: bias },
+                PointwiseF32Node::Add { .. },
+            ] if *scale == 2.0_f32.to_bits() && *bias == 1.0_f32.to_bits()
+        ));
         assert_eq!(
             verified
                 .target_slots
@@ -3160,238 +3245,289 @@ mod tests {
         );
     }
 
+    /// The composed program: a multi-input elementwise expression feeding a
+    /// strict serial reduction.
+    ///
+    /// **This is the shape no normalization matched.** The superseded serial-sum
+    /// template demanded exactly one declared input and the exact four- or
+    /// five-operation `x * scale + bias` prologue; the superseded pointwise
+    /// template refused anything containing a reduction. `sum((a * b) + c)` over
+    /// three declared inputs is neither, and it is admitted here on the strength
+    /// of its occurrences: two recognized elementwise families composing into one
+    /// expression, feeding one recognized reduction.
     #[test]
-    fn pointwise_recognition_covers_every_family_association_and_input_position() {
-        for family in [
-            NormalizedPointwiseOperation::Add,
-            NormalizedPointwiseOperation::Multiply,
-        ] {
-            for association in [
-                NormalizedPointwiseAssociation::Left,
-                NormalizedPointwiseAssociation::Right,
-            ] {
-                for input_position in 0..3 {
-                    let (program, leaves) = pointwise_program(family, association, input_position);
-                    let normalized = normalize_pointwise(&program).unwrap();
-                    assert_eq!(normalized.root_operation, family);
-                    assert_eq!(normalized.child_operation, family);
-                    assert_eq!(normalized.association, association);
-                    assert_eq!(normalized.leaves, leaves);
-                    assert_eq!(
-                        normalized.members,
-                        [
-                            SemanticMemberId(0),
-                            SemanticMemberId(1),
-                            SemanticMemberId(2),
-                            SemanticMemberId(3),
-                        ],
-                    );
-                    assert_eq!(normalized.shape, Shape::from_dims([2, 3]));
-                    assert_eq!(normalized.elements, 6);
-                }
-            }
-        }
+    fn a_multi_input_elementwise_expression_feeding_a_reduction_is_recognized() {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let inputs: Vec<_> = ["a", "b", "c"]
+            .into_iter()
+            .map(|key| {
+                builder
+                    .input::<F32>(InputKey::new(key).unwrap(), Shape::from_dims([2, 3]))
+                    .unwrap()
+            })
+            .collect();
+        let product = F32Multiply::apply(&mut builder, inputs[0], inputs[1]).unwrap();
+        let biased = F32Add::apply(&mut builder, product, inputs[2]).unwrap();
+        let sum = StrictSerialF32Sum::apply(&mut builder, biased, [Axis::new(1)]).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), sum)
+            .unwrap();
+        let program = builder.build().unwrap();
+
+        let NormalizedProgram::SerialSum(recognized) =
+            recognize(&program).expect("the composed program is recognized")
+        else {
+            panic!("a program whose output is a reduction recognizes as one");
+        };
+        assert_eq!(recognized.input_keys.len(), 3);
+        assert_eq!(recognized.input_shape, Shape::from_dims([2, 3]));
+        assert_eq!(recognized.output_shape, Shape::from_dims([2]));
+        assert_eq!(
+            recognized.prologue.input_count(),
+            3,
+            "one leaf per declared input tensor",
+        );
+        // Three elementwise occurrences in the prologue is exactly two — the
+        // multiply and the add — with no constant, and the reduction is the
+        // third occurrence of the program.
+        assert_eq!(recognized.members.pointwise().len(), 2);
+        assert_eq!(recognized.members.all().len(), program.operation_count());
+        // No fused spelling exists: `FusedMultiplyAddSerialSum` applies one
+        // scalar constant and one scalar bias, and this prologue applies neither.
+        let verified = verify_request(CompilationRequest::governed(&program))
+            .unwrap()
+            .for_target(0)
+            .unwrap();
+        assert_eq!(crate::physical::fused_prologue_constants(&verified), None);
     }
 
-    /// Graph shapes the widened recognizer now admits, and what each proves.
+    /// A reduction over a declared input refuses, because no region reads one.
     ///
-    /// Each of these was refused before the widening, and each was refused for
-    /// the *combined* signature gate rather than for anything about its shape:
-    /// the old rule demanded exactly one input and exactly four operations, so
-    /// a repeated input, a shared constant, and a second input tensor all
-    /// failed the same undifferentiated check. Recording their admission here
-    /// is what keeps the widening from being asserted only at the compiler
-    /// boundary test.
+    /// `sum(x)` is the simplest fold there is, and this is the one place in this
+    /// change where the wall is genuinely below the boundary: `tiler-ir`'s
+    /// `verify_access_and_semantics` requires a `ScalarProgram::StrictSerialSum`
+    /// region's contributor access to read `TensorRole::Intermediate`, so a
+    /// region reading the input directly is rejected by the schedule verifier as
+    /// malformed compiler output. Admitting it here and failing there is the
+    /// failure mode the precedent declined to ship, so it refuses at the
+    /// boundary under its own rule.
+    ///
+    /// Its accepted neighbour is the same fold over the same input with one
+    /// elementwise occurrence between them, so what the rule reads is the
+    /// missing prologue and not the fold.
     #[test]
-    fn pointwise_recognition_admits_repeated_shared_and_multiple_inputs() {
-        // `(a + a) + 1.0`: one input read at two leaves. The physical builder
-        // shares one leaf per ordinal, so this binds one read access.
+    fn a_reduction_over_a_declared_input_refuses_for_its_missing_prologue() {
+        let fold = |prologue: bool| {
+            let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+            let input = builder
+                .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
+                .unwrap();
+            let contributor = if prologue {
+                let scale = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+                F32Multiply::apply(&mut builder, input, scale).unwrap()
+            } else {
+                input
+            };
+            let sum = StrictSerialF32Sum::apply(&mut builder, contributor, [Axis::new(1)]).unwrap();
+            builder
+                .output(OutputKey::new("result").unwrap(), sum)
+                .unwrap();
+            builder.build().unwrap()
+        };
+        let bare = fold(false);
+        assert_eq!(bare.operation_count(), 1);
+        assert_eq!(recognize(&bare).unwrap_err(), "reduction-prologue");
+
+        let neighbour = fold(true);
+        assert!(matches!(
+            recognize(&neighbour),
+            Ok(NormalizedProgram::SerialSum(_))
+        ));
+    }
+
+    /// Elementwise recognition follows the graph, not a taught depth or arity.
+    ///
+    /// Each shape below was refused by the superseded template, and each was
+    /// refused for the *leaf count* rather than for anything about what it
+    /// computes: the old recognizer admitted exactly two operations over exactly
+    /// three leaves in one of two associations.
+    #[test]
+    fn elementwise_recognition_admits_depth_sharing_and_multiple_inputs() {
+        // Three declared inputs and a mixed multiply-then-add chain.
+        let three = three_input_elementwise();
+        let NormalizedProgram::Pointwise(recognized) =
+            recognize(&three).expect("a three-input expression is recognized")
+        else {
+            panic!("an elementwise output recognizes as an elementwise program");
+        };
+        assert_eq!(
+            recognized.input_keys,
+            [
+                InputKey::new("a").unwrap(),
+                InputKey::new("b").unwrap(),
+                InputKey::new("c").unwrap(),
+            ],
+        );
+        assert_eq!(recognized.expression.input_count(), 3);
+        assert_eq!(recognized.members.len(), three.operation_count());
+
+        // A four-deep chain: `((a * 2.0) + b) * ((a * 2.0) + b)`, whose shared
+        // subexpression is one node rather than two. Depth and sharing are both
+        // beyond what a three-leaf template could spell.
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let first = builder
+            .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let second = builder
+            .input::<F32>(InputKey::new("b").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let scale = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+        let scaled = F32Multiply::apply(&mut builder, first, scale).unwrap();
+        let shifted = F32Add::apply(&mut builder, scaled, second).unwrap();
+        let root = F32Multiply::apply(&mut builder, shifted, shifted).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), root)
+            .unwrap();
+        let deep = builder.build().unwrap();
+        let NormalizedProgram::Pointwise(recognized) =
+            recognize(&deep).expect("a deep shared expression is recognized")
+        else {
+            panic!("an elementwise output recognizes as an elementwise program");
+        };
+        assert_eq!(recognized.expression.input_count(), 2);
+        assert_eq!(recognized.members.len(), deep.operation_count());
+        assert_eq!(
+            recognized.expression.nodes().len(),
+            6,
+            "the shared `(a * 2.0) + b` is one node, not two",
+        );
+
+        // One input read at two leaves, which binds one read access.
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder
             .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
             .unwrap();
         let constant = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
-        let child = F32Add::apply(&mut builder, input, input).unwrap();
-        let root = F32Add::apply(&mut builder, child, constant).unwrap();
+        let doubled = F32Add::apply(&mut builder, input, input).unwrap();
+        let root = F32Add::apply(&mut builder, doubled, constant).unwrap();
         builder
             .output(OutputKey::new("result").unwrap(), root)
             .unwrap();
         let repeated = builder.build().unwrap();
-        assert_eq!(repeated.operation_count(), 3);
-        let normalized = normalize_pointwise(&repeated).unwrap();
-        assert_eq!(normalized.input_keys.len(), 1);
-        assert_eq!(
-            normalized.leaves,
-            [
-                NormalizedPointwiseLeaf::Input(InputOrdinal::new(0)),
-                NormalizedPointwiseLeaf::Input(InputOrdinal::new(0)),
-                NormalizedPointwiseLeaf::Constant(1.0_f32.to_bits()),
-            ],
-        );
-
-        // One constant occurrence shared by two leaves: three operations cover
-        // the program exactly, and the two leaves keep their own positions.
-        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
-        let input = builder
-            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
-            .unwrap();
-        let constant = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
-        let child = F32Add::apply(&mut builder, input, constant).unwrap();
-        let root = F32Add::apply(&mut builder, child, constant).unwrap();
-        builder
-            .output(OutputKey::new("result").unwrap(), root)
-            .unwrap();
-        let shared = builder.build().unwrap();
-        assert_eq!(shared.operation_count(), 3);
-        assert_eq!(normalize_pointwise(&shared).unwrap().input_keys.len(), 1);
-
-        // Two input tensors, ordinal-ordered by declaration and not by the
-        // order the leaves mention them.
-        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
-        let first_input = builder
-            .input::<F32>(
-                InputKey::new("first-input").unwrap(),
-                Shape::from_dims([2, 3]),
-            )
-            .unwrap();
-        let second_input = builder
-            .input::<F32>(
-                InputKey::new("second-input").unwrap(),
-                Shape::from_dims([2, 3]),
-            )
-            .unwrap();
-        let constant = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
-        let child = F32Add::apply(&mut builder, second_input, first_input).unwrap();
-        let root = F32Add::apply(&mut builder, child, constant).unwrap();
-        builder
-            .output(OutputKey::new("result").unwrap(), root)
-            .unwrap();
-        let multiple_inputs = builder.build().unwrap();
-        assert_eq!(multiple_inputs.input_count(), 2);
-        let normalized = normalize_pointwise(&multiple_inputs).unwrap();
-        assert_eq!(
-            normalized.input_keys,
-            [
-                InputKey::new("first-input").unwrap(),
-                InputKey::new("second-input").unwrap(),
-            ],
-        );
-        assert_eq!(
-            normalized.leaves,
-            [
-                NormalizedPointwiseLeaf::Input(InputOrdinal::new(1)),
-                NormalizedPointwiseLeaf::Input(InputOrdinal::new(0)),
-                NormalizedPointwiseLeaf::Constant(1.0_f32.to_bits()),
-            ],
-            "the ordinal is the declaration position, not the leaf position",
-        );
-
-        // A mixed multiply-then-add chain, which is the approved region's own
-        // shape and the one the homogeneous-chain rule used to refuse.
-        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
-        let input = builder
-            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
-            .unwrap();
-        let first = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
-        let second = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
-        let child = F32Multiply::apply(&mut builder, input, first).unwrap();
-        let root = F32Add::apply(&mut builder, child, second).unwrap();
-        builder
-            .output(OutputKey::new("result").unwrap(), root)
-            .unwrap();
-        let mixed = normalize_pointwise(&builder.build().unwrap()).unwrap();
-        assert_eq!(mixed.root_operation, NormalizedPointwiseOperation::Add);
-        assert_eq!(
-            mixed.child_operation,
-            NormalizedPointwiseOperation::Multiply
-        );
+        let NormalizedProgram::Pointwise(recognized) =
+            recognize(&repeated).expect("a repeated read is recognized")
+        else {
+            panic!("an elementwise output recognizes as an elementwise program");
+        };
+        assert_eq!(recognized.expression.input_count(), 1);
+        assert_eq!(recognized.input_keys.len(), 1);
     }
 
-    /// Graph shapes the widened recognizer still refuses, each by its own rule.
+    /// Every refusal names the exact property that was not recognized.
     ///
-    /// The rules are what changed: the combined `signature` gate is split, so a
-    /// reader of a refusal learns which of input arity, output arity, the
-    /// operation set, or the dtype was not recognized instead of having to
-    /// re-derive it from the program.
+    /// The table is the ticket's contract: recognition generalizes, admission
+    /// does not become silent. Each row is a program the boundary refuses, the
+    /// rule it refuses under, and — through the accepted neighbour built beside
+    /// it — a demonstration that the rule can say yes as well as no.
     #[test]
-    fn pointwise_recognition_rejects_adversarial_graph_shapes() {
-        // An all-constant graph has no output-reachable input: the frozen
-        // program drops the unused declaration, so this is also the exact
-        // constructible no-input case.
+    fn every_refusal_names_its_unrecognized_property() {
+        let shape = || Shape::from_dims([2, 3]);
+
+        // `input-arity`: an all-constant graph has no output-reachable input,
+        // and a frozen program drops the unused declaration. The neighbour is
+        // the same expression with one leaf replaced by the declared tensor.
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let _input = builder
-            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
+            .input::<F32>(InputKey::new("input").unwrap(), shape())
             .unwrap();
         let first = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
         let second = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
-        let child = F32Add::apply(&mut builder, first, second).unwrap();
-        let root = F32Add::apply(&mut builder, child, first).unwrap();
+        let root = F32Add::apply(&mut builder, first, second).unwrap();
         builder
             .output(OutputKey::new("result").unwrap(), root)
             .unwrap();
         let all_constant = builder.build().unwrap();
         assert_eq!(all_constant.input_count(), 0);
-        assert_pointwise_rejection(&all_constant, "input-arity");
+        assert_eq!(recognize(&all_constant).unwrap_err(), "input-arity");
 
-        // An extra output-reachable operation cannot be hidden behind either
-        // association: the root's second operand is produced rather than being
-        // a leaf, so leaf classification asks for a constant and finds an add.
+        // `output-arity`: two named outputs over one admitted expression. The
+        // neighbour is the same graph naming only the root.
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder
-            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
+            .input::<F32>(InputKey::new("input").unwrap(), shape())
             .unwrap();
-        let first = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
-        let second = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
-        let left = F32Add::apply(&mut builder, input, first).unwrap();
-        let right = F32Add::apply(&mut builder, input, second).unwrap();
-        let root = F32Add::apply(&mut builder, left, right).unwrap();
+        let constant = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+        let scaled = F32Multiply::apply(&mut builder, input, constant).unwrap();
+        let root = F32Add::apply(&mut builder, scaled, constant).unwrap();
         builder
             .output(OutputKey::new("result").unwrap(), root)
             .unwrap();
-        let two_children = builder.build().unwrap();
-        assert_eq!(two_children.operation_count(), 5);
-        assert_pointwise_rejection(&two_children, "operation-family");
+        builder
+            .output(OutputKey::new("partial").unwrap(), scaled)
+            .unwrap();
+        let two_outputs = builder.build().unwrap();
+        assert_eq!(two_outputs.output_count(), 2);
+        assert_eq!(recognize(&two_outputs).unwrap_err(), "output-arity");
 
-        // Naming a non-root output makes the later operation unreachable in the
-        // frozen program, so what remains is a single operation over two leaves
-        // and neither operand names a recognized child.
+        // `operation-set`: a registered family the expression vocabulary cannot
+        // spell. `tiler::silu-f32@1` has a lowering capability, and no node.
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let input = builder
-            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([2, 3]))
+            .input::<F32>(InputKey::new("input").unwrap(), shape())
             .unwrap();
-        let first = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
-        let second = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
-        let child = F32Add::apply(&mut builder, input, first).unwrap();
-        let _unreachable_root = F32Add::apply(&mut builder, child, second).unwrap();
+        let activated = tiler_ir::semantic::F32Silu::apply(&mut builder, input)
+            .expect("the standard registry admits the silu family");
         builder
-            .output(OutputKey::new("result").unwrap(), child)
+            .output(OutputKey::new("result").unwrap(), activated)
             .unwrap();
-        let wrong_output = builder.build().unwrap();
-        assert_eq!(wrong_output.operation_count(), 2);
-        assert_pointwise_rejection(&wrong_output, "pointwise-association");
+        let unary = builder.build().unwrap();
+        assert_eq!(recognize(&unary).unwrap_err(), "operation-set");
 
-        // A declared input no leaf reads is *not constructible*: the frozen
-        // program retains only output-reachable declarations, so a fourth input
-        // no operation consumes is dropped and what remains is the approved
-        // three-input region. `pointwise-leaves` therefore guards a case this
-        // profile cannot reach — see the reservation recorded at that check.
+        // `operation-set` again, from the other side: a contraction with a
+        // reachable elementwise epilogue. Its accepted neighbour is the bare
+        // contraction, and the difference between them is exactly the epilogue
+        // this profile has no region to assemble.
+        let contraction = contraction_program(false);
+        assert!(matches!(
+            recognize(&contraction),
+            Ok(NormalizedProgram::Contraction(_))
+        ));
+        let with_epilogue = contraction_program(true);
+        assert_eq!(recognize(&with_epilogue).unwrap_err(), "operation-set");
+    }
+
+    /// Builds a binary contraction, optionally with an elementwise epilogue.
+    fn contraction_program(epilogue: bool) -> SemanticProgram {
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
-        let mut inputs = Vec::new();
-        for key in ["a", "b", "c", "d"] {
-            inputs.push(
-                builder
-                    .input::<F32>(InputKey::new(key).unwrap(), Shape::from_dims([2, 3]))
-                    .unwrap(),
-            );
-        }
-        let child = F32Multiply::apply(&mut builder, inputs[0], inputs[1]).unwrap();
-        let root = F32Add::apply(&mut builder, child, inputs[2]).unwrap();
+        let left = builder
+            .input::<F32>(InputKey::new("left").unwrap(), Shape::from_dims([2, 3]))
+            .unwrap();
+        let right = builder
+            .input::<F32>(InputKey::new("right").unwrap(), Shape::from_dims([3, 4]))
+            .unwrap();
+        // `ab,bc->ac`: the ordinary matrix product, stated as the index
+        // structure the operation's identity is.
+        let structure = ContractionIndexStructure::new(
+            [
+                vec![ContractionIndex::new(0), ContractionIndex::new(1)],
+                vec![ContractionIndex::new(1), ContractionIndex::new(2)],
+            ],
+            [ContractionIndex::new(0), ContractionIndex::new(2)],
+        )
+        .expect("ab,bc->ac is an admitted structure");
+        let product =
+            tiler_ir::semantic::F32TensorContraction::apply(&mut builder, &structure, left, right)
+                .unwrap();
+        let root = if epilogue {
+            let scale = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+            F32Multiply::apply(&mut builder, product, scale).unwrap()
+        } else {
+            product
+        };
         builder
             .output(OutputKey::new("result").unwrap(), root)
             .unwrap();
-        let pruned = builder.build().unwrap();
-        assert_eq!(pruned.input_count(), 3);
-        assert_eq!(normalize_pointwise(&pruned).unwrap().input_keys.len(), 3);
+        builder.build().unwrap()
     }
 
     #[test]
@@ -3828,8 +3964,12 @@ mod tests {
             Err(RequestError::UnverifiedTargetSelection)
         );
 
+        // The recognized prologue's scale changed. It is the mutation that used
+        // to be a `scale_bits` edit: the subject now carries the whole
+        // expression, so a forged prologue is a forged expression.
         let mut forged = verified.clone();
-        forged.normalized.serial_sum_mut().scale_bits = 3.0_f32.to_bits();
+        forged.normalized.serial_sum_mut().prologue =
+            affine_expression(3.0_f32.to_bits(), 1.0_f32.to_bits());
         assert_eq!(
             forged.for_target(0),
             Err(RequestError::UnverifiedTargetSelection)
@@ -3865,12 +4005,16 @@ mod tests {
         forged.semantic_identity = program_with_unused_provider(11).semantic_identity().clone();
         assert!(!forged.reconstructs_its_authority());
 
+        // One constant of the recognized prologue flipped. The expression is
+        // rebuilt rather than edited in place, because it is opaque by
+        // construction — which is exactly what makes the subject bind it whole.
         let mut forged = target.clone();
-        forged.normalized.serial_sum_mut().bias_bits ^= 1;
+        forged.normalized.serial_sum_mut().prologue =
+            affine_expression(2.0_f32.to_bits(), 1.0_f32.to_bits() ^ 1);
         assert!(!forged.reconstructs_its_authority());
 
         let mut forged = target;
-        forged.normalized.serial_sum_mut().input_key = InputKey::new("forged").unwrap();
+        forged.normalized.serial_sum_mut().input_keys = vec![InputKey::new("forged").unwrap()];
         assert!(!forged.reconstructs_its_authority());
     }
 

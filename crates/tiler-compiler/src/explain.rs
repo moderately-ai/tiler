@@ -3973,7 +3973,25 @@ mod tests {
                 // realization is part of this subject. The trace's own two
                 // record lines are unchanged; nothing about explain's content
                 // moved.
-                "tiler-explain-v7 request=a532d35f0cfdd29a\n",
+                // Rebaselined from `a532d35f0cfdd29a` when the request boundary
+                // replaced its three whole-program templates with the general
+                // occurrence recognizer. Only the *request* half of the subject
+                // moves — no semantic definition, capability, or target
+                // declaration changed — and it moves because the recognized
+                // program is what the subject encodes: the serial-sum arm's two
+                // constant fields became the recognized prologue expression, the
+                // pointwise arm's fixed leaf triple became the general node run,
+                // the serial-sum arm gained its first sub-tag, and the enclosing
+                // domain stepped to `tiler.compiler.request-subject.v3`. Two
+                // requests whose recognized programs differ are different
+                // requests, and a digest that survived a change to *what the
+                // subject records about the program* would mean the qualifier
+                // reached the strategy without reaching its content. The same
+                // change moved the governed `buffers` budget from four to six,
+                // which is inside the subject for the reason the split-program
+                // widening already recorded. The trace's own two record lines are
+                // unchanged; nothing about explain's content moved.
+                "tiler-explain-v7 request=701c39d4a41e1a22\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

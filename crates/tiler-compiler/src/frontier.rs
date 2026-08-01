@@ -2912,8 +2912,17 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
             // target; neither is a capability question. Every occurrence the
             // region covers already resolved its lowering capability before any
             // cover reached this proposer, so no capability gap is left to defer.
+            //
+            // Offering nothing when the recognized prologue has no fused
+            // spelling is a legitimate local result, not a refusal: the
+            // materialized cover still has its two regions, and complete-plan
+            // selection reports an unimplementable cover rather than
+            // approximating one.
+            let Some((region, _)) = crate::physical::fused_region(request) else {
+                return ProviderOffer::default();
+            };
             (
-                crate::physical::fused_region(request).0,
+                region,
                 PhysicalCostEstimate::structural(1, output_elements, 0),
             )
         } else {

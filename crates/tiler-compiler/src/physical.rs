@@ -17,9 +17,9 @@ pub(crate) use tiler_ir::schedule::{
     Access, AccessMode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContractionAxisSource,
     ContributorOrder, ContributorPartition, ExecutionBinding, IndexRegion, InputOrdinal,
     KernelSchedule, LaunchPlan, LogicalAccess, NumericalRealization, OwnershipProof,
-    OwnershipProofKind, OwnershipWitnessId, PointwiseF32Expression, PointwiseF32ExpressionBuilder,
-    PointwiseF32Node, ReductionTopology, RegionId, ResourceRequirements, ScalarProgram,
-    ScheduledRegion, TailPolicy, TensorRole,
+    OwnershipProofKind, OwnershipWitnessId, PointwiseF32Expression, PointwiseF32Node,
+    ReductionTopology, RegionId, ResourceRequirements, ScalarProgram, ScheduledRegion, TailPolicy,
+    TensorRole,
 };
 use tiler_ir::schedule::{
     ArithmeticType, ScheduledRegionBuildError, ScheduledRegionBuilder, ScheduledRegionDiagnostic,
@@ -27,10 +27,8 @@ use tiler_ir::schedule::{
 
 use crate::region::SemanticMemberId;
 use crate::request::{
-    NormalizedContraction, NormalizedPointwise, NormalizedPointwiseAssociation,
-    NormalizedPointwiseLeaf, NormalizedPointwiseOperation, NormalizedProgramSubject,
-    NumericalPermission, StrictF32NumericalContract, TargetProfile, VerifiedRequestSubject,
-    VerifiedTargetRequest,
+    NormalizedContraction, NormalizedProgramSubject, NumericalPermission,
+    StrictF32NumericalContract, TargetProfile, VerifiedRequestSubject, VerifiedTargetRequest,
 };
 use crate::target::feasibility::UnrealizableSynchronization;
 use crate::target::feasibility::{
@@ -41,14 +39,65 @@ use crate::target::honourability::{
     DimensionBehaviour, NumericalDimension, NumericalRequirement, UnhonouredDimension,
 };
 
-/// The boundary role of a region reading exactly one program input tensor.
+/// The boundary role of a region reading the first declared program input.
 ///
-/// The serial-sum strategy is defined by reading one tensor: its contributor
-/// domain names one access, and a second input tensor would be a different
-/// scalar program rather than a wider spelling of this one.
+/// It is the tensor a reduction folds when the recognizer found no elementwise
+/// prologue, and the tensor a fused serial sum reads: both are single-access
+/// contributor domains over one declared input.
 const FIRST_INPUT: TensorRole = TensorRole::Input {
     ordinal: InputOrdinal::FIRST,
 };
+
+/// Recovers the scale and bias a fused serial sum's scalar program can spell.
+///
+/// [`ScalarProgram::FusedMultiplyAddSerialSum`] applies exactly `scale * x +
+/// bias` to each contributor, so the fused single-region alternative exists
+/// exactly when the recognized prologue *is* that expression over the sole
+/// declared input. This decides that by node topology, ordered operands, and the
+/// explicit root rather than by the constants alone: an algebraically similar
+/// expression with a different association is a different binary32 function, and
+/// admitting one here would bind an unproved reassociation to the request's
+/// occurrences.
+///
+/// Returning `None` loses a candidate and never a program — the materialized
+/// two-region plan realizes every recognized prologue, and it is what a general
+/// prologue compiles through.
+///
+/// This is the single authority the whole compilation asks: the region builder,
+/// the request-subject binding, and the whole-program numerical proof all reach
+/// it, so "a fused alternative exists" and "the fused equivalence proof is
+/// claimed" cannot disagree.
+pub(crate) fn fused_prologue_constants(request: &VerifiedTargetRequest) -> Option<(u32, u32)> {
+    affine_prologue(&request.try_serial_sum()?.prologue)
+}
+
+/// Recovers the scale and bias one recognized expression spells, or declines.
+fn affine_prologue(expression: &PointwiseF32Expression) -> Option<(u32, u32)> {
+    let [
+        PointwiseF32Node::Input {
+            ordinal: InputOrdinal::FIRST,
+        },
+        PointwiseF32Node::Constant { bits: scale },
+        PointwiseF32Node::Multiply {
+            lhs: multiply_lhs,
+            rhs: multiply_rhs,
+        },
+        PointwiseF32Node::Constant { bits: bias },
+        PointwiseF32Node::Add {
+            lhs: add_lhs,
+            rhs: add_rhs,
+        },
+    ] = expression.nodes()
+    else {
+        return None;
+    };
+    (multiply_lhs.index() == 0
+        && multiply_rhs.index() == 1
+        && add_lhs.index() == 2
+        && add_rhs.index() == 3
+        && expression.root().index() == 4)
+        .then_some((*scale, *bias))
+}
 
 /// Stable candidate identity used when assessing one scheduled region.
 const REGION_PROPOSAL_CANDIDATE: &str = "tiler.prototype.scheduled-region";
@@ -290,15 +339,27 @@ pub(crate) fn build_scheduled_regions(
 pub(crate) fn build_fused_scheduled_region(
     request: &VerifiedTargetRequest,
 ) -> Result<VerifiedScheduledRegion, PhysicalError> {
-    let (fused, members) = fused_region(request);
+    let (fused, members) = fused_region(request).ok_or(PhysicalError::Intrinsic {
+        rule: "fused-prologue-unspellable",
+        region: RegionId::new(0),
+    })?;
     verify_schedule(fused, members, request)
 }
 
-/// Builds the canonical pointwise scheduled region for one request.
+/// Builds the canonical elementwise scheduled region for one request.
 ///
-/// This constructs the raw, not-yet-verified region and its recognized pointwise
-/// members, either as a serial-sum prologue that writes an intermediate or as a
-/// standalone whole-program region that writes the output. It applies no
+/// This constructs the raw, not-yet-verified region and its recognized
+/// elementwise members, either as a reduction prologue that writes an
+/// intermediate or as a standalone whole-program region that writes the output.
+/// Both carry the recognizer's own [`PointwiseF32Expression`] rather than a
+/// spelling rebuilt here, which is what lets one builder serve every expression
+/// the recognizer admits instead of one shape it was taught.
+///
+/// # Panics
+///
+/// Panics when asked for a request whose recognized program is a contraction,
+/// which is invalid compiler output rather than a caller error: the frontier
+/// offers this region only for an elementwise or reduced-elementwise subject. It applies no
 /// intrinsic, subject-binding, or feasibility gate. The implementation frontier
 /// and its providers use it to obtain a canonical region they then re-submit
 /// through the ordinary checked verification path, including for a domain the
@@ -313,7 +374,7 @@ pub(crate) fn pointwise_region(
                 pointwise.elements,
                 pointwise.input_keys.len(),
                 TensorRole::Output,
-                normalized_pointwise_expression(pointwise),
+                pointwise.expression.clone(),
                 pointwise.members.clone(),
             )
         } else {
@@ -321,9 +382,9 @@ pub(crate) fn pointwise_region(
             (
                 serial.input_shape.clone(),
                 serial.input_elements,
-                1,
+                serial.input_keys.len(),
                 TensorRole::Intermediate,
-                scale_bias_expression(serial.scale_bits, serial.bias_bits),
+                serial.prologue.clone(),
                 serial.members.pointwise().to_vec(),
             )
         };
@@ -633,14 +694,25 @@ pub(crate) fn reduction_region(
     (region, request.serial_sum().members.reduction().to_vec())
 }
 
-/// Builds the canonical fused whole-program scheduled region for one request.
+/// Builds the canonical fused whole-program scheduled region for one request,
+/// when its scalar program can spell the recognized prologue.
+///
+/// **The fusion is conditional on the vocabulary, not on the family.**
+/// [`ScalarProgram::FusedMultiplyAddSerialSum`] applies one scale and one bias
+/// per contributor, so this alternative exists exactly when
+/// [`affine_prologue`] recovers those two constants from the recognized
+/// expression. A general prologue — `sum((a * b) + c)`, or one over two declared
+/// inputs — has no fused spelling in this vocabulary, and `None` therefore loses
+/// *a candidate* rather than the program: the materialized two-region plan
+/// realizes every recognized prologue, including this one.
 ///
 /// Like [`pointwise_region`], this is the raw region and its recognized members;
 /// every gate is applied when the frontier resubmits it through the ordinary
 /// checked verification path.
 pub(crate) fn fused_region(
     request: &VerifiedTargetRequest,
-) -> (ScheduledRegion, Vec<SemanticMemberId>) {
+) -> Option<(ScheduledRegion, Vec<SemanticMemberId>)> {
+    let (scale_bits, bias_bits) = fused_prologue_constants(request)?;
     let region = ScheduledRegion {
         index: IndexRegion {
             id: RegionId::new(0),
@@ -697,8 +769,8 @@ pub(crate) fn fused_region(
                 },
             },
             scalar_program: ScalarProgram::FusedMultiplyAddSerialSum {
-                scale_bits: request.serial_sum().scale_bits,
-                bias_bits: request.serial_sum().bias_bits,
+                scale_bits,
+                bias_bits,
                 axes: request.serial_sum().reduction_axes.clone(),
                 order: ContributorOrder::OriginalAxisLexicographic,
                 canonical_nan_bits: request.numerical_contract().canonical_arithmetic_nan_bits,
@@ -733,7 +805,7 @@ pub(crate) fn fused_region(
             )
         },
     };
-    (region, request.serial_sum().members.all())
+    Some((region, request.serial_sum().members.all()))
 }
 
 /// Chooses the split a multi-pass reduction proposal offers for one extent.
@@ -1323,116 +1395,6 @@ fn linear_schedule(work_items: u64, owner: OwnershipWitnessId) -> KernelSchedule
     }
 }
 
-/// Builds the canonical five-node scale-then-bias pointwise expression.
-///
-/// Every insertion is statically within the governed limit and uses handles
-/// minted earlier by this builder. Keeping the construction here gives region
-/// planning one spelling and lets request binding validate that exact spelling
-/// without accepting an algebraically similar but unproved expression.
-fn scale_bias_expression(scale_bits: u32, bias_bits: u32) -> PointwiseF32Expression {
-    let mut expression = PointwiseF32ExpressionBuilder::new();
-    let input = expression
-        .input(InputOrdinal::FIRST)
-        .expect("the fixed expression is within the node limit");
-    let scale = expression
-        .constant(scale_bits)
-        .expect("the fixed expression is within the node limit");
-    let product = expression
-        .multiply(input, scale)
-        .expect("both operands belong to this builder");
-    let bias = expression
-        .constant(bias_bits)
-        .expect("the fixed expression is within the node limit");
-    let root = expression
-        .add(product, bias)
-        .expect("both operands belong to this builder");
-    expression
-        .build(root)
-        .expect("every fixed-expression node reaches its root")
-}
-
-fn normalized_pointwise_expression(normalized: &NormalizedPointwise) -> PointwiseF32Expression {
-    let mut expression = PointwiseF32ExpressionBuilder::new();
-    let mut lower_leaf = |leaf| match leaf {
-        // Two leaves naming one ordinal share the leaf the builder already
-        // minted, which is what makes `(a * a) + b` one read of `a` rather than
-        // two reads the region would have to bind separately.
-        NormalizedPointwiseLeaf::Input(ordinal) => expression
-            .input(ordinal)
-            .expect("the normalized expression is within the node limit"),
-        NormalizedPointwiseLeaf::Constant(bits) => expression
-            .constant(bits)
-            .expect("the normalized expression is within the node limit"),
-    };
-    let [first, second, third] = normalized.leaves.map(&mut lower_leaf);
-    // The two operations are independent: the child is whichever family
-    // produced the root's non-leaf operand, and `(a * b) + c` mixes them.
-    let combine = |builder: &mut PointwiseF32ExpressionBuilder,
-                   operation: NormalizedPointwiseOperation,
-                   lhs,
-                   rhs| {
-        match operation {
-            NormalizedPointwiseOperation::Add => builder.add(lhs, rhs),
-            NormalizedPointwiseOperation::Multiply => builder.multiply(lhs, rhs),
-        }
-        .expect("normalized operands belong to this builder")
-    };
-    let child = normalized.child_operation;
-    let root_operation = normalized.root_operation;
-    let root = match normalized.association {
-        NormalizedPointwiseAssociation::Left => {
-            let inner = combine(&mut expression, child, first, second);
-            combine(&mut expression, root_operation, inner, third)
-        }
-        NormalizedPointwiseAssociation::Right => {
-            let inner = combine(&mut expression, child, second, third);
-            combine(&mut expression, root_operation, first, inner)
-        }
-    };
-    expression
-        .build(root)
-        .expect("every normalized-expression node reaches its root")
-}
-
-/// Checks the exact canonical scale-then-bias expression recognized by the
-/// governed serial-sum request.
-///
-/// This deliberately checks node topology, ordered operands, constant bits,
-/// and the explicit root. Matching only the two constants would let a provider
-/// bind an unproved reassociation or a different arithmetic operation to the
-/// request's semantic occurrences.
-fn scale_bias_expression_matches(
-    expression: &PointwiseF32Expression,
-    scale_bits: u32,
-    bias_bits: u32,
-) -> bool {
-    let [
-        PointwiseF32Node::Input {
-            ordinal: InputOrdinal::FIRST,
-        },
-        PointwiseF32Node::Constant { bits: actual_scale },
-        PointwiseF32Node::Multiply {
-            lhs: multiply_lhs,
-            rhs: multiply_rhs,
-        },
-        PointwiseF32Node::Constant { bits: actual_bias },
-        PointwiseF32Node::Add {
-            lhs: add_lhs,
-            rhs: add_rhs,
-        },
-    ] = expression.nodes()
-    else {
-        return false;
-    };
-    *actual_scale == scale_bits
-        && *actual_bias == bias_bits
-        && multiply_lhs.index() == 0
-        && multiply_rhs.index() == 1
-        && add_lhs.index() == 2
-        && add_rhs.index() == 3
-        && expression.root().index() == 4
-}
-
 /// Verifies one scheduled region and binds it to a compilation request.
 ///
 /// Intrinsic schedule verification runs first, in `tiler_ir::schedule`, and
@@ -1538,7 +1500,11 @@ fn verify_region_subject_binding(
                 && semantic_members == normalized.members
                 && region.index.id == RegionId::new(0)
                 && region.index.iteration_shape == normalized.shape
-                && expression == &normalized_pointwise_expression(normalized)
+                // The recognized expression itself, compared whole. It binds
+                // node topology, ordered operands, constant bits, shared reads,
+                // and the explicit root, so a provider cannot substitute an
+                // algebraically similar but unproved expression for it.
+                && expression == &normalized.expression
         }
         (
             NormalizedProgramSubject::Contraction(normalized),
@@ -1620,14 +1586,14 @@ fn verify_region_subject_binding(
             }
             match scalar {
                 ScalarProgram::PointwiseF32(expression) => {
-                    semantic_members == normalized.members().pointwise()
+                    // The recognized prologue itself, compared whole: node
+                    // topology, ordered operands, constant bits, shared reads,
+                    // and the explicit root. A provider cannot substitute an
+                    // algebraically similar but unproved expression for it.
+                    normalized.prologue() == expression
+                        && semantic_members == normalized.members().pointwise()
                         && region.index.id == RegionId::new(0)
                         && region.index.iteration_shape == *normalized.input_shape()
-                        && scale_bias_expression_matches(
-                            expression,
-                            normalized.scale_bits(),
-                            normalized.bias_bits(),
-                        )
                 }
                 ScalarProgram::StrictSerialSum {
                     axes,
@@ -1652,8 +1618,12 @@ fn verify_region_subject_binding(
                     semantic_members == normalized.members().all()
                         && region.index.id == RegionId::new(0)
                         && region.index.iteration_shape == *normalized.output_shape()
-                        && *scale_bits == normalized.scale_bits()
-                        && *bias_bits == normalized.bias_bits()
+                        // Re-derived from the recognized prologue rather than
+                        // read back: the fused scalar program is admitted only
+                        // for the one expression it can spell, so a prologue
+                        // that is not that expression has no fused form at all.
+                        && affine_prologue(normalized.prologue())
+                            == Some((*scale_bits, *bias_bits))
                         && axes == normalized.reduction_axes()
                         && reduction_access_matches(&region.index.accesses[0], normalized)
                         && *canonical_nan_bits
@@ -2165,6 +2135,21 @@ fn intrinsic<T>(rule: &'static str, region: RegionId) -> Result<T, PhysicalError
 
 #[cfg(test)]
 mod tests {
+
+    /// Builds the five-node `input * scale + bias` expression as a forgery.
+    ///
+    /// Test-only and deliberately not shared with the region builders: those
+    /// carry whatever expression the recognizer produced, and a helper they also
+    /// used could not be substituted for one of them here.
+    fn test_affine_expression(scale_bits: u32, bias_bits: u32) -> PointwiseF32Expression {
+        let mut expression = tiler_ir::schedule::PointwiseF32ExpressionBuilder::new();
+        let input = expression.input(InputOrdinal::FIRST).unwrap();
+        let scale = expression.constant(scale_bits).unwrap();
+        let product = expression.multiply(input, scale).unwrap();
+        let bias = expression.constant(bias_bits).unwrap();
+        let root = expression.add(product, bias).unwrap();
+        expression.build(root).unwrap()
+    }
     use std::fmt::Write as _;
     /// The governed profile's canonical descriptor, pinned byte for byte.
     ///
@@ -2421,11 +2406,14 @@ mod tests {
             })
         );
 
+        // The scale and the bias exchanged: the same two constants in the same
+        // two node positions, applied the other way round. It is a different
+        // binary32 function, and the binding compares the whole expression
+        // rather than its constant set, so it must be refused.
+        let (scale, bias) = fused_prologue_constants(&request).expect("the fixture is affine");
         let mut wrong_expression = regions[0].region().clone();
-        wrong_expression.index.scalar_program = ScalarProgram::PointwiseF32(scale_bias_expression(
-            request.serial_sum().bias_bits,
-            request.serial_sum().scale_bits,
-        ));
+        wrong_expression.index.scalar_program =
+            ScalarProgram::PointwiseF32(test_affine_expression(bias, scale));
         assert_eq!(
             verify_schedule(
                 wrong_expression,
@@ -2453,10 +2441,9 @@ mod tests {
         assert_eq!(region.semantic_members(), expected);
 
         let mut wrong_expression = region.region().clone();
-        wrong_expression.index.scalar_program = ScalarProgram::PointwiseF32(scale_bias_expression(
-            2.0_f32.to_bits(),
-            1.0_f32.to_bits(),
-        ));
+        wrong_expression.index.scalar_program = ScalarProgram::PointwiseF32(
+            test_affine_expression(2.0_f32.to_bits(), 1.0_f32.to_bits()),
+        );
         assert!(matches!(
             verify_schedule(
                 wrong_expression,

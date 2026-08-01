@@ -282,10 +282,12 @@ pub(super) fn verify_equivalence(
         (ProgramAlternativeKind::Materialized, None) => Ok(()),
         // A whole-program strategy that carries no fused-numerics proof, because
         // there is no fusion to prove: its single region realizes one semantic
-        // occurrence family directly rather than merging a pointwise prologue
-        // into a reduction. The coverage check below is what stands in its
-        // place, and it is not weaker — it requires the one scheduled region to
-        // cover exactly the candidate's occurrences.
+        // occurrence family directly rather than merging an elementwise prologue
+        // into a reduction. A reduced-elementwise request never reaches this arm
+        // — its only whole-program region is the fused one, which exists exactly
+        // when the affine equivalence proof does. The coverage check below is
+        // what stands in its place, and it is not weaker: it requires the one
+        // scheduled region to cover exactly the candidate's occurrences.
         (ProgramAlternativeKind::Fused, None)
             if request.pointwise().is_some() || request.contraction().is_some() =>
         {

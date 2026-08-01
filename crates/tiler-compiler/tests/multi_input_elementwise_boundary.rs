@@ -45,10 +45,25 @@
 //! contraction or an implementation for the materialized cover's single-operation
 //! regions; both are separate work, and neither is a vocabulary question.
 //!
-//! What still refuses for *recognition* is recorded here too. Widening the
-//! vocabulary is not licence to accept an unrecognized program, so a body
-//! outside the recognized two-operation shape must still refuse with a typed
-//! reason naming what was not recognized.
+//! What still refuses for *recognition* is recorded here too. Widening is not
+//! licence to accept an unrecognized program, so a program the physical layer
+//! cannot realize must still refuse with a typed reason naming what was not
+//! recognized.
+//!
+//! # Where that recognition boundary moved next
+//!
+//! When this file first landed, the recognized body was exactly two operations
+//! over three leaves, and `(a * b) + (c * c)` was the program that kept the
+//! widening honest by refusing. It no longer refuses: the request boundary's
+//! three whole-program templates were replaced by a general walk over the
+//! occurrences an expression contains, so depth, arity, family mixing, and
+//! shared reads are now properties of the caller's program rather than of a
+//! shape the recognizer was taught. That program is asserted below as a
+//! *compilation*, and the refusal it used to provide is now carried by
+//! `tiler::silu-f32@1` — a registered semantic family with a registered
+//! lowering capability and no `PointwiseF32Node` to spell it, which is a
+//! physical-vocabulary wall in exactly the sense the second input tensor once
+//! was.
 
 use tiler_compiler::session::{
     CompileFailureClass, CompileRequest, NumericalContract, TargetCompileFailure, compile,
@@ -58,7 +73,7 @@ use tiler_ir::schedule::{
     InputOrdinal, PointwiseF32ExpressionBuilder, PointwiseF32ExpressionDiagnostic, PointwiseF32Node,
 };
 use tiler_ir::semantic::{
-    F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
+    F32, F32Add, F32Constant, F32Multiply, F32Silu, InputKey, OutputKey, SemanticProgram,
     SemanticProgramBuilder,
 };
 use tiler_ir::shape::Shape;
@@ -170,14 +185,14 @@ fn compile_under(
     }
 }
 
-/// A region the widened vocabulary still cannot express: `(a * b) + (c * c)`.
+/// A region the two-operation body could not express: `(a * b) + (c * c)`.
 ///
-/// Three inputs, so it stays inside every governed budget, but three operations
-/// where the recognized body has two — the root's second operand is produced
-/// rather than being a leaf. This is the program that keeps the widening honest:
-/// what landed is "N inputs across the recognized body", not "anything with
-/// several inputs".
-fn unrecognized_three_input_region() -> SemanticProgram {
+/// Three inputs and three operations, where the superseded recognized body had
+/// two — the root's second operand is produced rather than being a leaf. It was
+/// this file's refusal case and is now its depth case: the general recognizer
+/// walks to it, so what the boundary admits is bounded by the expression
+/// vocabulary rather than by a leaf count.
+fn deeper_three_input_region() -> SemanticProgram {
     let mut builder = SemanticProgramBuilder::try_standard().unwrap();
     let mut inputs = Vec::new();
     for key in ["a", "b", "c"] {
@@ -254,26 +269,77 @@ fn the_contraction_permitting_contract_declines_a_mixed_body_at_any_input_count(
     );
 }
 
-/// A program outside the recognized body still refuses, with a named rule.
+/// The deeper three-input body compiles wherever a mixed body is admitted.
 ///
-/// The refusal names the operation family the leaf walk expected and did not
-/// find, rather than the combined `signature` this file used to assert: each
-/// gate now names its own refusal, so a reader learns which of input arity,
-/// output arity, the operation set, or the dtype was not recognized instead of
-/// having to re-derive it.
+/// This is the assertion that changed direction. `(a * b) + (c * c)` refused
+/// here until the request boundary generalized, and it refused for its *depth*
+/// — the root's second operand is produced rather than being a leaf — which was
+/// a property of the template rather than of anything the physical layer could
+/// not do. It is now recognized by the same walk that recognizes `(a * b) + c`,
+/// and it compiles to a complete verified plan under every contract that admits
+/// a mixed multiply/add body.
+///
+/// The one-input control travels with it for the reason it always has: without
+/// a program that compiles under the identical request, a pass here would be
+/// consistent with a permissive target rather than with anything about the body.
 #[test]
-fn an_unrecognized_multi_input_region_still_refuses_with_a_typed_reason() {
-    let region = unrecognized_three_input_region();
+fn the_deeper_three_input_region_compiles_wherever_a_mixed_body_is_admitted() {
+    let region = deeper_three_input_region();
     assert_eq!(region.input_count(), 3);
     assert_eq!(region.operation_count(), 3);
 
     for contract in CONTRACTS {
         assert_eq!(
+            compile_under(&one_input_control(), contract),
+            Ok(()),
+            "{contract:?} refused the recognized one-input control, so nothing \
+             this test asserts about the deeper body would be evidence about \
+             expression depth",
+        );
+        if contract == CONTRACTION_PERMITTED {
+            continue;
+        }
+        assert_eq!(
+            compile_under(&region, contract),
+            Ok(()),
+            "{contract:?} refused the deeper three-input body",
+        );
+    }
+}
+
+/// A family the region vocabulary cannot spell still refuses, with a named rule.
+///
+/// `tiler::silu-f32@1` is registered semantics *and* a registered index-access
+/// lowering capability, and it is still refused at the request boundary — which
+/// is the whole point of the pair. Recognition generalized over the expression
+/// vocabulary, not over everything the compiler can lower: no
+/// `PointwiseF32Node` spells a sigmoid-weighted linear unit, and decomposing one
+/// here into multiply, exp, add, and divide nodes would be this boundary
+/// re-deriving a provider's lowering rather than resolving it.
+///
+/// The refusal names `operation-set` — the property that was not recognized —
+/// and precedes any target-qualified trace, which `compile_under` asserts.
+#[test]
+fn a_family_outside_the_expression_vocabulary_refuses_with_a_typed_reason() {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let a = builder
+        .input::<F32>(InputKey::new("a").unwrap(), Shape::from_dims([4]))
+        .unwrap();
+    let activated = F32Silu::apply(&mut builder, a).unwrap();
+    builder
+        .output(OutputKey::new("out").unwrap(), activated)
+        .unwrap();
+    let region = builder.build().unwrap();
+    assert_eq!(region.input_count(), 1);
+    assert_eq!(region.operation_count(), 1);
+
+    for contract in CONTRACTS {
+        assert_eq!(
             compile_under(&region, contract),
             Err(CompileFailureClass::UnsupportedCapability {
-                rule: "operation-family"
+                rule: "operation-set"
             }),
-            "{contract:?} admitted a body the recognizer does not cover",
+            "{contract:?} admitted a family no scalar program spells",
         );
     }
 }
