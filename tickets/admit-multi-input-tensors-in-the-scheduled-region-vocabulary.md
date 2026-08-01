@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: []
 related: [admit-multi-input-elementwise-programs-at-the-compiler-boundary, prototype-inline-aot-integration-proof]
-scopes: [implementation/ir]
+scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, schedule]
