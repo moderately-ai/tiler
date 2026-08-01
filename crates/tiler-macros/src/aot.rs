@@ -65,10 +65,22 @@
 //! downstream would catch it. [`crate::delivery`]'s `PROFILE_MSL_VERSION` is
 //! what makes the accepted `deliver macos;` spelling reach this target at all.
 //!
-//! A selection naming several families is refused for a different reason and
-//! says so: one envelope carries one payload per built family, and the
-//! single-payload cache orchestration below builds one. Widening that is
-//! `deliver-several-artifact-families-from-one-expansion`.
+//! A selection naming several families is refused for the *same* reason, once
+//! per family it names that no declaration measures — `deliver macos-and-ios;`
+//! is refused because iOS has no declaration, not because a second payload
+//! would be one too many. Stating it the other way round would be the more
+//! flattering error and the wrong one: the missing measurement is the binding
+//! constraint, and it is upstream of every machinery question.
+//!
+//! Two things are nonetheless needed before `deliver macos-and-ios;` can
+//! succeed, and they are separately blocked, so neither should be read as
+//! waiting on the other. `first-authoritative-ios-metal-compile-declaration`
+//! owns the measured declaration, and is blocked on a physical iOS device.
+//! `carry-one-payload-per-artifact-family-in-one-envelope` owns the envelope:
+//! `tiler_build`'s `a_second_artifact_family_cannot_yet_share_one_envelope`
+//! measures the neutral artifact model refusing a two-payload envelope today,
+//! for a reason that is structural rather than a limit of the cache
+//! orchestration below.
 //!
 //! # The numerical contract is derived, not chosen
 //!
@@ -190,9 +202,14 @@ pub(crate) enum AotRefusal {
     SymbolicExtent,
     /// The one authoritative Metal compile declaration would not assemble.
     Declaration(BoundMetalDeclarationError),
-    /// The stated selection names families this frontend cannot build.
+    /// The stated selection names families no bound declaration measures.
     UnbuildableFamilies {
-        /// What the stated selection asks for, rendered.
+        /// The stated families that have no measured declaration, rendered.
+        ///
+        /// A subset of the selection rather than all of it: a statement mixing
+        /// a measured family with an unmeasured one names only the second here,
+        /// because that is the part a consumer changes. Empty means the
+        /// selection named no family at all.
         stated: Vec<String>,
         /// The one target the bound declaration compiles for, rendered.
         buildable: String,
@@ -238,11 +255,16 @@ impl fmt::Display for AotRefusal {
             ),
             Self::UnbuildableFamilies { stated, buildable } => write!(
                 formatter,
-                "this `deliver` statement selects {}, and this frontend compiles exactly one \
-                 target today: {buildable}. A selected family must not silently become fallback \
-                 on a matching target, so a selection it cannot build is a refusal rather than a \
-                 quiet downgrade. State `deliver macos;`, or state `fallback-only` to expand with \
-                 the semantic fallback on every target",
+                "this `deliver` statement names {}, and no measured Metal compile-time \
+                 declaration exists for it. One does exist, for {buildable}, and it is the only \
+                 one: a declaration is assembled from measured rows, and widening it to another \
+                 Apple family is a new measurement rather than a new argument — the retained MSL \
+                 4.0 measurement covers macOS alone. A selected family must not silently become \
+                 fallback on a matching target, so a family with no declaration is a refusal \
+                 rather than a quiet downgrade. State `deliver macos;`, or state `fallback-only` \
+                 to expand with the semantic fallback on every target. \
+                 `first-authoritative-ios-metal-compile-declaration` is the work that measures a \
+                 second one",
                 rendered_list(stated),
             ),
             Self::TargetRequest(source) => write!(
@@ -456,25 +478,45 @@ fn retained(
     })
 }
 
-/// Refuses a stated selection the bound declaration cannot compile.
+/// Refuses a stated selection naming a family no bound declaration measures.
+///
+/// The refusal names the families that are *missing a declaration*, not the
+/// whole stated selection. `deliver macos-and-ios;` states three families and
+/// two of them are the problem, so listing all three beside the one buildable
+/// target read as a contradiction — macOS appeared both as something the
+/// statement "selects" and as the target the frontend builds. What a consumer
+/// has to change is the unmeasured entries, so those are what the diagnostic
+/// names.
+///
+/// A selection naming *no* family is refused here too, with an empty list. It
+/// cannot arrive from [`crate::expand`], which calls [`deliver`] only for a
+/// selection that `invokes_backend_compiler` — and that is exactly why the
+/// refusal is kept: it is what a `FallbackOnly` selection meets if that branch
+/// is ever wrong, so the wrong branch produces a diagnostic rather than a
+/// compilation. `a_fallback_only_selection_is_refused_before_any_backend_work`
+/// holds it, and an "every stated family is measured" check alone would pass
+/// the empty case vacuously.
 fn require_buildable(
     selection: &ArtifactFamilySelection,
     declaration: &BoundMetalCompileDeclaration,
 ) -> Result<(), AotRefusal> {
     let buildable = declaration.aot_target();
     let stated = selection.families();
-    let matches = matches!(
-        stated,
-        [only]
-            if only.family == buildable.platform()
-                && only.deployment_minimum == buildable.deployment_minimum()
-                && only.msl_version == buildable.msl_version()
-    );
-    if matches {
+    let unmeasured: Vec<String> = stated
+        .iter()
+        .copied()
+        .filter(|selected| {
+            selected.family != buildable.platform()
+                || selected.deployment_minimum != buildable.deployment_minimum()
+                || selected.msl_version != buildable.msl_version()
+        })
+        .map(rendered_family)
+        .collect();
+    if !stated.is_empty() && unmeasured.is_empty() {
         return Ok(());
     }
     Err(AotRefusal::UnbuildableFamilies {
-        stated: stated.iter().copied().map(rendered_family).collect(),
+        stated: unmeasured,
         buildable: rendered_target(buildable),
     })
 }

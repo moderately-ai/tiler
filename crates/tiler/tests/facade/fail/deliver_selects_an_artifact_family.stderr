@@ -4,20 +4,20 @@ error: this region declares a symbolic extent, and a `deliver` statement selecti
 32 |         deliver macos;
    |         ^^^^^^^
 
-error: this `deliver` statement selects ios-device 26.0 at MSL 4.0, ios-simulator 26.0 at MSL 4.0, and this frontend compiles exactly one target today: macos 26.0 at MSL 4.0. A selected family must not silently become fallback on a matching target, so a selection it cannot build is a refusal rather than a quiet downgrade. State `deliver macos;`, or state `fallback-only` to expand with the semantic fallback on every target
+error: this `deliver` statement names ios-device 26.0 at MSL 4.0, ios-simulator 26.0 at MSL 4.0, and no measured Metal compile-time declaration exists for it. One does exist, for macos 26.0 at MSL 4.0, and it is the only one: a declaration is assembled from measured rows, and widening it to another Apple family is a new measurement rather than a new argument — the retained MSL 4.0 measurement covers macOS alone. A selected family must not silently become fallback on a matching target, so a family with no declaration is a refusal rather than a quiet downgrade. State `deliver macos;`, or state `fallback-only` to expand with the semantic fallback on every target. `first-authoritative-ios-metal-compile-declaration` is the work that measures a second one
   --> tests/facade/fail/deliver_selects_an_artifact_family.rs:39:9
    |
 39 |         deliver ios;
    |         ^^^^^^^
 
-error: this `deliver` statement selects ios-device 26.0 at MSL 4.0, ios-simulator 26.0 at MSL 4.0, macos 26.0 at MSL 4.0, and this frontend compiles exactly one target today: macos 26.0 at MSL 4.0. A selected family must not silently become fallback on a matching target, so a selection it cannot build is a refusal rather than a quiet downgrade. State `deliver macos;`, or state `fallback-only` to expand with the semantic fallback on every target
-  --> tests/facade/fail/deliver_selects_an_artifact_family.rs:47:9
+error: this `deliver` statement names ios-device 26.0 at MSL 4.0, ios-simulator 26.0 at MSL 4.0, and no measured Metal compile-time declaration exists for it. One does exist, for macos 26.0 at MSL 4.0, and it is the only one: a declaration is assembled from measured rows, and widening it to another Apple family is a new measurement rather than a new argument — the retained MSL 4.0 measurement covers macOS alone. A selected family must not silently become fallback on a matching target, so a family with no declaration is a refusal rather than a quiet downgrade. State `deliver macos;`, or state `fallback-only` to expand with the semantic fallback on every target. `first-authoritative-ios-metal-compile-declaration` is the work that measures a second one
+  --> tests/facade/fail/deliver_selects_an_artifact_family.rs:48:9
    |
-47 |         deliver macos-and-ios;
+48 |         deliver macos-and-ios;
    |         ^^^^^^^
 
 error: this artifact family and deployment minimum are not a governed Metal target: MSL 4.0 on macos requires deployment minimum 26.0, got 14.0
-  --> tests/facade/fail/deliver_selects_an_artifact_family.rs:54:23
+  --> tests/facade/fail/deliver_selects_an_artifact_family.rs:55:23
    |
-54 |         deliver macos 14.0;
+55 |         deliver macos 14.0;
    |                       ^^^^

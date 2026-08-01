@@ -317,6 +317,39 @@ impl BoundMetalCompileDeclaration {
         Self::declare(&FIRST_MACOS_APPLE9)
     }
 
+    /// A second *artifact family* over this profile's rows, for tests only.
+    ///
+    /// `#[cfg(test)]` and crate-private: it is unreachable from any dependent
+    /// crate and from every production path in this one, which is the whole of
+    /// its safety. It exists so a test can ask what happens when one selection
+    /// names two artifact families, without inventing a measured row.
+    ///
+    /// **It is not a second measured declaration, and could not be.** It moves
+    /// exactly one field — `MetalTargetFacts::platform` — which the ledger's
+    /// projection table records as *not* projecting into the compiler profile.
+    /// So this shares `first_macos_apple9`'s profile key, descriptor, measured
+    /// dispatchability, and every numerical row, and differs only in the AOT
+    /// target it compiles for: `air64-apple-ios26.0` rather than
+    /// `air64-apple-macos26.0`. Those measured rows were taken on a macOS host,
+    /// and the ledger refuses their inheritance by name — "No iOS family,
+    /// physical or simulated, gains a row from this one" — which is exactly why
+    /// this may not escape `cfg(test)`.
+    ///
+    /// `first-authoritative-ios-metal-compile-declaration` is the ticket that
+    /// would produce a real one, and it is blocked on a measurement.
+    #[cfg(test)]
+    pub(crate) fn second_artifact_family_fixture() -> Result<Self, BoundMetalDeclarationError> {
+        let mut rows = FIRST_MACOS_APPLE9;
+        rows.facts = MetalTargetFacts::new(
+            rows.facts.language,
+            MetalPlatform::IOsDevice,
+            rows.facts.deployment_minimum,
+            rows.facts.subnormal_arithmetic,
+            rows.facts.buffer_binding_limit,
+        );
+        Self::declare(&rows)
+    }
+
     /// Returns the checked compiler profile every projected row entered.
     #[must_use]
     pub const fn profile(&self) -> &TargetProfile {

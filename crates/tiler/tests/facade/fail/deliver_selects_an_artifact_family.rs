@@ -40,8 +40,9 @@ fn main() {
         out a * b
     };
 
-    // Several families: one envelope carries one payload per built family, and
-    // this frontend builds one.
+    // Several families, one of which is measured: the refusal names only the
+    // unmeasured ones, so the golden beside this file is also the evidence that
+    // `macos` is absent from a list of what could not be built.
     let _both = tiler::tensor! {
         in a: f32[4], b: f32[4];
         deliver macos-and-ios;
