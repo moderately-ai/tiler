@@ -1146,7 +1146,7 @@ impl<'a> Cursor<'a> {
             .expect("a checked read of N bytes is an N-byte array"))
     }
 
-    fn u8(&mut self) -> Result<u8, ArtifactCodecError> {
+    pub(super) fn u8(&mut self) -> Result<u8, ArtifactCodecError> {
         Ok(self.array::<1>()?[0])
     }
 

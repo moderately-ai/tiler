@@ -370,8 +370,8 @@ pub use codec::{
     ArtifactCodecFailure, DecodedArtifact, DecodedBinding, DecodedComponent,
     DecodedDeferredPredicate, DecodedEntry, DecodedExpr, DecodedInput, DecodedNumerical,
     DecodedOutput, DecodedStageDependency, DecodedVariant, PayloadContent, PayloadEntryMapping,
-    PayloadMetadata, PayloadProvenance, PayloadSdkIdentity, PayloadTargetObligation,
-    SectionPurpose, SectionView, ToolComponent, decode_artifact,
+    PayloadMetadata, PayloadPlatform, PayloadProvenance, PayloadSdkIdentity,
+    PayloadTargetObligation, SectionPurpose, SectionView, ToolComponent, decode_artifact,
 };
 // The governed digest algorithm, which `docs/artifact-abi.md` requires every
 // digest use to name explicitly rather than choose locally.
@@ -399,7 +399,7 @@ pub(crate) use codec::envelope_digest;
 pub(crate) use codec::{ENVELOPE_DIGEST_DOMAIN, MANIFEST_DIGEST_DOMAIN, SECTION_DIGEST_DOMAIN};
 pub use error::{
     AbiExprUse, ArtifactBuildError, ArtifactDiagnostic, ArtifactEntityKind, ArtifactKeyKind,
-    ArtifactLimitKind, ArtifactVerificationError, RecordedArtifactIdentityError,
+    ArtifactLimitKind, ArtifactVerificationError, ProvenanceField, RecordedArtifactIdentityError,
 };
 pub use expr::{
     AbiBinaryOp, AbiEvaluationError, AbiFacts, AbiRoot, AbiType, AbiUnaryOp, AbiValue,

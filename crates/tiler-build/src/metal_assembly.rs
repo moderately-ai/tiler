@@ -6,8 +6,8 @@ use std::fmt;
 use tiler_artifact::program::{
     ArtifactBuildError, ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey,
     BackendKey, BackendPayloadDescriptor, PayloadContent, PayloadDigest, PayloadEntryMapping,
-    PayloadId, PayloadMetadata, PayloadProvenance, PayloadSdkIdentity, PayloadTargetObligation,
-    RepresentationKey, SchemaVersion, TargetProfileRef, ToolComponent,
+    PayloadId, PayloadMetadata, PayloadPlatform, PayloadProvenance, PayloadSdkIdentity,
+    PayloadTargetObligation, RepresentationKey, SchemaVersion, TargetProfileRef, ToolComponent,
 };
 use tiler_metal::diagnostic::MetalEmitError;
 use tiler_metal::record::{MetalNumericalRequirement, MetalTranslationUnit};
@@ -352,8 +352,19 @@ fn payload_metadata(
             target: target.triple(),
             family: unit.target().platform.as_str().to_owned(),
             language: unit.target().language.semantic_name().to_owned(),
-            deployment_major: unit.target().deployment_minimum.major(),
-            deployment_minor: unit.target().deployment_minimum.minor(),
+            // Apple's toolchain resolves against a versioned SDK under a
+            // requested deployment minimum, so this backend declares that shape
+            // and owes every field of it. A backend whose toolchain has no SDK
+            // declares `Unversioned` instead; nothing here became optional.
+            platform: PayloadPlatform::VersionedSdk {
+                deployment_major: unit.target().deployment_minimum.major(),
+                deployment_minor: unit.target().deployment_minimum.minor(),
+                sdk: PayloadSdkIdentity {
+                    name: provenance.sdk.canonical_name.clone(),
+                    version: provenance.sdk.version.clone(),
+                    build: provenance.sdk.build.clone(),
+                },
+            },
             components: vec![
                 ToolComponent {
                     role: COMPILER_ROLE.to_owned(),
@@ -364,11 +375,6 @@ fn payload_metadata(
                     version: provenance.fingerprint.metallib_version.clone(),
                 },
             ],
-            sdk: PayloadSdkIdentity {
-                name: provenance.sdk.canonical_name.clone(),
-                version: provenance.sdk.version.clone(),
-                build: provenance.sdk.build.clone(),
-            },
             compile_flags: provenance.compile_flags.clone(),
             link_flags: provenance.link_flags.clone(),
         },

@@ -44,7 +44,7 @@ use tiler_artifact::program::{
     AvailabilityPhase, BackendEntryKey, BackendEntryRef, BackendKey, BindingKind, BindingSpec,
     BindingTarget, CapabilityKey, CompilationEnvironment, EntrySpec, FeasibilityRuleSetKey,
     FeasibilityRuleSetRef, LaunchSpec, PayloadContent, PayloadEntryMapping, PayloadMetadata,
-    PayloadProvenance, PayloadSdkIdentity, RecordedArtifactIdentityError,
+    PayloadPlatform, PayloadProvenance, RecordedArtifactIdentityError,
     RecordedArtifactProgramIdentity, RepresentationKey, SchemaVersion, SelectedProvider,
     TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, ToolComponent, VariantSpec,
     VerifiedArtifactProgram,
@@ -340,21 +340,16 @@ fn assemble(
                         target: profile::TARGET_TRIPLE.to_owned(),
                         family: "tiler.cpu.scalar".to_owned(),
                         language: "tiler.kernel-ir.v4".to_owned(),
-                        // The deployment minimum is an Apple-shaped required
-                        // field with no CPU meaning; `1.0` is stated as this
-                        // representation's own version rather than a platform
-                        // claim, and the README records the seam.
-                        deployment_major: 1,
-                        deployment_minor: 0,
+                        // This translator resolves against no SDK and requests
+                        // no platform deployment minimum, and it now says so.
+                        // Finding 7 recorded that it could not: the fields were
+                        // unconditional, and this spike stated its own
+                        // representation version in them.
+                        platform: PayloadPlatform::Unversioned,
                         components: vec![ToolComponent {
                             role: "translator".to_owned(),
                             version: "1".to_owned(),
                         }],
-                        sdk: PayloadSdkIdentity {
-                            name: "tiler.cpu.scalar-image".to_owned(),
-                            version: "1".to_owned(),
-                            build: "0".to_owned(),
-                        },
                         compile_flags: Vec::new(),
                         link_flags: Vec::new(),
                     },

@@ -58,12 +58,32 @@
 //! # Neutral, and why that is not a compromise
 //!
 //! Nothing here is Metal. A provenance record names a governed toolchain key, a
-//! normalized target string, a family, a language, a deployment minimum, an
-//! ordered set of versioned tool components, an SDK identity, and the exact
-//! ordered compile and link flags. Those are the identity dimensions
+//! normalized target string, a family, a language, an ordered set of versioned
+//! tool components, the platform contract its toolchain resolved against, and
+//! the exact ordered compile and link flags. Those are the identity dimensions
 //! `docs/artifact-abi.md` requires for Metal, spelled so a CUDA payload fills
 //! the same shape with `nvcc`, `ptxas`, and `sm_90`. The backend owns the
 //! *values*; this layer owns the framing, the bounds, and the identity.
+//!
+//! **Which fields a payload owes follows the shape it declares, not a backend
+//! this layer knows.** Every payload owes a toolchain, a target, a family, a
+//! language, and a role and a version for each tool component it lists. A
+//! payload whose toolchain resolved against a versioned platform SDK says so
+//! with [`PayloadPlatform::VersionedSdk`] and additionally owes a deployment
+//! minimum and all three SDK fields; a payload whose toolchain has no SDK says
+//! so with [`PayloadPlatform::Unversioned`] and owes none of them. An owed field
+//! left empty is refused by name as
+//! [`ArtifactBuildError::IncompletePayloadProvenance`] where the payload's
+//! identity is derived, and again on decode because an artifact's bytes arrive
+//! from a producer this process never ran.
+//!
+//! The record this replaces made the deployment minimum and the SDK identity
+//! unconditional, and ADR 0090 item 14 measured what that cost: the CPU vertical
+//! had to mint an SDK for a target that has none. An approximated field that
+//! enters durable identity is worse than an absent one, because it makes two
+//! unlike artifacts comparable. So the obligation was *redistributed* and not
+//! relaxed — a Metal payload owes every field it owed before, and now owes them
+//! to a check rather than to a convention.
 //!
 //! An entry mapping likewise carries the neutral
 //! [`BackendEntryKey`](super::super::BackendEntryKey), the backend's own symbol
@@ -85,12 +105,52 @@
 //! mapped none of the entries it realized and still decode. The check exists as
 //! of `expose-the-dispatch-record-on-a-decoded-artifact`, because a decoded
 //! entry that cannot reach its symbol is not a dispatch record.
+//!
+//! # How the platform block reaches the wire without moving an identity
+//!
+//! **The versioned-SDK shape keeps the untagged encoding, and the widening is
+//! one tag byte appended after the last field.** A [`PayloadPlatform::VersionedSdk`]
+//! record encodes to exactly the bytes this module produced before a platform
+//! block existed: the deployment minimum in its two `u16` positions ahead of the
+//! component list, and the three SDK runs after it. A
+//! [`PayloadPlatform::Unversioned`] record writes those same positions as two
+//! zeroes and three empty runs, then appends
+//! [`PAYLOAD_PLATFORM_UNVERSIONED_TAG`] after the obligation list.
+//!
+//! *No previously encodable payload's bytes moved.* Every record the previous
+//! shape could encode is a versioned-SDK record, and the function encoding one
+//! is unchanged byte for byte. Some of those records are no longer encodable at
+//! all — an empty SDK name is now a named refusal — but a refusal is not a move.
+//!
+//! *The encoding stays injective, and the argument is per tag.* The untagged
+//! grammar is self-delimiting: every run carries a fixed-width length and every
+//! collection a fixed-width count, so the number of bytes one record occupies is
+//! a function of the bytes themselves. A versioned encoding is therefore that
+//! grammar followed by nothing and an unversioned encoding is that same grammar
+//! followed by exactly one byte, so no record of one class can encode to a
+//! record of the other's bytes whatever its remaining fields hold. Within the
+//! untagged class the map is the previous injective one; within the tagged class
+//! the platform positions are constants and every other field is encoded by that
+//! same injective grammar, so two unversioned records that encode equally are
+//! equal. A *second spelling of one record* is the only thing that could break
+//! this, which is why [`decode_metadata`] refuses a tagged encoding that filled a
+//! platform position — as [`ArtifactCodecError::PlatformFieldWithoutPlatform`],
+//! rather than normalizing the values away — and why no tag value is admitted
+//! for the versioned shape.
+//!
+//! The cost is 28 pinned bytes in every unversioned payload's identity subject,
+//! plus the tag. The alternative — moving the platform block behind a leading
+//! discriminator, or to the end under a new schema minor — would have moved
+//! every already-published Metal payload's identity, and with it every artifact
+//! identity and every expansion-cache key that folds one, to save 29 bytes.
+//! A later platform shape is another appended tag with its own fields after it,
+//! and it moves nothing either.
 
-use super::super::error::ArtifactBuildError;
+use super::super::error::{ArtifactBuildError, ProvenanceField};
 use super::super::keys::{BackendEntryKey, PayloadDigest, RepresentationKey};
 use super::decode::Cursor;
 use super::digest::DigestAlgorithm;
-use super::error::{ArtifactCodecError, CodecLimitKind, OrderedSubject, codec_limit};
+use super::error::{ArtifactCodecError, CodecLimitKind, OrderedSubject, TagSubject, codec_limit};
 use tiler_ir::identity::{push_len, push_slice};
 
 /// Versioned domain tag opening the canonical payload-metadata bytes.
@@ -113,6 +173,14 @@ pub(super) const MAX_PROVENANCE_FLAGS: usize = 256;
 /// Maximum recorded target obligations admitted by one carried payload.
 pub(super) const MAX_TARGET_OBLIGATIONS: usize = 64;
 
+/// Appended tag of a payload whose toolchain resolved against no versioned SDK.
+///
+/// The one admitted tag value. The versioned-SDK shape is the *untagged*
+/// encoding — the module documentation states why — so admitting a second tag
+/// naming it would give one record two spellings and make payload identity
+/// non-injective.
+pub(super) const PAYLOAD_PLATFORM_UNVERSIONED_TAG: u8 = 0x00;
+
 /// One versioned component of the toolchain that produced a payload.
 ///
 /// The role is the governed name of the component's job — the compiler, the
@@ -129,6 +197,10 @@ pub struct ToolComponent {
 }
 
 /// The identity of the SDK one payload was compiled against.
+///
+/// Reachable only through [`PayloadPlatform::VersionedSdk`], because an SDK
+/// identity is a claim a backend either has or does not have. All three fields
+/// are owed wherever this record appears.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PayloadSdkIdentity {
     /// Canonical SDK selector, such as `macosx`.
@@ -137,6 +209,47 @@ pub struct PayloadSdkIdentity {
     pub version: String,
     /// SDK build identifier.
     pub build: String,
+}
+
+/// The platform contract one payload's toolchain resolved against.
+///
+/// Deliberately an enumeration rather than an optional SDK identity. "This
+/// target has no versioned platform SDK" is a fact a backend *states*, and a
+/// reader that has to distinguish it from "the producer left this blank" is
+/// reading an absence where it needs a claim — which is the same conflation
+/// that made a CPU payload mint an SDK name in the first place.
+///
+/// A later shape — a versioned toolkit with no deployment minimum, say — is a
+/// third variant carried by a new appended tag, and adding one moves no existing
+/// payload's bytes. The module documentation carries that derivation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PayloadPlatform {
+    /// The toolchain resolves against no versioned SDK and states no deployment
+    /// minimum.
+    ///
+    /// A payload here owes no platform field and may state none: a decoder
+    /// refuses an encoding that fills one.
+    Unversioned,
+    /// The toolchain resolved against a versioned platform SDK.
+    ///
+    /// Every field below is owed. This is the shape the Apple toolchain fills,
+    /// and it is the shape every payload encodable before the platform block
+    /// existed is read as.
+    VersionedSdk {
+        /// Major component of the requested deployment minimum.
+        ///
+        /// Owed, and therefore non-zero: a deployment minimum of `0` is the
+        /// absence of one, and stating an absence is what
+        /// [`Self::Unversioned`] is for.
+        deployment_major: u16,
+        /// Minor component of the requested deployment minimum.
+        ///
+        /// Legitimately `0` — `15.0` is a real deployment minimum — so it
+        /// carries no separate obligation.
+        deployment_minor: u16,
+        /// Identity of the SDK the payload was compiled against.
+        sdk: PayloadSdkIdentity,
+    },
 }
 
 /// Everything about *how* a payload was produced that participates in identity.
@@ -150,14 +263,10 @@ pub struct PayloadProvenance {
     pub family: String,
     /// Source language standard the payload was compiled under.
     pub language: String,
-    /// Major component of the requested deployment minimum.
-    pub deployment_major: u16,
-    /// Minor component of the requested deployment minimum.
-    pub deployment_minor: u16,
+    /// The platform contract the producing toolchain resolved against.
+    pub platform: PayloadPlatform,
     /// Versioned tool components, in canonical role order.
     pub components: Vec<ToolComponent>,
-    /// Identity of the SDK the payload was compiled against.
-    pub sdk: PayloadSdkIdentity,
     /// The exact ordered compiler flags, excluding file paths.
     ///
     /// Order is meaning here, not presentation: a compiler resolves repeated or
@@ -166,6 +275,69 @@ pub struct PayloadProvenance {
     pub compile_flags: Vec<String>,
     /// The exact ordered linker flags, excluding file paths.
     pub link_flags: Vec<String>,
+}
+
+/// Proves every field the record's declared shape owes carries a value.
+///
+/// The record is destructured irrefutably for the same reason the encoder is: a
+/// field added to it must be considered here rather than silently owing nothing.
+///
+/// # Errors
+///
+/// Returns [`ArtifactBuildError::IncompletePayloadProvenance`] naming the first
+/// owed field left empty.
+pub(crate) fn check_provenance(provenance: &PayloadProvenance) -> Result<(), ArtifactBuildError> {
+    let PayloadProvenance {
+        toolchain,
+        target,
+        family,
+        language,
+        platform,
+        components,
+        // Not owed. Flag order is meaning and an empty list is a legitimate
+        // invocation, so there is no emptiness rule over either list that would
+        // not reject real compilations.
+        compile_flags: _,
+        link_flags: _,
+    } = provenance;
+    require_stated(toolchain, ProvenanceField::Toolchain)?;
+    require_stated(target, ProvenanceField::Target)?;
+    require_stated(family, ProvenanceField::Family)?;
+    require_stated(language, ProvenanceField::Language)?;
+    for ToolComponent { role, version } in components {
+        require_stated(role, ProvenanceField::ToolComponentRole)?;
+        require_stated(version, ProvenanceField::ToolComponentVersion)?;
+    }
+    match platform {
+        PayloadPlatform::Unversioned => Ok(()),
+        PayloadPlatform::VersionedSdk {
+            deployment_major,
+            deployment_minor: _,
+            sdk:
+                PayloadSdkIdentity {
+                    name,
+                    version,
+                    build,
+                },
+        } => {
+            if *deployment_major == 0 {
+                return Err(ArtifactBuildError::IncompletePayloadProvenance {
+                    field: ProvenanceField::DeploymentMinimum,
+                });
+            }
+            require_stated(name, ProvenanceField::SdkName)?;
+            require_stated(version, ProvenanceField::SdkVersion)?;
+            require_stated(build, ProvenanceField::SdkBuild)
+        }
+    }
+}
+
+/// Rejects an owed provenance field that carries no value.
+fn require_stated(value: &str, field: ProvenanceField) -> Result<(), ArtifactBuildError> {
+    if value.is_empty() {
+        return Err(ArtifactBuildError::IncompletePayloadProvenance { field });
+    }
+    Ok(())
 }
 
 /// The backend's own spelling of one neutral executable entry.
@@ -230,10 +402,17 @@ impl PayloadMetadata {
     ///
     /// # Errors
     ///
-    /// Returns [`ArtifactBuildError`] when the canonical metadata bytes exceed
-    /// the governed opaque-identity bound, which the fixed digest width makes
-    /// unreachable and which is propagated rather than asserted.
+    /// Returns [`ArtifactBuildError::IncompletePayloadProvenance`] when the
+    /// provenance omits a field the shape it declares owes. A subject that does
+    /// not state what it claims to state has no identity rather than a weaker
+    /// one, and this is the single derivation both payload push paths reach, so
+    /// nothing enters an artifact without passing it.
+    ///
+    /// Also returns [`ArtifactBuildError`] when the canonical metadata bytes
+    /// exceed the governed opaque-identity bound, which the fixed digest width
+    /// makes unreachable and which is propagated rather than asserted.
     pub fn identity(&self) -> Result<PayloadDigest, ArtifactBuildError> {
+        check_provenance(&self.provenance)?;
         payload_identity(&encode_metadata(self))
     }
 }
@@ -306,18 +485,39 @@ pub(crate) fn encode_metadata(metadata: &PayloadMetadata) -> Vec<u8> {
         target,
         family,
         language,
-        deployment_major,
-        deployment_minor,
+        platform,
         components,
-        sdk,
         compile_flags,
         link_flags,
     } = provenance;
-    let PayloadSdkIdentity {
-        name: sdk_name,
-        version: sdk_version,
-        build: sdk_build,
-    } = sdk;
+    // The platform block is written at the field positions the record used
+    // before it had a platform block, and the *unversioned* shape is the one
+    // that carries a tag — appended after the last field, so no already
+    // encodable payload's bytes move. The module documentation carries the
+    // per-tag injectivity argument that makes the two classes disjoint.
+    let (deployment_major, deployment_minor, sdk_name, sdk_version, sdk_build, platform_tag) =
+        match platform {
+            PayloadPlatform::VersionedSdk {
+                deployment_major,
+                deployment_minor,
+                sdk:
+                    PayloadSdkIdentity {
+                        name,
+                        version,
+                        build,
+                    },
+            } => (
+                *deployment_major,
+                *deployment_minor,
+                name.as_str(),
+                version.as_str(),
+                build.as_str(),
+                None,
+            ),
+            PayloadPlatform::Unversioned => {
+                (0, 0, "", "", "", Some(PAYLOAD_PLATFORM_UNVERSIONED_TAG))
+            }
+        };
 
     let mut bytes = Vec::new();
     bytes.extend_from_slice(PAYLOAD_METADATA_DOMAIN);
@@ -369,6 +569,10 @@ pub(crate) fn encode_metadata(metadata: &PayloadMetadata) -> Vec<u8> {
         push_slice(&mut bytes, key.as_bytes());
         push_slice(&mut bytes, value.as_bytes());
     }
+
+    if let Some(tag) = platform_tag {
+        bytes.push(tag);
+    }
     bytes
 }
 
@@ -402,7 +606,7 @@ pub(crate) fn decode_metadata(bytes: &[u8]) -> Result<PayloadMetadata, ArtifactC
     )?;
     let source = source.to_vec();
 
-    let provenance = decode_provenance(&mut cursor)?;
+    let draft = decode_provenance(&mut cursor)?;
 
     let entries = cursor.vec(
         MAX_PAYLOAD_ENTRY_MAPPINGS,
@@ -440,11 +644,21 @@ pub(crate) fn decode_metadata(bytes: &[u8]) -> Result<PayloadMetadata, ArtifactC
     )?;
     require_canonical(&obligations, OrderedSubject::TargetObligation)?;
 
+    // The platform tag is the last thing in the record, and it has to be: an
+    // untagged encoding is recognized by there being nothing left, which is only
+    // decidable at the end. Everything before it was read at the positions the
+    // record used before the tag existed.
+    let platform = draft.platform(read_platform_tag(&mut cursor)?)?;
+    let provenance = draft.resolve(platform);
+
     if cursor.remaining() != 0 {
         return Err(ArtifactCodecError::TrailingManifestBytes {
             count: cursor.remaining(),
         });
     }
+    // The same obligation the producer's identity derivation proved, re-proven
+    // because these bytes came from a producer this process never ran.
+    check_provenance(&provenance)?;
     Ok(PayloadMetadata {
         source_representation,
         source,
@@ -454,11 +668,126 @@ pub(crate) fn decode_metadata(bytes: &[u8]) -> Result<PayloadMetadata, ArtifactC
     })
 }
 
+/// One payload's provenance with its platform shape not yet resolved.
+///
+/// The platform fields are read at their fixed positions long before the tag
+/// that says what they mean, so they are carried rather than interpreted. The
+/// two halves are rejoined by [`Self::resolve`] and nowhere else.
+struct ProvenanceDraft {
+    toolchain: String,
+    target: String,
+    family: String,
+    language: String,
+    deployment_major: u16,
+    deployment_minor: u16,
+    sdk: PayloadSdkIdentity,
+    components: Vec<ToolComponent>,
+    compile_flags: Vec<String>,
+    link_flags: Vec<String>,
+}
+
+impl ProvenanceDraft {
+    /// Rejoins the fields read at fixed positions with the resolved shape.
+    ///
+    /// The platform values the draft carries are consumed by
+    /// [`decode_platform`], which either promotes them into the versioned shape
+    /// or proves they were unstated, so this takes the resolved shape rather
+    /// than choosing one.
+    fn resolve(self, platform: PayloadPlatform) -> PayloadProvenance {
+        let Self {
+            toolchain,
+            target,
+            family,
+            language,
+            deployment_major: _,
+            deployment_minor: _,
+            sdk: _,
+            components,
+            compile_flags,
+            link_flags,
+        } = self;
+        PayloadProvenance {
+            toolchain,
+            target,
+            family,
+            language,
+            platform,
+            components,
+            compile_flags,
+            link_flags,
+        }
+    }
+
+    /// Reads the platform shape this draft's fixed-position fields encode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ArtifactCodecError::PlatformFieldWithoutPlatform`] when an
+    /// unversioned encoding filled a platform position, or
+    /// [`ArtifactCodecError::UnknownTag`] for a tag this build does not
+    /// implement.
+    fn platform(&self, tagged: bool) -> Result<PayloadPlatform, ArtifactCodecError> {
+        if !tagged {
+            return Ok(PayloadPlatform::VersionedSdk {
+                deployment_major: self.deployment_major,
+                deployment_minor: self.deployment_minor,
+                sdk: self.sdk.clone(),
+            });
+        }
+        refuse_stated(
+            self.deployment_major != 0 || self.deployment_minor != 0,
+            ProvenanceField::DeploymentMinimum,
+        )?;
+        refuse_stated(!self.sdk.name.is_empty(), ProvenanceField::SdkName)?;
+        refuse_stated(!self.sdk.version.is_empty(), ProvenanceField::SdkVersion)?;
+        refuse_stated(!self.sdk.build.is_empty(), ProvenanceField::SdkBuild)?;
+        Ok(PayloadPlatform::Unversioned)
+    }
+}
+
+/// Reads the appended platform tag, reporting whether the record carries one.
+///
+/// Nothing left is the versioned-SDK shape: it is what every payload encodable
+/// before the platform block existed encodes to, and keeping it untagged is what
+/// kept those bytes still. The tag byte is consumed when present, so the
+/// trailing-bytes check that follows still sees an exhausted cursor.
+///
+/// # Errors
+///
+/// Returns [`ArtifactCodecError::UnknownTag`] for any value but
+/// [`PAYLOAD_PLATFORM_UNVERSIONED_TAG`] — including a hypothetical tag for the
+/// versioned shape, which is refused because one record with two spellings is
+/// two payload identities.
+fn read_platform_tag(cursor: &mut Cursor<'_>) -> Result<bool, ArtifactCodecError> {
+    if cursor.remaining() == 0 {
+        return Ok(false);
+    }
+    match cursor.u8()? {
+        PAYLOAD_PLATFORM_UNVERSIONED_TAG => Ok(true),
+        tag => Err(ArtifactCodecError::UnknownTag {
+            subject: TagSubject::PayloadPlatform,
+            tag,
+        }),
+    }
+}
+
+/// Rejects a platform field stated by a payload whose shape owes none.
+fn refuse_stated(stated: bool, field: ProvenanceField) -> Result<(), ArtifactCodecError> {
+    if stated {
+        return Err(ArtifactCodecError::PlatformFieldWithoutPlatform { field });
+    }
+    Ok(())
+}
+
 /// Decodes the provenance half of one payload's compilation subject.
 ///
 /// Split from [`decode_metadata`] because provenance is the one part of the
 /// subject whose fields are heterogeneous rather than a repeated shape, so it
 /// reads as a block on its own and would otherwise dominate its caller.
+///
+/// It yields a [`ProvenanceDraft`] rather than a finished record because the
+/// platform fields it reads here are only *bytes at fixed positions* until the
+/// tag at the end of the record says which shape they encode.
 ///
 /// The two flag lists are read *without* a canonical-order requirement, unlike
 /// every other collection here. A compiler resolves repeated or conflicting
@@ -471,7 +800,7 @@ pub(crate) fn decode_metadata(bytes: &[u8]) -> Result<PayloadMetadata, ArtifactC
 /// Returns the typed [`ArtifactCodecError`] naming the first boundary that
 /// rejected: an exhausted governed budget, invalid text, or a non-canonical or
 /// repeated tool-component list.
-fn decode_provenance(cursor: &mut Cursor<'_>) -> Result<PayloadProvenance, ArtifactCodecError> {
+fn decode_provenance(cursor: &mut Cursor<'_>) -> Result<ProvenanceDraft, ArtifactCodecError> {
     let toolchain = cursor.text()?;
     let target = cursor.text()?;
     let family = cursor.text()?;
@@ -504,15 +833,15 @@ fn decode_provenance(cursor: &mut Cursor<'_>) -> Result<PayloadProvenance, Artif
         CodecLimitKind::ProvenanceFlags,
         Cursor::text,
     )?;
-    Ok(PayloadProvenance {
+    Ok(ProvenanceDraft {
         toolchain,
         target,
         family,
         language,
         deployment_major,
         deployment_minor,
-        components,
         sdk,
+        components,
         compile_flags,
         link_flags,
     })

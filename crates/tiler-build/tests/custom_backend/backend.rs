@@ -48,7 +48,7 @@ use tiler_artifact::program::{
     AbiBinaryOp, AbiExprId, AbiRoot, ArtifactBuildError, ArtifactExecutionPolicy,
     ArtifactProgramBuilder, AvailabilityPhase, BackendEntryKey, BackendKey,
     BackendPayloadDescriptor, BindingKind, DecodedArtifact, DigestAlgorithm, PayloadContent,
-    PayloadDigest, PayloadEntryMapping, PayloadMetadata, PayloadProvenance, PayloadSdkIdentity,
+    PayloadDigest, PayloadEntryMapping, PayloadMetadata, PayloadPlatform, PayloadProvenance,
     RepresentationKey, SchemaVersion, TargetPropertyKey, ToolComponent, VerifiedArtifactProgram,
 };
 use tiler_build::{
@@ -361,21 +361,17 @@ pub fn payload_metadata(
             target: TARGET_TRIPLE.to_owned(),
             family: BACKEND_KEY.to_owned(),
             language: "tiler.test.scalar-host-image".to_owned(),
-            // Apple-shaped required fields with no meaning for this backend.
-            // ADR 0090 item 14 names that gap; stating this representation's own
-            // version rather than a platform claim is the compromise the CPU
-            // vertical recorded, not a new one.
-            deployment_major: 1,
-            deployment_minor: 0,
+            // This backend translates kernel IR to its own host image. There is
+            // no SDK and no platform deployment minimum to state, and it says so
+            // rather than minting values with no referent on its target — which
+            // is the whole of what ADR 0090 item 14 named. Every field it does
+            // owe is above; the four this shape does not owe are absent rather
+            // than approximated.
+            platform: PayloadPlatform::Unversioned,
             components: vec![ToolComponent {
                 role: "translator".to_owned(),
                 version: "1".to_owned(),
             }],
-            sdk: PayloadSdkIdentity {
-                name: TOOLCHAIN_KEY.to_owned(),
-                version: "1".to_owned(),
-                build: "0".to_owned(),
-            },
             compile_flags: Vec::new(),
             link_flags: Vec::new(),
         },

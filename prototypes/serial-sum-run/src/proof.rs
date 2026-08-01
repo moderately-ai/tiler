@@ -3222,7 +3222,7 @@ mod tests {
         BackendEntryRef, BackendFeatureRequirement, BackendKey, BindingKind, BindingSpec,
         BindingTarget, BufferAccess, CapabilityKey, CompilationEnvironment, DeferredPredicateSpec,
         EntrySpec, FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec, PayloadContent,
-        PayloadEntryMapping, PayloadMetadata, PayloadProvenance, PayloadSdkIdentity,
+        PayloadEntryMapping, PayloadMetadata, PayloadPlatform, PayloadProvenance,
         RecordedArtifactProgramIdentity, RepresentationKey, RouteFeatureKey,
         RouteRequirementSubject, RouteResourceFloor, SchemaVersion, SelectedProvider,
         TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, ToolComponent,
@@ -3497,17 +3497,14 @@ mod tests {
                             target: "tiler-probe-target".to_owned(),
                             family: "tiler.probe.family".to_owned(),
                             language: "tiler.probe.language".to_owned(),
-                            deployment_major: 1,
-                            deployment_minor: 0,
+                            // The probe compiles nothing, so it resolved against
+                            // no SDK and requested no deployment minimum. Saying
+                            // so is what ADR 0090 item 14's gap prevented.
+                            platform: PayloadPlatform::Unversioned,
                             components: vec![ToolComponent {
                                 role: "compiler".to_owned(),
                                 version: "0".to_owned(),
                             }],
-                            sdk: PayloadSdkIdentity {
-                                name: "tiler.probe.sdk".to_owned(),
-                                version: "0".to_owned(),
-                                build: "0".to_owned(),
-                            },
                             compile_flags: Vec::new(),
                             link_flags: Vec::new(),
                         },

@@ -566,6 +566,7 @@ mod tests {
         serial_sum_program, sidecar,
     };
     use crate::{ArtifactCodecFailure, decode_artifact};
+    use tiler_artifact::program::PayloadPlatform;
     use tiler_artifact::proof::decode_proof_sidecar;
     use tiler_build::BoundMetalCompileDeclaration;
     use tiler_cache::expansion::{ExpansionCache, Resolution};
@@ -708,10 +709,10 @@ mod tests {
             provenance.target.clone(),
             provenance.family.clone(),
             provenance.language.clone(),
-            provenance.sdk.name.clone(),
-            provenance.sdk.version.clone(),
-            provenance.sdk.build.clone(),
         ];
+        if let PayloadPlatform::VersionedSdk { sdk, .. } = &provenance.platform {
+            text.extend([sdk.name.clone(), sdk.version.clone(), sdk.build.clone()]);
+        }
         text.extend(
             provenance
                 .components
@@ -1202,11 +1203,8 @@ mod tests {
         );
         println!("  toolchain components: {:?}", provenance.components);
         println!(
-            "  sdk: {} {} (build {}), target {:?}",
-            provenance.sdk.name,
-            provenance.sdk.version,
-            provenance.sdk.build,
-            provenance.compile_flags,
+            "  platform: {:?}, flags {:?}",
+            provenance.platform, provenance.compile_flags,
         );
     }
 

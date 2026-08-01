@@ -131,6 +131,51 @@ impl fmt::Display for ArtifactKeyKind {
     }
 }
 
+/// One field of a carried payload's provenance record.
+///
+/// Which of these a payload owes is a property of the shape its provenance
+/// declares rather than of a backend this crate knows. Every payload owes its
+/// toolchain, target, family, and language, and a role and a version for every
+/// tool component it lists. The last four are owed only by a payload that
+/// declares [`PayloadPlatform::VersionedSdk`](super::PayloadPlatform::VersionedSdk);
+/// a payload that declares
+/// [`PayloadPlatform::Unversioned`](super::PayloadPlatform::Unversioned) owes
+/// none of them and may not state one.
+///
+/// Compiler and linker flags are deliberately absent. Their order is meaning
+/// and an empty list is a legitimate invocation, so no flag is owed and an
+/// emptiness rule over them would reject real compilations.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum ProvenanceField {
+    /// The governed key of the toolchain family that produced the payload.
+    Toolchain,
+    /// The normalized target the payload was compiled for.
+    Target,
+    /// The artifact family the payload belongs to.
+    Family,
+    /// The source language standard the payload was compiled under.
+    Language,
+    /// The governed role of one listed tool component.
+    ToolComponentRole,
+    /// The reported version of one listed tool component.
+    ToolComponentVersion,
+    /// The requested platform deployment minimum.
+    DeploymentMinimum,
+    /// The canonical selector of the SDK the payload was compiled against.
+    SdkName,
+    /// The canonical version of that SDK.
+    SdkVersion,
+    /// The build identifier of that SDK.
+    SdkBuild,
+}
+
+impl fmt::Display for ProvenanceField {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
 /// The artifact-model role an expression is required to serve.
 ///
 /// A use site fixes both the value type an expression must have and the latest
@@ -240,6 +285,23 @@ pub enum ArtifactBuildError {
     },
     /// An identical backend payload descriptor is already declared.
     DuplicatePayload,
+    /// A carried payload's provenance left a field its declared shape owes empty.
+    ///
+    /// Raised where the payload's compilation identity is derived, so a subject
+    /// that does not state what it claims to state has no identity rather than a
+    /// weaker one. The same rule runs again on decode, because an artifact's
+    /// bytes arrive from a producer this process never ran.
+    ///
+    /// The field is named rather than the backend: a backend states which
+    /// provenance shape describes its toolchain, and the shape is what fixes the
+    /// obligation. That is the whole of what generalizing this record beyond the
+    /// Apple-shaped one changed — a Metal payload owes every field it owed
+    /// before, and a backend with no SDK owes none of the four SDK-shaped ones
+    /// instead of minting values with no referent on its target.
+    IncompletePayloadProvenance {
+        /// The owed field that carried no value.
+        field: ProvenanceField,
+    },
     /// An operand had the wrong value type for the operation applied to it.
     OperandType {
         /// Value type the operation requires.
@@ -529,6 +591,7 @@ impl Error for ArtifactBuildError {
             | Self::ProviderNotAvailable { .. }
             | Self::DuplicateSelectedProvider { .. }
             | Self::DuplicatePayload
+            | Self::IncompletePayloadProvenance { .. }
             | Self::OperandType { .. }
             | Self::SelectBranchType { .. }
             | Self::ExpressionType { .. }

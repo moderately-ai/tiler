@@ -21,7 +21,7 @@ use std::fmt;
 use tiler_ir::semantic::{BuildError, RegistryError};
 use tiler_ir::shape::ShapeError;
 
-use super::super::error::{ArtifactBuildError, ArtifactDiagnostic};
+use super::super::error::{ArtifactBuildError, ArtifactDiagnostic, ProvenanceField};
 use super::super::expr::AbiType;
 
 /// A governed component schema of the artifact model.
@@ -113,6 +113,13 @@ pub(crate) enum TagSubject {
     SynchronizationPresence,
     /// A Boolean field encoded as one byte.
     Boolean,
+    /// The platform shape one carried payload's provenance declares.
+    ///
+    /// Only the unversioned tag is admitted, and the tag is present only for a
+    /// payload that carries it: the versioned-SDK shape is the *untagged*
+    /// encoding, so a tag naming it would give one record two spellings.
+    /// `super::payload` states why that matters for payload identity.
+    PayloadPlatform,
 }
 
 impl fmt::Display for TagSubject {
@@ -437,6 +444,24 @@ pub(crate) enum ArtifactCodecError {
         /// Collection that repeated an item.
         subject: OrderedSubject,
     },
+    /// A payload that declares no platform SDK stated a platform field anyway.
+    ///
+    /// A canonical-form rejection rather than a completeness one, and the
+    /// direction matters: this reports a *stated* field where the declared shape
+    /// owes none, while [`ArtifactBuildError::IncompletePayloadProvenance`]
+    /// reports an owed field left empty.
+    ///
+    /// It exists because the unversioned shape writes the versioned shape's
+    /// field positions as pinned zeroes and appends a tag after the record —
+    /// which is what let the platform block be added without moving any
+    /// already-encodable payload's bytes. Accepting a tagged encoding that
+    /// filled those positions would give one record two spellings, and payload
+    /// identity is exactly those bytes. Normalizing the extra values away would
+    /// be worse than refusing: it would silently discard a producer's claim.
+    PlatformFieldWithoutPlatform {
+        /// The platform field the encoding stated.
+        field: ProvenanceField,
+    },
     /// A variant's stated execution order is not a permutation of its entries.
     ///
     /// The order must name every entry exactly once. A short, long, or repeating
@@ -665,6 +690,7 @@ impl Error for ArtifactCodecError {
             | Self::NonCanonicalSectionId { .. }
             | Self::NonCanonicalOrder { .. }
             | Self::DuplicateItem { .. }
+            | Self::PlatformFieldWithoutPlatform { .. }
             | Self::StageOrderNotAPermutation { .. }
             | Self::StageDependencyOutOfOrder { .. }
             | Self::StageDependencyOnItself { .. }

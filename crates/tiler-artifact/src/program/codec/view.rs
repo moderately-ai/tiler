@@ -1212,6 +1212,7 @@ impl From<ArtifactCodecError> for ArtifactCodecFailure {
             | ArtifactCodecError::NonCanonicalSectionId { .. }
             | ArtifactCodecError::NonCanonicalOrder { .. }
             | ArtifactCodecError::DuplicateItem { .. }
+            | ArtifactCodecError::PlatformFieldWithoutPlatform { .. }
             | ArtifactCodecError::NonCanonicalManifest
             | ArtifactCodecError::UnreferencedSection { .. }
             | ArtifactCodecError::EmptyBindingTarget
