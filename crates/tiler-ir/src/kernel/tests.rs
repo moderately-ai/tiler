@@ -2023,6 +2023,7 @@ fn cooperative_region() -> VerifiedScheduledRegion {
                 accumulation: crate::schedule::ArithmeticType::F32,
                 permits_reassociation: true,
                 permits_permutation: false,
+                arrival: crate::schedule::ContributorArrival::AscendingParticipant,
             },
             launch: LaunchPlan {
                 grid_threads: 6,

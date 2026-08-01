@@ -144,8 +144,9 @@ mod synchronization;
 
 pub use builder::ScheduledRegionBuilder;
 pub use cooperative::{
-    CooperativePhase, CooperativeTile, LocalCoordinateSource, LocalCoordinates, ParticipantRange,
-    StagedElement, StagedRead, StagedSpan, StagedWrite, VisibilityEdge, WorkgroupStaging,
+    ContributorArrival, CooperativePhase, CooperativeTile, LocalCoordinateSource, LocalCoordinates,
+    ParticipantRange, StagedElement, StagedRead, StagedSpan, StagedWrite, VisibilityEdge,
+    WorkgroupStaging, workgroup_tree_tile,
 };
 pub use error::{
     ContributorError, CooperativeTileRule, ElementCountOverflow, ScheduleBuildError,

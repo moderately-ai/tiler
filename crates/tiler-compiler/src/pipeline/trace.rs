@@ -447,6 +447,7 @@ pub(super) fn record_frontier(
             crate::frontier::FrontierRejection::Infeasible { .. }
             | crate::frontier::FrontierRejection::Unhonourable { .. }
             | crate::frontier::FrontierRejection::Unsynchronizable { .. }
+            | crate::frontier::FrontierRejection::SynchronizationUndeclared { .. }
             | crate::frontier::FrontierRejection::UnsupportedVariant { .. }
             | crate::frontier::FrontierRejection::NotApplicable { .. } => {}
         }
@@ -1045,6 +1046,19 @@ pub(super) fn record_target_rejection(
                             cause.fact().provenance().profile().key(),
                         )?,
                     },
+                )?)
+            })(),
+        ),
+        // The undeclared outcome the explain vocabulary already carries, not a
+        // second refusal spelling: nothing declared this subject, so there is no
+        // profile to attribute the answer to, and naming a neighbouring one
+        // would invite a reader to compose facts none of which is about it.
+        PhysicalError::UnrealizedSynchronization { subject, .. } => (
+            format!("target.synchronization.{}", subject.kind.key()),
+            (|| -> Result<_, CompileError> {
+                Ok(synchronization_event(
+                    *subject,
+                    crate::explain::SynchronizationOutcome::Undeclared,
                 )?)
             })(),
         ),

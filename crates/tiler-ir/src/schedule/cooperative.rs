@@ -40,13 +40,110 @@
 //! statable in this vocabulary but is refused: [`CooperativeTile`] admits one
 //! writer per slot, because a second write to a live slot needs a per-round
 //! lifetime and a per-round visibility edge that this profile does not yet
-//! model. Multi-dimensional local coordinates are likewise absent rather than
+//! model. Writing *fresh* slots each round is not the way around that, and the
+//! reason is structural rather than incidental: a [`StagedSpan`] is addressed by
+//! every participant of the tile, so a write phase writes
+//! `participants * count` slots whatever the round, and the active lanes never
+//! narrow. A log-depth tree therefore needs a per-access active-participant
+//! subset — separate from a phase's `participation`, which is *arrival* and must
+//! stay uniform for the point between rounds to be convergent — and that subset
+//! is absent rather than reserved. [`workgroup_tree_tile`] is the depth-two tree
+//! this profile does state. Multi-dimensional local coordinates are likewise absent rather than
 //! reserved: [`LocalCoordinateSource`] names the one linear source the bounded
 //! profile can check, and widening it is an appended tag, not a reinterpretation
 //! of what a coordinate already means.
 
-use super::handles::{PhaseId, StagingId};
-use super::synchronization::SynchronizationPoint;
+use super::handles::{PhaseId, StagingId, SyncPointId};
+use super::synchronization::{
+    ConvergenceEvidence, SynchronizationPlacement, SynchronizationPoint, required_subject,
+};
+
+/// The order in which one cooperative tile's staged partials reach the
+/// participant that combines them.
+///
+/// Deliberately not [`super::ContributorOrder`], which names the order of the
+/// *original* contributor sequence one participant folds before staging
+/// anything. This names what happens on the far side of the synchronization
+/// point: which staged values the committing participant combines, and in what
+/// order.
+///
+/// # Why it is stated, and why the distinction is a legality one
+///
+/// A tree over a *fixed* arrival order regroups the declared contributor
+/// sequence without moving any contributor across a group boundary, which is
+/// exactly reassociation. An arrival order the program does not fix — an atomic
+/// accumulation into one location, or a collective whose combine order follows
+/// scheduling — additionally reorders the contributors themselves, which is
+/// contributor permutation. The two permissions are independent (ADR 0011), and
+/// a strategy that checked reassociation and then used both would be admitted
+/// for a freedom nobody granted. Carrying the arrival on the topology is what
+/// makes that composition *statable*, and therefore refusable, instead of a
+/// property a reader has to infer from the emitted body.
+///
+/// Deliberately not `#[non_exhaustive]`: the identity encoder and the schedule
+/// verifier map this totally, so a widened vocabulary must be a build error at
+/// each rather than a silently admitted arrival.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ContributorArrival {
+    /// The staged partials are combined in ascending participant order.
+    ///
+    /// The only admitted arrival. Participant `p` stages the partial of the
+    /// contiguous contributor range its partition owns, and the committing
+    /// participant folds slots `0..participants` in ascending order — one
+    /// deterministic sequence, fixed by the program rather than by the machine.
+    AscendingParticipant,
+    /// The partials are combined in whatever order participants arrive.
+    ///
+    /// Unadmitted, and refused by name rather than left unstatable. It requires
+    /// contributor permutation *in addition to* reassociation, and it needs an
+    /// arrival-ordered construct — a split-phase barrier or a collective — whose
+    /// contract [`super::SynchronizationKind`] does not admit, so no point in
+    /// this vocabulary could order it.
+    NondeterministicArrival,
+    /// Every participant accumulates into one shared location.
+    ///
+    /// Unadmitted, for both reasons above and one more: the ordering is
+    /// established by [`super::SynchronizationKind::Atomic`], whose participant
+    /// set and convergence proof are meaningless, so the point this tile
+    /// declares could not be the one that orders it.
+    AtomicAccumulation,
+}
+
+impl ContributorArrival {
+    /// Returns whether this arrival consumes contributor permutation.
+    ///
+    /// An arrival the program fixes consumes reassociation alone; one it does
+    /// not fix additionally permutes the contributor sequence. Written as an
+    /// exhaustive match so a widened vocabulary must decide this rather than
+    /// inherit the deterministic answer.
+    #[must_use]
+    pub const fn requires_permutation(self) -> bool {
+        match self {
+            Self::AscendingParticipant => false,
+            Self::NondeterministicArrival | Self::AtomicAccumulation => true,
+        }
+    }
+
+    /// Returns the canonical tag naming this arrival in an identity encoding.
+    #[must_use]
+    pub const fn tag(self) -> u8 {
+        match self {
+            Self::AscendingParticipant => 0x01,
+            Self::NondeterministicArrival => 0x02,
+            Self::AtomicAccumulation => 0x03,
+        }
+    }
+
+    /// Returns the stable identifier naming this arrival in an explanation.
+    #[must_use]
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::AscendingParticipant => "ascending-participant",
+            Self::NondeterministicArrival => "nondeterministic-arrival",
+            Self::AtomicAccumulation => "atomic-accumulation",
+        }
+    }
+}
 
 /// The element one workgroup staging allocation holds.
 ///
@@ -355,4 +452,131 @@ impl CooperativeTile {
         }
         Some(slots)
     }
+}
+
+/// Builds the canonical cooperative tile of a single-workgroup tree reduction.
+///
+/// # The tree, stated level by level
+///
+/// | Level | Active lanes | Fan-in per lane | Where the result goes |
+/// | --- | --- | --- | --- |
+/// | 0 | every participant | the partition's contributors | slot `l` of the staging allocation |
+/// | 1 | the one committing participant | `participants` | the region's owning write |
+///
+/// Level 0's fan-in is the region's
+/// [`ContributorPartition::contributors_per_partition`](super::ContributorPartition),
+/// which this constructor does not see and does not need: the tile states the
+/// *staged dataflow*, and the schedule verifier is what requires the partition
+/// to have exactly `participants` partitions covering the contributor sequence
+/// once each. Level 1's fan-in is therefore the participant count, and the total
+/// depth is two.
+///
+/// **Active lanes narrow between the levels, and the narrowing is stated by
+/// [`CooperativeTile::commit`] rather than by a span.** Every phase is reached
+/// by every participant — that is the tile's own uniform-convergence rule, and
+/// it is what makes the point between the levels convergent — while only the
+/// committing participant performs level 1's fold and the owning write.
+///
+/// # Why the depth is two and not `log2(participants)`
+///
+/// A logarithmic tree narrows the *writing* lanes at every round, and this
+/// vocabulary cannot state that: a [`StagedSpan`] is addressed by every
+/// participant of the tile — the slot enumeration runs over the tile's whole
+/// participant range, not over a per-access subset — so every write phase writes
+/// exactly `participants * count` slots however few lanes are meant to be doing
+/// useful work. Rewriting one slot across rounds is refused by the one-writer-per-slot
+/// rule, and writing fresh slots per round does not shrink, so a log-depth tree
+/// needs a per-access active-participant subset this profile does not model.
+/// Stated here rather than left to be rediscovered, because "tree" is otherwise
+/// read as "logarithmic".
+///
+/// # Tail handling
+///
+/// There is none, and that is the contract: the split must cover the contributor
+/// sequence exactly once each, so a contributor count with no exact split of
+/// `participants` partitions is *declined by the strategy that chooses the
+/// count*, never padded with identity elements or truncated. A masked tail lane
+/// would additionally break the emitted body's soundness argument, which rests
+/// on every launched invocation reaching the staged store.
+///
+/// Returns `None` when `participants` is below two — a single participant stages
+/// values it reads back itself, which the synchronization authority refuses as
+/// the semantically redundant barrier — or above
+/// [`MAX_COOPERATIVE_PARTICIPANTS`](super::MAX_COOPERATIVE_PARTICIPANTS), or
+/// when the participant range does not fit the tile's ordinal space.
+#[must_use]
+pub fn workgroup_tree_tile(participants: u64) -> Option<CooperativeTile> {
+    if !(2..=super::MAX_COOPERATIVE_PARTICIPANTS).contains(&participants) {
+        return None;
+    }
+    let range = ParticipantRange {
+        first: 0,
+        count: participants,
+    };
+    range.end()?;
+    let staging = StagingId::FIRST;
+    let produce = PhaseId::FIRST;
+    let consume = PhaseId::new(1);
+    let tile = CooperativeTile {
+        coordinates: LocalCoordinates {
+            source: LocalCoordinateSource::LocalLinearInvocation,
+            participants: range,
+        },
+        staging: vec![WorkgroupStaging {
+            id: staging,
+            element: StagedElement::F32,
+            slots: participants,
+            live_from: produce,
+            live_through: consume,
+        }],
+        phases: vec![
+            CooperativePhase {
+                id: produce,
+                participation: range,
+                writes: vec![StagedWrite {
+                    staging,
+                    // One slot per participant: participant `l` writes slot `l`.
+                    span: StagedSpan {
+                        stride: 1,
+                        offset: 0,
+                        count: 1,
+                    },
+                }],
+                reads: Vec::new(),
+            },
+            CooperativePhase {
+                id: consume,
+                participation: range,
+                writes: Vec::new(),
+                reads: vec![StagedRead {
+                    staging,
+                    // The whole staged set, which is what makes the combining
+                    // level's fan-in the participant count.
+                    span: StagedSpan {
+                        stride: 0,
+                        offset: 0,
+                        count: participants,
+                    },
+                }],
+            },
+        ],
+        // Filled in below from the edges this dataflow derives, so the point's
+        // subject is the one the handoff requires rather than one restated here.
+        synchronization: Vec::new(),
+        commit: ParticipantRange { first: 0, count: 1 },
+    };
+    let subject = required_subject(&tile.visibility_edges())?;
+    Some(CooperativeTile {
+        synchronization: vec![SynchronizationPoint {
+            id: SyncPointId::FIRST,
+            subject,
+            placement: SynchronizationPlacement::PhaseBoundary {
+                preceding: produce,
+                following: consume,
+            },
+            participants: range,
+            convergence: ConvergenceEvidence::EveryParticipantReachesThePoint,
+        }],
+        ..tile
+    })
 }

@@ -3254,6 +3254,68 @@ impl TargetProfile {
             .expect("the refusing keyed test profile is intrinsically valid")
     }
 
+    /// The governed profile widened until a single-workgroup tree is assessable.
+    ///
+    /// **Deliberately test-only, and that is the finding rather than a
+    /// convenience.** `TargetProfileBuilder::governed` declares
+    /// `local-memory-bytes` as *zero* and declares nothing at all about
+    /// synchronization, so the bounded prototype baseline rejects every
+    /// cooperative region twice over — first on threadgroup memory it guarantees
+    /// none of, then on a realization it has never been asked about. Both
+    /// refusals are correct and both are exercised by their own tests; what they
+    /// mean is that the baseline cannot be the profile a synchronized strategy is
+    /// *admitted* against.
+    ///
+    /// Raising the baseline's own rows instead would be a capability claim: the
+    /// prototype authority has no evidence for a threadgroup-memory budget or a
+    /// barrier realization, and inventing one would promote support from a test's
+    /// convenience — precisely what the atomic synchronization fact exists to
+    /// prevent. `realize-parallel-reduction-strategies-on-metal` owns the real
+    /// declaration, and the question of what the *prototype baseline* should
+    /// guarantee is Tom's, not this ticket's.
+    ///
+    /// `synchronization` is `None` for a profile that has never been asked, which
+    /// is what makes the undeclared rejection drivable separately from a declared
+    /// refusal.
+    #[cfg(test)]
+    pub(crate) fn workgroup_tree_target_for_test(
+        local_memory_bytes: u64,
+        grid_axis_threads: u64,
+        synchronization: Option<SynchronizationSupport>,
+    ) -> Self {
+        let mut builder = TargetProfileBuilder::governed();
+        for (axis, bound) in [
+            (CapabilityAxis::LocalMemoryBytes, local_memory_bytes),
+            (CapabilityAxis::GridAxisThreads, grid_axis_threads),
+        ] {
+            builder
+                .quantitative
+                .iter_mut()
+                .find(|declaration| declaration.axis == axis)
+                .expect("the governed profile declares this axis")
+                .bound = bound;
+        }
+        if let Some(support) = synchronization {
+            // Derived from the canonical tile's own edges rather than restated,
+            // so a test profile cannot declare a realization the strategy does
+            // not require and then "admit" it.
+            let tile = tiler_ir::schedule::workgroup_tree_tile(2)
+                .expect("two participants are within the enumeration bound");
+            let subject = tiler_ir::schedule::required_subject(&tile.visibility_edges())
+                .expect("the canonical tree tile carries one handoff");
+            builder
+                .declare_synchronization_realization(
+                    subject,
+                    support,
+                    &TargetFactSource(governed_profile_source()),
+                )
+                .expect("the test synchronization declaration is valid");
+        }
+        builder
+            .build()
+            .expect("the widened test target profile is intrinsically valid")
+    }
+
     #[cfg(test)]
     pub(crate) fn governed_declared_behaviours() -> Vec<DeclaredBehaviour> {
         TargetProfileBuilder::governed()

@@ -211,6 +211,15 @@ struct KirMachine<'a> {
     input: &'a [f32],
     output: Vec<f32>,
     values: BTreeMap<tiler_ir::kernel::VerifiedValueId, KirValue>,
+    /// The lane's local coordinate within its workgroup.
+    ///
+    /// Equal to the global invocation index for every single-lane kernel, which
+    /// is why the pre-cooperative machine needed no second field. A cooperative
+    /// kernel reads both, and giving them one value would make its staged store
+    /// address the slot its output coordinate names.
+    local: u64,
+    /// The workgroup's shared staging, when it declares any.
+    staged: Vec<f32>,
 }
 
 impl<'a> KirMachine<'a> {
@@ -222,25 +231,68 @@ impl<'a> KirMachine<'a> {
         assert_eq!(write.access, tiler_ir::kernel::BufferAccess::Write);
         assert_eq!(input.len(), usize::try_from(read.element_count).unwrap());
         let outputs = usize::try_from(write.element_count).unwrap();
+        // Read from the kernel's own staging declaration, so the machine still
+        // resolves nothing from the schedule, the request, or the graph: a
+        // kernel that stages nothing runs one lane per output exactly as before.
+        let slots = kernel
+            .staging()
+            .next()
+            .map_or(1, |staging| staging.element_count.max(1));
+        let participants = usize::try_from(slots).unwrap();
         let mut machine = KirMachine {
             kernel,
             input,
             output: vec![f32::NAN; outputs],
             values: BTreeMap::new(),
+            local: 0,
+            staged: vec![f32::NAN; participants],
         };
-        for invocation in 0..u64::try_from(outputs).unwrap() {
-            machine.values.clear();
-            machine.run_block(kernel.body(), invocation);
+        for workgroup in 0..outputs {
+            // One value map per lane, carried across the barrier: a lane's
+            // pre-barrier definitions are exactly what its post-barrier block
+            // reads, and clearing them at the barrier would make every
+            // cooperative body fail on an undefined value rather than on the
+            // property under test.
+            let mut lanes = vec![BTreeMap::new(); participants];
+            machine.staged.fill(f32::NAN);
+            // Barrier semantics, structurally: every lane runs the segment
+            // before the barrier, and only then does any lane run the segment
+            // after it. The KIR verifier requires every barrier at block depth
+            // zero, which is what makes splitting the top-level operation list
+            // the faithful model rather than an approximation.
+            for segment in barrier_segments(kernel.body()) {
+                for (lane, values) in lanes.iter_mut().enumerate() {
+                    let lane = u64::try_from(lane).unwrap();
+                    machine.values = std::mem::take(values);
+                    machine.local = lane;
+                    let invocation = u64::try_from(workgroup).unwrap() * slots + lane;
+                    for operation in &segment {
+                        machine.run_operation(*operation, invocation);
+                    }
+                    *values = std::mem::take(&mut machine.values);
+                }
+            }
         }
         machine.output
     }
 
     fn run_block(&mut self, block: tiler_ir::kernel::BlockRef<'a>, invocation: u64) {
         for operation in block.operations() {
+            self.run_operation(operation, invocation);
+        }
+    }
+
+    fn run_operation(&mut self, operation: tiler_ir::kernel::OperationRef<'a>, invocation: u64) {
+        {
             let mut results = operation.results();
             match operation.view() {
-                OperationView::Builtin { .. } => {
-                    self.define(&mut results, KirValue::Index(invocation));
+                OperationView::Builtin { builtin } => {
+                    let value = match builtin {
+                        tiler_ir::kernel::Builtin::GlobalInvocationIndex => invocation,
+                        tiler_ir::kernel::Builtin::LocalInvocationIndex => self.local,
+                        other => panic!("unsupported launch builtin {other:?}"),
+                    };
+                    self.define(&mut results, KirValue::Index(value));
                 }
                 OperationView::Constant { value } => {
                     let value = match value {
@@ -331,7 +383,21 @@ impl<'a> KirMachine<'a> {
                         self.values.insert(result, value);
                     }
                 }
-                OperationView::Barrier { .. } => {}
+                // Reached only inside a nested block, which the KIR verifier
+                // forbids; a top-level barrier is consumed by `barrier_segments`
+                // and never executed as an operation.
+                OperationView::Barrier { .. } => {
+                    panic!("a barrier below block depth zero reached the machine")
+                }
+                OperationView::StagedStore { offset, value, .. } => {
+                    let offset = usize::try_from(self.get(offset).index()).unwrap();
+                    self.staged[offset] = self.get(value).float();
+                }
+                OperationView::StagedLoad { offset, .. } => {
+                    let offset = usize::try_from(self.get(offset).index()).unwrap();
+                    let value = KirValue::F32(self.staged[offset]);
+                    self.define(&mut results, value);
+                }
                 other => panic!("unsupported structured operation {other:?}"),
             }
         }
@@ -356,6 +422,27 @@ impl<'a> KirMachine<'a> {
 
 pub(super) fn interpret_fused(kernel: &VerifiedKernel, input: &[f32]) -> Vec<f32> {
     KirMachine::run(kernel, input)
+}
+
+/// Splits one kernel body's top-level operations at each barrier.
+///
+/// The barrier itself is dropped rather than retained: it is not an operation a
+/// lane executes, it is the boundary the lanes are advanced across together.
+fn barrier_segments(
+    body: tiler_ir::kernel::BlockRef<'_>,
+) -> Vec<Vec<tiler_ir::kernel::OperationRef<'_>>> {
+    let mut segments = vec![Vec::new()];
+    for operation in body.operations() {
+        if matches!(operation.view(), OperationView::Barrier { .. }) {
+            segments.push(Vec::new());
+        } else {
+            segments
+                .last_mut()
+                .expect("the segment list is never empty")
+                .push(operation);
+        }
+    }
+    segments
 }
 
 /// Returns the bounded range of the kernel's single guarded reduction loop.
@@ -610,13 +697,14 @@ fn every_wired_authority_emits_its_typed_explain_records() {
             // them when present; this governed compile fixture has no opaque
             // rejection, so its four region subjects still contribute eight.
             ("frontier.enumeration.v1", 8),
-            // Exactly one strategy is considered and withheld across the four
-            // region subjects: the multi-pass split, at the reduction subject,
-            // because this fixture compiles under the strict contract and a
-            // split *is* a reassociation. The other three subjects never reach
-            // the strategy, so a second record would mean it was being
+            // Exactly two strategies are considered and withheld, both at the
+            // reduction subject and both for the same reason: this fixture
+            // compiles under the strict contract, and the multi-pass split and
+            // the single-workgroup tree each *are* a reassociation of the
+            // declared contributor sequence. The other three subjects never
+            // reach either strategy, so a third record would mean one was being
             // considered somewhere it does not apply.
-            ("frontier.strategy-decline.v1", 1),
+            ("frontier.strategy-decline.v1", 2),
             ("selection.complete-plan.v1", 1),
             ("compile.region.verified", 3),
             ("compile.plan.boundary", 2),
@@ -3214,9 +3302,23 @@ fn the_frontier_retains_the_split_beside_the_serial_reduction() {
         frontier.admitted()[1].identity(),
         "the two alternatives share one identity, so one shadows the other"
     );
+    // The single-workgroup tree is proposed for the same subject and refused by
+    // the *target*, not withheld by the strategy: the bounded prototype profile
+    // guarantees zero threadgroup memory, so the tree's eight staged bytes are a
+    // hard-feasibility rejection naming the exact axis and both quantities. That
+    // is the shape a resource refusal must have — never an arbitrary cost — and
+    // it leaves the split and the serial alternative untouched.
     assert!(
-        frontier.rejections().is_empty(),
-        "a request that admits the split still recorded a refusal: {:?}",
+        matches!(
+            frontier.rejections(),
+            [crate::frontier::FrontierRejection::Infeasible {
+                axis: "local-memory-bytes",
+                required: 8,
+                available: 0,
+                ..
+            }]
+        ),
+        "the split request's rejections are not the tree's single resource refusal: {:?}",
         frontier.rejections()
     );
 
@@ -3304,6 +3406,460 @@ fn a_reassociation_forbidding_contract_declines_the_split_by_dimension() {
         )),
         "a strict contract withheld the split without naming the permission: {:?}",
         frontier.rejections()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The single-workgroup tree: enumerated beside serial, and executed
+// ---------------------------------------------------------------------------
+//
+// **Why the positive path uses a widened test profile.** The bounded prototype
+// baseline declares `local-memory-bytes` as zero and declares nothing at all
+// about synchronization, so it refuses every cooperative region — twice over,
+// and both refusals are driven below as required evidence. Raising the
+// baseline's own rows would be a capability claim this build has no authority
+// for; `TargetProfile::workgroup_tree_target_for_test` says so at length and
+// names who owns the real declaration.
+
+/// Builds the reassociating request for one shape against a chosen profile.
+fn tree_request(
+    shape: Shape,
+    profile: TargetProfile,
+) -> (SemanticProgram, crate::request::VerifiedTargetRequest) {
+    let semantic = semantic_case_with_axis(
+        shape,
+        2.0_f32.to_bits(),
+        1.0_f32.to_bits(),
+        false,
+        Axis::new(1),
+    );
+    let mut request = CompilationRequest::governed_under(
+        &semantic,
+        StrictF32NumericalContract::governed_relaxed(),
+    );
+    request.target_profiles = vec![profile];
+    let verified = verify_request(request).expect("the relaxed contract is admitted");
+    let verified = verified
+        .for_target(verified.target_profiles()[0])
+        .expect("the target resolves the relaxed contract");
+    (semantic, verified)
+}
+
+/// A profile that realizes the tree's exact handoff and stages enough for it.
+fn tree_target() -> TargetProfile {
+    TargetProfile::workgroup_tree_target_for_test(
+        256,
+        1_024,
+        Some(crate::target::SynchronizationSupport::Realized),
+    )
+}
+
+/// **The ticket's core claim:** the single-workgroup tree is retained *beside*
+/// the serial reduction and the multi-pass split, not in place of either.
+///
+/// All three implement the same occurrences with the same boundary contract, so
+/// the planner sees three legal alternatives for one subject and selection is
+/// left to decide between them on evidence this slice deliberately does not
+/// supply.
+#[test]
+fn the_frontier_retains_the_workgroup_tree_beside_serial_and_the_split() {
+    let (_, request) = tree_request(Shape::from_dims([1, 8]), tree_target());
+    let frontier = reduction_frontier(&request);
+    assert!(
+        frontier.rejections().is_empty(),
+        "a profile that realizes the handoff still refused something: {:?}",
+        frontier.rejections()
+    );
+    assert_eq!(frontier.admitted().len(), 3);
+
+    let scheduled: Vec<_> = frontier
+        .admitted()
+        .iter()
+        .filter(|admitted| admitted.provenance().kind() == PhysicalProposalKind::ScheduledKernel)
+        .collect();
+    assert_eq!(scheduled.len(), 2, "the serial region and the tree");
+    let subprograms = frontier
+        .admitted()
+        .iter()
+        .filter(|admitted| admitted.provenance().kind() == PhysicalProposalKind::KernelSubprogram)
+        .count();
+    assert_eq!(subprograms, 1, "the multi-pass split");
+    // Distinct identities, or one alternative shadows another and the portfolio
+    // silently holds two.
+    let mut identities: Vec<_> = frontier
+        .admitted()
+        .iter()
+        .map(crate::frontier::AdmittedImplementation::identity)
+        .collect();
+    let total = identities.len();
+    identities.sort_unstable();
+    identities.dedup();
+    assert_eq!(identities.len(), total);
+    // The same boundary contract and the same claimed occurrences, which is what
+    // makes the tree composable exactly where the serial reduction is.
+    for admitted in &scheduled {
+        assert_eq!(admitted.boundary(), scheduled[0].boundary());
+        assert_eq!(admitted.semantic_members(), scheduled[0].semantic_members());
+    }
+    // One dispatch each, and the tree launches strictly more threads: under the
+    // structural model it can never win by pruning, which is exactly the
+    // cost-free legality this slice is limited to.
+    let tree = scheduled
+        .iter()
+        .find(|admitted| admitted.cost().launched_threads() > 1)
+        .expect("the tree launches one invocation per participant per output");
+    let serial = scheduled
+        .iter()
+        .find(|admitted| admitted.cost().launched_threads() == 1)
+        .expect("the serial reduction launches one invocation per output");
+    assert_eq!(tree.cost().dispatch_count(), serial.cost().dispatch_count());
+    assert!(tree.cost().launched_threads() > serial.cost().launched_threads());
+    assert_eq!(
+        tree.cost().temporary_bytes(),
+        serial.cost().temporary_bytes()
+    );
+}
+
+/// Every way the tree can fail rejects before admission with its own reason.
+///
+/// Four causes, four distinct outcomes, and the point of driving them together
+/// is that none of them is a cost and none of them is the same answer as another:
+/// a withheld permission is decided from the contract before a region exists, a
+/// resource refusal names the axis and both quantities, a declared refusal names
+/// the profile that refused, and silence names no profile at all.
+#[test]
+fn each_way_the_tree_can_fail_rejects_before_admission_with_its_own_reason() {
+    // The control: the same shape against a realizing profile admits the tree,
+    // so every refusal below is earned by the change that produced it.
+    let (_, admitting) = tree_request(Shape::from_dims([1, 8]), tree_target());
+    assert_eq!(reduction_frontier(&admitting).admitted().len(), 3);
+
+    // A withheld numerical permission: decided from the contract, before any
+    // region is built, and naming the dimension the tree consumes.
+    let strict = semantic_case_with_axis(
+        Shape::from_dims([1, 8]),
+        2.0_f32.to_bits(),
+        1.0_f32.to_bits(),
+        false,
+        Axis::new(1),
+    );
+    let mut request = CompilationRequest::governed(&strict);
+    request.target_profiles = vec![tree_target()];
+    let verified = verify_request(request).expect("the strict contract is admitted");
+    let verified = verified.for_target(verified.target_profiles()[0]).unwrap();
+    assert!(
+        reduction_frontier(&verified)
+            .rejections()
+            .iter()
+            .any(|rejection| matches!(
+                rejection,
+                crate::frontier::FrontierRejection::StrategyDeclined {
+                    strategy: "tiler.reduction.single-workgroup-tree",
+                    cause: crate::frontier::StrategyDeclineCause::NumericalPermissionRefused {
+                        dimension: "numerics.reassociation",
+                    },
+                    ..
+                }
+            )),
+        "a strict contract withheld the tree without naming the permission"
+    );
+
+    // Insufficient workgroup resources: a hard bound, with the exact axis and
+    // both quantities, never an infinite cost.
+    let (_, starved) = tree_request(
+        Shape::from_dims([1, 8]),
+        TargetProfile::workgroup_tree_target_for_test(
+            8,
+            1_024,
+            Some(crate::target::SynchronizationSupport::Realized),
+        ),
+    );
+    assert!(
+        matches!(
+            reduction_frontier(&starved).rejections(),
+            [crate::frontier::FrontierRejection::Infeasible {
+                axis: "local-memory-bytes",
+                required: 16,
+                available: 8,
+                ..
+            }]
+        ),
+        "a profile too small for the staging did not refuse it by bound: {:?}",
+        reduction_frontier(&starved).rejections()
+    );
+
+    // A declared refusal: the profile was asked and said no, so the rejection
+    // carries the whole subject and the authority behind it.
+    let (_, refused) = tree_request(
+        Shape::from_dims([1, 8]),
+        TargetProfile::workgroup_tree_target_for_test(
+            256,
+            1_024,
+            Some(crate::target::SynchronizationSupport::Unrealizable),
+        ),
+    );
+    let rejections = reduction_frontier(&refused).rejections().to_vec();
+    let [crate::frontier::FrontierRejection::Unsynchronizable { cause, .. }] =
+        rejections.as_slice()
+    else {
+        panic!("a declared refusal did not reject the tree by subject: {rejections:?}")
+    };
+    assert_eq!(
+        cause.subject().kind,
+        tiler_ir::schedule::SynchronizationKind::ControlBarrier
+    );
+    assert_eq!(
+        cause.subject().execution_scope,
+        tiler_ir::schedule::SynchronizationScope::Workgroup
+    );
+    assert!(cause.subject().fenced_spaces.workgroup);
+    assert!(!cause.subject().fenced_spaces.device);
+
+    // Missing authority: the profile was never asked, so the rejection carries
+    // the subject and no profile. Distinguishing this from the refusal above is
+    // the whole reason the two rejections are separate variants.
+    let (_, unasked) = tree_request(
+        Shape::from_dims([1, 8]),
+        TargetProfile::workgroup_tree_target_for_test(256, 1_024, None),
+    );
+    let rejections = reduction_frontier(&unasked).rejections().to_vec();
+    let [crate::frontier::FrontierRejection::SynchronizationUndeclared { subject, .. }] =
+        rejections.as_slice()
+    else {
+        panic!("an unasked profile did not reject the tree as undeclared: {rejections:?}")
+    };
+    assert_eq!(*subject, cause.subject());
+}
+
+/// A divergent tile cannot reach the frontier at all.
+///
+/// The fourth required rejection, and it is a *schedule* refusal rather than a
+/// target one: a synchronization point in a phase some participants skip is
+/// undefined execution, so the schedule verifier refuses it and no proposal is
+/// ever assessed. Driven against the verifier directly, because the strategy
+/// constructor cannot emit a divergent tile — which is the point.
+#[test]
+fn a_divergent_tile_is_refused_by_the_schedule_before_any_target_is_consulted() {
+    let (_, request) = tree_request(Shape::from_dims([1, 8]), tree_target());
+    let (region, members) = crate::physical::single_workgroup_tree_region(&request)
+        .expect("a reassociating eight-contributor request admits the tree");
+    // The control: the tile the strategy actually emits verifies.
+    assert!(crate::physical::verify_schedule(region.clone(), members.clone(), &request).is_ok());
+
+    let mut divergent = region;
+    let tiler_ir::schedule::ReductionTopology::CooperativeWorkgroup { tile, .. } =
+        &mut divergent.schedule.reduction
+    else {
+        panic!("the tree region carries a cooperative topology")
+    };
+    // One participant skips the consuming phase, which is exactly the divergence
+    // the per-phase participation field exists to make statable.
+    tile.phases[1].participation = tiler_ir::schedule::ParticipantRange { first: 0, count: 3 };
+    assert_eq!(
+        crate::physical::verify_schedule(divergent, members, &request),
+        Err(crate::physical::PhysicalError::Intrinsic {
+            rule: "cooperative-phase-participation",
+            region: RegionId::new(4),
+        })
+    );
+}
+
+/// The tree's subject binding refuses a region that does not realize the
+/// request.
+///
+/// The binding is what stops a provider implementing a *different* reduction and
+/// having it admitted because the schedule verifier — which sees only the region
+/// — cannot notice. Each perturbation changes exactly one fact the binding
+/// re-derives from the request, so a rule that stopped re-deriving it would let
+/// one of these through.
+#[test]
+fn the_tree_subject_binding_refuses_a_region_that_does_not_realize_the_request() {
+    let (_, request) = tree_request(Shape::from_dims([1, 8]), tree_target());
+    let (region, members) = crate::physical::single_workgroup_tree_region(&request)
+        .expect("a reassociating eight-contributor request admits the tree");
+    // The control: unperturbed, it binds.
+    assert!(crate::physical::verify_schedule(region.clone(), members.clone(), &request).is_ok());
+
+    // A region ordinal the tree does not own. Two strategies sharing one ordinal
+    // would make the program's region correlation ambiguous.
+    let mut forged = region.clone();
+    forged.index.id = RegionId::new(1);
+    assert!(matches!(
+        crate::physical::verify_schedule(forged, members.clone(), &request),
+        Err(crate::physical::PhysicalError::Intrinsic {
+            rule: "request-binding",
+            ..
+        })
+    ));
+
+    // Claiming the prologue's occurrences as well as the reduction's, which
+    // would double-cover the graph.
+    let forged_members = request.serial_sum().members.all();
+    assert!(matches!(
+        crate::physical::verify_schedule(region.clone(), forged_members, &request),
+        Err(crate::physical::PhysicalError::Intrinsic {
+            rule: "request-binding",
+            ..
+        })
+    ));
+
+    // An iteration shape that is not the output shape carrying this split's
+    // participant axis, so the region's invocations no longer stand in
+    // one-to-one correspondence with (output, participant) pairs.
+    let mut forged = region;
+    forged.index.iteration_shape = Shape::from_dims([1, 2]);
+    assert!(matches!(
+        crate::physical::verify_schedule(forged, members, &request),
+        Err(crate::physical::PhysicalError::Intrinsic { .. })
+    ));
+}
+
+/// An input whose fold depends on *where* the partition boundaries fall.
+///
+/// After the recognized prologue (`x * 2 + 1`) these are `[2V, 1, -2V, 1, …]`
+/// with `V` far above the unit ulp, so a partition that spans the cancelling
+/// pair absorbs the ones beside it and a partition that stops between them does
+/// not. Cancellation alone is not enough — a strictly alternating input sums to
+/// the same value under every balanced split, which would let an agreement be
+/// luck rather than evidence.
+const REGROUPING_SENSITIVE_INPUT: [f32; 8] = [5.0e19, 0.0, -5.0e19, 0.0, 0.0, 0.0, 0.0, 0.0];
+
+/// The neighbouring split really does compute something else.
+///
+/// The guard on the test below: it asserts an executed kernel equals its
+/// declared order's oracle, and that assertion is only evidence if some *other*
+/// order would have disagreed. This pins that, so an input chosen to make the
+/// comparison vacuous fails here rather than silently weakening the conformance
+/// claim next door.
+#[test]
+fn the_declared_split_is_what_the_agreement_is_evidence_about() {
+    let scaled: Vec<f32> = REGROUPING_SENSITIVE_INPUT
+        .iter()
+        .map(|value| value * 2.0_f32 + 1.0_f32)
+        .collect();
+    let tensor = f32_tensor(Shape::from_dims([1, 8]), &scaled);
+    let declared = tiler_reference::strict_partitioned_sum(&tensor, &[Axis::new(1)], 4, 2)
+        .expect("the declared split is exact");
+    let neighbouring = tiler_reference::strict_partitioned_sum(&tensor, &[Axis::new(1)], 2, 4)
+        .expect("the neighbouring split is exact");
+    assert_ne!(
+        tensor_bits(&declared),
+        tensor_bits(&neighbouring),
+        "the conformance input cannot tell two splits apart"
+    );
+}
+
+/// The tree's executed result is the reference's, at every extent it admits and
+/// at every extent it declines.
+///
+/// The kernel is *run* rather than inspected: `KirMachine` advances every lane of
+/// a workgroup to the barrier before any lane crosses it, so a body that read a
+/// staged slot before its writer produced it would read `NaN` and fail here
+/// rather than pass by accident.
+///
+/// The oracle is `strict_partitioned_sum` at the region's *own* declared split —
+/// a second exact oracle, not a relaxation of the first. A contract permitting
+/// reassociation admits a set of results, so no oracle can answer "the" value for
+/// it; what a plan is checked against is the one order it selected.
+#[test]
+fn the_tree_matches_the_reference_at_its_declared_order_for_every_extent() {
+    for (extent, participants, contributors_per_partition) in [(8_u64, 4_u64, 2_u64), (6, 3, 2)] {
+        let values = REGROUPING_SENSITIVE_INPUT;
+        let extent_usize = usize::try_from(extent).unwrap();
+        let (_, request) = tree_request(Shape::from_dims([1, extent]), tree_target());
+        let (region, members) = crate::physical::single_workgroup_tree_region(&request)
+            .expect("a reassociating request admits the tree at this extent");
+        let tiler_ir::schedule::ReductionTopology::CooperativeWorkgroup { partition, .. } =
+            &region.schedule.reduction
+        else {
+            panic!("the tree region carries a cooperative topology")
+        };
+        assert_eq!(partition.partitions, participants, "extent {extent}");
+        assert_eq!(
+            partition.contributors_per_partition, contributors_per_partition,
+            "extent {extent}"
+        );
+        let partition = *partition;
+        let verified = crate::physical::verify_schedule(region, members, &request)
+            .expect("the tree region verifies");
+        let kernel = crate::physical::lower_structured_kernel(&verified)
+            .expect("the tree region lowers to a verified kernel");
+
+        // The prologue the recognized program applies before the fold, applied
+        // here so the reference sees the same contributor values the kernel's
+        // reduction reads.
+        let scaled: Vec<f32> = values[..extent_usize]
+            .iter()
+            .map(|value| value * 2.0_f32 + 1.0_f32)
+            .collect();
+        let actual = interpret_fused(&kernel, &scaled);
+        let expected = tiler_reference::strict_partitioned_sum(
+            &f32_tensor(Shape::from_dims([1, extent]), &scaled),
+            &[Axis::new(1)],
+            partition.partitions,
+            partition.contributors_per_partition,
+        )
+        .expect("the declared split is an exact oracle");
+        assert_eq!(
+            actual
+                .iter()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>(),
+            tensor_bits(&expected),
+            "extent {extent} disagreed with its declared order"
+        );
+    }
+
+    // One element and an empty domain admit no tree at all, and the decline
+    // names the extent rather than leaving the absence unexplained. The serial
+    // alternative carries both, including the empty domain's `+0.0` identity,
+    // which the zero-extent precedent already proves and this does not restate.
+    for extent in [1_u64, 0] {
+        let (_, request) = tree_request(Shape::from_dims([1, extent]), tree_target());
+        assert_eq!(
+            crate::physical::single_workgroup_tree_region(&request).err(),
+            Some(
+                crate::physical::WorkgroupTreeUnavailable::NoAdmissibleParticipantCount {
+                    contributors: extent,
+                }
+            ),
+            "extent {extent} did not decline by naming its contributor count"
+        );
+        let frontier = reduction_frontier(&request);
+        assert!(
+            frontier.rejections().iter().any(|rejection| matches!(
+                rejection,
+                crate::frontier::FrontierRejection::StrategyDeclined {
+                    strategy: "tiler.reduction.single-workgroup-tree",
+                    cause: crate::frontier::StrategyDeclineCause::NoAdmissibleShape { .. },
+                    ..
+                }
+            )),
+            "extent {extent}'s missing tree is unexplained: {:?}",
+            frontier.rejections()
+        );
+        // The serial alternative is still there, which is what makes the decline
+        // a narrowing of the portfolio rather than a compilation failure.
+        assert!(
+            frontier
+                .admitted()
+                .iter()
+                .any(|admitted| admitted.provenance().kind()
+                    == PhysicalProposalKind::ScheduledKernel)
+        );
+    }
+
+    // A prime extent is the tail case the exact-or-decline policy exists for:
+    // seven contributors admit no balanced split, so the tree is withheld rather
+    // than padded with identity elements or given a masked lane.
+    let (_, prime) = tree_request(Shape::from_dims([1, 7]), tree_target());
+    assert_eq!(
+        crate::physical::single_workgroup_tree_region(&prime).err(),
+        Some(
+            crate::physical::WorkgroupTreeUnavailable::NoAdmissibleParticipantCount {
+                contributors: 7,
+            }
+        )
     );
 }
 

@@ -516,9 +516,14 @@ impl From<PhysicalError> for CompileError {
             | PhysicalError::ShapeProductOverflow { .. } => {
                 Self::InvalidCompilerOutput(CompilerOutputError::Physical(value))
             }
+            // An unrealized synchronization joins the feasibility class rather
+            // than the compiler-output one: the schedule is valid and the target
+            // simply never declared the realization it needs, so blaming the
+            // producer would report a target's silence as a Tiler defect.
             PhysicalError::Target { .. }
             | PhysicalError::Numerical { .. }
-            | PhysicalError::Synchronization { .. } => {
+            | PhysicalError::Synchronization { .. }
+            | PhysicalError::UnrealizedSynchronization { .. } => {
                 Self::NoFeasiblePlan(NoFeasiblePlanError::Physical(value))
             }
         }
@@ -1438,7 +1443,8 @@ const fn physical_error_stage(error: &PhysicalError) -> ExplainStage {
         // against the same contract.
         PhysicalError::Target { .. }
         | PhysicalError::Numerical { .. }
-        | PhysicalError::Synchronization { .. } => ExplainStage::TargetFeasibility,
+        | PhysicalError::Synchronization { .. }
+        | PhysicalError::UnrealizedSynchronization { .. } => ExplainStage::TargetFeasibility,
         PhysicalError::Intrinsic { .. } | PhysicalError::ShapeProductOverflow { .. } => {
             ExplainStage::IntrinsicScheduling
         }
@@ -1522,6 +1528,11 @@ fn target_axis(error: &PhysicalError) -> &'static str {
         // key for a presentation index, and the subject a caller acts on travels
         // on the error itself rather than being flattened into a string.
         PhysicalError::Synchronization { cause, .. } => cause.subject().kind.key(),
+        // Deliberately *not* the same key as a declared refusal: a region
+        // rejected because nothing declared the realization and one rejected
+        // because a fact refused it are different rejections, and sharing a key
+        // would let the deduplication above drop one of them.
+        PhysicalError::UnrealizedSynchronization { .. } => "synchronization-undeclared",
         PhysicalError::ShapeProductOverflow { .. } => "shape-product-overflow",
     }
 }
@@ -1765,6 +1776,23 @@ fn failure_source_details(error: &CompileError) -> (String, SubjectKind, String)
                 "synchronization-{}-{}",
                 cause.subject().kind.key(),
                 cause.subject().execution_scope.key()
+            ),
+            SubjectKind::Region,
+            format!("failed-region:{}", region.get()),
+        ),
+        // The same pair, under a reason that says the target was silent rather
+        // than refusing. A reader acts differently on the two: one needs another
+        // strategy, and the other needs the profile to be asked.
+        CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(
+            PhysicalError::UnrealizedSynchronization { subject, region },
+        ))
+        | CompileError::InvalidCompilerOutput(CompilerOutputError::Physical(
+            PhysicalError::UnrealizedSynchronization { subject, region },
+        )) => (
+            format!(
+                "synchronization-undeclared-{}-{}",
+                subject.kind.key(),
+                subject.execution_scope.key()
             ),
             SubjectKind::Region,
             format!("failed-region:{}", region.get()),
