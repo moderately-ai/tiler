@@ -11,6 +11,7 @@ members = [
     "crates/tiler-metal-aot",
     "crates/tiler-reference",
     "crates/tiler-runtime",
+    "prototypes/candle-metal-adapter",
     "prototypes/serial-sum-compile",
     "prototypes/serial-sum-run",
 ]

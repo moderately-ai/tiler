@@ -1,0 +1,1118 @@
+//! The Candle Metal runtime adapter: `tiler-runtime`'s seam, consumed for real.
+//!
+//! # What this owns, and what it is forbidden to touch
+//!
+//! `docs/integration/candle.md` fixes the boundary in both directions. This
+//! adapter owns Candle storage, layout, allocation, and the command stream. It
+//! owns no compiler optimization and no MSL generation: it never reads the
+//! expansion compiler cache, never compiles MSL at run time, and loads a
+//! precompiled `metallib` from the bytes the artifact carries — through
+//! `newLibraryWithData:error:`, which is delivery rather than compilation.
+//!
+//! It is a *runtime adapter* in the glossary's exact sense and not a backend. A
+//! Metal capability it observes here is a live-device or prepared-pipeline fact
+//! and never a compile guarantee.
+//!
+//! # Every comparison stays with the loader
+//!
+//! [`RuntimeAdapter`]'s division is the one this file follows without
+//! exception: [`CandleMetalAdapter::observe_live_device`] reports what the device says and the
+//! loader decides whether the row is met; [`CandleMetalAdapter::observe_prepared_entry`]
+//! returns a measurement and the loader holds the threshold and the direction. A
+//! row this adapter does not know exactly is
+//! [`LiveDeviceObservation::Unrecognized`], which is fail-closed.
+//!
+//! # The synchronous checked boundary, and why it is not Candle's stream
+//!
+//! The ordinary contract has the adapter encode into Candle's active command
+//! stream and neither commit nor wait. This prototype does not, and the reason
+//! is a specific, checkable gap rather than convenience.
+//!
+//! **Fact — Candle 0.11.0 performs no post-wait terminal check.**
+//! `Commands::ensure_completed` (`candle-metal-kernels/src/metal/commands.rs`)
+//! inspects the command buffer's status *before* waiting: `NotEnqueued` and
+//! `Enqueued` commit and wait, `Committed` and `Scheduled` wait, and both arms
+//! return `Ok` without re-reading the status afterwards. A buffer that
+//! transitions to `Error` during the wait therefore returns success.
+//! `docs/research/runtime/candle-metal-post-wait-error-checking.md` is the
+//! standing report of that gap.
+//!
+//! **Fact — the check is unreachable from outside Candle.** `MetalDevice`'s
+//! `commands` field is `pub(crate)`, `Commands` publishes no accessor for the
+//! current or in-flight `CommandBuffer`, and `MetalDevice::wait_until_completed`
+//! returns `Result<()>` carrying no status. A consumer encoding into Candle's
+//! stream has no object to ask.
+//!
+//! The contract anticipates exactly this and permits it: that method "is not
+//! sufficient until the verified gap is fixed **or the adapter supplies an
+//! equivalent checked boundary**". This adapter supplies one — its own command
+//! queue and command buffer, committed and waited, with the terminal status read
+//! after the wait and before anything reads device memory. The cost is stated
+//! rather than hidden: this is the synchronous validation path, not the
+//! asynchronous launch path, so it forfeits overlap with surrounding Candle
+//! work. `adopt-candle-command-stream-once-a-terminal-check-is-reachable`
+//! carries the activation trigger.
+//!
+//! Ordering across the two streams is host-ordered rather than assumed:
+//! [`CandleMetalAdapter::plan_dispatch`] brings Candle's own pending work to a terminal state
+//! before anything is encoded — a tensor produced by a Candle kernel may still
+//! be a promise in an uncommitted command buffer, and a separate command buffer
+//! is not ordered against it — and [`CandleMetalAdapter::dispatch`] waits for its own
+//! submission before returning, so Candle work that follows reads storage this
+//! adapter has finished writing.
+
+use std::sync::Arc;
+
+use candle_core::backend::BackendStorage;
+use candle_core::{DType, MetalDevice, MetalStorage, Shape};
+use candle_metal_kernels::metal::{Buffer, CommandBuffer, ComputePipeline, Fence, Library};
+use dispatch2::DispatchData;
+use objc2_metal::{MTLCommandBufferStatus, MTLCommandQueue, MTLDevice, MTLGPUFamily, MTLSize};
+
+use tiler_artifact::program::{
+    BindingTarget, BufferAccess, RouteRequirement, RouteResourceDimension,
+};
+use tiler_metal::applicability::{MetalGpuFamily, MetalGpuFamilySupport};
+use tiler_runtime::adapter::{LiveExecutionContext, RuntimeAdapter};
+use tiler_runtime::load::{
+    ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest, Preflight, RoutedDispatch,
+    RoutedEntry, TargetPropertyRequest,
+};
+
+use crate::cache::{DeviceScope, PipelineCache};
+use crate::refusal::{DispatchFailure, RouteRefusal};
+
+/// Governed key of the Metal requirement naming a minimum Apple GPU family.
+///
+/// Owned by `tiler.metal`, the backend key this host states, so the loader
+/// refuses a row owned by anything else before this adapter is asked.
+const METAL_MINIMUM_GPU_FAMILY: &str = "tiler.metal.route-requirement.minimum-gpu-family";
+
+/// Governed version of [`METAL_MINIMUM_GPU_FAMILY`]'s meaning.
+///
+/// Matched exactly. One key at two versions can mean two things, and guessing
+/// which is how a route runs on a device it was refused on.
+const METAL_MINIMUM_GPU_FAMILY_VERSION: u32 = 1;
+
+/// Interface key of the program input this consumer binds.
+pub const INPUT_KEY: &str = "input";
+/// Interface key of the program output this consumer reads.
+pub const OUTPUT_KEY: &str = "result";
+
+/// What one completed dispatch yields to the wrapper.
+///
+/// Owned, per [`RuntimeAdapter::Completion`]'s contract. The storage is a real
+/// Candle `MetalStorage` over the allocation the route wrote, so the wrapper
+/// hands it straight back to Candle as the custom op's result.
+#[derive(Debug)]
+pub struct CandleCompletion {
+    /// The program output, as Candle storage.
+    pub storage: MetalStorage,
+    /// The output's shape.
+    pub shape: Shape,
+    /// The governed profile key the route was carried out under.
+    pub profile_key: String,
+    /// How many entries were encoded, and how many the route declared skippable.
+    pub encoded: usize,
+    /// The route's declared entries.
+    pub entries: usize,
+}
+
+/// What this device reports about itself, recorded rather than compared.
+///
+/// The two limits with an artifact-side counterpart — a pipeline's threadgroup
+/// capacity and the per-buffer length bound — are compared in
+/// [`CandleMetalAdapter::plan_dispatch`]; the rest is provenance.
+#[derive(Clone, Debug)]
+pub struct DeviceFacts {
+    /// The name the device reports for itself.
+    pub name: String,
+    /// The largest single allocation this device admits.
+    pub max_buffer_length: u64,
+    /// The highest named Apple family this device claims.
+    pub highest_apple_family: MetalGpuFamilySupport,
+}
+
+/// One routed ABI slot resolved to the storage this consumer supplies for it.
+#[derive(Clone, Debug)]
+struct PlacedSlot {
+    /// The backend argument-table index this slot occupies.
+    transport: u32,
+    /// The first addressed byte within the bound allocation.
+    offset: u64,
+    /// The access mode the ABI declares for this slot.
+    ///
+    /// Read from the artifact rather than inferred from what the slot is bound
+    /// to. `docs/integration/candle.md` requires exactly this — "resource access
+    /// modes come from the ABI so the encoder can declare read-only,
+    /// write-only, and read/write resources accurately" — and inferring it would
+    /// get the *consuming* half of a shared intermediate wrong: that slot is
+    /// backed by an allocation some other entry writes, and is itself a read.
+    access: BufferAccess,
+    /// The allocation itself, retained through the dispatch that reads it.
+    buffer: Arc<Buffer>,
+}
+
+/// One entry of a route with every device object its dispatch needs.
+#[derive(Clone, Debug)]
+struct PreparedEntry {
+    pipeline: ComputePipeline,
+    slots: Vec<PlacedSlot>,
+    grid_threads: u64,
+    threads_per_workgroup: u64,
+    /// This entry covers no threads and the artifact says to skip its dispatch.
+    ///
+    /// Its buffers are still allocated and still retained: an empty producing
+    /// stage shares its intermediate with the consumer that follows, and the
+    /// consumer must bind an allocation rather than nothing.
+    skipped: bool,
+}
+
+/// One route this device proved it can carry out, held across the commit.
+///
+/// **This value is the retention criterion.** Every `Arc<Buffer>` the encoder
+/// binds, every pipeline it sets, and the output the caller receives are owned
+/// here until [`CandleMetalAdapter::dispatch`] has observed terminal success.
+///
+/// Holding the `Arc` rather than a clone of the `Buffer` is load-bearing and not
+/// interchangeable. Candle's `Buffer` is a retained Objective-C handle, so
+/// cloning it keeps the `MTLBuffer` alive — but Candle's *allocator* recycles a
+/// pooled buffer as soon as its `Arc::strong_count` reaches one, and would hand
+/// the same live `MTLBuffer` to an unrelated allocation while this route still
+/// reads it. An Objective-C retain is therefore not sufficient evidence of
+/// exclusive use here; the `Arc` is.
+#[derive(Debug)]
+struct PlannedRoute {
+    entries: Vec<PreparedEntry>,
+    /// The allocation the program output lands in.
+    output: Arc<Buffer>,
+    /// How many `f32` elements it holds.
+    output_elements: usize,
+}
+
+/// The caller's Candle-owned input, resolved to a buffer and a byte offset.
+#[derive(Clone, Debug)]
+pub struct BoundInput {
+    /// The allocation Candle's tensor is backed by.
+    pub buffer: Arc<Buffer>,
+    /// The first addressed byte of the logical view within it.
+    ///
+    /// Composed from Candle's `Layout::start_offset` — an *element* offset into
+    /// the allocation — and never assumed zero. The adapter never uses the full
+    /// allocation length as the logical tensor length and never binds offset
+    /// zero merely because it holds the underlying buffer.
+    pub byte_offset: u64,
+}
+
+/// One consumer-selected runtime adapter for `tiler.metal` / `metallib` over Candle storage.
+#[derive(Debug)]
+pub struct CandleMetalAdapter {
+    device: MetalDevice,
+    /// This adapter's own command queue; see the module note on the checked boundary.
+    queue: candle_metal_kernels::metal::CommandQueue,
+    /// The environment the producer declared, restated rather than re-derived.
+    environment: ExecutionEnvironment,
+    /// The identity of the artifact being routed, which scopes every cache entry.
+    artifact_identity: Vec<u8>,
+    input: BoundInput,
+    output_elements: usize,
+    facts: DeviceFacts,
+    cache: PipelineCache,
+    /// Libraries validated from their own bytes, in execution order.
+    validated: Vec<Library>,
+    /// Entries promoted to prepared pipelines, in execution order.
+    prepared: Vec<ComputePipeline>,
+    /// Everything the committed dispatch will touch.
+    planned: Option<PlannedRoute>,
+    /// Slot pairs the loader required be backed by one allocation each.
+    ///
+    /// Recorded rather than recomputed by the caller: `Preflight` is the only
+    /// authority that publishes them and it is reachable from `plan_dispatch`
+    /// alone, so a caller that wanted the count would have to mint a second
+    /// routing authority for a route it will not execute.
+    shared_allocations: usize,
+}
+
+impl CandleMetalAdapter {
+    /// Builds an adapter bound to one Candle Metal device and one caller input.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RouteRefusal::NoExecutionContext`] when the device yields no
+    /// command queue.
+    pub fn new(
+        device: &MetalDevice,
+        environment: ExecutionEnvironment,
+        artifact_identity: &[u8],
+        input: BoundInput,
+        output_elements: usize,
+    ) -> Result<Self, RouteRefusal> {
+        let queue = device.metal_device().new_command_queue().map_err(|cause| {
+            RouteRefusal::NoExecutionContext {
+                detail: cause.to_string(),
+            }
+        })?;
+        Ok(Self {
+            facts: device_facts(device),
+            cache: PipelineCache::new(device),
+            device: device.clone(),
+            queue,
+            environment,
+            artifact_identity: artifact_identity.to_vec(),
+            input,
+            output_elements,
+            validated: Vec::new(),
+            prepared: Vec::new(),
+            planned: None,
+            shared_allocations: 0,
+        })
+    }
+
+    /// Returns what the bound device reported about itself.
+    pub fn facts(&self) -> &DeviceFacts {
+        &self.facts
+    }
+
+    /// Returns how many slot pairs the loader required be backed by one allocation.
+    pub const fn shared_allocations(&self) -> usize {
+        self.shared_allocations
+    }
+
+    /// Returns how many libraries and pipelines this adapter's cache holds.
+    pub fn cache_occupancy(&self) -> (usize, usize) {
+        self.cache.occupancy()
+    }
+
+    /// Returns the scope every cache entry of this adapter is minted under.
+    pub fn scope(&self) -> DeviceScope {
+        DeviceScope::of(&self.device)
+    }
+
+    /// Loads one entry's carried object into a Metal library, through the cache.
+    fn library_for(
+        &mut self,
+        position: usize,
+        entry: &RoutedEntry<'_>,
+    ) -> Result<Library, RouteRefusal> {
+        let scope = DeviceScope::of(&self.device);
+        let key = self
+            .cache
+            .library_key(&scope, &self.artifact_identity, position)?;
+        if let Some(cached) = self.cache.library(&key) {
+            return Ok(cached.clone());
+        }
+        let library = load_library(&self.device, position, entry.object())?;
+        self.cache.insert_library(key, library.clone());
+        Ok(library)
+    }
+
+    /// Builds one entry's compute pipeline, through the cache.
+    fn pipeline_for(
+        &mut self,
+        position: usize,
+        library: &Library,
+        symbol: &str,
+    ) -> Result<ComputePipeline, RouteRefusal> {
+        let scope = DeviceScope::of(&self.device);
+        let library_key = self
+            .cache
+            .library_key(&scope, &self.artifact_identity, position)?;
+        let key = PipelineCache::pipeline_key(&library_key, symbol);
+        if let Some(cached) = self.cache.pipeline(&key) {
+            return Ok(cached.clone());
+        }
+        // Function lookup and pipeline creation stay distinct stages, because a
+        // missing declared symbol is an artifact invariant and a pipeline the
+        // device refuses is a route fact about this device.
+        let function = library.get_function(symbol, None).map_err(|cause| {
+            RouteRefusal::EntrySymbolAbsent {
+                entry: position,
+                symbol: symbol.to_owned(),
+                detail: cause.to_string(),
+            }
+        })?;
+        let pipeline = self
+            .device
+            .metal_device()
+            .new_compute_pipeline_state_with_function(&function)
+            .map_err(|cause| RouteRefusal::PipelineRejected {
+                entry: position,
+                symbol: symbol.to_owned(),
+                detail: cause.to_string(),
+            })?;
+        self.cache.insert_pipeline(key, pipeline.clone());
+        Ok(pipeline)
+    }
+
+    /// Allocates one buffer of at least `bytes` through Candle's own allocator.
+    ///
+    /// Through Candle rather than through `MTLDevice` directly, because the
+    /// contract says output and temporary storage come from the input device's
+    /// allocator — that is what keeps the result a tensor Candle can go on using
+    /// and what keeps the allocation inside Candle's residency set.
+    fn allocate(&self, bytes: u64) -> Result<Arc<Buffer>, RouteRefusal> {
+        let element_bytes = u64::try_from(DType::F32.size_in_bytes()).unwrap_or(4);
+        // Rounded up rather than truncated: a byte range that is not a whole
+        // number of elements must still be entirely reachable.
+        let elements = bytes.div_ceil(element_bytes).max(1);
+        let elements = usize::try_from(elements).map_err(|_| RouteRefusal::Allocation {
+            detail: format!("{bytes} byte(s) is not an allocation this host can address"),
+        })?;
+        self.device
+            .new_buffer(elements, DType::F32, "tiler.route")
+            .map_err(|cause| RouteRefusal::Allocation {
+                detail: cause.to_string(),
+            })
+    }
+}
+
+/// Loads one carried object into a Metal library on a bound Candle device.
+///
+/// **Delivery, not compilation.** `newLibraryWithData:error:` takes an
+/// already-compiled `metallib` image; no MSL is compiled at run time and no
+/// expansion compiler cache is read. The bytes are the ones the envelope carries
+/// and whose integrity digest the artifact layer already proved, so a refusal
+/// here is content that will not execute rather than a damaged file.
+///
+/// A free function rather than a method, so `crate::proof`'s fail-closed probe
+/// drives the exact code path a route takes instead of a second one written to
+/// resemble it.
+///
+/// # Errors
+///
+/// Returns [`RouteRefusal::PayloadNotALibrary`] with Metal's own account.
+pub fn load_library(
+    device: &MetalDevice,
+    entry: usize,
+    object: &[u8],
+) -> Result<Library, RouteRefusal> {
+    let data = DispatchData::from_bytes(object);
+    device
+        .metal_device()
+        .as_ref()
+        .newLibraryWithData_error(&data)
+        .map(Library::new)
+        .map_err(|cause| RouteRefusal::PayloadNotALibrary {
+            entry,
+            detail: cause.to_string(),
+        })
+}
+
+/// Reads what one bound Candle Metal device reports about itself.
+fn device_facts(device: &MetalDevice) -> DeviceFacts {
+    let raw = device.metal_device().as_ref();
+    DeviceFacts {
+        name: raw.name().to_string(),
+        max_buffer_length: u64::try_from(raw.maxBufferLength()).unwrap_or(u64::MAX),
+        highest_apple_family: observed_apple_family(device),
+    }
+}
+
+/// Reads the highest named Apple GPU family this device reports supporting.
+///
+/// Highest first: the families are cumulative, so the first supported one is the
+/// most specific true statement. A device claiming none of them is reported as
+/// such rather than guessed at.
+///
+/// Public because `crate::proof` asks ADR 0086's separate applicability question
+/// from the *same* observation this adapter routes under; two spellings of "what
+/// family does this device claim" would let the two answers drift.
+pub fn observed_apple_family(device: &MetalDevice) -> MetalGpuFamilySupport {
+    let raw = device.metal_device().as_ref();
+    [
+        (MTLGPUFamily::Apple9, MetalGpuFamily::Apple9),
+        (MTLGPUFamily::Apple8, MetalGpuFamily::Apple8),
+        (MTLGPUFamily::Apple7, MetalGpuFamily::Apple7),
+        (MTLGPUFamily::Apple6, MetalGpuFamily::Apple6),
+        (MTLGPUFamily::Apple5, MetalGpuFamily::Apple5),
+    ]
+    .into_iter()
+    .find(|(queried, _)| raw.supportsFamily(*queried))
+    .map_or(MetalGpuFamilySupport::NoneNamed, |(_, named)| {
+        MetalGpuFamilySupport::Highest(named)
+    })
+}
+
+/// Reads a canonical family payload through the governed vocabulary's own spelling.
+///
+/// Scanned against `MetalGpuFamily::ALL` rather than against a second table of
+/// names written here: one spelling authority, so a family added to that
+/// vocabulary cannot be silently unreadable at this boundary.
+fn gpu_family_from_payload(payload: &[u8]) -> Option<MetalGpuFamily> {
+    MetalGpuFamily::ALL
+        .into_iter()
+        .find(|family| family.as_str().as_bytes() == payload)
+}
+
+/// What a command buffer's status permits after the wait.
+///
+/// Three outcomes and deliberately no fourth. There is no retry and no fallback
+/// variant, because every post-commit transition the runtime execution contract
+/// names is "never".
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SubmissionOutcome {
+    /// The one status that permits a readback.
+    Completed,
+    /// The device reported a terminal execution error.
+    ExecutionError,
+    /// The wait returned and the buffer had not reached a terminal state.
+    NotTerminal(&'static str),
+}
+
+/// Classifies one command-buffer status into what it permits.
+///
+/// **Apple defines exactly two terminal states, `Completed` and `Error`.** A
+/// check written as `status != Completed` is correct today and collapses that
+/// distinction — it reports a buffer that never left the queue in the same
+/// breath as one the GPU rejected, which are different things for a caller to do
+/// next. This is the one place a wrong answer would be read as arithmetic: a
+/// readback taken from a buffer whose dispatch failed returns whatever the
+/// output held before, which compares against a reference as a numerical
+/// disagreement.
+///
+/// **An unnamed status is non-terminal, and it has to be a default rather than a
+/// build error here.** `objc2-metal` models `MTLCommandBufferStatus` as a
+/// `#[repr(transparent)]` newtype over `NSUInteger` with associated constants
+/// rather than as a Rust enum, so a wildcard-free exhaustive match — which
+/// `prototypes/serial-sum-run` can write against `metal` 0.33's real enum — is
+/// not expressible against this binding. A status Apple adds therefore arrives
+/// as an unrecognised number, and the fail-closed classification is the one that
+/// refuses the readback.
+pub fn submission_outcome(status: MTLCommandBufferStatus) -> SubmissionOutcome {
+    match status {
+        MTLCommandBufferStatus::Completed => SubmissionOutcome::Completed,
+        MTLCommandBufferStatus::Error => SubmissionOutcome::ExecutionError,
+        MTLCommandBufferStatus::NotEnqueued => SubmissionOutcome::NotTerminal("NotEnqueued"),
+        MTLCommandBufferStatus::Enqueued => SubmissionOutcome::NotTerminal("Enqueued"),
+        MTLCommandBufferStatus::Committed => SubmissionOutcome::NotTerminal("Committed"),
+        MTLCommandBufferStatus::Scheduled => SubmissionOutcome::NotTerminal("Scheduled"),
+        _ => SubmissionOutcome::NotTerminal("an unnamed status"),
+    }
+}
+
+impl RuntimeAdapter for CandleMetalAdapter {
+    type Refusal = RouteRefusal;
+    type Failure = DispatchFailure;
+    type Completion = CandleCompletion;
+
+    /// Reports the identities this bound context executes under.
+    ///
+    /// **Producer-declared equality, not host-earned eligibility.** The profile
+    /// reported here is the one `tiler-build` declares for this Metal target;
+    /// nothing about this host earned the right to offer it, and ADR 0086
+    /// refuses that second question on every macOS row currently observable.
+    /// `crate::proof` asks it separately and prints the refusal, before any
+    /// routing commit.
+    fn bind_execution_context(&mut self) -> Result<ExecutionEnvironment, Self::Refusal> {
+        Ok(self.environment.clone())
+    }
+
+    /// Validates one entry's carried payload from its own bytes.
+    ///
+    /// ADR 0090 item 8, and the artifact layer performed no part of it: the
+    /// envelope proved this object's integrity digest and carried it opaquely.
+    /// Only Metal can say whether the bytes decode into a library and whether it
+    /// publishes the symbol the artifact declares, so both are asked here, while
+    /// a refusal still costs nothing.
+    ///
+    /// **What is not checked, stated rather than implied.** The third obligation
+    /// ADR 0090 item 8 names — that the slots the object addresses are the ones
+    /// the entry declares — is not discharged. Reading a Metal function's
+    /// argument table needs `newComputePipelineStateWithFunction:options:reflection:error:`
+    /// and an `MTLComputePipelineReflection`, which neither Candle's wrapper nor
+    /// this prototype builds. A slot disagreement therefore reaches the encoder
+    /// rather than this refusal; it is recorded as an unsupported case rather
+    /// than papered over.
+    fn validate_payload(
+        &mut self,
+        _context: &LiveExecutionContext,
+        entry: &RoutedEntry<'_>,
+    ) -> Result<(), Self::Refusal> {
+        let position = self.validated.len();
+        let library = self.library_for(position, entry)?;
+        let symbol = entry.entry_symbol();
+        library
+            .get_function(symbol, None)
+            .map_err(|cause| RouteRefusal::EntrySymbolAbsent {
+                entry: position,
+                symbol: symbol.to_owned(),
+                detail: cause.to_string(),
+            })?;
+        // Retained rather than re-derived later. Loading twice would mean two
+        // libraries for one object, and the second would be the one that ran.
+        self.validated.push(library);
+        Ok(())
+    }
+
+    /// Reports what the bound device is for one live-device route requirement.
+    ///
+    /// Reports, and does not decide. `RouteResourceDimension::SubgroupThreads`
+    /// is `Unrecognized` on purpose: Metal publishes no device-scoped execution
+    /// width — `threadExecutionWidth` lives on `MTLComputePipelineState`, which
+    /// is a prepared-kernel fact — so answering it from a family table would
+    /// report a documentation constant as a device observation.
+    fn observe_live_device(
+        &mut self,
+        _context: &LiveExecutionContext,
+        request: LiveDeviceRequest<'_>,
+    ) -> LiveDeviceObservation {
+        match request.requirement() {
+            RouteRequirement::ResourceFloor(floor) => match floor.dimension() {
+                RouteResourceDimension::SubgroupThreads => LiveDeviceObservation::Unrecognized,
+            },
+            RouteRequirement::BackendFeature(feature) => {
+                if feature.key().as_str() != METAL_MINIMUM_GPU_FAMILY
+                    || feature.version() != METAL_MINIMUM_GPU_FAMILY_VERSION
+                {
+                    return LiveDeviceObservation::Unrecognized;
+                }
+                let Some(required) = gpu_family_from_payload(feature.payload()) else {
+                    return LiveDeviceObservation::Unrecognized;
+                };
+                // Cumulative families: the highest supported one implies every
+                // lower one, so the ordering decides support without a second
+                // device call. A device naming none of them satisfies no family
+                // requirement.
+                let supported = match self.facts.highest_apple_family {
+                    MetalGpuFamilySupport::Highest(highest) => highest >= required,
+                    MetalGpuFamilySupport::NoneNamed => false,
+                };
+                LiveDeviceObservation::Feature(supported)
+            }
+        }
+    }
+
+    /// Builds every entry's compute pipeline, before any deferred property is answered.
+    ///
+    /// Every entry, not the first one: a two-entry route whose *second* pipeline
+    /// will not build must be refused here rather than discovered between two
+    /// dispatches. Reversible — a pipeline an abandoned route never uses costs
+    /// only the build.
+    fn prepare_entries(
+        &mut self,
+        _context: &LiveExecutionContext,
+        entries: &[RoutedEntry<'_>],
+    ) -> Result<(), Self::Refusal> {
+        let mut prepared = Vec::with_capacity(entries.len());
+        for (position, entry) in entries.iter().enumerate() {
+            let library = self.validated[position].clone();
+            prepared.push(self.pipeline_for(position, &library, entry.entry_symbol())?);
+        }
+        self.prepared = prepared;
+        Ok(())
+    }
+
+    /// Reports one exact prepared entry's maximum threadgroup size.
+    ///
+    /// From *that* entry's pipeline rather than from a device-wide property that
+    /// resembles it: `MTLDevice.maxThreadsPerThreadgroup` is a device bound and
+    /// `MTLComputePipelineState.maxTotalThreadsPerThreadgroup` is this kernel's,
+    /// and the second is what a launch is actually limited by.
+    fn observe_prepared_entry(
+        &mut self,
+        _context: &LiveExecutionContext,
+        request: TargetPropertyRequest<'_>,
+    ) -> u64 {
+        u64::try_from(self.prepared[request.entry()].max_total_threads_per_threadgroup())
+            .unwrap_or(u64::MAX)
+    }
+
+    /// Sizes, allocates, and binds everything the route will dispatch.
+    ///
+    /// The last chance to refuse, so every obligation a device can answer is
+    /// answered here: the threadgroup capacity this route's pipelines admit, the
+    /// single-buffer limit each binding must fit, and the length every
+    /// allocation actually came back with. Encoding and submission are program
+    /// work and belong after the commit.
+    ///
+    /// Candle's pending work is brought to a terminal state first. The tensor
+    /// this route reads may still be a promise in Candle's uncommitted command
+    /// buffer, and this adapter's own command buffer is not ordered against it;
+    /// flushing here rather than in `dispatch` keeps the failure on the side of
+    /// the commit where a fallback would still be permitted.
+    fn plan_dispatch(
+        &mut self,
+        _context: &LiveExecutionContext,
+        preflight: &Preflight<'_>,
+    ) -> Result<(), Self::Refusal> {
+        self.device
+            .wait_until_completed()
+            .map_err(|cause| RouteRefusal::PendingCandleWork {
+                detail: cause.to_string(),
+            })?;
+
+        let routed = preflight.entries();
+        self.shared_allocations = preflight.shared_allocations().len();
+
+        // Paired first, because a shared allocation belongs to two entries and
+        // neither owns it. A planner that allocated per binding would hand the
+        // consumer a fresh buffer and it would read uninitialised device memory
+        // — a wrong answer rather than a refusal.
+        let mut shared: Vec<Vec<Option<Arc<Buffer>>>> = routed
+            .iter()
+            .map(|entry| vec![None; entry.bindings().len()])
+            .collect();
+        for pair in preflight.shared_allocations() {
+            let (producer, consumer) = (pair.producer(), pair.consumer());
+            let needed = reach(routed, producer.entry(), producer.slot())?.max(reach(
+                routed,
+                consumer.entry(),
+                consumer.slot(),
+            )?);
+            self.fits_one_buffer(producer.entry(), producer.slot(), needed)?;
+            let buffer = self.allocate(needed)?;
+            Self::holds(producer.entry(), producer.slot(), needed, &buffer)?;
+            shared[producer.entry()][producer.slot()] = Some(Arc::clone(&buffer));
+            shared[consumer.entry()][consumer.slot()] = Some(buffer);
+        }
+
+        let mut output: Option<Arc<Buffer>> = None;
+        let mut entries = Vec::with_capacity(routed.len());
+        for (position, entry) in routed.iter().enumerate() {
+            let launch = entry.launch();
+            if launch.grid_threads() == 0 && !launch.zero_work_skips_dispatch() {
+                return Err(RouteRefusal::EmptyLaunchNotSkippable { entry: position });
+            }
+            let pipeline = self.prepared[position].clone();
+            workgroup_fits(
+                position,
+                entry.entry_symbol(),
+                launch.threads_per_workgroup(),
+                u64::try_from(pipeline.max_total_threads_per_threadgroup()).unwrap_or(u64::MAX),
+            )?;
+
+            let mut slots = Vec::with_capacity(entry.bindings().len());
+            for binding in entry.bindings() {
+                let slot = binding.slot();
+                let needed = reach(routed, position, slot)?;
+                self.fits_one_buffer(position, slot, needed)?;
+
+                // An occupied slot was already allocated as one half of a shared
+                // pair, and taking it is what makes the two entries address one
+                // buffer rather than two that merely have the same length.
+                let (buffer, offset) = if let Some(paired) = shared[position][slot].clone() {
+                    (paired, binding.accessible_offset())
+                } else {
+                    match binding.binding().target() {
+                        BindingTarget::ProgramInput(key) if key.as_str() == INPUT_KEY => {
+                            // The caller's own storage, bound at the byte the
+                            // Candle view starts at plus the byte the artifact
+                            // says this slot addresses. Neither is assumed
+                            // zero.
+                            let offset = self
+                                .input
+                                .byte_offset
+                                .checked_add(binding.accessible_offset())
+                                .ok_or(RouteRefusal::BindingRangeOverflow {
+                                    entry: position,
+                                    slot,
+                                    offset: self.input.byte_offset,
+                                    extent: binding.accessible_offset(),
+                                })?;
+                            (Arc::clone(&self.input.buffer), offset)
+                        }
+                        BindingTarget::ProgramOutput(keys)
+                            if keys.len() == 1 && keys[0].as_str() == OUTPUT_KEY =>
+                        {
+                            let buffer = self.allocate(needed)?;
+                            output = Some(Arc::clone(&buffer));
+                            (buffer, binding.accessible_offset())
+                        }
+                        BindingTarget::Internal => {
+                            let buffer = self.allocate(needed)?;
+                            (buffer, binding.accessible_offset())
+                        }
+                        other => {
+                            return Err(RouteRefusal::UnboundBindingTarget {
+                                entry: position,
+                                slot,
+                                target: format!("{other:?}"),
+                            });
+                        }
+                    }
+                };
+
+                Self::holds(position, slot, needed, &buffer)?;
+                slots.push(PlacedSlot {
+                    transport: binding.transport_slot(),
+                    offset,
+                    access: binding.binding().access(),
+                    buffer,
+                });
+            }
+
+            entries.push(PreparedEntry {
+                pipeline,
+                slots,
+                grid_threads: launch.grid_threads(),
+                threads_per_workgroup: launch.threads_per_workgroup(),
+                // The pipeline above was still built for a skipped entry, and
+                // deliberately: a route is ready only if every object it names
+                // loads, and an entry that runs no threads on this input may run
+                // some on the next one.
+                skipped: launch.grid_threads() == 0,
+            });
+        }
+
+        self.planned = Some(PlannedRoute {
+            entries,
+            output: output.ok_or(RouteRefusal::NoOutputBinding)?,
+            output_elements: self.output_elements,
+        });
+        Ok(())
+    }
+
+    /// Encodes, submits, and observes the committed route to terminal success.
+    ///
+    /// Everything here is past the one-way commit: nothing is looked up, nothing
+    /// is allocated, and there is no refusal left to make. What remains is the
+    /// encode, the submission, and the terminal-status check that must precede
+    /// any read of device memory.
+    ///
+    /// **One encoder per entry, with an explicit fence between them.** Metal
+    /// orders encoders within a command buffer, but Candle allocates every
+    /// buffer `HazardTrackingModeUntracked`, which means Metal does not flush
+    /// GPU caches at an encoder boundary. A successor reading what a predecessor
+    /// wrote therefore needs a fence rather than the ordering alone, and the
+    /// fence is created and waited on rather than assumed.
+    fn dispatch(
+        &mut self,
+        context: &LiveExecutionContext,
+        routed: &RoutedDispatch<'_>,
+    ) -> Result<Self::Completion, Self::Failure> {
+        let planned = self
+            .planned
+            .as_ref()
+            .ok_or(DispatchFailure::EncoderUnavailable { entry: None })?;
+        let raw = self
+            .queue
+            .commandBuffer()
+            .ok_or(DispatchFailure::EncoderUnavailable { entry: None })?;
+        let command_buffer = CommandBuffer::new(raw);
+        command_buffer.set_label("tiler.candle.route");
+
+        let mut previous: Option<Arc<Fence>> = None;
+        let mut dispatched = 0_usize;
+        for (position, entry) in planned.entries.iter().enumerate() {
+            if entry.skipped {
+                continue;
+            }
+            let fence = Arc::new(Fence::new(self.device.metal_device()));
+            let encoder = command_buffer.compute_command_encoder(&fence);
+            if let Some(previous) = previous.as_ref() {
+                encoder.wait_for_fence(previous);
+            }
+            encoder.set_compute_pipeline_state(&entry.pipeline);
+            for slot in &entry.slots {
+                let index = usize::try_from(slot.transport).unwrap_or(usize::MAX);
+                let offset = usize::try_from(slot.offset).unwrap_or(usize::MAX);
+                // Declared through the setter the ABI's access mode names, not
+                // through one derived from what the slot is bound to. Candle's
+                // encoder uses the distinction for its own hazard tracking, and
+                // a shared intermediate is written by one entry and read by the
+                // next — so the placement cannot supply the answer even though
+                // the allocation is the same.
+                //
+                // Exhaustive and wildcard-free: `BufferAccess` is a governed
+                // vocabulary, and a mode added to it must stop this build rather
+                // than reach an arm that guesses which setter is safe.
+                match slot.access {
+                    BufferAccess::Read => {
+                        encoder.set_input_buffer(index, Some(&slot.buffer), offset);
+                    }
+                    BufferAccess::Write => {
+                        encoder.set_output_buffer(index, Some(&slot.buffer), offset);
+                    }
+                }
+            }
+            encoder.dispatch_threads(
+                MTLSize {
+                    width: usize::try_from(entry.grid_threads).unwrap_or(usize::MAX),
+                    height: 1,
+                    depth: 1,
+                },
+                MTLSize {
+                    width: usize::try_from(entry.threads_per_workgroup).unwrap_or(usize::MAX),
+                    height: 1,
+                    depth: 1,
+                },
+            );
+            encoder.end_encoding();
+            previous = Some(fence);
+            dispatched += 1;
+            debug_assert!(position < routed.entries().len());
+        }
+
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+
+        // The only decision left after the commit, and the only path to a
+        // readback. Read *after* the wait, which is the check Candle's own
+        // `ensure_completed` does not perform.
+        match submission_outcome(command_buffer.status()) {
+            SubmissionOutcome::Completed => {}
+            SubmissionOutcome::ExecutionError => {
+                return Err(DispatchFailure::CommandBufferError {
+                    detail: command_buffer.error().map(std::borrow::Cow::into_owned),
+                });
+            }
+            SubmissionOutcome::NotTerminal(status) => {
+                return Err(DispatchFailure::NonTerminalStatus { status });
+            }
+        }
+
+        Ok(CandleCompletion {
+            storage: MetalStorage::new(
+                Arc::clone(&planned.output),
+                self.device.clone(),
+                planned.output_elements,
+                DType::F32,
+            ),
+            shape: Shape::from_dims(&[planned.output_elements]),
+            profile_key: context.target_profile().key.as_str().to_owned(),
+            encoded: dispatched,
+            entries: routed.entries().len(),
+        })
+    }
+}
+
+impl CandleMetalAdapter {
+    /// Refuses a binding whose accessible range exceeds one buffer on this device.
+    fn fits_one_buffer(&self, entry: usize, slot: usize, needed: u64) -> Result<(), RouteRefusal> {
+        binding_fits(entry, slot, needed, self.facts.max_buffer_length)
+    }
+
+    /// Refuses storage that does not reach the byte range the route requires.
+    fn holds(entry: usize, slot: usize, needed: u64, buffer: &Buffer) -> Result<(), RouteRefusal> {
+        allocation_holds(
+            entry,
+            slot,
+            needed,
+            u64::try_from(buffer.length()).unwrap_or(u64::MAX),
+        )
+    }
+}
+
+/// Whether one binding's accessible range fits in a single buffer here.
+///
+/// Split from the device call so the decision is testable without hardware: the
+/// device contributes one number and this contributes the comparison. That
+/// split is what lets the repository gate watch the refusal fail, which it could
+/// not do for a comparison written inline against a live `MTLDevice`.
+///
+/// # Errors
+///
+/// Returns [`RouteRefusal::BindingExceedsBufferLimit`].
+pub fn binding_fits(
+    entry: usize,
+    slot: usize,
+    needed: u64,
+    limit: u64,
+) -> Result<(), RouteRefusal> {
+    if needed > limit {
+        return Err(RouteRefusal::BindingExceedsBufferLimit {
+            entry,
+            slot,
+            needed,
+            limit,
+        });
+    }
+    Ok(())
+}
+
+/// Whether an allocation the allocator returned reaches the length it was asked for.
+///
+/// An assertion against Candle's own report rather than against a number this
+/// adapter computed twice: every buffer is requested at the length the route
+/// states, so reaching this means the allocator did not honour a request it
+/// accepted, or that a caller bound a shorter tensor than the artifact declares.
+///
+/// # Errors
+///
+/// Returns [`RouteRefusal::UndersizedStorage`].
+pub fn allocation_holds(
+    entry: usize,
+    slot: usize,
+    needed: u64,
+    held: u64,
+) -> Result<(), RouteRefusal> {
+    if held < needed {
+        return Err(RouteRefusal::UndersizedStorage {
+            entry,
+            slot,
+            needed,
+            held,
+        });
+    }
+    Ok(())
+}
+
+/// Whether a declared workgroup fits what one prepared pipeline admits.
+///
+/// # Errors
+///
+/// Returns [`RouteRefusal::WorkgroupTooLarge`].
+pub fn workgroup_fits(
+    entry: usize,
+    symbol: &str,
+    declared: u64,
+    capacity: u64,
+) -> Result<(), RouteRefusal> {
+    if declared > capacity {
+        return Err(RouteRefusal::WorkgroupTooLarge {
+            entry,
+            symbol: symbol.to_owned(),
+            declared,
+            capacity,
+        });
+    }
+    Ok(())
+}
+
+/// Returns the last byte one routed binding must be able to reach.
+fn reach(entries: &[RoutedEntry<'_>], entry: usize, slot: usize) -> Result<u64, RouteRefusal> {
+    let binding = entries[entry].bindings()[slot];
+    binding
+        .accessible_offset()
+        .checked_add(binding.accessible_bytes())
+        .ok_or(RouteRefusal::BindingRangeOverflow {
+            entry,
+            slot,
+            offset: binding.accessible_offset(),
+            extent: binding.accessible_bytes(),
+        })
+}
+
+/// Reads the buffer and byte offset one Candle Metal storage and layout name.
+///
+/// The layout's `start_offset` is in *elements*, so it is converted through the
+/// dtype's own width rather than assumed to be bytes. The allocation's length is
+/// never used as the logical tensor length, and offset zero is never bound
+/// merely because the underlying buffer is at hand.
+///
+/// # Errors
+///
+/// Returns [`RouteRefusal::BindingRangeOverflow`] when the element offset does
+/// not convert to an addressable byte offset.
+pub fn bind_candle_storage(
+    storage: &MetalStorage,
+    start_offset_elements: usize,
+) -> Result<BoundInput, RouteRefusal> {
+    let width = u64::try_from(storage.dtype().size_in_bytes()).unwrap_or(0);
+    let elements = u64::try_from(start_offset_elements).unwrap_or(u64::MAX);
+    let byte_offset = elements
+        .checked_mul(width)
+        .ok_or(RouteRefusal::BindingRangeOverflow {
+            entry: 0,
+            slot: 0,
+            offset: elements,
+            extent: width,
+        })?;
+    Ok(BoundInput {
+        // Candle hands out `&Buffer` rather than the `Arc` its allocator holds,
+        // so the handle is retained here. The caller's tensor keeps the `Arc`
+        // alive for the whole call, which is what makes this retain sufficient
+        // for the *input*; storage this adapter allocates itself is held as an
+        // `Arc` instead, for the reason `PlannedRoute` records.
+        buffer: Arc::new(storage.buffer().clone()),
+        byte_offset,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        SubmissionOutcome, allocation_holds, binding_fits, gpu_family_from_payload,
+        submission_outcome, workgroup_fits,
+    };
+    use objc2_metal::MTLCommandBufferStatus;
+    use tiler_metal::applicability::MetalGpuFamily;
+
+    /// Only `Completed` permits a readback, and `Error` is distinguished from it.
+    ///
+    /// The population is every status the binding names plus one it does not, so
+    /// a classification that collapsed "never submitted" into "failed" — or,
+    /// worse, an unnamed status into success — is visible here.
+    #[test]
+    fn only_a_completed_submission_permits_a_readback() {
+        assert_eq!(
+            submission_outcome(MTLCommandBufferStatus::Completed),
+            SubmissionOutcome::Completed,
+        );
+        assert_eq!(
+            submission_outcome(MTLCommandBufferStatus::Error),
+            SubmissionOutcome::ExecutionError,
+        );
+        for status in [
+            MTLCommandBufferStatus::NotEnqueued,
+            MTLCommandBufferStatus::Enqueued,
+            MTLCommandBufferStatus::Committed,
+            MTLCommandBufferStatus::Scheduled,
+            // A value Apple has not named. It must classify as non-terminal
+            // rather than as success, and this is the only way to state that
+            // against a newtype the binding does not model as an enum.
+            MTLCommandBufferStatus(4242),
+        ] {
+            assert!(
+                matches!(
+                    submission_outcome(status),
+                    SubmissionOutcome::NotTerminal(_)
+                ),
+                "{status:?} must not permit a readback",
+            );
+        }
+    }
+
+    /// Each pre-commit comparison accepts its boundary and refuses one past it.
+    ///
+    /// Both directions for each, because a comparison written the wrong way
+    /// round passes any test that only exercises the failing side. The exact
+    /// boundary value is stated rather than derived, so a fixture that changed
+    /// shape cannot quietly stop testing the edge.
+    #[test]
+    fn every_pre_commit_comparison_admits_its_boundary_and_refuses_one_past_it() {
+        assert!(binding_fits(0, 0, 16, 16).is_ok());
+        assert!(matches!(
+            binding_fits(1, 2, 17, 16),
+            Err(super::RouteRefusal::BindingExceedsBufferLimit {
+                entry: 1,
+                slot: 2,
+                needed: 17,
+                limit: 16,
+            }),
+        ));
+
+        assert!(allocation_holds(0, 0, 16, 16).is_ok());
+        assert!(matches!(
+            allocation_holds(1, 2, 16, 15),
+            Err(super::RouteRefusal::UndersizedStorage {
+                entry: 1,
+                slot: 2,
+                needed: 16,
+                held: 15,
+            }),
+        ));
+
+        assert!(workgroup_fits(0, "tiler_kernel", 32, 32).is_ok());
+        assert!(matches!(
+            workgroup_fits(1, "tiler_kernel", 33, 32),
+            Err(super::RouteRefusal::WorkgroupTooLarge {
+                entry: 1,
+                declared: 33,
+                capacity: 32,
+                ..
+            }),
+        ));
+    }
+
+    /// A family payload is read through the governed vocabulary and nothing else.
+    #[test]
+    fn a_family_payload_is_read_or_refused_by_name() {
+        assert_eq!(
+            gpu_family_from_payload(MetalGpuFamily::Apple9.as_str().as_bytes()),
+            Some(MetalGpuFamily::Apple9),
+        );
+        assert_eq!(gpu_family_from_payload(b"apple-nine"), None);
+        assert_eq!(gpu_family_from_payload(b""), None);
+    }
+}

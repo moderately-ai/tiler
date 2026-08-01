@@ -1,0 +1,63 @@
+[package]
+name = "tiler-prototype-candle"
+description = "Non-published Candle Metal adapter prototype for Tiler's first external consumer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "tiler-prototype-candle"
+path = "src/main.rs"
+test = true
+doc = true
+
+[dependencies]
+tiler-artifact.workspace = true
+# The producer's *authoritative* Metal declaration, for the same reason
+# `prototypes/serial-sum-run` holds this edge: the routed environment must be
+# the one `tiler-build` declares rather than one this consumer reconstructs.
+tiler-build.workspace = true
+# The canonical logical-type encoding the artifact's declared interface is
+# checked against. Read-only: nothing here builds or lowers a program.
+tiler-ir.workspace = true
+tiler-metal.workspace = true
+tiler-runtime.workspace = true
+
+# Candle and its Metal binding link Apple frameworks, so declaring them
+# unconditionally would make `cargo check --workspace` structurally impossible
+# on a non-Apple host. `src/main.rs` selects the body by the same `cfg`.
+#
+# `candle-metal-kernels` is a *direct* edge and has to be: `MetalStorage::buffer`
+# returns `&candle_metal_kernels::metal::Buffer`, and `candle-core` re-exports
+# only `MetalDevice`, `MetalError`, and `MetalStorage` — so the buffer, library,
+# pipeline, encoder, and command-buffer types this adapter names are unreachable
+# through `candle-core` alone. The version must stay the one `candle-core`
+# resolves, or the two `Buffer` types are two types with one name.
+#
+# `objc2-metal` and `dispatch2` cover exactly two things Candle's own wrapper
+# does not expose: `newLibraryWithData:error:`, which is how a precompiled
+# `metallib` becomes a library without compiling MSL at run time, and
+# `MTLCommandBufferStatus`, which is how a submission's terminal state is read.
+# Both are safe calls, so this crate keeps the workspace's `unsafe_code =
+# "forbid"` rather than diverging the way `tiler-prototype-run` must.
+[target.'cfg(target_os = "macos")'.dependencies]
+candle-core = { version = "0.11.0", features = ["metal"] }
+candle-metal-kernels = "0.11.0"
+dispatch2 = { version = "0.3.1", features = ["block2"] }
+objc2-metal = { version = "0.3.1", features = [
+    "MTLCommandBuffer",
+    "MTLCommandEncoder",
+    "MTLCommandQueue",
+    "MTLComputeCommandEncoder",
+    "MTLComputePipeline",
+    "MTLDevice",
+    "MTLLibrary",
+    "MTLResource",
+    "MTLTypes",
+    "dispatch2",
+] }
+
+[lints]
+workspace = true
