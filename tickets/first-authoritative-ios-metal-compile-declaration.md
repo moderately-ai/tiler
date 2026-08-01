@@ -1,7 +1,7 @@
 ---
 id: first-authoritative-ios-metal-compile-declaration
 title: Measure and bind the first authoritative iOS Metal compile declaration
-status: blocked
+status: deferred
 priority: p2
 dependencies: []
 related: [measure-apple-numerics-on-physical-ios-device, deliver-several-artifact-families-from-one-expansion, construct-and-bind-the-first-authoritative-metal-compile-profile]
@@ -11,6 +11,10 @@ paths: []
 tags: [implementation, metal, numerics, measurement]
 ---
 `tiler_build::BoundMetalCompileDeclaration` publishes one constructor, `first_macos_apple9`, and its own documentation states the rule this ticket exists to satisfy: "Widening this to another Apple family, OS row, or dtype is a new measurement rather than a new argument." `deliver ios;` and `deliver macos-and-ios;` are refused by `tiler_macros::aot::require_buildable` for exactly that reason, and the refusal now names this ticket.
+
+## Deferral (2026-08-01)
+
+Tom deprioritized iOS: the target devices are Metal on macOS and CPU. This ticket reactivates on the first consumer asking for an iOS artifact — until then the v13 envelope carrying one-position artifacts in practice is the accepted state, and the `#[cfg(test)]` second-family fixture remains the multi-payload exercise route.
 
 ## Why a second declaration is not constructible from the retained corpus
 
