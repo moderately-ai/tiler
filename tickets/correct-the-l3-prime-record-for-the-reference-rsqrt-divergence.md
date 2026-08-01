@@ -1,7 +1,7 @@
 ---
 id: correct-the-l3-prime-record-for-the-reference-rsqrt-divergence
 title: Correct the L3-prime record for the reference rsqrt divergence
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [admit-the-rms-normalization-family, implement-parallel-reduction-strategies, design-model-level-qualification-and-optimization]
@@ -9,9 +9,6 @@ scopes: [research/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, numerics, normalization, transcendental, correction]
-claimed_from: todo
-assignee: worker-l3-correct
-lease_expires_at: 1785580761
 ---
 ## User-visible outcome
 
