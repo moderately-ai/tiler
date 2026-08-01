@@ -48,3 +48,48 @@ A `Rope` operation family, the rotary table's construction inside the program, p
 ## Closes when
 
 The composition verifies over admitted families and reference-evaluates bit-identically to the pinned reference at both operand shapes with its perturbations retained. (D-10 was answered in the registered normative reference on 2026-07-31; this ticket consumes the `reverse-axis` form rather than settling anything.)
+
+## Outcome
+
+**Fact — the composition is a checked program and nothing was registered.** `crates/tiler-reference/tests/rotary_position_embedding.rs` builds rotary position embedding as ten occurrences over the four already-registered families, in this order and with these axis mappings:
+
+| # | key | form or mapping | shape |
+| --- | --- | --- | --- |
+| 1 | `tiler::reindex-f32@1` | `split-axis` on axis 2 into `(2, 64)` | `[T, h, 128] -> [T, h, 2, 64]` |
+| 2 | `tiler::reindex-f32@1` | `reverse-axis` on axis 2, the admitted D-10 form | `[T, h, 2, 64]` |
+| 3 | `tiler::broadcast-f32@1` | `replicate, replicate, from-operand 0, stretch-unit 1` | `[2, 1] -> [T, h, 2, 64]` |
+| 4 | `tiler::multiply-f32@1` | — | `[T, h, 2, 64]` |
+| 5 | `tiler::reindex-f32@1` | `merge-axes` over axes 2 and 3 | `[T, h, 2, 64] -> [T, h, 128]` |
+| 6 | `tiler::broadcast-f32@1` | `from-operand 0, replicate, from-operand 1` | `[T, 128] -> [T, h, 128]` |
+| 7 | `tiler::multiply-f32@1` | — | `x · cos` |
+| 8 | `tiler::broadcast-f32@1` | `from-operand 0, replicate, from-operand 1` | `[T, 128] -> [T, h, 128]` |
+| 9 | `tiler::multiply-f32@1` | — | `rotate_half(x) · sin` |
+| 10 | `tiler::add-f32@1` | — | `[T, h, 128]` |
+
+Occurrences 1–5 are `rotate_half`, and the program names both it and the rotary result as ordered outputs so every perturbation is shared between the two comparisons. No `Rope` key exists, no form or relation was added, and the public surface of `tiler-ir` and `tiler-reference` is unchanged.
+
+**Measurement — the composition at the workload's own extents, against an independently recomputed expectation.** `rotate_half` is compared at the bit level (negating a normal binary32 flips one bit, so the expectation needs no floating-point arithmetic); the whole formula is recomputed as two separate multiplies and an add.
+
+| comparison | 16-head query | 8-head key |
+| --- | --- | --- |
+| elements | 20,480 | 10,240 |
+| `rotate_half` differing | 0 | 0 |
+| `x · cos + rotate_half(x) · sin` differing | 0 | 0 |
+| swap dropped, `rotate_half` differing | 20,480 | 10,240 |
+| signs reversed, `rotate_half` differing | 20,480 | 10,240 |
+| swap dropped, whole formula differing | 20,480 | 10,240 |
+| signs reversed, whole formula differing | 20,480 | 10,240 |
+
+Both perturbation counts are exact rather than probable: the fixture's payloads are pairwise distinct by construction, so the two halves differ at every lane, and reversing the sign negates a tensor with no zero in it. The dropped-swap perturbation is checked structurally too — that program carries nine occurrences and two reindexes, so its counts measure the reversal alone.
+
+**Fact — the pinned lanes are reproduced.** `the_pinned_rotate_half_lanes_are_reproduced` drives the attention-block probe's four `rotate_half_input_lanes_0_3` and four `rotate_half_input_lanes_64_67` payloads through the composition and requires `rotate_half_output_lanes_0_3` and `rotate_half_output_lanes_64_67` back, bit for bit, with both perturbations shown to move exactly those lanes.
+
+**Measurement boundary, stated rather than hidden.** The full-shape comparison against the pinned reference's own numbers stays out of tree. [The attention-block probe](../spikes/program-planning/attention-block-reference/README.md) retains counts and eight lane payloads, not operand tensors, and its operands come from a seeded `torch` generator this workspace cannot reproduce; it is what measured this composition against `modeling_qwen3.rotate_half` and `apply_rotary_pos_emb` at 0 of 20,480, 0 of 20,480, and 0 of 10,240. In tree the evidence is that the composition denotes `cat(−x₂, x₁)` and the rotary formula at the workload's extents, plus the eight-lane tie to the probe's retained bits. Neither substitutes for the other, and a re-pin of the reference would need the probe re-run.
+
+**Fact — the explainable refusal fires.** A hand-assembled mapping record naming `rotate-axis` — the within-axis rotation the index vocabulary can express and D-10 deliberately leaves unadmitted — is refused under `reindex.form.unadmitted-kind` by `ReindexForm::from_canonical_value` and again through `SemanticProgramBuilder::apply` at the exact point of the composition where the swap belongs, with the message naming the rejected form. The admitted neighbour, `reverse-axis` at the same axis, is applied immediately afterwards and succeeds, so the refusal discriminates the form rather than the occurrence.
+
+**Fact — the sign operand cannot be a constant.** A one-output constant program evaluates to a rank-zero tensor carrying `0xbf800000`, and the `[2, 1]` sign mapping refuses that operand under `broadcast.mapping.operand-axes-unconsumed`; a broadcast of one constant could not have supplied two different signs regardless. The `[2, 1]` input is admitted by the same mapping.
+
+**Every check was watched failing.** Dropping the negation from the bit-level `rotate_half` expectation moved the query comparison to 10,240 of 20,480 and the key to 5,120 of 10,240 — the first half, where the negation lives. Corrupting one pinned output lane failed `the_pinned_rotate_half_lanes_are_reproduced` on that lane alone. Renaming the unadmitted form to `reverse-axis` made the record decode and admitted the occurrence, failing the refusal test.
+
+Roadmap: the structural row and the slice row each gained a dated fact, because both previously rested on a derivation this landing turns into a program.
