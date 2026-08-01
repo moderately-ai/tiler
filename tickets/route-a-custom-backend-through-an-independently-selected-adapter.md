@@ -1,7 +1,7 @@
 ---
 id: route-a-custom-backend-through-an-independently-selected-adapter
 title: Route a custom backend through an independently selected runtime adapter
-status: in-progress
+status: done
 priority: p1
 dependencies: [accept-the-public-backend-provider-composition-boundary, declare-a-required-gpu-family-in-the-artifact]
 related: [runtime-execution-contract, prototype-metal-runtime-execution, make-runtime-routing-commit-authority-one-shot]
@@ -9,8 +9,6 @@ scopes: [implementation/runtime, implementation/artifact, contracts/artifacts, c
 shared_scopes: [project/tickets]
 paths: []
 tags: [backend-providers, pluggability, implementation, runtime]
-assignee: worker-route-a-cust
-lease_expires_at: 1785554211
 ---
 ## User-visible outcome
 
@@ -53,3 +51,5 @@ Landed on `tkt/route-a-custom-backend-through-an-independently-selected-adapter`
 **Scope note, declared rather than silent.** `implementation/cargo-lock` was added to this ticket's scopes: the `[dev-dependencies]` on `tiler-ir` and `tiler-reference` that the fixture needs move two lines of `Cargo.lock`, and a manifest change cannot land without them. ADR 0081 item 2 fixes this crate's *dependency* closure at `[tiler-artifact]`; a development edge does not enter it, `tiler-ir` was already linked transitively, and neither edge reaches `tiler-compiler`. The manifest states that derivation at the site. No ADR was edited — `contracts/decisions` is outside this ticket's scopes — so ADR 0090's `implementation_status` stays `not-started`, deliberately: the boundary is unaccepted, and moving it belongs to the acceptance rather than to this branch.
 
 `make full` green.
+
+**Boundary acceptance (2026-07-31).** Tom accepted the `tiler_runtime::adapter` surface as the reviewed draft it is documented as — `RuntimeAdapter`, `LiveExecutionContext`, `route_with_adapter`, `AdapterRouteFailure` — with the two open sub-questions (returning the context to the caller; a borrowing `Completion`) deferred to the first real consumer.

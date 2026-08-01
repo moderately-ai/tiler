@@ -1,7 +1,7 @@
 ---
 id: admit-multi-input-tensors-in-the-scheduled-region-vocabulary
 title: Admit multiple input tensors in the scheduled-region and physical scalar vocabulary
-status: todo
+status: done
 priority: p1
 dependencies: []
 related: [admit-multi-input-elementwise-programs-at-the-compiler-boundary, prototype-inline-aot-integration-proof]
@@ -65,3 +65,5 @@ Measured, this worktree, `nightly-2026-07-19`: `(a * b) + c` (three inputs) and 
 - `normalize_pointwise` now admits a *mixed* operation body. The old recognizer required the child to repeat the root's key, so `(a * b) + c` — the approved region's own shape — was refused as `pointwise-association` regardless of input count. `NormalizedPointwise` carries `root_operation` and `child_operation` separately.
 
 **Two checks are reservations, not tested guarantees**, and say so at their sites: `pointwise-leaves` and the per-input arm of `pointwise-shape` cannot fail in this profile, because a frozen program retains only output-reachable declarations and the semantic schema requires operand shapes to agree. They are kept because the first widening admitting a deeper body or a broadcast operand makes them reachable, and both failures they name are silent.
+
+**Boundary acceptance (2026-07-31).** Tom accepted the `InputOrdinal` payload design, the split rule spellings (`input-arity`, `output-arity`, `operation-set`, reused `dtype-f32`), the buffer-bindings 2→4 prototype-guarantee row, and the mixed-body `normalize_pointwise` admission as reviewed.
