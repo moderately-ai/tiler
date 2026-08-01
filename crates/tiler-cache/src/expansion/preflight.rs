@@ -59,14 +59,17 @@ pub enum PreflightVerdict {
     /// Distinct from [`Self::Refuted`] because the remedies differ: a refuted
     /// property means this root is unsuitable, while an unrunnable probe means
     /// nothing was learned — most often that the root is not writable, which is
-    /// itself worth reporting rather than reading as a filesystem verdict.
+    /// itself worth reporting rather than reading as a filesystem verdict. A
+    /// cache built by
+    /// [`ExpansionCache::disabled`](crate::expansion::ExpansionCache::disabled)
+    /// has no root to probe and answers every row this way.
     NotRun,
 }
 
 /// The properties the publication protocol rests on, as this root answered.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreflightReport {
-    root: PathBuf,
+    root: Option<PathBuf>,
     same_device: PreflightVerdict,
     create_new_excludes: PreflightVerdict,
     lock_excludes_locally: PreflightVerdict,
@@ -75,10 +78,17 @@ pub struct PreflightReport {
 }
 
 impl PreflightReport {
-    /// The root these verdicts describe.
+    /// The root these verdicts describe, or `None` when the cache stores
+    /// nothing.
+    ///
+    /// A disabled cache has no root, so every verdict beside this is
+    /// [`PreflightVerdict::NotRun`] and
+    /// [`Self::all_probed_properties_hold`] is false — nothing was probed, and a
+    /// report that read as a clean bill of health would be the vacuous pass this
+    /// module refuses.
     #[must_use]
-    pub fn root(&self) -> &Path {
-        &self.root
+    pub fn root(&self) -> Option<&Path> {
+        self.root.as_deref()
     }
 
     /// `entries/`, `tmp/`, and `locks/` share one device.
@@ -170,15 +180,27 @@ impl ExpansionCache {
     ///
     /// A probe that cannot run reports [`PreflightVerdict::NotRun`] rather than
     /// failing: an unwritable root is a fact about the root worth reporting,
-    /// not an error that should deny a caller the rows that did run.
+    /// not an error that should deny a caller the rows that did run. A cache
+    /// built by [`ExpansionCache::disabled`] has no root, so it probes nothing
+    /// and every row is `NotRun`.
     #[must_use]
     pub fn preflight(&self) -> PreflightReport {
-        let namespace = self.layout().version_root();
+        let Some(layout) = self.layout() else {
+            return PreflightReport {
+                root: None,
+                same_device: PreflightVerdict::NotRun,
+                create_new_excludes: PreflightVerdict::NotRun,
+                lock_excludes_locally: PreflightVerdict::NotRun,
+                rename_publishes: PreflightVerdict::NotRun,
+                modification_time_reported: PreflightVerdict::NotRun,
+            };
+        };
+        let namespace = layout.version_root();
         let area = namespace.join("preflight");
         let prepared = fs::create_dir_all(&area).is_ok();
 
         let report = PreflightReport {
-            root: self.layout().root().to_path_buf(),
+            root: Some(layout.root().to_path_buf()),
             same_device: if prepared {
                 probe_same_device(&namespace, &area)
             } else {

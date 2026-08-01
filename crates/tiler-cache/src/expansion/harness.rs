@@ -1599,10 +1599,10 @@ fn a_stuck_child_is_killed_at_its_deadline() {
     let subject = "stuck";
     let cache = ExpansionCache::open(&root);
     let key = CacheKey::derive(&subject_of(subject));
-    cache
-        .prepare_directories(&key)
+    ExpansionCache::prepare_directories(cache.rooted_layout(), &key)
         .expect("the namespace is creatable");
-    let held = cache.acquire_lock(&key).expect("the lock is takeable");
+    let held =
+        ExpansionCache::acquire_lock(cache.rooted_layout(), &key).expect("the lock is takeable");
 
     let mut child = Run::new(&root, subject, "envelope")
         .command()

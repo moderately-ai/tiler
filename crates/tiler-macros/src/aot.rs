@@ -26,6 +26,15 @@
 //!   the flag [`crate::expand`] branches on, and
 //!   `a_fallback_only_selection_is_refused_before_any_backend_work` below pins
 //!   what happens if the branch is ever wrong — a refusal, not a compilation.
+//! - **`TILER_EXPANSION_CACHE_DIR=off` reaches all of it.** ADR 0089 spells the
+//!   value "expand, compile, embed, and cache nothing", so a delivering region
+//!   under it runs the same eight steps and resolves to
+//!   `Resolution::Uncached` — the artifact is built, validated, and embedded,
+//!   and no consumer of the same subject is spared the work.
+//!   [`open_cache`] states that by handing back a cache with no root at all
+//!   rather than by declining, and
+//!   `a_disabled_cache_delivers_the_region_and_publishes_no_file` below watches
+//!   one directory both ways to hold it.
 //! - **A cache hit compiles nothing, and resolves the toolchain anyway.** The
 //!   compiler fingerprint is an input to the compilation identity, so it must be
 //!   read *before* the identity that decides hit or miss exists:
@@ -224,9 +233,6 @@ pub(crate) enum AotRefusal {
     NoSelectedPlan,
     /// No expansion cache root could be resolved.
     CacheRoot(RootRefusal),
-    /// The consumer disabled the expansion cache, which a delivering expansion
-    /// cannot yet honour.
-    CacheDisabled,
     /// Emission, AOT compilation, artifact assembly, or cache resolution failed.
     Build(Box<MetalPlanBuildError>),
     /// The produced artifact does not carry the one payload a plan needs.
@@ -285,13 +291,6 @@ impl fmt::Display for AotRefusal {
                  selected no plan, so there is nothing to emit",
             ),
             Self::CacheRoot(source) => write!(formatter, "{source}"),
-            Self::CacheDisabled => formatter.write_str(
-                "`TILER_EXPANSION_CACHE_DIR` is set to `off`, and a `deliver` statement selecting \
-                 an artifact family compiles through the expansion cache, which has no \
-                 store-nothing mode yet. Set it to an absolute directory path only you can write, \
-                 or state `fallback-only`. `expand-a-delivering-region-with-the-cache-disabled` \
-                 is the work that removes this restriction",
-            ),
             Self::Build(source) => write!(
                 formatter,
                 "the offline Metal compilation for the stated artifact families failed: {source}"
@@ -521,11 +520,18 @@ fn require_buildable(
     })
 }
 
-/// Opens the expansion cache at the root this host's policy resolves.
+/// Opens the expansion cache this host's policy decides on.
+///
+/// `off` is a decision and not a refusal, so it opens a cache that stores
+/// nothing rather than declining to expand: ADR 0089 spells the value "expand,
+/// compile, embed, and cache nothing", which means a delivering region still
+/// compiles and still embeds its artifact — it simply shares the compiler work
+/// with nobody. `ExpansionCache::disabled` takes no root, which is what keeps
+/// that promise structural rather than remembered.
 fn open_cache(environment: &RootEnvironment) -> Result<ExpansionCache, AotRefusal> {
     match resolve(environment).map_err(AotRefusal::CacheRoot)? {
         CacheRootDecision::Directory { root, .. } => Ok(ExpansionCache::open(root)),
-        CacheRootDecision::Disabled => Err(AotRefusal::CacheDisabled),
+        CacheRootDecision::Disabled => Ok(ExpansionCache::disabled()),
     }
 }
 

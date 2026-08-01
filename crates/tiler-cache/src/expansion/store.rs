@@ -219,14 +219,31 @@ pub struct SweepReport {
     pub retained: u32,
 }
 
-/// One expansion cache rooted at a directory.
+/// Where one cache keeps its entries, or that it keeps none.
 ///
-/// Opening one performs no I/O and creates no directory: a cache root that does
-/// not exist yet is not an error, and one that can never be created is a miss
-/// reported at the moment it is needed rather than a failure at construction.
+/// Absence is a *stated* mode and never an uninitialized one:
+/// [`ExpansionCache::disabled`] takes no root, so a disabled cache holds no
+/// path it could read, create, or publish to. Every namespace operation is
+/// behind [`Self::Rooted`], and that is the mechanism by which a disabled cache
+/// touches no filesystem — not a flag each operation has to remember to check.
+#[derive(Clone, Debug)]
+enum Storage {
+    /// Entries live under a root on this host's filesystem.
+    Rooted(Layout),
+    /// Nothing is stored, because the caller asked for a cache that shares
+    /// nothing.
+    Disabled,
+}
+
+/// One expansion cache, rooted at a directory or storing nothing at all.
+///
+/// Constructing one performs no I/O and creates no directory: a cache root that
+/// does not exist yet is not an error, and one that can never be created is a
+/// miss reported at the moment it is needed rather than a failure at
+/// construction.
 #[derive(Clone, Debug)]
 pub struct ExpansionCache {
-    layout: Layout,
+    storage: Storage,
     limits: Limits,
     durability: Durability,
 }
@@ -242,7 +259,37 @@ impl ExpansionCache {
     #[must_use]
     pub fn open(root: impl Into<PathBuf>) -> Self {
         Self {
-            layout: Layout::new(root.into()),
+            storage: Storage::Rooted(Layout::new(root.into())),
+            limits: Limits::default(),
+            durability: Durability::default(),
+        }
+    }
+
+    /// Builds a cache that stores nothing.
+    ///
+    /// Every [`Self::get_or_publish`] call compiles through its `build` step,
+    /// validates the result exactly as a rooted cache does, and resolves to
+    /// [`Resolution::Uncached`] — a complete success carrying an embeddable
+    /// artifact that simply was not stored. Every [`Self::lookup`] misses with
+    /// [`MissReason::Disabled`].
+    ///
+    /// **It takes no root, which is the guarantee rather than a convenience.**
+    /// Nothing here can name a file: no directory is created, no lock file is
+    /// opened, no temporary is written, and no entry is published, because there
+    /// is no path from which one could be derived. That is what
+    /// `TILER_EXPANSION_CACHE_DIR=off` means — expand, compile, embed, and cache
+    /// nothing — and a scratch directory the caller would have to clean up is
+    /// exactly what it must not become.
+    ///
+    /// [`Self::with_limits`] and [`Self::with_durability`] still apply and are
+    /// inert: a bound on bytes that are never written and a persistence policy
+    /// for a file that is never created change nothing. They are accepted rather
+    /// than refused so a caller can configure a cache before deciding whether it
+    /// has a root.
+    #[must_use]
+    pub fn disabled() -> Self {
+        Self {
+            storage: Storage::Disabled,
             limits: Limits::default(),
             durability: Durability::default(),
         }
@@ -262,10 +309,14 @@ impl ExpansionCache {
         self
     }
 
-    /// Returns the cache root.
+    /// Returns the cache root, or `None` when this cache stores nothing.
+    ///
+    /// `None` is not "the root is unknown". A disabled cache has no root by
+    /// construction, so there is nothing for a caller to inspect, clear, or
+    /// report — see [`Self::disabled`].
     #[must_use]
-    pub fn root(&self) -> &Path {
-        self.layout.root()
+    pub fn root(&self) -> Option<&Path> {
+        self.layout().map(Layout::root)
     }
 
     /// Reads the entry for one composed subject, validating it completely.
@@ -278,6 +329,9 @@ impl ExpansionCache {
     /// The parameter is a [`ComposedSubject`] and not a byte run, which is what
     /// makes under-keying unrepresentable here rather than merely documented: a
     /// caller cannot reach this with the backend compilation subject alone.
+    ///
+    /// A cache built by [`Self::disabled`] misses with
+    /// [`MissReason::Disabled`] without opening anything.
     #[must_use]
     pub fn lookup(&self, subject: &ComposedSubject) -> Lookup {
         let key = CacheKey::derive(subject);
@@ -293,6 +347,12 @@ impl ExpansionCache {
 
     /// Returns a validated artifact for `subject`, compiling and publishing one
     /// if the cache does not already hold it.
+    ///
+    /// A cache built by [`Self::disabled`] always runs `build`, validates its
+    /// result identically, and resolves to [`Resolution::Uncached`] carrying
+    /// [`MissReason::Disabled`] and [`PublicationRefusal::Disabled`]. It is the
+    /// same fall-open path an unusable root takes, reached by a stated mode
+    /// rather than by a failed attempt.
     ///
     /// # Errors
     ///
@@ -339,13 +399,19 @@ impl ExpansionCache {
     /// a writer could publish between this call's decision and its unlink and
     /// have its fresh entry removed. The lock file itself is retained.
     ///
+    /// A cache built by [`Self::disabled`] reports [`Eviction::Absent`]: it
+    /// stored nothing, so no entry existed to remove.
+    ///
     /// # Errors
     ///
     /// Returns [`CacheUnavailable`] when the namespace could not be used.
     pub fn evict(&self, key: &CacheKey) -> Result<Eviction, CacheUnavailable> {
-        self.prepare_directories(key)?;
-        let lock = self.acquire_lock(key)?;
-        let entry = self.layout.entry_path(key);
+        let Some(layout) = self.layout() else {
+            return Ok(Eviction::Absent);
+        };
+        Self::prepare_directories(layout, key)?;
+        let lock = Self::acquire_lock(layout, key)?;
+        let entry = layout.entry_path(key);
         let eviction = match fs::remove_file(&entry) {
             Ok(()) => Eviction::Removed,
             Err(error) if error.kind() == io::ErrorKind::NotFound => Eviction::Absent,
@@ -357,7 +423,7 @@ impl ExpansionCache {
                 ));
             }
         };
-        self.release_lock(lock, key)?;
+        Self::release_lock(layout, lock, key)?;
         Ok(eviction)
     }
 
@@ -370,13 +436,19 @@ impl ExpansionCache {
     /// a process that died still belongs to nobody, and one written moments ago
     /// might belong to a writer this process cannot see.
     ///
+    /// A cache built by [`Self::disabled`] reports an empty sweep: it created no
+    /// temporary file, so there is none to remove and none to retain.
+    ///
     /// # Errors
     ///
     /// Returns [`CacheUnavailable`] when the namespace could not be used.
     pub fn sweep_temporaries(&self, key: &CacheKey) -> Result<SweepReport, CacheUnavailable> {
-        self.prepare_directories(key)?;
-        let lock = self.acquire_lock(key)?;
-        let directory = self.layout.temporary_dir(key);
+        let Some(layout) = self.layout() else {
+            return Ok(SweepReport::default());
+        };
+        Self::prepare_directories(layout, key)?;
+        let lock = Self::acquire_lock(layout, key)?;
+        let directory = layout.temporary_dir(key);
         let mut report = SweepReport::default();
         let entries = fs::read_dir(&directory).map_err(|error| {
             CacheUnavailable::new(CacheOperation::ScanDirectory, directory.clone(), error)
@@ -423,7 +495,7 @@ impl ExpansionCache {
                 }
             }
         }
-        self.release_lock(lock, key)?;
+        Self::release_lock(layout, lock, key)?;
         Ok(report)
     }
 
@@ -462,18 +534,26 @@ impl ExpansionCache {
         #[cfg(test)]
         fault::rendezvous();
 
-        // Everything from here can fail open. `lock` is `None` when the
-        // namespace could not be prepared or locked, and a publication is not
-        // attempted without it.
-        let lock = match self.prepare_directories(&key).and_then(|()| {
-            let lock = self.acquire_lock(&key)?;
-            Ok(lock)
-        }) {
-            Ok(lock) => Some(lock),
-            Err(unavailable) => {
-                report.set_publication_refusal(PublicationRefusal::Unavailable(unavailable));
+        // Everything from here can fail open. `lock` is `None` when this cache
+        // stores nothing at all, or when the namespace could not be prepared or
+        // locked, and a publication is not attempted without it. The disabled
+        // mode deliberately joins the existing fall-open path rather than
+        // returning early with its own build-and-validate: one route to
+        // `Uncached` is one route that has to stay correct.
+        let lock = match self.layout() {
+            None => {
+                report.set_publication_refusal(PublicationRefusal::Disabled);
                 None
             }
+            Some(layout) => match Self::prepare_directories(layout, &key)
+                .and_then(|()| Self::acquire_lock(layout, &key))
+            {
+                Ok(lock) => Some((layout, lock)),
+                Err(unavailable) => {
+                    report.set_publication_refusal(PublicationRefusal::Unavailable(unavailable));
+                    None
+                }
+            },
         };
         #[cfg(test)]
         fault::reach(fault::Phase::AfterLock);
@@ -512,11 +592,12 @@ impl ExpansionCache {
             payload,
         };
 
-        let Some(lock) = lock else {
+        let Some((layout, lock)) = lock else {
             return Ok(ProtocolOutcome::Uncached { entry, report });
         };
 
         match self.publish(
+            layout,
             &entry.key,
             subject,
             entry.envelope(),
@@ -534,7 +615,7 @@ impl ExpansionCache {
                 // an entry that is already published and valid. It was recorded
                 // as a publication refusal, which said the opposite of what had
                 // happened while the outcome beside it said `published: true`.
-                if let Err(unavailable) = self.release_lock(lock, &entry.key) {
+                if let Err(unavailable) = Self::release_lock(layout, lock, &entry.key) {
                     report.set_cleanup_shortfall(unavailable);
                 }
                 Ok(ProtocolOutcome::Hit {
@@ -552,12 +633,21 @@ impl ExpansionCache {
     }
 
     /// Reads and completely validates the final entry for one key.
+    ///
+    /// A cache that stores nothing has no content path to read, so it misses
+    /// with [`MissReason::Disabled`] before any path is formed. This is the one
+    /// place the read side learns about the mode, which is why both
+    /// [`Self::lookup`] and the protocol's lock-free read and post-lock recheck
+    /// report it without stating it themselves.
     pub(crate) fn read_entry<T>(
         &self,
         key: &CacheKey,
         validate: &dyn Fn(&[u8]) -> Result<T, ArtifactCodecFailure>,
     ) -> Result<ValidatedEntry<T>, MissReason> {
-        let path = self.layout.entry_path(key);
+        let Some(layout) = self.layout() else {
+            return Err(MissReason::Disabled);
+        };
+        let path = layout.entry_path(key);
         let file = match File::open(&path) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -663,8 +753,13 @@ impl ExpansionCache {
     }
 
     /// Encodes, writes, re-validates, and atomically publishes one bundle.
+    ///
+    /// Takes the namespace rather than reading it off `self`, which is what
+    /// makes publication unreachable for a cache that has none: there is no
+    /// `Layout` to pass.
     fn publish<T>(
         &self,
+        layout: &Layout,
         key: &CacheKey,
         subject: &[u8],
         envelope: &[u8],
@@ -678,7 +773,7 @@ impl ExpansionCache {
             "the bundle encoder derives the key from the same subject this call did",
         );
 
-        let (temporary, mut file) = self.create_temporary(key)?;
+        let (temporary, mut file) = Self::create_temporary(layout, key)?;
         #[cfg(test)]
         fault::reach(fault::Phase::AfterTempCreate);
         let write = write_encoded(&mut file, &encoded).map_err(|error| {
@@ -720,9 +815,9 @@ impl ExpansionCache {
         fault::reach(fault::Phase::AfterFileSync);
         drop(file);
 
-        let entry = self.layout.entry_path(key);
+        let entry = layout.entry_path(key);
         let quarantine = if replacing_rejected_entry {
-            Some(self.quarantine(key, &entry))
+            Some(self.quarantine(layout, key, &entry))
         } else {
             None
         };
@@ -797,10 +892,13 @@ impl ExpansionCache {
                     PublicationRefusal::Unavailable(unavailable)
                 }
                 MissReason::Rejected(rejection) => PublicationRefusal::TemporaryRejected(rejection),
-                // A file this call just created cannot be absent from its own
-                // read; the read reports absence only through `File::open`,
-                // which succeeded above.
-                MissReason::Absent => PublicationRefusal::TemporaryRejected(
+                // Neither remaining reason describes this read. A file this call
+                // just created cannot be absent from its own read — the read
+                // reports absence only through `File::open`, which succeeded
+                // above — and `read_bounded` never reports the disabled mode at
+                // all, which only `read_entry` decides and which this call
+                // cannot be on, since publication requires a namespace.
+                MissReason::Absent | MissReason::Disabled => PublicationRefusal::TemporaryRejected(
                     EntryRejection::Bundle(BundleRejection::Magic),
                 ),
             }
@@ -815,7 +913,7 @@ impl ExpansionCache {
     }
 
     /// Moves a rejected entry aside so the bytes that were refused survive.
-    fn quarantine(&self, key: &CacheKey, entry: &Path) -> QuarantineOutcome {
+    fn quarantine(&self, layout: &Layout, key: &CacheKey, entry: &Path) -> QuarantineOutcome {
         let Ok(metadata) = fs::metadata(entry) else {
             // Nothing to retain: the entry disappeared between the recheck and
             // now, which is the ordinary external-deletion race.
@@ -825,7 +923,7 @@ impl ExpansionCache {
                 discarded: 0,
             };
         };
-        let directory = self.layout.quarantine_dir(key);
+        let directory = layout.quarantine_dir(key);
         if let Err(error) = fs::create_dir_all(&directory) {
             return QuarantineOutcome::Failed(CacheUnavailable::new(
                 CacheOperation::Quarantine,
@@ -856,10 +954,13 @@ impl ExpansionCache {
         }
     }
 
-    fn create_temporary(&self, key: &CacheKey) -> Result<(PathBuf, File), PublicationRefusal> {
+    fn create_temporary(
+        layout: &Layout,
+        key: &CacheKey,
+    ) -> Result<(PathBuf, File), PublicationRefusal> {
         let mut last = None;
         for attempt in 0..TEMPORARY_ATTEMPTS {
-            let path = self.layout.temporary_path(key, attempt);
+            let path = layout.temporary_path(key, attempt);
             match OpenOptions::new().write(true).create_new(true).open(&path) {
                 Ok(file) => return Ok((path, file)),
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
@@ -882,18 +983,27 @@ impl ExpansionCache {
         )))
     }
 
-    pub(crate) fn prepare_directories(&self, key: &CacheKey) -> Result<(), CacheUnavailable> {
-        let entry = self.layout.entry_path(key);
+    /// Creates the entry, lock, and temporary shards one key is filed under.
+    ///
+    /// An associated function over a namespace rather than a method on a cache,
+    /// which is what the disabled mode made visible: nothing here is a property
+    /// of the cache, and a cache with no namespace cannot call it because it has
+    /// no `Layout` to supply. The same holds for the three beside it.
+    pub(crate) fn prepare_directories(
+        layout: &Layout,
+        key: &CacheKey,
+    ) -> Result<(), CacheUnavailable> {
+        let entry = layout.entry_path(key);
         let shard = entry
             .parent()
             .expect("an entry path always has a shard directory");
         for directory in [
             shard,
-            self.layout
+            layout
                 .lock_path(key)
                 .parent()
                 .expect("a lock path always has a shard directory"),
-            &self.layout.temporary_dir(key),
+            &layout.temporary_dir(key),
         ] {
             fs::create_dir_all(directory).map_err(|error| {
                 CacheUnavailable::new(
@@ -906,42 +1016,64 @@ impl ExpansionCache {
         Ok(())
     }
 
-    /// The namespace this cache is laid out under.
+    /// The namespace this cache is laid out under, or `None` when it stores
+    /// nothing.
     ///
     /// Reached by [`super::collect`], which walks the whole namespace rather
     /// than one key's paths and so needs the tree roots the per-key accessors do
-    /// not name.
-    pub(crate) const fn layout(&self) -> &Layout {
-        &self.layout
+    /// not name, and by [`super::preflight`], which probes the root itself.
+    ///
+    /// This is the single seam every filesystem operation in the crate passes
+    /// through, which is why a disabled cache needs no second mechanism: an
+    /// operation that cannot obtain a `Layout` here has no path to act on.
+    pub(crate) const fn layout(&self) -> Option<&Layout> {
+        match &self.storage {
+            Storage::Rooted(layout) => Some(layout),
+            Storage::Disabled => None,
+        }
     }
 
-    pub(crate) fn acquire_lock(&self, key: &CacheKey) -> Result<KeyLock, CacheUnavailable> {
-        let path = self.layout.lock_path(key);
+    /// The namespace of a cache a test built with a root.
+    ///
+    /// Only the test seams below and this crate's own tests reach it, and they
+    /// are all statements about a rooted namespace: asking a disabled cache for
+    /// one is a defect in the test rather than a case to report.
+    #[cfg(test)]
+    pub(crate) fn rooted_layout(&self) -> &Layout {
+        self.layout()
+            .expect("this seam describes a rooted namespace; a disabled cache has none")
+    }
+
+    pub(crate) fn acquire_lock(
+        layout: &Layout,
+        key: &CacheKey,
+    ) -> Result<KeyLock, CacheUnavailable> {
+        let path = layout.lock_path(key);
         KeyLock::acquire(&path)
             .map_err(|error| CacheUnavailable::new(CacheOperation::AcquireLock, path, error))
     }
 
     #[cfg(test)]
     pub(crate) fn lock_path(&self, key: &CacheKey) -> PathBuf {
-        self.layout.lock_path(key)
+        self.rooted_layout().lock_path(key)
     }
 
     #[cfg(test)]
     pub(crate) fn entry_path(&self, key: &CacheKey) -> PathBuf {
-        self.layout.entry_path(key)
+        self.rooted_layout().entry_path(key)
     }
 
-    fn release_lock(&self, lock: KeyLock, key: &CacheKey) -> Result<(), CacheUnavailable> {
+    fn release_lock(
+        layout: &Layout,
+        lock: KeyLock,
+        key: &CacheKey,
+    ) -> Result<(), CacheUnavailable> {
         let released = lock.release();
         #[cfg(test)]
         let released = released
             .and_then(|()| fault::injected(fault::Injection::LockRelease).map_or(Ok(()), Err));
         released.map_err(|error| {
-            CacheUnavailable::new(
-                CacheOperation::ReleaseLock,
-                self.layout.lock_path(key),
-                error,
-            )
+            CacheUnavailable::new(CacheOperation::ReleaseLock, layout.lock_path(key), error)
         })
     }
 }

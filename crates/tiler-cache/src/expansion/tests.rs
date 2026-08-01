@@ -44,7 +44,9 @@ use super::preflight::{PreflightReport, PreflightVerdict};
 use super::report::{
     CacheOperation, EntryRejection, MissReason, PublicationRefusal, QuarantineOutcome,
 };
-use super::store::{Durability, ExpansionCache, Lookup, ProtocolOutcome, PublishFailure};
+use super::store::{
+    Durability, Eviction, ExpansionCache, Lookup, ProtocolOutcome, PublishFailure, SweepReport,
+};
 use super::subject::{ComposedSubject, SubjectFacet, SubjectFacets, SubjectRefusal};
 
 // -------------------------------------------------------------------------
@@ -821,7 +823,7 @@ fn an_oversize_entry_is_refused_against_the_bound() {
         .expect("the entry exists")
         .len();
 
-    let bounded = ExpansionCache::open(cache.root()).with_limits(Limits {
+    let bounded = ExpansionCache::open(cache.rooted_layout().root()).with_limits(Limits {
         max_bundle_bytes: stored - 1,
         ..Limits::default()
     });
@@ -891,6 +893,7 @@ fn publication_leaves_no_temporary_behind() {
     let cache = cache(&scratch);
     let key = publish(&cache, b"subject", b"envelope");
     let temporaries = cache
+        .rooted_layout()
         .root()
         .join("v1/tmp")
         .join(&key.label()[..2])
@@ -1183,8 +1186,7 @@ fn one_key_lock_excludes_a_second_holder() {
     let scratch = Scratch::new("lock-exclusion");
     let cache = cache(&scratch);
     let key = CacheKey::derive_bytes(b"subject");
-    cache
-        .prepare_directories(&key)
+    ExpansionCache::prepare_directories(cache.rooted_layout(), &key)
         .expect("the namespace is creatable");
     let path = cache.lock_path(&key);
 
@@ -1217,13 +1219,13 @@ fn a_waiter_rechecks_after_the_lock_and_does_not_rebuild() {
     let scratch = Scratch::new("post-lock-recheck");
     let cache = cache(&scratch);
     let key = CacheKey::derive_bytes(b"subject");
-    cache
-        .prepare_directories(&key)
+    ExpansionCache::prepare_directories(cache.rooted_layout(), &key)
         .expect("the namespace is creatable");
 
     // Hold the key's lock, publish underneath it, then release. A waiter that
     // did not recheck would rebuild; one that does, hits.
-    let held = cache.acquire_lock(&key).expect("the lock is takeable");
+    let held =
+        ExpansionCache::acquire_lock(cache.rooted_layout(), &key).expect("the lock is takeable");
     let (waiter_started, started) = mpsc::channel();
     let waiting_cache = cache.clone();
     let waiter = thread::spawn(move || {
@@ -1239,7 +1241,7 @@ fn a_waiter_rechecks_after_the_lock_and_does_not_rebuild() {
     // The waiter is either blocked on the lock or about to be. Publishing here
     // and releasing is what it must observe on its recheck.
     let (_, bytes) = encoded(b"subject", b"envelope");
-    let temporary = cache.root().join("staged");
+    let temporary = cache.rooted_layout().root().join("staged");
     fs::write(&temporary, &bytes).expect("the staging file is writable");
     fs::rename(&temporary, cache.entry_path(&key)).expect("the entry publishes");
     held.release().expect("the lock releases");
@@ -1456,10 +1458,10 @@ fn a_young_temporary_is_retained_by_the_sweep() {
     let scratch = Scratch::new("sweep-young");
     let cache = cache(&scratch);
     let key = CacheKey::derive_bytes(b"subject");
-    cache
-        .prepare_directories(&key)
+    ExpansionCache::prepare_directories(cache.rooted_layout(), &key)
         .expect("the namespace is creatable");
     let abandoned = cache
+        .rooted_layout()
         .root()
         .join("v1/tmp")
         .join(&key.label()[..2])
@@ -1481,10 +1483,13 @@ fn an_aged_temporary_is_swept() {
         ..Limits::default()
     });
     let key = CacheKey::derive_bytes(b"subject");
-    cache
-        .prepare_directories(&key)
+    ExpansionCache::prepare_directories(cache.rooted_layout(), &key)
         .expect("the namespace is creatable");
-    let directory = cache.root().join("v1/tmp").join(&key.label()[..2]);
+    let directory = cache
+        .rooted_layout()
+        .root()
+        .join("v1/tmp")
+        .join(&key.label()[..2]);
     let abandoned = directory.join(format!("{}.999.0.0.tmp", key.label()));
     fs::write(&abandoned, b"abandoned").expect("the temporary is writable");
     let unrelated = directory.join("something-else.tmp");
@@ -2001,7 +2006,7 @@ fn a_purge_retires_the_namespace_and_a_later_writer_starts_clean() {
     assert!(report.reclaimed_bytes() > 0);
     assert!(report.failed().is_empty());
     assert!(
-        !cache.root().join("v1").exists(),
+        !cache.rooted_layout().root().join("v1").exists(),
         "nothing is left in service",
     );
     assert_eq!(
@@ -2038,8 +2043,9 @@ fn a_purge_reclaims_a_tree_an_earlier_purge_left_behind() {
     publish(&cache, b"subject", b"envelope");
 
     // Exactly the state a purge killed after its rename leaves behind.
-    let abandoned = cache.root().join("v1.out-of-service.12345");
-    fs::rename(cache.root().join("v1"), &abandoned).expect("the namespace renames");
+    let root = cache.rooted_layout().root().to_path_buf();
+    let abandoned = root.join("v1.out-of-service.12345");
+    fs::rename(root.join("v1"), &abandoned).expect("the namespace renames");
     assert!(abandoned.exists());
 
     let report = cache.purge().expect("a purge runs");
@@ -2072,8 +2078,9 @@ fn a_retired_namespace_is_invisible_to_a_reader() {
     let cache = cache(&scratch);
     let key = publish(&cache, b"subject", b"envelope");
 
-    let abandoned = cache.root().join("v1.out-of-service.999");
-    fs::rename(cache.root().join("v1"), &abandoned).expect("the namespace renames");
+    let root = cache.rooted_layout().root().to_path_buf();
+    let abandoned = root.join("v1.out-of-service.999");
+    fs::rename(root.join("v1"), &abandoned).expect("the namespace renames");
     assert!(
         abandoned.join("entries").exists(),
         "the entries are still on disk, merely out of service",
@@ -2161,6 +2168,164 @@ fn hot_path_cache_hit() {
     );
 }
 
+// -------------------------------------------------------------------------
+// The cache that stores nothing
+// -------------------------------------------------------------------------
+
+/// A disabled cache compiles, validates, and returns — and writes no file where
+/// a rooted cache writes one.
+///
+/// The two halves run over one scratch directory with one subject and one
+/// envelope, because either alone is vacuous. "Nothing was created" would also
+/// be what a host that cannot publish at all reported, so the rooted resolution
+/// afterwards is what makes the absence evidence rather than an accident; and
+/// the rooted half says nothing about the disabled mode on its own.
+///
+/// What the directory cannot show is that nothing was written *elsewhere*. That
+/// is not a measurement here but a property of the constructor:
+/// [`ExpansionCache::disabled`] takes no root and stores no [`Layout`], so
+/// `root()` is `None` and there is no path any operation could derive — which
+/// the assertion below records rather than infers.
+#[test]
+fn a_disabled_cache_stores_nothing_where_a_rooted_cache_publishes() {
+    let scratch = Scratch::new("disabled-stores-nothing");
+    let root = scratch.root().join("cache");
+    let mut builds = 0_u32;
+
+    let disabled = ExpansionCache::disabled();
+    assert_eq!(
+        disabled.root(),
+        None,
+        "a disabled cache holds no path any operation could publish to",
+    );
+
+    let outcome = disabled
+        .resolve(
+            b"compilation",
+            || {
+                builds += 1;
+                Ok::<_, String>(b"program".to_vec())
+            },
+            &any_payload,
+        )
+        .expect("a disabled cache still resolves");
+    let ProtocolOutcome::Uncached { entry, report } = outcome else {
+        panic!("a disabled cache stores nothing, so it can never report a hit");
+    };
+    assert_eq!(builds, 1, "the build step runs exactly once, as on a miss");
+    assert_eq!(
+        entry.envelope(),
+        b"program",
+        "the validated artifact is still returned for embedding",
+    );
+    assert!(
+        matches!(report.lookup_miss(), Some(MissReason::Disabled)),
+        "the miss must name the mode, not an absent entry: {:?}",
+        report.lookup_miss(),
+    );
+    assert!(
+        matches!(
+            report.publication_refusal(),
+            Some(PublicationRefusal::Disabled)
+        ),
+        "an absent refusal would state the result was published: {:?}",
+        report.publication_refusal(),
+    );
+    assert!(
+        report.recheck_miss().is_none(),
+        "no lock was taken, so no post-lock recheck ran",
+    );
+    assert!(
+        !root.exists(),
+        "the disabled resolution created no cache root",
+    );
+
+    // The control, over the same directory, the same subject, and the same
+    // envelope: only the cache differs, and now the file exists.
+    let rooted = ExpansionCache::open(root.clone());
+    let key = publish(&rooted, b"compilation", b"program");
+    assert!(
+        rooted.entry_path(&key).exists(),
+        "the rooted resolution must publish the entry the disabled one did not",
+    );
+}
+
+/// Every operation of a disabled cache answers without a namespace.
+///
+/// Each one is a public method on a public type, so each is callable on a cache
+/// that has no root and each needs a defined answer rather than a path it
+/// fabricates. The bound is the tightest one there is — retain no entry — so an
+/// accounting that reported anything would select it for removal and fail the
+/// outcome assertion rather than pass vacuously.
+#[test]
+fn a_disabled_cache_answers_every_namespace_operation_without_a_root() {
+    let cache = ExpansionCache::disabled();
+    let key = CacheKey::derive_bytes(b"compilation");
+
+    assert_eq!(cache.root(), None);
+    assert!(
+        matches!(
+            cache.lookup(&composed(&[b"compilation"], b"artifact")),
+            Lookup::Miss(MissReason::Disabled),
+        ),
+        "a lookup with no content path must name the mode",
+    );
+    assert_eq!(
+        cache.evict(&key).expect("an eviction reports"),
+        Eviction::Absent,
+        "nothing was stored, so nothing was removed",
+    );
+    assert_eq!(
+        cache
+            .sweep_temporaries(&key)
+            .expect("a temporary sweep reports"),
+        SweepReport::default(),
+        "no temporary was ever created to sweep",
+    );
+
+    let accounting = cache.account().expect("accounting reports");
+    assert_eq!(accounting.entry_count(), 0);
+    assert_eq!(accounting.total_bytes(), 0);
+    assert_eq!(accounting.quarantine_files(), 0);
+    assert!(accounting.unrecognized().is_empty());
+
+    let collection = cache.collect(&at_most(0)).expect("a collection reports");
+    assert_eq!(collection.selected(), 0);
+    assert_eq!(collection.outcome(), CollectionOutcome::WithinBound);
+    assert!(collection.removed().is_empty());
+    assert!(collection.accounts_for_every_entry());
+
+    let purge = cache.purge().expect("a purge reports");
+    assert_eq!(purge.retired(), None, "there is no namespace to retire");
+    assert_eq!(purge.reclaimed_trees(), 0);
+
+    let preflight = cache.preflight();
+    assert_eq!(preflight.root(), None);
+    let verdicts = [
+        preflight.same_device(),
+        preflight.create_new_excludes(),
+        preflight.lock_excludes_locally(),
+        preflight.rename_publishes(),
+        preflight.modification_time_reported(),
+    ];
+    assert_eq!(
+        verdicts.len(),
+        5,
+        "the population is every probed property, counted",
+    );
+    for verdict in verdicts {
+        assert_eq!(
+            verdict,
+            PreflightVerdict::NotRun,
+            "no root was probed, so no property was learned",
+        );
+    }
+    assert!(
+        !preflight.all_probed_properties_hold(),
+        "a report where nothing ran must not read as a clean bill of health",
+    );
+}
+
 /// A preflight on an ordinary root reports every property holding.
 ///
 /// **The stronger half of this test is the second assertion.** A report whose
@@ -2174,7 +2339,7 @@ fn a_preflight_on_a_writable_root_reports_every_property_holding() {
     let cache = cache(&scratch);
 
     let report = cache.preflight();
-    assert_eq!(report.root(), scratch.root().join("cache"));
+    assert_eq!(report.root(), Some(scratch.root().join("cache").as_path()));
     assert_eq!(report.same_device(), PreflightVerdict::Holds);
     assert_eq!(report.create_new_excludes(), PreflightVerdict::Holds);
     assert_eq!(report.lock_excludes_locally(), PreflightVerdict::Holds);
@@ -2211,7 +2376,11 @@ fn a_preflight_leaves_the_root_as_it_found_it() {
 
     assert_eq!(before.entries(), after.entries(), "an entry was disturbed");
     assert!(
-        !cache.layout().version_root().join("preflight").exists(),
+        !cache
+            .rooted_layout()
+            .version_root()
+            .join("preflight")
+            .exists(),
         "the probe area outlived the call",
     );
 
@@ -2309,7 +2478,7 @@ fn a_temporary_that_cannot_be_created_refuses_and_publishes_nothing() {
 
     // Create the shard so it exists to be made read-only; a missing shard would
     // fail at `CreateDirectory` instead, which is a different boundary.
-    let temporaries = cache.layout().temporary_dir(&key);
+    let temporaries = cache.rooted_layout().temporary_dir(&key);
     fs::create_dir_all(&temporaries).expect("the temporary shard is creatable");
 
     let outcome = while_read_only(&temporaries, || {
@@ -2334,7 +2503,7 @@ fn a_temporary_that_cannot_be_created_refuses_and_publishes_nothing() {
 
     // Pre-rename, so no content entry exists and no temporary was left.
     assert!(
-        !cache.layout().entry_path(&key).exists(),
+        !cache.rooted_layout().entry_path(&key).exists(),
         "a refused publication must not leave a content entry",
     );
     assert!(
@@ -2374,7 +2543,7 @@ fn a_rename_that_cannot_land_refuses_and_leaves_no_entry() {
     let cache = cache(&scratch);
     let key = CacheKey::derive_bytes(b"compilation");
 
-    let entries = cache.layout().entry_path(&key);
+    let entries = cache.rooted_layout().entry_path(&key);
     let shard = entries
         .parent()
         .expect("an entry path has a shard")
@@ -2406,7 +2575,7 @@ fn a_rename_that_cannot_land_refuses_and_leaves_no_entry() {
         "a refused rename must not leave a content entry"
     );
     assert!(
-        fs::read_dir(cache.layout().temporary_dir(&key))
+        fs::read_dir(cache.rooted_layout().temporary_dir(&key))
             .expect("the temporary shard is listable")
             .next()
             .is_none(),
