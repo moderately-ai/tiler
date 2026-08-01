@@ -1,7 +1,7 @@
 ---
 id: expand-a-delivering-region-with-the-cache-disabled
 title: Expand a delivering region when the expansion cache is disabled
-status: todo
+status: in-progress
 priority: p2
 dependencies: [prototype-inline-aot-integration-proof]
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/cache, implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, cache, inline-dx]
+claimed_from: todo
+assignee: worker-expand-a-del
+lease_expires_at: 1785566409
 ---
 ## Why this exists
 

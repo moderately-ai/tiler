@@ -1,7 +1,7 @@
 ---
 id: promote-the-build-time-cache-and-correspondence-seam
 title: Promote the build-time cache and correspondence seam
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [produce-a-custom-backend-payload-through-the-build-orchestrator]
@@ -9,6 +9,9 @@ scopes: [implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: [backend-providers, pluggability, implementation, build, cache]
+claimed_from: todo
+assignee: worker-promote-the-
+lease_expires_at: 1785566410
 ---
 ## User-visible outcome
 
