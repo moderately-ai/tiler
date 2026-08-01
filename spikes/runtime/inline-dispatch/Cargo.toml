@@ -1,0 +1,50 @@
+[package]
+name = "inline-dispatch-spike"
+description = "Out-of-tree consumer that dispatches one inline Tiler region on this host's Metal device"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "inline-dispatch-spike"
+path = "src/main.rs"
+
+[dependencies]
+# The one crate a Tiler consumer declares. By path rather than by version
+# because nothing here is published, and the point of the spike is that this is
+# the *only* Tiler edge: no `tiler-runtime`, no `tiler-artifact`, no backend
+# crate. Everything the adapter names is reached through this facade.
+tiler = { path = "../../../crates/tiler" }
+# The backend the embedded payload realizes. `0.33.0` is the version the
+# repository's own Metal consumers pin (`[workspace.dependencies]` in the root
+# manifest, used by `prototypes/serial-sum-run`), so the binding this spike
+# reports refusals from is the same one the recorded prototypes report from.
+metal = "0.33.0"
+
+# Its own workspace, deliberately, and this is the placement decision the ticket
+# reserved. `crates/tiler/tests/dependency_direction.rs` forbids any workspace
+# package from depending on the frontend, and the root manifest's
+# `[workspace.lints.rust] unsafe_code = "forbid"` cannot be relaxed by an inner
+# attribute at any scope — so the buffer readback below could not exist in a
+# member crate. An out-of-tree consumer costs neither.
+[workspace]
+
+# Mirrors the repository dev profile rather than inheriting it: this is a
+# separate workspace, so the root profile does not reach it.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+[profile.dev.package."*"]
+opt-level = 1
+
+# `deny` rather than the workspace's `forbid`: this crate has exactly one site
+# that must call an Objective-C buffer API, and it opts in by name with the four
+# things ADR 0079 requires. Everything else here is a hard error.
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
