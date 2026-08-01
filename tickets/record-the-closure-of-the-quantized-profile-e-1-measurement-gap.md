@@ -1,7 +1,7 @@
 ---
 id: record-the-closure-of-the-quantized-profile-e-1-measurement-gap
 title: Record the closure of the quantized profile's E-1 measurement gap
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [measure-code-domain-integer-arithmetic-on-the-qualified-apple-row, implement-first-quantized-backend-profile]
@@ -34,3 +34,9 @@ Every sentence in the profile record whose truth depended on E-1 being unrun is 
 
 - Filed by [`measure-code-domain-integer-arithmetic-on-the-qualified-apple-row`](measure-code-domain-integer-arithmetic-on-the-qualified-apple-row.md) on landing E-1.
 - [`implement-first-quantized-backend-profile`](implement-first-quantized-backend-profile.md) reads the profile record as its authority, so this correction should land before it claims device executability.
+
+## Outcome (2026-07-31)
+
+**Fact.** All four named sites in the profile record moved, and only those: the elimination-axis-3 `Unknown` became a dated `Measurement` citing finding 32 and the retained record path, keeping the two still-true halves (the numerical probe's dtype axis is unchanged; the U4 extraction remains undispatched); the E-1 entry became a run experiment with the verdict, the operand-side flush observation, the retained record path, and the boundary; delivery-table row 4 records the outcome; and the dispatchability ledger row states exactly what finding 32 is and is not — a measured decode chain, deliberately not a dispatchability row.
+
+**Fact — the sweep.** `grep -c "has measured integer arithmetic on any Apple GPU" docs/research/numerics/first-quantized-lm-profile.md` returns 0 after the edit; no other sentence in the record conditioned on E-1 being unrun (`grep -n "E-1" docs/research/numerics/first-quantized-lm-profile.md` shows only the corrected sites). No claim exceeds finding 32's boundary; E-2 stays open and still blocks every device-optimal claim.
