@@ -1,7 +1,7 @@
 ---
 id: close-the-metal-gpu-family-out-of-crate-total-map
 title: Close the MetalGpuFamily out-of-crate total map
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [design-the-adapter-owned-route-requirement-answer-channel]
@@ -9,6 +9,9 @@ scopes: [implementation/metal, implementation/candle]
 shared_scopes: [project/tickets]
 paths: []
 tags: [correctness, api-conventions, metal, adr-0074]
+claimed_from: todo
+assignee: worker-gpu-map
+lease_expires_at: 1785596471
 ---
 ## User-visible outcome
 

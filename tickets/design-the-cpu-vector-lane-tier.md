@@ -1,7 +1,7 @@
 ---
 id: design-the-cpu-vector-lane-tier
 title: Design the CPU vector-lane tier and its backend consumption
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [prototype-a-bounded-scalar-cpu-backend-vertical, exercise-standard-metal-custom-metal-and-cpu-providers-in-one-portfolio, design-the-subgroup-execution-tier, drive-an-external-physical-implementation-provider-through-compilation]
@@ -9,6 +9,9 @@ scopes: [research/scheduling, research/target-profiles]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, design, scheduling, execution-hierarchy, cpu, simd]
+claimed_from: todo
+assignee: worker-cpu-lane
+lease_expires_at: 1785596471
 ---
 ## User-visible outcome
 
