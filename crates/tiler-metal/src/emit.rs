@@ -1132,6 +1132,17 @@ impl KernelEmitter<'_> {
         };
         let (call, arithmetic_type) = match op {
             UnaryOp::F32Exp => ("precise::exp", MetalFloatArithmeticType::F32),
+            // The same namespace discipline, and the hazard is the same shape:
+            // `rsqrt(x)` unqualified selects `air.rsqrt.f32` under the governed
+            // flag set and `air.fast_rsqrt.f32` under the compiler's own default,
+            // which is fast math. The two are different *contracts* rather than
+            // two speeds of one — MSL Table 8.1 states `rsqrt` correctly rounded
+            // and Table 8.2 states it `<= 2 ulp` — so selecting the fast
+            // intrinsic to satisfy `tiler::rms-norm-f32@1`'s faithful contract is
+            // the substitution ADR 0076 forbids. There is deliberately no `sqrt`
+            // emission beside it: `1 / sqrt(x)` rounds twice and is a different
+            // binary32 function.
+            UnaryOp::F32Rsqrt => ("precise::rsqrt", MetalFloatArithmeticType::F32),
         };
         self.record_subnormal_obligation(arithmetic_type);
         // Both requirements, and they are separate obligations. The precise

@@ -33,6 +33,7 @@ use tiler_ir::schedule::{
     ScheduledRegionBuilder, SubnormalFreedom, SubnormalMode, TailPolicy, TensorRole,
     ValueDomainProvenance, VerifiedScheduledRegion, element_count,
 };
+use tiler_ir::semantic::RMS_NORM_F32_QWEN3_EPS_BITS;
 use tiler_ir::semantic::{
     STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE,
 };
@@ -211,6 +212,118 @@ pub(crate) fn silu_kernel() -> VerifiedKernel {
         ScalarProgram::PointwiseF32(silu_expression()),
     ))
     .expect("the bounded SiLU fixture lowers")
+}
+
+/// The `tiler::rms-norm-f32@1` epilogue as a pointwise expression.
+///
+/// `y = w * (x * Rsqrt(u + eps))`, reading the normalized value at ordinal zero,
+/// the already-broadcast weight at ordinal one, and the row's mean of squares at
+/// ordinal two. It is the second of the normalization's two passes: the first is
+/// the squaring-prologue reduction below, and the epilogue is separate because
+/// the two iterate different domains.
+///
+/// The `eps` payload is the pinned workload's, and the reciprocal square root is
+/// one node rather than a reciprocal of a square root — the vocabulary has no
+/// `sqrt` node to compose, which is what makes the two-rounding spelling
+/// unstatable here.
+fn rms_norm_epilogue_expression() -> PointwiseF32Expression {
+    let mut expression = PointwiseF32ExpressionBuilder::new();
+    let value = expression
+        .input(InputOrdinal::FIRST)
+        .expect("the normalized value");
+    let weight = expression
+        .input(InputOrdinal::new(1))
+        .expect("the broadcast weight");
+    let mean = expression
+        .input(InputOrdinal::new(2))
+        .expect("the row mean of squares");
+    let eps = expression
+        .constant(RMS_NORM_F32_QWEN3_EPS_BITS)
+        .expect("the governed eps payload");
+    let argument = expression.add(mean, eps).expect("u + eps");
+    let scale = expression
+        .rsqrt(argument)
+        .expect("the subordinate reciprocal square root");
+    let normalized = expression.multiply(value, scale).expect("x * r");
+    let root = expression
+        .multiply(weight, normalized)
+        .expect("w * (x * r)");
+    expression
+        .build(root)
+        .expect("verified normalization epilogue expression")
+}
+
+/// The normalization epilogue region, under the strict declared realization.
+///
+/// Three read accesses because the expression has three input leaves, which the
+/// schedule verifier requires to correspond one for one with the region's reads.
+pub(crate) fn rms_norm_epilogue_kernel() -> VerifiedKernel {
+    let shape = Shape::from_dims([4]);
+    let elements = element_count(&shape).expect("bounded fixture shape");
+    let mut builder = ScheduledRegionBuilder::new(RegionId::new(23));
+    builder.iteration_shape(shape).unwrap();
+    for ordinal in 0..3_u32 {
+        builder
+            .push_access(Access {
+                tensor: TensorRole::Input {
+                    ordinal: InputOrdinal::new(ordinal),
+                },
+                component_role: None,
+                mode: AccessMode::Read,
+                map: LogicalAccess::LinearIdentity,
+                bounds: BoundsWitnessId::new(ordinal),
+                ownership: None,
+            })
+            .unwrap();
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(ordinal),
+                tensor: TensorRole::Input {
+                    ordinal: InputOrdinal::new(ordinal),
+                },
+                component_role: None,
+                kind: BoundsProofKind::LinearRange {
+                    element_count: elements,
+                },
+            })
+            .unwrap();
+    }
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Output,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(3),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        })
+        .unwrap();
+    builder
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(3),
+            tensor: TensorRole::Output,
+            component_role: None,
+            kind: BoundsProofKind::LinearRange {
+                element_count: elements,
+            },
+        })
+        .unwrap();
+    builder
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                output_count: elements,
+            },
+        })
+        .unwrap();
+    builder
+        .scalar_program(ScalarProgram::PointwiseF32(rms_norm_epilogue_expression()))
+        .unwrap();
+    builder.numerical(numerical(NAN_BITS)).unwrap();
+    builder.schedule(linear_schedule(elements)).unwrap();
+    lower_scheduled_region(&builder.build().unwrap())
+        .expect("the bounded normalization epilogue fixture lowers")
 }
 
 /// A pointwise scale-then-bias region carrying one stated declared realization.
@@ -400,22 +513,37 @@ fn strict_affine_u4_dequantize_kernel() -> VerifiedKernel {
     lower_scheduled_region(&builder.build().unwrap()).unwrap()
 }
 
+/// Which per-contributor prologue a reduction fixture fuses into its fold.
+///
+/// A named enum rather than a boolean, because there are now three cases and the
+/// two prologues are not two settings of one shape: `scale * x + bias` is affine
+/// in the contributor and `x * x` is quadratic, so neither expresses the other.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FixturePrologue {
+    /// No prologue; the contributor enters the fold unchanged.
+    None,
+    /// The scale-then-bias prologue of the fused serial sum.
+    ScaleBias,
+    /// The squaring prologue of `tiler::rms-norm-f32@1`'s embedded reduction.
+    Square,
+}
+
 /// A serial reduction region over `axes` of `input`, optionally fusing a
-/// scale-then-bias prologue into every contributor.
+/// per-contributor prologue into every contributor.
 fn reduction_region(
     id: RegionId,
     input: &Shape,
     axes: &[Axis],
-    fused: bool,
+    prologue: FixturePrologue,
 ) -> VerifiedScheduledRegion {
     let output = input.without_axes(axes);
     let output_elements = element_count(&output).expect("bounded fixture shape");
-    let read_tensor = if fused {
-        TensorRole::Input {
+    // A prologue reads the original input; a bare fold reads an intermediate.
+    let read_tensor = match prologue {
+        FixturePrologue::None => TensorRole::Intermediate,
+        FixturePrologue::ScaleBias | FixturePrologue::Square => TensorRole::Input {
             ordinal: InputOrdinal::FIRST,
-        }
-    } else {
-        TensorRole::Intermediate
+        },
     };
     let mut builder = ScheduledRegionBuilder::new(id);
     builder.iteration_shape(output.clone()).unwrap();
@@ -476,8 +604,8 @@ fn reduction_region(
             },
         })
         .unwrap();
-    let scalar = if fused {
-        ScalarProgram::FusedMultiplyAddSerialSum {
+    let scalar = match prologue {
+        FixturePrologue::ScaleBias => ScalarProgram::FusedMultiplyAddSerialSum {
             scale_bits: SCALE_BITS,
             bias_bits: BIAS_BITS,
             axes: axes.to_vec(),
@@ -485,14 +613,19 @@ fn reduction_region(
             canonical_nan_bits: NAN_BITS,
             empty_identity_bits: 0.0_f32.to_bits(),
             contraction: false,
-        }
-    } else {
-        ScalarProgram::StrictSerialSum {
+        },
+        FixturePrologue::Square => ScalarProgram::SquaredSerialSum {
             axes: axes.to_vec(),
             order: ContributorOrder::OriginalAxisLexicographic,
             canonical_nan_bits: NAN_BITS,
             empty_identity_bits: 0.0_f32.to_bits(),
-        }
+        },
+        FixturePrologue::None => ScalarProgram::StrictSerialSum {
+            axes: axes.to_vec(),
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: NAN_BITS,
+            empty_identity_bits: 0.0_f32.to_bits(),
+        },
     };
     builder.scalar_program(scalar).unwrap();
     builder.numerical(numerical(NAN_BITS)).unwrap();
@@ -524,7 +657,7 @@ pub(crate) fn single_axis_reduction_kernel() -> VerifiedKernel {
         RegionId::new(1),
         &Shape::from_dims([2, 3]),
         &[Axis::new(1)],
-        false,
+        FixturePrologue::None,
     ))
     .expect("bounded reduction fixture lowers")
 }
@@ -534,7 +667,7 @@ pub(crate) fn multi_axis_reduction_kernel() -> VerifiedKernel {
         RegionId::new(2),
         &Shape::from_dims([2, 3, 4]),
         &[Axis::new(1), Axis::new(2)],
-        false,
+        FixturePrologue::None,
     ))
     .expect("bounded multi-axis reduction fixture lowers")
 }
@@ -544,9 +677,20 @@ pub(crate) fn fused_reduction_kernel() -> VerifiedKernel {
         RegionId::new(3),
         &Shape::from_dims([2, 3]),
         &[Axis::new(1)],
-        true,
+        FixturePrologue::ScaleBias,
     ))
     .expect("bounded fused reduction fixture lowers")
+}
+
+/// The squaring-prologue serial sum `tiler::rms-norm-f32@1` embeds.
+pub(crate) fn squared_reduction_kernel() -> VerifiedKernel {
+    lower_scheduled_region(&reduction_region(
+        RegionId::new(22),
+        &Shape::from_dims([2, 3]),
+        &[Axis::new(1)],
+        FixturePrologue::Square,
+    ))
+    .expect("bounded squaring-prologue reduction fixture lowers")
 }
 
 /// A reduction whose reduced axis has extent zero.
@@ -559,7 +703,7 @@ pub(crate) fn empty_domain_reduction_kernel() -> VerifiedKernel {
         RegionId::new(4),
         &Shape::from_dims([2, 0]),
         &[Axis::new(1)],
-        false,
+        FixturePrologue::None,
     ))
     .expect("bounded empty-domain reduction fixture lowers")
 }
@@ -1825,4 +1969,145 @@ fn the_argument_table_follows_declaration_order() {
             "the table's {ordinal}th entry is the {ordinal}th declared parameter",
         );
     }
+}
+
+/// The normalization epilogue selects the precise reciprocal square root, by name.
+///
+/// **The negative half is the load-bearing one, and its hazard is a *different
+/// contract* rather than a coarser one.** Under the compiler's own default —
+/// which is fast math — an unqualified `rsqrt(x)` selects `air.fast_rsqrt.f32`,
+/// whose accuracy is Metal's Table 8.2 `<= 2 ulp` where Table 8.1 states
+/// correctly rounded. Writing `precise::rsqrt` selects `air.rsqrt.f32` under both
+/// settings, so the flag requirement below is a second line of defence rather
+/// than the only one. There is also no `sqrt` in the emission: `1 / sqrt(x)`
+/// rounds twice and the retained probe measures the two spellings disagreeing at
+/// the `eps` argument this workload's zero and subnormal rows reach.
+#[test]
+fn the_normalization_epilogue_emits_the_precise_reciprocal_square_root() {
+    let kernel = rms_norm_epilogue_kernel();
+    let unit =
+        emit_translation_unit(&[&kernel], &target()).expect("the normalization fixture emits");
+    let source = unit.source();
+    assert_eq!(
+        source.matches("precise::rsqrt(").count(),
+        1,
+        "the subordinate reciprocal square root is emitted once, in the precise namespace:\n{source}"
+    );
+    for forbidden in [
+        "fast::rsqrt",
+        "fast_rsqrt",
+        "sqrt(",
+        "1.0f /",
+        "metal::divide(",
+    ] {
+        if forbidden == "sqrt(" {
+            // `precise::rsqrt(` contains `sqrt(`, so the check is that no *other*
+            // occurrence exists rather than that the substring is absent.
+            assert_eq!(
+                source.matches("sqrt(").count(),
+                source.matches("precise::rsqrt(").count(),
+                "every sqrt occurrence belongs to the reciprocal square root:\n{source}"
+            );
+            continue;
+        }
+        assert!(
+            !source.contains(forbidden),
+            "{forbidden} must not appear; it is a different contract:\n{source}"
+        );
+    }
+    // The governed eps payload reaches the emitted source as its exact bits
+    // rather than a decimal literal someone rounded on the way.
+    assert!(
+        source.contains(&format!("0x{RMS_NORM_F32_QWEN3_EPS_BITS:08x}"))
+            || source.contains(&format!("{}", f32::from_bits(RMS_NORM_F32_QWEN3_EPS_BITS))),
+        "the eps constant is emitted:\n{source}"
+    );
+}
+
+/// The normalization epilogue requires both governed math flags.
+#[test]
+fn the_normalization_epilogue_requires_the_precise_and_safe_selections() {
+    let kernel = rms_norm_epilogue_kernel();
+    let unit =
+        emit_translation_unit(&[&kernel], &target()).expect("the normalization fixture emits");
+    let requirements = unit.numerical_requirements();
+    assert!(requirements.contains(&MetalNumericalRequirement::PreciseFp32Functions));
+    assert!(requirements.contains(&MetalNumericalRequirement::SafeMathMode));
+
+    // The scale-then-bias fixture emits no elementary function, so it requires
+    // no precise selection. Without this the assertion above would pass for a
+    // requirement that had simply been added to every unit.
+    let pointwise = pointwise_kernel();
+    let plain = emit_translation_unit(&[&pointwise], &target()).expect("emits");
+    assert!(
+        !plain
+            .numerical_requirements()
+            .contains(&MetalNumericalRequirement::PreciseFp32Functions),
+        "a kernel with no elementary function does not demand the precise selection"
+    );
+}
+
+/// The squaring-prologue sum multiplies each contributor by itself, once.
+///
+/// One product per contributor and no constant beside it, which is what
+/// distinguishes it from the scale-then-bias prologue emitted by the fused sum:
+/// that one multiplies by a scale and adds a bias, two roundings, and this one
+/// squares, one rounding. The two fixtures are emitted side by side so the
+/// difference is asserted rather than described.
+#[test]
+fn the_squaring_prologue_sum_squares_each_contributor_once() {
+    let squared = emit_one(&squared_reduction_kernel());
+    let fused = emit_one(&fused_reduction_kernel());
+
+    // The seed and the loop body each square, so the squaring appears twice in a
+    // fixture whose reduced extent is three — and every one of the emitted
+    // `float` products is a value multiplied by *itself*, from one load rather
+    // than from two reads agreeing.
+    let self_products = |source: &str| {
+        source
+            .lines()
+            .filter_map(|line| {
+                let body = line.trim().strip_prefix("float ")?;
+                let (_, expression) = body.split_once(" = ")?;
+                let (lhs, rhs) = expression.trim_end_matches(';').split_once(" * ")?;
+                Some(lhs == rhs)
+            })
+            .collect::<Vec<bool>>()
+    };
+    let products = self_products(&squared);
+    assert_eq!(
+        products.len(),
+        2,
+        "one float product per contributor position, seed and loop body:\n{squared}"
+    );
+    assert!(
+        products.iter().all(|same| *same),
+        "every product squares one loaded value:\n{squared}"
+    );
+
+    // The scale-bias prologue's products are *not* self-products, so the
+    // assertion above distinguishes the two programs rather than holding for any
+    // reduction the emitter produces.
+    let fused_products = self_products(&fused);
+    assert!(!fused_products.is_empty());
+    assert!(
+        fused_products.iter().all(|same| !*same),
+        "the scale-bias prologue multiplies by a constant, not by itself:\n{fused}"
+    );
+    assert_ne!(squared, fused);
+}
+
+/// The two prologue-carrying reductions do not share a kernel identity.
+///
+/// They read the same tensor with the same access relation over the same
+/// contributor order, so nothing but the scalar program distinguishes them — and
+/// an appended scalar-program tag that had collided with an existing one would
+/// make these equal.
+#[test]
+fn the_squaring_and_scale_bias_reductions_carry_different_identities() {
+    let squared = squared_reduction_kernel();
+    let fused = fused_reduction_kernel();
+    let bare = single_axis_reduction_kernel();
+    assert_ne!(squared.canonical_identity(), fused.canonical_identity());
+    assert_ne!(squared.canonical_identity(), bare.canonical_identity());
 }

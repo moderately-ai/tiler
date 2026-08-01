@@ -22,6 +22,7 @@ mod program;
 mod quantization;
 mod registry;
 mod reindex;
+mod rms_norm;
 mod shape_evidence;
 mod silu;
 mod standard_operations;
@@ -140,6 +141,21 @@ pub use reindex::{
     REINDEX_MAPPING_ATTRIBUTE, ReindexAttributeSubject, ReindexForm, ReindexFormError,
     ReindexFormKind, reindex_f32_op,
 };
+pub use rms_norm::{
+    RMS_NORM_EPS_BITS_ATTRIBUTE, RMS_NORM_F32_FACT_ACCUMULATOR_TYPE,
+    RMS_NORM_F32_FACT_APPROXIMATE_INTRINSIC_PERMITTED,
+    RMS_NORM_F32_FACT_ARITHMETIC_CONTRACTION_PERMITTED, RMS_NORM_F32_FACT_CANONICAL_NAN_BITS,
+    RMS_NORM_F32_FACT_COMPUTATION_TYPE, RMS_NORM_F32_FACT_EVALUATION_ORDER,
+    RMS_NORM_F32_FACT_EXTENT_DIVISION, RMS_NORM_F32_FACT_FOLD_ORDER,
+    RMS_NORM_F32_FACT_NAN_BEHAVIOUR, RMS_NORM_F32_FACT_RECIPROCAL_TRANSFORM_PERMITTED,
+    RMS_NORM_F32_FACT_RESULT_TYPE, RMS_NORM_F32_FACT_RSQRT_ACCURACY_CONTRACT,
+    RMS_NORM_F32_FACT_SIGNED_ZERO, RMS_NORM_F32_FACT_SQUARING_OVERFLOW,
+    RMS_NORM_F32_FACT_SUBNORMALS, RMS_NORM_F32_QWEN3_EPS_BITS, RMS_NORM_F32_SQUARING_OVERFLOW_BITS,
+    RMS_NORM_REDUCED_AXES_ATTRIBUTE, rms_norm_f32_axis_attribute, rms_norm_f32_eps_attribute,
+    rms_norm_f32_facts, rms_norm_f32_op, rms_norm_f32_reference_semantics,
+    rms_norm_f32_rsqrt_accuracy_contract, rms_norm_f32_rsqrt_exceptional_contract,
+    rms_norm_f32_rsqrt_ordinary_domain, rms_norm_f32_rsqrt_reference_semantics,
+};
 pub use shape_evidence::{SameShape, ShapePredicate, ShapeWitness, ShapedValue};
 pub use silu::{
     SILU_F32_EXPONENTIAL_ARGUMENT_CEILING_BITS, SILU_F32_EXPONENTIAL_ULP_TOLERANCE,
@@ -154,7 +170,7 @@ pub use silu::{
 };
 pub use standard_operations::{
     Bf16Add, Bf16Constant, Bf16Multiply, F32Add, F32Broadcast, F32Constant, F32Multiply,
-    F32Reindex, F32Silu, F32TensorContraction, StrictSerialF32Sum,
+    F32Reindex, F32RmsNorm, F32Silu, F32TensorContraction, StrictSerialF32Sum,
 };
 pub use types::{
     AttributeFieldId, CanonicalField, CanonicalFloatBitsRef, CanonicalIntegerWidth,

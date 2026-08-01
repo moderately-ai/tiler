@@ -45,8 +45,8 @@ use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::schedule::NumericalPermission;
 use tiler_ir::semantic::{
     F32, FrozenSemanticRegistry, OpKey, OperationEffect, ProviderIdentity, SemanticProgram,
-    add_f32_op, broadcast_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op, silu_f32_op,
-    strict_serial_sum_f32_op,
+    add_f32_op, broadcast_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op,
+    rms_norm_f32_op, silu_f32_op, strict_serial_sum_f32_op,
 };
 
 use crate::region::{
@@ -142,7 +142,37 @@ enum FusionOperationRole {
     /// A separate-rounding elementwise arithmetic operation.
     ElementwiseArithmetic,
     /// A strict lexicographic left-fold reduction with a defined identity.
+    ///
+    /// The *whole* of the operation is the fold: `tiler::strict-serial-sum-f32@1`
+    /// applies no per-point rounding before or after it. That is what makes
+    /// [`Self::PrologueCarryingOrderedReduction`] a separate role rather than the
+    /// same one — see there.
     OrderedReduction,
+    /// An ordered fold wrapped in per-point arithmetic on one or both sides.
+    ///
+    /// `tiler::rms-norm-f32@1` squares each contributor before the fold and then
+    /// divides, adds `eps`, takes a reciprocal square root, and applies two
+    /// multiplies after it. Every reduction obligation
+    /// [`Self::OrderedReduction`] carries is carried here too — the embedded fold
+    /// is the same strict left fold over the same canonical contributor sequence,
+    /// so [`Self::is_reduction`] answers `true` for both and the four reduction
+    /// obligations are derived identically.
+    ///
+    /// **Why it is nevertheless not the same role.** `OrderedReduction`'s
+    /// contract is that the operation *is* a fold: nothing else about it rounds.
+    /// Classifying a normalization as one would state that fusing it can only
+    /// move a fold order, when it also carries seven per-point roundings whose
+    /// exceptional-value behaviour a fused realization must preserve. The
+    /// distinction is what keeps `is_exact_governed_same_family_pointwise`
+    /// closed: its match is exhaustive, so a role added later has to decide
+    /// whether it introduces a multiply-plus-add adjacency rather than inherit an
+    /// answer.
+    ///
+    /// It is counted under the reduction total rather than given a count of its
+    /// own, because [`FusionRegionStructure`]'s four role counts sum to the
+    /// member count and adding a fifth field would move every previously
+    /// encodable region's content identity.
+    PrologueCarryingOrderedReduction,
     /// A pure coordinate relation that computes no value.
     ///
     /// A reindex or a broadcast rearranges or replicates which coordinate reads
@@ -171,7 +201,10 @@ impl FusionOperationRole {
     }
 
     const fn is_reduction(self) -> bool {
-        matches!(self, Self::OrderedReduction)
+        matches!(
+            self,
+            Self::OrderedReduction | Self::PrologueCarryingOrderedReduction
+        )
     }
 
     const fn is_value_source(self) -> bool {
@@ -232,6 +265,21 @@ impl FusionNumericalCapabilities {
         roles.insert(
             strict_serial_sum_f32_op(),
             FusionOperationRole::OrderedReduction,
+        );
+        // The normalization embeds a strict ordered fold over an elementwise
+        // squaring prologue, which is the shape `OrderedReduction` was defined
+        // for — but that role is held by the bare serial sum, and the L3′
+        // derivation records that a family without one "resolves to no fusion
+        // legality at all". Registering the prologue-carrying role is what gives
+        // the 113 occurrences per forward pass any legality to reason about.
+        //
+        // The role says nothing about the operation's *accuracy*: fusing two
+        // regions neither adds nor removes a rounding, so the resolved contract
+        // of the subordinate reciprocal square root is unchanged by fusion and is
+        // not this authority's to assess.
+        roles.insert(
+            rms_norm_f32_op(),
+            FusionOperationRole::PrologueCarryingOrderedReduction,
         );
         roles.insert(reindex_f32_op(), FusionOperationRole::CoordinateRelation);
         roles.insert(broadcast_f32_op(), FusionOperationRole::CoordinateRelation);
@@ -425,7 +473,12 @@ pub(crate) struct FusionRegionStructure {
     value_sources: u32,
     /// Number of elementwise arithmetic members.
     arithmetic: u32,
-    /// Number of ordered-reduction members.
+    /// Number of members carrying an ordered reduction.
+    ///
+    /// Both reduction roles count here — the bare fold and the prologue-carrying
+    /// one — so that the four counts still sum to `members`. Distinguishing them
+    /// would need a fifth field, which would move the content identity of every
+    /// region this vocabulary can already encode.
     reductions: u32,
     /// Number of pure coordinate-relation members.
     ///
@@ -1095,8 +1148,14 @@ fn is_exact_governed_same_family_pointwise(members: &[MemberDerivation]) -> bool
                 all_add &= member.reached.operation == add;
                 all_multiply &= member.reached.operation == multiply;
             }
+            // Every remaining role disqualifies the sound proof, and the
+            // prologue-carrying reduction disqualifies it for its own reason
+            // rather than the fold's: its epilogue puts a multiply next to an add
+            // — `u + eps` after `a / N` — so a region containing one has a
+            // contraction opportunity that this closed proof cannot rule out.
             FusionOperationRole::ValueSource
             | FusionOperationRole::OrderedReduction
+            | FusionOperationRole::PrologueCarryingOrderedReduction
             | FusionOperationRole::CoordinateRelation => {
                 return false;
             }

@@ -1194,7 +1194,14 @@ fn verify_region_subject_binding(
                         && *canonical_nan_bits
                             == subject.numerical_contract().canonical_arithmetic_nan_bits
                 }
-                ScalarProgram::StrictAffineU4Dequantize { .. } => false,
+                // Neither program is produced by the two recognized whole-program
+                // shapes this binding verifies. The strict-affine one is refused
+                // upstream; the squaring-prologue sum belongs to
+                // `tiler::rms-norm-f32@1`, which the recognizer does not admit,
+                // so no normalized subject can bind one and answering `false` is
+                // the fail-closed answer rather than a deferral.
+                ScalarProgram::StrictAffineU4Dequantize { .. }
+                | ScalarProgram::SquaredSerialSum { .. } => false,
             }
         }
     };

@@ -58,6 +58,7 @@ pub struct PointwiseF32Value {
 ///         PointwiseF32Node::Multiply { .. } => "multiply",
 ///         PointwiseF32Node::Divide { .. } => "divide",
 ///         PointwiseF32Node::Exp { .. } => "exp",
+///         PointwiseF32Node::Rsqrt { .. } => "rsqrt",
 ///     }
 /// }
 ///
@@ -124,6 +125,18 @@ pub enum PointwiseF32Node {
         /// The function's argument, defined before this node.
         argument: PointwiseF32NodeId,
     },
+    /// The reciprocal square root over IEEE-754 binary32.
+    ///
+    /// One node, deliberately, and there is no `Sqrt` node beside it: `1 / Sqrt(t)`
+    /// rounds twice and is a different binary32 function from `Rsqrt(t)`, so the
+    /// vocabulary that cannot spell the composition is the one that cannot
+    /// exchange them. Like [`Self::Exp`] its admitted result set comes from the
+    /// registered accuracy contract of the operation this expression realizes,
+    /// never from IEEE-754 alone.
+    Rsqrt {
+        /// The function's argument, defined before this node.
+        argument: PointwiseF32NodeId,
+    },
 }
 
 /// An opaque, verified physical `f32` pointwise expression.
@@ -184,7 +197,7 @@ impl PointwiseF32Expression {
                         return false;
                     }
                 }
-                PointwiseF32Node::Exp { argument } => {
+                PointwiseF32Node::Exp { argument } | PointwiseF32Node::Rsqrt { argument } => {
                     let Ok(index) = u32::try_from(index) else {
                         return false;
                     };
@@ -242,6 +255,9 @@ enum DraftNode {
         rhs: PointwiseF32Value,
     },
     Exp {
+        argument: PointwiseF32Value,
+    },
+    Rsqrt {
         argument: PointwiseF32Value,
     },
 }
@@ -381,6 +397,26 @@ impl PointwiseF32ExpressionBuilder {
         self.push(DraftNode::Exp { argument })
     }
 
+    /// Adds the binary32 reciprocal square root of `argument`.
+    ///
+    /// The *precise* reciprocal square root. What it may deliver is the resolved
+    /// accuracy contract of the semantic operation this expression realizes,
+    /// which is a property of that operation's registered identity rather than of
+    /// this node. There is deliberately no `sqrt` constructor beside it: see
+    /// [`PointwiseF32Node::Rsqrt`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed handle or structural error when the operand was not
+    /// already defined by this builder or the node limit is exhausted.
+    pub fn rsqrt(
+        &mut self,
+        argument: PointwiseF32Value,
+    ) -> Result<PointwiseF32Value, PointwiseF32ExpressionAdmissionError> {
+        self.validate_operand(&argument)?;
+        self.push(DraftNode::Rsqrt { argument })
+    }
+
     /// Verifies, canonically orders, and freezes the expression under `root`.
     ///
     /// # Errors
@@ -438,7 +474,8 @@ impl PointwiseF32ExpressionBuilder {
                 | PointwiseF32Node::Add { .. }
                 | PointwiseF32Node::Multiply { .. }
                 | PointwiseF32Node::Divide { .. }
-                | PointwiseF32Node::Exp { .. } => None,
+                | PointwiseF32Node::Exp { .. }
+                | PointwiseF32Node::Rsqrt { .. } => None,
             })
             .collect();
         if !input_ordinals_are_dense(&mut ordinals) {
@@ -534,7 +571,9 @@ fn canonicalize_nodes(
                     pending.push((rhs.index, false));
                     pending.push((lhs.index, false));
                 }
-                DraftNode::Exp { argument } => pending.push((argument.index, false)),
+                DraftNode::Exp { argument } | DraftNode::Rsqrt { argument } => {
+                    pending.push((argument.index, false));
+                }
                 DraftNode::Input { .. } | DraftNode::Constant { .. } => {}
             }
             continue;
@@ -557,6 +596,9 @@ fn canonicalize_nodes(
             DraftNode::Divide { lhs, rhs } => PointwiseF32Node::Divide {
                 lhs: resolve(lhs),
                 rhs: resolve(rhs),
+            },
+            DraftNode::Rsqrt { argument } => PointwiseF32Node::Rsqrt {
+                argument: resolve(argument),
             },
             DraftNode::Exp { argument } => PointwiseF32Node::Exp {
                 argument: resolve(argument),
@@ -589,7 +631,9 @@ fn reachable_nodes(nodes: &[PointwiseF32Node], root: PointwiseF32NodeId) -> Vec<
                 pending.push(*lhs);
                 pending.push(*rhs);
             }
-            PointwiseF32Node::Exp { argument } => pending.push(*argument),
+            PointwiseF32Node::Exp { argument } | PointwiseF32Node::Rsqrt { argument } => {
+                pending.push(*argument);
+            }
             PointwiseF32Node::Input { .. } | PointwiseF32Node::Constant { .. } => {}
         }
     }

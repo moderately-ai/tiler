@@ -3773,7 +3773,22 @@ mod tests {
                 // the governed lowering capabilities gained a seventh row. The
                 // trace's own two record lines are unchanged; nothing about
                 // explain's content moved.
-                "tiler-explain-v7 request=50c735514f5d51ca\n",
+                // Rebaselined from `50c735514f5d51ca` when the standard semantic
+                // registry began registering `tiler::rms-norm-f32@1`. Only the
+                // *semantic* half of the subject moves this time, which is the
+                // difference from the activation's step above: the snapshot
+                // admits one further family whose facts carry a second resolved
+                // ADR 0042 contract — and one stated in a different contract
+                // form, `Faithful` rather than a ULP bound, so the definition
+                // projection folds a shape no earlier snapshot contained. Its
+                // schema also carries the first `FloatBits` attribute in the
+                // registry, the exact `eps` payload. Nothing on the compiler side
+                // moved with it: the governed scalar registry gained no key, the
+                // governed lowering capabilities gained no row, and the
+                // normalization's fusion role and capability row are not part of
+                // this subject. The trace's own two record lines are unchanged;
+                // nothing about explain's content moved.
+                "tiler-explain-v7 request=b8ffa37f3d2dc86b\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

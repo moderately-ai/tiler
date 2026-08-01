@@ -21,6 +21,19 @@
 //! naming the declaring profile and the refusing fact's measurement boundary,
 //! which is the shape ADR 0043 makes hard feasibility rather than cost.
 //!
+//! # Two families, two contract forms, and only one of them needs a metric
+//!
+//! `tiler::silu-f32@1`'s exponential is a ULP bound and reaches the
+//! reconciliation below. `tiler::rms-norm-f32@1`'s reciprocal square root is
+//! `Faithful` and does not: Table 8.1 states `rsqrt` *correctly rounded*, §8.2
+//! leaves the rounding mode open between ties-to-even and toward-zero, and the
+//! union of the two admitted modes is exactly the faithful result set. So the
+//! four gaps the Metal accuracy record names bind disjoint halves of that table —
+//! the metric reconciliation (Gap 1) binds the ULP entries and the rounding-mode
+//! question (Gap 4) binds the correctly rounded ones — and this module registers
+//! **one** cross-metric row rather than two, because the second family needs
+//! none.
+//!
 //! # Why the Metal declaration is not simply `Ulp(tiler::ulp-reference-gap@1, 4)`
 //!
 //! Metal's Table 8.1 states `exp <= 4 ulp` under **Apple's** definition of `ulp`,
@@ -62,8 +75,9 @@ use tiler_ir::semantic::accuracy::{
 };
 use tiler_ir::semantic::{
     F32, NormativeDefinitionRef, OpKey, SILU_F32_EXPONENTIAL_ARGUMENT_CEILING_BITS,
-    silu_f32_exponential_exceptional_contract, silu_f32_exponential_reference_semantics,
-    silu_f32_op,
+    rms_norm_f32_op, rms_norm_f32_rsqrt_exceptional_contract,
+    rms_norm_f32_rsqrt_reference_semantics, silu_f32_exponential_exceptional_contract,
+    silu_f32_exponential_reference_semantics, silu_f32_op,
 };
 
 use super::honourability::FactSourceProvenance;
@@ -192,6 +206,109 @@ pub(crate) fn metal_f32_exponential_contract() -> AccuracyContract {
             AccuracyDomain::new([ordinary], [clause]).expect("the declared domain is canonical"),
         ),
         silu_f32_exponential_exceptional_contract(),
+    )
+}
+
+/// Returns the accuracy contract the Metal realization of the normalization states.
+///
+/// **Identical to `tiler::rms-norm-f32@1`'s requirement, and the identity is the
+/// whole content of the declaration rather than a coincidence.** Table 8.1 states
+/// `rsqrt` correctly rounded and §8.2 admits either ties-to-even or toward-zero,
+/// so what Metal *promises* is a value drawn from the two-element faithful set —
+/// which is what the requirement states. `refines` therefore admits it on
+/// `RefinementBasis::IdenticalNormalizedContract` rather than through a
+/// registered implication, and that is the honest outcome: there is no
+/// translation to perform.
+///
+/// **Declaring `CorrectlyRounded { NearestTiesToEven }` here would be the
+/// substitution to avoid**, in the direction that looks conservative and is not.
+/// It would be a *stronger* claim than the specification supports, and because
+/// `refines` proves correctly-rounded-satisfies-faithful along a registered row,
+/// it would be admitted — so the over-claim would pass rather than fail. The
+/// check that catches it is
+/// `the_metal_normalization_declaration_is_not_stronger_than_the_specification`.
+///
+/// # Panics
+///
+/// Panics only if this crate's compile-time contract violates the grammar the
+/// accuracy vocabulary defines.
+#[must_use]
+pub(crate) fn metal_f32_reciprocal_square_root_contract() -> AccuracyContract {
+    AccuracyContract::new(
+        rms_norm_f32_op(),
+        vec![F32::resolved_type()],
+        F32::resolved_type(),
+        rms_norm_f32_rsqrt_reference_semantics(),
+        AccuracyContractForm::Faithful,
+        rms_norm_f32_rsqrt_exceptional_contract(),
+    )
+}
+
+/// Returns the normative record behind the Metal reciprocal square root's form.
+///
+/// A `NormativeGuarantee`, like the exponential's bound and for the same reason —
+/// a quoted entry of a retained specification at a verified digest — but its
+/// scope names the *rounding-mode* qualification rather than a metric one,
+/// because that is the gap this entry has to cross.
+///
+/// # Errors
+///
+/// Returns [`ConformanceEvidenceError`] only if this crate's own compile-time
+/// record violates the record's stated obligations.
+pub(crate) fn metal_f32_reciprocal_square_root_bound_evidence()
+-> Result<ConformanceEvidence, ConformanceEvidenceError> {
+    let reference = |text: &str| {
+        NormativeDefinitionRef::new(text).expect("a compile-time evidence field is canonical")
+    };
+    ConformanceEvidence::new(
+        ConformanceEvidenceClass::NormativeGuarantee,
+        reference(
+            "the ordinary-domain accuracy of single-precision rsqrt under Metal's precise math              selection, stated as a faithful result set; qualified by two readings the              specification requires rather than one. MSL 4.1 Table 8.1 gives rsqrt as correctly              rounded, and section 8.2 states that either round ties to even or round toward zero              may be supported, so the promised set is the union of the two correctly rounded              results, which is the faithful pair. Also qualified by the applicability inference              that section 1.6.3's equivalence -fno-fast-math =              -fmetal-math-fp32-functions=precise -fmetal-math-mode=safe makes Table 8.1 rather              than Table 8.2 the governing table, which the specification never states directly",
+        ),
+        reference("Metal shading language, single precision, precise math selection"),
+        reference("air.rsqrt.f32, selected by the precise::rsqrt namespace under -std=metal4.0"),
+        reference(
+            "Metal Shading Language Specification version 4.1 dated 2026-06-04, and version 4              dated 2025-10-23, whose section 8.4 is byte-identical after footer normalization",
+        ),
+        None,
+        None,
+        None,
+        b"sha256:41538b30d2f1140a5b2a0c84ce0a9f7b67bf0c707e224cfea0bfe5a44aa26cf5",
+    )
+}
+
+/// Returns the empirical record behind the normalization's exceptional behaviour.
+///
+/// An `EmpiricalQualification` for the same reason the activation's is: chapter 8
+/// has no edge-case table for math functions, and §8.1's "may be flushed to zero"
+/// is permissive and therefore licenses neither declaration. What exists is a
+/// bounded corpus, and it does not discharge a hard requirement.
+///
+/// # Errors
+///
+/// Returns [`ConformanceEvidenceError`] only if this crate's own compile-time
+/// record violates the record's stated obligations.
+pub(crate) fn metal_f32_normalization_exceptional_value_evidence()
+-> Result<ConformanceEvidence, ConformanceEvidenceError> {
+    let reference = |text: &str| {
+        NormativeDefinitionRef::new(text).expect("a compile-time evidence field is canonical")
+    };
+    ConformanceEvidence::new(
+        ConformanceEvidenceClass::EmpiricalQualification,
+        reference(
+            "the exceptional-value, signed-zero, and subnormal behaviour of              tiler::rms-norm-f32@1 at binary32; the Metal specification supplies no edge-case              contract for rsqrt, and section 8.1's flush permission licenses neither a flushing              nor a preserving declaration, so nothing normative covers this half",
+        ),
+        reference("Metal shading language on one measured Apple GPU row"),
+        reference("air.rsqrt.f32 with the operator division, under the governed flag set"),
+        reference("Apple metal version 32023.883, macOS 27.0, -std=metal4.0"),
+        Some(reference("Apple M4 Max")),
+        Some(reference(
+            "crates/tiler-reference rms_norm_f32, whose reciprocal square root is certified              against an exact rational enclosure rather than a host library",
+        )),
+        Some(reference(
+            "the bounded corpus of crates/tiler-reference/src/rms_norm/tests.rs: the retained              worked example, a zero row, a signed-zero row, a subnormal row, a row above the              squaring-overflow threshold, both workload extent classes at 1024 and 128, and a              contiguous 512-argument sweep of the reciprocal square root",
+        )),
+        b"corpus:rms-norm-f32-boundary-v1",
     )
 }
 
@@ -484,10 +601,15 @@ pub(crate) fn assess_elementary_accuracy(
 
 /// Returns the elementary realizations this build installs.
 ///
-/// One row. The Metal declaration is caller-vouched in exactly the sense ADR
-/// 0076's `tiler-build` projection is: the accuracy half rests on a quoted
-/// specification and the exceptional half on a bounded corpus, and neither is
-/// authenticated here.
+/// Two rows, one per registered family. Each Metal declaration is caller-vouched
+/// in exactly the sense ADR 0076's `tiler-build` projection is: the accuracy half
+/// rests on a quoted specification and the exceptional half on a bounded corpus,
+/// and neither is authenticated here.
+///
+/// The two rows state their accuracy in *different contract forms*, which is the
+/// point rather than an inconsistency: the exponential's is a ULP bound needing a
+/// registered cross-metric implication, and the reciprocal square root's is a
+/// faithful result set needing none.
 ///
 /// # Panics
 ///
@@ -495,13 +617,24 @@ pub(crate) fn assess_elementary_accuracy(
 /// stated obligations.
 #[must_use]
 pub(crate) fn installed_elementary_realizations() -> Vec<ElementaryRealization> {
-    vec![ElementaryRealization::new(
-        silu_f32_op(),
-        metal_f32_exponential_contract(),
-        metal_f32_exponential_bound_evidence().expect("the normative record is well formed"),
-        metal_f32_exceptional_value_evidence().expect("the empirical record is well formed"),
-        super::honourability::governed_profile_source(),
-    )]
+    vec![
+        ElementaryRealization::new(
+            silu_f32_op(),
+            metal_f32_exponential_contract(),
+            metal_f32_exponential_bound_evidence().expect("the normative record is well formed"),
+            metal_f32_exceptional_value_evidence().expect("the empirical record is well formed"),
+            super::honourability::governed_profile_source(),
+        ),
+        ElementaryRealization::new(
+            rms_norm_f32_op(),
+            metal_f32_reciprocal_square_root_contract(),
+            metal_f32_reciprocal_square_root_bound_evidence()
+                .expect("the normative record is well formed"),
+            metal_f32_normalization_exceptional_value_evidence()
+                .expect("the empirical record is well formed"),
+            super::honourability::governed_profile_source(),
+        ),
+    ]
 }
 
 #[cfg(test)]

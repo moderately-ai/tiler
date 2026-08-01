@@ -9,7 +9,8 @@ use super::{
     REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, ReindexForm, SemanticProgramBuilder,
     ShapedValue, Value, add_bf16_op, add_f32_op, broadcast_f32_op, canonical_bf16_bits,
     constant_bf16_op, constant_f32_op, multiply_bf16_op, multiply_f32_op, reindex_f32_op,
-    silu_f32_op, strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
+    rms_norm_f32_axis_attribute, rms_norm_f32_eps_attribute, rms_norm_f32_op, silu_f32_op,
+    strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
 };
 
 /// Exact binary32 constant from its IEEE-754 payload.
@@ -400,6 +401,56 @@ impl F32Silu {
             silu_f32_op(),
             OperationAttributes::empty(),
             &[input.weaken().erase()],
+        )
+    }
+}
+
+/// Binary32 root-mean-square normalization over one named axis.
+///
+/// Two operands and never one: the weight arrives already shaped like the value,
+/// because the graph admits no implicit broadcasting and a per-channel weight is
+/// widened by a `tiler::broadcast-f32@1` occurrence the caller writes. Passing
+/// the narrow weight here is a typed refusal rather than a convenience.
+///
+/// `eps` is taken as an exact binary32 payload rather than an `f32`, so a caller
+/// cannot reach the attribute through a decimal literal whose rounding it never
+/// inspected. The pinned workload's constant is
+/// [`RMS_NORM_F32_QWEN3_EPS_BITS`](super::RMS_NORM_F32_QWEN3_EPS_BITS).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct F32RmsNorm;
+
+impl F32RmsNorm {
+    /// Applies the registered RMS normalization semantics.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed construction error without mutating the graph on failure,
+    /// including the named refusals for an absent, duplicated, multi-valued, or
+    /// out-of-range axis, for a weight whose shape differs from the value's, and
+    /// for a non-positive or non-finite `eps`.
+    pub fn apply(
+        builder: &mut SemanticProgramBuilder,
+        value: Value<F32>,
+        weight: Value<F32>,
+        axis: Axis,
+        eps_bits: u32,
+    ) -> Result<Value<F32>, BuildError> {
+        let attributes = OperationAttributes::new([
+            CanonicalField::new(
+                super::RMS_NORM_REDUCED_AXES_ATTRIBUTE,
+                rms_norm_f32_axis_attribute(axis),
+            ),
+            CanonicalField::new(
+                super::RMS_NORM_EPS_BITS_ATTRIBUTE,
+                rms_norm_f32_eps_attribute(eps_bits),
+            ),
+        ])
+        .map_err(BuildError::InvalidOperationAttributes)?;
+        apply_single(
+            builder,
+            rms_norm_f32_op(),
+            attributes,
+            &[value.erase(), weight.erase()],
         )
     }
 }

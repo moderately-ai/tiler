@@ -228,6 +228,7 @@ pub struct OwnershipProof {
 ///         ScalarProgram::PointwiseF32(_) => false,
 ///         ScalarProgram::StrictAffineU4Dequantize { .. } => false,
 ///         ScalarProgram::StrictSerialSum { .. }
+///         | ScalarProgram::SquaredSerialSum { .. }
 ///         | ScalarProgram::FusedMultiplyAddSerialSum { .. } => true,
 ///     }
 /// }
@@ -285,6 +286,32 @@ pub enum ScalarProgram {
         empty_identity_bits: u32,
         /// Whether contraction is permitted.
         contraction: bool,
+    },
+    /// A serial sum whose per-contributor prologue squares the contributor.
+    ///
+    /// The reduction `tiler::rms-norm-f32@1` embeds, and a *prologue* rather than
+    /// a new reducer: `mean(x^2)` is the ordered sum the strict serial reduction
+    /// already defines, applied to an elementwise squaring of each contributor.
+    /// It is a variant of its own rather than a
+    /// [`Self::FusedMultiplyAddSerialSum`] with contrived constants, because
+    /// `scale * x + bias` cannot express `x * x` for any pair of constants: the
+    /// prologue is quadratic in the contributor and the fused form is affine.
+    ///
+    /// The squaring rounds once per contributor and the fold rounds once per
+    /// combine, exactly as the semantic reference states. There is deliberately no
+    /// epilogue field: the division by the extent, the `eps` addition, the
+    /// reciprocal square root, and the two multiplies belong to the pointwise pass
+    /// that consumes this reduction's result, and folding them in here would make
+    /// one region carry two different iteration domains.
+    SquaredSerialSum {
+        /// Reduced axes in canonical ascending order.
+        axes: Vec<Axis>,
+        /// Contributor combination order.
+        order: ContributorOrder,
+        /// Canonical arithmetic NaN bit pattern.
+        canonical_nan_bits: u32,
+        /// Empty-reduction identity bit pattern.
+        empty_identity_bits: u32,
     },
 }
 
@@ -708,6 +735,7 @@ pub(crate) const fn subnormal_freedom_of(program: &ScalarProgram) -> SubnormalFr
         }
         ScalarProgram::PointwiseF32(_)
         | ScalarProgram::StrictSerialSum { .. }
+        | ScalarProgram::SquaredSerialSum { .. }
         | ScalarProgram::FusedMultiplyAddSerialSum { .. } => SubnormalFreedom::Unproven,
     }
 }
@@ -847,6 +875,13 @@ const TAG_SCALAR_SERIAL_SUM: u8 = 0x22;
 const TAG_SCALAR_FUSED_SUM: u8 = 0x23;
 const TAG_SCALAR_POINTWISE_F32: u8 = 0x24;
 const TAG_SCALAR_STRICT_AFFINE_U4_DEQUANTIZE: u8 = 0x25;
+/// Scalar-program tag of the squaring-prologue serial sum.
+///
+/// Appended rather than inserted, and the schedule domain deliberately did not
+/// step with it: every earlier scalar program keeps its tag and its field layout,
+/// so a reader that reaches `0x26` is reading a region the earlier vocabulary
+/// could not express, never an earlier region under a new interpretation.
+const TAG_SCALAR_SQUARED_SUM: u8 = 0x26;
 const TAG_REDUCTION_NONE: u8 = 0x31;
 const TAG_REDUCTION_SERIAL: u8 = 0x32;
 /// Reduction-topology tag of a split, multi-dispatch reduction pass.
@@ -1041,6 +1076,22 @@ fn push_scalar_program(bytes: &mut Vec<u8>, program: &ScalarProgram) {
             bytes.extend_from_slice(&empty_identity_bits.to_be_bytes());
             bytes.push(u8::from(*contraction));
         }
+        // Appended tag, like `TAG_REDUCTION_MULTI_PASS`: `0x22` through `0x25`
+        // keep their meanings and every field keeps its position, so no
+        // previously encodable region's bytes move and the schedule identity
+        // domain does not step.
+        ScalarProgram::SquaredSerialSum {
+            axes,
+            order,
+            canonical_nan_bits,
+            empty_identity_bits,
+        } => {
+            bytes.push(TAG_SCALAR_SQUARED_SUM);
+            push_axes(bytes, axes);
+            push_order(bytes, *order);
+            bytes.extend_from_slice(&canonical_nan_bits.to_be_bytes());
+            bytes.extend_from_slice(&empty_identity_bits.to_be_bytes());
+        }
     }
 }
 
@@ -1050,13 +1101,18 @@ fn push_pointwise_f32_node(bytes: &mut Vec<u8>, node: &PointwiseF32Node) {
     const U32_FIELD_BYTES: usize = LENGTH_BYTES + size_of::<u32>();
 
     let encoded_len = match node {
-        PointwiseF32Node::Input { .. } | PointwiseF32Node::Constant { .. } => {
-            TAG_FIELD_BYTES + U32_FIELD_BYTES
-        }
+        // A tag plus one `u32` covers every node with a single field, whatever
+        // that field means: an input ordinal, a constant payload, or one
+        // elementary function's argument. Grouped because the *encoded width* is
+        // the only thing this function decides; the tags that distinguish them
+        // are pushed below.
+        PointwiseF32Node::Input { .. }
+        | PointwiseF32Node::Constant { .. }
+        | PointwiseF32Node::Exp { .. }
+        | PointwiseF32Node::Rsqrt { .. } => TAG_FIELD_BYTES + U32_FIELD_BYTES,
         PointwiseF32Node::Add { .. }
         | PointwiseF32Node::Multiply { .. }
         | PointwiseF32Node::Divide { .. } => TAG_FIELD_BYTES + 2 * U32_FIELD_BYTES,
-        PointwiseF32Node::Exp { .. } => TAG_FIELD_BYTES + U32_FIELD_BYTES,
     };
     push_len(bytes, encoded_len);
     let start = bytes.len();
@@ -1091,6 +1147,12 @@ fn push_pointwise_f32_node(bytes: &mut Vec<u8>, node: &PointwiseF32Node) {
         }
         PointwiseF32Node::Exp { argument } => {
             push_slice(bytes, &[0x06]);
+            push_slice(bytes, &argument.index().to_be_bytes());
+        }
+        // Appended for the same reason and with the same consequence: `0x07` is
+        // a node the earlier vocabulary could not express.
+        PointwiseF32Node::Rsqrt { argument } => {
+            push_slice(bytes, &[0x07]);
             push_slice(bytes, &argument.index().to_be_bytes());
         }
     }

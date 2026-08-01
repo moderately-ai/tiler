@@ -840,6 +840,7 @@ const fn boundary_carrier(program: &ScalarProgram) -> Option<StorageScalar> {
     match program {
         ScalarProgram::PointwiseF32(_)
         | ScalarProgram::StrictSerialSum { .. }
+        | ScalarProgram::SquaredSerialSum { .. }
         | ScalarProgram::FusedMultiplyAddSerialSum { .. } => Some(StorageScalar::F32),
         // The one program in the vocabulary whose boundary values disagree:
         // `tiler-ir`'s `verify_signature` fixes its reads at `[U8, F32, U8]`,

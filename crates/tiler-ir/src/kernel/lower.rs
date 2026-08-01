@@ -395,7 +395,7 @@ fn emit_guarded(
             write_buffer,
             invocation,
             *empty_identity_bits,
-            None,
+            ReductionPrologue::None,
         ),
         ScalarProgram::FusedMultiplyAddSerialSum {
             scale_bits,
@@ -409,9 +409,51 @@ fn emit_guarded(
             write_buffer,
             invocation,
             *empty_identity_bits,
-            Some((*scale_bits, *bias_bits)),
+            ReductionPrologue::ScaleBias {
+                scale_bits: *scale_bits,
+                bias_bits: *bias_bits,
+            },
+        ),
+        ScalarProgram::SquaredSerialSum {
+            empty_identity_bits,
+            ..
+        } => emit_reduction(
+            builder,
+            plan,
+            sole_read_buffer()?,
+            write_buffer,
+            invocation,
+            *empty_identity_bits,
+            ReductionPrologue::Square,
         ),
     }
+}
+
+/// The elementwise expression applied to each contributor before the fold.
+///
+/// A typed enum rather than an `Option<(u32, u32)>`, because there are now two
+/// prologues and they are not two constant choices of one shape: the scale-bias
+/// form is affine in the contributor and the squaring form is quadratic, so no
+/// pair of constants makes one express the other. The exhaustive match at the
+/// emission site is what forces a third prologue to state its own arithmetic
+/// rather than borrowing whichever of these two it resembles.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReductionPrologue {
+    /// The contributor enters the fold unchanged.
+    None,
+    /// `scale * x + bias`, two roundings per contributor.
+    ScaleBias {
+        /// Scale constant bit pattern.
+        scale_bits: u32,
+        /// Bias constant bit pattern.
+        bias_bits: u32,
+    },
+    /// `x * x`, one rounding per contributor.
+    ///
+    /// Emitted as a multiplication of the loaded value by *itself* rather than by
+    /// a second load of the same address: one load, one product, and no
+    /// assumption that two reads of one element agree.
+    Square,
 }
 
 fn emit_strict_affine_u4_dequantize(
@@ -533,6 +575,11 @@ fn emit_pointwise(
                 let result = builder.unary(UnaryOp::F32Exp, argument)?;
                 builder.convert(ConvertOp::CanonicalizeF32Nan, result)?
             }
+            PointwiseF32Node::Rsqrt { argument } => {
+                let argument = pointwise_value(&values, *argument)?;
+                let result = builder.unary(UnaryOp::F32Rsqrt, argument)?;
+                builder.convert(ConvertOp::CanonicalizeF32Nan, result)?
+            }
             PointwiseF32Node::Multiply { lhs, rhs } => {
                 let lhs = pointwise_value(&values, *lhs)?;
                 let rhs = pointwise_value(&values, *rhs)?;
@@ -571,6 +618,31 @@ fn emit_scale_bias(
     builder.convert(ConvertOp::CanonicalizeF32Nan, biased)
 }
 
+/// Emits one contributor's prologue expression, or the contributor unchanged.
+///
+/// The match is exhaustive over a crate-private enum, so a third prologue is a
+/// build error here rather than a silent reuse of whichever arm it resembles.
+fn emit_prologue(
+    builder: &mut KernelBuilder,
+    value: KernelValueId,
+    prologue: ReductionPrologue,
+) -> Result<KernelValueId, KernelBuildError> {
+    match prologue {
+        ReductionPrologue::None => Ok(value),
+        ReductionPrologue::ScaleBias {
+            scale_bits,
+            bias_bits,
+        } => emit_scale_bias(builder, value, scale_bits, bias_bits),
+        // The loaded value multiplied by itself, so the square rests on one read
+        // rather than on two reads agreeing. One rounding, which is what the
+        // semantic reference states for `q_i = x_i * x_i`.
+        ReductionPrologue::Square => {
+            let square = builder.binary(BinaryOp::F32Multiply, value, value)?;
+            builder.convert(ConvertOp::CanonicalizeF32Nan, square)
+        }
+    }
+}
+
 fn emit_reduction(
     builder: &mut KernelBuilder,
     plan: &CanonicalPlan<'_>,
@@ -578,7 +650,7 @@ fn emit_reduction(
     write_buffer: KernelBufferId,
     invocation: KernelValueId,
     empty_identity_bits: u32,
-    prologue: Option<(u32, u32)>,
+    prologue: ReductionPrologue,
 ) -> Result<(), KernelBuildError> {
     if plan.contributors == 0 {
         let identity = builder.constant(KernelConstant::F32Bits(empty_identity_bits))?;
@@ -592,10 +664,7 @@ fn emit_reduction(
     }
     let first_offset = emit_offset(builder, plan, invocation, None)?;
     let first = builder.load(read_buffer, first_offset, plan.read_bounds)?;
-    let seed = match prologue {
-        Some((scale_bits, bias_bits)) => emit_scale_bias(builder, first, scale_bits, bias_bits)?,
-        None => first,
-    };
+    let seed = emit_prologue(builder, first, prologue)?;
     // A single contributor supplies the whole strict-serial value, but the
     // reduction still canonicalizes at its result boundary: ADR 0055 and the
     // numerical contract both require that boundary rule "even when the
@@ -613,8 +682,8 @@ fn emit_reduction(
     // so those boundaries are canonical without a second one.
     let total = if plan.contributors == 1 {
         match prologue {
-            Some(_) => seed,
-            None => builder.convert(ConvertOp::CanonicalizeF32Nan, seed)?,
+            ReductionPrologue::ScaleBias { .. } | ReductionPrologue::Square => seed,
+            ReductionPrologue::None => builder.convert(ConvertOp::CanonicalizeF32Nan, seed)?,
         }
     } else {
         let results = builder.serial_loop(
@@ -630,12 +699,7 @@ fn emit_reduction(
                     .ok_or(KernelBuildError::EmptyLoopAccumulators)?;
                 let offset = emit_offset(builder, plan, invocation, Some(induction))?;
                 let loaded = builder.load(read_buffer, offset, plan.read_bounds)?;
-                let contributor = match prologue {
-                    Some((scale_bits, bias_bits)) => {
-                        emit_scale_bias(builder, loaded, scale_bits, bias_bits)?
-                    }
-                    None => loaded,
-                };
+                let contributor = emit_prologue(builder, loaded, prologue)?;
                 let sum = builder.binary(BinaryOp::F32Add, accumulator, contributor)?;
                 let sum = builder.convert(ConvertOp::CanonicalizeF32Nan, sum)?;
                 Ok(vec![sum])
