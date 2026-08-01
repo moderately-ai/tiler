@@ -1,7 +1,7 @@
 ---
 id: design-autoregressive-state-and-kv-cache
 title: Design autoregressive state and KV-cache ownership
-status: todo
+status: in-progress
 priority: p1
 dependencies: [design-attention-program-vertical]
 related: [device-placement-and-memory-domain-contract, transfer-synchronization-and-resource-lifetime-contract, prototype-candle-metal-adapter]
@@ -9,6 +9,9 @@ scopes: [research/runtime, contracts/integrations, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [design, runtime, kv-cache, prefill, decode, language-model]
+claimed_from: todo
+assignee: worker-kv-cache
+lease_expires_at: 1785558508
 ---
 ## User-visible outcome
 
