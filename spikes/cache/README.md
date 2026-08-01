@@ -106,9 +106,12 @@ delimited, so it changes how long the pre-rename window is and not what a killed
 writer leaves at a content path.
 
 That substitution is lifted by the build-tool exercise below, which is an
-orchestrator holding both crates and drives the public `get_or_publish`. One
-narrower gap remains and is stated there: its payload is *declared* rather than
-*carried*, so no compiled backend object has yet travelled through a cache entry.
+orchestrator holding both crates and drives the public `get_or_publish`. The
+narrower gap it stated — its payload is *declared* rather than *carried* — was
+closed on 2026-07-31 by the self-contained embedding spike (`spikes/embedding/self-contained/`),
+which put envelopes carrying compiled `metallib` objects through the same
+`get_or_publish` with every hit validated by the real `decode_artifact`; the
+exercise's own rows still carry no object bytes, and that remains its boundary.
 
 ## Under Cargo and rust-analyzer
 
