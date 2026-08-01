@@ -57,6 +57,7 @@ accepted. Unresolved questions are collected in
 - [0009: Resolve numerical typing before semantic optimization](0009-resolved-numerical-typing.md) — accepted; contracts: [Numerical semantics](../numerical-semantics.md); evidence: [Dtype resolution and mixed-precision precedent](../research/numerics/dtype-resolution-precedents.md)
 - [0016: Resolve transcendental accuracy per operation](0016-transcendental-accuracy-contracts.md) — accepted; contracts: [Numerical semantics](../numerical-semantics.md); evidence: [Transcendental accuracy precedents](../research/numerics/transcendental-accuracy-precedents.md)
 - [0013: Scope deterministic numerical guarantees](0013-scoped-determinism.md) — accepted; contracts: [Numerical semantics](../numerical-semantics.md); evidence: [Reduction semantics and legality](../research/numerics/reduction-semantics-and-legality.md)
+- [0091: Separate BF16 float conversion families and keep the accumulator an operation fact](0091-separate-bf16-float-conversion-families-and-keep-the-accumulator-an-operation-fact.md) — accepted; contracts: [Numerical semantics](../numerical-semantics.md); evidence: [BF16 computation, accumulator, and conversion](../research/numerics/bf16-computation-accumulator-and-conversion.md)
 - [0041: Separate float-to-integer conversion families](0041-separate-float-to-integer-conversion-families.md) — accepted; contracts: [Numerical semantics](../numerical-semantics.md); evidence: [Floating-point to integer conversion precedents](../research/numerics/float-to-integer-conversion-precedents.md)
 - [0017: Separate local semantics from region accuracy goals](0017-local-vs-region-accuracy.md) — accepted; contracts: [Numerical semantics](../numerical-semantics.md), [Correctness and testing](../correctness-and-testing.md); evidence: [Region accuracy contracts and analyzable error budgets](../research/numerics/region-accuracy-contract.md)
 - [0023: Separate propagating and number-preferring extrema](0023-floating-point-extrema-semantics.md) — accepted; contracts: [Numerical semantics](../numerical-semantics.md); evidence: [Floating-point extrema precedents](../research/numerics/floating-point-extrema-precedents.md)
@@ -221,6 +222,7 @@ accepted. Unresolved questions are collected in
 - [0088: Admit tiler and tiler-macros as the consumer frontend pair](0088-admit-tiler-and-tiler-macros-as-the-frontend-pair.md) — accepted
 - [0089: Resolve the expansion-cache root from an override or the user cache](0089-resolve-the-expansion-cache-root-from-an-override-or-the-user-cache.md) — accepted
 - [0090: Compose backends per responsibility rather than per backend](0090-compose-backends-per-responsibility-rather-than-per-backend.md) — accepted
+- [0091: Separate BF16 float conversion families and keep the accumulator an operation fact](0091-separate-bf16-float-conversion-families-and-keep-the-accumulator-an-operation-fact.md) — accepted
 <!-- END GENERATED ADR CHRONOLOGY -->
 
 ## Template
