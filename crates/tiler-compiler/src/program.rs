@@ -31,7 +31,7 @@ use tiler_ir::program::{
     StageLaunch, StageRef, StorageEncoding, StorageScalar, ValueRole, VerifiedKernelProgram,
     ViewId,
 };
-use tiler_ir::semantic::{F32, SemanticIdentity, SemanticProgram};
+use tiler_ir::semantic::{F32, InputKey, SemanticIdentity, SemanticProgram};
 use tiler_ir::shape::Shape;
 
 use tiler_ir::program::abi::{
@@ -397,9 +397,11 @@ fn build_split_core(
     let mut builder = open_core_builder(semantic, request)?;
     let abi = declare_host_abi(
         &mut builder,
-        subject.input_elements,
+        &[subject.input_elements],
         subject.output_elements,
     )?;
+    let input_bytes_abi = abi.sole_input_bytes()?;
+    let input_elements_abi = abi.sole_input_elements()?;
     let partial_abi = declare_partial_abi(&mut builder, partial_elements)?;
     let external = builder.push_allocation(storage(input_bytes, AllocationOwnership::External))?;
     let temporary_storage =
@@ -432,16 +434,16 @@ fn build_split_core(
         &lower(pointwise)?,
         &covered(subject.members.pointwise()),
         &[
-            read(input_view, abi.input_bytes),
-            write(temporary_view, abi.input_bytes),
+            read(input_view, input_bytes_abi),
+            write(temporary_view, input_bytes_abi),
         ],
-        abi.launch(abi.input_elements),
+        abi.launch(input_elements_abi),
     )?;
     let partial_stage = builder.push_stage(
         &lower(partial)?,
         &covered(subject.members.reduction()),
         &[
-            read(temporary_view, abi.input_bytes),
+            read(temporary_view, input_bytes_abi),
             write(partial_view, partial_abi.bytes),
         ],
         abi.launch(partial_abi.elements),
@@ -478,8 +480,8 @@ fn build_split_core(
 
 /// Builds a single-stage whole-program kernel for one request.
 ///
-/// The scheduled region may be either a fused serial sum or a standalone
-/// governed pointwise program.
+/// The scheduled region may be a fused serial sum, a standalone governed
+/// pointwise program, or a contraction.
 pub(crate) fn build_fused_kernel_program(
     semantic: &SemanticProgram,
     request: &VerifiedTargetRequest,
@@ -512,9 +514,11 @@ fn build_materialized_core(
     let mut builder = open_core_builder(semantic, request)?;
     let abi = declare_host_abi(
         &mut builder,
-        subject.input_elements,
+        &[subject.input_elements],
         subject.output_elements,
     )?;
+    let input_bytes_abi = abi.sole_input_bytes()?;
+    let input_elements_abi = abi.sole_input_elements()?;
     let external = builder.push_allocation(storage(input_bytes, AllocationOwnership::External))?;
     let temporary_storage =
         builder.push_allocation(storage(input_bytes, AllocationOwnership::Program))?;
@@ -539,16 +543,16 @@ fn build_materialized_core(
         &lower(pointwise)?,
         &covered(subject.members.pointwise()),
         &[
-            read(input_view, abi.input_bytes),
-            write(temporary_view, abi.input_bytes),
+            read(input_view, input_bytes_abi),
+            write(temporary_view, input_bytes_abi),
         ],
-        abi.launch(abi.input_elements),
+        abi.launch(input_elements_abi),
     )?;
     let reduce_stage = builder.push_stage(
         &lower(reduction)?,
         &covered(subject.members.reduction()),
         &[
-            read(temporary_view, abi.input_bytes),
+            read(temporary_view, input_bytes_abi),
             write(output_view, abi.output_bytes),
         ],
         abi.launch(abi.output_elements),
@@ -565,54 +569,80 @@ fn build_fused_core(
     request: &VerifiedTargetRequest,
     scheduled: &VerifiedScheduledRegion,
 ) -> Result<VerifiedKernelProgram, ProgramError> {
-    // A pointwise region reads every program input; a fused serial sum reads
-    // the one its reduction contracts over. The keys travel as a list in
-    // declaration order because that order is what the region's input ordinals
-    // index — a stage's accesses bind to its kernel's buffers positionally, so
-    // reordering here would silently bind each buffer to the wrong tensor.
-    let (
-        input_keys,
-        output_key,
-        input_shape,
-        output_shape,
-        input_elements,
-        output_elements,
-        members,
+    // A pointwise region reads every program input at one shared shape; a fused
+    // serial sum reads the one its reduction contracts over; a contraction reads
+    // two operands whose extents generally differ, so each declared input
+    // carries its own shape, element count, and ABI byte expression. The inputs
+    // travel as a list in declaration order because that order is what the
+    // region's input ordinals index — a stage's accesses bind to its kernel's
+    // buffers positionally, so reordering here would silently bind each buffer
+    // to the wrong tensor.
+    let (inputs, output_key, output_shape, output_elements, members): (
+        Vec<(InputKey, Shape, u64)>,
+        _,
+        _,
+        _,
+        _,
     ) = if let Some(pointwise) = request.pointwise() {
         (
-            pointwise.input_keys.clone(),
+            pointwise
+                .input_keys
+                .iter()
+                .map(|key| (key.clone(), pointwise.shape.clone(), pointwise.elements))
+                .collect(),
             pointwise.output_key.clone(),
             pointwise.shape.clone(),
-            pointwise.shape.clone(),
-            pointwise.elements,
             pointwise.elements,
             pointwise.members.clone(),
+        )
+    } else if let Some(contraction) = request.contraction() {
+        (
+            (0..contraction.input_keys.len())
+                .map(|declaration| {
+                    (
+                        contraction.input_keys[declaration].clone(),
+                        contraction.input_shapes[declaration].clone(),
+                        contraction.input_elements[declaration],
+                    )
+                })
+                .collect(),
+            contraction.output_key.clone(),
+            contraction.output_shape.clone(),
+            contraction.output_elements,
+            contraction.members.clone(),
         )
     } else {
         let subject = request.serial_sum();
         (
-            vec![subject.input_key.clone()],
+            vec![(
+                subject.input_key.clone(),
+                subject.input_shape.clone(),
+                subject.input_elements,
+            )],
             subject.output_key.clone(),
-            subject.input_shape.clone(),
             subject.output_shape.clone(),
-            subject.input_elements,
             subject.output_elements,
             subject.members.all(),
         )
     };
-    let input_bytes = byte_count(input_elements)?;
     let output_bytes = byte_count(output_elements)?;
     let mut builder = open_core_builder(semantic, request)?;
-    let abi = declare_host_abi(&mut builder, input_elements, output_elements)?;
-    // Every input shares the region's one shape, so they share one byte count
-    // and one ABI expression; a strategy admitting inputs of different extents
-    // would need one expression each.
-    let mut input_views = Vec::with_capacity(input_keys.len());
-    for key in input_keys {
-        let external =
-            builder.push_allocation(storage(input_bytes, AllocationOwnership::External))?;
-        let input = builder.push_value(program_input(key, input_shape.clone()), external)?;
-        input_views.push(builder.push_whole_view(input)?);
+    let abi = declare_host_abi(
+        &mut builder,
+        &inputs
+            .iter()
+            .map(|(_, _, elements)| *elements)
+            .collect::<Vec<_>>(),
+        output_elements,
+    )?;
+    let mut input_views = Vec::with_capacity(inputs.len());
+    for ((key, shape, elements), bytes) in inputs.into_iter().zip(&abi.input_bytes) {
+        let external = builder.push_allocation(storage(
+            byte_count(elements)?,
+            AllocationOwnership::External,
+        ))?;
+        let input = builder.push_value(program_input(key, shape), external)?;
+        input_views.push((builder.push_whole_view(input)?, *bytes));
     }
     let output_storage =
         builder.push_allocation(storage(output_bytes, AllocationOwnership::Program))?;
@@ -620,7 +650,7 @@ fn build_fused_core(
     let output_view = builder.push_whole_view(output)?;
     let mut accesses: Vec<StageAccess> = input_views
         .into_iter()
-        .map(|view| read(view, abi.input_bytes))
+        .map(|(view, bytes)| read(view, bytes))
         .collect();
     accesses.push(write(output_view, abi.output_bytes));
     builder.push_stage(
@@ -642,11 +672,18 @@ fn build_fused_core(
 /// what a dynamic-shape subject would name instead; promoting these literals is
 /// a capability question tied to dynamic shapes, not a property of the
 /// vocabulary, and nothing in this contract has to change shape for it.
-#[derive(Clone, Copy, Debug)]
+/// The `input_bytes` and `input_elements` runs are per declared input, in
+/// declaration order, because a contraction's two operands have different
+/// extents and therefore different accessible ranges. The single-input
+/// strategies declare one entry each and reach it through
+/// [`HostAbi::sole_input_bytes`] and [`HostAbi::sole_input_elements`], which
+/// refuse rather than index — a strategy that grew a second input and kept
+/// calling them would fail loudly instead of sizing everything by the first.
+#[derive(Clone, Debug)]
 struct HostAbi {
-    input_bytes: AbiExprId,
+    input_bytes: Vec<AbiExprId>,
     output_bytes: AbiExprId,
-    input_elements: AbiExprId,
+    input_elements: Vec<AbiExprId>,
     output_elements: AbiExprId,
     threads_per_workgroup: AbiExprId,
 }
@@ -657,10 +694,29 @@ impl HostAbi {
     /// Every current region uses the profile's fixed workgroup width; the width
     /// the *kernel* requires is what the program builder proves the declared
     /// expression against.
-    const fn launch(self, grid_threads: AbiExprId) -> StageLaunch {
+    const fn launch(&self, grid_threads: AbiExprId) -> StageLaunch {
         StageLaunch {
             grid_threads,
             threads_per_workgroup: self.threads_per_workgroup,
+        }
+    }
+
+    /// Returns the byte count of the one declared input, or refuses.
+    fn sole_input_bytes(&self) -> Result<AbiExprId, ProgramError> {
+        Self::sole(&self.input_bytes)
+    }
+
+    /// Returns the element count of the one declared input, or refuses.
+    fn sole_input_elements(&self) -> Result<AbiExprId, ProgramError> {
+        Self::sole(&self.input_elements)
+    }
+
+    fn sole(expressions: &[AbiExprId]) -> Result<AbiExprId, ProgramError> {
+        match expressions {
+            [expression] => Ok(*expression),
+            _ => Err(ProgramError::Structure {
+                rule: "host-abi-input-arity",
+            }),
         }
     }
 }
@@ -672,25 +728,31 @@ impl HostAbi {
 /// their use, which is the arena's acyclicity invariant.
 fn declare_host_abi(
     builder: &mut KernelProgramBuilder,
-    input_elements: u64,
+    input_elements: &[u64],
     output_elements: u64,
 ) -> Result<HostAbi, ProgramError> {
     // The element byte width every accessible range scales by.
     let element_bytes = builder.push_abi_root(AbiRoot::UnsignedLiteral(element_bytes()))?;
-    let input_elements = builder.push_abi_root(AbiRoot::UnsignedLiteral(input_elements))?;
-    let output_elements = builder.push_abi_root(AbiRoot::UnsignedLiteral(output_elements))?;
-    let abi = HostAbi {
-        input_bytes: builder.push_abi_binary(
+    let mut declared_elements = Vec::with_capacity(input_elements.len());
+    let mut declared_bytes = Vec::with_capacity(input_elements.len());
+    for elements in input_elements {
+        let elements = builder.push_abi_root(AbiRoot::UnsignedLiteral(*elements))?;
+        declared_bytes.push(builder.push_abi_binary(
             AbiBinaryOp::CheckedMultiply,
             element_bytes,
-            input_elements,
-        )?,
+            elements,
+        )?);
+        declared_elements.push(elements);
+    }
+    let output_elements = builder.push_abi_root(AbiRoot::UnsignedLiteral(output_elements))?;
+    let abi = HostAbi {
+        input_bytes: declared_bytes,
         output_bytes: builder.push_abi_binary(
             AbiBinaryOp::CheckedMultiply,
             element_bytes,
             output_elements,
         )?,
-        input_elements,
+        input_elements: declared_elements,
         output_elements,
         threads_per_workgroup: builder.push_abi_root(AbiRoot::UnsignedLiteral(1))?,
     };

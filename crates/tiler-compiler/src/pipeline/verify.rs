@@ -280,7 +280,15 @@ pub(super) fn verify_equivalence(
         alternative.equivalence.numerical.as_deref(),
     ) {
         (ProgramAlternativeKind::Materialized, None) => Ok(()),
-        (ProgramAlternativeKind::Fused, None) if request.pointwise().is_some() => {
+        // A whole-program strategy that carries no fused-numerics proof, because
+        // there is no fusion to prove: its single region realizes one semantic
+        // occurrence family directly rather than merging a pointwise prologue
+        // into a reduction. The coverage check below is what stands in its
+        // place, and it is not weaker — it requires the one scheduled region to
+        // cover exactly the candidate's occurrences.
+        (ProgramAlternativeKind::Fused, None)
+            if request.pointwise().is_some() || request.contraction().is_some() =>
+        {
             let candidate = formation.whole_program_candidate().ok_or({
                 CompileError::InvalidCompilerOutput(CompilerOutputError::Program(
                     ProgramError::Structure {

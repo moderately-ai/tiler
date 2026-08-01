@@ -149,8 +149,8 @@ pub use handles::{BoundsWitnessId, InputOrdinal, OwnershipWitnessId, RegionId};
 pub(crate) use model::subnormal_freedom_of;
 pub use model::{
     Access, AccessMode, BoundsProof, BoundsProofKind, CanonicalScheduledRegionIdentity,
-    ContributorOrder, ContributorPartition, ExecutionBinding, IndexRegion, KernelSchedule,
-    LaunchPlan, LogicalAccess, OwnershipProof, OwnershipProofKind, ReductionPass,
+    ContractionAxisSource, ContributorOrder, ContributorPartition, ExecutionBinding, IndexRegion,
+    KernelSchedule, LaunchPlan, LogicalAccess, OwnershipProof, OwnershipProofKind, ReductionPass,
     ReductionTopology, ResourceRequirements, ScalarProgram, ScheduledRegion, TailPolicy,
     TensorRole, VerifiedScheduledRegion, axes_are_canonical, contributor_count, element_count,
     partial_reduction_axis, partial_reduction_shape,

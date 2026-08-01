@@ -8,12 +8,13 @@ use tiler_ir::index::FrozenScalarRegistry;
 use tiler_ir::program::abi::AvailabilityPhase;
 use tiler_ir::schedule::InputOrdinal;
 use tiler_ir::semantic::{
-    CanonicalIntegerWidth, CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey,
+    CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalIntegerWidth, CanonicalValueView,
+    ContractionIndex, ContractionIndexStructure, F32, F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey,
     OutputKey, ProviderIdentity, REDUCTION_AXES_ATTRIBUTE, ResolvedValueType, SemanticIdentity,
     SemanticProgram, TypeKey, ValueId, add_f32_op, constant_f32_op, multiply_f32_op,
-    strict_serial_sum_f32_op,
+    strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
 };
-use tiler_ir::shape::{Axis, Shape};
+use tiler_ir::shape::{Axis, Extent, Shape};
 
 // The numerical-realization vocabulary is target-neutral and owned by the shared
 // IR (ADR 0070); the compiler contract references it rather than duplicating it.
@@ -850,38 +851,122 @@ pub(crate) struct NormalizedPointwise {
     pub(crate) elements: u64,
 }
 
+/// A verified two-input, one-output binary tensor-contraction `f32` program.
+///
+/// **The structure is carried whole, not projected.** ADR 0087 makes the
+/// canonical index structure the operation's identity, so a normalization that
+/// kept only the extents it happened to need would let two different structures
+/// over the same shapes share a request subject. `operand_positions` maps each
+/// *declared input ordinal* to the structure operand it supplies, so a caller
+/// whose declaration order differs from its operand order is admitted rather
+/// than refused for a spelling — and every downstream binding indexes by
+/// declaration order, which is what the ABI binds in.
+///
+/// `output_shape` and `contracted_shape` are derived from the structure and the
+/// operand shapes rather than read from the graph, and the derived output shape
+/// is required to equal the program's own: the semantic inferencer already
+/// proved them equal at construction, so a disagreement here is invalid state
+/// and is refused rather than resolved in favour of either side.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct NormalizedContraction {
+    pub(crate) input_keys: [InputKey; 2],
+    pub(crate) output_key: OutputKey,
+    /// Operand shapes, indexed by declared input ordinal.
+    pub(crate) input_shapes: [Shape; 2],
+    pub(crate) output_shape: Shape,
+    /// Row-major shape of the contracted iteration space, ascending by
+    /// canonical contracted index.
+    pub(crate) contracted_shape: Shape,
+    pub(crate) structure: ContractionIndexStructure,
+    /// Structure operand position supplying each declared input ordinal.
+    pub(crate) operand_positions: [usize; 2],
+    pub(crate) members: Vec<SemanticMemberId>,
+    /// Operand values, indexed by declared input ordinal.
+    pub(crate) inputs: [ValueId; 2],
+    pub(crate) output: ValueId,
+    /// Operand element counts, indexed by declared input ordinal.
+    pub(crate) input_elements: [u64; 2],
+    pub(crate) output_elements: u64,
+    /// Points of the contracted iteration space; the fold length per output.
+    pub(crate) contracted_elements: u64,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum NormalizedProgram {
     SerialSum(NormalizedSerialSum),
     Pointwise(NormalizedPointwise),
+    /// Boxed because a contraction carries two operand shapes, an output shape,
+    /// a contracted shape, and a validated index structure — roughly twice the
+    /// serial sum's payload — and every value of this enum would otherwise pay
+    /// for the widest variant.
+    Contraction(Box<NormalizedContraction>),
 }
 
 impl NormalizedProgram {
     pub(crate) const fn serial_sum(&self) -> &NormalizedSerialSum {
         match self {
             Self::SerialSum(normalized) => normalized,
-            Self::Pointwise(_) => panic!("request is not a serial-sum program"),
+            Self::Pointwise(_) | Self::Contraction(_) => {
+                panic!("request is not a serial-sum program")
+            }
         }
     }
 
     pub(crate) const fn try_serial_sum(&self) -> Option<&NormalizedSerialSum> {
         match self {
             Self::SerialSum(normalized) => Some(normalized),
-            Self::Pointwise(_) => None,
+            Self::Pointwise(_) | Self::Contraction(_) => None,
         }
     }
 
     pub(crate) const fn pointwise(&self) -> Option<&NormalizedPointwise> {
         match self {
-            Self::SerialSum(_) => None,
+            Self::SerialSum(_) | Self::Contraction(_) => None,
             Self::Pointwise(normalized) => Some(normalized),
         }
     }
 
-    pub(crate) const fn input_elements(&self) -> u64 {
+    pub(crate) const fn contraction(&self) -> Option<&NormalizedContraction> {
+        match self {
+            Self::SerialSum(_) | Self::Pointwise(_) => None,
+            Self::Contraction(normalized) => Some(normalized),
+        }
+    }
+
+    /// Returns the element count of one declared input tensor.
+    ///
+    /// Per ordinal rather than one shared count, because a contraction's two
+    /// operands generally have different extents. The two single-shape
+    /// strategies answer the same for every ordinal they declare and `None` for
+    /// one they do not, so a caller that names an ordinal no input occupies gets
+    /// a refusal instead of another tensor's size.
+    pub(crate) fn input_elements_at(&self, ordinal: InputOrdinal) -> Option<u64> {
+        let ordinal = usize::try_from(ordinal.get()).ok()?;
+        match self {
+            Self::SerialSum(normalized) => (ordinal == 0).then_some(normalized.input_elements),
+            Self::Pointwise(normalized) => {
+                (ordinal < normalized.input_keys.len()).then_some(normalized.elements)
+            }
+            Self::Contraction(normalized) => normalized.input_elements.get(ordinal).copied(),
+        }
+    }
+
+    /// Returns the largest declared input element count.
+    ///
+    /// The size of the widest thing a plan for this request could stage, which
+    /// is what a structural cost estimate and a pre-strategy budget both want.
+    /// It is deliberately not "the input's element count": a contraction has two
+    /// inputs of different extents and no single answer to that question.
+    pub(crate) fn max_input_elements(&self) -> u64 {
         match self {
             Self::SerialSum(normalized) => normalized.input_elements,
             Self::Pointwise(normalized) => normalized.elements,
+            Self::Contraction(normalized) => normalized
+                .input_elements
+                .iter()
+                .copied()
+                .max()
+                .unwrap_or_default(),
         }
     }
 
@@ -889,6 +974,7 @@ impl NormalizedProgram {
         match self {
             Self::SerialSum(normalized) => normalized.output_elements,
             Self::Pointwise(normalized) => normalized.elements,
+            Self::Contraction(normalized) => normalized.output_elements,
         }
     }
 
@@ -896,6 +982,7 @@ impl NormalizedProgram {
         match self {
             Self::SerialSum(normalized) => normalized.members.all(),
             Self::Pointwise(normalized) => normalized.members.clone(),
+            Self::Contraction(normalized) => normalized.members.clone(),
         }
     }
 
@@ -903,7 +990,7 @@ impl NormalizedProgram {
     fn serial_sum_mut(&mut self) -> &mut NormalizedSerialSum {
         match self {
             Self::SerialSum(normalized) => normalized,
-            Self::Pointwise(_) => panic!("the fixture is a serial sum"),
+            Self::Pointwise(_) | Self::Contraction(_) => panic!("the fixture is a serial sum"),
         }
     }
 }
@@ -998,6 +1085,8 @@ pub(crate) struct NormalizedSerialSumSubject {
 pub(crate) enum NormalizedProgramSubject {
     SerialSum(NormalizedSerialSumSubject),
     Pointwise(NormalizedPointwise),
+    /// Boxed for the reason [`NormalizedProgram::Contraction`] is.
+    Contraction(Box<NormalizedContraction>),
 }
 
 impl VerifiedTargetRequest {
@@ -1015,6 +1104,10 @@ impl VerifiedTargetRequest {
 
     pub(crate) const fn pointwise(&self) -> Option<&NormalizedPointwise> {
         self.normalized.pointwise()
+    }
+
+    pub(crate) const fn contraction(&self) -> Option<&NormalizedContraction> {
+        self.normalized.contraction()
     }
 
     /// The request subject this target compiles under.
@@ -1180,6 +1273,43 @@ impl VerifiedRequestSubject {
                     bytes.extend_from_slice(&member.0.to_be_bytes());
                 }
                 bytes.extend_from_slice(&normalized.elements.to_be_bytes());
+            }
+            // A third sub-tag rather than a step of the enclosing
+            // `request-subject.v2` domain: neither existing arm's bytes move, so
+            // a subject encoded before this variant existed still encodes to
+            // exactly what it did, and a reader that reaches this tag is reading
+            // a subject the earlier vocabulary could not express.
+            NormalizedProgramSubject::Contraction(normalized) => {
+                push_slice(&mut bytes, b"contraction-f32.v1");
+                push_len(&mut bytes, normalized.input_keys.len());
+                for key in &normalized.input_keys {
+                    push_slice(&mut bytes, key.as_str().as_bytes());
+                }
+                push_slice(&mut bytes, normalized.output_key.as_str().as_bytes());
+                for shape in &normalized.input_shapes {
+                    encode_explain_shape(&mut bytes, shape);
+                }
+                encode_explain_shape(&mut bytes, &normalized.output_shape);
+                encode_explain_shape(&mut bytes, &normalized.contracted_shape);
+                // The canonical structure encoding, not a projection of it: the
+                // index tuples are what ADR 0087 makes the operation's identity,
+                // and two structures over one set of shapes are two programs.
+                push_slice(
+                    &mut bytes,
+                    normalized.structure.canonical_encoding().as_bytes(),
+                );
+                for position in normalized.operand_positions {
+                    push_len(&mut bytes, position);
+                }
+                push_len(&mut bytes, normalized.members.len());
+                for member in &normalized.members {
+                    bytes.extend_from_slice(&member.0.to_be_bytes());
+                }
+                for elements in normalized.input_elements {
+                    bytes.extend_from_slice(&elements.to_be_bytes());
+                }
+                bytes.extend_from_slice(&normalized.output_elements.to_be_bytes());
+                bytes.extend_from_slice(&normalized.contracted_elements.to_be_bytes());
             }
         }
         encode_contract(&mut bytes, self.numerical_contract);
@@ -1454,6 +1584,9 @@ fn request_subject(
         }
         NormalizedProgram::Pointwise(normalized) => {
             NormalizedProgramSubject::Pointwise(normalized.clone())
+        }
+        NormalizedProgram::Contraction(normalized) => {
+            NormalizedProgramSubject::Contraction(normalized.clone())
         }
     };
     VerifiedRequestSubject {
@@ -1905,6 +2038,11 @@ fn verify_program(
     // program's pointwise, partial, and final stages over its input, temporary,
     // partial, and output values.
     check_budget("regions", budgets.regions, 3)?;
+    // Nine, and the contraction reaches the same nine by a different route: the
+    // element width, one element count and one byte count per declared input,
+    // the output's pair, the workgroup width, and the applicability guard. A
+    // strategy declaring a third input would exceed it, which is why this is
+    // re-derived here rather than left as the split program's number.
     check_budget("host-expression-nodes", budgets.host_expression_nodes, 9)?;
     // A standalone pointwise program binds one buffer per declared input plus
     // its output, which can exceed the split program's four. Taking the larger
@@ -1985,23 +2123,240 @@ fn resolve_numerical_contract(
     })
 }
 
+/// Selects the one recognized strategy a program admits, or explains the refusal.
+///
+/// The strategies are disjoint by the operation key each is built around, so the
+/// order below decides nothing about which one wins — a program reaching the
+/// second recognizer is one the first has already refused, and it can only be
+/// admitted by the second if it carries that recognizer's own root operation.
+/// What the order does decide is *which* refusal a rejected program reports, and
+/// that is settled by the key the program actually contains rather than by
+/// enumeration order: a program mentioning the serial sum gets the serial sum's
+/// reason, one mentioning the contraction gets the contraction's, and one
+/// mentioning neither gets the pointwise reason, which is the recognizer whose
+/// vocabulary it was closest to.
 fn select_supported_strategy(program: &SemanticProgram) -> Result<NormalizedProgram, RequestError> {
-    match normalize_serial_sum(program) {
-        Ok(normalized) => Ok(NormalizedProgram::SerialSum(normalized)),
-        Err(serial_error) => match normalize_pointwise(program) {
-            Ok(normalized) => Ok(NormalizedProgram::Pointwise(normalized)),
-            Err(pointwise_error) => {
-                if program
-                    .operations()
-                    .any(|operation| operation.key() == &strict_serial_sum_f32_op())
-                {
-                    Err(serial_error)
-                } else {
-                    Err(pointwise_error)
-                }
-            }
-        },
+    let serial_error = match normalize_serial_sum(program) {
+        Ok(normalized) => return Ok(NormalizedProgram::SerialSum(normalized)),
+        Err(error) => error,
+    };
+    let contraction_error = match normalize_contraction(program) {
+        Ok(normalized) => return Ok(NormalizedProgram::Contraction(Box::new(normalized))),
+        Err(error) => error,
+    };
+    let pointwise_error = match normalize_pointwise(program) {
+        Ok(normalized) => return Ok(NormalizedProgram::Pointwise(normalized)),
+        Err(error) => error,
+    };
+    let mentions = |key: &OpKey| program.operations().any(|operation| operation.key() == key);
+    if mentions(&strict_serial_sum_f32_op()) {
+        Err(serial_error)
+    } else if mentions(&strict_tensor_contraction_f32_op()) {
+        Err(contraction_error)
+    } else {
+        Err(pointwise_error)
     }
+}
+
+/// Recognized operation count of the bounded contraction strategy.
+///
+/// Exactly the contraction itself. Its operands are tensors rather than
+/// constants, so — unlike the two elementwise strategies — no constant operation
+/// belongs to this shape, and an extra reachable operation is work this region
+/// would silently drop.
+const CONTRACTION_OPERATIONS: usize = 1;
+
+/// Recognizes a two-input binary tensor contraction over `f32`.
+///
+/// The admitted set is *every* well-formed binary index structure the semantic
+/// registry validates, not one hard-coded matmul spelling. That is not a
+/// widening for its own sake: the physical realization addresses each operand
+/// axis by whichever output or contracted coordinate the structure binds it to,
+/// so a structure whose contracted index sits at a different axis of each
+/// operand costs this recognizer nothing extra and refusing it would be a check
+/// with no correctness content behind it. What stays narrow is everything else —
+/// exactly two operands, exactly one contraction operation reachable, `f32`
+/// throughout, and no attribute beyond the index structure.
+fn normalize_contraction(program: &SemanticProgram) -> Result<NormalizedContraction, RequestError> {
+    if program.input_count() != 2 {
+        return mismatch("input-arity");
+    }
+    if program.output_count() != 1 {
+        return mismatch("output-arity");
+    }
+    if program.operation_count() != CONTRACTION_OPERATIONS {
+        return mismatch("operation-set");
+    }
+    if program
+        .values()
+        .any(|value| value.resolved_type() != &F32::resolved_type())
+    {
+        return mismatch("dtype-f32");
+    }
+    let output = program
+        .outputs()
+        .next()
+        .ok_or(RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule: "missing-output",
+        })?;
+    let (ordinal, operation) =
+        producer(program, output.value(), &strict_tensor_contraction_f32_op())?;
+    if operation.results().collect::<Vec<_>>() != [output.value()] {
+        return mismatch("contraction-output");
+    }
+    // Exactly the index structure. An attribute this normalization does not
+    // carry forward is a semantic fact it would silently drop.
+    let [field] = operation.attributes().fields() else {
+        return mismatch("contraction-attributes");
+    };
+    if field.id() != CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE {
+        return mismatch("contraction-attributes");
+    }
+    let structure =
+        ContractionIndexStructure::from_canonical_value(field.value()).map_err(|_| {
+            RequestError::UnsupportedCapability {
+                phase: "strategy",
+                rule: "contraction-structure",
+            }
+        })?;
+    if structure.operand_count() != 2 {
+        return mismatch("contraction-operand-count");
+    }
+
+    // Each structure operand must be one distinct declared input, and the two
+    // together must be both of them. Recorded as declaration ordinal -> operand
+    // position, because declaration order is what the ABI binds buffers in and
+    // is stable under any reordering of the occurrence's operands.
+    let operands: Vec<ValueId> = operation.operands().collect();
+    let declared: Vec<ValueId> = program.inputs().map(|input| input.value()).collect();
+    let mut operand_positions = [usize::MAX; 2];
+    for (position, operand) in operands.iter().enumerate() {
+        let Some(declaration) = declared.iter().position(|declared| declared == operand) else {
+            return mismatch("contraction-operands");
+        };
+        let Some(slot) = operand_positions.get_mut(declaration) else {
+            return mismatch("contraction-operands");
+        };
+        if std::mem::replace(slot, position) != usize::MAX {
+            return mismatch("contraction-operands");
+        }
+    }
+    if operand_positions.contains(&usize::MAX) {
+        return mismatch("contraction-operands");
+    }
+
+    let shape_of = |value: ValueId| -> Result<Shape, RequestError> {
+        program
+            .shape(value)
+            .map_err(|_| RequestError::UnsupportedCapability {
+                phase: "strategy",
+                rule: "input-handle",
+            })
+            .cloned()
+    };
+    let input_shapes = [shape_of(declared[0])?, shape_of(declared[1])?];
+    // One extent per index, bound by the first operand axis naming it. The
+    // semantic inferencer already proved agreement at construction, so a
+    // disagreement here is invalid state and is refused rather than preferred
+    // one way.
+    let mut extents: Vec<(ContractionIndex, Extent)> = Vec::new();
+    for (declaration, shape) in input_shapes.iter().enumerate() {
+        let tuple = structure.operand(operand_positions[declaration]).ok_or(
+            RequestError::UnsupportedCapability {
+                phase: "strategy",
+                rule: "contraction-structure",
+            },
+        )?;
+        if shape.rank() != tuple.len() {
+            return mismatch("contraction-rank");
+        }
+        for (axis, index) in tuple.iter().enumerate() {
+            let extent = shape.extents()[axis];
+            match extents.iter().find(|(bound, _)| bound == index) {
+                Some((_, bound)) if *bound != extent => return mismatch("contraction-extent"),
+                Some(_) => {}
+                None => extents.push((*index, extent)),
+            }
+        }
+    }
+    let extent_of = |index: &ContractionIndex| -> Result<Extent, RequestError> {
+        extents
+            .iter()
+            .find(|(bound, _)| bound == index)
+            .map(|(_, extent)| *extent)
+            .ok_or(RequestError::UnsupportedCapability {
+                phase: "strategy",
+                rule: "contraction-extent",
+            })
+    };
+    let shape_over = |indices: &[ContractionIndex]| -> Result<Shape, RequestError> {
+        Shape::try_new(
+            indices
+                .iter()
+                .map(&extent_of)
+                .collect::<Result<Vec<_>, _>>()?,
+        )
+        .map_err(|_| RequestError::UnsupportedCapability {
+            phase: "strategy",
+            rule: "contraction-shape",
+        })
+    };
+    let output_shape = shape_over(structure.output())?;
+    let contracted_shape = shape_over(structure.contracted())?;
+    if program.shape(output.value()).ok() != Some(&output_shape) {
+        return mismatch("contraction-output-shape");
+    }
+
+    let input_elements = [
+        element_count_u64(&input_shapes[0], "input")?,
+        element_count_u64(&input_shapes[1], "input")?,
+    ];
+    let output_elements = element_count_u64(&output_shape, "output")?;
+    let contracted_elements = element_count_u64(&contracted_shape, "input")?;
+    // `direct`'s one precondition, and its only one. The semantic inferencer
+    // refuses a zero contracted extent at construction, so this is unreachable
+    // through a built program; it is kept because it is the *stated* precondition
+    // of this realization and a reader must be able to find it here rather than
+    // infer it from an inferencer three crates away.
+    if contracted_elements == 0 {
+        return mismatch("contraction-empty-domain");
+    }
+
+    Ok(NormalizedContraction {
+        input_keys: [
+            program
+                .inputs()
+                .next()
+                .ok_or(RequestError::UnsupportedCapability {
+                    phase: "strategy",
+                    rule: "missing-input",
+                })?
+                .key()
+                .clone(),
+            program
+                .inputs()
+                .nth(1)
+                .ok_or(RequestError::UnsupportedCapability {
+                    phase: "strategy",
+                    rule: "missing-input",
+                })?
+                .key()
+                .clone(),
+        ],
+        output_key: output.key().clone(),
+        input_shapes,
+        output_shape,
+        contracted_shape,
+        structure,
+        operand_positions,
+        members: vec![SemanticMemberId(ordinal)],
+        inputs: [declared[0], declared[1]],
+        output: output.value(),
+        input_elements,
+        output_elements,
+        contracted_elements,
+    })
 }
 
 /// Recognized operation counts of the bounded standalone pointwise strategy.

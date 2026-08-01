@@ -26,11 +26,11 @@ use tiler_ir::kernel::{
 };
 use tiler_ir::schedule::{
     Access, AccessMode, ArithmeticType, BoundsProof, BoundsProofKind, BoundsWitnessId,
-    ContributorOrder, ExceptionalValueAssumption, ExecutionBinding, FlushedZeroSign, InputOrdinal,
-    KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission, NumericalRealization,
-    OwnershipProof, OwnershipProofKind, OwnershipWitnessId, PointwiseF32Expression,
-    PointwiseF32ExpressionBuilder, ReductionTopology, RegionId, ScalarProgram,
-    ScheduledRegionBuilder, SubnormalFreedom, SubnormalMode, TailPolicy, TensorRole,
+    ContractionAxisSource, ContributorOrder, ExceptionalValueAssumption, ExecutionBinding,
+    FlushedZeroSign, InputOrdinal, KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission,
+    NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
+    PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionTopology, RegionId,
+    ScalarProgram, ScheduledRegionBuilder, SubnormalFreedom, SubnormalMode, TailPolicy, TensorRole,
     ValueDomainProvenance, VerifiedScheduledRegion, element_count,
 };
 use tiler_ir::semantic::RMS_NORM_F32_QWEN3_EPS_BITS;
@@ -643,6 +643,113 @@ fn reduction_region(
     builder.build().unwrap()
 }
 
+/// The `direct` contraction of the profile's own index structure, `td,od->to`.
+///
+/// `[m, k] x [n, k] -> [m, n]`, one invocation per output element, each folding
+/// its own contracted sequence in ascending `d`. Operand 0 reads output position
+/// 0 then the contracted coordinate; operand 1 reads output position 1 then the
+/// same contracted coordinate — which is exactly what makes the weight layout
+/// `[out_features, in_features]` a *different* structure from the ordinary
+/// `[K, N]` matmul.
+fn contraction_region(id: RegionId, m: u64, n: u64, k: u64) -> VerifiedScheduledRegion {
+    let left = Shape::from_dims([m, k]);
+    let right = Shape::from_dims([n, k]);
+    let output = Shape::from_dims([m, n]);
+    let contracted = Shape::from_dims([k]);
+    let output_elements = element_count(&output).unwrap();
+    let mut builder = ScheduledRegionBuilder::new(id);
+    builder.iteration_shape(output.clone()).unwrap();
+    for (ordinal, (operand, free)) in [(&left, 0_u32), (&right, 1)].into_iter().enumerate() {
+        let witness = u32::try_from(ordinal).unwrap();
+        let tensor = TensorRole::Input {
+            ordinal: InputOrdinal::new(witness),
+        };
+        builder
+            .push_access(Access {
+                tensor,
+                component_role: None,
+                mode: AccessMode::Read,
+                map: LogicalAccess::ContractionOperand {
+                    operand_shape: operand.clone(),
+                    output_shape: output.clone(),
+                    contracted_shape: contracted.clone(),
+                    sources: vec![
+                        ContractionAxisSource::Output { position: free },
+                        ContractionAxisSource::Contracted { position: 0 },
+                    ],
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                },
+                bounds: BoundsWitnessId::new(witness),
+                ownership: None,
+            })
+            .unwrap();
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(witness),
+                tensor,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange {
+                    element_count: element_count(operand).unwrap(),
+                },
+            })
+            .unwrap();
+    }
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Output,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(2),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        })
+        .unwrap();
+    builder
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(2),
+            tensor: TensorRole::Output,
+            component_role: None,
+            kind: BoundsProofKind::LinearRange {
+                element_count: output_elements,
+            },
+        })
+        .unwrap();
+    builder
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                output_count: output_elements,
+            },
+        })
+        .unwrap();
+    builder
+        .scalar_program(ScalarProgram::StrictTensorContraction {
+            contracted_shape: contracted.clone(),
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: NAN_BITS,
+        })
+        .unwrap();
+    builder.numerical(numerical(NAN_BITS)).unwrap();
+    builder
+        .schedule(KernelSchedule {
+            reduction: ReductionTopology::Contraction {
+                contracted_shape: contracted,
+                order: ContributorOrder::OriginalAxisLexicographic,
+                permits_reassociation: false,
+                permits_permutation: false,
+            },
+            ..linear_schedule(output_elements)
+        })
+        .unwrap();
+    builder.build().unwrap()
+}
+
+pub(crate) fn contraction_kernel() -> VerifiedKernel {
+    lower_scheduled_region(&contraction_region(RegionId::new(9), 2, 3, 4))
+        .expect("bounded contraction fixture lowers")
+}
+
 pub(crate) fn pointwise_kernel() -> VerifiedKernel {
     lower_scheduled_region(&pointwise_region(
         RegionId::new(0),
@@ -826,6 +933,107 @@ fn an_empty_portfolio_emits_a_declaration_free_translation_unit() {
     assert!(
         unit.source()
             .contains("// Declared numerical obligations this profile cannot realize: none.")
+    );
+}
+
+/// The contraction's accumulation path carries no fused multiply-add.
+///
+/// **The flag is not what holds this line, which is why the check is on the
+/// text.** [Finding 16 of the Apple numerical-behaviour record] established that
+/// `-ffp-contract=off` is a defence against the *compiler* contracting a written
+/// multiply and add, and no defence at all against a fused operation the source
+/// asks for; the L3 realization probe reproduced it at a new construct, where
+/// `simdgroup_multiply_accumulate` returned the fused `0x3fc58f9d` under exactly
+/// the governed flags that kept the four scalar kernels at `0x3fc58f9e`.
+///
+/// So the property asserted here is per-statement structure, which no flag can
+/// change: every emitted arithmetic line binds one operator over two already
+/// named locals, so no statement contains a product feeding a sum. There is no
+/// adjacency for `-ffp-contract=on` to fuse and no fused intrinsic in the text.
+/// The flag requirement is still recorded — the last assertion — but as a second
+/// line of defence rather than as the guarantee.
+///
+/// [Finding 16 of the Apple numerical-behaviour record]: ../../docs/research/apple-targets/numerical-behaviour.md
+#[test]
+fn the_contraction_kernel_emits_no_fused_multiply_add_on_its_accumulation_path() {
+    let kernel = contraction_kernel();
+    let unit = emit_translation_unit(&[&kernel], &target()).expect("the contraction fixture emits");
+    let source = unit.source();
+    // Nothing in the emitted text names a fusing construct, under any spelling
+    // the profile could reach.
+    for forbidden in [
+        "fma(",
+        "metal::fma",
+        "precise::fma",
+        "simdgroup",
+        "multiply_accumulate",
+        "mad(",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "{forbidden} must not appear on a path whose contract forbids contraction:\n{source}"
+        );
+    }
+    // No statement holds a multiply and an add together, so the pair a
+    // contracting compiler would fuse is never adjacent in one expression.
+    let arithmetic: Vec<&str> = source
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("float ") && line.contains(" = "))
+        .collect();
+    assert!(
+        arithmetic.iter().any(|line| line.contains(" * ")),
+        "the fixture must actually emit the product:\n{source}"
+    );
+    assert!(
+        arithmetic.iter().any(|line| line.contains(" + ")),
+        "the fixture must actually emit the accumulation:\n{source}"
+    );
+    for line in &arithmetic {
+        assert!(
+            !(line.contains(" * ") && line.contains(" + ")),
+            "one statement carries both operators, so the pair is fusable:\n{line}"
+        );
+    }
+    // Counted over the `float` statements alone, because the index arithmetic
+    // uses both operators too and counting the whole text would make these
+    // assertions about the addressing rather than about the fold.
+    //
+    // Two products — the seed's and the loop body's — and one accumulation. A
+    // third product would mean the loaded operands were multiplied again, and a
+    // second accumulation would mean the fold combined twice per step.
+    assert_eq!(
+        arithmetic
+            .iter()
+            .filter(|line| line.contains(" * "))
+            .count(),
+        2,
+        "one product for the seed and one inside the fold:\n{source}"
+    );
+    assert_eq!(
+        arithmetic
+            .iter()
+            .filter(|line| line.contains(" + "))
+            .count(),
+        1,
+        "one accumulation, inside the fold:\n{source}"
+    );
+    // Every product is canonicalized before it reaches the accumulation, which
+    // is the declared `after-every-combine` rule and is also what puts a call
+    // between the two arithmetic operations.
+    assert_eq!(
+        source
+            .matches("tiler_canonicalize_nan_f32_7fc00000(")
+            .count(),
+        // The helper definition, the seed's product, the fold's product, and the
+        // fold's sum.
+        4,
+        "each emitted product and sum commits the canonical payload:\n{source}"
+    );
+    assert!(
+        unit.numerical_requirements()
+            .contains(&MetalNumericalRequirement::NoFloatingPointContraction),
+        "the forbidden contraction dimension still places its flag obligation"
     );
 }
 

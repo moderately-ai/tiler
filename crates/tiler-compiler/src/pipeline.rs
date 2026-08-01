@@ -1537,6 +1537,14 @@ fn region_role(
             "unrecognized"
         };
     }
+    // Before the serial-sum accessor, which panics for any other strategy.
+    if let Some(contraction) = request.contraction() {
+        return if members == contraction.members {
+            "whole-program"
+        } else {
+            "unrecognized"
+        };
+    }
     let recognized = &request.serial_sum().members;
     if members == recognized.pointwise() {
         "pointwise"

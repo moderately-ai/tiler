@@ -77,12 +77,12 @@ enum ReadAddressing {
 
 /// Everything the canonical emission needs, resolved before any operation.
 ///
-/// `reads` and `read_elements` are parallel and complete: a pointwise region
-/// declares one buffer per read, so a plan that carried only the first read's
-/// facts would emit a signature narrower than the region it lowers. The single
-/// `addressing` and `contributors` describe the *reduction* families, which read
-/// exactly one tensor; the pointwise path addresses every read by the invocation
-/// index directly and consults neither.
+/// `reads`, `read_elements`, and `addressing` are parallel and complete: a
+/// pointwise region declares one buffer per read and a contraction two with
+/// *different* coordinate maps, so a plan carrying only the first read's facts
+/// would emit a signature narrower than the region it lowers and address the
+/// second operand by the first's relation. `contributors` is the fold length one
+/// invocation performs, and is zero for the families that fold nothing.
 #[derive(Clone, Debug)]
 struct CanonicalPlan<'a> {
     scalar: &'a ScalarProgram,
@@ -93,11 +93,10 @@ struct CanonicalPlan<'a> {
     read_elements: Vec<u64>,
     write_elements: u64,
     work_items: u64,
-    read_bounds: BoundsWitnessId,
     write_bounds: BoundsWitnessId,
     ownership: OwnershipWitnessId,
     contributors: u64,
-    addressing: ReadAddressing,
+    addressing: Vec<ReadAddressing>,
 }
 
 /// Lowers one verified scheduled region to its canonical verified kernel.
@@ -166,6 +165,25 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
             partition,
             ..
         } => partition.contributors_per_partition,
+        // The contracted index space, which the topology states because no
+        // single operand's map determines it.
+        ReductionTopology::Contraction {
+            contracted_shape, ..
+        } => crate::schedule::element_count(contracted_shape)
+            .map_err(|_| KernelDiagnostic::ElementCountOverflow)?,
+    };
+    // The strict-affine decode addresses its three role-scoped components by the
+    // invocation index directly, so it consults no coordinate map.
+    let addressing = if matches!(
+        &schedule.index.scalar_program,
+        ScalarProgram::StrictAffineU4Dequantize { .. }
+    ) {
+        vec![ReadAddressing::Identity; reads.len()]
+    } else {
+        reads
+            .iter()
+            .map(|read| addressing(read, &schedule.schedule.reduction))
+            .collect::<Result<Vec<_>, _>>()?
     };
     Ok(CanonicalPlan {
         scalar: &schedule.index.scalar_program,
@@ -179,18 +197,10 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
             .collect::<Result<Vec<_>, _>>()?,
         write_elements: access_elements(write, schedule)?,
         work_items: schedule.schedule.work_items,
-        read_bounds: read.bounds,
         write_bounds: write.bounds,
         ownership: schedule.schedule.output_owner,
         contributors,
-        addressing: if matches!(
-            &schedule.index.scalar_program,
-            ScalarProgram::StrictAffineU4Dequantize { .. }
-        ) {
-            ReadAddressing::Identity
-        } else {
-            addressing(read, &schedule.schedule.reduction)?
-        },
+        addressing,
     })
 }
 
@@ -230,10 +240,90 @@ fn addressing(
                 }),
                 ReductionTopology::None
                 | ReductionTopology::Serial { .. }
+                | ReductionTopology::Contraction { .. }
                 | ReductionTopology::MultiPass { .. } => Ok(ReadAddressing::Linearized(terms)),
             }
         }
+        LogicalAccess::ContractionOperand {
+            operand_shape,
+            output_shape,
+            contracted_shape,
+            sources,
+            ..
+        } => Ok(ReadAddressing::Linearized(linearize_contraction_operand(
+            operand_shape,
+            output_shape,
+            contracted_shape,
+            sources,
+        )?)),
     }
+}
+
+/// Builds the row-major linearization terms of one contraction operand access.
+///
+/// Each operand axis contributes one term. The axis's coordinate is decoded from
+/// whichever linear index the schedule verifier proved it names — the invocation
+/// index for an output coordinate, the loop induction variable for a contracted
+/// one — using the suffix products of *that* space, and is scaled by the
+/// operand's own row-major stride. The leading position of a space needs no
+/// wrap, because the linear index is already below the product of every extent
+/// in it. A term whose extent is one, or whose divisor, modulus, or stride is
+/// zero, is dropped: the coordinate is then constantly zero, or the domain is
+/// empty and the guarded block never executes.
+fn linearize_contraction_operand(
+    operand_shape: &Shape,
+    output_shape: &Shape,
+    contracted_shape: &Shape,
+    sources: &[crate::schedule::ContractionAxisSource],
+) -> Result<Vec<OffsetTerm>, KernelDiagnostic> {
+    let extents_of =
+        |shape: &Shape| -> Vec<u64> { shape.extents().iter().map(|extent| extent.get()).collect() };
+    let operand_extents = extents_of(operand_shape);
+    let operand_strides = suffix_products(&operand_extents);
+    let output_extents = extents_of(output_shape);
+    let output_suffix = suffix_products(&output_extents);
+    let contracted_extents = extents_of(contracted_shape);
+    let contracted_suffix = suffix_products(&contracted_extents);
+    if sources.len() != operand_extents.len() {
+        return Err(KernelDiagnostic::ContributorDomain);
+    }
+
+    let mut terms = Vec::with_capacity(sources.len());
+    for (axis, source) in sources.iter().enumerate() {
+        let (root, position, sub_extents, sub_suffix) = match source {
+            crate::schedule::ContractionAxisSource::Output { position } => (
+                OffsetRoot::Output,
+                *position,
+                &output_extents,
+                &output_suffix,
+            ),
+            crate::schedule::ContractionAxisSource::Contracted { position } => (
+                OffsetRoot::Contributor,
+                *position,
+                &contracted_extents,
+                &contracted_suffix,
+            ),
+        };
+        let position =
+            usize::try_from(position).map_err(|_| KernelDiagnostic::ContributorDomain)?;
+        let (Some(divisor), Some(sub_extent)) =
+            (sub_suffix.get(position), sub_extents.get(position))
+        else {
+            return Err(KernelDiagnostic::ContributorDomain);
+        };
+        let modulus = (position > 0).then_some(*sub_extent);
+        let stride = operand_strides[axis];
+        if operand_extents[axis] == 1 || *divisor == 0 || modulus == Some(0) || stride == 0 {
+            continue;
+        }
+        terms.push(OffsetTerm {
+            root,
+            divisor: *divisor,
+            modulus,
+            stride,
+        });
+    }
+    Ok(terms)
 }
 
 /// Builds the ordered row-major linearization terms of a contributor access.
@@ -367,6 +457,14 @@ fn emit_guarded(
         };
         Ok(*buffer)
     };
+    let sole_read = || {
+        let [read] = plan.reads else {
+            return Err(KernelBuildError::InvalidHandle {
+                entity: super::error::KernelEntityKind::Buffer,
+            });
+        };
+        Ok(read.bounds)
+    };
     match plan.scalar {
         ScalarProgram::PointwiseF32(expression) => {
             let mut inputs = Vec::with_capacity(read_buffers.len());
@@ -391,7 +489,7 @@ fn emit_guarded(
         } => emit_reduction(
             builder,
             plan,
-            sole_read_buffer()?,
+            (sole_read_buffer()?, sole_read()?),
             write_buffer,
             invocation,
             *empty_identity_bits,
@@ -405,7 +503,7 @@ fn emit_guarded(
         } => emit_reduction(
             builder,
             plan,
-            sole_read_buffer()?,
+            (sole_read_buffer()?, sole_read()?),
             write_buffer,
             invocation,
             *empty_identity_bits,
@@ -420,13 +518,120 @@ fn emit_guarded(
         } => emit_reduction(
             builder,
             plan,
-            sole_read_buffer()?,
+            (sole_read_buffer()?, sole_read()?),
             write_buffer,
             invocation,
             *empty_identity_bits,
             ReductionPrologue::Square,
         ),
+        ScalarProgram::StrictTensorContraction { .. } => {
+            let ([left, right], [left_read, right_read]) = (read_buffers, plan.reads) else {
+                return Err(KernelBuildError::InvalidHandle {
+                    entity: super::error::KernelEntityKind::Buffer,
+                });
+            };
+            emit_contraction(
+                builder,
+                plan,
+                [(*left, left_read.bounds), (*right, right_read.bounds)],
+                write_buffer,
+                invocation,
+            )
+        }
     }
+}
+
+/// Emits the guarded body of one strict tensor contraction.
+///
+/// One thread folds its own output element in ascending contracted order. The
+/// accumulator is seeded at the *first product* rather than at `+0.0`: the two
+/// differ observably where every product is `-0.0`, and the registered family
+/// declares no seed, so an identity-seeded fold would compute a contraction
+/// carrying an explicit `initial` — a different operation.
+///
+/// **The fold is deliberately three separate structured operations per step**: a
+/// multiply, a NaN canonicalization, and an add. The canonicalization is the
+/// declared `after-every-combine-and-at-the-result-boundary` rule reaching the
+/// product, and it is also what makes a fused multiply-add unformable — the
+/// backend sees a call between the two arithmetic operations, not an adjacent
+/// pair. That matters because the governed contracts forbid ADR 0015 contraction
+/// and the measured Apple row shows `-ffp-contract=off` is no defence against a
+/// *fused instruction the source asks for*; here the source cannot ask for one.
+///
+/// **No result-boundary conversion is emitted, and its absence is derived.** The
+/// serial sum needs one when its contributor sequence is a singleton, because
+/// its seed is a raw load no combine has canonicalized. A contraction's seed is
+/// a *product*, which this emission canonicalizes, so every path out of the fold
+/// already carries the canonical payload and a second conversion would be a
+/// provable identity in a body the refinement gate compares structurally.
+fn emit_contraction(
+    builder: &mut KernelBuilder,
+    plan: &CanonicalPlan<'_>,
+    reads: [(KernelBufferId, BoundsWitnessId); 2],
+    write_buffer: KernelBufferId,
+    invocation: KernelValueId,
+) -> Result<(), KernelBuildError> {
+    let seed = emit_contraction_product(builder, plan, reads, invocation, None)?;
+    let total = if plan.contributors <= 1 {
+        seed
+    } else {
+        let results = builder.serial_loop(
+            SerialLoopSpec {
+                start: 1,
+                end: plan.contributors,
+            },
+            &[seed],
+            |builder, parameters| {
+                let induction = parameters.induction();
+                let accumulator = parameters
+                    .accumulator(0)
+                    .ok_or(KernelBuildError::EmptyLoopAccumulators)?;
+                let product =
+                    emit_contraction_product(builder, plan, reads, invocation, Some(induction))?;
+                let sum = builder.binary(BinaryOp::F32Add, accumulator, product)?;
+                let sum = builder.convert(ConvertOp::CanonicalizeF32Nan, sum)?;
+                Ok(vec![sum])
+            },
+        )?;
+        results
+            .get(0)
+            .ok_or(KernelBuildError::EmptyLoopAccumulators)?
+    };
+    builder.store(
+        write_buffer,
+        invocation,
+        total,
+        plan.write_bounds,
+        plan.ownership,
+    )
+}
+
+/// Emits one contracted point's separately rounded, canonicalized product.
+fn emit_contraction_product(
+    builder: &mut KernelBuilder,
+    plan: &CanonicalPlan<'_>,
+    reads: [(KernelBufferId, BoundsWitnessId); 2],
+    invocation: KernelValueId,
+    contributor: Option<KernelValueId>,
+) -> Result<KernelValueId, KernelBuildError> {
+    let mut loaded = [None, None];
+    for (position, (buffer, bounds)) in reads.into_iter().enumerate() {
+        let addressing = plan
+            .addressing
+            .get(position)
+            .ok_or(KernelBuildError::InvalidHandle {
+                entity: super::error::KernelEntityKind::Buffer,
+            })?;
+        let offset = emit_offset(builder, addressing, invocation, contributor)?;
+        loaded[position] = Some(builder.load(buffer, offset, bounds)?);
+    }
+    let [Some(left), Some(right)] = loaded else {
+        return Err(KernelBuildError::InvalidHandle {
+            entity: super::error::KernelEntityKind::Value,
+        });
+    };
+    let product = builder.binary(BinaryOp::F32Multiply, left, right)?;
+    builder.convert(ConvertOp::CanonicalizeF32Nan, product)
 }
 
 /// The elementwise expression applied to each contributor before the fold.
@@ -646,12 +851,19 @@ fn emit_prologue(
 fn emit_reduction(
     builder: &mut KernelBuilder,
     plan: &CanonicalPlan<'_>,
-    read_buffer: KernelBufferId,
+    read: (KernelBufferId, BoundsWitnessId),
     write_buffer: KernelBufferId,
     invocation: KernelValueId,
     empty_identity_bits: u32,
     prologue: ReductionPrologue,
 ) -> Result<(), KernelBuildError> {
+    let (read_buffer, read_bounds) = read;
+    let addressing = plan
+        .addressing
+        .first()
+        .ok_or(KernelBuildError::InvalidHandle {
+            entity: super::error::KernelEntityKind::Buffer,
+        })?;
     if plan.contributors == 0 {
         let identity = builder.constant(KernelConstant::F32Bits(empty_identity_bits))?;
         return builder.store(
@@ -662,8 +874,8 @@ fn emit_reduction(
             plan.ownership,
         );
     }
-    let first_offset = emit_offset(builder, plan, invocation, None)?;
-    let first = builder.load(read_buffer, first_offset, plan.read_bounds)?;
+    let first_offset = emit_offset(builder, addressing, invocation, None)?;
+    let first = builder.load(read_buffer, first_offset, read_bounds)?;
     let seed = emit_prologue(builder, first, prologue)?;
     // A single contributor supplies the whole strict-serial value, but the
     // reduction still canonicalizes at its result boundary: ADR 0055 and the
@@ -697,8 +909,8 @@ fn emit_reduction(
                 let accumulator = parameters
                     .accumulator(0)
                     .ok_or(KernelBuildError::EmptyLoopAccumulators)?;
-                let offset = emit_offset(builder, plan, invocation, Some(induction))?;
-                let loaded = builder.load(read_buffer, offset, plan.read_bounds)?;
+                let offset = emit_offset(builder, addressing, invocation, Some(induction))?;
+                let loaded = builder.load(read_buffer, offset, read_bounds)?;
                 let contributor = emit_prologue(builder, loaded, prologue)?;
                 let sum = builder.binary(BinaryOp::F32Add, accumulator, contributor)?;
                 let sum = builder.convert(ConvertOp::CanonicalizeF32Nan, sum)?;
@@ -783,11 +995,11 @@ fn emit_partition_contributor(
 /// zero; every contributor term then vanishes exactly.
 fn emit_offset(
     builder: &mut KernelBuilder,
-    plan: &CanonicalPlan<'_>,
+    addressing: &ReadAddressing,
     invocation: KernelValueId,
     contributor: Option<KernelValueId>,
 ) -> Result<KernelValueId, KernelBuildError> {
-    let (terms, output, contributor) = match &plan.addressing {
+    let (terms, output, contributor) = match addressing {
         ReadAddressing::Identity => return Ok(invocation),
         ReadAddressing::Linearized(terms) => (terms, invocation, contributor),
         ReadAddressing::Partitioned {

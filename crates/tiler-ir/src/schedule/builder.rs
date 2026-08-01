@@ -16,10 +16,10 @@ use super::error::{
 use super::handles::{InputOrdinal, RegionId};
 use super::model::{
     Access, AccessMode, BoundsProof, BoundsProofKind, CanonicalScheduledRegionIdentity,
-    ExecutionBinding, IndexRegion, KernelSchedule, LogicalAccess, OwnershipProof,
-    OwnershipProofKind, ReductionPass, ReductionTopology, ResourceRequirements, ScalarProgram,
-    ScheduledRegion, TailPolicy, TensorRole, VerifiedScheduledRegion, contributor_count,
-    derive_requirements, element_count, encode_identity, partial_reduction_axis,
+    ContractionAxisSource, ExecutionBinding, IndexRegion, KernelSchedule, LogicalAccess,
+    OwnershipProof, OwnershipProofKind, ReductionPass, ReductionTopology, ResourceRequirements,
+    ScalarProgram, ScheduledRegion, TailPolicy, TensorRole, VerifiedScheduledRegion,
+    contributor_count, derive_requirements, element_count, encode_identity, partial_reduction_axis,
     partial_reduction_shape,
 };
 use super::numerics::{ArithmeticType, ExceptionalValueAssumption, NumericalRealization};
@@ -332,7 +332,166 @@ fn verify_intrinsic(region: &ScheduledRegion) -> Result<(), ScheduledRegionDiagn
             };
             verify_access_and_semantics(region, read, write)
         }
+        // A contraction reads exactly two operands. That count is the family's
+        // definition and not a bound this profile happens to impose: ADR 0087's
+        // fifth structural rule refuses an index shared by more than two
+        // operands, so a third read would be an occurrence the semantic registry
+        // already refused.
+        ScalarProgram::StrictTensorContraction { .. } => {
+            let [left, right, write] = region.index.accesses.as_slice() else {
+                return Err(ScheduledRegionDiagnostic::AccessCount);
+            };
+            verify_contraction(region, left, right, write)
+        }
     }
+}
+
+/// Verifies a two-operand strict tensor contraction region.
+///
+/// Every obligation is stated against the region's *own* three declarations of
+/// the contracted space — the scalar program's, the schedule topology's, and
+/// each operand access's — and they are required to agree. A producer that
+/// stated one of them differently would otherwise fold a different number of
+/// contributors than it addressed.
+fn verify_contraction(
+    region: &ScheduledRegion,
+    left: &Access,
+    right: &Access,
+    write: &Access,
+) -> Result<(), ScheduledRegionDiagnostic> {
+    let ScalarProgram::StrictTensorContraction {
+        contracted_shape,
+        order,
+        ..
+    } = &region.index.scalar_program
+    else {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    };
+    let ReductionTopology::Contraction {
+        contracted_shape: scheduled_contracted,
+        order: scheduled_order,
+        permits_reassociation,
+        permits_permutation,
+    } = &region.schedule.reduction
+    else {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    };
+    let numerical = &region.index.numerical;
+    if contracted_shape != scheduled_contracted
+        || order != scheduled_order
+        || *permits_reassociation != numerical.permits_reassociation()
+        || *permits_permutation != numerical.permits_permutation()
+    {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+    // The one precondition this realization has. The registered family declares
+    // an empty contracted domain refused rather than identity-valued, so a
+    // contracted space with no points has no result to commit — and a rank-zero
+    // contracted shape has one point, not none, so the check is on the element
+    // count rather than on the rank.
+    let contracted_points = element_count(contracted_shape)
+        .map_err(|_| ScheduledRegionDiagnostic::ShapeProductOverflow)?;
+    if contracted_points == 0 {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+    if left.mode != AccessMode::Read
+        || right.mode != AccessMode::Read
+        || left.ownership.is_some()
+        || right.ownership.is_some()
+        || write.mode != AccessMode::Write
+        || write.map != LogicalAccess::LinearIdentity
+        || write.ownership != Some(region.schedule.output_owner)
+        || !matches!(write.tensor, TensorRole::Intermediate | TensorRole::Output)
+        || write.component_role.is_some()
+    {
+        return Err(ScheduledRegionDiagnostic::AccessContract);
+    }
+    // The two operands bind the program's first two input tensors positionally,
+    // in the order the structure names them. Without this a region could read
+    // one tensor twice while the second buffer went unread, and every consumer
+    // that binds buffers positionally would bind the wrong one.
+    if left.tensor
+        != (TensorRole::Input {
+            ordinal: InputOrdinal::new(0),
+        })
+        || right.tensor
+            != (TensorRole::Input {
+                ordinal: InputOrdinal::new(1),
+            })
+        || left.component_role.is_some()
+        || right.component_role.is_some()
+    {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+    verify_proof_records(region, &[left, right], write)?;
+
+    let mut contracted_covered = vec![false; contracted_shape.rank()];
+    let mut output_covered = vec![false; region.index.iteration_shape.rank()];
+    for access in [left, right] {
+        let LogicalAccess::ContractionOperand {
+            operand_shape,
+            output_shape,
+            contracted_shape: access_contracted,
+            sources,
+            order: access_order,
+        } = &access.map
+        else {
+            return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+        };
+        if output_shape != &region.index.iteration_shape
+            || access_contracted != contracted_shape
+            || access_order != order
+            || sources.len() != operand_shape.rank()
+        {
+            return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+        }
+        // Every operand axis names one in-range coordinate whose extent it
+        // agrees with, and no two axes of one operand name the same coordinate.
+        // Extent agreement is what makes the row-major linearization stay inside
+        // the operand, which is the whole content of its bounds proof.
+        let mut seen_output = vec![false; output_shape.rank()];
+        let mut seen_contracted = vec![false; contracted_shape.rank()];
+        for (axis, source) in sources.iter().enumerate() {
+            let (shape, seen, covered) = match source {
+                ContractionAxisSource::Output { .. } => {
+                    (output_shape, &mut seen_output, &mut output_covered)
+                }
+                ContractionAxisSource::Contracted { .. } => (
+                    contracted_shape,
+                    &mut seen_contracted,
+                    &mut contracted_covered,
+                ),
+            };
+            let position = match source {
+                ContractionAxisSource::Output { position }
+                | ContractionAxisSource::Contracted { position } => usize::try_from(*position)
+                    .map_err(|_| ScheduledRegionDiagnostic::NumericalOrAccessRefinement)?,
+            };
+            let (Some(extent), Some(slot)) =
+                (shape.extents().get(position), seen.get_mut(position))
+            else {
+                return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+            };
+            if std::mem::replace(slot, true) || operand_shape.extents()[axis] != *extent {
+                return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+            }
+            covered[position] = true;
+        }
+        // A contracted coordinate this operand does not read would make the
+        // operand invariant in it — an outer product summed over a free index,
+        // not a contraction. ADR 0087's second rule refuses exactly that
+        // structure, and this is where a region claiming one is caught.
+        if seen_contracted.iter().any(|read| !read) {
+            return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+        }
+    }
+    // Every output coordinate must be read by at least one operand: one that no
+    // operand reads would make every output position along it hold the same
+    // value, which is a broadcast the structure never declared.
+    if output_covered.iter().any(|read| !read) || contracted_covered.iter().any(|read| !read) {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+    Ok(())
 }
 
 /// Verifies an N-input physical `f32` pointwise region.
@@ -726,6 +885,7 @@ fn reduction_output_shape(region: &ScheduledRegion) -> Option<crate::shape::Shap
         }
         ReductionTopology::None
         | ReductionTopology::Serial { .. }
+        | ReductionTopology::Contraction { .. }
         | ReductionTopology::MultiPass { .. } => Some(shape.clone()),
     }
 }
@@ -808,6 +968,17 @@ fn bounds_proof_refines_access(
                 && order == access_order
                 && input_shape.without_axes(axes) == *output_shape
         }
+        // A contraction operand's proven domain is the contiguous linear range
+        // of its own elements, exactly as an identity-mapped access's is. It
+        // pairs with `LinearRange` for that reason rather than needing a fourth
+        // proof structure: which of those positions the access touches is what
+        // the map states, and `verify_contraction` proves every coordinate the
+        // map derives is in range by requiring per-axis extent agreement.
+        (
+            BoundsProofKind::LinearRange { element_count },
+            LogicalAccess::ContractionOperand { operand_shape, .. },
+        ) => super::model::element_count(operand_shape)
+            .is_ok_and(|elements| *element_count == elements),
         _ => false,
     }
 }
