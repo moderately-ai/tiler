@@ -1,7 +1,7 @@
 ---
 id: admit-a-normal-scale-precondition-for-target-honourable-strict-affine-decode
 title: Admit a normal-scale precondition so strict-affine decode is target honourable
-status: in-progress
+status: done
 priority: p2
 dependencies: [prototype-quantized-value-vertical, scope-first-quantized-lm-profile]
 related: [implement-first-runtime-semantic-value-precondition-enforcement, produce-typed-strict-affine-quantize-semantic-preconditions, implement-first-quantized-backend-profile, admit-strict-affine-quantize-physical-candidate]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/reference, implementation/metal, impl
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, quantization, numerics, metal]
-claimed_from: todo
-assignee: worker-normal-scale
-lease_expires_at: 1785563375
 ---
 ## User-visible outcome
 
@@ -85,3 +82,5 @@ No public item was removed or renamed. `SubnormalFreedom` is deliberately *not* 
 **Contract corrections in `docs/numerical-semantics.md`.** The scale domain, both producers' declarations and `Dequantize`'s deliberate absence, the two codes and their ordering, the discharge as a general mechanism in the subnormal section, the reference boundary's new cases, the identity sentence, the Metal measurement paragraph (refusal → honoured, with the non-vacuity witness), and the proposal's remaining blockers.
 
 **Not done here, deliberately.** No U4 packing, per-axis map, or contraction work. No tensor-payload enforcement. No dtype-ledger cell moved. The `f16`/`bf16`/`f64` arms of `discharges` are reservations, not implemented support — nothing emits arithmetic in them.
+
+**Provisional boundary acceptance (2026-08-01, overnight mode).** The coordinator provisionally accepted the five public items — `positive_normal_scalar_predicate`, `ENCODED_NUMERIC_SCALE_DOMAIN`, `SubnormalFreedom` with `discharges`, and the two derived accessors — with the deliberate identity exclusions (derived value never folded twice) noted. Recorded for Tom's morning review.
