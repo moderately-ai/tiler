@@ -558,7 +558,14 @@ impl<S: Copy> RegionDeclarations<S> {
                 .map(|(operand, _)| BoundOperand {
                     key: operand.key,
                     storage_scalar: operand.storage_scalar,
-                    rank: operand.axes.len(),
+                    extents: operand
+                        .axes
+                        .iter()
+                        .map(|axis| match axis {
+                            DeclaredAxis::Literal(extent) => BoundOperandExtent::Literal(*extent),
+                            DeclaredAxis::Symbol { .. } => BoundOperandExtent::Symbolic,
+                        })
+                        .collect(),
                 })
                 .collect(),
             symbols: bound,
@@ -628,7 +635,25 @@ pub(crate) struct BoundSymbol {
 pub(crate) struct BoundOperand {
     key: InputKey,
     storage_scalar: StorageScalar,
-    rank: usize,
+    extents: Vec<BoundOperandExtent>,
+}
+
+/// Where one axis of a declared operand gets the extent it must report.
+///
+/// A literal extent has to reach the emitted facts, because nothing else states
+/// it: the environment binds symbols, and an axis naming no symbol owes no
+/// obligation, so a region that dropped its literals would hand a runtime check
+/// nothing to compare a supplied value against.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BoundOperandExtent {
+    /// An extent the region fixed literally.
+    Literal(u64),
+    /// An extent naming a declared symbol.
+    ///
+    /// Which symbol is deliberately not carried: the emitted symbol table is the
+    /// single authority for that, and a second index here could disagree with
+    /// it.
+    Symbolic,
 }
 
 /// Where one result axis gets its extent.
@@ -729,11 +754,23 @@ impl BoundRegion {
             .operands
             .iter()
             .map(|operand| {
+                let extents = operand
+                    .extents
+                    .iter()
+                    .map(|extent| match extent {
+                        BoundOperandExtent::Literal(extent) => {
+                            format!("::tiler::__private::OperandExtent::Literal({extent}u64)")
+                        }
+                        BoundOperandExtent::Symbolic => {
+                            "::tiler::__private::OperandExtent::Symbolic".to_owned()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 format!(
-                    "::tiler::__private::OperandFacts {{ key: {}, storage_scalar: {}, rank: {}usize }}",
+                    "::tiler::__private::OperandFacts {{ key: {}, storage_scalar: {}, extents: &[{extents}] }}",
                     rust_string(operand.key.as_str()),
                     storage_scalar_path(operand.storage_scalar),
-                    operand.rank,
                 )
             })
             .collect::<Vec<_>>()

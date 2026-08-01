@@ -13,8 +13,8 @@
 //! an accepting neighbour differing in exactly the input under test.
 
 use tiler::__private::{
-    AxisRef, OperandFacts, RegionFacts, ResultAxis, ResultFacts, SymbolFacts, bind_and_build,
-    bind_region, build_result,
+    AxisRef, OperandExtent, OperandFacts, RegionFacts, ResultAxis, ResultFacts, SymbolFacts,
+    bind_and_build, bind_region, build_result,
 };
 use tiler::value::{
     AdapterCapability, BindError, OperandAxis, ResultRequest, StorageScalar, Tensor, TensorAdapter,
@@ -123,19 +123,21 @@ impl TensorAdapter for ReadOnly {
 
 /// `sym n; in a: f32[n], b: f32[n, 4]; out d: f32[n]`.
 ///
-/// Two operands of different rank, so a rank check cannot pass by accident, and
-/// one symbol occurring on both, so the equality obligation is exercised.
+/// Two operands of different rank, so a rank check cannot pass by accident; one
+/// symbol occurring on both, so the equality obligation is exercised; and one
+/// literal extent, which no symbol names and which therefore only the operand's
+/// own declaration can check.
 const REGION: RegionFacts = RegionFacts {
     operands: &[
         OperandFacts {
             key: "a",
             storage_scalar: StorageScalar::F32,
-            rank: 1,
+            extents: &[OperandExtent::Symbolic],
         },
         OperandFacts {
             key: "b",
             storage_scalar: StorageScalar::F32,
-            rank: 2,
+            extents: &[OperandExtent::Symbolic, OperandExtent::Literal(4)],
         },
     ],
     symbols: &[SymbolFacts {
@@ -209,6 +211,41 @@ fn a_repeated_extent_that_disagrees_is_refused_naming_both_axes() {
         .to_string();
     assert!(rendered.contains("`a` axis 0"), "{rendered}");
     assert!(rendered.contains("`b` axis 0"), "{rendered}");
+}
+
+/// An extent the region fixed literally is checked against the supplied value,
+/// and the refusal names the axis.
+///
+/// Not a case of the unification check above: `b` axis 1 names no symbol, so no
+/// obligation covers it, and a region whose every axis is literal declares no
+/// symbol at all. Without this the region's shape claim would be read by
+/// nothing, and `build_result` would construct the *declared* shape from a value
+/// that does not have it.
+#[test]
+fn a_literal_extent_the_supplied_value_does_not_report_is_refused() {
+    let a = wrap(Held::f32([7]));
+    let b = wrap(Held::f32([7, 5]));
+
+    assert_eq!(
+        bind_region::<Complete>(&REGION, &[&a, &b]).expect_err("`b` axis 1 is declared 4"),
+        BindError::LiteralExtentMismatch {
+            axis: OperandAxis {
+                input: "b",
+                axis: 1,
+            },
+            declared: 4,
+            actual: 5,
+        },
+    );
+
+    let rendered = bind_region::<Complete>(&REGION, &[&a, &b])
+        .expect_err("still refused")
+        .to_string();
+    assert!(rendered.contains("`b` axis 1"), "{rendered}");
+
+    // The accepting neighbour differs in exactly that extent.
+    bind_region::<Complete>(&REGION, &[&a, &wrap(Held::f32([7, 4]))])
+        .expect("the supplied value reports the declared extent");
 }
 
 /// A rank the region did not declare is refused, naming both ranks.
@@ -323,7 +360,7 @@ fn facts_that_disagree_with_themselves_are_refused_rather_than_indexed_past() {
         operands: &[OperandFacts {
             key: "a",
             storage_scalar: StorageScalar::F32,
-            rank: 1,
+            extents: &[OperandExtent::Symbolic],
         }],
         symbols: &[SymbolFacts {
             name: "n",
@@ -345,7 +382,7 @@ fn facts_that_disagree_with_themselves_are_refused_rather_than_indexed_past() {
         operands: &[OperandFacts {
             key: "a",
             storage_scalar: StorageScalar::F32,
-            rank: 1,
+            extents: &[OperandExtent::Symbolic],
         }],
         symbols: &[],
         capabilities: &[],
