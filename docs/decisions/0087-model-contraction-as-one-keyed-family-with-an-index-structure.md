@@ -6,7 +6,7 @@ title: "Model contraction as one keyed family with an index structure"
 topics: ["semantics", "operation-families", "contraction", "identity", "validation", "language-model"]
 catalog_group: "foundation-semantics-extensions"
 decision_status: "accepted"
-implementation_status: "not-started"
+implementation_status: "partial"
 applies_to: ["tiler.contract.ir"]
 evidence: ["tiler.research.shapes.transformer-operation-and-shape-surface", "tiler.research.program-planning.first-metal-lm-workload"]
 ticket: "decide-whether-a-contraction-is-one-keyed-family-or-fixed-arity-keys"
@@ -49,4 +49,4 @@ A tensor contraction is **one keyed semantic operation family** whose node carri
 
 ## Traceability
 
-This record settles the first reserved choice of [Q-SEM-015](../open-questions.md#q-sem-015--tensor-contraction-matmul-batched-matmul-and-einsum) and item 1 of the [Milestone 6 framing's reserved decisions](../roadmap.md#decisions-reserved-for-tom); the multi-operand choice (item 2) and the distributivity choice ([`decide-whether-to-admit-a-distributivity-permission`](../../tickets/decide-whether-to-admit-a-distributivity-permission.md)) remain reserved. The workload evidence is the [transformer operation and shape surface derivation](../research/shapes/transformer-operation-and-shape-surface.md) over the [first Metal language-model workload profile](../research/program-planning/first-metal-lm-workload.md). The [support matrix](../roadmap.md#operation-family-support-matrix) contraction row stays at R1 — identity is decided, nothing is admitted.
+This record settles the first reserved choice of [Q-SEM-015](../open-questions.md#q-sem-015--tensor-contraction-matmul-batched-matmul-and-einsum) and item 1 of the [Milestone 6 framing's reserved decisions](../roadmap.md#decisions-reserved-for-tom); the multi-operand choice (item 2) and the distributivity choice ([`decide-whether-to-admit-a-distributivity-permission`](../../tickets/decide-whether-to-admit-a-distributivity-permission.md)) remain reserved. The workload evidence is the [transformer operation and shape surface derivation](../research/shapes/transformer-operation-and-shape-surface.md) over the [first Metal language-model workload profile](../research/program-planning/first-metal-lm-workload.md). The [support matrix](../roadmap.md#operation-family-support-matrix) contraction row stayed at R1 while this decision was only accepted — identity decided, nothing admitted. Correction, 2026-07-31: [`admit-the-contraction-semantic-profile`](../../tickets/admit-the-contraction-semantic-profile.md) registered `tiler::strict-tensor-contraction-f32@1` with the canonical structure encoding, the five structural refusals, and the item-5 numerical signature this decision requires, and the row moved to R3. The decision itself is unchanged; what moved is the implementation state it reports, and everything above R3 — evaluator, fusion role, lowering, backend — remains absent and fails closed.
