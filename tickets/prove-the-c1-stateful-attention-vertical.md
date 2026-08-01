@@ -1,0 +1,26 @@
+---
+id: prove-the-c1-stateful-attention-vertical
+title: Prove the C1 stateful attention vertical end to end
+status: todo
+priority: p1
+dependencies: [test-the-autoregressive-state-failure-cases]
+related: [design-autoregressive-state-and-kv-cache, retain-the-c1-attention-block-conformance-evidence, retain-the-qwen-conformance-reference-logit-fixture]
+scopes: [implementation/candle, implementation/runtime, research/runtime]
+shared_scopes: [project/tickets]
+paths: []
+tags: [implementation, conformance, kv-cache, attention, language-model]
+---
+## User-visible outcome
+
+**This is rung L5's user-visible outcome.** One causal self-attention block runs C1's prefill and all eight decode steps on Metal against a real KV state, and its results are compared bit for bit with the normative reference at every one of the nine executions.
+
+## Required content
+
+- Nine executions: prefill at `T = S = 10`, then decode steps at `S = 11 … 18`. The comparison is per execution, not only at the end, because a cache that is wrong at step 3 and self-consistent afterwards passes an end-only check.
+- The comparison is on exact bit patterns rather than an epsilon. The program declares a numerical contract; a result that is close but not equal has violated it.
+- The retained evidence records the state's bytes per step (81,920 through 147,456 per layer for the K and V pair), the variant selected at each `S`, and the single artifact identity across all nine.
+- The measurement boundary is stated: one host, one toolchain, one block rather than the model, and one seed for any synthetic operand.
+
+## Closes when
+
+All nine executions agree with the reference, a deliberate perturbation of the cache contents at one step makes exactly that step and its successors disagree, and the retained record says what it does not establish — which is everything about the other twenty-seven layers and about the model.
