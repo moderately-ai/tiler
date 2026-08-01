@@ -3,7 +3,7 @@ id: compose-the-two-level-subgroup-and-workgroup-reduction
 title: Represent the two-level subgroup-then-workgroup reduction
 status: todo
 priority: p2
-dependencies: [accept-the-subgroup-execution-tier-adr]
+dependencies: [accept-adr-0094-subgroup-execution-tier]
 related: [design-the-subgroup-execution-tier, implement-the-single-workgroup-synchronized-reduction-strategy]
 scopes: [research/scheduling]
 shared_scopes: [project/tickets]

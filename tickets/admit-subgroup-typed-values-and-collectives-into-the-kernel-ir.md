@@ -3,7 +3,7 @@ id: admit-subgroup-typed-values-and-collectives-into-the-kernel-ir
 title: Admit subgroup-typed values and shuffle collectives into the structured kernel IR
 status: todo
 priority: p2
-dependencies: [accept-the-subgroup-execution-tier-adr, admit-subgroup-bindings-into-the-schedule-vocabulary]
+dependencies: [admit-subgroup-bindings-into-the-schedule-vocabulary, accept-adr-0094-subgroup-execution-tier]
 related: [design-the-subgroup-execution-tier, admit-lane-typed-values-and-masked-memory-into-the-kernel-ir, close-the-memory-and-execution-scope-vocabulary-with-an-ir-tripwire]
 scopes: [implementation/ir]
 shared_scopes: [project/tickets]
@@ -16,7 +16,9 @@ The structured kernel IR can express a value that lives per subgroup lane and a 
 
 ## Why now
 
-**Fact — the acceptance node releases nothing today.** [`accept-the-subgroup-execution-tier-adr`](accept-the-subgroup-execution-tier-adr.md):15 and `:31` both claim acceptance releases the implementation tickets gated behind it, and [`design-the-subgroup-execution-tier`](design-the-subgroup-execution-tier.md):65 lists the four filed tickets, none of them an implementation ticket. This is the kernel-IR third of what makes that claim true.
+**Fact — the acceptance node releases nothing today.** [`accept-adr-0094-subgroup-execution-tier`](accept-adr-0094-subgroup-execution-tier.md):15 and `:31` both claim acceptance releases the implementation tickets gated behind it, and [`design-the-subgroup-execution-tier`](design-the-subgroup-execution-tier.md):65 lists the four filed tickets, none of them an implementation ticket. This is the kernel-IR third of what makes that claim true.
+
+**Resolved 2026-08-01, and this ticket is the one of the three that acceptance does *not* make ready.** [ADR 0094](../docs/decisions/0094-bind-a-subgroup-combine-to-a-register-transfer-tree.md) landed `accepted` and the acceptance node is `done` under its final id, which is why the link above no longer reads `accept-the-subgroup-execution-tier-adr`. This ticket declares a second dependency on [`admit-subgroup-bindings-into-the-schedule-vocabulary`](admit-subgroup-bindings-into-the-schedule-vocabulary.md), which is `todo` rather than terminal, so it stays out of `ready` until that lands — the same asymmetry the CPU trio recorded, where the node's own text said three tickets were released and two actually were.
 
 **Fact — a shuffle needs no barrier, and that is the design's load-bearing negative result.** The 2026-08-01 addendum on [`add-subgroup-memory-scope-when-collectives-land`](add-subgroup-memory-scope-when-collectives-land.md) records it from Metal Shading Language Specification 4.1 §6.10.2: "SIMD-group functions allow threads in a SIMD-group to share data **without using threadgroup memory or requiring any synchronization operations, such as a barrier**." A shuffle names its source lane and its destination register in one operation that is both the transfer and the ordering, so a shuffle-tree reduction derives no visibility edge, declares no synchronization point, and never reaches `barrier_call` at all. A design that routes a shuffle through a barrier would be wrong, not merely conservative.
 
@@ -26,7 +28,7 @@ The structured kernel IR can express a value that lives per subgroup lane and a 
 
 - Subgroup-typed values and the shuffle vocabulary the record derives, with the lane a shuffle reads named explicitly rather than inferred from position.
 - The combine tree the record enumerates, whose order is *stated* in the IR because the hardware does not state it. An unordered reduction collective is refused by name.
-- The lane identity's proof obligation lands as one concept with the CPU tier's, per [the subgroup execution tier](../docs/research/scheduling/subgroup-execution-tier.md):391; read [`admit-lane-typed-values-and-masked-memory-into-the-kernel-ir`](admit-lane-typed-values-and-masked-memory-into-the-kernel-ir.md) against this ticket before choosing a shape.
+- The lane identity's proof obligation lands as one concept with the CPU tier's, per [the subgroup execution tier](../docs/research/scheduling/subgroup-execution-tier.md):396; read [`admit-lane-typed-values-and-masked-memory-into-the-kernel-ir`](admit-lane-typed-values-and-masked-memory-into-the-kernel-ir.md) against this ticket before choosing a shape.
 - Identity encoding is additive at every site: appended tags only, no existing tag or field position moves, and the kernel identity domain does not step.
 - If this widens `ExecutionScope` or `MemoryScope`, [`close-the-memory-and-execution-scope-vocabulary-with-an-ir-tripwire`](close-the-memory-and-execution-scope-vocabulary-with-an-ir-tripwire.md) is the check that must fire; land that tripwire first or update it in the same change.
 
