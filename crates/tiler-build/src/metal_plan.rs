@@ -552,7 +552,6 @@ mod tests {
                  shift 2\n\
                  case \"$1\" in\n\
                    --find) if [ \"$2\" = \"metal\" ]; then echo '{}'; else echo '{}'; fi ;;\n\
-                   --show-sdk-path) echo /SDKs/MacOSX.sdk ;;\n\
                    --show-sdk-version) echo 26.5 ;;\n\
                    --show-sdk-build-version) echo 25F70 ;;\n\
                    *) exit 1 ;;\n\

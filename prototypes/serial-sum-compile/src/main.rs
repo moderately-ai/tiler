@@ -690,9 +690,14 @@ mod tests {
 
     /// No absolute path reaches the payload's portable subject.
     ///
-    /// `ResolvedTool::path` and `SdkIdentity::path` are local provenance by
-    /// their own documentation. A subject that folded one would give two hosts
-    /// running the same toolchain two different artifact identities.
+    /// `ResolvedTool::path` is local provenance by its own documentation, and a
+    /// subject that folded it would give two hosts running the same toolchain
+    /// two different artifact identities. `SdkIdentity` contributes no path to
+    /// check, carrying only portable fields.
+    ///
+    /// The check walks every text field the payload actually carries rather
+    /// than a fixed list of path-shaped ones, so it keeps deciding the question
+    /// as the provenance record's own shape changes.
     #[test]
     fn the_payload_subject_carries_no_local_path() {
         let (_unit, compiled) = emit_and_compile();

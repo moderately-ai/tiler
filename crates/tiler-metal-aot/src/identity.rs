@@ -392,13 +392,16 @@ impl CompilationIdentity {
     }
 }
 
-/// Encodes the SDK's portable identity, excluding its local path.
+/// Encodes the SDK's portable identity.
+///
+/// Every field is destructured irrefutably rather than read through `.`, so a
+/// field added to [`SdkIdentity`] is a compile error here and its presence in
+/// or absence from identity becomes a decision instead of a default.
 fn push_sdk(bytes: &mut Vec<u8>, sdk: &SdkIdentity) {
     let SdkIdentity {
         canonical_name,
         version,
         build,
-        path: _,
     } = sdk;
     push_str(bytes, canonical_name);
     push_str(bytes, version);
@@ -504,7 +507,6 @@ mod tests {
                 canonical_name: "macosx".to_owned(),
                 version: "26.5".to_owned(),
                 build: "25F70".to_owned(),
-                path: PathBuf::from("/Applications/Xcode.app/Contents/Developer/SDKs/MacOSX.sdk"),
             },
             metal: ResolvedTool {
                 path: PathBuf::from("/usr/bin/metal"),
@@ -718,13 +720,17 @@ mod tests {
     /// different toolchains at the same path — so it buys no soundness and
     /// costs every legitimate hit. The soundness it does not buy is what
     /// [`ToolchainEvidence`] states instead.
+    ///
+    /// The tool paths are the only local paths a resolution still carries: the
+    /// SDK's path is excluded by its absence from [`SdkIdentity`] rather than by
+    /// this test, and `push_sdk`'s irrefutable destructure is what makes
+    /// re-admitting one a compile error rather than a silent identity change.
     #[test]
     fn local_paths_are_excluded_from_the_subject() {
         let baseline = baseline();
         let request = request();
 
         let mut moved = toolchain();
-        moved.sdk.path = PathBuf::from("/opt/sdks/MacOSX.sdk");
         moved.metal.path = PathBuf::from("/opt/tools/metal");
         moved.metallib.path = PathBuf::from("/opt/tools/metallib");
         assert_eq!(

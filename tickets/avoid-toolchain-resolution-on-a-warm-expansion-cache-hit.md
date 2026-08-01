@@ -125,6 +125,8 @@ Reopen the cross-process fingerprint question if either holds: a consumer crate 
 
 `drop-the-unread-sdk-path-from-the-resolved-toolchain` — `--show-sdk-path` populates `SdkIdentity::path`, which compilation identity excludes by construction, the artifact payload does not carry, and no compiler or linker flag reads. It is the only part of the resolution that buys nothing; removing it is a public-field removal and therefore Tom's under ADR 0075, which is why it was filed rather than applied.
 
+**Landed 2026-08-01.** Tom accepted the removal, and `drop-the-unread-sdk-path-from-the-resolved-toolchain` carries it. Every measurement in this outcome describes the five-call resolution as it stood at `a37be43` and stays as measured; a resolution now makes four `xcrun` calls and two `--version` executions. Nothing here needs re-deriving: the removed call was the one component that reached no identity, so the derivation, the `xcrun_db` finding, and both eliminated designs are unaffected.
+
 ### Changes
 
 1. `docs/integration/frontends.md` — the third rust-analyzer bullet is corrected, and a new "Why a warm expansion resolves the toolchain" subsection carries the derivation, the measurements, and the eliminations.
