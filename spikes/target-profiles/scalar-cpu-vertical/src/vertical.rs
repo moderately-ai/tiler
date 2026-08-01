@@ -85,6 +85,19 @@ const OUTPUT_KEY: &str = "result";
 /// Byte width of one `f32`.
 const F32_BYTES: u64 = 4;
 
+/// The one delivery position this vertical's artifact is built for.
+///
+/// A delivery position is the ordered slot a consumer's build target resolves
+/// to, and [`assemble`] pushes exactly one carried payload and names it once per
+/// entry, so this artifact declares one position and zero is the only one in
+/// range — `DecodedProgram::decode` refuses any other by construction rather
+/// than by convention. Named rather than written as a bare `0` at each call,
+/// because the argument decides *which compiled object* is loaded and a literal
+/// there says nothing about why that one; this is the spelling
+/// `prototypes/serial-sum-run` and `prototypes/candle-metal-adapter` already use
+/// for the same single-target case.
+const SOLE_DELIVERY: usize = 0;
+
 /// The operand pattern the workload is filled from.
 ///
 /// Chosen to exercise the numerical contract rather than to be arithmetically
@@ -376,7 +389,12 @@ fn assemble(
                     preconditions: Vec::new(),
                 },
                 implementation: BackendEntryRef {
-                    payload,
+                    // One payload, because this spike compiles one object for
+                    // one consumer build target. The list is positional against
+                    // the artifact's delivery positions, so a second entry here
+                    // would be a second compiled object rather than a second
+                    // plan — and the position a run loads is `SOLE_DELIVERY`.
+                    payloads: vec![payload],
                     entry_key: BackendEntryKey::from_bytes(
                         stage.kernel().canonical_identity().as_bytes(),
                     )
@@ -820,7 +838,13 @@ pub fn run() -> Result<Report, VerticalError> {
     );
 
     // ---- device-free validation ------------------------------------------
-    let mut decoded = DecodedProgram::decode(&envelope).map_err(VerticalError::Load)?;
+    let mut decoded =
+        DecodedProgram::decode(&envelope, SOLE_DELIVERY).map_err(VerticalError::Load)?;
+    println!(
+        "loaded as delivery position {} of the {} this artifact carries",
+        decoded.delivery_position(),
+        decoded.delivery_positions(),
+    );
     let (rows, columns, abi) = bind_interface(&decoded)?;
     println!("the artifact declares a {rows} by {columns} input");
     let environment = host_environment(&compilation)?;
@@ -1037,8 +1061,8 @@ fn sole_ineligibility(rejection: &LoadRejection) -> Option<&VariantIneligibility
 /// Proves the loader accepts the unperturbed subject, before anything is
 /// perturbed.
 fn probe_baseline(subject: &ProbeSubject<'_>) -> Result<String, VerticalError> {
-    let mut decoded =
-        DecodedProgram::decode(subject.bytes).map_err(VerticalError::ProbeBaseline)?;
+    let mut decoded = DecodedProgram::decode(subject.bytes, SOLE_DELIVERY)
+        .map_err(VerticalError::ProbeBaseline)?;
     let preflight = decoded
         .preflight(subject.environment, subject.expected, subject.abi)
         .map_err(VerticalError::ProbeBaseline)?;
@@ -1065,7 +1089,7 @@ fn probe_fail_closed(subject: &ProbeSubject<'_>) -> Result<Vec<String>, Vertical
     let mut damaged = subject.bytes.to_vec();
     let midpoint = damaged.len() / 2;
     damaged[midpoint] ^= 0x01;
-    outcomes.push(match DecodedProgram::decode(&damaged) {
+    outcomes.push(match DecodedProgram::decode(&damaged, SOLE_DELIVERY) {
         Err(rejection @ LoadRejection::Artifact(_)) => {
             format!("a flipped byte at offset {midpoint}: {rejection}")
         }
@@ -1079,25 +1103,27 @@ fn probe_fail_closed(subject: &ProbeSubject<'_>) -> Result<Vec<String>, Vertical
     });
 
     // A truncated envelope is malformed.
-    outcomes.push(match DecodedProgram::decode(&subject.bytes[..midpoint]) {
-        Err(rejection @ LoadRejection::Artifact(ArtifactCodecFailure::Malformed { .. })) => {
-            format!("truncated to {midpoint} byte(s): {rejection}")
-        }
-        Err(other) => return Err(refused("a truncated envelope", other.to_string())),
-        Ok(_) => {
-            return Err(refused(
-                "a truncated envelope",
-                "the envelope decoded as valid".to_owned(),
-            ));
-        }
-    });
+    outcomes.push(
+        match DecodedProgram::decode(&subject.bytes[..midpoint], SOLE_DELIVERY) {
+            Err(rejection @ LoadRejection::Artifact(ArtifactCodecFailure::Malformed { .. })) => {
+                format!("truncated to {midpoint} byte(s): {rejection}")
+            }
+            Err(other) => return Err(refused("a truncated envelope", other.to_string())),
+            Ok(_) => {
+                return Err(refused(
+                    "a truncated envelope",
+                    "the envelope decoded as valid".to_owned(),
+                ));
+            }
+        },
+    );
 
     // An artifact that is not the expected one is a program mismatch. The
     // trailing byte is perturbed deliberately: a recorded identity is
     // domain-checked when it is stated, so a leading-byte flip would be refused
     // at the assertion boundary and never reach the loader.
-    let mut decoded =
-        DecodedProgram::decode(subject.bytes).map_err(VerticalError::ProbeBaseline)?;
+    let mut decoded = DecodedProgram::decode(subject.bytes, SOLE_DELIVERY)
+        .map_err(VerticalError::ProbeBaseline)?;
     let mut bytes = subject.expected.as_bytes().to_vec();
     if let Some(last) = bytes.last_mut() {
         *last ^= 0x01;
@@ -1120,8 +1146,8 @@ fn probe_fail_closed(subject: &ProbeSubject<'_>) -> Result<Vec<String>, Vertical
     );
 
     // A host offering another descriptor of the same profile family.
-    let mut decoded =
-        DecodedProgram::decode(subject.bytes).map_err(VerticalError::ProbeBaseline)?;
+    let mut decoded = DecodedProgram::decode(subject.bytes, SOLE_DELIVERY)
+        .map_err(VerticalError::ProbeBaseline)?;
     let mut descriptor = subject
         .environment
         .target_profile
@@ -1168,8 +1194,8 @@ fn probe_fail_closed(subject: &ProbeSubject<'_>) -> Result<Vec<String>, Vertical
     // CPU vertical exists to be able to make: the two profiles are different
     // families rather than two revisions of one, so the refusal must be a key
     // mismatch and not a descriptor mismatch.
-    let mut decoded =
-        DecodedProgram::decode(subject.bytes).map_err(VerticalError::ProbeBaseline)?;
+    let mut decoded = DecodedProgram::decode(subject.bytes, SOLE_DELIVERY)
+        .map_err(VerticalError::ProbeBaseline)?;
     let metal_family = ExecutionEnvironment {
         target_profile: TargetProfileRef {
             key: TargetProfileKey::new("tiler.target.governed-prototype")
@@ -1207,8 +1233,8 @@ fn probe_fail_closed(subject: &ProbeSubject<'_>) -> Result<Vec<String>, Vertical
     // pair the entry's payload declares, with the profile still exactly the one
     // the variant was assessed against, so the exclusion cannot come from either
     // compatibility classification.
-    let mut decoded =
-        DecodedProgram::decode(subject.bytes).map_err(VerticalError::ProbeBaseline)?;
+    let mut decoded = DecodedProgram::decode(subject.bytes, SOLE_DELIVERY)
+        .map_err(VerticalError::ProbeBaseline)?;
     let metal_host = ExecutionEnvironment {
         target_profile: subject.environment.target_profile.clone(),
         backend: BackendKey::new("tiler.metal").map_err(|_| VerticalError::HostProfile)?,
@@ -1244,8 +1270,8 @@ fn probe_fail_closed(subject: &ProbeSubject<'_>) -> Result<Vec<String>, Vertical
     // alone, so a backend that widened its representation set would have to say
     // so — and the host half is pinned here precisely because this exclusion and
     // the Metal one above now report the same class.
-    let mut decoded =
-        DecodedProgram::decode(subject.bytes).map_err(VerticalError::ProbeBaseline)?;
+    let mut decoded = DecodedProgram::decode(subject.bytes, SOLE_DELIVERY)
+        .map_err(VerticalError::ProbeBaseline)?;
     let other_representation = ExecutionEnvironment {
         target_profile: subject.environment.target_profile.clone(),
         backend: subject.environment.backend.clone(),

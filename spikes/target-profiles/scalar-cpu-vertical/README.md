@@ -10,7 +10,7 @@ evidence_classes: ["executable-model", "bounded-measurement"]
 supports: ["tiler.research.target-profiles.physical-feasibility-model", "tiler.contract.cpu-backend"]
 entrypoints: ["spikes/target-profiles/scalar-cpu-vertical/src/main.rs"]
 last_verified: "2026-08-01"
-verified_at_commit: "e2da98f"
+verified_at_commit: "2119b20"
 ticket: "prototype-a-bounded-scalar-cpu-backend-vertical"
 ---
 
@@ -46,7 +46,7 @@ The binary's only product is a verdict: every stage that fails exits non-zero wi
 3. **Translates** each verified structured kernel into `tiler.cpu.scalar-image-v1` (`src/image.rs`) and serializes it. The translation is a real consumer of KIR: launch builtins, typed constants, index arithmetic, comparisons, the named NaN canonicalization, typed loads and stores, predicated blocks, and bounded serial loops, all read through `VerifiedKernel`'s public views.
 4. **Observes the translator refusing** every buffer parameter this backend cannot bind, against an accepted neighbour, before the positive path is claimed.
 5. **Packages** a real artifact: one carried payload whose `code` is the serialized image, whose compilation subject names the kernel identities it was translated from, and one variant bound to the compiler's own kernel program.
-6. **Encodes and decodes** the envelope through `tiler_artifact`, then runs the fail-closed probe set against those exact bytes.
+6. **Encodes and decodes** the envelope through `tiler_artifact`, as the sole delivery position this artifact declares a payload for, then runs the fail-closed probe set against those exact bytes.
 7. **Decodes the payload** through the image decoder — which knows nothing about `VerifiedKernel` — and runs the payload-level probe set.
 8. **Binds a live host execution context** (`src/host.rs`) by *measuring* this process: architecture, system, pointer width, byte order, and the subnormal behaviour of its actual floating-point arithmetic. It refuses a route whose declared realization this process does not deliver.
 9. **Commits** the route, then executes (`src/interpret.rs`): one invocation at a time, in ascending grid index, on the calling thread.
@@ -54,11 +54,11 @@ The binary's only product is a verdict: every stage that fails exits non-zero wi
 
 ## Result
 
-**Measurement**, Apple M-series arm64 macOS, `rust-toolchain.toml`'s pinned nightly, base commit `e2da98f`:
+**Measurement**, Apple M-series arm64 macOS, `rust-toolchain.toml`'s pinned nightly, base commit `2119b20`:
 
 The vertical executed. Twelve `f32` elements agreed **bit for bit** with `tiler-reference`, including a negative zero whose sign survived, the least positive and least negative subnormals preserved through a multiply, a non-canonical NaN payload canonicalized to the realization's exact `0x7fc00000`, and both infinities. The retained fixture is [`results/2026-07-31-macos-arm64.json`](results/2026-07-31-macos-arm64.json).
 
-Recorded quantities from that run: profile descriptor 797 bytes, payload 265 bytes, envelope 20,953 bytes, artifact identity 9,753 bytes, reference registry identity 446,768 bytes, **zero** deferred prepared-entry predicates.
+Recorded quantities from that run: profile descriptor 865 bytes, payload 265 bytes, envelope 21,296 bytes, artifact identity 9,969 bytes, reference registry identity 912,256 bytes, **zero** deferred prepared-entry predicates.
 
 ### Three identity sizes moved between `488efac` and `63f9259`
 
@@ -101,6 +101,30 @@ Recorded quantities from that run: profile descriptor 797 bytes, payload 265 byt
 
 **Inference, and it is why the last two rows are pinned further than their class.** The two payload perturbations reported one class before and still do, but that class now carries the host's own stated backend and representation, and this artifact packages a single variant — so all four probes arrive as "the whole portfolio was filtered" and only the carried reason tells them apart. `probe_fail_closed` therefore asserts the exclusion's fields rather than only its class: the Metal-host probe requires `tiler.metal`/`metallib` and the representation probe requires `tiler.cpu.scalar`/`tiler.cpu.scalar-image-v2`. Substituting either host pair for the other was made, and the run exits non-zero naming the probe. This is stronger than the retired code was rather than a restoration of it — those two probes matched `UnexecutablePayload { .. }` and were interchangeable then too, and the class move is only what made the weakness visible. The first two rows are separated by their classification as they were before.
 
+### Two API steps landed while this spike could not compile, and the delivery position is a decision
+
+**Fact.** Between `e2da98f` and `2119b20` the spike stopped compiling twice over, in ten places, and neither landing was caught by anything: no `make` target reaches `spikes/`, so the only detector is a reader running it by hand. `BackendEntryRef::payload` became `payloads`, a counted run of payload references rather than one, and `DecodedProgram::decode` gained a `delivery: usize` argument at nine call sites. [`restore-the-scalar-cpu-vertical-spike-against-the-current-crates`](../../../tickets/restore-the-scalar-cpu-vertical-spike-against-the-current-crates.md) repaired both; the provenance ticket that preceded it had deliberately stopped short of the second, because passing a position is a decision rather than a mechanical rename.
+
+**The position this spike resolves is zero, and it is derived rather than convenient.** A delivery position is the ordered slot a consumer's build target resolves to — `crates/tiler-artifact/src/program/model.rs`'s `BackendEntryRef` and `docs/artifact-abi.md` both state that two positions are one compilation, one plan, one kernel program, and two separately compiled objects, and that the artifact layer deliberately carries no name for what a position *is*. `assemble` pushes exactly one carried payload and names it once per entry, so this artifact declares one position, `DecodedProgram::decode` refuses every other index outright, and zero is not a default but the only member of the set. There is no default in the API for exactly the case this artifact is not in: an artifact carrying several objects has no "the" payload, and taking the first would hand a consumer the object built for another target. The constant is named `SOLE_DELIVERY` and documented at its definition, which is the spelling `prototypes/serial-sum-run`, `prototypes/candle-metal-adapter`, and the runtime's own integration tests already use for the same single-target case.
+
+### Five quantities moved between `e2da98f` and `2119b20`
+
+**Measurement.** Recorded against the previous run at `e2da98f`, on the re-run the repair above made possible:
+
+| Quantity | `e2da98f` | `2119b20` |
+| --- | --- | --- |
+| selected plan | `program-alternative:986779d4106ea633` | `program-alternative:72d49e71d668fff8` |
+| profile descriptor bytes | 797 | 865 |
+| envelope bytes | 20,953 | 21,296 |
+| artifact identity bytes | 9,753 | 9,969 |
+| reference registry identity bytes | 446,768 | 912,256 |
+
+**What did not move.** The twelve output bit patterns are byte-identical to every earlier fixture, and so are the payload (265), the element count, the zero deferred predicates, the host string, and every governed key. The profile descriptor moved for the first time across any of these intervals, having held at 797 through the previous three runs.
+
+**No delta here is attributable to any single landing, and the interval is why.** 232 commits separate the two bases, 64 of them touching `crates/` across 158 files, so this table records *that* the numbers moved and not *what moved them*. The byte-count boundary the previous section states applies unchanged: four of these five rows are lengths, and an identity whose content changed without changing length would read the same.
+
+**A correction to the ticket that ordered this run.** It predicted `payload_bytes` would move from 265, reasoning that the provenance record's canonical subject lost three SDK text runs and gained a platform tag. It did not move, and the prediction rested on reading the fixture's field as the payload's canonical subject: `payload_bytes` records the length of the serialized scalar image — the payload's `code` — which no provenance field is part of. Provenance folds into the payload descriptor's canonical key and therefore into artifact identity and the envelope, and those are two of the numbers that did move.
+
 ## Findings
 
 Each is what a consumer-neutral backend-provider contract has to account for. **Fact** means inspected source or this run's output; **Inference** is derived from those.
@@ -119,7 +143,7 @@ Each is what a consumer-neutral backend-provider contract has to account for. **
 
 7. **`PayloadProvenance` carries Apple-shaped required fields.** (Fact, as measured) `deployment_major`/`deployment_minor` and `PayloadSdkIdentity` are mandatory and have no CPU meaning; this spike states its representation version and its own name in them, which is honest but is not what the fields are called. A neutral provenance record would make the platform-versioned fields optional or backend-owned.
 
-   **Closed 2026-08-01 by [`generalize-payload-provenance-beyond-the-apple-shape`](../../../tickets/generalize-payload-provenance-beyond-the-apple-shape.md).** `PayloadProvenance` now carries a `PayloadPlatform`, and this spike's source states `PayloadPlatform::Unversioned` rather than minting an SDK. The answer landed as *backend-owned* rather than optional, which is the stronger of the two the finding offered: which fields a payload owes follows the shape it declares, so a Metal payload still owes the deployment minimum and all three SDK fields and an omission is refused by field name. Two consequences for this record. The source above changed, and **the byte counts under `results/` were not re-measured**, because this spike does not currently compile against `crates/` for reasons unrelated to that change — `BackendEntryRef::payload` became `payloads` and `DecodedProgram::decode` gained a delivery-position argument, both from later landings, and both already broken at `cbec2d4`. [`restore-the-scalar-cpu-vertical-spike-against-the-current-crates`](../../../tickets/restore-the-scalar-cpu-vertical-spike-against-the-current-crates.md) owns repairing and re-running it. Until that run happens, treat `payload_bytes`, `envelope_bytes`, and `artifact_identity_bytes` in the result fixture as measurements of the superseded provenance record.
+   **Closed 2026-08-01 by [`generalize-payload-provenance-beyond-the-apple-shape`](../../../tickets/generalize-payload-provenance-beyond-the-apple-shape.md).** `PayloadProvenance` now carries a `PayloadPlatform`, and this spike's source states `PayloadPlatform::Unversioned` rather than minting an SDK. The answer landed as *backend-owned* rather than optional, which is the stronger of the two the finding offered: which fields a payload owes follows the shape it declares, so a Metal payload still owes the deployment minimum and all three SDK fields and an omission is refused by field name. **Re-measured 2026-08-01 at `2119b20`**, once [`restore-the-scalar-cpu-vertical-spike-against-the-current-crates`](../../../tickets/restore-the-scalar-cpu-vertical-spike-against-the-current-crates.md) repaired the two unrelated API steps that had left the spike uncompilable. Every number under `results/` is now this source's own output: the envelope and artifact identity moved, the payload did not, and the table above gives both the values and the reason the moves cannot be attributed to the provenance change alone.
 
 8. **Two profile axes have no CPU referent and must still be answered.** (Fact) `WorkgroupThreads` and `LocalMemoryBytes` are compared against every kernel's derived `ResourceRequirements`, so a CPU profile has to declare `1` and `0` rather than omit them. Omitting them leaves them `Unknown`, which is not the same claim. **Inference:** the quantitative axis set is a *GPU* axis set with a neutral spelling; a CPU profile's real axes — vector width, mask and tail support, scalable-vector length, cache levels, thread count — have no home in it at all, which is exactly what `docs/backends/cpu.md` proposes and what this vertical could not express.
 
@@ -141,7 +165,7 @@ Every check below was run against a case that must fail, and observed failing. E
 
 **Host context**: an image declaring flushed input subnormals, an image declaring flushed result subnormals, an artifact declaring a 32-bit address model, and an artifact declaring `x86_64`, each refused by the measured context, against the unperturbed declaration it admits.
 
-**The comparison itself**, which is the one that matters most, because every probe above would still pass if the final check could not fail. Deleting the `CanonicalizeF32Nan` arm from `src/interpret.rs` — replacing it with an identity — makes the run exit non-zero at the comparison, naming exactly one differing element: the backend returns the operand's own `0x7fc01234` payload where the reference requires the realization's canonical `0x7fc00000`. Every other element still agrees. That perturbation was made, observed, and reverted; it is the evidence that the agreement above is a result rather than a tautology, and that the NaN canonicalization the kernel names is load-bearing rather than decorative. It was re-run at `63f9259` and again at `e2da98f`, both on 2026-08-01, and produced that same single-element failure each time, so the comparison is still a check that can say no on the current tree rather than one inherited from a run nobody repeated. The second re-run is not redundant: the reference registry identity moved across that interval, so the oracle the comparison is against is not the one the first re-run used.
+**The comparison itself**, which is the one that matters most, because every probe above would still pass if the final check could not fail. Deleting the `CanonicalizeF32Nan` arm from `src/interpret.rs` — replacing it with an identity — makes the run exit non-zero at the comparison, naming exactly one differing element: the backend returns the operand's own `0x7fc01234` payload where the reference requires the realization's canonical `0x7fc00000`. Every other element still agrees. That perturbation was made, observed, and reverted; it is the evidence that the agreement above is a result rather than a tautology, and that the NaN canonicalization the kernel names is load-bearing rather than decorative. It was re-run at `63f9259`, at `e2da98f`, and at `2119b20`, all on 2026-08-01, and produced that same single-element failure each time — exit 1, `0x7fc01234` where the reference requires `0x7fc00000`, every other element still agreeing — so the comparison is still a check that can say no on the current tree rather than one inherited from a run nobody repeated. None of the re-runs is redundant, and the rule is the same each time: the reference registry identity moved across every one of those intervals, so the oracle the comparison is against is never the one the previous re-run used.
 
 ## Measurement boundary
 
@@ -154,5 +178,5 @@ Every check below was run against a case that must fail, and observed failing. E
 
 ## Retained evidence
 
-- [`results/2026-07-31-macos-arm64.json`](results/2026-07-31-macos-arm64.json) — the identities, byte counts, and exact output bit patterns of the run recorded above. Re-running with the same argument overwrites it; a diff is drift from the source beside it. The date in the name is the fixture's origin, deliberately not bumped per run: the path is stable so that `git diff` is the drift signal, and the run it currently holds is dated by `last_verified` above. The 2026-08-01 restoration made four of its numbers move, and the loader-vocabulary re-run later the same day moved two more; both are tabled under "Result" with the superseded values kept rather than overwritten.
+- [`results/2026-07-31-macos-arm64.json`](results/2026-07-31-macos-arm64.json) — the identities, byte counts, and exact output bit patterns of the run recorded above. Re-running with the same argument overwrites it; a diff is drift from the source beside it. The date in the name is the fixture's origin, deliberately not bumped per run: the path is stable so that `git diff` is the drift signal, and the run it currently holds is dated by `last_verified` above. The 2026-08-01 restoration made four of its numbers move, the loader-vocabulary re-run later the same day moved two more, and the delivery-position repair later still moved five; all three are tabled under "Result" with the superseded values kept rather than overwritten. The run this file currently holds is deterministic across invocations: three consecutive runs at `2119b20`, one of them after a rebuild, produced byte-identical fixtures and byte-identical 47-line run narratives.
 - `Cargo.lock` is tracked, so the dependency set a recorded run was taken under is recoverable.
