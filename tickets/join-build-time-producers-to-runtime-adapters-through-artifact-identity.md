@@ -3,7 +3,7 @@ id: join-build-time-producers-to-runtime-adapters-through-artifact-identity
 title: Join build-time producers to runtime adapters through artifact identity
 status: todo
 priority: p1
-dependencies: [produce-a-custom-backend-payload-through-the-build-orchestrator, route-a-custom-backend-through-a-registered-runtime-adapter]
+dependencies: [produce-a-custom-backend-payload-through-the-build-orchestrator, route-a-custom-backend-through-an-independently-selected-adapter]
 related: [accept-and-publish-validated-artifacts-through-the-expansion-cache, bind-runtime-library-and-pipeline-caches-to-exact-payload-bytes]
 scopes: [implementation/build, implementation/runtime, implementation/artifact, contracts/artifacts]
 shared_scopes: [project/tickets]

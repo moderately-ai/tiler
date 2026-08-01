@@ -3,7 +3,7 @@ id: expose-explicit-backend-provider-and-selection-policy-composition
 title: Expose explicit backend-provider and selection-policy composition
 status: todo
 priority: p1
-dependencies: [drive-an-external-physical-implementation-provider-through-compilation, produce-a-custom-backend-payload-through-the-build-orchestrator, route-a-custom-backend-through-a-registered-runtime-adapter, select-executable-variants-across-registered-backend-families]
+dependencies: [drive-an-external-physical-implementation-provider-through-compilation, produce-a-custom-backend-payload-through-the-build-orchestrator, select-executable-variants-across-registered-backend-families, route-a-custom-backend-through-an-independently-selected-adapter]
 related: [prototype-public-compiler-api, admit-the-tiler-facade-and-proc-macro-crate-boundary]
 scopes: [implementation/compiler, implementation/build, implementation/runtime, implementation/artifact, contracts/foundation, contracts/artifacts, contracts/integrations]
 shared_scopes: [project/tickets]
