@@ -1,7 +1,7 @@
 ---
 id: admit-multi-input-elementwise-programs-at-the-compiler-boundary
 title: Admit multi-input elementwise programs at the public compiler boundary
-status: in-progress
+status: todo
 priority: p1
 dependencies: [admit-multi-input-tensors-in-the-scheduled-region-vocabulary]
 related: [prototype-inline-proc-macro-frontend, prototype-semantic-normalization, prototype-inline-aot-integration-proof]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler-api]
-claimed_from: todo
-assignee: worker-multi-input
-lease_expires_at: 1785551213
 ---
 ## Why this exists
 
