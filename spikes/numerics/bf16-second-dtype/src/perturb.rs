@@ -14,8 +14,14 @@ use tiler_compiler::target::{DTypeDispatchabilityResolution, TargetProfileBuildE
 use tiler_ir::program::abi::AvailabilityPhase;
 use tiler_ir::semantic::{ResolvedValueType, TypeKey, builtin_scalar_value_type_facts};
 
-use crate::bf16::{Bf16, ExactValue, TieRule, multiply, round_with_tie_rule};
+use crate::bf16::{
+    Bf16, ExactValue, TieRule, exact_multiply, multiply, round_to_nearest_even, round_with_tie_rule,
+};
 use crate::corpus::{Operation, witnesses};
+use crate::format::BinaryFormat;
+use crate::promotion::{
+    ACCUMULATOR_WITNESS, FUSED_WITNESS, fold_at, fused_exact, promoted_route, route_through,
+};
 use crate::routing::{ios_simulator_profile, macos_profile};
 use crate::seams::Bf16 as Bf16Marker;
 
@@ -206,6 +212,105 @@ pub fn fused_operations_are_unexpressible() -> Perturbation {
                 .map(|operation| operation.as_str())
                 .collect::<Vec<_>>()
                 .join(", ")
+        ),
+    }
+}
+
+/// Confirms the promoted route's exactness depends on binary32's precision.
+///
+/// Stage 2 reports zero disagreements between one exact BF16 rounding and a
+/// widen/evaluate/narrow route through binary32. A stage that can only report
+/// zero is not a check, so this substitutes an intermediate with **BF16's own
+/// exponent range and one extra significand bit** — precision 9, where
+/// the double-rounding bound `q >= 2p + 2` is `9 >= 18` and fails — and requires the same
+/// comparison to start disagreeing. Only the intermediate precision moves: the
+/// operands, the operation, and both roundings are the stage's own.
+#[must_use]
+pub fn promoted_route_depends_on_binary32_precision() -> Perturbation {
+    let narrow = BinaryFormat {
+        name: "bf16 exponent range at precision 9",
+        exponent_bits: 8,
+        trailing_significand_bits: 8,
+    };
+    let partner = Bf16::from_bits(0x3fb2).to_exact();
+    let mut binary32_disagreements = 0_usize;
+    let mut narrow_disagreements = 0_usize;
+    for bits in 0..=u16::MAX {
+        let exact = exact_multiply(&Bf16::from_bits(bits).to_exact(), &partner);
+        let direct = round_to_nearest_even(&exact);
+        if direct != promoted_route(&exact) {
+            binary32_disagreements += 1;
+        }
+        if direct != route_through(narrow, &exact) {
+            narrow_disagreements += 1;
+        }
+    }
+    Perturbation {
+        subject: "the promoted route's binary32 intermediate replaced by a precision-9 format",
+        detected: binary32_disagreements == 0 && narrow_disagreements > 0,
+        detail: format!(
+            "through binary32 {binary32_disagreements} of 65,536 multiplies disagree with one \
+             exact rounding; through precision 9 {narrow_disagreements} do"
+        ),
+    }
+}
+
+/// Confirms the fused witness is about the binary32 rounding boundary.
+///
+/// The witness disagrees because its addend is small enough for binary32 to round
+/// the exact sum back onto a BF16 halfway point. Moving the addend up five
+/// binades — to `2^-20`, which binary32 represents exactly beside the product —
+/// must make the disagreement vanish. If it did not, the witness would be about
+/// the operands rather than about double rounding, and stage 3's conclusion would
+/// not follow.
+#[must_use]
+pub fn the_fused_witness_is_about_double_rounding() -> Perturbation {
+    let (a_bits, b_bits, c_bits) = FUSED_WITNESS;
+    let witness = fused_exact(a_bits, b_bits, c_bits);
+    let witness_differs = round_to_nearest_even(&witness) != promoted_route(&witness);
+    // `2^-20`: biased exponent 107, trailing significand zero, sign set.
+    let coarse_addend = 0xb580_u16;
+    let coarse = fused_exact(a_bits, b_bits, coarse_addend);
+    let coarse_differs = round_to_nearest_even(&coarse) != promoted_route(&coarse);
+    Perturbation {
+        subject: "the fused witness's addend moved from 2^-25 to 2^-20",
+        detected: witness_differs && !coarse_differs,
+        detail: format!(
+            "at {c_bits:#06x} the two routes give {:#06x} and {:#06x}; at {coarse_addend:#06x} \
+             both give {:#06x}",
+            round_to_nearest_even(&witness).to_bits(),
+            promoted_route(&witness).to_bits(),
+            round_to_nearest_even(&coarse).to_bits()
+        ),
+    }
+}
+
+/// Confirms the accumulator witness needs its contributors to accumulate.
+///
+/// Stage 4's two folds differ after four contributors. With **zero** contributors
+/// the fold is the seed and the two must agree, which shows the difference is
+/// accumulated rounding rather than a disagreement the two accumulators have
+/// about the seed itself.
+#[must_use]
+pub fn the_accumulator_witness_needs_contributors() -> Perturbation {
+    let (seed_bits, addend_bits, count) = ACCUMULATOR_WITNESS;
+    let accumulated = (
+        fold_at(BinaryFormat::BF16, seed_bits, addend_bits, count),
+        fold_at(BinaryFormat::BINARY32, seed_bits, addend_bits, count),
+    );
+    let empty = (
+        fold_at(BinaryFormat::BF16, seed_bits, addend_bits, 0),
+        fold_at(BinaryFormat::BINARY32, seed_bits, addend_bits, 0),
+    );
+    Perturbation {
+        subject: "the accumulator witness's contributor count reduced to zero",
+        detected: accumulated.0 != accumulated.1 && empty.0 == empty.1,
+        detail: format!(
+            "with {count} contributors the folds give {:#06x} and {:#06x}; with none both give \
+             {:#06x}",
+            accumulated.0.to_bits(),
+            accumulated.1.to_bits(),
+            empty.0.to_bits()
         ),
     }
 }
