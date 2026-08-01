@@ -1,7 +1,7 @@
 ---
 id: generate-cfg-gated-artifact-family-delivery
 title: Generate the cfg-gated delivery half of the artifact-family selection
-status: todo
+status: done
 priority: p1
 dependencies: [prototype-inline-proc-macro-frontend, prototype-artifact-family-delivery]
 related: [prototype-macro-embedding-and-cargo-behavior, record-that-the-frontend-axis-is-review-gated]
