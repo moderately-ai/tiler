@@ -543,12 +543,13 @@ impl DecodedProgram {
         // Exhaustive rather than a wildcard: `ArtifactExecutionPolicy` is
         // deliberately not `#[non_exhaustive]` (ADR 0074 convention 5b), so a
         // policy added to the artifact layer is a build failure here instead of
-        // being silently treated as directly loadable.
+        // being silently treated as directly loadable. The vocabulary is
+        // one-valued since `RequiresDeviceTranslation` was retired, so this
+        // no longer refuses anything at run time — a payload this loader cannot
+        // deliver is now unrepresentable, and the codec refuses the retired tag
+        // before a route exists to reject.
         match payload.execution_policy {
             ArtifactExecutionPolicy::NativeImage => {}
-            policy @ ArtifactExecutionPolicy::RequiresDeviceTranslation => {
-                return Err(LoadRejection::UndeliverableExecutionPolicy { policy });
-            }
         }
 
         // One condition asked three ways: a descriptor-only payload carries no
@@ -1374,11 +1375,6 @@ pub enum LoadRejection {
         /// How many the artifact declares.
         positions: usize,
     },
-    /// The payload needs a delivery step this device-free loader cannot perform.
-    UndeliverableExecutionPolicy {
-        /// The policy the payload declares.
-        policy: ArtifactExecutionPolicy,
-    },
     /// The artifact names its payload and does not carry the object bytes.
     ///
     /// A descriptor-only payload is well formed; it just cannot be executed
@@ -1517,10 +1513,6 @@ impl fmt::Display for LoadRejection {
                 "runtime.unknown-delivery-position: this artifact carries a payload for \
                  {positions} delivery position(s) and was asked for position {requested}",
             ),
-            Self::UndeliverableExecutionPolicy { policy } => write!(
-                formatter,
-                "runtime.undeliverable: a device-free loader cannot deliver {policy:?}",
-            ),
             Self::ObjectNotCarried => formatter.write_str(
                 "runtime.object-absent: the artifact names its payload and carries no object",
             ),
@@ -1558,7 +1550,6 @@ impl Error for LoadRejection {
             | Self::MisansweredRouteRequirement { .. }
             | Self::UnsatisfiedRouteRequirement { .. }
             | Self::UnknownDeliveryPosition { .. }
-            | Self::UndeliverableExecutionPolicy { .. }
             | Self::ObjectNotCarried
             | Self::LaunchPrecondition { .. }
             | Self::UnpairableSharedAllocation { .. } => None,

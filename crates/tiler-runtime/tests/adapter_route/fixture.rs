@@ -412,8 +412,6 @@ pub struct FixtureSpec {
     pub variant_profile: TargetProfileRef,
     /// Profile the carried payload's own bytes were built for.
     pub payload_profile: TargetProfileRef,
-    /// How the payload reaches an executable state.
-    pub execution_policy: ArtifactExecutionPolicy,
     /// Additional live-device requirements of the route.
     pub route_requirements: Vec<RouteRequirement>,
     /// Deferred prepared-entry predicates of the variant.
@@ -521,7 +519,6 @@ impl Default for FixtureSpec {
             representation: representation(),
             variant_profile: profile(),
             payload_profile: profile(),
-            execution_policy: ArtifactExecutionPolicy::NativeImage,
             route_requirements: vec![host_arithmetic_requirement(backend())],
             deferred_predicates: vec![prepared_predicate(0)],
             entries: vec![FixtureEntry {
@@ -621,7 +618,9 @@ fn push_member(draft: &mut ArtifactProgramBuilder, semantic: &SemanticProgram, s
             spec.representation.clone(),
             SchemaVersion::new(1, 0),
             spec.payload_profile.clone(),
-            spec.execution_policy,
+            // The only policy the vocabulary defines, so the fixture states it
+            // rather than offering a knob with one position.
+            ArtifactExecutionPolicy::NativeImage,
             PayloadContent {
                 metadata: PayloadMetadata {
                     source_representation: RepresentationKey::new(SOURCE_REPRESENTATION_KEY)

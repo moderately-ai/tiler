@@ -1223,7 +1223,7 @@ pub(super) fn payload(tag: u8) -> BackendPayloadDescriptor {
         payload_schema: SchemaVersion::new(1, 0),
         digest: PayloadDigest::from_bytes([tag, 0xb2, 0xc3]).unwrap(),
         compatibility: profile(),
-        execution_policy: ArtifactExecutionPolicy::RequiresDeviceTranslation,
+        execution_policy: ArtifactExecutionPolicy::NativeImage,
     }
 }
 
@@ -1277,7 +1277,7 @@ pub(crate) fn strict_affine_u4_dequantize_artifact() -> VerifiedArtifactProgram 
             payload_schema: SchemaVersion::new(1, 0),
             digest: PayloadDigest::from_bytes([0xd4, 0x04]).expect("payload digest"),
             compatibility: profile(),
-            execution_policy: ArtifactExecutionPolicy::RequiresDeviceTranslation,
+            execution_policy: ArtifactExecutionPolicy::NativeImage,
         })
         .expect("payload");
     draft

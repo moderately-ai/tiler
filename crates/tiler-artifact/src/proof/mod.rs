@@ -310,7 +310,7 @@
 //! #     payload_schema: SchemaVersion::new(1, 0),
 //! #     digest: PayloadDigest::from_bytes([0xa1, 0xb2, 0xc3])?,
 //! #     compatibility: profile.clone(),
-//! #     execution_policy: ArtifactExecutionPolicy::RequiresDeviceTranslation,
+//! #     execution_policy: ArtifactExecutionPolicy::NativeImage,
 //! # })?;
 //! # let key = InputKey::new("input")?;
 //! # builder.push_variant(
