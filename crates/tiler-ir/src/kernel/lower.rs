@@ -28,7 +28,8 @@ use super::error::{KernelBuildError, KernelDiagnostic, KernelLoweringError};
 use super::handles::{KernelBufferId, KernelValueId};
 use super::model::{
     AddressSpace, BinaryOp, BufferAccess, BufferParameter, Builtin, CompareOp, ConvertOp,
-    KernelConstant, KernelData, KernelType, PackedExtractOp, SerialLoopSpec, VerifiedKernel,
+    KernelConstant, KernelData, KernelType, PackedExtractOp, SerialLoopSpec, UnaryOp,
+    VerifiedKernel,
 };
 use super::verify::{access_elements, boundary_accesses};
 
@@ -515,6 +516,21 @@ fn emit_pointwise(
                 let lhs = pointwise_value(&values, *lhs)?;
                 let rhs = pointwise_value(&values, *rhs)?;
                 let result = builder.binary(BinaryOp::F32Add, lhs, rhs)?;
+                builder.convert(ConvertOp::CanonicalizeF32Nan, result)?
+            }
+            PointwiseF32Node::Divide { lhs, rhs } => {
+                let lhs = pointwise_value(&values, *lhs)?;
+                let rhs = pointwise_value(&values, *rhs)?;
+                let result = builder.binary(BinaryOp::F32Divide, lhs, rhs)?;
+                builder.convert(ConvertOp::CanonicalizeF32Nan, result)?
+            }
+            // The exponential's result is canonicalized on the same rule every
+            // other arithmetic result is: the numerical realization installs one
+            // canonical arithmetic NaN payload, and an elementary function that
+            // skipped it would deliver a payload the contract does not name.
+            PointwiseF32Node::Exp { argument } => {
+                let argument = pointwise_value(&values, *argument)?;
+                let result = builder.unary(UnaryOp::F32Exp, argument)?;
                 builder.convert(ConvertOp::CanonicalizeF32Nan, result)?
             }
             PointwiseF32Node::Multiply { lhs, rhs } => {

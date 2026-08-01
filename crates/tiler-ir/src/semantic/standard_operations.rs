@@ -9,7 +9,7 @@ use super::{
     REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, ReindexForm, SemanticProgramBuilder,
     ShapedValue, Value, add_bf16_op, add_f32_op, broadcast_f32_op, canonical_bf16_bits,
     constant_bf16_op, constant_f32_op, multiply_bf16_op, multiply_f32_op, reindex_f32_op,
-    strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
+    silu_f32_op, strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
 };
 
 /// Exact binary32 constant from its IEEE-754 payload.
@@ -350,6 +350,57 @@ impl F32Broadcast {
         )])
         .map_err(BuildError::InvalidOperationAttributes)?;
         apply_single(builder, broadcast_f32_op(), attributes, &[input.erase()])
+    }
+}
+
+/// The binary32 `SiLU` activation, `y = x / (1 + Exp(-x))`.
+///
+/// One atomic operation rather than a composition of an exponential, an addition,
+/// and a division: none of those three is a registered semantic key, and the
+/// activation's resolved accuracy contract for its subordinate exponential is part
+/// of *this* key's identity. A caller that wants the sigmoid-product spelling is
+/// asking for a different binary32 function and does not get it from here.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct F32Silu;
+
+impl F32Silu {
+    /// Applies the registered `SiLU` semantics.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed construction error without mutating the graph on failure,
+    /// including the named refusal when the operand is not `tiler::f32@1`.
+    pub fn apply(
+        builder: &mut SemanticProgramBuilder,
+        input: Value<F32>,
+    ) -> Result<Value<F32>, BuildError> {
+        apply_single(
+            builder,
+            silu_f32_op(),
+            OperationAttributes::empty(),
+            &[input.erase()],
+        )
+    }
+
+    /// Applies `SiLU` through the canonical path and rechecks the operand evidence
+    /// on its result.
+    ///
+    /// The activation is elementwise, so the result carries the operand's own
+    /// shape evidence unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed construction or shape-refinement error.
+    pub fn apply_shaped<E: ShapeEvidence>(
+        builder: &mut SemanticProgramBuilder,
+        input: ShapedValue<F32, E>,
+    ) -> Result<ShapedValue<F32, E>, BuildError> {
+        apply_shaped_single(
+            builder,
+            silu_f32_op(),
+            OperationAttributes::empty(),
+            &[input.weaken().erase()],
+        )
     }
 }
 

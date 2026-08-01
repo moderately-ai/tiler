@@ -483,6 +483,7 @@ fn loaded_buffers(kernel: &VerifiedKernel) -> Vec<VerifiedBufferId> {
                 | OperationView::Binary { .. }
                 | OperationView::Compare { .. }
                 | OperationView::Convert { .. }
+                | OperationView::Unary { .. }
                 | OperationView::PackedExtract { .. }
                 | OperationView::Store { .. }
                 | OperationView::Barrier { .. } => {}

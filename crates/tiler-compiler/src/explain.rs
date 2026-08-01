@@ -3759,7 +3759,21 @@ mod tests {
                 // closed everywhere past the semantic layer, and this digest is
                 // the only pin that moved. The trace's own two record lines are
                 // unchanged; nothing about explain's content moved.
-                "tiler-explain-v7 request=b610aff7e1907c00\n",
+                // Rebaselined from `b610aff7e1907c00` when the standard semantic
+                // registry began registering `tiler::silu-f32@1`. Both halves of
+                // the subject move this time, which is what distinguishes this
+                // step from the bf16 one above. The semantic half moves because
+                // the snapshot admits one further operation family whose facts
+                // carry a complete ADR 0042 accuracy contract — the first
+                // registered definition that does — so the definition projection
+                // folds a resolved tolerance, a metric key, a domain, and four
+                // exceptional-value rules that no earlier snapshot contained. The
+                // compiler half moves because the governed scalar registry gained
+                // `tiler.scalar::divide-f32@1` and `tiler.scalar::exp-f32@1` and
+                // the governed lowering capabilities gained a seventh row. The
+                // trace's own two record lines are unchanged; nothing about
+                // explain's content moved.
+                "tiler-explain-v7 request=50c735514f5d51ca\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

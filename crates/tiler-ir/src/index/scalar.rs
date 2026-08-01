@@ -41,6 +41,31 @@ pub fn add_f32_scalar_op() -> ScalarOpKey {
     governed_scalar_op("add-f32")
 }
 
+/// Returns the governed per-point `f32` division scalar operation key.
+///
+/// A division, and deliberately not a reciprocal followed by a multiplication:
+/// the two round a different number of times and are different binary32
+/// functions. There is no reciprocal scalar key beside it, so the substitution
+/// has nothing to name rather than being forbidden by a rule someone must
+/// remember.
+#[must_use]
+pub fn divide_f32_scalar_op() -> ScalarOpKey {
+    governed_scalar_op("divide-f32")
+}
+
+/// Returns the governed per-point `f32` natural-exponential scalar operation key.
+///
+/// The *precise* exponential. It is the first scalar key whose result is not a
+/// rational function of its operand, so what it may deliver is a resolved ADR
+/// 0042 accuracy contract rather than IEEE-754 alone — and that contract lives on
+/// the semantic operation this scalar realizes, `tiler::silu-f32@1`, not here. A
+/// second copy of the tolerance at this layer would be a second authority over
+/// one obligation.
+#[must_use]
+pub fn exp_f32_scalar_op() -> ScalarOpKey {
+    governed_scalar_op("exp-f32")
+}
+
 /// Returns the governed per-point `f32` NaN-canonicalization scalar key.
 ///
 /// This is the index-region counterpart of the structured kernel's
@@ -948,6 +973,32 @@ fn arithmetic_f32_scalar_facts() -> Result<CanonicalValue, ScalarRegistryError> 
     ])
 }
 
+/// Facts of the governed precise binary32 exponential.
+///
+/// It states the same NaN rule and the same canonical payload as the arithmetic
+/// scalars, and it deliberately states **no rounding rule of its own**: an
+/// elementary function's admitted result set is its operation's resolved accuracy
+/// contract, and writing "round-to-nearest ties-to-even" here would claim a
+/// correctly rounded exponential that nothing establishes. The contraction field
+/// is absent for the same reason it is absent from a conversion — there is no
+/// adjacent product to fuse into.
+fn exp_f32_scalar_facts() -> Result<CanonicalValue, ScalarRegistryError> {
+    scalar_facts([
+        (
+            SCALAR_FACT_ROUNDING,
+            utf8_fact("resolved-by-the-operation-accuracy-contract")?,
+        ),
+        (
+            SCALAR_FACT_NAN_RESULT_RULE,
+            utf8_fact(CANONICAL_ARITHMETIC_NAN_PROFILE)?,
+        ),
+        (
+            SCALAR_FACT_CANONICAL_NAN_BITS,
+            crate::semantic::canonical_f32_bits(crate::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS),
+        ),
+    ])
+}
+
 /// Facts of the governed canonical arithmetic-NaN conversion.
 ///
 /// It installs the same payload as the arithmetic scalars, but it is not
@@ -1302,6 +1353,30 @@ impl ScalarRegistryBuilder {
                 ScalarAttributeSchema::empty(),
                 ScalarArity::exact(2)?,
                 arithmetic_f32_scalar_facts()?,
+                Arc::new(StandardF32Homogeneous),
+            )?,
+        )?;
+        builder.register(
+            provider.clone(),
+            standard_definition(
+                divide_f32_scalar_op(),
+                "IEEE 754-2019 binary32 division; tiler.scalar::divide-f32@1",
+                ScalarAttributeSchema::empty(),
+                ScalarArity::exact(2)?,
+                arithmetic_f32_scalar_facts()?,
+                Arc::new(StandardF32Homogeneous),
+            )?,
+        )?;
+        builder.register(
+            provider.clone(),
+            standard_definition(
+                exp_f32_scalar_op(),
+                "the natural exponential over IEEE 754-2019 binary32, precise family; its admitted \
+                 result set is the resolved accuracy contract of the semantic operation it \
+                 realizes; tiler.scalar::exp-f32@1",
+                ScalarAttributeSchema::empty(),
+                ScalarArity::exact(1)?,
+                exp_f32_scalar_facts()?,
                 Arc::new(StandardF32Homogeneous),
             )?,
         )?;

@@ -56,6 +56,8 @@ pub struct PointwiseF32Value {
 ///         PointwiseF32Node::Constant { .. } => "constant",
 ///         PointwiseF32Node::Add { .. } => "add",
 ///         PointwiseF32Node::Multiply { .. } => "multiply",
+///         PointwiseF32Node::Divide { .. } => "divide",
+///         PointwiseF32Node::Exp { .. } => "exp",
 ///     }
 /// }
 ///
@@ -97,6 +99,30 @@ pub enum PointwiseF32Node {
         lhs: PointwiseF32NodeId,
         /// Right operand, defined before this node.
         rhs: PointwiseF32NodeId,
+    },
+    /// Ordered IEEE-754 binary32 division.
+    ///
+    /// One rounding, deliberately. A reciprocal followed by a multiply rounds
+    /// twice and is a different binary32 function, so the two are separate nodes
+    /// rather than one node with a permission — and this vocabulary has no
+    /// reciprocal node at all, which is what makes the substitution unstatable
+    /// here rather than merely forbidden.
+    Divide {
+        /// Dividend, defined before this node.
+        lhs: PointwiseF32NodeId,
+        /// Divisor, defined before this node.
+        rhs: PointwiseF32NodeId,
+    },
+    /// The natural exponential over IEEE-754 binary32.
+    ///
+    /// The one node in this vocabulary whose result is not a rational function of
+    /// its operands, so it is the one whose admitted result set comes from a
+    /// registered accuracy contract rather than from IEEE-754 alone. The node
+    /// names the *precise* function; an approximate realization is a different
+    /// obligation and this vocabulary cannot spell it.
+    Exp {
+        /// The function's argument, defined before this node.
+        argument: PointwiseF32NodeId,
     },
 }
 
@@ -148,11 +174,21 @@ impl PointwiseF32Expression {
             match node {
                 PointwiseF32Node::Input { ordinal } => ordinals.push(ordinal.get()),
                 PointwiseF32Node::Constant { .. } => {}
-                PointwiseF32Node::Add { lhs, rhs } | PointwiseF32Node::Multiply { lhs, rhs } => {
+                PointwiseF32Node::Add { lhs, rhs }
+                | PointwiseF32Node::Multiply { lhs, rhs }
+                | PointwiseF32Node::Divide { lhs, rhs } => {
                     let Ok(index) = u32::try_from(index) else {
                         return false;
                     };
                     if lhs.0 >= index || rhs.0 >= index {
+                        return false;
+                    }
+                }
+                PointwiseF32Node::Exp { argument } => {
+                    let Ok(index) = u32::try_from(index) else {
+                        return false;
+                    };
+                    if argument.0 >= index {
                         return false;
                     }
                 }
@@ -200,6 +236,13 @@ enum DraftNode {
     Multiply {
         lhs: PointwiseF32Value,
         rhs: PointwiseF32Value,
+    },
+    Divide {
+        lhs: PointwiseF32Value,
+        rhs: PointwiseF32Value,
+    },
+    Exp {
+        argument: PointwiseF32Value,
     },
 }
 
@@ -299,6 +342,45 @@ impl PointwiseF32ExpressionBuilder {
         self.push(DraftNode::Multiply { lhs, rhs })
     }
 
+    /// Adds an ordered binary32 `lhs / rhs`.
+    ///
+    /// One rounding. There is deliberately no reciprocal constructor beside it:
+    /// `lhs * (1 / rhs)` rounds twice and is a different binary32 function, and an
+    /// expression vocabulary that could spell both would let a rewrite exchange
+    /// them.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed handle or structural error when either operand was not
+    /// already defined by this builder or the node limit is exhausted.
+    pub fn divide(
+        &mut self,
+        lhs: PointwiseF32Value,
+        rhs: PointwiseF32Value,
+    ) -> Result<PointwiseF32Value, PointwiseF32ExpressionAdmissionError> {
+        self.validate_operand(&lhs)?;
+        self.validate_operand(&rhs)?;
+        self.push(DraftNode::Divide { lhs, rhs })
+    }
+
+    /// Adds the binary32 natural exponential of `argument`.
+    ///
+    /// The *precise* exponential. What it may deliver is the resolved accuracy
+    /// contract of the semantic operation this expression realizes, which is a
+    /// property of that operation's registered identity rather than of this node.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed handle or structural error when the operand was not
+    /// already defined by this builder or the node limit is exhausted.
+    pub fn exp(
+        &mut self,
+        argument: PointwiseF32Value,
+    ) -> Result<PointwiseF32Value, PointwiseF32ExpressionAdmissionError> {
+        self.validate_operand(&argument)?;
+        self.push(DraftNode::Exp { argument })
+    }
+
     /// Verifies, canonically orders, and freezes the expression under `root`.
     ///
     /// # Errors
@@ -354,7 +436,9 @@ impl PointwiseF32ExpressionBuilder {
                 PointwiseF32Node::Input { ordinal } => Some(ordinal.get()),
                 PointwiseF32Node::Constant { .. }
                 | PointwiseF32Node::Add { .. }
-                | PointwiseF32Node::Multiply { .. } => None,
+                | PointwiseF32Node::Multiply { .. }
+                | PointwiseF32Node::Divide { .. }
+                | PointwiseF32Node::Exp { .. } => None,
             })
             .collect();
         if !input_ordinals_are_dense(&mut ordinals) {
@@ -442,12 +526,15 @@ fn canonicalize_nodes(
         if !operands_visited {
             pending.push((draft_id, true));
             match &draft[draft_index] {
-                DraftNode::Add { lhs, rhs } | DraftNode::Multiply { lhs, rhs } => {
+                DraftNode::Add { lhs, rhs }
+                | DraftNode::Multiply { lhs, rhs }
+                | DraftNode::Divide { lhs, rhs } => {
                     // The stack is LIFO: enqueue the right operand first so the
                     // left operand receives the earlier canonical ordinal.
                     pending.push((rhs.index, false));
                     pending.push((lhs.index, false));
                 }
+                DraftNode::Exp { argument } => pending.push((argument.index, false)),
                 DraftNode::Input { .. } | DraftNode::Constant { .. } => {}
             }
             continue;
@@ -466,6 +553,13 @@ fn canonicalize_nodes(
             DraftNode::Multiply { lhs, rhs } => PointwiseF32Node::Multiply {
                 lhs: resolve(lhs),
                 rhs: resolve(rhs),
+            },
+            DraftNode::Divide { lhs, rhs } => PointwiseF32Node::Divide {
+                lhs: resolve(lhs),
+                rhs: resolve(rhs),
+            },
+            DraftNode::Exp { argument } => PointwiseF32Node::Exp {
+                argument: resolve(argument),
             },
         };
         let id = PointwiseF32NodeId(u32::try_from(nodes.len()).expect("node count is bounded"));
@@ -489,10 +583,13 @@ fn reachable_nodes(nodes: &[PointwiseF32Node], root: PointwiseF32NodeId) -> Vec<
         }
         *seen = true;
         match &nodes[usize::try_from(node.0).expect("validated node ordinal")] {
-            PointwiseF32Node::Add { lhs, rhs } | PointwiseF32Node::Multiply { lhs, rhs } => {
+            PointwiseF32Node::Add { lhs, rhs }
+            | PointwiseF32Node::Multiply { lhs, rhs }
+            | PointwiseF32Node::Divide { lhs, rhs } => {
                 pending.push(*lhs);
                 pending.push(*rhs);
             }
+            PointwiseF32Node::Exp { argument } => pending.push(*argument),
             PointwiseF32Node::Input { .. } | PointwiseF32Node::Constant { .. } => {}
         }
     }

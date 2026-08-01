@@ -23,6 +23,7 @@ use super::operation::{
 };
 use super::quantization::register_standard_quantization;
 use super::reindex::register_standard_reindex;
+use super::silu::register_standard_silu;
 use super::types::{
     AttributeFieldId, CanonicalField, CanonicalValue, CanonicalValueView, QuantSchemeKey,
     ResolvedValueType, TypeIdentityError, TypeKey, validate_canonical_value, validate_key,
@@ -2119,6 +2120,10 @@ impl SemanticRegistryProvider for StandardSemantics {
         // registrations for a reader's benefit alone: registration order fixes
         // nothing about semantics, and the frozen snapshot's identity is
         // computed over an ordered map rather than over this call sequence.
+        // The activation sits after the arithmetic families and before the
+        // structural ones for a reader's benefit alone; registration order fixes
+        // nothing about semantics.
+        register_standard_silu(registrar)?;
         register_standard_reindex(registrar)?;
         register_standard_broadcast(registrar)?;
         register_standard_quantization(registrar)

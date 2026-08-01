@@ -99,8 +99,8 @@ use std::path::Path;
 use tiler_metal_aot::diagnostic::{CompileStage, DriverError};
 use tiler_metal_aot::driver::Toolchain;
 use tiler_metal_aot::input::{
-    ApplePlatform, AppleSdk, CompileRequest, DeploymentMinimum, FpContract, MathMode, MetalTarget,
-    MslVersion, NumericalRealization, OptimizationLevel,
+    ApplePlatform, AppleSdk, CompileRequest, DeploymentMinimum, Fp32Functions, FpContract,
+    MathMode, MetalTarget, MslVersion, NumericalRealization, OptimizationLevel,
 };
 
 use crate::emit::emit_translation_unit;
@@ -214,6 +214,9 @@ fn realization_honours(
         MetalNumericalRequirement::SafeMathMode => realization.math_mode == MathMode::Safe,
         MetalNumericalRequirement::NoFloatingPointContraction => {
             realization.fp_contract == FpContract::Off
+        }
+        MetalNumericalRequirement::PreciseFp32Functions => {
+            realization.fp32_functions == Fp32Functions::Precise
         }
     }
 }

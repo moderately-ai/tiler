@@ -242,6 +242,14 @@ pub enum ReferenceOperationError {
     InvalidApplication,
     /// Shape arithmetic exceeded host limits.
     ShapeTooLarge,
+    /// A certified enclosure could not decide a transcendental reference value.
+    ///
+    /// The fail-closed path of the exact transcendental references: the bracket
+    /// straddles a rounding boundary, so which binary32 value the reference rounds
+    /// to is *not established*. Refusing is the only honest answer — resolving it
+    /// toward the nearer side would make a reference that cannot be wrong, and
+    /// resolving it toward failure would reject a correct implementation.
+    UndecidedTranscendentalReference,
     /// The callback produced the wrong number of ordered results.
     ResultCount {
         /// Required result count.
@@ -297,6 +305,10 @@ impl fmt::Display for ReferenceOperationError {
             Self::ShapeTooLarge => {
                 formatter.write_str("reference operation shape exceeds host limits")
             }
+            Self::UndecidedTranscendentalReference => formatter.write_str(
+                "the certified enclosure does not establish which value the transcendental \
+                 reference rounds to",
+            ),
             Self::ResultCount { expected, actual } => {
                 write!(
                     formatter,

@@ -23,6 +23,7 @@ mod quantization;
 mod registry;
 mod reindex;
 mod shape_evidence;
+mod silu;
 mod standard_operations;
 mod types;
 
@@ -140,9 +141,20 @@ pub use reindex::{
     ReindexFormKind, reindex_f32_op,
 };
 pub use shape_evidence::{SameShape, ShapePredicate, ShapeWitness, ShapedValue};
+pub use silu::{
+    SILU_F32_EXPONENTIAL_ARGUMENT_CEILING_BITS, SILU_F32_EXPONENTIAL_ULP_TOLERANCE,
+    SILU_F32_FACT_APPROXIMATE_INTRINSIC_PERMITTED, SILU_F32_FACT_ARITHMETIC_CONTRACTION_PERMITTED,
+    SILU_F32_FACT_CANONICAL_NAN_BITS, SILU_F32_FACT_COMPUTATION_TYPE,
+    SILU_F32_FACT_EVALUATION_ORDER, SILU_F32_FACT_EXPONENTIAL_ACCURACY_CONTRACT,
+    SILU_F32_FACT_INFINITY_AND_OVERFLOW, SILU_F32_FACT_NAN_BEHAVIOUR,
+    SILU_F32_FACT_RECIPROCAL_TRANSFORM_PERMITTED, SILU_F32_FACT_RESULT_TYPE,
+    SILU_F32_FACT_SIGNED_ZERO, SILU_F32_FACT_SUBNORMALS, silu_f32_exponential_accuracy_contract,
+    silu_f32_exponential_exceptional_contract, silu_f32_exponential_reference_semantics,
+    silu_f32_facts, silu_f32_op, silu_f32_reference_semantics,
+};
 pub use standard_operations::{
     Bf16Add, Bf16Constant, Bf16Multiply, F32Add, F32Broadcast, F32Constant, F32Multiply,
-    F32Reindex, F32TensorContraction, StrictSerialF32Sum,
+    F32Reindex, F32Silu, F32TensorContraction, StrictSerialF32Sum,
 };
 pub use types::{
     AttributeFieldId, CanonicalField, CanonicalFloatBitsRef, CanonicalIntegerWidth,

@@ -436,11 +436,12 @@ pub enum ApproximationEnvelope {
     /// Approximate intrinsics are forbidden; every elementary function follows
     /// its own resolved accuracy contract.
     ///
-    /// That contract now has a carrier rather than being a forward reference:
-    /// [`crate::semantic::accuracy::AccuracyContract`] is the ADR 0042 vocabulary
-    /// this resolution defers to. What it does *not* have is any operation
-    /// carrying one — the vocabulary registers no key — so this variant still
-    /// forbids a relaxation that nothing would currently be able to state.
+    /// That contract has both a carrier and, since `tiler::silu-f32@1`, an
+    /// operation carrying one: [`crate::semantic::accuracy::AccuracyContract`] is
+    /// the ADR 0042 vocabulary this resolution defers to, and the activation's
+    /// definition facts carry a resolved instance of it for the subordinate
+    /// exponential. So this variant is no longer forbidding a relaxation nothing
+    /// could state — it now names a real obligation on a real operation.
     Forbidden,
     /// Permitted up to the backend-elementary envelope.
     ///
@@ -449,6 +450,14 @@ pub enum ApproximationEnvelope {
     /// backend contract". It bounds the approximation by the backend's own stated
     /// accuracy rather than by a Tiler-side numeric tolerance, so a backend that
     /// states none cannot honour it.
+    ///
+    /// **Not reachable for the one operation that could consume it.** The
+    /// admitted activation withholds this dimension from its compiler capability
+    /// row — see `SILU_UNCARRIED_DIMENSIONS` in `crates/tiler-compiler/src/policy.rs`
+    /// — because [`NumericalRealization`] cannot record which resolution a region
+    /// chose, so two contracts differing here would share one identity. Widening
+    /// the realization is what makes this variant consumable rather than merely
+    /// statable.
     BackendElementary,
 }
 

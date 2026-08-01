@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use tiler_ir::semantic::{
     CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE, ProviderIdentity, TypeKey, add_f32_op,
-    broadcast_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op, strict_serial_sum_f32_op,
-    strict_tensor_contraction_f32_op,
+    broadcast_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op, silu_f32_op,
+    strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
 };
 
 use super::contraction::{ContractionContract, StrictTensorContractionF32Reference};
@@ -21,6 +21,7 @@ use super::registry::{
     ReferenceRegistryProvider, ReferenceRegistryRegistrar, ReferenceSignature,
     ReferenceValueValidator,
 };
+use super::silu::silu_reference;
 use super::structural::{BroadcastF32Reference, ReindexF32Reference};
 use super::tensor::{FloatBitOrder, ReferenceElement, Tensor, TensorPayloadView};
 
@@ -28,7 +29,7 @@ pub(crate) struct StandardReferenceProvider;
 
 impl ReferenceRegistryProvider for StandardReferenceProvider {
     fn identity(&self) -> ProviderIdentity {
-        ProviderIdentity::new("tiler", "standard-reference", 4)
+        ProviderIdentity::new("tiler", "standard-reference", 5)
             .expect("the governed reference provider identity is valid")
     }
 
@@ -36,7 +37,7 @@ impl ReferenceRegistryProvider for StandardReferenceProvider {
         &self,
         registrar: &mut ReferenceRegistryRegistrar<'_>,
     ) -> Result<(), ReferenceRegistryError> {
-        let revision = ReferenceCapabilityRevision::new(4)?;
+        let revision = ReferenceCapabilityRevision::new(5)?;
         registrar.register_value_type(
             F32::resolved_type(),
             revision,
@@ -95,10 +96,14 @@ impl ReferenceRegistryProvider for StandardReferenceProvider {
         )?;
         registrar.register(
             broadcast_f32_op(),
-            unary_signature,
+            unary_signature.clone(),
             revision,
             Arc::new(BroadcastF32Reference),
         )?;
+        // The activation's exponential is the first reference in this crate whose
+        // value is not a rational function of its operands, so its implementation
+        // certifies the rounding it reports instead of trusting a host library.
+        registrar.register(silu_f32_op(), unary_signature, revision, silu_reference())?;
         register_standard_quantization(registrar, revision)
     }
 }

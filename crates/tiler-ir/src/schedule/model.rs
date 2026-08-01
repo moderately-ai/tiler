@@ -1053,9 +1053,10 @@ fn push_pointwise_f32_node(bytes: &mut Vec<u8>, node: &PointwiseF32Node) {
         PointwiseF32Node::Input { .. } | PointwiseF32Node::Constant { .. } => {
             TAG_FIELD_BYTES + U32_FIELD_BYTES
         }
-        PointwiseF32Node::Add { .. } | PointwiseF32Node::Multiply { .. } => {
-            TAG_FIELD_BYTES + 2 * U32_FIELD_BYTES
-        }
+        PointwiseF32Node::Add { .. }
+        | PointwiseF32Node::Multiply { .. }
+        | PointwiseF32Node::Divide { .. } => TAG_FIELD_BYTES + 2 * U32_FIELD_BYTES,
+        PointwiseF32Node::Exp { .. } => TAG_FIELD_BYTES + U32_FIELD_BYTES,
     };
     push_len(bytes, encoded_len);
     let start = bytes.len();
@@ -1077,6 +1078,20 @@ fn push_pointwise_f32_node(bytes: &mut Vec<u8>, node: &PointwiseF32Node) {
             push_slice(bytes, &[0x04]);
             push_slice(bytes, &lhs.index().to_be_bytes());
             push_slice(bytes, &rhs.index().to_be_bytes());
+        }
+        // Appended tags, like `TAG_REDUCTION_MULTI_PASS`: every earlier node keeps
+        // its tag and its field layout, so no previously encodable region's bytes
+        // move and the schedule domain deliberately does not step. A reader that
+        // reaches `0x05` or `0x06` is reading a region the earlier vocabulary could
+        // not express, never an earlier region reinterpreted.
+        PointwiseF32Node::Divide { lhs, rhs } => {
+            push_slice(bytes, &[0x05]);
+            push_slice(bytes, &lhs.index().to_be_bytes());
+            push_slice(bytes, &rhs.index().to_be_bytes());
+        }
+        PointwiseF32Node::Exp { argument } => {
+            push_slice(bytes, &[0x06]);
+            push_slice(bytes, &argument.index().to_be_bytes());
         }
     }
     debug_assert_eq!(bytes.len() - start, encoded_len);

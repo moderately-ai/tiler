@@ -102,3 +102,88 @@ Both are now dependencies of this ticket and of [`admit-the-rms-normalization-fa
 ### Deliberately not done
 
 No crate was touched, so no explain digest moved; it remains `0b7759de2d9b5756` at `crates/tiler-compiler/src/explain.rs:3739`. The [support matrix](../docs/roadmap.md#operation-family-support-matrix) row and absence check 1 are **not** updated: both remain accurate — no transcendental operation, evaluator, or structured-kernel construct exists, and the row's own trigger (Q-SEM-004, and Milestone 1's rule) is exactly what this determination confirms is unmet. The `docs/` corrections this reading implies — the D-4 entry, the precedents record's unquoted Metal paragraph, and Q-SEM-004's backend-evidence half — belong to the filed evidence ticket, whose scopes reach them; `research/numerics` and `contracts/numerics` are outside this ticket's declared scopes and were not edited.
+
+## Outcome — 2026-08-01
+
+**Determination: (a) — delivered to R5, which is this ticket's stated honest ceiling.** The earlier determination above is preserved verbatim: it was correct at its base, both gates it filed have since landed, and this section records what the open gate made possible. One key, one accuracy contract, one reference evaluator, one fusion role, one lowering capability, two structured-kernel constructs, one Metal emission, one explainable refusal, and a bounded corpus.
+
+### The governed key, and what its reference pins
+
+**Fact.** `register_standard_silu` in `crates/tiler-ir/src/semantic/silu.rs` registers `tiler::silu-f32@1`, arity one in and one out, `OperationEffect::Pure`, elementwise. Its `NormativeDefinitionRef` pins the **division** form explicitly — `y = x / (1 + Exp(-x))`, in that exact order — names the three ADR 0024 round-to-nearest-ties-to-even boundaries (the negation exact by sign manipulation, the addition and the division rounding once each), and rules out the sigmoid-product spelling by name. `the_registered_reference_pins_the_division_form` reads the registered text rather than the constructor's.
+
+**Measurement — the two spellings, computed with one shared certified exponential, over this corpus.** They differ at exactly three of the thirteen finite corpus arguments, all in the deep-negative tail: `0xc2b00000` by one ULP (`0x83354ddc` against `0x83354ddb`, the divergence the L3′ probe pins), and `0xc2b17213` and `0xc2b17217` by three ULPs each. The product form rounds twice — once at the reciprocal, once at the multiply — where the division rounds once, and the reciprocal's rounding is worth most when `1 + exp(-x)` is large. The ticket's claim of a single divergence was true of the probe's corpus; over a corpus with two more near-threshold arguments the set is three, and `the_sigmoid_product_spelling_differs_at_the_pinned_input` asserts the exact set rather than a count.
+
+**Fact — no general key came with it.** `no_general_exponential_or_sigmoid_key_is_registered` checks `tiler::{exp,sigmoid,gelu,divide}-f32@1` are all unregistered. The contract's `operation()` is `tiler::silu-f32@1`, not a minted exponential.
+
+### The accuracy contract — form, tolerance, derivation, and evidence class
+
+**The contract.** `silu_f32_exponential_accuracy_contract()` resolves the *subordinate exponential only*, which is the composition's one inexact element:
+
+| | |
+| --- | --- |
+| Form | `BoundedPiecewise`, one clause |
+| Predicate | `Ulp(tiler::ulp-reference-gap@1, 12)` |
+| Domain | `(-inf, 88.722832]`, closed at `0x42b17217` |
+| Reference class | `Positive`, justified |
+| NaN reference | `CanonicalNan` |
+| Infinite reference | `SignedInfinity` |
+| Outside domain | `CanonicalNan` |
+| Finite overflow | `SignedInfinity` |
+
+**Inference — why twelve and not four.** Metal's Table 8.1 states `exp <= 4 ulp` under *Apple's* ULP definition, and ADR 0042 forbids translating across metric definitions by name. Apple's second clause admits an adjacent-pair reading and a predecessor-to-successor reading; against `tiler::ulp-reference-gap@1`'s smaller-adjacent-gap rule the largest ratios over the whole finite domain are two and three. Nothing in the retained specification chooses, so the conservative factor covering **both** readings is three and the bound is `4 * 3 = 12`. Stating twelve is a claim about both readings; adopting four or eight would be claiming a reading and a domain that would have to be named.
+
+**Fact — the domain stops where the metric does.** `tiler::ulp-reference-gap@1` is undefined above binary32's finite range, and SiLU reaches those arguments — the whole `-88.73` band does. The ceiling is the largest binary32 argument whose exponential is finite; `the_accuracy_domain_excludes_the_finite_overflow_region` asserts both halves (`exp(ceiling) <= f32::MAX` and `exp(successor) > f32::MAX`), and the gap between the ceiling and the real threshold contains no binary32 value, so excluding it loses no admissible input. Those arguments are the `FiniteOverflowRule`'s subject instead.
+
+**Fact — the contract is inside the registered identity.** `OperationDefinition` has no accuracy slot, so the contract's canonical value rides in the definition's `OperationDefinitionFacts` under `SILU_F32_FACT_EXPONENTIAL_ACCURACY_CONTRACT`. The registry's own definition projection therefore folds it — which is ADR 0016's "transcendental accuracy participates in semantic, plan, artifact, reference, and explain identity" satisfied by the existing mechanism rather than by a second authority. This is why the explain digest moved.
+
+**The implication and its evidence, and the honest classes.** `crates/tiler-compiler/src/target/accuracy.rs` mints `apple::msl-ulp@1`, declares the Metal realization's contract under it (identical in operation, signature, reference semantics, exceptional contract, and domain — every field `refines` compares before the bound), and registers `RegisteredImplication::ScaledMetric { apple::msl-ulp@1 -> tiler::ulp-reference-gap@1, factor 3 }` with the derivation attached. `refines` then admits by `RefinementBasis::RegisteredImplication`. `RegisteredImplicationRegistry::standard()` still ships no cross-metric row; the row is registered where the target realization is declared, not inside the target-neutral vocabulary.
+
+**Two evidence records, because they are two claims.** The ordinary-domain bound is `NormativeGuarantee` — MSL 4.1 at digest `41538b30…`, with Gap 2's applicability inference written *inside the record's own scope field* rather than omitted from it — and it discharges. The exceptional-value, signed-zero, and subnormal behaviour is `EmpiricalQualification` and **does not discharge**: chapter 8 has no edge-case table for math functions, §8.3 disables exceptions, and §8.1's "may be flushed to zero" is permissive and licenses neither declaration, so nothing normative covers that half. `the_bound_is_normative_and_the_exceptional_behaviour_is_only_empirical` asserts `ClassCannotDischarge` for it. The contract says so rather than borrowing the bound the other half established, which is what the ticket asked for.
+
+### Compiler legality
+
+`FusionNumericalCapabilities::governed` gives the key `ElementwiseArithmetic`. `governed_index_access_capabilities` returns seven rows instead of six; the new one emits `tiler.scalar::{constant,multiply,exp,add,divide}-f32@1`, and `tiler.scalar::divide-f32@1` and `tiler.scalar::exp-f32@1` are new governed scalar definitions. The exponential's scalar facts deliberately state **no rounding rule** — writing "round-to-nearest ties-to-even" there would claim a correctly rounded exponential nothing establishes.
+
+`crates/tiler-compiler/src/policy.rs` gives the key a real capability row over six dimensions: the arithmetic row minus contraction, because the composition puts no multiply adjacent to an add. `the_capability_table_names_exactly_the_admitted_operations` passes without touching `UNPLANNED_OPERATIONS`.
+
+**The one deliberate scope cut, stated rather than absorbed.** SiLU is the first admitted operation that could consume `ReciprocalTransform` (it has a division) and the first that could consume `ApproximateIntrinsics` (it has an elementary function). Listing either enters it into `is_consumable`'s union, which decides what *every* contract asks of *every* target; neither is carried by `NumericalRealization`, so `unrepresentable_dimension` would refuse the public `session::NumericalContract::RelaxedF32` preset for every program, activation or not. `policy::SILU_UNCARRIED_DIMENSIONS` names both and `the_uncarried_elementary_dimensions_are_outside_the_realization` fails the moment the realization grows to carry either. Meanwhile the obligation is enforced where this build can enforce it — in the Metal emission. [`carry-the-elementary-numerical-dimensions-in-the-region-realization`](carry-the-elementary-numerical-dimensions-in-the-region-realization.md) owns the widening. The stale `policy.rs` paragraph that derived both dimensions' unconsumability from the admitted set is corrected in the same change.
+
+### Metal realization, and the identity domains that did not move
+
+`UnaryOp::F32Exp` is the new structured-kernel construct — a new enum rather than a `ConvertOp` variant, because a conversion is not an elementary function — with `OperationKind::Unary`, `OperationView::Unary`, a builder constructor, and arms in the identity encoder and the length mirror. `BinaryOp::F32Divide` joins it. `PointwiseF32Node::{Exp, Divide}` are the schedule-side vocabulary, with `PointwiseF32ExpressionBuilder::{exp, divide}` and arms in `kernel::lower::emit_pointwise`.
+
+**No identity domain steps, and the non-step is documented at the tags.** Every addition is an **appended tag** on an existing enum: `BinaryOp::F32Divide` takes `0x08`, `OperationKind::Unary` takes `0x1c`, `PointwiseF32Node::Divide` and `Exp` take `0x05` and `0x06`. No earlier variant's tag moves and no field is inserted into any repeating record, so no previously encodable region or kernel maps to different bytes — this is the `TAG_REDUCTION_MULTI_PASS` case, not the `InputOrdinal` case, and the reasoning is written at each tag in that form. `tiler.kernel.v5` and `tiler.schedule.v3` are unchanged, `STRICT_F32_REGION_IDENTITY_HEX` is unchanged, the four MSL goldens are unchanged, and the governed target descriptor is unchanged. The **one** pin that moved is the explain request qualifier.
+
+`crates/tiler-metal/src/emit.rs` emits `precise::exp(x)` — the namespace written explicitly, because unqualified `exp` selects `air.fast_exp.f32` under the compiler's own default and `precise::exp` selects `air.exp.f32` under both, making the flag a second line of defence rather than the only one — and the `/` operator rather than `metal::divide`, because Table 8.1 states an accuracy for the operator spelling and gives `divide()` no row. `MetalNumericalRequirement::PreciseFp32Functions` is new and is recorded per elementary emission; `the_silu_kernel_requires_the_precise_and_safe_selections` also checks the scale-then-bias fixture does **not** demand it, so the assertion is not passing on a requirement added to every unit.
+
+### Explainable refusal, and the perturbation that fired
+
+`assess_elementary_accuracy` returns a typed refusal naming the operation, the declaring profile's provenance, and the `RefinementUnknown` reason, with two distinct diagnostic codes: `accuracy.elementary.no-installed-realization` (ADR 0043's `Unknown` — no admissible proof path) and `accuracy.elementary.unrefined-realization` (a disproved predicate). Three perturbations were run and each fired:
+
+1. **Registry without the cross-metric row** — same declaration, same requirement, only the derivation removed. Refuses with `UnregisteredMetricImplication { apple::msl-ulp@1, tiler::ulp-reference-gap@1 }`, carrying the declaring profile.
+2. **Empty installation** — refuses as undeclared rather than unrefined.
+3. **Declaration with `FiniteOverflowRule::LargestFinite`** — bound untouched and still translatable; refused as `DifferentExceptionalValueContract` *before* the tolerance is reached, which is ADR 0042's independence enforced rather than described.
+
+**Boundary — where this authority is not wired.** It is a complete typed decision exercised by its own tests and is not folded into `TargetProfile`'s canonical descriptor. Folding it in buys a path SiLU cannot reach — the recognizer routes no activation to a target — at the cost of a descriptor domain step and a mass rebaseline. That wiring belongs with the recognizer work, and the module's `#![allow(dead_code)]` states exactly that rather than a generic reason.
+
+### Bounded conformance evidence — exactly which inputs
+
+`crates/tiler-reference/src/silu.rs` evaluates the pinned formula. Three of its four steps are exact host operations; the exponential's host value is a **candidate** admitted only when an exact-rational enclosure lies strictly inside the candidate's own round-to-nearest interval, which *proves* it is correctly rounded. A straddling bracket returns `UndecidedTranscendentalReference` rather than the nearer side.
+
+Fourteen enumerated binary32 arguments plus one contiguous 4,096-argument walk from `0xc2b17217`. Every ticket-pinned value reproduces: `silu(+0.0)=0x00000000`, `silu(-0.0)=0x80000000`, `silu(+inf)=0x7f800000`, `silu(-inf)=0x7fc00000` (**recorded, not repaired** — `-inf/+inf` is a NaN and the reference is not total on the extended reals), `silu(-88.0)=0x83354ddc`, `silu(-88.7228)=0x82b173cc`, `silu(-88.73)=0x80000000`. The band's zero is asserted to come from an **overflowed exponential** — `certified_exp_f32(-x) == +inf`, then `1+inf = inf`, then a finite negative over an infinity is exactly `-0.0` — and not from a flush. The walk finds the magnitude stepping from a normal value more than twenty times the minimum normal straight to zero, with no subnormal anywhere.
+
+**That is the population.** Nothing here generalizes to the family, nothing here is a claim about any target, and an exhaustive claim over the 2^32 arguments would be `ExhaustiveFinite` evidence with its own harness and budget.
+
+**Every check was run against a case that must fail, and failed.** A four-bit enclosure grid no longer admits the true value; a candidate one ULP either side of the true exponential is refused by the same predicate that accepts it; a candidate thirteen ULPs from the reference `Violates` the registered contract where twelve `Conforms`; the three refusal perturbations above; and `require_declared_realization` fails closed for the SiLU kernel on the measured flushing target.
+
+### R5/R6 boundary
+
+**Fact.** `select_supported_strategy` in `crates/tiler-compiler/src/request.rs` recognizes two whole-program shapes and neither contains an activation, so no program compiles through this key. The recognizer was deliberately not widened. The Metal emission is exercised at the kernel layer the way the existing Metal tests are: a `VerifiedScheduledRegion` is built in-test, lowered, and emitted. R6 is [`reach-a-verified-kernel-through-the-structural-families`](reach-a-verified-kernel-through-the-structural-families.md)'s — the same remainder the structural families filed — and R7 additionally needs a dispatched device comparison.
+
+### Navigation
+
+The support matrix gains an `Elementwise activation` row at R5 and the pointwise-transcendentals row narrows to *general* keys with its rung unmoved. Absence check 1's heading is corrected: one transcendental family is now registered and the check names where its `exp` hits come from. Absence check 3 gains `register_standard_silu` in **both** the alternation and the file list, which its own comment says is the condition for it not to read as a pass.
+
+### Hazard found, outside every declared scope
+
+**Fact.** `.gitignore:13` is a bare `target/`, which matches `crates/tiler-compiler/src/target/` — the compiler's private target-concerns cluster. New files there are silently ignored: `git check-ignore -v crates/tiler-compiler/src/target/accuracy.rs` names that line. The tracked siblings predate the rule's effect on them. This ticket's new module was added with `git add -f`; a future one will be dropped from a commit with no signal at all. Anchoring the rule (`/target/`) is a one-line fix in a file no declared scope reaches, and `.gitignore` is already modified on `main`'s working tree, so it is reported rather than edited here.

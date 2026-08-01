@@ -255,6 +255,14 @@ pub enum BinaryOp {
     F32Multiply,
     /// Exact signed 32-bit subtraction.
     I32Subtract,
+    /// IEEE-754 binary32 division.
+    ///
+    /// A division, deliberately not a reciprocal followed by a multiply: the two
+    /// round a different number of times and are different binary32 functions.
+    /// `tiler::silu-f32@1` pins the division form and withholds the reciprocal
+    /// permission, so a lowering that substituted one for the other would compute
+    /// something the operation does not mean.
+    F32Divide,
 }
 
 impl BinaryOp {
@@ -267,6 +275,13 @@ impl BinaryOp {
             Self::F32Add => 0x05,
             Self::F32Multiply => 0x06,
             Self::I32Subtract => 0x07,
+            // Appended rather than inserted, and the kernel domain deliberately
+            // did not step with it: every earlier variant keeps its tag and every
+            // field keeps its position, so no previously encodable kernel's bytes
+            // move. A reader that reaches `0x08` is reading a kernel the earlier
+            // vocabulary could not express, never an earlier kernel under a new
+            // interpretation.
+            Self::F32Divide => 0x08,
         }
     }
 
@@ -277,7 +292,7 @@ impl BinaryOp {
             Self::IndexAdd | Self::IndexMultiply | Self::IndexDivide | Self::IndexModulo => {
                 KernelType::Index
             }
-            Self::F32Add | Self::F32Multiply => KernelType::F32,
+            Self::F32Add | Self::F32Multiply | Self::F32Divide => KernelType::F32,
             Self::I32Subtract => KernelType::I32,
         }
     }
@@ -324,6 +339,56 @@ impl CompareOp {
         match self {
             Self::IndexLessThan => KernelType::Bool,
         }
+    }
+}
+
+/// A pure unary elementary function.
+///
+/// The first transcendental construct in this vocabulary, and it is one variant
+/// rather than a family: a construct here is only admissible once some registered
+/// operation's *resolved accuracy contract* says what it must deliver, and exactly
+/// one does. Widening this enum is a versioned extension that must bring its own
+/// contract, not a matter of adding the next function a backend happens to expose.
+///
+/// **This names the precise function, never an approximate one.** A backend
+/// selecting a fast-math intrinsic to realize this construct is the substitution
+/// ADR 0076 forbids, and the emission probe records that it is one default
+/// compiler flag away. The construct carries no accuracy attribute of its own
+/// because the accuracy lives in the semantic operation's contract; a second
+/// spelling here would be a second authority over the same obligation.
+///
+/// Deliberately not `#[non_exhaustive]`, for the same reason [`KernelType`] is
+/// not: `tiler-artifact` encodes this vocabulary into a cross-crate total map,
+/// where widening must be a build error at every encoder rather than a silent
+/// identity collision.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum UnaryOp {
+    /// The natural exponential over IEEE-754 binary32.
+    ///
+    /// Realizes the subordinate exponential of `tiler::silu-f32@1` and nothing
+    /// else. Its admitted result set is that key's registered accuracy contract.
+    F32Exp,
+}
+
+impl UnaryOp {
+    const fn tag(self) -> u8 {
+        match self {
+            Self::F32Exp => 0x01,
+        }
+    }
+
+    /// Returns the required operand type.
+    #[must_use]
+    pub const fn operand_type(self) -> KernelType {
+        match self {
+            Self::F32Exp => KernelType::F32,
+        }
+    }
+
+    /// Returns the produced result type.
+    #[must_use]
+    pub const fn result_type(self) -> KernelType {
+        self.operand_type()
     }
 }
 
@@ -535,6 +600,10 @@ pub(super) enum OperationKind {
     },
     Convert {
         op: ConvertOp,
+        source: u32,
+    },
+    Unary {
+        op: UnaryOp,
         source: u32,
     },
     PackedExtract {
@@ -876,6 +945,10 @@ impl<'a> OperationRef<'a> {
                 op: *op,
                 source: kernel.value_id(*source),
             },
+            OperationKind::Unary { op, source } => OperationView::Unary {
+                op: *op,
+                source: kernel.value_id(*source),
+            },
             OperationKind::PackedExtract {
                 op,
                 carrier,
@@ -974,6 +1047,13 @@ pub enum OperationView<'a> {
         /// The applied conversion contract.
         op: ConvertOp,
         /// Converted source value.
+        source: VerifiedValueId,
+    },
+    /// Applies a pure unary elementary function.
+    Unary {
+        /// The applied elementary function.
+        op: UnaryOp,
+        /// The function's argument.
         source: VerifiedValueId,
     },
     /// Extracts one logical packed value from its loaded carrier byte.
@@ -1268,6 +1348,13 @@ fn push_operation(bytes: &mut Vec<u8>, data: &KernelData, operation: &OperationD
             bytes.push(op.tag());
             bytes.extend_from_slice(&source.to_be_bytes());
         }
+        OperationKind::Unary { op, source } => {
+            // Appended tag, like `BinaryOp::F32Divide` above: no earlier kernel's
+            // bytes move, so the kernel identity domain does not step.
+            bytes.push(0x1c);
+            bytes.push(op.tag());
+            bytes.extend_from_slice(&source.to_be_bytes());
+        }
         OperationKind::PackedExtract {
             op,
             carrier,
@@ -1517,7 +1604,9 @@ fn operation_encoded_len(data: &KernelData, operation: &OperationData) -> usize 
         OperationKind::Binary { lhs, rhs, .. } | OperationKind::Compare { lhs, rhs, .. } => 1_usize
             .saturating_add(size_of_val(lhs))
             .saturating_add(size_of_val(rhs)),
-        OperationKind::Convert { source, .. } => 1_usize.saturating_add(size_of_val(source)),
+        OperationKind::Convert { source, .. } | OperationKind::Unary { source, .. } => {
+            1_usize.saturating_add(size_of_val(source))
+        }
         OperationKind::PackedExtract {
             carrier,
             logical_index,
