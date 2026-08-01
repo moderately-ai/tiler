@@ -32,6 +32,7 @@ use crate::request::{
     NumericalPermission, StrictF32NumericalContract, TargetProfile, VerifiedRequestSubject,
     VerifiedTargetRequest,
 };
+use crate::target::feasibility::UnrealizableSynchronization;
 use crate::target::feasibility::{
     AvailabilityPhase, AxisRequirement, CapabilityAxis, DeferredSet, FeasibilityError,
     FeasibilityOutcome, FeasibilityProposal, ProvenEvidence, RejectionCause,
@@ -141,6 +142,17 @@ pub(crate) enum PhysicalError {
         region: RegionId,
         cause: UnhonouredDimension,
     },
+    /// A synchronization realization the target declares it cannot provide.
+    ///
+    /// A distinct variant for the reason [`Self::Numerical`] is one: the
+    /// rejection names a complete subject — kind, arrival scope, publication
+    /// scope, fenced domains, ordering — and the profile that refused it, none of
+    /// which is a quantity. Reporting it as a `Target` bound would restate an
+    /// atomic subject as a number and lose exactly what makes it uncomposable.
+    Synchronization {
+        region: RegionId,
+        cause: Box<UnrealizableSynchronization>,
+    },
     Refinement {
         rule: &'static str,
         region: RegionId,
@@ -183,6 +195,30 @@ impl fmt::Display for PhysicalError {
                     write!(formatter, " and honours {}", honoured.key())?;
                 }
                 write!(formatter, " (profile {})", cause.profile().key())
+            }
+            Self::Synchronization { region, cause } => {
+                let subject = cause.subject();
+                write!(
+                    formatter,
+                    "schedule.synchronization: region {} requires {} arriving {}, publishing {}, \
+                     fencing{}{}, ordered {}; profile {} declares it unrealizable",
+                    region.get(),
+                    subject.kind.key(),
+                    subject.execution_scope.key(),
+                    subject.visibility_scope.key(),
+                    if subject.fenced_spaces.workgroup {
+                        " workgroup"
+                    } else {
+                        ""
+                    },
+                    if subject.fenced_spaces.device {
+                        " device"
+                    } else {
+                        ""
+                    },
+                    subject.ordering.key(),
+                    cause.fact().provenance().profile().key(),
+                )
             }
             Self::Refinement { rule, region } => write!(
                 formatter,
@@ -1545,6 +1581,16 @@ impl AdmissionEvidence {
     pub(crate) fn honoured(&self) -> &[crate::target::honourability::HonouredDimension] {
         self.proven().honoured()
     }
+
+    /// The synchronization realization already established at compile time.
+    ///
+    /// `None` for a region that requires none, which is what keeps a
+    /// zero-synchronization program's explanation free of a manufactured row.
+    pub(crate) const fn synchronization(
+        &self,
+    ) -> Option<&crate::target::feasibility::RealizedSynchronization> {
+        self.proven().synchronization()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1608,6 +1654,12 @@ pub(crate) fn assess_region(
             ResourceVerdict::Rejected(RejectionCause::Numerical(cause)) => {
                 PhysicalError::Numerical { region, cause }
             }
+            ResourceVerdict::Rejected(RejectionCause::Synchronization(cause)) => {
+                PhysicalError::Synchronization {
+                    region,
+                    cause: Box::new(cause),
+                }
+            }
             ResourceVerdict::Rejected(RejectionCause::Capability(predicate)) => {
                 PhysicalError::Target {
                     rule: predicate.axis().key(),
@@ -1665,17 +1717,27 @@ pub(crate) fn target_profile_descriptor(target: &TargetProfile) -> &[u8] {
 /// The candidate requires complete support for the governed unsigned-64 KIR
 /// index operation family and the device address space whenever its resource
 /// requirements demand it. It does not infer a device address width from that
-/// arithmetic type. The prototype baseline needs no local memory and introduces
-/// no synchronization obligation. Its numerical requirements are the region's declared
+/// arithmetic type. Its numerical requirements are the region's declared
 /// realization carried forward **per dimension** rather than collapsed into one
 /// summary bit — the collapse the retired `StrictF32Arithmetic` axis forced, and
 /// which could neither name a failing dimension nor express emulation.
+///
+/// The synchronization requirement is carried the *opposite* way: forward as one
+/// atomic subject rather than per dimension, because each of its dimensions is
+/// separately true of some realization and their conjunction is what the region
+/// needs. It is also carried **conditionally**, and that is what keeps the
+/// absence canonical: a region requiring no synchronization composes no
+/// requirement at all, so no predicate is resolved, no target fact is consulted,
+/// and no explain row exists to be a manufactured zero — exactly as
+/// `index_arithmetic_requirement` yields nothing for a value type with no
+/// arithmetic obligation, and as the retired barrier-count axis must never again
+/// yield `required 0`.
 fn region_proposal(
     requirements: ResourceRequirements,
     arithmetic: ArithmeticType,
     work_items: u64,
 ) -> Result<FeasibilityProposal, FeasibilityError> {
-    FeasibilityProposal::new(
+    FeasibilityProposal::new_with_synchronization(
         REGION_PROPOSAL_CANDIDATE,
         vec![
             AxisRequirement::new(CapabilityAxis::GridAxisThreads, work_items),
@@ -1724,6 +1786,7 @@ fn region_proposal(
                 DimensionBehaviour::Transform(requirements.reassociation),
             ),
         ],
+        requirements.synchronization,
     )
 }
 
@@ -1820,8 +1883,15 @@ mod tests {
         // API-backed bound four. Device-address width remains absent because no
         // current KIR operation consumes it and the governed authority does not
         // establish it.
+        // Rebaselined again at the `tiler.target-profile.declaration.v11` step,
+        // which appends the synchronization-realization row family. The governed
+        // profile declares *no* row, and its bytes still move: the family writes
+        // its own domain separator and a count, so "this target says nothing
+        // about synchronization" becomes a recorded fact. That is the step's
+        // purpose — a `v10` declaration could not distinguish a target that had
+        // been asked from one that had not.
         // Every artifact identity and cache entry derived from it moves with it. Regenerate with `cargo nextest run -p tiler-compiler -E 'test(the_governed_descriptor_bytes_do_not_move)'` and take `left`.
-        const GOVERNED: &str = "000000000000002574696c65722e7461726765742d70726f66696c652e6465636c61726174696f6e2e76313000000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e7631000000000000002574696c65722e7461726765742d70726f66696c652e666163742d736f75726365732e7634000000000000000001000000000000007400000003010101000000000000002a74696c65722e676f7665726e65642d7461726765742d70726f66696c652d617574686f726974792e76310000000101000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e76310000000100000000000000050000000000000009677269642d61786973040000000000000000000000000000000f6275666665722d62696e64696e6773040000000000000000000000000000000d6465766963652d6d656d6f727901000000000000000000000000000000126c6f63616c2d6d656d6f72792d62797465730000000000000000000000000000000014696e6465782d61726974686d657469632d75363401000000000000000000000000000000010000000000000015746872656164732d7065722d776f726b67726f7570000000000000009274696c65722e7461726765742d70726f70657274792d71756572792e763100000000000000003874696c65722e7461726765742e70726570617265642d656e7472792e6d61782d746872656164732d7065722d776f726b67726f75702e763104000000000000000574696c6572000000000000001970726570617265642d656e7472792d70726f70657274696573000000010000000000000001000000000000004303000000000000003a74696c65722e7265736f6c7665642d76616c75652d747970652e76330001000000000000000574696c6572000000000000000366333200000001000000000000000c000101010100000101020100000201010100000201020100000302010100000302020100000402010100000402020100000502010100000602010100000904010100000a04010100000000000000002e74696c65722e7461726765742d70726f66696c652e64747970652d64697370617463686162696c6974792e7632000000000000000001000000000000003a74696c65722e7265736f6c7665642d76616c75652d747970652e76330001000000000000000574696c65720000000000000003663332000000010100";
+        const GOVERNED: &str = "000000000000002574696c65722e7461726765742d70726f66696c652e6465636c61726174696f6e2e76313100000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e7631000000000000002574696c65722e7461726765742d70726f66696c652e666163742d736f75726365732e7634000000000000000001000000000000007400000003010101000000000000002a74696c65722e676f7665726e65642d7461726765742d70726f66696c652d617574686f726974792e76310000000101000000000000002a74696c65722e70726f746f747970652d7461726765742d6e65757472616c2d626173656c696e652e76310000000100000000000000050000000000000009677269642d61786973040000000000000000000000000000000f6275666665722d62696e64696e6773040000000000000000000000000000000d6465766963652d6d656d6f727901000000000000000000000000000000126c6f63616c2d6d656d6f72792d62797465730000000000000000000000000000000014696e6465782d61726974686d657469632d75363401000000000000000000000000000000010000000000000015746872656164732d7065722d776f726b67726f7570000000000000009274696c65722e7461726765742d70726f70657274792d71756572792e763100000000000000003874696c65722e7461726765742e70726570617265642d656e7472792e6d61782d746872656164732d7065722d776f726b67726f75702e763104000000000000000574696c6572000000000000001970726570617265642d656e7472792d70726f70657274696573000000010000000000000001000000000000004303000000000000003a74696c65722e7265736f6c7665642d76616c75652d747970652e76330001000000000000000574696c6572000000000000000366333200000001000000000000000c000101010100000101020100000201010100000201020100000302010100000302020100000402010100000402020100000502010100000602010100000904010100000a04010100000000000000002e74696c65722e7461726765742d70726f66696c652e64747970652d64697370617463686162696c6974792e7632000000000000000001000000000000003a74696c65722e7265736f6c7665642d76616c75652d747970652e76330001000000000000000574696c65720000000000000003663332000000010100000000000000003474696c65722e7461726765742d70726f66696c652e73796e6368726f6e697a6174696f6e2d7265616c697a6174696f6e2e7631000000000000000000";
 
         let profile = crate::request::TargetProfile::governed();
         let descriptor = target_profile_descriptor(&profile);

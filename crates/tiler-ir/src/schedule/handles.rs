@@ -136,6 +136,35 @@ impl StagingId {
     }
 }
 
+/// A tile-local ordinal naming one synchronization point.
+///
+/// Part of canonical identity for the reason [`PhaseId`] is: which point orders
+/// which handoff is the schedule's synchronization authority itself, and two
+/// tiles whose points sit at different boundaries order different programs.
+///
+/// This is also the reference a structured-kernel barrier carries, which is what
+/// makes "this barrier realizes *that* point" a resolvable statement rather than
+/// a positional coincidence.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct SyncPointId(u32);
+
+impl SyncPointId {
+    /// The first synchronization point of a cooperative tile.
+    pub const FIRST: Self = Self(0);
+
+    /// Wraps a tile-local synchronization-point ordinal.
+    #[must_use]
+    pub const fn new(ordinal: u32) -> Self {
+        Self(ordinal)
+    }
+
+    /// Returns the tile-local synchronization-point ordinal.
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
 /// A region-local reference to a write-ownership proof witness.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct OwnershipWitnessId(u32);

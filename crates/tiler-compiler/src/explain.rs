@@ -596,6 +596,28 @@ pub(crate) enum FeasibilityOutcome {
     Rejected(ReasonCode),
 }
 
+/// How one complete synchronization subject resolved against a target.
+///
+/// A third vocabulary, and not [`FeasibilityOutcome`]: a subject is matched by
+/// equality and has no magnitude, so the quantitative `required > available`
+/// relation that record validates has nothing to range over here. Three values
+/// rather than two, for the reason [`HonourabilityOutcome`] has three: the
+/// absence of a refusal is not an admission, and a reader must be able to see
+/// that a target simply never spoke to this realization.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum SynchronizationOutcome {
+    /// A fact declares the target realizes exactly this subject.
+    Realized { profile: SubjectKey },
+    /// A fact declares the target does not realize it.
+    Unrealizable { profile: SubjectKey },
+    /// Nothing available declares anything about this exact subject.
+    ///
+    /// This is where a profile carrying facts about *neighbouring* subjects
+    /// lands, and the record says so rather than reporting the closest one:
+    /// naming a near miss in an explanation invites a reader to compose it.
+    Undeclared,
+}
+
 /// How one numerical dimension resolved against a target's declaration.
 ///
 /// A distinct vocabulary from [`FeasibilityOutcome`], which is quantitative and
@@ -685,6 +707,34 @@ pub(crate) enum ExplainEvent {
         outcome: HonourabilityOutcome,
         profile: SubjectKey,
     },
+    /// One complete synchronization realization assessed against a target.
+    ///
+    /// The whole subject in one record, deliberately not five records and not a
+    /// [`Self::Feasibility`] row per dimension: a subject is matched by equality
+    /// and has no magnitude, and splitting it across rows would render an
+    /// explanation from which a reader could conclude that four of its five
+    /// dimensions were "admitted" — the exact composition the atomic fact exists
+    /// to prevent, reproduced in the explanation instead of in the authority.
+    ///
+    /// **A candidate requiring no synchronization emits no record at all.** The
+    /// absence is not an omission to be filled with a zero row; it is what the
+    /// retired barrier-count axis used to report as `required 0`.
+    SynchronizationRealization {
+        /// Governed key of the required operation kind.
+        kind: ReasonCode,
+        /// Invocations that must arrive at the point.
+        execution_scope: ReasonCode,
+        /// Invocations across which its fenced effects publish.
+        visibility_scope: ReasonCode,
+        /// Whether workgroup memory is among the fenced domains.
+        fences_workgroup: bool,
+        /// Whether device memory is among the fenced domains.
+        fences_device: bool,
+        /// Governed key of the required ordering.
+        ordering: ReasonCode,
+        /// How the target resolved the whole subject.
+        outcome: SynchronizationOutcome,
+    },
     DeferredCapability {
         predicate: PredicateKey,
         reason: ReasonCode,
@@ -722,7 +772,8 @@ impl ExplainEvent {
             | Self::CompilerFailure { stage, .. } => *stage,
             Self::Feasibility { .. }
             | Self::DeferredTargetRequirement { .. }
-            | Self::NumericalHonourability { .. } => ExplainStage::TargetFeasibility,
+            | Self::NumericalHonourability { .. }
+            | Self::SynchronizationRealization { .. } => ExplainStage::TargetFeasibility,
             Self::DeferredCapability { .. } => ExplainStage::CapabilityResolution,
             Self::CostAssessment { .. } => ExplainStage::Costing,
             Self::Selection { .. }
@@ -747,6 +798,10 @@ impl ExplainEvent {
             }
             | Self::NumericalHonourability {
                 outcome: HonourabilityOutcome::Honoured { .. },
+                ..
+            }
+            | Self::SynchronizationRealization {
+                outcome: SynchronizationOutcome::Realized { .. },
                 ..
             } => ExplainDisposition::Admitted,
             Self::DeferredTargetRequirement { .. } => ExplainDisposition::DeferredAdmitted,
@@ -791,6 +846,13 @@ impl ExplainEvent {
             | Self::NumericalHonourability {
                 outcome: HonourabilityOutcome::Undeclared,
                 ..
+            }
+            // Undeclared for the same reason and with the same consequence: a
+            // profile that never spoke to this exact realization has not refused
+            // it, and a reader must not act on the silence either way.
+            | Self::SynchronizationRealization {
+                outcome: SynchronizationOutcome::Undeclared,
+                ..
             } => ExplainDisposition::DeferredUnsupported,
             Self::BudgetStop { .. } => ExplainDisposition::BudgetStopped,
             Self::CostAssessment {
@@ -803,6 +865,10 @@ impl ExplainEvent {
             }
             | Self::NumericalHonourability {
                 outcome: HonourabilityOutcome::Unhonourable { .. },
+                ..
+            }
+            | Self::SynchronizationRealization {
+                outcome: SynchronizationOutcome::Unrealizable { .. },
                 ..
             }
             | Self::Selection {
@@ -946,12 +1012,25 @@ impl ExplainEvent {
             Self::BudgetStop { limit, actual, .. } if actual <= limit => {
                 return Err(ExplainError::InvalidQuantityRelation);
             }
+            // A subject that fences nothing publishes nothing, so a record
+            // claiming one was assessed states a check no realization could
+            // satisfy and no requirement could have produced.
+            Self::SynchronizationRealization {
+                fences_workgroup,
+                fences_device,
+                ..
+            } if !fences_workgroup && !fences_device => {
+                return Err(ExplainError::InvalidQuantityRelation);
+            }
             // A honourability record has no magnitude relation to validate: its
             // three outcomes are already disjoint, and the means it carries is a
-            // governed key rather than a comparable quantity.
+            // governed key rather than a comparable quantity. A synchronization
+            // record has none for the same reason, and one more: its subject is
+            // matched by equality, so there is no `required > available` to check.
             Self::BudgetStop { .. }
             | Self::DeferredCapability { .. }
             | Self::NumericalHonourability { .. }
+            | Self::SynchronizationRealization { .. }
             | Self::Selection { .. }
             | Self::SemanticSelection { .. }
             | Self::PreferencePruned { .. }
@@ -2268,6 +2347,42 @@ fn render_event(output: &mut String, event: &ExplainEvent) {
             outcome,
             profile,
         ),
+        // The whole subject on one line, and the fenced domains spelled as a
+        // set rather than a count: a reader has to be able to see that "device"
+        // is absent, which a number of fenced spaces would hide.
+        ExplainEvent::SynchronizationRealization {
+            kind,
+            execution_scope,
+            visibility_scope,
+            fences_workgroup,
+            fences_device,
+            ordering,
+            outcome,
+        } => {
+            let mut fences = Vec::new();
+            if *fences_workgroup {
+                fences.push("workgroup");
+            }
+            if *fences_device {
+                fences.push("device");
+            }
+            let _ = write!(
+                output,
+                "synchronization:{}:arrive={}:publish={}:fence={}:order={}:{}",
+                kind.as_str(),
+                execution_scope.as_str(),
+                visibility_scope.as_str(),
+                fences.join("+"),
+                ordering.as_str(),
+                match outcome {
+                    SynchronizationOutcome::Realized { profile } =>
+                        format!("realized:profile={}", profile.as_str()),
+                    SynchronizationOutcome::Unrealizable { profile } =>
+                        format!("unrealizable:profile={}", profile.as_str()),
+                    SynchronizationOutcome::Undeclared => "undeclared".to_owned(),
+                }
+            );
+        }
         ExplainEvent::DeferredCapability { predicate, reason } => {
             let _ = write!(
                 output,
@@ -2790,6 +2905,36 @@ fn encode_event(bytes: &mut Vec<u8>, event: &ExplainEvent) {
             outcome,
             profile,
         ),
+        // Event tag `13`, appended: every earlier record keeps its tag and its
+        // field layout, so no previously encoded trace's bytes move.
+        ExplainEvent::SynchronizationRealization {
+            kind,
+            execution_scope,
+            visibility_scope,
+            fences_workgroup,
+            fences_device,
+            ordering,
+            outcome,
+        } => {
+            bytes.push(13);
+            push_slice(bytes, kind.as_str().as_bytes());
+            push_slice(bytes, execution_scope.as_str().as_bytes());
+            push_slice(bytes, visibility_scope.as_str().as_bytes());
+            bytes.push(u8::from(*fences_workgroup));
+            bytes.push(u8::from(*fences_device));
+            push_slice(bytes, ordering.as_str().as_bytes());
+            match outcome {
+                SynchronizationOutcome::Realized { profile } => {
+                    bytes.push(1);
+                    push_slice(bytes, profile.as_str().as_bytes());
+                }
+                SynchronizationOutcome::Unrealizable { profile } => {
+                    bytes.push(2);
+                    push_slice(bytes, profile.as_str().as_bytes());
+                }
+                SynchronizationOutcome::Undeclared => bytes.push(3),
+            }
+        }
         ExplainEvent::DeferredCapability { predicate, reason } => {
             bytes.push(4);
             push_slice(bytes, predicate.as_str().as_bytes());
@@ -3799,7 +3944,21 @@ mod tests {
                 // gained no key — the emission reaches `multiply-f32` and
                 // `add-f32`, both already registered. The trace's own two record
                 // lines are unchanged; nothing about explain's content moved.
-                "tiler-explain-v7 request=4d9f4773575b6679\n",
+                // Rebaselined from `4d9f4773575b6679` when the target profile
+                // gained its synchronization-realization declaration. Only the
+                // *compiler* half of the subject moves, and it moves even though
+                // the governed profile declares no realization: the complete
+                // declaration stepped to
+                // `tiler.target-profile.declaration.v11`, whose row family writes
+                // its own domain separator and a count, so "this target says
+                // nothing about synchronization" is now a recorded fact rather
+                // than an absence recoverable from bytes that never stated it.
+                // Two requests compiled against a target that has been asked and
+                // one that has not are different requests. The semantic half did
+                // not move — no operation family, contract, or dtype changed —
+                // and the trace's own two record lines are unchanged, because a
+                // program requiring no synchronization emits no record.
+                "tiler-explain-v7 request=1ac2bf9aeef5d035\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

@@ -23,8 +23,9 @@ use tiler_ir::program::{
     VerifiedKernelProgram,
 };
 use tiler_ir::schedule::{
-    ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, NumericalRealization,
-    ResourceRequirements, SubnormalMode, ValueDomainProvenance,
+    ExceptionalValueAssumption, FlushedZeroSign, MemoryOrdering, NumericalPermission,
+    NumericalRealization, ResourceRequirements, SubnormalMode, SynchronizationKind,
+    SynchronizationScope, SynchronizationSubject, ValueDomainProvenance,
 };
 use tiler_ir::semantic::{
     EncodedComponentRole, InputKey, OutputKey, ProviderIdentity,
@@ -184,7 +185,25 @@ use super::requirement::{RouteRequirement, push_requirements};
 /// entry's bytes rather than only removing a payload from the sorted table, so a
 /// cache holding the two-family artifact misses for the one-family one instead
 /// of matching a subject that carries different objects.
-const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v13\0";
+///
+/// # Why this is a `v14` step
+///
+/// An executable entry's fixed resource record now states the synchronization
+/// realization its schedule requires, or states that it requires none. The field
+/// lands inside a record every entry writes, ahead of its numerical fields, so a
+/// `v13` encoding of one artifact could otherwise equal a `v14` encoding of
+/// another. The subjects genuinely differ: a `v13` identity described an entry
+/// that could not state a synchronization obligation at all, so an entry that
+/// performs a fenced staged handoff and an entry that performs none were
+/// indistinguishable in these bytes. They are different programs against
+/// different target authorities, and a cache holding one must miss for the
+/// other.
+///
+/// The **absence** is folded too, and that is the load-bearing half. Writing
+/// nothing for an entry that synchronizes nothing would leave "no requirement"
+/// recoverable from bytes that never stated it, so a later entry that gained one
+/// could share identity with the one that had none.
+const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v14\0";
 
 /// [`ARTIFACT_DOMAIN`] without its terminator, for rendering in a diagnostic.
 ///
@@ -1964,12 +1983,99 @@ pub(super) const fn exceptional_assumption_from_tag(tag: u8) -> Option<Exception
     }
 }
 
+/// This crate's own tag table for the synchronization operation kind.
+///
+/// A second, independent copy of the schedule's table by design, exactly as the
+/// subnormal and permission tables are: the two identities are different
+/// subjects, and a shared encoder would let one domain's step silently move the
+/// other's bytes. Adding a kind is a build error at both.
+pub(super) const fn synchronization_kind_tag(kind: SynchronizationKind) -> u8 {
+    match kind {
+        SynchronizationKind::ControlBarrier => 0x01,
+        SynchronizationKind::AsynchronousCopy => 0x02,
+        SynchronizationKind::SplitPhaseBarrier => 0x03,
+        SynchronizationKind::Collective => 0x04,
+        SynchronizationKind::Atomic => 0x05,
+        SynchronizationKind::InterDispatchDependency => 0x06,
+    }
+}
+
+pub(super) const fn synchronization_kind_from_tag(tag: u8) -> Option<SynchronizationKind> {
+    match tag {
+        0x01 => Some(SynchronizationKind::ControlBarrier),
+        0x02 => Some(SynchronizationKind::AsynchronousCopy),
+        0x03 => Some(SynchronizationKind::SplitPhaseBarrier),
+        0x04 => Some(SynchronizationKind::Collective),
+        0x05 => Some(SynchronizationKind::Atomic),
+        0x06 => Some(SynchronizationKind::InterDispatchDependency),
+        _ => None,
+    }
+}
+
+pub(super) const fn synchronization_scope_tag(scope: SynchronizationScope) -> u8 {
+    match scope {
+        SynchronizationScope::Subgroup => 0x01,
+        SynchronizationScope::Workgroup => 0x02,
+        SynchronizationScope::Device => 0x03,
+    }
+}
+
+pub(super) const fn synchronization_scope_from_tag(tag: u8) -> Option<SynchronizationScope> {
+    match tag {
+        0x01 => Some(SynchronizationScope::Subgroup),
+        0x02 => Some(SynchronizationScope::Workgroup),
+        0x03 => Some(SynchronizationScope::Device),
+        _ => None,
+    }
+}
+
+pub(super) const fn memory_ordering_tag(ordering: MemoryOrdering) -> u8 {
+    match ordering {
+        MemoryOrdering::Relaxed => 0x01,
+        MemoryOrdering::AcquireRelease => 0x02,
+        MemoryOrdering::SequentiallyConsistent => 0x03,
+    }
+}
+
+pub(super) const fn memory_ordering_from_tag(tag: u8) -> Option<MemoryOrdering> {
+    match tag {
+        0x01 => Some(MemoryOrdering::Relaxed),
+        0x02 => Some(MemoryOrdering::AcquireRelease),
+        0x03 => Some(MemoryOrdering::SequentiallyConsistent),
+        _ => None,
+    }
+}
+
+/// Encodes the synchronization realization one entry requires, or its absence.
+///
+/// A presence tag ahead of a fixed-width subject. The absence is written rather
+/// than omitted because more fields follow it in the resource record, and it is
+/// written *at all* because "this entry performs no synchronization" has to be a
+/// recorded fact: an entry that later gains one must not share identity with the
+/// entry that did not, and a reader must not be able to recover "no requirement"
+/// from bytes that never stated it.
+pub(super) fn push_synchronization(bytes: &mut Vec<u8>, subject: Option<SynchronizationSubject>) {
+    match subject {
+        None => bytes.push(0x00),
+        Some(subject) => {
+            bytes.push(0x01);
+            bytes.push(synchronization_kind_tag(subject.kind));
+            bytes.push(synchronization_scope_tag(subject.execution_scope));
+            bytes.push(synchronization_scope_tag(subject.visibility_scope));
+            bytes.push(u8::from(subject.fenced_spaces.workgroup));
+            bytes.push(u8::from(subject.fenced_spaces.device));
+            bytes.push(memory_ordering_tag(subject.ordering));
+        }
+    }
+}
+
 pub(super) fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirements) {
     let ResourceRequirements {
         buffer_bindings,
         threads_per_workgroup,
         local_memory_bytes,
         requires_device_memory,
+        synchronization,
         input_subnormals,
         result_subnormals,
         contraction,
@@ -1983,6 +2089,7 @@ pub(super) fn push_resources(bytes: &mut Vec<u8>, resources: ResourceRequirement
     bytes.extend_from_slice(&threads_per_workgroup.to_be_bytes());
     bytes.extend_from_slice(&local_memory_bytes.to_be_bytes());
     bytes.push(u8::from(requires_device_memory));
+    push_synchronization(bytes, synchronization);
     bytes.push(subnormal_tag(input_subnormals));
     bytes.push(subnormal_tag(result_subnormals));
     bytes.push(permission_tag(contraction));

@@ -30,7 +30,9 @@ use tiler_ir::program::abi::{
 use tiler_ir::program::{
     BitPackedEncoding, PackedBitOrder, PackedTailRule, StorageEncoding, StorageScalar,
 };
-use tiler_ir::schedule::{ExceptionalValueAssumption, ResourceRequirements};
+use tiler_ir::schedule::{
+    ExceptionalValueAssumption, FencedSpaces, ResourceRequirements, SynchronizationSubject,
+};
 use tiler_ir::semantic::{EncodedComponentRole, InputKey, OutputKey, ProviderIdentity};
 use tiler_ir::shape::Shape;
 
@@ -50,8 +52,9 @@ use super::super::model::{
     BindingTargetData, DeferredPredicateData, InterfaceComponentData, InterfaceEntryData,
     LaunchData, RoutingPolicy, SchemaVersion, SelectedProvider, StageDependencyData,
     StageDependencyReason, address_space_from_tag, buffer_access_from_tag, element_type_from_tag,
-    exceptional_assumption_from_tag, permission_from_tag, storage_scalar_from_tag,
-    subnormal_from_tag,
+    exceptional_assumption_from_tag, memory_ordering_from_tag, permission_from_tag,
+    storage_scalar_from_tag, subnormal_from_tag, synchronization_kind_from_tag,
+    synchronization_scope_from_tag,
 };
 use super::super::requirement::{
     BackendFeatureRequirement, RouteRequirement, RouteRequirementError, RouteResourceDimension,
@@ -998,6 +1001,7 @@ fn parse_entry(
         threads_per_workgroup: cursor.u32()?,
         local_memory_bytes: cursor.u64()?,
         requires_device_memory: cursor.boolean()?,
+        synchronization: cursor.synchronization()?,
         input_subnormals: cursor.subnormal()?,
         result_subnormals: cursor.subnormal()?,
         contraction: cursor.permission()?,
@@ -1283,6 +1287,35 @@ impl<'a> Cursor<'a> {
         }
     }
 
+    /// Reads one entry's synchronization realization, or its recorded absence.
+    ///
+    /// The presence byte is a governed tag with exactly two admitted values, so
+    /// a third is `UnknownTag` rather than a silent absence: an artifact whose
+    /// presence byte a forger flipped to something unrecognized must not read as
+    /// "requires no synchronization", which is the reading that would let a
+    /// synchronized program dispatch against a target that never attested to
+    /// ordering it.
+    fn synchronization(&mut self) -> Result<Option<SynchronizationSubject>, ArtifactCodecError> {
+        let tag = self.u8()?;
+        match tag {
+            0x00 => Ok(None),
+            0x01 => Ok(Some(SynchronizationSubject {
+                kind: self.synchronization_kind()?,
+                execution_scope: self.synchronization_scope()?,
+                visibility_scope: self.synchronization_scope()?,
+                fenced_spaces: FencedSpaces {
+                    workgroup: self.boolean()?,
+                    device: self.boolean()?,
+                },
+                ordering: self.memory_ordering()?,
+            })),
+            tag => Err(ArtifactCodecError::UnknownTag {
+                subject: TagSubject::SynchronizationPresence,
+                tag,
+            }),
+        }
+    }
+
     fn boolean(&mut self) -> Result<bool, ArtifactCodecError> {
         match self.u8()? {
             0 => Ok(false),
@@ -1518,4 +1551,22 @@ tag_reader!(
     ExceptionalValueAssumption,
     exceptional_assumption_from_tag,
     TagSubject::ExceptionalValueAssumption
+);
+tag_reader!(
+    synchronization_kind,
+    tiler_ir::schedule::SynchronizationKind,
+    synchronization_kind_from_tag,
+    TagSubject::SynchronizationKind
+);
+tag_reader!(
+    synchronization_scope,
+    tiler_ir::schedule::SynchronizationScope,
+    synchronization_scope_from_tag,
+    TagSubject::SynchronizationScope
+);
+tag_reader!(
+    memory_ordering,
+    tiler_ir::schedule::MemoryOrdering,
+    memory_ordering_from_tag,
+    TagSubject::MemoryOrdering
 );

@@ -63,24 +63,32 @@
 //! observable value; facts and requirements are stored sorted by their typed
 //! keys and every aggregate is emitted in a fixed canonical order.
 
+use std::sync::Arc;
 use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::program::abi::{
     PreparedEntryTargetRequirement, TargetPropertyQuery, TargetPropertyRequirementRelation,
 };
-use tiler_ir::schedule::ArithmeticType;
+
+use tiler_ir::schedule::{ArithmeticType, SynchronizationSubject};
 
 use crate::explain::Quantity;
 pub(crate) use crate::target::TargetProfileIdentity;
 use crate::target::honourability::{
-    DeferredDimension, DimensionBehaviour, HonouredDimension, HonouringMeans, NumericalDimension,
-    NumericalHonourabilityFact, NumericalRequirement, UndeclaredDimension, UnhonouredDimension,
-    encode_honourability_facts,
+    DeferredDimension, DimensionBehaviour, FactSourceProvenance, HonouredDimension, HonouringMeans,
+    NumericalDimension, NumericalHonourabilityFact, NumericalRequirement, UndeclaredDimension,
+    UnhonouredDimension, encode_honourability_facts,
 };
 
 /// Domain separator of a canonical target profile descriptor.
 ///
 /// Trailing NUL so no descriptor can be a prefix of a differently-domained
 /// encoding, matching the framing the rest of the workspace's identities use.
+///
+/// `v10` adds the synchronization-realization declaration. It is folded into the
+/// descriptor rather than kept beside it because it decides verdicts exactly as a
+/// bound does: two profiles sharing a key and differing only in which
+/// realization they declare admit different candidates, and a `v9` descriptor
+/// could not tell them apart.
 ///
 /// `v9` distinguishes observed capability facts from executable later-phase
 /// query schemas. A future measured value no longer masquerades as proof that a
@@ -103,7 +111,7 @@ use crate::target::honourability::{
 /// `v3` distinguished per-dimension behaviours after the strict-arithmetic
 /// boolean was retired, but two profiles resting on different measured builds
 /// still collided under it.
-const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v9\0";
+const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v10\0";
 
 /// Governed key of the feasibility rule set this authority applies.
 ///
@@ -116,6 +124,14 @@ const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v9\0"
 /// [`GOVERNED_FEASIBILITY_RULE_SET_REVISION`] instead. That is why the artifact
 /// layer's `FeasibilityRuleSetRef` carries both a key and a revision rather than
 /// one number.
+///
+/// `v5` adds the atomic synchronization-realization predicate. This is a
+/// *vocabulary* widening rather than a revision: the rules now decide a
+/// predicate `v4` could not express at all, and a `v4` assessment of a
+/// synchronized candidate could only have been silent about it. Tag `0x08` of
+/// the [`CapabilityAxis`] space stays retired — the new predicate is not a
+/// quantitative axis, because a subject is matched by equality and has no bound
+/// to compare, which is the same reason numerical honourability is not one.
 ///
 /// `v4` adds typed target-property query paths to deferred capability
 /// predicates. Under v3, any fact assigned a later phase created `Deferred`
@@ -135,7 +151,7 @@ const PROFILE_DESCRIPTOR_DOMAIN: &[u8] = b"tiler.target-profile.descriptor.v9\0"
 /// predicate nor decide one, and it named an axis (`strict-f32`) this rule set
 /// no longer has.
 const GOVERNED_FEASIBILITY_RULE_SET_KEY: &str =
-    "tiler.feasibility.phased-capability-and-numerical-honourability.v4";
+    "tiler.feasibility.phased-capability-and-numerical-honourability.v5";
 
 /// Nonzero output-affecting revision of the governed feasibility rule set.
 ///
@@ -493,6 +509,158 @@ impl FactProvenance {
     }
 }
 
+/// Whether a target realizes one complete synchronization subject.
+///
+/// Two valued rather than a presence marker, for the reason
+/// [`crate::target::DTypeDispatchability`] is: a measured negative is a fact
+/// worth recording, and a profile that could only stay silent about what it
+/// cannot do would make "unsupported" and "unmeasured" one state. They are not —
+/// the first is a typed rejection a caller can act on, the second is
+/// [`FeasibilityOutcome::Unknown`].
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) enum SynchronizationRealization {
+    /// The target realizes exactly this subject.
+    Realized,
+    /// The target does not realize this subject.
+    Unrealizable,
+}
+
+impl SynchronizationRealization {
+    /// Returns the canonical tag naming this verdict in a descriptor encoding.
+    pub(crate) const fn tag(self) -> u8 {
+        match self {
+            Self::Realized => 0x01,
+            Self::Unrealizable => 0x02,
+        }
+    }
+
+    /// The stable identifier naming this verdict in an explanation.
+    pub(crate) const fn key(self) -> &'static str {
+        match self {
+            Self::Realized => "realized",
+            Self::Unrealizable => "unrealizable",
+        }
+    }
+}
+
+/// One target's verdict on one complete synchronization subject, before it is
+/// attributed to the profile declaring it.
+///
+/// **The subject is one value and is matched as one value.** That is the whole
+/// content of atomicity: each of its five dimensions is separately true of some
+/// realization on some machine — a device-memory fence, a subgroup-wide arrival,
+/// an acquire-release ordering — so a profile declaring them independently would
+/// let their conjunction be inferred from facts none of which is about it. There
+/// is deliberately no accessor yielding one dimension of the subject, and
+/// [`CheckedTargetProfile::resolve_synchronization`] compares the whole value
+/// rather than reading a field.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DeclaredSynchronizationRealization {
+    subject: SynchronizationSubject,
+    realization: SynchronizationRealization,
+    source: Arc<FactSourceProvenance>,
+}
+
+impl DeclaredSynchronizationRealization {
+    /// Declares one verdict over one complete subject.
+    pub(crate) const fn new(
+        subject: SynchronizationSubject,
+        realization: SynchronizationRealization,
+        source: Arc<FactSourceProvenance>,
+    ) -> Self {
+        Self {
+            subject,
+            realization,
+            source,
+        }
+    }
+
+    /// The complete subject this declaration ranges over.
+    pub(crate) const fn subject(&self) -> SynchronizationSubject {
+        self.subject
+    }
+
+    /// The verdict this declaration states.
+    pub(crate) const fn realization(&self) -> SynchronizationRealization {
+        self.realization
+    }
+
+    /// The phase from which the declaration is available.
+    pub(crate) fn phase(&self) -> AvailabilityPhase {
+        self.source.phase()
+    }
+
+    /// The structured source qualifying the declaration.
+    pub(crate) fn source_ref(&self) -> &FactSourceProvenance {
+        &self.source
+    }
+
+    /// Attributes this declaration to the profile that makes it.
+    pub(crate) fn attributed_to(
+        self,
+        profile: impl Into<TargetProfileIdentity>,
+    ) -> SynchronizationRealizationFact {
+        SynchronizationRealizationFact {
+            declared: self,
+            provenance: FactProvenance::declared_by(profile),
+        }
+    }
+}
+
+/// One atomic, provenance-bearing target fact about a synchronization subject.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SynchronizationRealizationFact {
+    declared: DeclaredSynchronizationRealization,
+    provenance: FactProvenance,
+}
+
+impl SynchronizationRealizationFact {
+    /// The complete subject this fact ranges over.
+    pub(crate) const fn subject(&self) -> SynchronizationSubject {
+        self.declared.subject
+    }
+
+    /// Whether the target realizes that subject.
+    pub(crate) const fn realization(&self) -> SynchronizationRealization {
+        self.declared.realization
+    }
+
+    /// The phase from which this fact is available.
+    pub(crate) fn phase(&self) -> AvailabilityPhase {
+        self.declared.source.phase()
+    }
+
+    /// The authority class supplying it.
+    pub(crate) fn authority(&self) -> FactAuthority {
+        self.declared.source.authority()
+    }
+
+    /// The scope over which it is valid.
+    pub(crate) fn validity(&self) -> FactValidityScope {
+        self.declared.source.validity()
+    }
+
+    /// The structured source qualifying the claim.
+    pub(crate) fn source(&self) -> &Arc<FactSourceProvenance> {
+        &self.declared.source
+    }
+
+    /// The profile that declared it.
+    pub(crate) const fn provenance(&self) -> &FactProvenance {
+        &self.provenance
+    }
+
+    /// The canonical sort and uniqueness key: the subject and its phase.
+    ///
+    /// Deliberately *excluding* the verdict. A profile declaring one subject both
+    /// realized and unrealizable at one phase has stated a contradiction, and
+    /// keying on the verdict would let both rows coexist with whichever the sort
+    /// put first deciding.
+    fn sort_key(&self) -> (SynchronizationSubject, AvailabilityPhase) {
+        (self.subject(), self.phase())
+    }
+}
+
 /// A typed capability fact: a bound on one axis, available from a stated phase.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CapabilityFact {
@@ -592,6 +760,8 @@ pub(crate) struct CheckedTargetProfile {
     /// Canonical: sorted by `(dimension, arithmetic, behaviour, phase)`, unique
     /// per tuple.
     honourability: Vec<NumericalHonourabilityFact>,
+    /// Canonical: sorted by `(subject, phase)`, unique per pair.
+    synchronization: Vec<SynchronizationRealizationFact>,
     /// The bounded canonical descriptor, derived once after validation.
     descriptor: Box<[u8]>,
 }
@@ -627,10 +797,56 @@ impl CheckedTargetProfile {
         queries: Vec<CapabilityQuery>,
         honourability: Vec<NumericalHonourabilityFact>,
     ) -> Result<Self, FeasibilityError> {
+        Self::new_complete(identity, facts, queries, honourability, Vec::new())
+    }
+
+    /// Builds a checked profile including its synchronization declaration.
+    pub(crate) fn new_complete(
+        identity: impl Into<TargetProfileIdentity>,
+        facts: Vec<CapabilityFact>,
+        queries: Vec<CapabilityQuery>,
+        honourability: Vec<NumericalHonourabilityFact>,
+        synchronization: Vec<SynchronizationRealizationFact>,
+    ) -> Result<Self, FeasibilityError> {
         let identity = identity.into();
         let mut facts = facts;
         let mut queries = queries;
         let mut honourability = honourability;
+        let mut synchronization = synchronization;
+        for fact in &synchronization {
+            if fact.provenance().profile() != &identity {
+                return Err(FeasibilityError::MalformedProfile {
+                    rule: "synchronization-provenance",
+                });
+            }
+            if !authority_matches_phase(fact.authority(), fact.phase()) {
+                return Err(FeasibilityError::MalformedProfile {
+                    rule: "synchronization-authority",
+                });
+            }
+            if !fact.source().is_valid() {
+                return Err(FeasibilityError::MalformedProfile {
+                    rule: "synchronization-source",
+                });
+            }
+            // A fence naming no memory domain publishes nothing, so no handoff
+            // could consume it and a realization of one would be a permission
+            // for an operation with no effect.
+            if fact.subject().fenced_spaces.is_empty() {
+                return Err(FeasibilityError::MalformedProfile {
+                    rule: "synchronization-subject",
+                });
+            }
+        }
+        synchronization.sort_by_key(SynchronizationRealizationFact::sort_key);
+        if synchronization
+            .windows(2)
+            .any(|pair| pair[0].sort_key() == pair[1].sort_key())
+        {
+            return Err(FeasibilityError::MalformedProfile {
+                rule: "duplicate-synchronization",
+            });
+        }
         if identity.key().is_empty() {
             return Err(FeasibilityError::MalformedProfile { rule: "identity" });
         }
@@ -723,7 +939,13 @@ impl CheckedTargetProfile {
                 rule: "duplicate-declaration",
             });
         }
-        let descriptor = canonical_profile_descriptor(&identity, &facts, &queries, &honourability);
+        let descriptor = canonical_profile_descriptor(
+            &identity,
+            &facts,
+            &queries,
+            &honourability,
+            &synchronization,
+        );
         let descriptor_length = descriptor.len();
         if descriptor_length > MAX_TARGET_PROFILE_DESCRIPTOR_BYTES {
             return Err(FeasibilityError::DescriptorTooLong {
@@ -736,6 +958,7 @@ impl CheckedTargetProfile {
             facts,
             queries,
             honourability,
+            synchronization,
             descriptor: descriptor.into_boxed_slice(),
         })
     }
@@ -758,6 +981,64 @@ impl CheckedTargetProfile {
     /// The checked numerical honourability declaration, in canonical order.
     pub(crate) fn honourability(&self) -> &[NumericalHonourabilityFact] {
         &self.honourability
+    }
+
+    /// The checked synchronization-realization declaration, in canonical order.
+    pub(crate) fn synchronization(&self) -> &[SynchronizationRealizationFact] {
+        &self.synchronization
+    }
+
+    /// Resolves one complete synchronization subject against this profile.
+    ///
+    /// **The match is one equality over the whole subject**, which is what makes
+    /// the fact atomic rather than composable. A profile carrying a fact for a
+    /// subject differing in any one dimension resolves this subject as
+    /// [`SynchronizationResolution::NoPath`], however many of its dimensions
+    /// some other fact happens to state — so a caller can never assemble a
+    /// permission out of rows about neighbouring realizations.
+    ///
+    /// A fact admissible only from a later phase also resolves as `NoPath`
+    /// rather than as a deferral, and the difference from the quantitative axes
+    /// is the reason: a deferred axis carries a
+    /// [`TargetPropertyQuery`] that says how a runtime obtains the value before
+    /// routing commits, and no query vocabulary can ask a device "do you order a
+    /// workgroup-scoped acquire-release fence over threadgroup memory". Deferring
+    /// without a query contract would be a promise nothing can keep, so the
+    /// unresolved case is `Unknown` and fails closed.
+    fn resolve_synchronization(
+        &self,
+        subject: SynchronizationSubject,
+        available_phase: AvailabilityPhase,
+    ) -> SynchronizationResolution {
+        let mut resolved: Option<&SynchronizationRealizationFact> = None;
+        for fact in &self.synchronization {
+            if fact.subject() != subject || fact.phase() > available_phase {
+                continue;
+            }
+            // Prefer the most refined fact already available, exactly as the
+            // quantitative axes do.
+            resolved = Some(match resolved {
+                Some(current) if current.phase() >= fact.phase() => current,
+                _ => fact,
+            });
+        }
+        match resolved {
+            None => SynchronizationResolution::NoPath,
+            Some(fact) => match fact.realization() {
+                SynchronizationRealization::Realized => {
+                    SynchronizationResolution::Realized(RealizedSynchronization {
+                        subject,
+                        fact: fact.clone(),
+                    })
+                }
+                SynchronizationRealization::Unrealizable => {
+                    SynchronizationResolution::Unrealizable(UnrealizableSynchronization {
+                        subject,
+                        fact: fact.clone(),
+                    })
+                }
+            },
+        }
     }
 
     /// Returns this profile's canonical descriptor bytes.
@@ -967,10 +1248,14 @@ impl CheckedTargetProfile {
     /// always exactly one of the four outcomes; malformed inputs cannot reach here
     /// because both the profile and the proposal are validated at construction.
     ///
-    /// Capability predicates and numerical-honourability predicates are assessed
-    /// by their own rules and then composed under one precedence, so a candidate
-    /// that is both too large and numerically unhonourable has one verdict rather
-    /// than two.
+    /// Capability predicates, numerical-honourability predicates, and the one
+    /// synchronization-realization predicate are assessed by their own rules and
+    /// then composed under one precedence, so a candidate that is both too large
+    /// and numerically unhonourable has one verdict rather than two.
+    ///
+    /// The synchronization predicate is composed and never decomposed. Its
+    /// subject resolves as one equality, so a candidate is never partly
+    /// synchronization-feasible, and no path here reads a dimension of it.
     pub(crate) fn assess(
         &self,
         proposal: &FeasibilityProposal,
@@ -1020,17 +1305,35 @@ impl CheckedTargetProfile {
                 DimensionResolution::NoPath(record) => undeclared.push(record),
             }
         }
+        // The synchronization requirement, resolved as one atomic subject. A
+        // candidate that requires none skips this entirely, which is what keeps
+        // the absence canonical: no predicate is resolved, so no evidence, no
+        // rejection, and no unknown mentions synchronization at all.
+        let mut realized = None;
+        let mut unrealizable = None;
+        let mut unknown_synchronization = None;
+        if let Some(subject) = proposal.synchronization {
+            match self.resolve_synchronization(subject, available_phase) {
+                SynchronizationResolution::Realized(record) => realized = Some(record),
+                SynchronizationResolution::Unrealizable(record) => unrealizable = Some(record),
+                SynchronizationResolution::NoPath => {
+                    unknown_synchronization = Some(UnknownSynchronization { subject });
+                }
+            }
+        }
         // Precedence: rejected, then unknown, then deferred, then proven.
-        if !disproved.is_empty() || !unhonoured.is_empty() {
+        if !disproved.is_empty() || !unhonoured.is_empty() || unrealizable.is_some() {
             return FeasibilityOutcome::Rejected(Rejection {
                 disproved,
                 unhonourable: unhonoured,
+                synchronization: unrealizable,
             });
         }
-        if !unknown.is_empty() || !undeclared.is_empty() {
+        if !unknown.is_empty() || !undeclared.is_empty() || unknown_synchronization.is_some() {
             return FeasibilityOutcome::Unknown(UnknownSet {
                 predicates: unknown,
                 dimensions: undeclared,
+                synchronization: unknown_synchronization,
             });
         }
         if !deferred.is_empty() || !deferred_dimensions.is_empty() {
@@ -1048,6 +1351,7 @@ impl CheckedTargetProfile {
                 proven: ProvenEvidence {
                     predicates: proven,
                     honoured,
+                    synchronization: realized,
                 },
                 predicates: deferred,
                 dimensions: deferred_dimensions,
@@ -1056,6 +1360,7 @@ impl CheckedTargetProfile {
         FeasibilityOutcome::Proven(ProvenEvidence {
             predicates: proven,
             honoured,
+            synchronization: realized,
         })
     }
 
@@ -1095,6 +1400,7 @@ fn canonical_profile_descriptor(
     facts: &[CapabilityFact],
     queries: &[CapabilityQuery],
     honourability: &[NumericalHonourabilityFact],
+    synchronization: &[SynchronizationRealizationFact],
 ) -> Vec<u8> {
     let mut bytes = Vec::new();
     push_slice(&mut bytes, PROFILE_DESCRIPTOR_DOMAIN);
@@ -1113,6 +1419,26 @@ fn canonical_profile_descriptor(
         push_slice(&mut bytes, &query.query.canonical_bytes());
     }
     encode_honourability_facts(&mut bytes, honourability);
+    // The synchronization declaration is *inside* the descriptor, for the reason
+    // the honourability declaration is: it decides verdicts exactly as a bound
+    // does, so two profiles sharing a key and differing only in which
+    // realization they declare admit different candidates, and a descriptor that
+    // could not tell them apart would let one artifact claim it was assessed
+    // against the other.
+    push_len(&mut bytes, synchronization.len());
+    for fact in synchronization {
+        let subject = fact.subject();
+        bytes.push(subject.kind.tag());
+        bytes.push(subject.execution_scope.tag());
+        bytes.push(subject.visibility_scope.tag());
+        bytes.push(u8::from(subject.fenced_spaces.workgroup));
+        bytes.push(u8::from(subject.fenced_spaces.device));
+        bytes.push(subject.ordering.tag());
+        bytes.push(fact.realization().tag());
+        bytes.push(fact.phase().tag());
+        bytes.push(fact.authority().tag());
+        bytes.push(fact.validity().tag());
+    }
     bytes
 }
 
@@ -1148,6 +1474,74 @@ enum AxisResolution {
     Later(CapabilityQuery),
     /// No admissible proof/query path exists for the axis.
     NoPath,
+}
+
+/// The three ways one synchronization subject resolves against a profile.
+///
+/// Three, not four: there is no `Later`. See
+/// [`CheckedTargetProfile::resolve_synchronization`] for why a fact with no
+/// query contract cannot be deferred.
+enum SynchronizationResolution {
+    /// A fact available now declares the target realizes exactly this subject.
+    Realized(RealizedSynchronization),
+    /// A fact available now declares the target does not realize it.
+    Unrealizable(UnrealizableSynchronization),
+    /// Nothing available now speaks to this exact subject.
+    NoPath,
+}
+
+/// A synchronization subject a target declares it realizes, with its evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RealizedSynchronization {
+    subject: SynchronizationSubject,
+    fact: SynchronizationRealizationFact,
+}
+
+impl RealizedSynchronization {
+    /// The complete subject the target realizes.
+    pub(crate) const fn subject(&self) -> SynchronizationSubject {
+        self.subject
+    }
+
+    /// The whole attributed fact that established it.
+    pub(crate) const fn fact(&self) -> &SynchronizationRealizationFact {
+        &self.fact
+    }
+}
+
+/// A synchronization subject a target declares it cannot realize.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct UnrealizableSynchronization {
+    subject: SynchronizationSubject,
+    fact: SynchronizationRealizationFact,
+}
+
+impl UnrealizableSynchronization {
+    /// The complete subject the candidate required.
+    pub(crate) const fn subject(&self) -> SynchronizationSubject {
+        self.subject
+    }
+
+    /// The whole refusing fact, retained rather than summarized.
+    ///
+    /// A caller reporting the refusal needs the provenance behind it: "this
+    /// profile, on this measurement, says no" is actionable and "no" is not.
+    pub(crate) const fn fact(&self) -> &SynchronizationRealizationFact {
+        &self.fact
+    }
+}
+
+/// A synchronization subject no available fact speaks to.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct UnknownSynchronization {
+    subject: SynchronizationSubject,
+}
+
+impl UnknownSynchronization {
+    /// The complete subject the candidate required and nothing declared.
+    pub(crate) const fn subject(self) -> SynchronizationSubject {
+        self.subject
+    }
 }
 
 /// The four ways one numerical dimension resolves against a declaration.
@@ -1191,6 +1585,16 @@ pub(crate) struct FeasibilityProposal {
     requirements: Vec<AxisRequirement>,
     /// Canonical: sorted by dimension, unique per dimension.
     numerical: Vec<NumericalRequirement>,
+    /// The one complete synchronization realization this candidate requires.
+    ///
+    /// `None` is the canonical absence, and it is what makes a
+    /// zero-synchronization candidate *feasible* against a profile that declares
+    /// nothing about synchronization rather than unknown against it: no
+    /// requirement is composed, so no predicate is resolved, so no explain row is
+    /// produced and no target fact is consulted. It is deliberately not a `Vec`:
+    /// a candidate requires one realization however many times it performs it,
+    /// and a count would be the barrier-count capacity `v7` retired.
+    synchronization: Option<SynchronizationSubject>,
 }
 
 impl FeasibilityProposal {
@@ -1205,8 +1609,27 @@ impl FeasibilityProposal {
         requirements: Vec<AxisRequirement>,
         numerical: Vec<NumericalRequirement>,
     ) -> Result<Self, FeasibilityError> {
+        Self::new_with_synchronization(candidate, requirements, numerical, None)
+    }
+
+    /// Builds a checked proposal that also requires a synchronization
+    /// realization.
+    pub(crate) fn new_with_synchronization(
+        candidate: &'static str,
+        requirements: Vec<AxisRequirement>,
+        numerical: Vec<NumericalRequirement>,
+        synchronization: Option<SynchronizationSubject>,
+    ) -> Result<Self, FeasibilityError> {
         let mut requirements = requirements;
         let mut numerical = numerical;
+        // A requirement to fence nothing publishes nothing, so no handoff could
+        // consume it; asking a target to realize one would consume an authority
+        // for an operation with no effect.
+        if synchronization.is_some_and(|subject| subject.fenced_spaces.is_empty()) {
+            return Err(FeasibilityError::MalformedProposal {
+                rule: "requirement-synchronization",
+            });
+        }
         if candidate.is_empty() {
             return Err(FeasibilityError::MalformedProposal {
                 rule: "candidate-id",
@@ -1252,6 +1675,7 @@ impl FeasibilityProposal {
             candidate,
             requirements,
             numerical,
+            synchronization,
         })
     }
 
@@ -1345,6 +1769,9 @@ impl UnknownPredicate {
 pub(crate) struct ProvenEvidence {
     predicates: Vec<ResolvedPredicate>,
     honoured: Vec<HonouredDimension>,
+    /// The one realization fact that authorized this candidate's synchronization,
+    /// or `None` when it requires none.
+    synchronization: Option<RealizedSynchronization>,
 }
 
 impl ProvenEvidence {
@@ -1358,9 +1785,19 @@ impl ProvenEvidence {
         &self.honoured
     }
 
+    /// The synchronization realization that authorized this candidate, if any.
+    ///
+    /// `None` for a candidate that requires none. That is an absence and not a
+    /// vacuous proof: a consumer rendering evidence emits no row for it, which is
+    /// what keeps a zero-synchronization program's explanation free of a
+    /// manufactured zero.
+    pub(crate) const fn synchronization(&self) -> Option<&RealizedSynchronization> {
+        self.synchronization.as_ref()
+    }
+
     /// Whether this evidence records no check at all.
     pub(crate) fn is_empty(&self) -> bool {
-        self.predicates.is_empty() && self.honoured.is_empty()
+        self.predicates.is_empty() && self.honoured.is_empty() && self.synchronization.is_none()
     }
 }
 
@@ -1369,11 +1806,14 @@ impl ProvenEvidence {
 pub(crate) struct Rejection {
     disproved: Vec<ResolvedPredicate>,
     unhonourable: Vec<UnhonouredDimension>,
+    synchronization: Option<UnrealizableSynchronization>,
 }
 
 /// The canonical representative cause of one rejection.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RejectionCause {
+    /// A synchronization realization the target declares it cannot provide.
+    Synchronization(UnrealizableSynchronization),
     /// A numerical dimension the target declares it cannot honour as required.
     Numerical(UnhonouredDimension),
     /// A capability bound the candidate exceeds.
@@ -1391,13 +1831,27 @@ impl Rejection {
     /// search dimension. Reporting the cause that re-planning cannot fix is the
     /// more useful of the two.
     ///
-    /// At least one of the two sets is nonempty by construction, so this never
+    /// A refused synchronization realization comes first of all, for a stronger
+    /// form of the same reason: it says the target cannot *order* what this
+    /// program's dataflow requires, and no re-planning within this strategy
+    /// changes that — a different strategy is a different candidate with a
+    /// different proposal.
+    ///
+    /// At least one of the three is nonempty by construction, so this never
     /// panics.
     pub(crate) fn representative(&self) -> RejectionCause {
+        if let Some(cause) = &self.synchronization {
+            return RejectionCause::Synchronization(cause.clone());
+        }
         self.unhonourable.first().map_or_else(
             || RejectionCause::Capability(self.disproved[0]),
             |cause| RejectionCause::Numerical(cause.clone()),
         )
+    }
+
+    /// The refused synchronization realization, when one caused the rejection.
+    pub(crate) const fn synchronization(&self) -> Option<&UnrealizableSynchronization> {
+        self.synchronization.as_ref()
     }
 
     /// All disproved capability predicates, in canonical axis order.
@@ -1457,6 +1911,7 @@ impl DeferredSet {
 pub(crate) struct UnknownSet {
     predicates: Vec<UnknownPredicate>,
     dimensions: Vec<UndeclaredDimension>,
+    synchronization: Option<UnknownSynchronization>,
 }
 
 impl UnknownSet {
@@ -1468,6 +1923,15 @@ impl UnknownSet {
     /// The numerical dimensions the profile does not speak to, canonical order.
     pub(crate) fn dimensions(&self) -> &[UndeclaredDimension] {
         &self.dimensions
+    }
+
+    /// The synchronization realization no available fact speaks to, if any.
+    ///
+    /// This is where a profile carrying facts about *neighbouring* subjects
+    /// lands: none of them equals the required subject, so none of them resolves
+    /// it, and the candidate is unknown rather than composed into feasible.
+    pub(crate) const fn synchronization(&self) -> Option<&UnknownSynchronization> {
+        self.synchronization.as_ref()
     }
 }
 
@@ -1707,6 +2171,414 @@ mod tests {
                 HonouringMeans::SupportedExactly,
             ),
         ]
+    }
+
+    // ---- The atomic synchronization-realization fact -----------------------
+    //
+    // Every fixture below is the same complete subject: a control barrier every
+    // workgroup invocation arrives at, publishing workgroup-wide, fencing
+    // workgroup memory alone, ordered acquire-release. The perturbation tests
+    // change exactly one of its five dimensions, so a refusal names the
+    // dimension the change touched rather than a difference the fixture carried.
+
+    /// The realization the cooperative tile's staged handoff requires.
+    const REQUIRED_SUBJECT: SynchronizationSubject = SynchronizationSubject {
+        kind: tiler_ir::schedule::SynchronizationKind::ControlBarrier,
+        execution_scope: tiler_ir::schedule::SynchronizationScope::Workgroup,
+        visibility_scope: tiler_ir::schedule::SynchronizationScope::Workgroup,
+        fenced_spaces: tiler_ir::schedule::FencedSpaces {
+            workgroup: true,
+            device: false,
+        },
+        ordering: tiler_ir::schedule::MemoryOrdering::AcquireRelease,
+    };
+
+    /// The five one-dimension neighbours of [`REQUIRED_SUBJECT`].
+    ///
+    /// Named rather than spelled inline because they serve two tests: each is a
+    /// mismatch the authority must refuse, and *together* they are the
+    /// composition hazard — a profile declaring all five realizes every
+    /// dimension of the required subject somewhere and the required subject
+    /// nowhere.
+    fn neighbouring_subjects() -> [(&'static str, SynchronizationSubject); 5] {
+        use tiler_ir::schedule::{MemoryOrdering, SynchronizationKind, SynchronizationScope};
+        [
+            (
+                "operation kind",
+                SynchronizationSubject {
+                    kind: SynchronizationKind::Collective,
+                    ..REQUIRED_SUBJECT
+                },
+            ),
+            (
+                "arrival scope",
+                SynchronizationSubject {
+                    execution_scope: SynchronizationScope::Subgroup,
+                    ..REQUIRED_SUBJECT
+                },
+            ),
+            (
+                "publication scope",
+                SynchronizationSubject {
+                    visibility_scope: SynchronizationScope::Device,
+                    ..REQUIRED_SUBJECT
+                },
+            ),
+            (
+                "fenced domains",
+                SynchronizationSubject {
+                    fenced_spaces: tiler_ir::schedule::FencedSpaces {
+                        workgroup: true,
+                        device: true,
+                    },
+                    ..REQUIRED_SUBJECT
+                },
+            ),
+            (
+                "ordering",
+                SynchronizationSubject {
+                    ordering: MemoryOrdering::SequentiallyConsistent,
+                    ..REQUIRED_SUBJECT
+                },
+            ),
+        ]
+    }
+
+    fn synchronization_fact(
+        id: &TargetProfileIdentity,
+        subject: SynchronizationSubject,
+        realization: SynchronizationRealization,
+    ) -> SynchronizationRealizationFact {
+        DeclaredSynchronizationRealization::new(
+            subject,
+            realization,
+            crate::target::honourability::governed_profile_source(),
+        )
+        .attributed_to(id)
+    }
+
+    /// The baseline plus a declaration over exactly `facts`.
+    fn synchronizing_profile(facts: Vec<SynchronizationRealizationFact>) -> CheckedTargetProfile {
+        let id = identity();
+        CheckedTargetProfile::new_complete(
+            id,
+            vec![
+                compile_fact(id, CapabilityAxis::GridAxisThreads, 65_535),
+                compile_fact(id, CapabilityAxis::WorkgroupThreads, 8),
+                compile_fact(id, CapabilityAxis::BufferBindings, 2),
+                compile_fact(id, CapabilityAxis::DeviceAddressSpace, 1),
+                compile_fact(id, CapabilityAxis::LocalMemoryBytes, 4_096),
+                compile_fact(id, CapabilityAxis::IndexArithmeticU64, 1),
+            ],
+            Vec::new(),
+            baseline_honourability(id),
+            facts,
+        )
+        .unwrap()
+    }
+
+    /// A candidate requiring exactly [`REQUIRED_SUBJECT`], and nothing else new.
+    fn synchronizing_proposal() -> FeasibilityProposal {
+        FeasibilityProposal::new_with_synchronization(
+            "tiler.test.synchronized",
+            vec![AxisRequirement::new(CapabilityAxis::WorkgroupThreads, 4)],
+            Vec::new(),
+            Some(REQUIRED_SUBJECT),
+        )
+        .unwrap()
+    }
+
+    /// A zero-synchronization candidate is feasible against a profile that
+    /// declares nothing about synchronization.
+    ///
+    /// The absence is canonical, and this proves all three halves of that: the
+    /// proposal composes no requirement, the profile carries no fact, and the
+    /// proven evidence carries no synchronization record for a consumer to
+    /// render. A vacuous "zero barriers required, zero available" predicate
+    /// would have made the same program *report* a check it never performed.
+    #[test]
+    fn a_zero_synchronization_candidate_needs_no_synchronization_fact() {
+        let profile = synchronizing_profile(Vec::new());
+        assert!(profile.synchronization().is_empty());
+        let proposal = FeasibilityProposal::new(
+            "tiler.test.unsynchronized",
+            vec![AxisRequirement::new(CapabilityAxis::WorkgroupThreads, 4)],
+            Vec::new(),
+        )
+        .unwrap();
+        assert!(proposal.synchronization.is_none());
+        let FeasibilityOutcome::Proven(evidence) =
+            profile.assess(&proposal, AvailabilityPhase::CompileProfile)
+        else {
+            panic!("a candidate requiring no synchronization is feasible");
+        };
+        assert!(
+            evidence.synchronization().is_none(),
+            "a candidate that required no realization was credited with one"
+        );
+    }
+
+    /// The exact matching fact, and only it, admits the synchronized candidate.
+    #[test]
+    fn an_exactly_matching_realization_admits_a_synchronized_candidate() {
+        let profile = synchronizing_profile(vec![synchronization_fact(
+            identity(),
+            REQUIRED_SUBJECT,
+            SynchronizationRealization::Realized,
+        )]);
+        let FeasibilityOutcome::Proven(evidence) =
+            profile.assess(&synchronizing_proposal(), AvailabilityPhase::CompileProfile)
+        else {
+            panic!("the exactly matching realization admits the candidate");
+        };
+        let realized = evidence
+            .synchronization()
+            .expect("the admitted evidence names the realization it consumed");
+        assert_eq!(realized.subject(), REQUIRED_SUBJECT);
+        // The evidence retains the whole attributed fact, so a consumer can say
+        // *which* authority permitted the operation rather than only that one
+        // did.
+        assert_eq!(realized.fact().provenance().profile().key(), BASELINE_KEY);
+        assert_eq!(realized.fact().authority(), FactAuthority::GovernedProfile);
+    }
+
+    /// A profile that declares nothing about the subject is `Unknown`.
+    #[test]
+    fn a_missing_realization_is_unknown_rather_than_admitted() {
+        let profile = synchronizing_profile(Vec::new());
+        let FeasibilityOutcome::Unknown(unknown) =
+            profile.assess(&synchronizing_proposal(), AvailabilityPhase::CompileProfile)
+        else {
+            panic!("a candidate whose realization nothing declares is unknown");
+        };
+        assert_eq!(
+            unknown
+                .synchronization()
+                .expect("the unknown set names the unresolved subject")
+                .subject(),
+            REQUIRED_SUBJECT
+        );
+        assert!(unknown.predicates().is_empty());
+        assert!(unknown.dimensions().is_empty());
+    }
+
+    /// A declared refusal is a typed rejection, not an unknown.
+    #[test]
+    fn a_declared_unrealizable_subject_rejects_by_name() {
+        let profile = synchronizing_profile(vec![synchronization_fact(
+            identity(),
+            REQUIRED_SUBJECT,
+            SynchronizationRealization::Unrealizable,
+        )]);
+        let FeasibilityOutcome::Rejected(rejection) =
+            profile.assess(&synchronizing_proposal(), AvailabilityPhase::CompileProfile)
+        else {
+            panic!("a declared refusal rejects the candidate");
+        };
+        let RejectionCause::Synchronization(cause) = rejection.representative() else {
+            panic!("the representative cause names the synchronization refusal");
+        };
+        assert_eq!(cause.subject(), REQUIRED_SUBJECT);
+        assert!(rejection.disproved().is_empty());
+        assert!(rejection.unhonourable().is_empty());
+    }
+
+    /// One dimension changed is one refusal: the match is over the whole value.
+    #[test]
+    fn a_realization_differing_in_any_one_dimension_satisfies_nothing() {
+        for (dimension, neighbour) in neighbouring_subjects() {
+            assert_ne!(neighbour, REQUIRED_SUBJECT, "{dimension} did not change");
+            let profile = synchronizing_profile(vec![synchronization_fact(
+                identity(),
+                neighbour,
+                SynchronizationRealization::Realized,
+            )]);
+            assert!(
+                matches!(
+                    profile.assess(&synchronizing_proposal(), AvailabilityPhase::CompileProfile),
+                    FeasibilityOutcome::Unknown(_)
+                ),
+                "a realization differing only in {dimension} satisfied the requirement"
+            );
+        }
+    }
+
+    /// **The composition hazard, demonstrated refused.**
+    ///
+    /// Every dimension of the required subject is realized by *some* fact in
+    /// this profile: it declares a collective, a subgroup arrival, a device-wide
+    /// publication, a workgroup-and-device fence, and a sequentially consistent
+    /// ordering, each realized. Every component of the conjunction is therefore
+    /// separately true of this target, and the conjunction is declared nowhere.
+    ///
+    /// A per-dimension authority would admit the candidate here. This one does
+    /// not, and the outcome is `Unknown` rather than a rejection because the
+    /// profile has not refused anything — it has simply never been asked about
+    /// the realization the program needs.
+    #[test]
+    fn independently_true_component_facts_compose_into_no_permission() {
+        let facts: Vec<_> = neighbouring_subjects()
+            .into_iter()
+            .map(|(_, subject)| {
+                synchronization_fact(identity(), subject, SynchronizationRealization::Realized)
+            })
+            .collect();
+        assert_eq!(facts.len(), 5);
+        let profile = synchronizing_profile(facts);
+        // Each dimension of the required subject appears, realized, somewhere.
+        for (dimension, neighbour) in neighbouring_subjects() {
+            assert!(
+                profile.synchronization().iter().any(|fact| {
+                    fact.subject() == neighbour
+                        && fact.realization() == SynchronizationRealization::Realized
+                }),
+                "the fixture does not realize the {dimension} neighbour"
+            );
+        }
+        let FeasibilityOutcome::Unknown(unknown) =
+            profile.assess(&synchronizing_proposal(), AvailabilityPhase::CompileProfile)
+        else {
+            panic!("five true component facts must not compose into one permission");
+        };
+        assert_eq!(
+            unknown
+                .synchronization()
+                .expect("the unknown set names the unresolved subject")
+                .subject(),
+            REQUIRED_SUBJECT
+        );
+    }
+
+    /// A fact only available later is unknown, never deferred.
+    ///
+    /// Deferral means "a runtime can obtain this before routing commits", and a
+    /// synchronization fact carries no query contract that could. Admitting it
+    /// as deferred would be a promise nothing can keep.
+    #[test]
+    fn a_later_phase_realization_is_unknown_rather_than_deferred() {
+        let id = identity();
+        let later = DeclaredSynchronizationRealization::new(
+            REQUIRED_SUBJECT,
+            SynchronizationRealization::Realized,
+            measured_source(FactAuthority::DeviceRuntime),
+        )
+        .attributed_to(id);
+        assert_eq!(later.phase(), AvailabilityPhase::LiveDevicePreflight);
+        let profile = synchronizing_profile(vec![later]);
+        assert!(matches!(
+            profile.assess(&synchronizing_proposal(), AvailabilityPhase::CompileProfile),
+            FeasibilityOutcome::Unknown(_)
+        ));
+        // And it *is* resolvable once that phase is reached, which is what makes
+        // the compile-time refusal a phase decision rather than a dead branch.
+        assert!(matches!(
+            profile.assess(
+                &synchronizing_proposal(),
+                AvailabilityPhase::LiveDevicePreflight
+            ),
+            FeasibilityOutcome::Proven(_)
+        ));
+    }
+
+    /// The declaration is part of the profile's identity.
+    #[test]
+    fn a_synchronization_declaration_moves_the_profile_descriptor() {
+        let bare = synchronizing_profile(Vec::new());
+        let realized = synchronizing_profile(vec![synchronization_fact(
+            identity(),
+            REQUIRED_SUBJECT,
+            SynchronizationRealization::Realized,
+        )]);
+        let refused = synchronizing_profile(vec![synchronization_fact(
+            identity(),
+            REQUIRED_SUBJECT,
+            SynchronizationRealization::Unrealizable,
+        )]);
+        assert_ne!(bare.canonical_descriptor(), realized.canonical_descriptor());
+        assert_ne!(
+            realized.canonical_descriptor(),
+            refused.canonical_descriptor(),
+            "two profiles that answer one subject differently shared a descriptor"
+        );
+        // And every dimension of the subject moves it, which is what stops one
+        // artifact claiming it was assessed against a neighbouring realization.
+        for (dimension, neighbour) in neighbouring_subjects() {
+            let other = synchronizing_profile(vec![synchronization_fact(
+                identity(),
+                neighbour,
+                SynchronizationRealization::Realized,
+            )]);
+            assert_ne!(
+                realized.canonical_descriptor(),
+                other.canonical_descriptor(),
+                "the {dimension} dimension does not reach the descriptor"
+            );
+        }
+    }
+
+    /// A profile cannot answer one subject twice at one phase.
+    #[test]
+    fn a_contradictory_synchronization_declaration_is_malformed() {
+        let id = identity();
+        assert!(matches!(
+            CheckedTargetProfile::new_complete(
+                id,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                vec![
+                    synchronization_fact(
+                        id,
+                        REQUIRED_SUBJECT,
+                        SynchronizationRealization::Realized
+                    ),
+                    synchronization_fact(
+                        id,
+                        REQUIRED_SUBJECT,
+                        SynchronizationRealization::Unrealizable
+                    ),
+                ],
+            ),
+            Err(FeasibilityError::MalformedProfile {
+                rule: "duplicate-synchronization"
+            })
+        ));
+    }
+
+    /// A fence over no memory domain publishes nothing, in both directions.
+    #[test]
+    fn a_subject_that_fences_nothing_is_malformed() {
+        let vacuous = SynchronizationSubject {
+            fenced_spaces: tiler_ir::schedule::FencedSpaces::NONE,
+            ..REQUIRED_SUBJECT
+        };
+        assert!(matches!(
+            CheckedTargetProfile::new_complete(
+                identity(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                vec![synchronization_fact(
+                    identity(),
+                    vacuous,
+                    SynchronizationRealization::Realized
+                )],
+            ),
+            Err(FeasibilityError::MalformedProfile {
+                rule: "synchronization-subject"
+            })
+        ));
+        assert!(matches!(
+            FeasibilityProposal::new_with_synchronization(
+                "tiler.test.vacuous",
+                Vec::new(),
+                Vec::new(),
+                Some(vacuous),
+            ),
+            Err(FeasibilityError::MalformedProposal {
+                rule: "requirement-synchronization"
+            })
+        ));
     }
 
     /// The bounded serial-Sum baseline: every axis resolvable at compile time.
@@ -3078,7 +3950,7 @@ mod tests {
         assert_ne!(rules.key(), profile.identity().key());
         assert_eq!(
             rules.key(),
-            "tiler.feasibility.phased-capability-and-numerical-honourability.v4"
+            "tiler.feasibility.phased-capability-and-numerical-honourability.v5"
         );
         assert_eq!(rules.revision(), 1);
 

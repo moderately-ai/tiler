@@ -1872,6 +1872,7 @@ mod tests {
                 threads_per_workgroup: 1,
                 local_memory_bytes: 0,
                 requires_device_memory: true,
+                synchronization: None,
                 input_subnormals: realization.input_subnormals,
                 result_subnormals: realization.result_subnormals,
                 contraction: realization.contraction,

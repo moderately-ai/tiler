@@ -52,6 +52,8 @@ pub enum KernelEntityKind {
     Value,
     /// A kernel buffer parameter.
     Buffer,
+    /// A workgroup staging allocation.
+    Staging,
 }
 
 impl fmt::Display for KernelEntityKind {
@@ -222,22 +224,63 @@ pub enum KernelDiagnostic {
     /// The ordered effect sequence does not end with the owning store.
     EffectOrdering,
     /// The kernel contains synchronization that no schedule has authorized.
+    ///
+    /// Either the region's schedule owns no synchronization point at all — the
+    /// pointwise and global-linear case, where a barrier is redundant under an
+    /// exact launch and divergent under any other — or the barrier names a point
+    /// ordinal the region's cooperative tile does not declare.
     UnexpectedSynchronization,
+    /// A barrier's declared spelling is not the schedule point's subject.
+    ///
+    /// The point states the obligation and the barrier declares how it is spelled
+    /// for a backend; this refuses a kernel whose declaration would emit
+    /// something other than what the schedule requires and what a target fact was
+    /// matched against.
+    SynchronizationContract,
+    /// A barrier is not reached by every invocation that must arrive at it.
+    ///
+    /// A control barrier inside a predicated region or a loop body is reached by
+    /// a dynamic subset of the participants, which is undefined execution on
+    /// every target rather than an unsupported one. The rule is structural — the
+    /// barrier must sit at the kernel's top level — because a predicate that is
+    /// *provably* uniform today would stop being one the moment the launch
+    /// geometry admitted a tail.
+    SynchronizationConvergence,
+    /// A staged load or store names a phase and allocation its tile does not
+    /// declare, or addresses a slot outside the declared span.
+    StagedAccessEvidence,
+    /// A staged read is not separated from its producing write by the barrier
+    /// that realizes the point discharging their visibility edge.
+    ///
+    /// The schedule proves a point *exists* for every edge; this proves the body
+    /// actually places the barrier between the two effects. Without it a kernel
+    /// could carry a correct point, a correct barrier, and still read staged
+    /// values before the fence that publishes them.
+    UnorderedStagedHandoff,
     /// The declared staging allocations do not realize the region's tile.
     StagingContract,
     /// The region's cooperative dataflow carries a visibility dependency that
     /// no schedule has authorized a synchronization point for.
     ///
     /// A cooperative tile states that values one participant writes to
-    /// workgroup storage are read by others in a later phase. Nothing orders
-    /// those two phases: the barrier vocabulary is refused intrinsically by
-    /// [`Self::UnexpectedSynchronization`], and no schedule owns a
-    /// synchronization point, participant set, or convergence proof a barrier
-    /// could be matched against. Admitting the kernel would deliver a race, so
-    /// the dependency is refused rather than assumed discharged. Removing this
-    /// refusal is the synchronization authority's work, not a widening of this
-    /// verifier's.
+    /// workgroup storage are read by others in a later phase, and the kernel
+    /// body contains no barrier realizing the point that orders them.
+    ///
+    /// The schedule proves that a point exists for every edge before a kernel is
+    /// opened, so reaching this means the *body* omitted the barrier — a
+    /// well-authorized region lowered into a race. Admitting it would deliver
+    /// staged reads that observe unordered writes.
     UndischargedVisibility,
+    /// The region's cooperative tile is outside the lowered dataflow profile.
+    ///
+    /// The tile is well formed and its synchronization authority is complete —
+    /// the schedule verifier proved both — but its shape is one this lowering
+    /// has no canonical body for: more than one staging allocation, more than
+    /// two phases, a staged span other than the one-slot-per-participant write
+    /// and whole-set read the bounded profile uses, or a committing participant
+    /// other than the first, which `IndexLessThan` cannot select. Refusing is
+    /// what keeps "representable" and "lowered" different claims.
+    CooperativeLoweringShape,
     /// The structured loops do not realize the scheduled reduction topology.
     ReductionContract,
     /// The reduction contributor domain is malformed.
@@ -273,8 +316,13 @@ impl KernelDiagnostic {
             Self::OutputCoverage => "output-coverage",
             Self::EffectOrdering => "effect-ordering",
             Self::UnexpectedSynchronization => "unexpected-synchronization",
+            Self::SynchronizationContract => "synchronization-contract",
+            Self::SynchronizationConvergence => "synchronization-convergence",
+            Self::StagedAccessEvidence => "staged-access-evidence",
+            Self::UnorderedStagedHandoff => "unordered-staged-handoff",
             Self::StagingContract => "staging-contract",
             Self::UndischargedVisibility => "undischarged-visibility",
+            Self::CooperativeLoweringShape => "cooperative-lowering-shape",
             Self::ReductionContract => "reduction-contract",
             Self::ContributorDomain => "contributor-domain",
             Self::ElementCountOverflow => "element-count-overflow",

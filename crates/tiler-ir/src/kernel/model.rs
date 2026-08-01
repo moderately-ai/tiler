@@ -17,7 +17,7 @@ use crate::schedule::{BoundsWitnessId, OwnershipWitnessId};
 use crate::schedule::{
     CanonicalScheduledRegionIdentity, ExceptionalValueAssumption, FlushedZeroSign,
     NumericalPermission, NumericalRealization, RegionId, ResourceRequirements, SubnormalFreedom,
-    SubnormalMode, TensorRole, ValueDomainProvenance,
+    SubnormalMode, SynchronizationSubject, TensorRole, ValueDomainProvenance,
 };
 use crate::semantic::EncodedComponentRole;
 
@@ -27,6 +27,23 @@ use super::MAX_KERNEL_IDENTITY_BYTES;
 ///
 /// Named so [`encode_identity`] and [`identity_encoded_len`] measure the same
 /// bytes rather than agreeing on a literal by inspection.
+///
+/// `v6` gives the fixed resource-requirement record its synchronization
+/// requirement — the complete
+/// [`SynchronizationSubject`](crate::schedule::SynchronizationSubject) a
+/// region's schedule obliges a target to realize, or its canonical absence.
+/// The field lands at the end of a record that is *followed* by the value-type
+/// table and the whole body, so a `v5` reader would consume the presence tag as
+/// the first value-count byte and lose framing for everything after it. Every
+/// kernel ever encoded maps to different bytes now, and that is the point: a
+/// cache or artifact holding a `v5` identity must miss rather than match a
+/// kernel whose synchronization obligation the earlier record could not state —
+/// including, and especially, the zero-synchronization kernels whose absence is
+/// now an encoded fact rather than an unstated one.
+///
+/// The staged-access and barrier operation encodings moved with it and cost
+/// nothing extra: no `v5` kernel could contain a `Barrier`, because the verifier
+/// refused every one intrinsically, and staged loads and stores did not exist.
 ///
 /// `v5` gives a buffer parameter's input role its ordinal, so a kernel can bind
 /// several distinct input tensors. The ordinal lands inside the repeated
@@ -46,12 +63,12 @@ use super::MAX_KERNEL_IDENTITY_BYTES;
 /// their earlier values and new variants receive appended tags. These changes
 /// advance the domain rather than letting an earlier reader interpret the
 /// kernel incompletely.
-const KERNEL_DOMAIN: &[u8] = b"tiler.kernel.v5\0";
+const KERNEL_DOMAIN: &[u8] = b"tiler.kernel.v6\0";
 
 /// The width [`push_len`] frames a length in, as ADR 0074 fixes it.
 const LENGTH_BYTES: usize = size_of::<u64>();
 use super::error::{KernelDiagnostic, KernelEntityKind, VerifiedKernelHandleError};
-use super::handles::{VerifiedBufferId, VerifiedKernelOwner, VerifiedValueId};
+use super::handles::{VerifiedBufferId, VerifiedKernelOwner, VerifiedStagingId, VerifiedValueId};
 
 /// The resolved type of one structured-kernel SSA value.
 ///
@@ -600,8 +617,30 @@ impl BarrierOrdering {
 /// Execution scope, memory scope, fenced address spaces, and ordering stay
 /// distinct even when one target builtin combines them (ADR 0048); collapsing
 /// them into a single flag would lose the portable contract.
+///
+/// # Why the spec both names a schedule point and restates its subject
+///
+/// `point` is the *reference*: it names the exact
+/// [`SynchronizationPoint`](crate::schedule::SynchronizationPoint) of the
+/// region's cooperative tile that this barrier realizes, so "which handoff does
+/// this order" is a resolvable question rather than a positional coincidence.
+/// The four spelling fields are the *self-contained emission fact*: this IR
+/// exists so a backend needs no other document, and a backend cannot reach the
+/// scheduled region from a kernel operation.
+///
+/// They are deliberately **not** one authority. The schedule point is the
+/// obligation and this is a declaration of it; whole-kernel verification
+/// projects the four fields onto the point's
+/// [`SynchronizationSubject`](crate::schedule::SynchronizationSubject) through
+/// one total mapping and requires equality, exactly as a kernel's declared
+/// [`ResourceRequirements`] is proven equal to the derived record rather than
+/// being trusted beside it. Equal field shapes did not make these one concept
+/// before that projection existed, and the projection is what makes the
+/// agreement checked rather than assumed.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct BarrierSpec {
+    /// Schedule synchronization point this barrier realizes.
+    pub point: crate::schedule::SyncPointId,
     /// Invocations that must reach the same dynamic barrier instance.
     pub execution_scope: ExecutionScope,
     /// Scope across which fenced effects become visible.
@@ -695,6 +734,17 @@ pub(super) enum OperationKind {
     },
     Barrier {
         spec: BarrierSpec,
+    },
+    StagedStore {
+        staging: u32,
+        offset: u32,
+        value: u32,
+        phase: crate::schedule::PhaseId,
+    },
+    StagedLoad {
+        staging: u32,
+        offset: u32,
+        phase: crate::schedule::PhaseId,
     },
 }
 
@@ -939,6 +989,32 @@ impl VerifiedKernel {
     fn buffer_id(&self, index: u32) -> VerifiedBufferId {
         VerifiedBufferId::from_verified(self.owner, index)
     }
+
+    fn staging_id(&self, index: u32) -> VerifiedStagingId {
+        VerifiedStagingId::from_verified(self.owner, index)
+    }
+
+    /// Returns one verified workgroup staging allocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VerifiedKernelHandleError`] when the handle belongs to another
+    /// kernel or does not identify a retained allocation.
+    pub fn staging_parameter(
+        &self,
+        id: VerifiedStagingId,
+    ) -> Result<StagingParameter, VerifiedKernelHandleError> {
+        if id.owner != self.owner {
+            return Err(VerifiedKernelHandleError::ForeignKernel {
+                entity: KernelEntityKind::Staging,
+            });
+        }
+        self.data.staging.get(id.as_usize()).copied().ok_or(
+            VerifiedKernelHandleError::InvalidHandle {
+                entity: KernelEntityKind::Staging,
+            },
+        )
+    }
 }
 
 /// A read-only view of one structured block.
@@ -1073,6 +1149,26 @@ impl<'a> OperationRef<'a> {
                 block: *body,
             }),
             OperationKind::Barrier { spec } => OperationView::Barrier { spec },
+            OperationKind::StagedStore {
+                staging,
+                offset,
+                value,
+                phase,
+            } => OperationView::StagedStore {
+                staging: kernel.staging_id(*staging),
+                offset: kernel.value_id(*offset),
+                value: kernel.value_id(*value),
+                phase: *phase,
+            },
+            OperationKind::StagedLoad {
+                staging,
+                offset,
+                phase,
+            } => OperationView::StagedLoad {
+                staging: kernel.staging_id(*staging),
+                offset: kernel.value_id(*offset),
+                phase: *phase,
+            },
         }
     }
 
@@ -1169,8 +1265,36 @@ pub enum OperationView<'a> {
     SerialLoop(SerialLoopRef<'a>),
     /// Synchronizes an execution scope and fences named address spaces.
     Barrier {
-        /// The barrier's separately named scopes, fences, and ordering.
+        /// The barrier's schedule point, scopes, fences, and ordering.
         spec: &'a BarrierSpec,
+    },
+    /// Stores one element into workgroup staging during a named tile phase.
+    ///
+    /// The phase is the evidence: it names the
+    /// [`CooperativePhase`](crate::schedule::CooperativePhase) whose declared
+    /// [`StagedWrite`](crate::schedule::StagedWrite) authorizes this effect,
+    /// which is what a bounds witness is for a boundary load. It also fixes
+    /// *when* the effect happens relative to the tile's visibility edges, so a
+    /// verifier can decide whether the barrier discharging an edge actually
+    /// separates this write from the read that consumes it.
+    StagedStore {
+        /// Workgroup allocation written.
+        staging: VerifiedStagingId,
+        /// Slot index within the allocation.
+        offset: VerifiedValueId,
+        /// Stored value.
+        value: VerifiedValueId,
+        /// Tile phase whose staged write authorizes this effect.
+        phase: crate::schedule::PhaseId,
+    },
+    /// Loads one element from workgroup staging during a named tile phase.
+    StagedLoad {
+        /// Workgroup allocation read.
+        staging: VerifiedStagingId,
+        /// Slot index within the allocation.
+        offset: VerifiedValueId,
+        /// Tile phase whose staged read authorizes this effect.
+        phase: crate::schedule::PhaseId,
     },
 }
 
@@ -1324,11 +1448,36 @@ fn push_numerical(bytes: &mut Vec<u8>, numerical: &NumericalRealization) {
     push_exceptional_assumption(bytes, numerical.infinity_assumptions);
 }
 
+/// Encodes the synchronization realization a region requires, or its absence.
+///
+/// A one-byte presence tag, and the complete subject when present. Absence
+/// writes `0x00` rather than nothing: this record is followed by more fields, so
+/// the omitted-when-empty idiom that let the staging list append has no analogue
+/// here — which is exactly why this field steps the kernel identity domain. What
+/// the tag buys is that "this kernel synchronizes nothing" becomes an *encoded*
+/// claim rather than an unstated one, so a kernel that later gains a barrier
+/// cannot share identity with the one that did not.
+fn push_synchronization(bytes: &mut Vec<u8>, subject: Option<SynchronizationSubject>) {
+    match subject {
+        None => bytes.push(0x00),
+        Some(subject) => {
+            bytes.push(0x01);
+            bytes.push(subject.kind.tag());
+            bytes.push(subject.execution_scope.tag());
+            bytes.push(subject.visibility_scope.tag());
+            bytes.push(u8::from(subject.fenced_spaces.workgroup));
+            bytes.push(u8::from(subject.fenced_spaces.device));
+            bytes.push(subject.ordering.tag());
+        }
+    }
+}
+
 fn push_requirements(bytes: &mut Vec<u8>, requirements: &ResourceRequirements) {
     bytes.extend_from_slice(&requirements.buffer_bindings.to_be_bytes());
     bytes.extend_from_slice(&requirements.threads_per_workgroup.to_be_bytes());
     bytes.extend_from_slice(&requirements.local_memory_bytes.to_be_bytes());
     bytes.push(u8::from(requirements.requires_device_memory));
+    push_synchronization(bytes, requirements.synchronization);
     push_subnormal(bytes, requirements.input_subnormals);
     push_subnormal(bytes, requirements.result_subnormals);
     push_permission(bytes, requirements.contraction);
@@ -1414,6 +1563,7 @@ fn push_constant(bytes: &mut Vec<u8>, value: KernelConstant) {
 }
 
 fn push_barrier(bytes: &mut Vec<u8>, spec: &BarrierSpec) {
+    bytes.extend_from_slice(&spec.point.get().to_be_bytes());
     bytes.push(spec.execution_scope.tag());
     bytes.push(spec.memory_scope.tag());
     push_len(bytes, spec.fenced_spaces.len());
@@ -1520,6 +1670,32 @@ fn push_operation(bytes: &mut Vec<u8>, data: &KernelData, operation: &OperationD
         OperationKind::Barrier { spec } => {
             bytes.push(0x1a);
             push_barrier(bytes, spec);
+        }
+        // Appended tags. No `v5` kernel could contain either construct — staged
+        // accesses did not exist and every barrier was refused intrinsically —
+        // so these move no earlier subject's bytes on their own account. The
+        // domain still steps, for the resource-requirement field above.
+        OperationKind::StagedStore {
+            staging,
+            offset,
+            value,
+            phase,
+        } => {
+            bytes.push(0x1d);
+            bytes.extend_from_slice(&staging.to_be_bytes());
+            bytes.extend_from_slice(&offset.to_be_bytes());
+            bytes.extend_from_slice(&value.to_be_bytes());
+            bytes.extend_from_slice(&phase.get().to_be_bytes());
+        }
+        OperationKind::StagedLoad {
+            staging,
+            offset,
+            phase,
+        } => {
+            bytes.push(0x1e);
+            bytes.extend_from_slice(&staging.to_be_bytes());
+            bytes.extend_from_slice(&offset.to_be_bytes());
+            bytes.extend_from_slice(&phase.get().to_be_bytes());
         }
     }
     push_indices(bytes, &operation.results);
@@ -1654,6 +1830,16 @@ const fn exceptional_assumption_encoded_len(assumption: ExceptionalValueAssumpti
     }
 }
 
+/// Mirrors [`push_synchronization`]: a presence tag, plus six bytes when present.
+const fn synchronization_encoded_len(subject: Option<SynchronizationSubject>) -> usize {
+    match subject {
+        None => 1,
+        // The kind, execution scope, and visibility scope tags, the two fence
+        // flags, and the ordering tag.
+        Some(_) => 7,
+    }
+}
+
 /// Mirrors [`push_requirements`].
 fn requirements_encoded_len(requirements: &ResourceRequirements) -> usize {
     size_of_val(&requirements.buffer_bindings)
@@ -1661,6 +1847,7 @@ fn requirements_encoded_len(requirements: &ResourceRequirements) -> usize {
         .saturating_add(size_of_val(&requirements.local_memory_bytes))
         // The device-memory flag, two subnormal modes, and four permissions.
         .saturating_add(7)
+        .saturating_add(synchronization_encoded_len(requirements.synchronization))
         .saturating_add(exceptional_assumption_encoded_len(
             requirements.nan_assumptions,
         ))
@@ -1680,9 +1867,10 @@ fn constant_encoded_len(value: KernelConstant) -> usize {
 
 /// Mirrors [`push_barrier`].
 fn barrier_encoded_len(spec: &BarrierSpec) -> usize {
-    // Execution scope, memory scope, then the framed fenced spaces at one tag
-    // byte each, then the ordering.
-    2_usize
+    // The schedule point, then execution scope, memory scope, then the framed
+    // fenced spaces at one tag byte each, then the ordering.
+    size_of_val(&spec.point.get())
+        .saturating_add(2)
         .saturating_add(LENGTH_BYTES)
         .saturating_add(spec.fenced_spaces.len())
         .saturating_add(1)
@@ -1758,6 +1946,22 @@ fn operation_encoded_len(data: &KernelData, operation: &OperationData) -> usize 
             .saturating_add(indices_encoded_len(yields))
             .saturating_add(block_encoded_len(data, *body)),
         OperationKind::Barrier { spec } => barrier_encoded_len(spec),
+        OperationKind::StagedStore {
+            staging,
+            offset,
+            value,
+            phase,
+        } => size_of_val(staging)
+            .saturating_add(size_of_val(offset))
+            .saturating_add(size_of_val(value))
+            .saturating_add(size_of_val(&phase.get())),
+        OperationKind::StagedLoad {
+            staging,
+            offset,
+            phase,
+        } => size_of_val(staging)
+            .saturating_add(size_of_val(offset))
+            .saturating_add(size_of_val(&phase.get())),
     };
     // Every arm is preceded by its one-byte kind tag and followed by results.
     1_usize

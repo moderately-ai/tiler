@@ -140,6 +140,7 @@ mod handles;
 mod model;
 mod numerics;
 mod pointwise;
+mod synchronization;
 
 pub use builder::ScheduledRegionBuilder;
 pub use cooperative::{
@@ -151,7 +152,7 @@ pub use error::{
     ScheduleComponent, ScheduleLimitKind, ScheduledRegionBuildError, ScheduledRegionDiagnostic,
 };
 pub use handles::{
-    BoundsWitnessId, InputOrdinal, OwnershipWitnessId, PhaseId, RegionId, StagingId,
+    BoundsWitnessId, InputOrdinal, OwnershipWitnessId, PhaseId, RegionId, StagingId, SyncPointId,
 };
 pub(crate) use model::subnormal_freedom_of;
 pub use model::{
@@ -173,6 +174,11 @@ pub use pointwise::{
     PointwiseF32ExpressionAdmissionError, PointwiseF32ExpressionBuildError,
     PointwiseF32ExpressionBuilder, PointwiseF32ExpressionDiagnostic, PointwiseF32Node,
     PointwiseF32NodeId, PointwiseF32Value,
+};
+pub use synchronization::{
+    ConvergenceEvidence, FencedSpaces, MemoryOrdering, SynchronizationKind,
+    SynchronizationPlacement, SynchronizationPoint, SynchronizationRule, SynchronizationScope,
+    SynchronizationSubject, required_subject,
 };
 
 /// Maximum logical accesses admitted by one scheduled region.
@@ -200,3 +206,10 @@ pub const MAX_COOPERATIVE_STAGING_SLOTS: u64 = 65_536;
 pub const MAX_COOPERATIVE_PHASES: usize = 64;
 /// Maximum staged accesses admitted by one cooperative phase.
 pub const MAX_COOPERATIVE_PHASE_ACCESSES: usize = 64;
+/// Maximum synchronization points admitted by one cooperative workgroup tile.
+///
+/// A point sits at a boundary between consecutive phases, so a tile can need at
+/// most one fewer point than it has phases; the bound is stated separately
+/// anyway, because the verifier enumerates points against edges and a bound
+/// derived from another bound is one a reader has to reconstruct.
+pub const MAX_COOPERATIVE_SYNCHRONIZATION_POINTS: usize = 64;

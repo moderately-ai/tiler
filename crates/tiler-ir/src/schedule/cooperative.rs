@@ -9,14 +9,20 @@
 //!
 //! # What this is and what it deliberately is not
 //!
-//! This module represents a *dependency*, never its discharge. A tile that
-//! writes staging in one phase and reads it in a later one carries a
+//! This module represents a *dependency* and names what discharges it. A tile
+//! that writes staging in one phase and reads it in a later one carries a
 //! [`VisibilityEdge`] for each such pair, and an edge is exactly the obligation
-//! a synchronization point would have to satisfy. Nothing here admits a barrier,
-//! names an execution or memory scope, or claims any target can order the two
-//! phases — the structured-kernel verifier refuses a kernel whose region carries
-//! an undischarged edge, which is what keeps a representable tile from becoming
-//! an executable race.
+//! a [`SynchronizationPoint`] has to satisfy. The edges are still derived here
+//! and never declared; the points are declared and their discharge is derived
+//! from where they sit. A tile whose edges are not all discharged is refused by
+//! the schedule verifier, and a kernel whose body does not separate a staged
+//! write from its staged read by the barrier realizing the discharging point is
+//! refused by the structured-kernel verifier — the two together are what keep a
+//! representable tile from becoming an executable race.
+//!
+//! Nothing here claims any *target* can order the two phases. That is one atomic
+//! provenance-bearing fact a target profile declares, composed against
+//! [`super::synchronization::required_subject`] by a feasibility authority.
 //!
 //! # Why the relations are stated per participant
 //!
@@ -40,6 +46,7 @@
 //! of what a coordinate already means.
 
 use super::handles::{PhaseId, StagingId};
+use super::synchronization::SynchronizationPoint;
 
 /// The element one workgroup staging allocation holds.
 ///
@@ -237,6 +244,16 @@ pub struct CooperativeTile {
     pub staging: Vec<WorkgroupStaging>,
     /// Phases, in ascending [`PhaseId`] order.
     pub phases: Vec<CooperativePhase>,
+    /// Synchronization points, in ascending
+    /// [`SyncPointId`](super::SyncPointId) order.
+    ///
+    /// Declared rather than derived, because *where* to order a handoff is a
+    /// physical decision with more than one correct answer — a tile with three
+    /// phases and two handoffs may separate them with one point or two — and a
+    /// derivation would silently pick one and make the alternative unstatable.
+    /// What is derived is which edges each point discharges, so the declaration
+    /// is checked against the dependency rather than trusted beside it.
+    pub synchronization: Vec<SynchronizationPoint>,
     /// Participants that perform the region's owning write.
     ///
     /// Carried by the tile rather than left to the ownership proof: the proof
@@ -285,6 +302,20 @@ impl CooperativeTile {
         });
         edges.dedup();
         edges
+    }
+
+    /// Returns the points that discharge `edge`, in declaration order.
+    ///
+    /// The schedule verifier requires exactly one, so a caller holding a
+    /// verified region may take the single element. The plural form is what lets
+    /// the verifier tell "no point orders this handoff" apart from "two points
+    /// order it", which are different defects with different fixes.
+    #[must_use]
+    pub fn discharging_points(&self, edge: VisibilityEdge) -> Vec<&SynchronizationPoint> {
+        self.synchronization
+            .iter()
+            .filter(|point| point.discharges(edge))
+            .collect()
     }
 
     /// Returns the workgroup memory this tile allocates, in bytes.

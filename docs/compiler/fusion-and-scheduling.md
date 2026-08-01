@@ -284,17 +284,45 @@ Each implementation declares valid extents, lane-result visibility, tail masking
 barrier requirements, accumulator type, and target capabilities. There is no
 underspecified portable “block reduce” operation in final scheduled IR.
 
-The threadgroup form's *dataflow* is implemented and verifier-owned ahead of its
-execution: `ReductionTopology::CooperativeWorkgroup` states the participant set,
-local coordinates, workgroup staging with declared lifetimes, phased writes and
-reads, uniform phase reachability, and the single committing participant, and the
-intrinsic schedule verifier proves all of it. What it does not state is the
-ordering between a staged write and a later staged read — that dependency is
-derived as an explicit visibility edge, no schedule authorizes a synchronization
-point to discharge it, and the structured-kernel verifier refuses any kernel
-whose region carries one. So a threadgroup reduction is *representable and
-rejected*, which is what keeps a strategy the compiler cannot yet order out of an
-executable plan rather than silently into a race.
+The threadgroup form's dataflow *and* its ordering are implemented and
+verifier-owned. `ReductionTopology::CooperativeWorkgroup` states the participant
+set, local coordinates, workgroup staging with declared lifetimes, phased writes
+and reads, uniform phase reachability, and the single committing participant; the
+ordering between a staged write and a later staged read is derived as an explicit
+visibility edge, and the tile declares the synchronization points that discharge
+those edges. The intrinsic schedule verifier proves all of it, including that
+exactly one point discharges each edge — no edge left unordered, and no second
+point stating the same ordering twice.
+
+A point is a schedule-owned authority, not a barrier's field. It names its
+operation kind, the phase boundary it occupies, the participants that must
+arrive, and the complete realization it requires — arrival scope, publication
+scope, fenced memory domains, ordering — together with the evidence class its
+convergence rests on. Only the control barrier is admitted; asynchronous copies,
+split-phase barriers, collectives, atomics, and inter-dispatch dependencies are
+statable and refused by name, because each carries a contract this vocabulary
+does not define and a target fact for one must never satisfy a requirement for
+another. Convergence is refused outright when a producer merely asserts it: the
+admitted evidence class is the derivation over the tile's own per-phase
+participation, which makes "every participant reaches this point" a checked claim
+rather than a caller's word.
+
+A point lives inside the tile rather than beside the topology, and the
+consequence is the elimination this authority exists for: a barrier in the
+pointwise, global-linear program cannot be *stated* at the schedule layer at all,
+because that schedule has no phases to place one between. The structured-kernel
+verifier still refuses one there by name, which checks the redundant barrier at
+the layer where a barrier can actually be written.
+
+Feasibility then composes one atomic realization subject against a target's
+declaration, by equality over the whole value. A subject nothing declares is
+`Unknown`; a subject a profile declares unrealizable is a typed rejection; and a
+profile whose facts each realize one dimension of the required subject — subgroup
+arrival, device-wide publication, a wider fence, a stronger ordering — satisfies
+nothing, because their conjunction is a statement about none of them. A schedule
+with no synchronization derives no requirement at all, so it consults no fact,
+produces no explain row, and stays feasible against a target that declares
+nothing about synchronization.
 
 A multi-pass reduction is a `KernelSubprogram`: an initial scheduled kernel
 fully defines a typed partials temporary in declared scratch, a typed `Data`

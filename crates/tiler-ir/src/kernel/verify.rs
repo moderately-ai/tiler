@@ -18,15 +18,17 @@ use std::collections::BTreeSet;
 
 use crate::schedule::{
     Access, AccessMode, BoundsProofKind, BoundsWitnessId, CanonicalScheduledRegionIdentity,
-    CooperativeTile, ExecutionBinding, OwnershipWitnessId, ReductionPass, ReductionTopology,
-    ResourceRequirements, ScheduledRegion, StagedElement, contributor_count, cooperative_tile,
-    element_count,
+    ContributorPartition, CooperativeTile, ExecutionBinding, FencedSpaces, MemoryOrdering,
+    OwnershipWitnessId, PhaseId, ReductionPass, ReductionTopology, ResourceRequirements,
+    ScheduledRegion, StagedElement, SyncPointId, SynchronizationKind, SynchronizationPoint,
+    SynchronizationScope, SynchronizationSubject, VisibilityEdge, contributor_count,
+    cooperative_tile, element_count,
 };
 
 use super::error::KernelDiagnostic;
 use super::model::{
-    AddressSpace, BufferAccess, Builtin, CompareOp, KernelConstant, KernelData, KernelType,
-    OperationKind,
+    AddressSpace, BarrierOrdering, BarrierSpec, BufferAccess, Builtin, CompareOp, ExecutionScope,
+    KernelConstant, KernelData, KernelType, MemoryScope, OperationKind,
 };
 
 /// Returns the number of addressable elements one scheduled access spans.
@@ -92,10 +94,36 @@ struct LoopSummary {
     block_depth: u32,
 }
 
+/// One synchronization-relevant event, recorded in program order.
+///
+/// Staged accesses and barriers share one ordered list because the property they
+/// have to prove is *relative*: a staged read is legal exactly when the barrier
+/// realizing the point that discharges its edge sits between it and the write it
+/// consumes. Two separate lists could each be well formed and still leave the
+/// read ahead of the fence.
+#[derive(Clone, Copy, Debug)]
+enum SyncEvent {
+    /// A store into workgroup staging, tagged with the phase authorizing it.
+    StagedWrite { staging: u32, phase: PhaseId },
+    /// A load from workgroup staging, tagged with the phase authorizing it.
+    StagedRead { staging: u32, phase: PhaseId },
+    /// A barrier realizing one schedule synchronization point.
+    Barrier {
+        point: SyncPointId,
+        /// Lexical block depth, `0` at the kernel's top level.
+        block_depth: u32,
+    },
+}
+
 #[derive(Debug, Default)]
 struct Walk {
     effects: Vec<Effect>,
     has_synchronization: bool,
+    /// Barrier specifications in program order, parallel to the `Barrier`
+    /// entries of `sync`.
+    barriers: Vec<BarrierSpec>,
+    /// Staged accesses and barriers in program order.
+    sync: Vec<SyncEvent>,
     loops: Vec<LoopSummary>,
     ungoverned_predicate: bool,
 }
@@ -111,12 +139,13 @@ pub(super) fn verify_kernel(
     verify_signature(data, schedule, reads, write, derived)?;
     verify_cooperative(data, schedule)?;
 
-    let guards = guard_values(data, schedule.schedule.work_items);
+    let guards = guard_values(data, schedule);
     let mut walk = Walk::default();
     visit_block(data, 0, false, 0, 0, &guards, &mut walk);
     if walk.ungoverned_predicate {
         return Err(KernelDiagnostic::PredicateDominance);
     }
+    verify_synchronization(&walk, data, schedule)?;
     verify_effects(&walk, schedule, reads, write)?;
     verify_reduction(&walk, schedule, reads)?;
 
@@ -231,21 +260,12 @@ fn verify_signature(
 
 /// Verifies the workgroup staging a kernel declares against its region's tile.
 ///
-/// Two jobs. The staging declarations must realize the tile exactly — same
-/// count, same ordinals in order, same element type, same slot count — so a
-/// producer cannot allocate more or differently shaped workgroup storage than
-/// the schedule proved well formed. And a region carrying any cross-invocation
-/// visibility dependency is refused outright: the tile states that one
-/// participant's staged writes are read by others in a later phase, and nothing
-/// orders the two.
-///
-/// **The refusal is derived, not a placeholder.** The barrier vocabulary is
-/// rejected intrinsically by [`verify_effects`], and no schedule owns a
-/// synchronization point a barrier could be matched to, so there is no
-/// construct this kernel could contain that would discharge the edge. Admitting
-/// the kernel would hand a backend a program whose staged reads observe
-/// unordered writes. Discharging an edge is the synchronization authority's
-/// work; representing one is this ticket's.
+/// The staging declarations must realize the tile exactly — same count, same
+/// ordinals in order, same element type, same slot count — so a producer cannot
+/// allocate more or differently shaped workgroup storage than the schedule
+/// proved well formed. Whether anything *orders* the staged handoff is
+/// [`verify_synchronization`]'s question, and it runs after the body walk
+/// because the answer is a property of the body's operation order.
 fn verify_cooperative(
     data: &KernelData,
     schedule: &ScheduledRegion,
@@ -273,29 +293,262 @@ fn verify_cooperative(
             return Err(KernelDiagnostic::StagingContract);
         }
     }
-    if CooperativeTile::visibility_edges(tile).is_empty() {
-        return Ok(());
-    }
-    Err(KernelDiagnostic::UndischargedVisibility)
+    Ok(())
 }
 
-/// Collects the values that denote the scheduled bounds predicate.
+/// Projects one barrier's declared spelling onto a schedule subject.
 ///
-/// A governed predicate compares an admitted global invocation index against
-/// the exact scheduled work-item count. Any other predicate leaves an effect
-/// undominated by schedule-derived bounds evidence.
-fn guard_values(data: &KernelData, work_items: u64) -> BTreeSet<u32> {
-    let mut invocations = BTreeSet::new();
+/// A *total* mapping, written as exhaustive matches over both vocabularies, so
+/// widening either is a build error here rather than a silent disagreement
+/// between a schedule obligation and the barrier a backend will emit. The two
+/// vocabularies stay separate on purpose: the schedule's is the obligation and
+/// the kernel's is the emission spelling, and equal field shapes are not what
+/// makes them agree — this projection plus the equality below is.
+///
+/// Returns `None` when the spelling names something the schedule vocabulary
+/// cannot express at all, which is a refusal rather than a nearest match.
+fn barrier_subject(spec: &BarrierSpec) -> Option<SynchronizationSubject> {
+    // Exhaustive on purpose. `#[non_exhaustive]` has no effect inside the
+    // defining crate, so widening either vocabulary is a build error here — the
+    // one place that has to decide what the new spelling means — rather than a
+    // wildcard silently projecting it onto whichever scope it resembles.
+    let execution_scope = match spec.execution_scope {
+        ExecutionScope::Subgroup => SynchronizationScope::Subgroup,
+        ExecutionScope::Workgroup => SynchronizationScope::Workgroup,
+    };
+    let visibility_scope = match spec.memory_scope {
+        MemoryScope::Workgroup => SynchronizationScope::Workgroup,
+        MemoryScope::Device => SynchronizationScope::Device,
+    };
+    let ordering = match spec.ordering {
+        BarrierOrdering::AcquireRelease => MemoryOrdering::AcquireRelease,
+    };
+    // A repeated or unorderable fenced space is a spelling with two readings, so
+    // it is refused rather than deduplicated into one.
+    let mut fenced = FencedSpaces::NONE;
+    for space in &spec.fenced_spaces {
+        let flag = match space {
+            AddressSpace::Workgroup => &mut fenced.workgroup,
+            AddressSpace::Device => &mut fenced.device,
+            AddressSpace::InvocationPrivate | AddressSpace::Constant => return None,
+        };
+        if std::mem::replace(flag, true) {
+            return None;
+        }
+    }
+    Some(SynchronizationSubject {
+        // A `Barrier` operation *is* the control-barrier construct; a different
+        // kind is a different operation, which is why no field spells it.
+        kind: SynchronizationKind::ControlBarrier,
+        execution_scope,
+        visibility_scope,
+        fenced_spaces: fenced,
+        ordering,
+    })
+}
+
+/// Proves the body realizes exactly the schedule's synchronization authority.
+///
+/// Five obligations, in the order a failure is most usefully reported.
+///
+/// 1. A region whose schedule owns no synchronization point contains no barrier
+///    and no staged access. This is where the pointwise, global-linear barrier
+///    is eliminated: that schedule has no cooperative tile, so it can state no
+///    point, so any barrier in its body is unauthorized by construction.
+/// 2. Every barrier names a declared point, every declared point is realized
+///    exactly once, and the realizations appear in ascending point order.
+/// 3. Every barrier sits at the kernel's top level, so every invocation reaches
+///    it. A barrier inside a predicate or a loop is reached by a dynamic subset
+///    of the participants — undefined execution rather than unsupported.
+/// 4. Every barrier's declared spelling projects onto its point's subject.
+/// 5. Every staged access is authorized by the phase it names, and every
+///    visibility edge's write precedes, and its read follows, the barrier
+///    realizing the point that discharges it.
+fn verify_synchronization(
+    walk: &Walk,
+    data: &KernelData,
+    schedule: &ScheduledRegion,
+) -> Result<(), KernelDiagnostic> {
+    let Some(tile) = cooperative_tile(&schedule.schedule.reduction) else {
+        if walk.has_synchronization {
+            return Err(KernelDiagnostic::UnexpectedSynchronization);
+        }
+        if walk.sync.is_empty() {
+            return Ok(());
+        }
+        return Err(KernelDiagnostic::StagedAccessEvidence);
+    };
+
+    // Obligation 2: the realized points are exactly the declared ones, once
+    // each, in declaration order.
+    let realized: Vec<SyncPointId> = walk.barriers.iter().map(|spec| spec.point).collect();
+    let declared: Vec<SyncPointId> = tile.synchronization.iter().map(|point| point.id).collect();
+    if realized != declared {
+        return Err(if realized.iter().any(|id| !declared.contains(id)) {
+            KernelDiagnostic::UnexpectedSynchronization
+        } else {
+            KernelDiagnostic::UndischargedVisibility
+        });
+    }
+
+    // Obligations 3 and 4.
+    for (spec, event) in walk.barriers.iter().zip(
+        walk.sync
+            .iter()
+            .filter(|event| matches!(event, SyncEvent::Barrier { .. })),
+    ) {
+        if let SyncEvent::Barrier { block_depth, .. } = event
+            && *block_depth != 0
+        {
+            return Err(KernelDiagnostic::SynchronizationConvergence);
+        }
+        let point = resolve_point(tile, spec.point)?;
+        if barrier_subject(spec) != Some(point.subject) {
+            return Err(KernelDiagnostic::SynchronizationContract);
+        }
+    }
+
+    // Obligation 5a: every staged access names a phase that authorizes it.
+    for event in &walk.sync {
+        let (staging, phase, writes) = match event {
+            SyncEvent::StagedWrite { staging, phase } => (*staging, *phase, true),
+            SyncEvent::StagedRead { staging, phase } => (*staging, *phase, false),
+            SyncEvent::Barrier { .. } => continue,
+        };
+        let id = data
+            .staging
+            .get(usize::try_from(staging).unwrap_or(usize::MAX))
+            .ok_or(KernelDiagnostic::StagedAccessEvidence)?
+            .staging;
+        let authorized = tile
+            .phases
+            .iter()
+            .find(|candidate| candidate.id == phase)
+            .is_some_and(|candidate| {
+                if writes {
+                    candidate.writes.iter().any(|write| write.staging == id)
+                } else {
+                    candidate.reads.iter().any(|read| read.staging == id)
+                }
+            });
+        if !authorized {
+            return Err(KernelDiagnostic::StagedAccessEvidence);
+        }
+    }
+
+    // Obligation 5b: the fence actually separates each handoff.
+    for edge in tile.visibility_edges() {
+        verify_edge_is_ordered(walk, data, tile, edge)?;
+    }
+    Ok(())
+}
+
+/// Resolves one barrier's point reference against the region's tile.
+fn resolve_point(
+    tile: &CooperativeTile,
+    point: SyncPointId,
+) -> Result<&SynchronizationPoint, KernelDiagnostic> {
+    tile.synchronization
+        .iter()
+        .find(|candidate| candidate.id == point)
+        .ok_or(KernelDiagnostic::UnexpectedSynchronization)
+}
+
+/// Proves one visibility edge's write precedes, and its read follows, the fence.
+///
+/// The schedule already proved exactly one point discharges the edge; this
+/// proves the *body* placed that point's barrier between the two effects. Both
+/// halves are needed and neither implies the other: a body can carry the right
+/// point and the right barrier and still read staged values ahead of it.
+fn verify_edge_is_ordered(
+    walk: &Walk,
+    data: &KernelData,
+    tile: &CooperativeTile,
+    edge: VisibilityEdge,
+) -> Result<(), KernelDiagnostic> {
+    let discharging = tile.discharging_points(edge);
+    let [point] = discharging.as_slice() else {
+        return Err(KernelDiagnostic::UndischargedVisibility);
+    };
+    let point = point.id;
+    let fence = walk
+        .sync
+        .iter()
+        .position(|event| matches!(event, SyncEvent::Barrier { point: realized, .. } if *realized == point))
+        .ok_or(KernelDiagnostic::UndischargedVisibility)?;
+
+    let staging_of = |staging: u32| {
+        data.staging
+            .get(usize::try_from(staging).unwrap_or(usize::MAX))
+            .map(|parameter| parameter.staging)
+    };
+    let mut wrote = false;
+    let mut read = false;
+    for (position, event) in walk.sync.iter().enumerate() {
+        match event {
+            SyncEvent::StagedWrite { staging, phase }
+                if staging_of(*staging) == Some(edge.staging) && *phase == edge.produced_in =>
+            {
+                if position > fence {
+                    return Err(KernelDiagnostic::UnorderedStagedHandoff);
+                }
+                wrote = true;
+            }
+            SyncEvent::StagedRead { staging, phase }
+                if staging_of(*staging) == Some(edge.staging) && *phase == edge.consumed_in =>
+            {
+                if position < fence {
+                    return Err(KernelDiagnostic::UnorderedStagedHandoff);
+                }
+                read = true;
+            }
+            _ => {}
+        }
+    }
+    if wrote && read {
+        return Ok(());
+    }
+    Err(KernelDiagnostic::UnorderedStagedHandoff)
+}
+
+/// Collects the values that denote a schedule-derived governed predicate.
+///
+/// Two forms, and both bounds come from the schedule rather than from the body.
+///
+/// The **iteration guard** compares an admitted global invocation index against
+/// the exact scheduled work-item count; every kernel has one and every memory
+/// effect must be dominated by it.
+///
+/// The **commit guard** compares an admitted *local* invocation index against a
+/// cooperative tile's committing participant count, and exists only for a
+/// cooperative region. It is what lets several invocations reach the same
+/// output's phases while exactly one of them stores, which is the fact
+/// `OwnershipProofKind::OneGlobalInvocationPerOutput` rests on for a tile. It is
+/// admitted only when the tile's commit range starts at zero, because
+/// `IndexLessThan` cannot express "equals `k`" for a nonzero `k`; a tile that
+/// commits from some other participant has no governed predicate here and its
+/// body is refused rather than approximated.
+///
+/// Any other predicate leaves an effect undominated by schedule-derived
+/// evidence.
+fn guard_values(data: &KernelData, schedule: &ScheduledRegion) -> BTreeSet<u32> {
+    let mut global = BTreeSet::new();
+    let mut local = BTreeSet::new();
     for block in &data.blocks {
         for operation in &block.operations {
-            if let OperationKind::Builtin {
-                builtin: Builtin::GlobalInvocationIndex,
-            } = operation.kind
-            {
-                invocations.extend(operation.results.iter().copied());
+            if let OperationKind::Builtin { builtin } = operation.kind {
+                let admitted = match builtin {
+                    Builtin::GlobalInvocationIndex => &mut global,
+                    Builtin::LocalInvocationIndex => &mut local,
+                };
+                admitted.extend(operation.results.iter().copied());
             }
         }
     }
+    let commit = cooperative_tile(&schedule.schedule.reduction)
+        .map(|tile| tile.commit)
+        .filter(|commit| commit.first == 0)
+        .map(|commit| commit.count);
     let mut guards = BTreeSet::new();
     for block in &data.blocks {
         for operation in &block.operations {
@@ -312,7 +565,9 @@ fn guard_values(data: &KernelData, work_items: u64) -> BTreeSet<u32> {
                 .get(rhs as usize)
                 .and_then(|value| value.constant)
                 .and_then(KernelConstant::as_index);
-            if invocations.contains(&lhs) && bound == Some(work_items) {
+            let governed = (global.contains(&lhs) && bound == Some(schedule.schedule.work_items))
+                || (local.contains(&lhs) && bound.is_some() && bound == commit);
+            if governed {
                 guards.extend(operation.results.iter().copied());
             }
         }
@@ -349,7 +604,26 @@ fn visit_block(
                 loop_depth,
                 guarded,
             }),
-            OperationKind::Barrier { .. } => walk.has_synchronization = true,
+            OperationKind::Barrier { spec } => {
+                walk.has_synchronization = true;
+                walk.barriers.push(spec.clone());
+                walk.sync.push(SyncEvent::Barrier {
+                    point: spec.point,
+                    block_depth,
+                });
+            }
+            OperationKind::StagedStore { staging, phase, .. } => {
+                walk.sync.push(SyncEvent::StagedWrite {
+                    staging: *staging,
+                    phase: *phase,
+                });
+            }
+            OperationKind::StagedLoad { staging, phase, .. } => {
+                walk.sync.push(SyncEvent::StagedRead {
+                    staging: *staging,
+                    phase: *phase,
+                });
+            }
             OperationKind::Predicated { predicate, body } => {
                 if !guards.contains(predicate) {
                     walk.ungoverned_predicate = true;
@@ -407,15 +681,20 @@ fn visit_block(
     }
 }
 
+/// Verifies the ordered boundary memory effects of one kernel.
+///
+/// Staged accesses are deliberately not counted here. This function's subject is
+/// the region's *boundary* contract — which tensors are read, which position is
+/// owned, and that the owning store commits last — and workgroup staging is
+/// neither a boundary tensor nor an owned position. Counting a staged store
+/// among the stores would make "exactly one store per invocation" false of every
+/// cooperative kernel; [`verify_synchronization`] owns the staged half.
 fn verify_effects(
     walk: &Walk,
     schedule: &ScheduledRegion,
     reads: &[Access],
     write: &Access,
 ) -> Result<(), KernelDiagnostic> {
-    if walk.has_synchronization {
-        return Err(KernelDiagnostic::UnexpectedSynchronization);
-    }
     if walk.effects.iter().any(|effect| !effect.guarded) {
         return Err(KernelDiagnostic::PredicateDominance);
     }
@@ -510,15 +789,49 @@ fn verify_reduction(
             }
             verify_contributor_loop(walk, contributors)
         }
-        // `verify_cooperative` refused this region before the walk reached
-        // here, so no loop obligation is stated for it: a cooperative fold's
-        // shape is decided together with the synchronization point that
-        // separates its phases, and stating one now would be a contract written
-        // against a body nothing can produce.
-        ReductionTopology::CooperativeWorkgroup { .. } => {
-            Err(KernelDiagnostic::UndischargedVisibility)
+        // A cooperative fold is two folds, and the split is exactly what the
+        // partition states: each participant combines its own contiguous
+        // contributor range, and the committing participant combines the staged
+        // partials in ascending participant order. Both trip counts come from
+        // the partition rather than from the access, for the reason a partial
+        // pass's does — the access counts the whole sequence.
+        ReductionTopology::CooperativeWorkgroup {
+            partition, tile, ..
+        } => verify_cooperative_loops(walk, *partition, tile.coordinates.participants.count),
+    }
+}
+
+/// Proves the body realizes both halves of a cooperative fold.
+///
+/// A trivial half emits no loop at all, exactly as the serial contract does for
+/// a single contributor: a loop over one element would need an empty range.
+fn verify_cooperative_loops(
+    walk: &Walk,
+    partition: ContributorPartition,
+    participants: u64,
+) -> Result<(), KernelDiagnostic> {
+    let mut expected = Vec::with_capacity(2);
+    if partition.contributors_per_partition > 1 {
+        // Inside the iteration guard, which is block depth one.
+        expected.push((partition.contributors_per_partition, 1_u32));
+    }
+    if participants > 1 {
+        // Inside the iteration guard and then the commit guard, which is two.
+        expected.push((participants, 2_u32));
+    }
+    if walk.loops.len() != expected.len() {
+        return Err(KernelDiagnostic::ReductionContract);
+    }
+    for (summary, (end, block_depth)) in walk.loops.iter().zip(expected) {
+        if summary.start != 1
+            || summary.end != end
+            || summary.accumulators != [KernelType::F32]
+            || summary.block_depth != block_depth
+        {
+            return Err(KernelDiagnostic::ReductionContract);
         }
     }
+    Ok(())
 }
 
 /// Proves the body realizes exactly the scheduled contributor fold.

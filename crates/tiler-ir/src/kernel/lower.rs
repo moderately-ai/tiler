@@ -25,11 +25,11 @@ use crate::shape::Shape;
 
 use super::builder::KernelBuilder;
 use super::error::{KernelBuildError, KernelDiagnostic, KernelLoweringError};
-use super::handles::{KernelBufferId, KernelValueId};
+use super::handles::{KernelBufferId, KernelStagingId, KernelValueId};
 use super::model::{
-    AddressSpace, BinaryOp, BufferAccess, BufferParameter, Builtin, CompareOp, ConvertOp,
-    KernelConstant, KernelData, KernelType, PackedExtractOp, SerialLoopSpec, UnaryOp,
-    VerifiedKernel,
+    AddressSpace, BarrierOrdering, BarrierSpec, BinaryOp, BufferAccess, BufferParameter, Builtin,
+    CompareOp, ConvertOp, ExecutionScope, KernelConstant, KernelData, KernelType, MemoryScope,
+    PackedExtractOp, SerialLoopSpec, StagingParameter, UnaryOp, VerifiedKernel,
 };
 use super::verify::{access_elements, boundary_accesses};
 
@@ -75,6 +75,40 @@ enum ReadAddressing {
     },
 }
 
+/// The one cooperative tile shape this lowering has a canonical body for.
+///
+/// Resolved once, before any operation, so every refusal is a named diagnostic
+/// rather than a builder error deep inside an emission. The narrowness is
+/// deliberate and stated rather than assumed: a tile is *representable* whenever
+/// the schedule verifier admits it, and *lowered* only in this shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CooperativePlan {
+    /// Invocations of the workgroup that cooperate on one output.
+    participants: u64,
+    /// Contributors each participant folds in the producing phase.
+    contributors_per_partition: u64,
+    /// Participants that perform the owning store; always the first `n`.
+    commit_count: u64,
+    /// Scheduled staging allocation the partials are staged in.
+    staging: crate::schedule::StagingId,
+    /// Slots the allocation holds.
+    slots: u64,
+    /// Phase whose staged write publishes the partials.
+    produce_phase: crate::schedule::PhaseId,
+    /// Phase whose staged reads consume them.
+    consume_phase: crate::schedule::PhaseId,
+    /// Slots between consecutive participants' staged writes.
+    produce_stride: u64,
+    /// First slot participant zero writes.
+    produce_offset: u64,
+    /// First slot the consuming fold reads.
+    consume_offset: u64,
+    /// The synchronization point separating the two phases.
+    point: crate::schedule::SyncPointId,
+    /// The realization that point requires, restated in KIR spelling.
+    barrier: BarrierSpec,
+}
+
 /// Everything the canonical emission needs, resolved before any operation.
 ///
 /// `reads`, `read_elements`, and `addressing` are parallel and complete: a
@@ -97,6 +131,7 @@ struct CanonicalPlan<'a> {
     ownership: OwnershipWitnessId,
     contributors: u64,
     addressing: Vec<ReadAddressing>,
+    cooperative: Option<CooperativePlan>,
 }
 
 /// Lowers one verified scheduled region to its canonical verified kernel.
@@ -171,16 +206,11 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
             contracted_shape, ..
         } => crate::schedule::element_count(contracted_shape)
             .map_err(|_| KernelDiagnostic::ElementCountOverflow)?,
-        // No canonical body exists for a cooperative tile, and refusing here is
-        // what keeps that true. Emitting one would mean emitting the staged
-        // handoff its phases describe, which is correct only when something
-        // orders the producing phase before the consuming one -- and the
-        // barrier vocabulary is refused intrinsically, so nothing can. A body
-        // that staged and re-read without that ordering would be a race this
-        // lowering had authored, so the region is refused before any operation
-        // is inserted rather than lowered into one.
-        ReductionTopology::CooperativeWorkgroup { .. } => {
-            return Err(KernelDiagnostic::UndischargedVisibility);
+        // What one participant folds in the producing phase, which the split
+        // states directly for the reason a partial pass's does: counting the
+        // access's contributors here would count the whole sequence.
+        ReductionTopology::CooperativeWorkgroup { partition, .. } => {
+            partition.contributors_per_partition
         }
     };
     // The strict-affine decode addresses its three role-scoped components by the
@@ -212,6 +242,122 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
         ownership: schedule.schedule.output_owner,
         contributors,
         addressing,
+        cooperative: cooperative_plan(schedule)?,
+    })
+}
+
+/// Resolves the cooperative shape this lowering emits, or refuses by name.
+///
+/// Returns `None` for every region that is not cooperative — the canonical
+/// absence — and `Err` for a cooperative tile outside the lowered profile. Each
+/// narrowing below is a shape the schedule verifier admits and this emission has
+/// no body for, so refusing keeps "representable" and "lowered" apart instead of
+/// lowering the nearest thing.
+fn cooperative_plan(
+    schedule: &ScheduledRegion,
+) -> Result<Option<CooperativePlan>, KernelDiagnostic> {
+    let ReductionTopology::CooperativeWorkgroup {
+        partition, tile, ..
+    } = &schedule.schedule.reduction
+    else {
+        return Ok(None);
+    };
+    let shape = KernelDiagnostic::CooperativeLoweringShape;
+    // One allocation, two phases, one point: the bounded profile's tile stages
+    // one partial per participant and reads the set back once.
+    let ([staging], [produce, consume], [point]) = (
+        tile.staging.as_slice(),
+        tile.phases.as_slice(),
+        tile.synchronization.as_slice(),
+    ) else {
+        return Err(shape);
+    };
+    let ([write], [], [], [read]) = (
+        produce.writes.as_slice(),
+        produce.reads.as_slice(),
+        consume.writes.as_slice(),
+        consume.reads.as_slice(),
+    ) else {
+        return Err(shape);
+    };
+    if write.staging != staging.id || read.staging != staging.id {
+        return Err(shape);
+    }
+    let participants = tile.coordinates.participants.count;
+    // One slot per participant on the producing side, and the whole staged set
+    // read by the committing participant on the consuming side. Any other span
+    // needs an addressing form this emission does not have.
+    if write.span.count != 1
+        || write.span.stride == 0
+        || read.span.stride != 0
+        || read.span.count != participants
+    {
+        return Err(shape);
+    }
+    // `IndexLessThan` selects a prefix, so a commit range that does not start at
+    // participant zero has no governed predicate and its store would be
+    // undominated by schedule-derived evidence.
+    if tile.commit.first != 0 {
+        return Err(shape);
+    }
+    Ok(Some(CooperativePlan {
+        participants,
+        contributors_per_partition: partition.contributors_per_partition,
+        commit_count: tile.commit.count,
+        staging: staging.id,
+        slots: staging.slots,
+        produce_phase: produce.id,
+        consume_phase: consume.id,
+        produce_stride: write.span.stride,
+        produce_offset: write.span.offset,
+        consume_offset: read.span.offset,
+        point: point.id,
+        barrier: barrier_spelling(point).ok_or(shape)?,
+    }))
+}
+
+/// Restates one schedule synchronization point in the KIR barrier spelling.
+///
+/// The inverse of `verify::barrier_subject`, and deliberately partial: a subject
+/// this vocabulary cannot spell has no canonical barrier, so the region is
+/// refused rather than emitted with the nearest available construct. The
+/// verifier projects the result back and requires equality, so a mistake here is
+/// a build failure of the lowering itself rather than a wrong emission.
+fn barrier_spelling(point: &crate::schedule::SynchronizationPoint) -> Option<BarrierSpec> {
+    let subject = point.subject;
+    if subject.kind != crate::schedule::SynchronizationKind::ControlBarrier {
+        return None;
+    }
+    let execution_scope = match subject.execution_scope {
+        crate::schedule::SynchronizationScope::Subgroup => ExecutionScope::Subgroup,
+        crate::schedule::SynchronizationScope::Workgroup => ExecutionScope::Workgroup,
+        crate::schedule::SynchronizationScope::Device => return None,
+    };
+    let memory_scope = match subject.visibility_scope {
+        crate::schedule::SynchronizationScope::Workgroup => MemoryScope::Workgroup,
+        crate::schedule::SynchronizationScope::Device => MemoryScope::Device,
+        crate::schedule::SynchronizationScope::Subgroup => return None,
+    };
+    let ordering = match subject.ordering {
+        crate::schedule::MemoryOrdering::AcquireRelease => BarrierOrdering::AcquireRelease,
+        crate::schedule::MemoryOrdering::Relaxed
+        | crate::schedule::MemoryOrdering::SequentiallyConsistent => return None,
+    };
+    // Ascending governed order, which is what makes the emitted flag expression
+    // independent of how the fence was stated.
+    let mut fenced_spaces = Vec::new();
+    if subject.fenced_spaces.device {
+        fenced_spaces.push(AddressSpace::Device);
+    }
+    if subject.fenced_spaces.workgroup {
+        fenced_spaces.push(AddressSpace::Workgroup);
+    }
+    Some(BarrierSpec {
+        point: point.id,
+        execution_scope,
+        memory_scope,
+        fenced_spaces,
+        ordering,
     })
 }
 
@@ -249,15 +395,16 @@ fn addressing(
                     partitions: partition.partitions,
                     contributors_per_partition: partition.contributors_per_partition,
                 }),
-                // The cooperative arm is unreachable from `plan`, which
-                // refuses the topology before resolving any addressing, and it
-                // is spelled rather than wildcarded so a later reachable path
-                // is a build error here instead of silently addressing a tile
-                // by the unsplit relation.
-                ReductionTopology::CooperativeWorkgroup { .. } => {
-                    Err(KernelDiagnostic::UndischargedVisibility)
-                }
-                ReductionTopology::None
+                // A cooperative tile splits its invocation index exactly as a
+                // partial pass does, but the split is emitted *once* at the top
+                // level rather than inside each offset: the committing
+                // participant's owning store needs the same output coordinate
+                // the loads used, and a value defined inside a guarded block
+                // could not reach it. The shared linearization therefore
+                // receives the already-split roots, which is why this arm is the
+                // unsplit form and not `Partitioned`.
+                ReductionTopology::CooperativeWorkgroup { .. }
+                | ReductionTopology::None
                 | ReductionTopology::Serial { .. }
                 | ReductionTopology::Contraction { .. }
                 | ReductionTopology::MultiPass { .. } => Ok(ReadAddressing::Linearized(terms)),
@@ -420,6 +567,9 @@ fn emit(
 ) -> Result<(), KernelLoweringError> {
     if matches!(plan.scalar, ScalarProgram::StrictAffineU4Dequantize { .. }) {
         return emit_strict_affine_u4_dequantize(builder, plan, requirements);
+    }
+    if let Some(cooperative) = &plan.cooperative {
+        return emit_cooperative(builder, plan, cooperative, requirements);
     }
     // One buffer per read, in access order. The component role stays `None`
     // rather than being copied from the access: these families read dense
@@ -651,6 +801,266 @@ fn emit_contraction_product(
     };
     let product = builder.binary(BinaryOp::F32Multiply, left, right)?;
     builder.convert(ConvertOp::CanonicalizeF32Nan, product)
+}
+
+/// Emits the canonical body of one cooperative workgroup reduction.
+///
+/// # The shape, and why each part of it is where it is
+///
+/// ```text
+/// %gid = global invocation index        %lid = local invocation index
+/// %out = %gid / participants            %par = %gid % participants
+/// %act = %gid < work_items
+/// if (%act) { fold contributors [%par·k, (%par+1)·k) ; staged_store[%lid] }
+/// barrier(point)
+/// if (%act) { if (%lid < commit) { fold staged[0..participants] ; store[%out] } }
+/// ```
+///
+/// **The barrier is at the top level, and that is a correctness rule rather than
+/// a layout preference.** A control barrier inside a predicated region is reached
+/// by whichever invocations the predicate admits, and one not reached by every
+/// participant is undefined execution on every target. Placing it outside both
+/// guarded blocks makes convergence structural, so it survives any later change
+/// to what those guards test.
+///
+/// **The staged store is inside the iteration guard, and the launch is what
+/// makes that sound.** `TailPolicy::Exact` and the intrinsic verifier's
+/// `grid_threads == work_items` rule together mean every launched invocation
+/// satisfies the guard, so every slot the consuming phase reads was written. A
+/// tail policy that admitted inactive lanes would leave slots unwritten, which
+/// is why widening the tail vocabulary must revisit this emission rather than
+/// inherit it.
+///
+/// **The invocation split is emitted once, at the top level.** The committing
+/// participant's owning store needs the same output coordinate the producing
+/// phase's loads used, and a value defined inside a guarded block cannot cross
+/// into the next one.
+///
+/// **The staged fold seeds at the first slot and canonicalizes after each
+/// combine**, exactly as the serial fold does. A partial that is a single
+/// uncombined load gets no conversion of its own: it is not a result boundary,
+/// and the fold that consumes it canonicalizes every combine — so a conversion
+/// there would be a provable identity in a body the refinement gate compares
+/// structurally.
+fn emit_cooperative(
+    builder: &mut KernelBuilder,
+    plan: &CanonicalPlan<'_>,
+    cooperative: &CooperativePlan,
+    requirements: ResourceRequirements,
+) -> Result<(), KernelLoweringError> {
+    let ([read], [addressing]) = (plan.reads, plan.addressing.as_slice()) else {
+        return Err(KernelLoweringError::UnsupportedRegion {
+            rule: "cooperative-access-count",
+        });
+    };
+    let prologue =
+        reduction_prologue(plan.scalar).ok_or(KernelLoweringError::UnsupportedRegion {
+            rule: "cooperative-scalar-program",
+        })?;
+    let read_buffer = builder.declare_buffer(BufferParameter {
+        tensor: read.tensor,
+        component_role: None,
+        element_type: KernelType::F32,
+        address_space: AddressSpace::Device,
+        access: BufferAccess::Read,
+        element_count: plan.read_elements.first().copied().unwrap_or(0),
+    })?;
+    let write_buffer = builder.declare_buffer(BufferParameter {
+        tensor: plan.write_tensor,
+        component_role: None,
+        element_type: KernelType::F32,
+        address_space: AddressSpace::Device,
+        access: BufferAccess::Write,
+        element_count: plan.write_elements,
+    })?;
+    builder.admit_builtin(Builtin::GlobalInvocationIndex)?;
+    builder.admit_builtin(Builtin::LocalInvocationIndex)?;
+    let staging = builder.declare_staging(StagingParameter {
+        staging: cooperative.staging,
+        element_type: KernelType::F32,
+        address_space: AddressSpace::Workgroup,
+        element_count: cooperative.slots,
+    })?;
+    builder.numerical(plan.numerical)?;
+    builder.requirements(requirements)?;
+
+    let invocation = builder.builtin(Builtin::GlobalInvocationIndex)?;
+    let local = builder.builtin(Builtin::LocalInvocationIndex)?;
+    let (output, partition) =
+        split_partitioned_invocation(builder, invocation, cooperative.participants)?;
+    let extent = builder.constant(KernelConstant::Index(plan.work_items))?;
+    let active = builder.compare(CompareOp::IndexLessThan, invocation, extent)?;
+
+    builder.predicated(active, |builder| {
+        let partial = emit_partition_fold(
+            builder,
+            cooperative,
+            addressing,
+            (read_buffer, read.bounds),
+            SplitInvocation { output, partition },
+            prologue,
+        )?;
+        let slot = emit_staged_slot(builder, cooperative, local)?;
+        builder.staged_store(staging, slot, partial, cooperative.produce_phase)
+    })?;
+    builder.barrier(cooperative.barrier.clone())?;
+    builder.predicated(active, |builder| {
+        let commit = builder.constant(KernelConstant::Index(cooperative.commit_count))?;
+        let commits = builder.compare(CompareOp::IndexLessThan, local, commit)?;
+        builder.predicated(commits, |builder| {
+            let total = emit_staged_fold(builder, cooperative, staging)?;
+            builder.store(
+                write_buffer,
+                output,
+                total,
+                plan.write_bounds,
+                plan.ownership,
+            )
+        })
+    })?;
+    Ok(())
+}
+
+/// The already-split invocation roots one cooperative fold addresses through.
+///
+/// A pair rather than two arguments because they are always derived together and
+/// always travel together: the output coordinate and the partition ordinal are
+/// the two halves of one `IndexDivide`/`IndexModulo` split, emitted once at the
+/// kernel's top level so the committing store can reach the same output the
+/// producing phase's loads used.
+#[derive(Clone, Copy, Debug)]
+struct SplitInvocation {
+    output: KernelValueId,
+    partition: Option<KernelValueId>,
+}
+
+/// Folds one participant's own contiguous share of the contributor sequence.
+fn emit_partition_fold(
+    builder: &mut KernelBuilder,
+    cooperative: &CooperativePlan,
+    addressing: &ReadAddressing,
+    read: (KernelBufferId, BoundsWitnessId),
+    split: SplitInvocation,
+    prologue: ReductionPrologue,
+) -> Result<KernelValueId, KernelBuildError> {
+    let (read_buffer, read_bounds) = read;
+    let SplitInvocation { output, partition } = split;
+    let contributors = cooperative.contributors_per_partition;
+    let seed_contributor = emit_partition_contributor(builder, partition, None, contributors)?;
+    let first_offset = emit_offset(builder, addressing, output, seed_contributor)?;
+    let first = builder.load(read_buffer, first_offset, read_bounds)?;
+    let seed = emit_prologue(builder, first, prologue)?;
+    if contributors <= 1 {
+        return Ok(seed);
+    }
+    let results = builder.serial_loop(
+        SerialLoopSpec {
+            start: 1,
+            end: contributors,
+        },
+        &[seed],
+        |builder, parameters| {
+            let induction = parameters.induction();
+            let accumulator = parameters
+                .accumulator(0)
+                .ok_or(KernelBuildError::EmptyLoopAccumulators)?;
+            let contributor =
+                emit_partition_contributor(builder, partition, Some(induction), contributors)?;
+            let offset = emit_offset(builder, addressing, output, contributor)?;
+            let loaded = builder.load(read_buffer, offset, read_bounds)?;
+            let value = emit_prologue(builder, loaded, prologue)?;
+            let sum = builder.binary(BinaryOp::F32Add, accumulator, value)?;
+            let sum = builder.convert(ConvertOp::CanonicalizeF32Nan, sum)?;
+            Ok(vec![sum])
+        },
+    )?;
+    results
+        .get(0)
+        .ok_or(KernelBuildError::EmptyLoopAccumulators)
+}
+
+/// Emits the staging slot one participant writes.
+///
+/// `stride * local + offset`, with each operation dropped where it is provably
+/// the identity, so the canonical body carries no operation a refinement gate
+/// would have to compare against a computed nothing.
+fn emit_staged_slot(
+    builder: &mut KernelBuilder,
+    cooperative: &CooperativePlan,
+    local: KernelValueId,
+) -> Result<KernelValueId, KernelBuildError> {
+    let mut slot = local;
+    if cooperative.produce_stride != 1 {
+        let stride = builder.constant(KernelConstant::Index(cooperative.produce_stride))?;
+        slot = builder.binary(BinaryOp::IndexMultiply, slot, stride)?;
+    }
+    if cooperative.produce_offset != 0 {
+        let offset = builder.constant(KernelConstant::Index(cooperative.produce_offset))?;
+        slot = builder.binary(BinaryOp::IndexAdd, slot, offset)?;
+    }
+    Ok(slot)
+}
+
+/// Folds the staged partials in ascending participant order.
+fn emit_staged_fold(
+    builder: &mut KernelBuilder,
+    cooperative: &CooperativePlan,
+    staging: KernelStagingId,
+) -> Result<KernelValueId, KernelBuildError> {
+    let base = builder.constant(KernelConstant::Index(cooperative.consume_offset))?;
+    let seed = builder.staged_load(staging, base, cooperative.consume_phase)?;
+    if cooperative.participants <= 1 {
+        return Ok(seed);
+    }
+    let results = builder.serial_loop(
+        SerialLoopSpec {
+            start: 1,
+            end: cooperative.participants,
+        },
+        &[seed],
+        |builder, parameters| {
+            let induction = parameters.induction();
+            let accumulator = parameters
+                .accumulator(0)
+                .ok_or(KernelBuildError::EmptyLoopAccumulators)?;
+            let slot = if cooperative.consume_offset == 0 {
+                induction
+            } else {
+                let offset = builder.constant(KernelConstant::Index(cooperative.consume_offset))?;
+                builder.binary(BinaryOp::IndexAdd, induction, offset)?
+            };
+            let staged = builder.staged_load(staging, slot, cooperative.consume_phase)?;
+            let sum = builder.binary(BinaryOp::F32Add, accumulator, staged)?;
+            let sum = builder.convert(ConvertOp::CanonicalizeF32Nan, sum)?;
+            Ok(vec![sum])
+        },
+    )?;
+    results
+        .get(0)
+        .ok_or(KernelBuildError::EmptyLoopAccumulators)
+}
+
+/// Returns the per-contributor prologue one reduction scalar program applies.
+///
+/// `None` for every program that is not a reduction, which is a refusal rather
+/// than an absent prologue: a cooperative region whose scalar program is not one
+/// of these folds nothing, and the schedule verifier already rejects it.
+const fn reduction_prologue(program: &ScalarProgram) -> Option<ReductionPrologue> {
+    match program {
+        ScalarProgram::StrictSerialSum { .. } => Some(ReductionPrologue::None),
+        ScalarProgram::SquaredSerialSum { .. } => Some(ReductionPrologue::Square),
+        ScalarProgram::FusedMultiplyAddSerialSum {
+            scale_bits,
+            bias_bits,
+            ..
+        } => Some(ReductionPrologue::ScaleBias {
+            scale_bits: *scale_bits,
+            bias_bits: *bias_bits,
+        }),
+        ScalarProgram::PointwiseF32(_)
+        | ScalarProgram::StrictAffineU4Dequantize { .. }
+        | ScalarProgram::StrictTensorContraction { .. } => None,
+    }
 }
 
 /// The elementwise expression applied to each contributor before the fold.

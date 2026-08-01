@@ -30,8 +30,8 @@ use tiler_ir::schedule::{
     FlushedZeroSign, InputOrdinal, KernelSchedule, LaunchPlan, LogicalAccess, NumericalPermission,
     NumericalRealization, OwnershipProof, OwnershipProofKind, OwnershipWitnessId,
     PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionTopology, RegionId,
-    ScalarProgram, ScheduledRegionBuilder, SubnormalFreedom, SubnormalMode, TailPolicy, TensorRole,
-    ValueDomainProvenance, VerifiedScheduledRegion, element_count,
+    ScalarProgram, ScheduledRegionBuilder, SubnormalFreedom, SubnormalMode, SyncPointId,
+    TailPolicy, TensorRole, ValueDomainProvenance, VerifiedScheduledRegion, element_count,
 };
 use tiler_ir::semantic::RMS_NORM_F32_QWEN3_EPS_BITS;
 use tiler_ir::semantic::{
@@ -2019,7 +2019,12 @@ fn barrier(
     memory: MemoryScope,
     fenced: &[AddressSpace],
 ) -> Result<String, MetalEmitError> {
+    // The schedule point a barrier realizes is a verification reference, not an
+    // emission fact: `barrier_call` reads the scopes, fences, and ordering and
+    // never the point, which is why every case below fixes it at the first
+    // ordinal rather than varying it.
     barrier_call(&BarrierSpec {
+        point: SyncPointId::FIRST,
         execution_scope: execution,
         memory_scope: memory,
         fenced_spaces: fenced.to_vec(),
