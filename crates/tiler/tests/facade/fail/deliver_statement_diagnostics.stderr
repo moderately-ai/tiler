@@ -1,10 +1,10 @@
-error: `macos-and-tvos` is not a delivery profile; this frontend names `fallback-only`, `macos`, `ios`, `macos-and-ios`, or state a family list such as `deliver macos 14.0, ios 17.0;` to choose a deployment minimum of your own
+error: `macos-and-tvos` is not a delivery profile; this frontend names `fallback-only`, `macos`, `ios`, `macos-and-ios`, or state a family list such as `deliver macos 26.0, ios 26.0;` to choose a deployment minimum of your own
   --> tests/facade/fail/deliver_statement_diagnostics.rs:23:17
    |
 23 |         deliver macos-and-tvos;
    |                 ^^^^^
 
-error: `fallback_only` is not a delivery profile; this frontend names `fallback-only`, `macos`, `ios`, `macos-and-ios`, or state a family list such as `deliver macos 14.0, ios 17.0;` to choose a deployment minimum of your own
+error: `fallback_only` is not a delivery profile; this frontend names `fallback-only`, `macos`, `ios`, `macos-and-ios`, or state a family list such as `deliver macos 26.0, ios 26.0;` to choose a deployment minimum of your own
   --> tests/facade/fail/deliver_statement_diagnostics.rs:30:17
    |
 30 |         deliver fallback_only;
@@ -16,28 +16,28 @@ error: `ios-device` is not an artifact family a `deliver` list may name; this fr
 37 |         deliver ios-device 17.0;
    |                 ^^^
 
-error: this artifact family and deployment minimum are not a governed Metal target: MSL 3.1 on macos requires deployment minimum 14.0, got 13.0
+error: this artifact family and deployment minimum are not a governed Metal target: MSL 4.0 on macos requires deployment minimum 26.0, got 13.0
   --> tests/facade/fail/deliver_statement_diagnostics.rs:45:23
    |
 45 |         deliver macos 13.0;
    |                       ^^^^
 
-error: `14` is not a deployment minimum; it is written as `<major>.<minor>` with no suffix and no digit separators, as in `deliver ios 17.0;`
+error: `14` is not a deployment minimum; it is written as `<major>.<minor>` with no suffix and no digit separators, as in `deliver ios 26.0;`
   --> tests/facade/fail/deliver_statement_diagnostics.rs:52:23
    |
 52 |         deliver macos 14;
    |                       ^^
 
-error: expected an artifact family's deployment minimum, written as `<major>.<minor>`, and found `;`; a family list states one for every family it names, as in `deliver macos 14.0, ios 17.0;`
+error: expected an artifact family's deployment minimum, written as `<major>.<minor>`, and found `;`; a family list states one for every family it names, as in `deliver macos 26.0, ios 26.0;`
   --> tests/facade/fail/deliver_statement_diagnostics.rs:59:32
    |
-59 |         deliver macos 14.0, ios;
+59 |         deliver macos 26.0, ios;
    |                                ^
 
 error: the `macos` artifact family is stated twice; one `deliver` statement states each family once, because two entries for one family disagree about its deployment minimum whenever they differ
   --> tests/facade/fail/deliver_statement_diagnostics.rs:66:29
    |
-66 |         deliver macos 14.0, macos 15.0;
+66 |         deliver macos 26.0, macos 27.0;
    |                             ^^^^^
 
 error: this region already states a `deliver` statement; a region states its artifact-family delivery policy once, because two statements would be two policies for one invocation and nothing here says which one delivers

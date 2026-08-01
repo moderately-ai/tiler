@@ -20,9 +20,23 @@ doc = true
 # nothing else, because `tiler-macros` cannot depend back on this crate. See the
 # crate documentation for the derivation and for the cost this edge carries into
 # a consumer's build graph.
+#
+# `tiler-runtime` and `tiler-artifact` are the guarded-selection half. An
+# expansion that stated a selected artifact family embeds an artifact envelope
+# in the consumer's binary, and `route` is what decodes and routes it — so this
+# is the crate that has to hold the loader. The cost is the one the facade
+# documentation already priced: `tiler-runtime`'s dependency closure is
+# `[tiler-artifact]` by ADR 0081 item 2, `tiler-artifact` is `sha2` and
+# `tiler-ir`, and `tiler-ir` was already here. Neither reaches an Apple
+# toolchain, a device object, or a compiler: `tiler-runtime` "touches no device,
+# no `MTLDevice`, no pipeline state, and no platform binding", which is what
+# makes it affordable on a consumer-neutral boundary where `tiler-metal-aot` is
+# not. `tests/dependency_direction.rs` is what keeps that distinction true.
 [dependencies]
+tiler-artifact.workspace = true
 tiler-ir.workspace = true
 tiler-macros.workspace = true
+tiler-runtime.workspace = true
 
 [dev-dependencies]
 trybuild.workspace = true

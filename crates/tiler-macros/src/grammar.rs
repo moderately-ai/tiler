@@ -20,7 +20,7 @@
 //!
 //! ```text
 //! deliver macos-and-ios;        // a named profile
-//! deliver macos 14.0, ios 17.0; // a family list, when a floor must be stated
+//! deliver macos 26.0, ios 26.0; // a family list, when a floor must be stated
 //! ```
 //!
 //! This module owns exactly the shape of that text. It knows nothing about the
@@ -143,7 +143,7 @@ pub(crate) enum StatedDelivery<S> {
     /// `deliver macos-and-ios;` — one named profile, whose families and
     /// governed floors [`crate::delivery`] fixes.
     Profile(Name<S>),
-    /// `deliver macos 14.0, ios 17.0;` — a family list, in written order, which
+    /// `deliver macos 26.0, ios 26.0;` — a family list, in written order, which
     /// [`crate::delivery`] canonicalizes. Never empty: the grammar admits no
     /// `deliver ;`, so an empty selection cannot be spelled.
     Families(Vec<FamilyMinimumSyntax<S>>),
@@ -413,18 +413,18 @@ impl<S> fmt::Display for SyntaxError<S> {
                  `14.0` after an artifact family, and found {found}; a `{DELIVER_KEYWORD}` \
                  statement names either one profile, as in `{DELIVER_KEYWORD} macos-and-ios;`, or \
                  a family list stating each family's own floor, as in `{DELIVER_KEYWORD} macos \
-                 14.0, ios 17.0;`"
+                 26.0, ios 26.0;`"
             ),
             Self::ExpectedDeploymentMinimum { found, .. } => write!(
                 formatter,
                 "expected an artifact family's deployment minimum, written as `<major>.<minor>`, \
                  and found {found}; a family list states one for every family it names, as in \
-                 `{DELIVER_KEYWORD} macos 14.0, ios 17.0;`"
+                 `{DELIVER_KEYWORD} macos 26.0, ios 26.0;`"
             ),
             Self::MalformedDeploymentMinimum { text, .. } => write!(
                 formatter,
                 "`{text}` is not a deployment minimum; it is written as `<major>.<minor>` with no \
-                 suffix and no digit separators, as in `{DELIVER_KEYWORD} ios 17.0;`"
+                 suffix and no digit separators, as in `{DELIVER_KEYWORD} ios 26.0;`"
             ),
             Self::RepeatedDeliveryStatement { .. } => write!(
                 formatter,
@@ -602,7 +602,7 @@ fn parse_operand_statement<S: Copy>(
     }
 }
 
-/// Reads `deliver macos-and-ios;` or `deliver macos 14.0, ios 17.0;` after its
+/// Reads `deliver macos-and-ios;` or `deliver macos 26.0, ios 26.0;` after its
 /// keyword.
 ///
 /// The two productions are told apart by the token *after* the first name and

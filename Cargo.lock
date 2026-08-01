@@ -362,8 +362,10 @@ dependencies = [
 name = "tiler"
 version = "0.0.0"
 dependencies = [
+ "tiler-artifact",
  "tiler-ir",
  "tiler-macros",
+ "tiler-runtime",
  "trybuild",
 ]
 
@@ -419,6 +421,9 @@ dependencies = [
 name = "tiler-macros"
 version = "0.0.0"
 dependencies = [
+ "tiler-build",
+ "tiler-cache",
+ "tiler-compiler",
  "tiler-ir",
  "tiler-metal-aot",
 ]

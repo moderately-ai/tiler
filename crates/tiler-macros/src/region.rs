@@ -43,32 +43,26 @@
 //! the emitted facts check every operand's rank and stored scalar, unify every
 //! symbol, and construct the declared result, symbolic or not.
 //!
-//! # The compiler is not invoked here
+//! # The compiler is not invoked *here*
 //!
-//! Construction stops at a verified [`SemanticProgram`]. It does not continue
-//! into `tiler_compiler::session`, and this crate holds no edge to that crate.
+//! This module stops at a verified [`SemanticProgram`] and hands it on;
+//! [`crate::aot`] is what carries it into `tiler_compiler::session` and the
+//! offline Metal driver, and only for a region whose `deliver` statement
+//! selected an artifact family. The separation is the reason the program is
+//! *carried* out of [`ProgramEvidence::Verified`] rather than rebuilt there.
 //!
-//! The reason it could not was measured at `b623670`: the approved region over
-//! three `f32[4]` inputs was refused by `compile_governed` under all four
-//! `NumericalContract` values with `UnsupportedCapability { rule: "signature" }`
-//! before any target-qualified trace, because both recognized program shapes
-//! opened with `program.input_count() != 1`. `docs/integration/frontends.md`
-//! requires target-neutral optimizer and verifier failures to become
-//! *unconditional* `compile_error!` diagnostics, so wiring the compiler in then
-//! would have made the region Tom approved a compile error at every call site.
-//!
-//! That refusal is gone. The scheduled-region vocabulary names which input
-//! tensor each access and each scalar leaf reads, the combined `signature` rule
-//! is split so each gate names its own refusal, and the approved region now
-//! reaches a complete verified plan on the governed profile. It still refuses
-//! under `RelaxedF32` alone — the contract that permits arithmetic contraction
-//! declines any fused multiply-then-add body, at any input count — so the
-//! diagnostic a wired-in compiler would raise is now contract-dependent rather
-//! than unconditional. Whether that is a `compile_error!`, a narrowed contract,
-//! or a deferred edge is what
-//! `admit-multi-input-elementwise-programs-at-the-compiler-boundary` decides;
-//! `crates/tiler-compiler/tests/multi_input_elementwise_boundary.rs` carries the
-//! executable statement of both halves.
+//! It could not be invoked at all until recently, and the reason was measured at
+//! `b623670`: the approved region over three `f32[4]` inputs was refused by
+//! `compile_governed` under all four `NumericalContract` values with
+//! `UnsupportedCapability { rule: "signature" }` before any target-qualified
+//! trace, because both recognized program shapes opened with
+//! `program.input_count() != 1`. That refusal is gone — the scheduled-region
+//! vocabulary now names which input tensor each access and each scalar leaf
+//! reads — and `crates/tiler-compiler/tests/multi_input_elementwise_boundary.rs`
+//! carries the executable statement of the transition. What remains
+//! contract-dependent is `RelaxedF32`, which declines any fused
+//! multiply-then-add body at any input count; it is not the contract an
+//! expansion states, for the separate reason [`crate::aot`] records.
 //!
 //! [`AvailabilityPhase::LiveDevicePreflight`]: tiler_ir::program::abi::AvailabilityPhase::LiveDevicePreflight
 //! [`multiply_f32_op`]: tiler_ir::semantic::multiply_f32_op
@@ -78,7 +72,8 @@ use core::fmt;
 
 use tiler_ir::program::StorageScalar;
 use tiler_ir::semantic::{
-    BuildError, F32, F32Add, F32Multiply, InputKey, OutputKey, SemanticProgramBuilder, Value,
+    BuildError, F32, F32Add, F32Multiply, InputKey, OutputKey, SemanticProgram,
+    SemanticProgramBuilder, Value,
 };
 use tiler_ir::shape::Shape;
 
@@ -105,14 +100,18 @@ const RESULT_KEY: &str = "out";
 const ELEMENT_TYPES: [(&str, StorageScalar); 1] = [("f32", StorageScalar::F32)];
 
 /// Whether an expansion could construct the region's public logical program.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+///
+/// The verified variant *carries* the program rather than merely reporting that
+/// one existed, because the program is what [`crate::aot`] compiles: an
+/// expansion that had to rebuild it from the syntax a second time would be a
+/// second constructor for one subject, and the artifact identity would then name
+/// whichever of the two the driver happened to be handed.
+#[derive(Clone, Debug)]
 pub(crate) enum ProgramEvidence {
     /// Every declared extent is a literal, so the region was constructed as a
     /// [`SemanticProgram`] through the governed registry, verified, and its
     /// inferred result shape checked against the derived one.
-    ///
-    /// [`SemanticProgram`]: tiler_ir::semantic::SemanticProgram
-    Verified,
+    Verified(SemanticProgram),
     /// A declared extent is symbolic, which the fixed-extent semantic shape
     /// vocabulary cannot carry. The operations were still resolved through the
     /// governed registry's keys and the runtime contract is unchanged; what is
@@ -120,8 +119,22 @@ pub(crate) enum ProgramEvidence {
     DeferredSymbolicExtent,
 }
 
+impl ProgramEvidence {
+    /// Returns the verified public logical program, when one was constructible.
+    pub(crate) const fn verified(&self) -> Option<&SemanticProgram> {
+        match self {
+            Self::Verified(program) => Some(program),
+            Self::DeferredSymbolicExtent => None,
+        }
+    }
+}
+
 /// One region, lowered to what an expansion emits.
-#[derive(Clone, Debug, Eq, PartialEq)]
+///
+/// Not `Eq`/`PartialEq`: a verified [`SemanticProgram`] is neither, and giving
+/// this record an equality that skipped it would compare two expansions as
+/// equal while they carried different programs.
+#[derive(Clone, Debug)]
 pub(crate) struct Expansion<S> {
     /// The `RegionFacts` literal generated code carries, as Rust source text.
     pub(crate) facts: String,
@@ -631,7 +644,7 @@ fn verify_public_logical_program<S: Copy>(
         });
     }
 
-    Ok(ProgramEvidence::Verified)
+    Ok(ProgramEvidence::Verified(program))
 }
 
 /// Applies one subexpression through the governed operation facades.

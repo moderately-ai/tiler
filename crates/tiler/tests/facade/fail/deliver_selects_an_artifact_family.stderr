@@ -1,17 +1,23 @@
-error: this `deliver` statement selects the macos artifact family, but no expansion runs the offline Metal driver yet, so there is no payload to deliver; a selected family must not silently become fallback on a matching target, so this is a refusal rather than a quiet downgrade. Remove the statement, or state `fallback-only`, to expand with the semantic fallback on every target
-  --> tests/facade/fail/deliver_selects_an_artifact_family.rs:24:9
-   |
-24 |         deliver macos;
-   |         ^^^^^^^
-
-error: this `deliver` statement selects the ios-device, ios-simulator, macos artifact families, but no expansion runs the offline Metal driver yet, so there is no payload to deliver; a selected family must not silently become fallback on a matching target, so this is a refusal rather than a quiet downgrade. Remove the statement, or state `fallback-only`, to expand with the semantic fallback on every target
+error: this region declares a symbolic extent, and a `deliver` statement selecting an artifact family compiles the region ahead of time — which needs every extent to be known at expansion time. Declare literal extents, or state `fallback-only`. `carry-symbolic-extents-into-the-semantic-program` is the work that removes this restriction
   --> tests/facade/fail/deliver_selects_an_artifact_family.rs:32:9
    |
-32 |         deliver macos 14.0, ios 17.0;
+32 |         deliver macos;
    |         ^^^^^^^
 
-error: this `deliver` statement selects the ios-device, ios-simulator artifact families, but no expansion runs the offline Metal driver yet, so there is no payload to deliver; a selected family must not silently become fallback on a matching target, so this is a refusal rather than a quiet downgrade. Remove the statement, or state `fallback-only`, to expand with the semantic fallback on every target
-  --> tests/facade/fail/deliver_selects_an_artifact_family.rs:41:9
+error: this `deliver` statement selects ios-device 26.0 at MSL 4.0, ios-simulator 26.0 at MSL 4.0, and this frontend compiles exactly one target today: macos 26.0 at MSL 4.0. A selected family must not silently become fallback on a matching target, so a selection it cannot build is a refusal rather than a quiet downgrade. State `deliver macos;`, or state `fallback-only` to expand with the semantic fallback on every target
+  --> tests/facade/fail/deliver_selects_an_artifact_family.rs:39:9
    |
-41 |         deliver ios 18.2;
+39 |         deliver ios;
    |         ^^^^^^^
+
+error: this `deliver` statement selects ios-device 26.0 at MSL 4.0, ios-simulator 26.0 at MSL 4.0, macos 26.0 at MSL 4.0, and this frontend compiles exactly one target today: macos 26.0 at MSL 4.0. A selected family must not silently become fallback on a matching target, so a selection it cannot build is a refusal rather than a quiet downgrade. State `deliver macos;`, or state `fallback-only` to expand with the semantic fallback on every target
+  --> tests/facade/fail/deliver_selects_an_artifact_family.rs:47:9
+   |
+47 |         deliver macos-and-ios;
+   |         ^^^^^^^
+
+error: this artifact family and deployment minimum are not a governed Metal target: MSL 4.0 on macos requires deployment minimum 26.0, got 14.0
+  --> tests/facade/fail/deliver_selects_an_artifact_family.rs:54:23
+   |
+54 |         deliver macos 14.0;
+   |                       ^^^^

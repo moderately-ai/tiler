@@ -56,14 +56,14 @@ fn main() {
     // A list whose second family states no minimum.
     let _malformed_list = tiler::tensor! {
         in a: f32[4];
-        deliver macos 14.0, ios;
+        deliver macos 26.0, ios;
         out a
     };
 
     // One family stated twice, refused at the repetition.
     let _repeated_family = tiler::tensor! {
         in a: f32[4];
-        deliver macos 14.0, macos 15.0;
+        deliver macos 26.0, macos 27.0;
         out a
     };
 

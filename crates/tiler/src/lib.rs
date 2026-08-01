@@ -139,6 +139,7 @@
 pub use tiler_macros::tensor;
 
 mod expansion;
+mod route;
 
 // Deliberately no outer doc comment here: the module documents itself with
 // `//!`, and adding a `///` on the item would move intra-doc link resolution for
@@ -161,4 +162,5 @@ pub mod __private {
         AxisRef, BoundExtents, OperandFacts, RegionFacts, ResultAxis, ResultFacts, SymbolFacts,
         bind_and_build, bind_region, build_result,
     };
+    pub use crate::route::{RouteFacts, RouteOutcome, bind_route_and_build, select_embedded_route};
 }

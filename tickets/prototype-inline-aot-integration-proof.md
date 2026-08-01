@@ -6,7 +6,7 @@ priority: p1
 dependencies: [prototype-macro-embedding-and-cargo-behavior, prototype-metal-runtime-proof, promote-the-metal-aot-compilation-identity, make-runtime-routing-commit-authority-one-shot, admit-multi-input-elementwise-programs-at-the-compiler-boundary, generate-cfg-gated-artifact-family-delivery]
 related: []
 scopes: [implementation/frontend, implementation/cache, implementation/compiler, implementation/artifact, implementation/metal-aot, implementation/runtime]
-shared_scopes: [project/tickets]
+shared_scopes: [project/tickets, implementation/cargo-lock]
 paths: []
 tags: [implementation, integration, inline-dx, milestone-0b]
 claimed_from: todo
@@ -85,3 +85,83 @@ The same test built `(a * 2.0f32) * 3.0f32` — one input, two constants, four o
 
 - The sibling tickets above were **not** absorbed. Widening the compiler's recognizers is that ticket's whole subject, and adding scalar-literal or reduction syntax to the region grammar is a change to `tensor!`'s observable public surface — ADR 0075 makes that Tom's, not a worker's.
 - No `tensor!` behaviour changed, so **there is no boundary packet**: the delivery policy is still `FallbackOnly`, no cache is opened at expansion, and no public item was added or removed.
+
+## Outcome — second attempt (worker, base `aa961da`, 2026-07-31)
+
+**The proof is built and four of the five closing conditions are supported. The fifth — "produces a running kernel" — is not, and what stops it is a missing accepted public boundary rather than unwritten code.** A new dependency, `route-an-embedded-artifact-through-a-consumer-storage-seam`, carries the remainder.
+
+An ordinary consumer crate declaring only `tiler`, containing one `tiler::tensor!` invocation with `deliver macos;`, now runs the whole expansion-time AOT flow inside `rustc`: the region is parsed, verified as a public logical program, optimized through `tiler_compiler::session`, emitted as Metal, given a complete artifact identity, looked up in the expansion cache, compiled by `xcrun metal` and `xcrun metallib` on a miss, published atomically, read back, and embedded as one byte-string literal — after which the produced binary decodes and routes those bytes and takes its fallback before any commit.
+
+### Condition 1 — one inline invocation, and every named absence
+
+**Supported except for the dispatch.** `crates/tiler/tests/facade/pass/deliver_compiles_embeds_and_routes.rs` is the fixture; `trybuild` compiles and *runs* it as a separate out-of-tree crate whose manifest names `tiler` alone.
+
+**Measurement — macOS 27.0 arm64, Apple M4 Max, `nightly-2026-07-19`, 2026-07-31.** The same source built as a standalone crate outside the workspace, with `TILER_EXPANSION_CACHE_DIR` pointed at a private root under `$TMPDIR`:
+
+- the crate is two files, `Cargo.toml` and `src/main.rs`; `find . -name build.rs` counts **0**;
+- its whole dependency table is one line, `tiler = { path = … }`;
+- the source (doc comments stripped) contains no `include_bytes!`, `include_str!`, `env!`, `option_env!`, `std::fs`, `tiler_macros`, `Command`, or any absolute path;
+- the produced 3,364,808-byte binary contains the `MTLB` metallib magic exactly **once** — the embedded payload;
+- with the entire cache root deleted (**2** files before removal, **0** after, directory gone — the removal is refused outright if the path held no files first), the already-built binary runs and exits 0;
+- the binary contains no occurrence of the cache root path, `ai.moderately.tiler`, `.bundle`, or `TILER_EXPANSION_CACHE_DIR`.
+
+**What is not supported: "produces a running kernel".** `crates/tiler/src/value.rs` publishes no storage access and no device object by accepted design, and `crates/tiler/tests/dependency_direction.rs` forbids any workspace package from depending on `tiler`, so no consumer of the facade can hand a kernel its operands. `tiler_runtime::load::Preflight::commit` is consequently unreachable from a consumer, and `crates/tiler/src/route.rs` contains no call to it. Adding the seam is a public boundary under ADR 0075 and is Tom's; the new dependency ticket carries it.
+
+### Condition 2 — the validated cache, and both refusal classes
+
+**Supported.**
+
+**Measurement — same host and date, out-of-tree consumer, private cache root, `xcrun` shim first on `PATH` logging every invocation and returning logging wrappers for `metal` and `metallib`.** Source touched between passes so the expansion re-ran each time:
+
+| pass | `xcrun` calls | `metal`/`metallib` runs | cache |
+| --- | ---: | ---: | --- |
+| cold root | 6 | 2 (`metal`, then `metallib`) | one 49,432-byte bundle published |
+| warm root | 6 | **0** | validated hit |
+
+Validation on every hit is the cache's own: `ExpansionCache::lookup` "has no fast path", re-derives the key from the carried subject, checks every section digest, and runs the pinned artifact validator. `crates/tiler-macros/src/aot/tests.rs` carries both perturbations, each watched failing before it passed:
+
+- `a_semantically_wrong_entry_is_a_typed_refusal_rather_than_a_silent_rebuild` publishes the *other* region's envelope under the approved region's subject through the cache's own API — internally consistent in every way the cache can check — and the expansion refuses with `MetalPlanBuildError::CacheProtocol`;
+- `a_damaged_entry_is_quarantined_and_rebuilt` flips one interior byte of the published bundle and the next expansion is a miss with a reason, quarantined and republished with the identical bytes.
+
+**Measurement boundary.** A warm hit still performs six `xcrun` calls, because `Toolchain::prepare` reads the compiler fingerprint that `CompilationIdentity` folds into the key that decides hit or miss. That is narrower than the contract's "warm IDE and `cargo check` expansion must avoid `xcrun`", and `avoid-toolchain-resolution-on-a-warm-expansion-cache-hit` carries the tension rather than resolving it here.
+
+### Condition 3 — identity before the compilation it describes
+
+**Supported, and it was already true.** `accept_or_publish_metal_plan` composes the cache subject from the *pending* artifact's canonical identity and the prepared compilation's identity, both of which exist before `metal` runs. `the_second_expansion_of_one_subject_compiles_nothing` is the observable form: a design computing identity after compiling could not hit at all, and the transcript above shows the second pass compiling nothing.
+
+### Condition 4 — guarded selection with fallback before the commit
+
+**Partially supported, and the unsupported half is the same seam.** `crates/tiler/src/route.rs` decodes the embedded envelope, restates the producer's declared environment, matches the artifact against the identity the expansion recorded, selects the variant, reaches the first question only a device can answer, and drops the pre-commit stage — the fallback ADR 0051 permits. `grep -rn "\.commit()" crates/tiler/src` returns nothing, so "nowhere after the commit" holds by construction rather than by discipline, and `RouteOutcome` has no committed variant.
+
+**This is producer-declared equality, not host-earned eligibility.** The environment the loader is handed is the profile `tiler-build` declared, so `ExecutionEnvironment::classify` answers whether the bytes name the profile they were built under and does *not* answer whether this machine is a host that profile applies to. ADR 0086 refuses on every macOS row and nothing in the facade can ask it: the facade holds no device. The module says so in those words, as `prototypes/serial-sum-run` does.
+
+What is missing is the other side: a route that *can* commit, because there is something to dispatch. See condition 1.
+
+### Condition 5 — `make full`
+
+**Supported.** Green on the final commit: fmt, `cargo check --workspace --all-targets --locked`, clippy with warnings denied (prototypes excluded, as the target has always excluded them), `cargo nextest run --workspace --locked` — **1,750 tests, 1,750 passed, 4 skipped** — workspace doc-tests, rustdoc with warnings denied, the release-profile numerical tests (610 passed), `ticketsplease lint`, and `shellcheck`.
+
+### Boundary packet — every observable change, none self-accepted
+
+1. **`deliver macos;` compiles a payload instead of erroring.** The consumer-visible behaviour the accepted syntax's own documentation said was pending. Expected acceptance; stated anyway.
+2. **The Metal language standard a stated policy selects moves from MSL 3.1 to MSL 4.0**, and with it every profile's governed floor: `deliver macos;` now means macOS 26.0 rather than 14.0, and `deliver ios;` 26.0 rather than 17.0. This is a *correction to match the accepted spelling's own definition* — a profile fixes each family to "that family's governed floor for the Metal language standard Tiler compiles with", and the one authoritative compile-time declaration compiles at `-std=metal4.0` for `air64-apple-macos26.0`. Leaving it at 3.1 would have delivered a consumer a payload requiring macOS 26.0 under a policy promising 14.0, gated by a `#[cfg]` that cannot see a deployment minimum. Consequence: `deliver macos 14.0;` is now the driver's own floor refusal at the version token.
+3. **A `deliver` statement selecting anything but the one buildable target is refused with a new diagnostic** naming that target: `deliver ios;`, `deliver macos-and-ios;`, and any minimum or standard other than macOS 26.0 / MSL 4.0. `deliver-several-artifact-families-from-one-expansion` carries the widening.
+4. **A region with a symbolic extent cannot state a selected family**, because there is no program to compile ahead of time. The refusal names `carry-symbolic-extents-into-the-semantic-program`.
+5. **`TILER_EXPANSION_CACHE_DIR=off` refuses for a delivering region** — a narrowing of ADR 0089, because `ExpansionCache` has no store-nothing mode. `fallback-only` regions are unaffected. `expand-a-delivering-region-with-the-cache-disabled` retires it.
+6. **The expansion states `NumericalContract::FlushSubnormalsToZeroF32`.** Derived rather than chosen: the bound declaration's measured `f32` row flushes subnormals, so `StrictF32` and `ReassociateF32` are refused by the target's own numerical contract check, and `RelaxedF32` permits contraction, which `fusion_legality` declines for a multiply adjacent to an add. `only_one_numerical_contract_is_admissible_for_the_bound_declaration` fails the day a second becomes admissible, which is when it becomes a real question for Tom.
+7. **A toolchain failure is now a family-scoped retained diagnostic** rather than an unconditional error, per the contract's own split, so a non-Apple consumer of a `deliver macos;` region still builds. Target-neutral failures stay unconditional.
+8. **New `tiler::__private` items:** `RouteFacts`, `RouteOutcome`, `bind_route_and_build`, `select_embedded_route`. `#[doc(hidden)]`, named only by generated tokens, carrying no compatibility claim — but they are a public boundary in the ADR 0075 sense and are a reviewed draft, not accepted.
+9. **`crates/tiler` gains `tiler-runtime` and `tiler-artifact`**, so every consumer's build graph gains them plus `sha2`. `tiler-runtime`'s closure is `[tiler-artifact]` by ADR 0081 item 2 and it touches no device; `tiler-metal-aot` stays off the facade and `dependency_direction` still proves it.
+10. **`crates/tiler-macros` gains `tiler-build`, `tiler-cache`, and `tiler-compiler`** — host-built, never in a consumer's target graph.
+11. **`Cargo.lock` moves** for both edges. No new workspace member; `workspace_population.rs` is unchanged.
+
+### Unsupported cases, stated
+
+Symbolic extents with a selected family; several families in one selection; any family, minimum, or language standard other than macOS 26.0 / MSL 4.0; `off` with a selected family; and dispatch. Each refuses explicitly with a named remedy or a named ticket.
+
+### Deliberately not done
+
+- **No dispatch and no storage seam.** Public boundary, Tom's, and now a declared dependency.
+- **`docs/integration/frontends.md` still says a statement selecting a family is refused, and that the cache-root resolver is uncalled.** Both are now false. The document is scope `contracts/integrations`, which this ticket does not hold; correcting it needs that scope. Flagged rather than edited.
+- **The literal-extent binding gap** found while writing the facade's tests is filed as `check-a-literal-operand-extent-against-the-supplied-value` rather than fixed here: the refusal is consumer-visible and belongs with its own boundary review.
+- **`admit-multi-input-elementwise-programs-at-the-compiler-boundary` was not closed.** Its stated outcome is supported at this base — `crates/tiler-compiler/tests/multi_input_elementwise_boundary.rs` shows the approved three-input region compiling — but workers do not close tickets, and `tkt claim` refused this ticket for exactly that unfinished dependency, so no claim is recorded.
