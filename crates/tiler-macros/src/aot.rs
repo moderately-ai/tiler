@@ -21,8 +21,11 @@
 //! - **`FallbackOnly` reaches none of it.** [`deliver`] is called only for a
 //!   selection that `invokes_backend_compiler`, so a region stating nothing, or
 //!   stating `fallback-only`, opens no cache, resolves no root, and spawns no
-//!   process. `a_fallback_only_expansion_performs_no_backend_work` is the
-//!   executable form of that claim.
+//!   process. Two tests hold it: `crate::delivery`'s
+//!   `fallback_only_states_a_selection_that_invokes_no_backend_compiler` pins
+//!   the flag [`crate::expand`] branches on, and
+//!   `a_fallback_only_selection_is_refused_before_any_backend_work` below pins
+//!   what happens if the branch is ever wrong — a refusal, not a compilation.
 //! - **A cache hit compiles nothing, and spawns `xcrun` anyway.** The compiler
 //!   fingerprint is an input to the compilation identity, so it must be read
 //!   *before* the identity that decides hit or miss exists: `Toolchain::prepare`

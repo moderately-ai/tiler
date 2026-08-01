@@ -670,3 +670,42 @@ fn a_damaged_entry_is_quarantined_and_rebuilt() {
     );
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// A `FallbackOnly` selection reaching this module is refused before anything
+/// is opened, resolved, or spawned.
+///
+/// `crate::expand` never brings one here — it branches on
+/// `invokes_backend_compiler`, which `crate::delivery`'s own test pins false for
+/// `FallbackOnly`. This is the defence behind that branch: ADR 0053 defines
+/// `FallbackOnly` as invoking no backend compiler, so if the branch were ever
+/// inverted the result must be a refusal rather than a compilation nobody asked
+/// for. The stated cache root is a path that does not exist and could not be
+/// created, so a case that reached the cache would fail differently.
+#[test]
+fn a_fallback_only_selection_is_refused_before_any_backend_work() {
+    let selection = ArtifactFamilySelection::new(ArtifactDeliveryPolicy::FallbackOnly)
+        .expect("`fallback-only` is a valid selection");
+    assert!(
+        !selection.invokes_backend_compiler(),
+        "the flag `expand` branches on must be false, or the branch means nothing",
+    );
+
+    let refusal = deliver(
+        Some(&approved_region()),
+        selection,
+        &stating(std::path::Path::new("/tiler-no-such-cache-root")),
+        &Toolchain::system(),
+    )
+    .expect_err("a selection naming no family has nothing to build");
+    let AotRefusal::UnbuildableFamilies { stated, .. } = &refusal else {
+        panic!("unexpected refusal: {refusal:?}");
+    };
+    assert!(
+        stated.is_empty(),
+        "the refusal must report that no family was named: {stated:?}",
+    );
+    assert!(
+        refusal.to_string().contains("no artifact family"),
+        "the diagnostic must say so too: {refusal}",
+    );
+}
