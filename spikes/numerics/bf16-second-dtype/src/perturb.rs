@@ -222,7 +222,7 @@ pub fn fused_operations_are_unexpressible() -> Perturbation {
 /// widen/evaluate/narrow route through binary32. A stage that can only report
 /// zero is not a check, so this substitutes an intermediate with **BF16's own
 /// exponent range and one extra significand bit** — precision 9, where
-/// Figueroa's `q >= 2p + 2` bound is `9 >= 18` and fails — and requires the same
+/// the double-rounding bound `q >= 2p + 2` is `9 >= 18` and fails — and requires the same
 /// comparison to start disagreeing. Only the intermediate precision moves: the
 /// operands, the operation, and both roundings are the stage's own.
 #[must_use]

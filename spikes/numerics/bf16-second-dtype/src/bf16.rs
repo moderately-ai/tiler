@@ -13,7 +13,7 @@
 //! comment previously argued that a host-`f32` oracle would be wrong because
 //! `f32`'s 24-bit significand "does not exceed twice `bf16`'s 8-bit significand
 //! by enough to make the second rounding innocuous". That reads the bound
-//! backwards. Figueroa's condition for an innocuous double rounding of one
+//! backwards. The classical bound for an innocuous double rounding of one
 //! `+ - * /` or square root is `q >= 2p + 2`, which here is `24 >= 18` and
 //! **holds** — which is exactly why finding 24 of the retained Apple record says
 //! no *single* operation can expose an `f32` intermediate, and why

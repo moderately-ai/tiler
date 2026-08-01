@@ -154,8 +154,11 @@ fn the_generic_rounder_agrees_with_the_bf16_oracle() -> Stage {
 /// BF16 once, for every case in the population. The reason is a property of the
 /// two formats' parameters and not of this population: an exact product of two
 /// BF16 values needs at most sixteen significand bits, which binary32's
-/// twenty-four hold exactly, and for the remaining operations Figueroa's
+/// twenty-four hold exactly, and for the remaining operations the classical
 /// double-rounding bound `q >= 2p + 2` is `24 >= 18`, which binary32 satisfies.
+/// That inequality is not introduced here: finding 24 of the retained Apple
+/// record and `crates/tiler-metal/src/target.rs` both already state it at this
+/// pair, and this stage is what checks it rather than repeating it.
 ///
 /// **What it does not establish.** Nothing about a *fused* multiply-add, which
 /// is not one of the operations that bound covers; stage 3 is that question, and
