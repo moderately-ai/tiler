@@ -1,7 +1,7 @@
 ---
 id: admit-the-attention-contraction-structures
 title: Admit the attention score and value contraction index structures
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-the-contraction-normative-reference]
 related: [design-attention-program-vertical, admit-the-contraction-semantic-profile, realize-the-attention-contractions-on-metal, implement-parallel-reduction-strategies, own-operation-family-support-matrix]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/reference, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, semantics, contraction, attention, language-model, identity]
+claimed_from: todo
+assignee: worker-attn-structs
+lease_expires_at: 1785563718
 ---
 ## User-visible outcome
 
