@@ -62,27 +62,12 @@
 //! 2026-07-31 under ADR 0075, recorded in ADR 0089
 //! (`docs/decisions/0089-resolve-the-expansion-cache-root-from-an-override-or-the-user-cache.md`).
 //! Changing one is a superseding decision rather than an edit. The module is
-//! crate-private and nothing but its own tests calls it yet.
+//! crate-private; `aot` consumes the resolver on every delivering expansion
+//! since `prototype-inline-aot-integration-proof` landed (2026-08-01).
 //!
 //! [frontends]: https://github.com/moderately-ai/tiler/blob/main/docs/integration/frontends.md
 //! [metal]: https://github.com/moderately-ai/tiler/blob/main/docs/backends/metal.md
 //! [policy]: https://github.com/moderately-ai/tiler/blob/main/docs/research/cache/root-policy.md
-
-#![allow(
-    dead_code,
-    reason = "the cache-root policy is accepted (ADR 0089) and not yet reached: the expansion \
-              cache exists to share *external* compilation, and every region states \
-              `FallbackOnly`, which ADR 0053 defines as invoking no backend compiler. There is \
-              therefore nothing to cache, and resolving a root anyway would let an unset `HOME` \
-              refuse an expansion that opens no cache. \
-              `generate-cfg-gated-artifact-family-delivery` landed the delivery half — the \
-              versioned consumer-`cfg` map and the gated tokens — without changing that: it emits \
-              what a compilation produced and does not itself compile. \
-              `prototype-inline-aot-integration-proof` is the slice that first invokes the \
-              backend compiler, and it is what consumes this resolver. The surface reserved is \
-              the whole of the stated policy — the override variable, the `off` value, the \
-              derived user-cache root, and every refusal a consumer can read."
-)]
 
 use core::fmt;
 use std::ffi::{OsStr, OsString};

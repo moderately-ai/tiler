@@ -1,7 +1,7 @@
 ---
 id: expand-a-delivering-region-with-the-cache-disabled
 title: Expand a delivering region when the expansion cache is disabled
-status: in-progress
+status: done
 priority: p2
 dependencies: [prototype-inline-aot-integration-proof]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/cache, implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, cache, inline-dx]
-claimed_from: todo
-assignee: worker-expand-a-del
-lease_expires_at: 1785566409
 ---
 ## Why this exists
 
@@ -74,3 +71,5 @@ Four deliberate perturbations were run and each failed as designed:
 ### Commands
 
 `cargo fmt`; `cargo check --workspace --all-targets`; `cargo nextest run -p tiler-cache -p tiler-macros -p tiler -p tiler-build` (301 passed); `cargo clippy` per package with warnings denied; `cargo test --doc`; `tkt lint`; `git diff --check`; `tkt guard --base 189491a`; `make full`.
+
+**Provisional boundary acceptance (2026-08-01, overnight mode).** The coordinator provisionally accepted the surface: `ExpansionCache::disabled()`, the two `Disabled` reason variants (additive on `#[non_exhaustive]` enums), the `root()` accessors returning `Option`, and the removal of the superseded `AotRefusal::CacheDisabled` diagnostic. The coordinator also removed `cache_root.rs`'s stale crate-level `dead_code` allow in the same landing — the resolver has been production-called since the AOT proof, so the allow and its falsified reason came off cleanly.
