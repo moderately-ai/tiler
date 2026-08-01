@@ -25,10 +25,14 @@
 //!   footnote the reader to `MTLComputePipelineState.maxTotalThreadsPerThreadgroup`
 //!   for the compiled-function maximum; a theoretical family limit is not a
 //!   prepared pipeline's capacity.
-//! - **Synchronization** has no row at all. The bounded schedule contains no
-//!   synchronization point, so it emits no requirement, and
-//!   `replace-or-justify-the-barrier-count-axis` removed the axis rather than
-//!   inventing a capacity.
+//! - **Synchronization** carries exactly one row: the workgroup control barrier
+//!   over threadgroup memory, realized by
+//!   `threadgroup_barrier(mem_flags::mem_threadgroup)` and sourced from MSL 4.0
+//!   §6.9.1. It is a whole-subject fact rather than a capacity — a numeric
+//!   barrier-count axis was removed outright by
+//!   `replace-or-justify-the-barrier-count-axis` and is not what returned. Any
+//!   subject differing in even one of its five dimensions still resolves as
+//!   `NoPath`, so this row admits the single-workgroup tree and nothing else.
 //! - **F16 and BF16** get no dispatchability and no numerical row. The measured
 //!   Apple row *disagrees* across dtypes — `f32` arithmetic flushes where `f16`
 //!   preserves on the same hardware in the same math modes — so inheritance is
@@ -73,15 +77,19 @@ use tiler_artifact::program::{
 };
 use tiler_compiler::target::{
     DTypeDispatchability, IndexArithmeticSupport, ScalarArithmetic, ScalarSupport,
-    TargetCompileProfileMeasurementSource, TargetCompilerBuild, TargetCompilerRole,
-    TargetCompilerRoleIdentity, TargetExecutionEnvironment, TargetFactProducerIdentity,
-    TargetFactSource, TargetMeasurementContext, TargetNormativeReferenceIdentity, TargetProfile,
-    TargetProfileBuildError, TargetProfileBuilder, TargetProfileKey, TargetProfileKeyError,
+    SynchronizationSupport, TargetCompileProfileMeasurementSource, TargetCompilerBuild,
+    TargetCompilerRole, TargetCompilerRoleIdentity, TargetExecutionEnvironment,
+    TargetFactProducerIdentity, TargetFactSource, TargetMeasurementContext,
+    TargetNormativeReferenceIdentity, TargetProfile, TargetProfileBuildError, TargetProfileBuilder,
+    TargetProfileKey, TargetProfileKeyError,
 };
 use tiler_ir::program::abi::{
     AvailabilityPhase, TargetPropertyKey, TargetPropertyProviderIdentity, TargetPropertyQuery,
 };
-use tiler_ir::schedule::{ExceptionalValueAssumption, NumericalPermission};
+use tiler_ir::schedule::{
+    ExceptionalValueAssumption, FencedSpaces, MemoryOrdering, NumericalPermission,
+    SynchronizationKind, SynchronizationScope, SynchronizationSubject,
+};
 use tiler_ir::semantic::F32;
 use tiler_metal::target::{
     LaunchIndexRealization, MetalDeploymentMinimum, MetalEmissionRealization,
@@ -139,6 +147,24 @@ struct LedgerRows {
     index_arithmetic: IndexArithmeticSupport,
     device_address_space: bool,
     local_memory_bytes: u64,
+    /// The one complete synchronization subject this target realizes.
+    ///
+    /// Stated literally rather than derived from a strategy's own tile, and the
+    /// difference is the whole point of a *capability* row. Deriving it from
+    /// `workgroup_tree_tile` would make the profile agree with whatever the
+    /// strategy happens to ask for, which is a profile that cannot refuse;
+    /// `TargetProfile::workgroup_tree_target_for_test` derives it precisely
+    /// because a *test* profile must not be able to over-declare, and a
+    /// production profile has the opposite obligation. A strategy requiring any
+    /// other subject resolves `NoPath` against this row, which is correct.
+    synchronization: SynchronizationSubject,
+    /// The verdict on that subject, carried apart from the subject itself.
+    ///
+    /// Separate so a mutation case can move the verdict without moving the
+    /// subject: a target that names the right realization and refuses it is a
+    /// different fact from one that names a realization nobody asked about, and
+    /// the two produce different typed rejections.
+    synchronization_support: SynchronizationSupport,
     facts: MetalTargetFacts,
     emission: MetalEmissionRealization,
     numerical: NumericalRealization,
@@ -170,6 +196,43 @@ const FIRST_MACOS_APPLE9: LedgerRows = LedgerRows {
     device_address_space: true,
     // "Local memory bytes — 32,768", feature tables, `Apple9` column, 32 KB.
     local_memory_bytes: 32_768,
+    // "Synchronization — the workgroup control barrier over threadgroup memory".
+    // Realized by `threadgroup_barrier(mem_flags::mem_threadgroup)`, from MSL 4.0
+    // §6.9.1 and its two tables. Four of the five dimensions are quoted normative
+    // facts and the fifth is an elimination, and the ledger row states which is
+    // which rather than presenting one authority for all five:
+    //
+    // - `kind`: Table 6.12 — every thread of the threadgroup "need[s] to execute
+    //   this function before any thread can continue execution beyond the
+    //   threadgroup_barrier", and §6.9.1 calls it "an execution and memory
+    //   barrier". That is the control-barrier contract.
+    // - `execution_scope`: Table 6.12, "All threads in a threadgroup".
+    // - `visibility_scope`: Table 6.13, `mem_threadgroup` orders threadgroup
+    //   memory operations "for threads in a threadgroup".
+    // - `fenced_spaces`: the emitted flag is exactly `mem_threadgroup`.
+    //   `mem_device` is a separate flag this realization does not pass, so the
+    //   device domain is deliberately false rather than conservatively true — a
+    //   superset fence is a different realization with a different cost.
+    // - `ordering`: an **inference**, and the one row here that is not a
+    //   quotation. MSL declares `enum memory_order { memory_order_relaxed,
+    //   memory_order_seq_cst }` (§6.15.1) and applies it to atomics and
+    //   `atomic_thread_fence` (§6.15.3), never to `threadgroup_barrier`, so no
+    //   sentence assigns this barrier an ordering. `Relaxed` is refuted by
+    //   §6.9.1's memory fence "for reads and writes"; `SequentiallyConsistent`
+    //   is withheld, being what the spec reserves for an explicit
+    //   `memory_order_seq_cst` fence; `AcquireRelease` is what remains and is
+    //   exactly the quoted content.
+    synchronization: SynchronizationSubject {
+        kind: SynchronizationKind::ControlBarrier,
+        execution_scope: SynchronizationScope::Workgroup,
+        visibility_scope: SynchronizationScope::Workgroup,
+        fenced_spaces: FencedSpaces {
+            workgroup: true,
+            device: false,
+        },
+        ordering: MemoryOrdering::AcquireRelease,
+    },
+    synchronization_support: SynchronizationSupport::Realized,
     // "Metal target facts, and which of them project". The deployment minimum is
     // 26.0 and the standard MSL 4.0 because `probe.fixed_flags -std=metal4.0`
     // and `requested_target air64-apple-macos26.0` are the inputs the retained
@@ -226,6 +289,13 @@ const SDK_DISPATCH_REFERENCE: &str =
 const FEATURE_TABLES_REFERENCE: &str = "apple.metal-feature-set-tables.2025-10-20";
 /// The MSL 4.0 specification's address-space chapter.
 const MSL_ADDRESS_SPACE_REFERENCE: &str = "apple.metal-shading-language.4-0.device-address-space";
+/// The MSL 4.0 specification's threadgroup-synchronization section.
+///
+/// A reference of its own rather than a second use of the address-space one: a
+/// reader repairing a stale synchronization row needs §6.9.1 and its two tables,
+/// not the chapter that establishes the `device` address space, and two rows
+/// sharing one reference would leave neither able to say which section moved.
+const MSL_BARRIER_REFERENCE: &str = "apple.metal-shading-language.4-0.threadgroup-barrier";
 /// Provider of the prepared-entry property the workgroup query names.
 const PREPARED_ENTRY_PROVIDER_NAMESPACE: &str = "tiler";
 /// Property family the prepared-entry workgroup query is answered from.
@@ -476,6 +546,24 @@ impl BoundMetalCompileDeclaration {
         builder.declare_device_memory(rows.device_address_space, normative.msl_address_space)?;
         builder.declare_local_memory_bytes(rows.local_memory_bytes, normative.feature_tables)?;
 
+        // ---- the one synchronization row, normatively sourced ---------------
+        // Declared at `CompileProfile` because that is the phase the fact is
+        // true at: MSL defines the barrier's contract in the language, so
+        // nothing about a live device or a prepared pipeline is consulted to
+        // know it. That is what separates this row from the workgroup-threads
+        // one above, which is a query precisely because its value does not
+        // exist until a pipeline does.
+        //
+        // One subject, one verdict. A target realizing a second subject would
+        // declare a second fact; there is deliberately no per-dimension
+        // spelling, so this conjunction can never be assembled out of five
+        // facts none of which is about the barrier.
+        builder.declare_synchronization_realization(
+            rows.synchronization,
+            rows.synchronization_support,
+            &normative.msl_barrier,
+        )?;
+
         // ---- dispatchability, measured and exact ----------------------------
         // The retained run dispatched `f32` compute kernels on the execution
         // environment above and read results back, with an execution witness on
@@ -511,6 +599,40 @@ impl BoundMetalCompileDeclaration {
         builder.declare_measured_reassociation(
             f32.clone(),
             NumericalPermission::Forbidden,
+            ScalarSupport::Exact,
+            measured.clone(),
+        )?;
+        // The *other* resolution of the same dimension, from the same retained
+        // case read for its other consequence — not a second measurement and not
+        // a widening of the row above.
+        //
+        // `reassociation_chain` shows that under `safe`/`contract-off` the
+        // offline compiler emits no `reassoc` attribute and returns the source's
+        // own fold order, where `relaxed` and `fast` return the regrouped one.
+        // That single observation answers two different questions. Asked "can a
+        // contract that *forbids* regrouping be delivered here?" it says yes,
+        // because the compiler adds none. Asked "can a contract that *permits*
+        // regrouping be delivered here?" it says yes *exactly*, and for the same
+        // reason: the permission licenses Tiler to choose a grouping, the chosen
+        // grouping is what the emitted source expresses, and the target runs that
+        // one rather than substituting another. A permitted contract is honoured
+        // by delivering some legal grouping, and this target delivers the one
+        // Tiler selected.
+        //
+        // Declaring both resolutions of a permission dimension is the governed
+        // profile's own idiom (`governed_target_honourability` declares both for
+        // contraction and reassociation), and it is not the exclusive-table shape
+        // the subnormal dimensions use: a target flushes or preserves and cannot
+        // do both, whereas `Forbidden` and `Permitted` name two caller contracts
+        // that one non-reassociating target satisfies at once.
+        //
+        // This row is what makes the two parallel reduction strategies reachable
+        // on this profile at all: both a multi-pass split and a single-workgroup
+        // tree regroup the declared contributor sequence, so both are refused by
+        // name on a profile that answers only `Forbidden`.
+        builder.declare_measured_reassociation(
+            f32.clone(),
+            NumericalPermission::Permitted,
             ScalarSupport::Exact,
             measured.clone(),
         )?;
@@ -586,6 +708,7 @@ struct NormativeSources {
     sdk_dispatch: TargetFactSource,
     feature_tables: TargetFactSource,
     msl_address_space: TargetFactSource,
+    msl_barrier: TargetFactSource,
 }
 
 impl NormativeSources {
@@ -604,6 +727,10 @@ impl NormativeSources {
             msl_address_space: TargetFactSource::external_guarantee(
                 producer()?,
                 reference(MSL_ADDRESS_SPACE_REFERENCE)?,
+            ),
+            msl_barrier: TargetFactSource::external_guarantee(
+                producer()?,
+                reference(MSL_BARRIER_REFERENCE)?,
             ),
         })
     }
@@ -847,13 +974,16 @@ mod tests {
     use tiler_compiler::session::{CompileRequest, NumericalContract, compile};
     use tiler_compiler::target::{
         DTypeDispatchabilityResolution, IndexArithmeticSupport, ScalarArithmetic, ScalarSupport,
-        TargetFactProducerIdentity, TargetFactSource, TargetNormativeReferenceIdentity,
-        TargetProfileBuildError, TargetProfileBuilder, TargetProfileKey, TargetRequest,
+        SynchronizationSupport, TargetFactProducerIdentity, TargetFactSource,
+        TargetNormativeReferenceIdentity, TargetProfileBuildError, TargetProfileBuilder,
+        TargetProfileKey, TargetRequest,
     };
     use tiler_ir::program::abi::{
         AvailabilityPhase, TargetPropertyKey, TargetPropertyProviderIdentity, TargetPropertyQuery,
     };
-    use tiler_ir::schedule::{FlushedZeroSign, SubnormalMode};
+    use tiler_ir::schedule::{
+        FlushedZeroSign, MemoryOrdering, SubnormalMode, SynchronizationKind, SynchronizationScope,
+    };
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, ResolvedValueType,
         SemanticProgram, SemanticProgramBuilder, StrictSerialF32Sum, TypeKey,
@@ -1266,6 +1396,100 @@ mod tests {
                 "{name} does not reach the profile descriptor",
             );
         }
+    }
+
+    /// Every dimension of the synchronization row separately moves the descriptor.
+    ///
+    /// The subject is matched as one atomic value, so a profile that agreed with
+    /// a caller on four dimensions and differed on the fifth must be a *different
+    /// profile* rather than a near miss. Driving all five plus the verdict is
+    /// what makes that atomicity a checked property instead of a comment: if any
+    /// one of them failed to reach the encoding, two targets with genuinely
+    /// different barrier contracts would share an artifact identity, and a cache
+    /// entry built for one would be served for the other.
+    #[test]
+    fn every_synchronization_dimension_moves_the_profile_descriptor() {
+        let baseline = descriptor(&FIRST_MACOS_APPLE9);
+        let perturbations: [RowPerturbation; 6] = [
+            ("the synchronization kind", |rows| {
+                rows.synchronization.kind = SynchronizationKind::SplitPhaseBarrier;
+            }),
+            ("the arrival scope", |rows| {
+                rows.synchronization.execution_scope = SynchronizationScope::Subgroup;
+            }),
+            ("the publication scope", |rows| {
+                rows.synchronization.visibility_scope = SynchronizationScope::Device;
+            }),
+            ("the fenced workgroup domain", |rows| {
+                rows.synchronization.fenced_spaces.workgroup = false;
+                // The subject must still fence something, or construction refuses
+                // it as vacuous before the descriptor is reached and this case
+                // would prove nothing.
+                rows.synchronization.fenced_spaces.device = true;
+            }),
+            ("the fenced device domain", |rows| {
+                rows.synchronization.fenced_spaces.device = true;
+            }),
+            ("the established ordering", |rows| {
+                rows.synchronization.ordering = MemoryOrdering::SequentiallyConsistent;
+            }),
+        ];
+        for (name, perturb) in perturbations {
+            let mut rows = FIRST_MACOS_APPLE9;
+            perturb(&mut rows);
+            assert_ne!(
+                descriptor(&rows),
+                baseline,
+                "{name} does not reach the profile descriptor",
+            );
+        }
+    }
+
+    /// A refused realization is a different profile from a realized one.
+    ///
+    /// Separate from the dimension sweep above because it perturbs the *verdict*
+    /// rather than the subject. A target that names this exact barrier and
+    /// declares it unrealizable is making a different claim from one that
+    /// realizes it, and the two must not share a descriptor — otherwise a plan
+    /// admitted against the realizing profile would validate against the
+    /// refusing one.
+    #[test]
+    fn a_refused_synchronization_verdict_moves_the_profile_descriptor() {
+        let mut rows = FIRST_MACOS_APPLE9;
+        rows.synchronization_support = SynchronizationSupport::Unrealizable;
+        assert_ne!(descriptor(&rows), descriptor(&FIRST_MACOS_APPLE9));
+    }
+
+    /// The declared profile carries exactly one synchronization row.
+    ///
+    /// Read from the canonical encoding rather than from the builder, because
+    /// the encoding is what artifact and cache identity are taken over. The
+    /// governed domain separator is what a reader greps for; a profile that
+    /// declared none would omit the count this asserts.
+    #[test]
+    fn the_declared_profile_states_one_barrier_realization() {
+        let declaration = declared();
+        let descriptor = declaration.profile().canonical_descriptor();
+        let text = String::from_utf8_lossy(descriptor);
+        assert!(
+            text.contains("tiler.target-profile.synchronization-realization.v1"),
+            "the synchronization row family is absent from the descriptor",
+        );
+        // The reference the row is attributed to travels in the source table, so
+        // a row sourced from the wrong document is visible here.
+        assert!(
+            text.contains("apple.metal-shading-language.4-0.threadgroup-barrier"),
+            "the barrier row is not attributed to the MSL synchronization section",
+        );
+        // Pinned because the authority ledger quotes this number, and a
+        // document citing a byte count nothing checks drifts silently. It moved
+        // from 1,741 when the barrier row and the permitted resolution of
+        // reassociation were added.
+        assert_eq!(
+            descriptor.len(),
+            1_963,
+            "the canonical descriptor length moved; update the authority ledger with it",
+        );
     }
 
     /// A profile-key change moves both halves of the artifact reference.

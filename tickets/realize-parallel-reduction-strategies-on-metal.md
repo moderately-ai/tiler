@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: [implement-the-target-neutral-multi-pass-reduction-strategy, implement-the-single-workgroup-synchronized-reduction-strategy, declare-a-required-gpu-family-in-the-artifact, construct-and-bind-the-first-authoritative-metal-compile-profile]
 related: [implement-parallel-reduction-strategies]
-scopes: [implementation/metal, implementation/build, implementation/runtime, implementation/artifact, contracts/artifacts]
+scopes: [implementation/metal, implementation/build, implementation/runtime, implementation/artifact, contracts/artifacts, research/target-profiles]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
@@ -36,3 +36,37 @@ Metal lowering, artifact, build, and runtime paths agree with the target-neutral
 - Follow both target-neutral strategies, backend-neutral route requirements, and the authoritative Metal compile profile explicitly; scope collision is not prerequisite evidence.
 - Keep measured crossover and winner activation in `calibrate-and-activate-parallel-reduction-selection` after executable Metal evidence exists.
 - Split a named hardware measurement when the qualified host is unavailable; do not convert compilation success into feature or performance evidence.
+
+## Outcome
+
+**Status: the profile-fact half is complete; the executable half is blocked on a compiler-side contract and is not this ticket's to unblock.** The qualified host was available and matched the ledger's execution-environment row in every field, so the blocker is not a missing environment.
+
+### What landed
+
+**Fact — the authoritative macOS Metal profile now carries its synchronization row.** `BoundMetalCompileDeclaration` declares one complete `SynchronizationSubject` — `ControlBarrier`, workgroup arrival, workgroup publication, threadgroup memory fenced and device memory deliberately not, acquire-release ordering — as `Realized` at `CompileProfile`, under a normative reference of its own, `apple.metal-shading-language.4-0.threadgroup-barrier`. Before this, `declare_synchronization_realization` had exactly one call site in the workspace and it was `#[cfg(test)]`; no production profile declared a synchronization row at all, which is what `TargetProfile::workgroup_tree_target_for_test`'s doc comment named this ticket as the owner of.
+
+**Fact — four of the row's five dimensions are quoted normative facts and the fifth is a stated elimination.** MSL 4.0 §6.9.1 with Tables 6.12 and 6.13 establishes the kind, both scopes, and the fenced domain. It assigns the barrier no memory ordering at all: MSL declares `enum memory_order { memory_order_relaxed, memory_order_seq_cst }` and applies it to atomics and `atomic_thread_fence`, never to `threadgroup_barrier`. `Relaxed` is refuted by the specification's own "memory fence (for reads and writes)", `SequentiallyConsistent` is withheld as what the spec reserves for an explicit seq-cst fence, and `AcquireRelease` is what remains. The ledger records the split per dimension rather than presenting one authority for five.
+
+**Fact — the permitted resolution of reassociation is declared, from the same retained measurement read for its other consequence.** `reassociation_chain` shows the compiler emitting no `reassoc` under `safe` and returning the source's own fold order. That answers both "can a contract forbidding regrouping be delivered?" (yes, none is added) and "can a contract permitting it be delivered?" (yes exactly — Tiler chooses the grouping, the source expresses it, the target runs that one). Declaring both resolutions of a permission dimension is `governed_target_honourability`'s own idiom and is not the exclusive-table shape the subnormal dimensions use.
+
+**Fact — identity moved and was recomputed rather than assumed.** The canonical descriptor is 1,963 bytes, from 1,741, and both the standard Metal artifact identity and the cache subject moved with it; each was rebaselined from an observed run. The descriptor length is now pinned by a test naming the ledger, so the document's cited number cannot drift from the encoding.
+
+### The blocker, located exactly
+
+**Measurement — no registered numerical contract both flushes subnormals and permits reassociation**, so no parallel reduction strategy is expressible on the one measured Apple row. The four registered contracts are `tiler.strict-f32.v1`, `tiler.flush-f32.v1`, `tiler.relaxed-f32.v1`, and `tiler.reassociate-f32.v1`; the two granting regrouping are strict-based and require preserved subnormals, which this hardware measurably refuses in every math mode, and the one this hardware delivers grants no regrouping. `CompileRequest` accepts only that four-value preset enumeration, so no caller outside `tiler-compiler` can state the combination.
+
+The refusal lands on `InputSubnormals` and never reaches the reassociation dimension, which is what makes it diagnosable. `no_registered_contract_both_flushes_subnormals_and_permits_reassociation` drives both halves — the regrouping contract refused on subnormals, and the deliverable contract retaining no split — and is the activation trigger.
+
+**This was not routed around.** Registering a fifth preset is a `crates/tiler-compiler` change, and the compiler lane was occupied by `admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary` for this ticket's whole run. Filed as `register-a-flush-and-reassociate-numerical-contract` rather than absorbed.
+
+### What is therefore unrun, stated as predicates rather than as gaps
+
+Neither strategy executed against the reference; no negative fixture for insufficient prepared capacity, insufficient local memory, invalid synchronization realization, or missing family authority was driven on hardware; no lifetime or command-ordering evidence was produced. Every one of these is downstream of a plan existing, and no plan exists. **None of them is blocked by a missing target fact or by an unavailable host**, and converting the compiling cooperative golden into execution evidence would be exactly the substitution this ticket forbids.
+
+### Scope note
+
+`research/target-profiles` was added to this ticket's scopes: the brief required the ledger rows and no live sibling held that scope. `implementation/metal-aot` was **not** added — publishing new proof members from `prototypes/serial-sum-compile` would only have been useful once a plan exists.
+
+### Verification
+
+`cargo nextest run --workspace --locked` green at 2236 tests before the ledger edits; per-package `tiler-build` green at 69. Each new check was mutation-proved: removing `declare_synchronization_realization` fails both the descriptor-text test and the dimension sweep, and each of the row's five dimensions plus its verdict was separately perturbed and observed moving the descriptor.

@@ -797,13 +797,21 @@ mod tests {
     /// `v10` declaration described a target that could not be asked, so a cache
     /// holding either must miss rather than match.
     ///
+    /// Both moved once more when the declared Metal profile gained its
+    /// synchronization row. This program still performs no synchronization, and
+    /// that is exactly why the move is the intended one: the row is a *target*
+    /// realization, so it enters the profile descriptor the artifact folds
+    /// whether or not a given program consumes it. A cache entry published
+    /// against a profile that could not state the barrier must miss rather than
+    /// match, because the profile it was assessed under no longer exists.
+    ///
     /// [`assemble_plan_artifact`]: crate::assemble_plan_artifact
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "8cb1a5e2d20f120f8801698da3d070f623d1bb6b0a1c7ed96cd2c55a928e951b";
+            "1fe732f030c72ca7f46a79fb7a9131c77fbc6502b95089a196378c4d54fac33e";
         const CACHE_SUBJECT: &str =
-            "d4493d4711c310403ca3805ec2f41ea14f5dcdde45f9b4b67ac1f7a943cc35bf";
+            "c8f9aee8ad51c6f373e539a4846a9a60aeab05ffb94c7a8cdc888288ccefcf84";
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));
@@ -846,6 +854,118 @@ mod tests {
         DigestAlgorithm::GOVERNED
             .digest(b"tiler.build.metal-plan-golden.v1\0", preimage)
             .label()
+    }
+
+    /// A reassociating sum over four contributors per output, on two outputs.
+    ///
+    /// Four is the smallest contributor count `governed_partition` splits at all
+    /// — it requires at least two partitions of at least two contributors each —
+    /// and two outputs keeps the widest launch this profile's grid-axis row
+    /// admits: the tree launches one invocation per participant per output, so
+    /// two participants across two outputs is exactly four threads.
+    fn reassociating_program() -> SemanticProgram {
+        let mut builder =
+            SemanticProgramBuilder::try_standard().expect("the semantic profile composes");
+        let input = builder
+            .input::<F32>(
+                InputKey::new("input").expect("the input key is valid"),
+                Shape::from_dims([2, 4]),
+            )
+            .expect("the input binds");
+        let scale = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).expect("the scale applies");
+        let bias = F32Constant::apply(&mut builder, 0.0_f32.to_bits()).expect("the bias applies");
+        let product = F32Multiply::apply(&mut builder, input, scale).expect("the product applies");
+        let mapped = F32Add::apply(&mut builder, product, bias).expect("the bias applies");
+        let sum = StrictSerialF32Sum::apply(&mut builder, mapped, [Axis::new(1)])
+            .expect("the sum applies");
+        builder
+            .output(
+                OutputKey::new("result").expect("the output key is valid"),
+                sum,
+            )
+            .expect("the output binds");
+        builder.build().expect("the program verifies")
+    }
+
+    /// **No admitted contract reaches a parallel reduction on Apple hardware,
+    /// and the gate is the contract vocabulary rather than this profile.**
+    ///
+    /// Both halves are driven, because either alone is misreadable. The first
+    /// shows the *reassociating* contract refused before any strategy is
+    /// considered, and refused on **subnormals**: `ReassociateF32` is the strict
+    /// contract widened on one dimension, so it still requires preserved
+    /// subnormals, and Apple `f32` arithmetic measurably flushes them in every
+    /// math mode. The second shows the contract Apple *can* deliver —
+    /// `FlushSubnormalsToZeroF32` — compiling and retaining no split, because
+    /// that preset deliberately widens subnormals alone and grants no
+    /// regrouping.
+    ///
+    /// Together they bound the gap exactly: the four registered contracts are
+    /// `tiler.strict-f32.v1`, `tiler.flush-f32.v1`, `tiler.relaxed-f32.v1`, and
+    /// `tiler.reassociate-f32.v1`, and **none of them both flushes subnormals
+    /// and permits reassociation**. `CompileRequest` accepts only that
+    /// four-value preset enumeration, so no caller outside `tiler-compiler` can
+    /// state the combination either. Every parallel reduction strategy regroups
+    /// the declared contributor sequence, so on this target all of them are
+    /// unreachable — not for want of a target fact, but for want of a contract
+    /// a caller is able to name.
+    ///
+    /// This test is therefore the activation trigger for
+    /// `realize-parallel-reduction-strategies-on-metal`'s backend evidence: it
+    /// fails the moment a flush-and-reassociate contract is registered, which is
+    /// exactly when the profile rows this declaration now carries — the
+    /// synchronization realization and the permitted resolution of reassociation
+    /// — stop being unreachable.
+    #[test]
+    fn no_registered_contract_both_flushes_subnormals_and_permits_reassociation() {
+        let declaration = declaration();
+        let program = reassociating_program();
+        let targets =
+            || TargetRequest::new([declaration.profile().clone()]).expect("a singleton request");
+
+        // The regrouping contract is refused, and not for the regrouping.
+        let reassociating = compile(CompileRequest::new(
+            &program,
+            NumericalContract::ReassociateF32,
+            targets(),
+        ))
+        .expect("the batch resolves")
+        .into_targets()
+        .pop()
+        .expect("one target outcome")
+        .into_parts()
+        .1;
+        let refusal = reassociating
+            .expect_err("Apple f32 flushes subnormals, so the strict-based contract cannot hold");
+        let rendered = format!("{refusal:?}");
+        assert!(
+            rendered.contains("InputSubnormals"),
+            "the refusal moved off the subnormal dimension: {rendered}",
+        );
+
+        // The contract this target *can* deliver reaches a plan, and that plan
+        // has no parallel alternative to select between.
+        let flushing = compile(CompileRequest::new(
+            &program,
+            NumericalContract::FlushSubnormalsToZeroF32,
+            targets(),
+        ))
+        .expect("the batch resolves")
+        .into_targets()
+        .pop()
+        .expect("one target outcome")
+        .into_parts()
+        .1
+        .expect("the flush contract is what this hardware delivers");
+        let stages: Vec<usize> = flushing
+            .alternatives()
+            .map(|alternative| alternative.kernels().len())
+            .collect();
+        assert!(
+            !stages.contains(&3),
+            "a multi-pass split reached a portfolio under a contract granting no regrouping: \
+             {stages:?}",
+        );
     }
 
     /// One envelope carries one payload per artifact family, at its own position.
