@@ -2,7 +2,7 @@
 id: enforce-resolved-encoded-value-binding-conformance
 title: Enforce resolved encoded-value binding conformance
 status: todo
-priority: p2
+priority: p1
 dependencies: [prototype-quantized-value-vertical, produce-typed-strict-affine-assemble-semantic-precondition]
 related: [implement-first-runtime-semantic-value-precondition-enforcement, produce-typed-strict-affine-assemble-semantic-precondition, own-the-dtype-support-maturity-matrix]
 scopes: [implementation/ir, implementation/artifact, implementation/reference, implementation/runtime, contracts/foundation, contracts/numerics, contracts/artifacts, contracts/decisions]

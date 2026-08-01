@@ -1,7 +1,7 @@
 ---
 id: reconcile-the-shared-object-claim-with-the-subject-check-in-the-artifact-contract
 title: Reconcile the shared-object claim with the subject check in the artifact contract
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: worker-shared-object
+lease_expires_at: 1785595402
 ---
 ## User-visible outcome
 
