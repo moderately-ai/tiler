@@ -1,7 +1,7 @@
 ---
 id: design-the-bf16-computation-and-accumulator-contract
 title: Design the BF16 computation, accumulator, and conversion contract
-status: in-progress
+status: done
 priority: p2
 dependencies: [register-the-bf16-semantic-operation-signatures]
 related: [spike-bf16-through-the-second-dtype-seams, widen-the-f16-operation-vocabulary-to-contraction-and-reassociation, own-operation-family-support-matrix, redesign-the-delivered-realization-record-from-typed-evidence, land-the-bf16-conversion-and-accumulator-adr, probe-the-bf16-contraction-pragma-on-the-metal-runtime-path]
@@ -9,9 +9,6 @@ scopes: [research/numerics, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, design, dtype, bf16, numerics, accumulator, conversion]
-claimed_from: todo
-assignee: worker-bf16-accum
-lease_expires_at: 1785574773
 ---
 ## User-visible outcome
 
