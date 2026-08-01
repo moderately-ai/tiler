@@ -1,7 +1,7 @@
 ---
 id: select-executable-variants-across-registered-backend-families
 title: Select executable variants across registered backend families
-status: todo
+status: in-progress
 priority: p1
 dependencies: [produce-a-custom-backend-payload-through-the-build-orchestrator, route-a-custom-backend-through-an-independently-selected-adapter]
 related: [prototype-complete-physical-plan-selection, promote-artifact-family-selection-for-the-frontend]
@@ -9,6 +9,9 @@ scopes: [implementation/runtime, implementation/artifact, implementation/compile
 shared_scopes: [project/tickets]
 paths: []
 tags: [backend-providers, pluggability, implementation, selection, runtime]
+claimed_from: todo
+assignee: worker-variant-sel
+lease_expires_at: 1785565152
 ---
 ## User-visible outcome
 
