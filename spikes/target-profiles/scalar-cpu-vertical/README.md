@@ -10,7 +10,7 @@ evidence_classes: ["executable-model", "bounded-measurement"]
 supports: ["tiler.research.target-profiles.physical-feasibility-model", "tiler.contract.cpu-backend"]
 entrypoints: ["spikes/target-profiles/scalar-cpu-vertical/src/main.rs"]
 last_verified: "2026-08-01"
-verified_at_commit: "63f9259"
+verified_at_commit: "e2da98f"
 ticket: "prototype-a-bounded-scalar-cpu-backend-vertical"
 ---
 
@@ -54,11 +54,11 @@ The binary's only product is a verdict: every stage that fails exits non-zero wi
 
 ## Result
 
-**Measurement**, Apple M-series arm64 macOS, `rust-toolchain.toml`'s pinned nightly, base commit `63f9259`:
+**Measurement**, Apple M-series arm64 macOS, `rust-toolchain.toml`'s pinned nightly, base commit `e2da98f`:
 
 The vertical executed. Twelve `f32` elements agreed **bit for bit** with `tiler-reference`, including a negative zero whose sign survived, the least positive and least negative subnormals preserved through a multiply, a non-canonical NaN payload canonicalized to the realization's exact `0x7fc00000`, and both infinities. The retained fixture is [`results/2026-07-31-macos-arm64.json`](results/2026-07-31-macos-arm64.json).
 
-Recorded quantities from that run: profile descriptor 797 bytes, payload 265 bytes, envelope 20,953 bytes, artifact identity 9,753 bytes, reference registry identity 438,805 bytes, **zero** deferred prepared-entry predicates.
+Recorded quantities from that run: profile descriptor 797 bytes, payload 265 bytes, envelope 20,953 bytes, artifact identity 9,753 bytes, reference registry identity 446,768 bytes, **zero** deferred prepared-entry predicates.
 
 ### Three identity sizes moved between `488efac` and `63f9259`
 
@@ -74,6 +74,32 @@ Recorded quantities from that run: profile descriptor 797 bytes, payload 265 byt
 **What did not move is the part the spike exists to claim.** The twelve output bit patterns are byte-identical to the earlier fixture, and so are the profile descriptor (797), the payload (265), the element count, and the zero deferred predicates. The four quantities above are *identity and encoding sizes*, not numerical results: they moved because the content folded into those identities changed as `tiler-ir`, `tiler-artifact`, and `tiler-reference` gained operations and fields between the two commits. The reference registry identity grew most because it enumerates the reference implementations, and that set grew.
 
 **Inference.** No claim [ADR 0090](../../../docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md) cites from this spike depends on the moved numbers — it cites the bit-for-bit agreement, the named exceptional values, the `CanonicalizeF32Nan` perturbation, and that no physical provider was installed, all of which reproduced. The moved numbers were recorded here and in the fixture only, so this table is the correction rather than an amendment to an accepted record.
+
+### Two more quantities moved between `63f9259` and `e2da98f`
+
+**Measurement.** The re-run recorded above was taken at `e2da98f` on 2026-08-01, after the loader's compatibility refusals were retired (next section). Recorded against the previous run at `63f9259`:
+
+| Quantity | `63f9259` | `e2da98f` |
+| --- | --- | --- |
+| selected plan | `program-alternative:5ef3467e50acb6f7` | `program-alternative:986779d4106ea633` |
+| reference registry identity bytes | 438,805 | 446,768 |
+
+**What did not move.** The twelve output bit patterns, the profile descriptor (797), the payload (265), the envelope (20,953), the artifact identity (9,753), the element count, and the zero deferred predicates all reproduced. The envelope and artifact-identity numbers held across this interval where they moved across the last one.
+
+**Measurement boundary, because five of those seven are byte *counts*.** What reproduced for them is a length rather than a value: an identity whose content changed without changing size would read the same here, and this spike retains no identity bytes to tell the difference. Only the output bits are recorded exactly, and those are byte-identical to the earlier fixture. **Inference**, held to that boundary: what folds into an artifact's identity and what folds into a plan's stable id are at least not the same set, because the plan id moved while the artifact-identity length did not — which is weaker than saying the artifact identity is unchanged, and is as much as this fixture can support.
+
+### Four host-relative refusals moved class between `63f9259` and `e2da98f`
+
+**Measurement.** `select-executable-variants-across-registered-backend-families` inverted the loader's selection order: host-relative ineligibility is now a *filter* applied to a variant before any applicability guard is evaluated, rather than a terminal mismatch reported after one. `LoadRejection::UnexecutablePayload`, `LoadRejection::IncompatibleTarget`, and `TargetDeclaration` were the terminal spelling and are removed, so the four envelope probes below stopped compiling; they were rewritten against `LoadRejection::NoEligibleVariant` and `VariantIneligibility` and re-run. What each probe perturbs is unchanged, and so is the fact that each is refused; the class the loader reports for it moved.
+
+| Perturbation | class at `63f9259` | class at `e2da98f` |
+| --- | --- | --- |
+| another profile descriptor | `IncompatibleTarget` / `TargetDeclaration::Variant` / `DescriptorMismatch` | `runtime.no-eligible-variant` / `AssessedProfile` / `DescriptorMismatch` |
+| the Metal profile family | `IncompatibleTarget` / `TargetDeclaration::Variant` / `ProfileKeyMismatch` | `runtime.no-eligible-variant` / `AssessedProfile` / `ProfileKeyMismatch` |
+| a host executing `metallib` | `runtime.unexecutable-payload` | `runtime.no-eligible-variant` / `UnsupportedRepresentation` |
+| a host consuming `tiler.cpu.scalar-image-v2` | `runtime.unexecutable-payload` | `runtime.no-eligible-variant` / `UnsupportedRepresentation` |
+
+**Inference, and it is why the last two rows are pinned further than their class.** The two payload perturbations reported one class before and still do, but that class now carries the host's own stated backend and representation, and this artifact packages a single variant — so all four probes arrive as "the whole portfolio was filtered" and only the carried reason tells them apart. `probe_fail_closed` therefore asserts the exclusion's fields rather than only its class: the Metal-host probe requires `tiler.metal`/`metallib` and the representation probe requires `tiler.cpu.scalar`/`tiler.cpu.scalar-image-v2`. Substituting either host pair for the other was made, and the run exits non-zero naming the probe. This is stronger than the retired code was rather than a restoration of it — those two probes matched `UnexecutablePayload { .. }` and were interchangeable then too, and the class move is only what made the weakness visible. The first two rows are separated by their classification as they were before.
 
 ## Findings
 
@@ -105,7 +131,7 @@ Each is what a consumer-neutral backend-provider contract has to account for. **
 
 Every check below was run against a case that must fail, and observed failing. Each perturbs exactly one thing, and each is paired with an accepted neighbour so a refusal is evidence about the perturbation rather than about a harness that refuses everything.
 
-**Envelope**, against the exact bytes this run packaged: a flipped interior byte (`artifact.integrity: ManifestDigestMismatch`), truncation (`artifact.malformed: TotalLengthMismatch`), a foreign expected identity (`runtime.program-mismatch`), another profile descriptor (`IncompatibleTarget` / `DescriptorMismatch` on the variant), the *Metal profile family* (`IncompatibleTarget` / `ProfileKeyMismatch`), a host that executes `metallib` (`runtime.unexecutable-payload`), and a host consuming `tiler.cpu.scalar-image-v2` (`runtime.unexecutable-payload`).
+**Envelope**, against the exact bytes this run packaged: a flipped interior byte (`artifact.integrity: ManifestDigestMismatch`), truncation (`artifact.malformed: TotalLengthMismatch`), a foreign expected identity (`runtime.program-mismatch`), another profile descriptor (`runtime.no-eligible-variant`, the variant filtered as `AssessedProfile` / `DescriptorMismatch`), the *Metal profile family* (`runtime.no-eligible-variant`, `AssessedProfile` / `ProfileKeyMismatch`), a host that executes `metallib` (`runtime.no-eligible-variant`, `UnsupportedRepresentation` naming `tiler.metal`/`metallib` as what the host stated), and a host consuming `tiler.cpu.scalar-image-v2` (`runtime.no-eligible-variant`, `UnsupportedRepresentation` naming `tiler.cpu.scalar`/`tiler.cpu.scalar-image-v2`). The last four are exclusions rather than terminal mismatches, and they are the outcome here only because this artifact packages one variant; each is pinned to its carried reason as well as its class, for the reason the drift section above gives.
 
 **Payload**, against the exact image bytes: a changed domain separator, truncation, one appended byte, an instruction naming a slot past the declared value space, and a store redirected into the read-only input parameter. The last two are constructed by modifying the decoded image and re-encoding it, so the perturbation is exactly the one claimed rather than a byte flipped at a guessed offset.
 
@@ -113,7 +139,7 @@ Every check below was run against a case that must fail, and observed failing. E
 
 **Host context**: an image declaring flushed input subnormals, an image declaring flushed result subnormals, an artifact declaring a 32-bit address model, and an artifact declaring `x86_64`, each refused by the measured context, against the unperturbed declaration it admits.
 
-**The comparison itself**, which is the one that matters most, because every probe above would still pass if the final check could not fail. Deleting the `CanonicalizeF32Nan` arm from `src/interpret.rs` — replacing it with an identity — makes the run exit non-zero at the comparison, naming exactly one differing element: the backend returns the operand's own `0x7fc01234` payload where the reference requires the realization's canonical `0x7fc00000`. Every other element still agrees. That perturbation was made, observed, and reverted; it is the evidence that the agreement above is a result rather than a tautology, and that the NaN canonicalization the kernel names is load-bearing rather than decorative. It was re-run at `63f9259` on 2026-08-01 and produced that same single-element failure, so the comparison is still a check that can say no on the current tree rather than one inherited from a run nobody repeated.
+**The comparison itself**, which is the one that matters most, because every probe above would still pass if the final check could not fail. Deleting the `CanonicalizeF32Nan` arm from `src/interpret.rs` — replacing it with an identity — makes the run exit non-zero at the comparison, naming exactly one differing element: the backend returns the operand's own `0x7fc01234` payload where the reference requires the realization's canonical `0x7fc00000`. Every other element still agrees. That perturbation was made, observed, and reverted; it is the evidence that the agreement above is a result rather than a tautology, and that the NaN canonicalization the kernel names is load-bearing rather than decorative. It was re-run at `63f9259` and again at `e2da98f`, both on 2026-08-01, and produced that same single-element failure each time, so the comparison is still a check that can say no on the current tree rather than one inherited from a run nobody repeated. The second re-run is not redundant: the reference registry identity moved across that interval, so the oracle the comparison is against is not the one the first re-run used.
 
 ## Measurement boundary
 
@@ -126,5 +152,5 @@ Every check below was run against a case that must fail, and observed failing. E
 
 ## Retained evidence
 
-- [`results/2026-07-31-macos-arm64.json`](results/2026-07-31-macos-arm64.json) — the identities, byte counts, and exact output bit patterns of the run recorded above. Re-running with the same argument overwrites it; a diff is drift from the source beside it. The date in the name is the fixture's origin, deliberately not bumped per run: the path is stable so that `git diff` is the drift signal, and the run it currently holds is dated by `last_verified` above. The 2026-08-01 restoration is what made four of its numbers move.
+- [`results/2026-07-31-macos-arm64.json`](results/2026-07-31-macos-arm64.json) — the identities, byte counts, and exact output bit patterns of the run recorded above. Re-running with the same argument overwrites it; a diff is drift from the source beside it. The date in the name is the fixture's origin, deliberately not bumped per run: the path is stable so that `git diff` is the drift signal, and the run it currently holds is dated by `last_verified` above. The 2026-08-01 restoration made four of its numbers move, and the loader-vocabulary re-run later the same day moved two more; both are tabled under "Result" with the superseded values kept rather than overwritten.
 - `Cargo.lock` is tracked, so the dependency set a recorded run was taken under is recoverable.
