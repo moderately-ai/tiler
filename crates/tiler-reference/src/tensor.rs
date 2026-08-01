@@ -157,8 +157,10 @@ impl Tensor {
     /// # Errors
     ///
     /// Returns [`EvaluationError::ElementCount`] when the payload length does
-    /// not match the shape, or [`EvaluationError::ShapeTooLarge`] when the
-    /// element count cannot be represented on this host.
+    /// not match the shape, [`EvaluationError::ShapeTooLarge`] when the element
+    /// count cannot be represented on this host, and
+    /// [`EvaluationError::ResourceExceeded`] when the element or retained-byte
+    /// count exceeds its governed limit.
     pub fn dense(
         resolved_type: ResolvedValueType,
         shape: Shape,

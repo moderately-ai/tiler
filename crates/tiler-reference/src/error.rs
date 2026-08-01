@@ -270,6 +270,22 @@ pub enum ReferenceOperationError {
         /// First rejected aggregate size.
         actual: usize,
     },
+    /// The work an implementation would step through exceeded its governed bound.
+    ///
+    /// Separate from the output bounds above because it bounds a different thing.
+    /// A contraction's fold walks `output_count * contracted_count`
+    /// multiply-accumulate steps — larger than either operand, and bounded by
+    /// neither the stored-element nor the byte limit the operands and the output
+    /// already passed. Bounding what a result *retains* does not bound the work
+    /// that produces it.
+    IterationStepsExceeded {
+        /// Active iteration-step limit.
+        limit: usize,
+        /// First rejected step count, saturated at `usize::MAX` when the count
+        /// exceeds host arithmetic. Saturation only under-reports, so a step
+        /// count too large to name is still refused.
+        actual: usize,
+    },
 }
 
 impl fmt::Display for ReferenceOperationError {
@@ -298,6 +314,10 @@ impl fmt::Display for ReferenceOperationError {
             Self::OutputResourceExceeded { limit, actual } => write!(
                 formatter,
                 "reference operation output retained {actual} bytes, exceeding {limit}"
+            ),
+            Self::IterationStepsExceeded { limit, actual } => write!(
+                formatter,
+                "reference operation iteration space has {actual} steps, exceeding {limit}"
             ),
         }
     }
