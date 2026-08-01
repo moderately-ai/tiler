@@ -26,17 +26,25 @@
 //!   the flag [`crate::expand`] branches on, and
 //!   `a_fallback_only_selection_is_refused_before_any_backend_work` below pins
 //!   what happens if the branch is ever wrong — a refusal, not a compilation.
-//! - **A cache hit compiles nothing, and spawns `xcrun` anyway.** The compiler
-//!   fingerprint is an input to the compilation identity, so it must be read
-//!   *before* the identity that decides hit or miss exists: `Toolchain::prepare`
-//!   runs `xcrun --find`, `--version`, and the SDK queries on every expansion,
-//!   and only `metal` and `metallib` are inside the miss closure. That is
-//!   narrower than the contract's "warm IDE and `cargo check` expansion must
-//!   avoid `xcrun`", and the gap is deliberate rather than overlooked: deriving
-//!   an identity without the compiler fingerprint would make a hit return an
-//!   artifact built by a toolchain that is no longer installed.
-//!   `avoid-toolchain-resolution-on-a-warm-expansion-cache-hit` carries the
-//!   measurement and the question.
+//! - **A cache hit compiles nothing, and resolves the toolchain anyway.** The
+//!   compiler fingerprint is an input to the compilation identity, so it must be
+//!   read *before* the identity that decides hit or miss exists:
+//!   `Toolchain::prepare` runs five `xcrun` queries — two `--find` and three
+//!   `--show-sdk-*` — and then executes the two located binaries to read their
+//!   reported versions, on every expansion; only the `metal` and `metallib`
+//!   compilation runs are inside the miss closure. `docs/integration/frontends.md`
+//!   states this as the contract and carries the measurement: a warm `cargo check`
+//!   expansion costs one resolution, 44–97 ms on the measured host, and a live
+//!   rust-analyzer session pays it once per settled edit inside a region.
+//!
+//!   The `--version` executions are the load-bearing half and are deliberately
+//!   *not* `xcrun` invocations: they run the binaries `prepare` already located,
+//!   so the folded version describes the compiler that will produce the bytes.
+//!   The five `xcrun` answers are themselves served from Apple's own
+//!   `$TMPDIR/xcrun_db` cache, which is why re-running them buys less than it
+//!   appears to — and why the invariant is that identity folds a fingerprint read
+//!   by executing the binaries this same prepared token will execute, rather than
+//!   that a resolution happens on some schedule.
 //!
 //! # The one family this frontend can build, and why the check is equality
 //!
