@@ -1,7 +1,7 @@
 ---
 id: correct-the-roadmap-frontier-and-opaque-call-status
 title: Correct the roadmap's frontier and opaque-call status claims
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [correct-stale-public-compiler-boundary-authorities, integrate-opaque-calls-into-the-physical-frontier, enumerate-the-split-reduction-on-the-planning-frontier, implement-opaque-physical-call-providers]
@@ -36,3 +36,11 @@ Both passages agree with the frontier's actual admission set and with the siblin
 
 - Link the corrections to the exact completed tickets that falsified them.
 - Check the rest of `docs/roadmap.md` for the same claim family while the file is open, and correct or split whatever else it finds.
+
+## Outcome (2026-07-31)
+
+**Fact.** Both falsified passages now state the frontier's actual admission set — checked `ScheduledKernel` and `KernelSubprogram` bodies and registered `OpaqueCall` proposals, with only the reserved `View` rejected — and link the two completed tickets that falsified the old text (`implement-opaque-physical-call-providers`, `integrate-opaque-calls-into-the-physical-frontier`). The three claims are kept apart as required: admitted body variants and delivered declaration contracts moved; out-of-crate registration did not, and both passages state that `OpaqueCallDeclaration` and `OpaqueCallRegistry` are crate-private so no external provider can supply an opaque call.
+
+**Fact — the Milestone 6 inference is restated on the corrected premise rather than deleted.** The exact remaining gap for a library GEMM is named as two independent things: the absent out-of-crate provider seam, and the per-shape numerical guarantee the L3 record measured no library supplying (`MPSMatrixMultiplication` refuted against all twenty-two named topologies). The numerical-evidence argument in the following passage is preserved and now explicitly load-bearing: the library alternative is inadmissible on those grounds today regardless of the seam.
+
+**Fact — the same-claim-family sweep.** `grep -n "rejects opaque\|admits only checked\|opaque.*deferred" docs/roadmap.md` returns only the two corrected passages. One adjacent staleness found while the file was open and corrected: the Milestone 6 provider count still read "four governed index-access providers registered" in the present tense; it now records four at that landing and six since the structural families, matching the dated corrections at the support-matrix boundary note and `docs/open-questions.md`.
