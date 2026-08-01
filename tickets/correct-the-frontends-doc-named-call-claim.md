@@ -1,7 +1,7 @@
 ---
 id: correct-the-frontends-doc-named-call-claim
 title: Correct the frontends doc's claim that the named-call form is unfilled
-status: todo
+status: done
 priority: p3
 dependencies: []
 related: [denote-a-reduction-region-in-the-inline-macro-grammar]
