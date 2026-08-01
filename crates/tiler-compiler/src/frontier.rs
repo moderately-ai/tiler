@@ -2552,6 +2552,71 @@ fn encode_subprogram_subject(stages: &[VerifiedScheduledRegion]) -> Vec<u8> {
     bytes
 }
 
+/// The physical implementation authorities one compilation enumerates against.
+///
+/// The provider list and the opaque-call registry are composed together because
+/// they are two halves of one answer to *what physical implementations exist for
+/// this compilation*: a provider proposes a call and only the registry says what
+/// that call is, so a provider installed without the declaration it names
+/// proposes something that cannot be admitted, and a declaration registered
+/// without a provider is admitted by nothing. Composing them apart is what left
+/// the sole production enumeration constructing an empty registry inline while
+/// the admission path was fully implemented.
+///
+/// Crate-private and passed down the compile path rather than carried on the
+/// request. Two reasons, and the second is the load-bearing one. A provider
+/// holds no ownership the request model could express — it is a borrowed
+/// statically linked implementation, while `VerifiedCompilationRequest` is an
+/// owned, cloned, comparable value. And the request's canonical identity binds
+/// what the caller *asked for*; which implementations this build offers is
+/// bound instead where it is used, in each admitted implementation's provenance
+/// and so in the plan identity. A compilation offering no opaque call therefore
+/// has exactly the request subject it had before this type existed.
+pub(crate) struct PhysicalAuthorities<'providers> {
+    providers: Vec<&'providers dyn PhysicalImplementationProvider>,
+    calls: OpaqueCallRegistry,
+}
+
+impl<'providers> PhysicalAuthorities<'providers> {
+    /// The authorities this build ships: the governed provider, and no call.
+    ///
+    /// An empty registry is not a degenerate case here but the ordinary one —
+    /// Tiler declares no opaque call of its own — and a program referencing none
+    /// needs none.
+    pub(crate) fn governed() -> Self {
+        Self {
+            providers: vec![&GovernedPhysicalProvider],
+            calls: OpaqueCallRegistry::new(),
+        }
+    }
+
+    /// Composes a stated provider list with the calls those providers may name.
+    ///
+    /// Taken together rather than installed one at a time, so the pair a
+    /// compilation plans against is stated in one place: a caller cannot leave
+    /// half of it behind.
+    #[allow(
+        dead_code,
+        reason = "the composition seam for a non-governed authority; its first caller is the compile-path test proving a registered call reaches admission, and a governed opaque declaration would be its first production one"
+    )]
+    pub(crate) fn composed(
+        providers: Vec<&'providers dyn PhysicalImplementationProvider>,
+        calls: OpaqueCallRegistry,
+    ) -> Self {
+        Self { providers, calls }
+    }
+
+    /// The providers proposing implementations for each region subject.
+    pub(crate) fn providers(&self) -> &[&'providers dyn PhysicalImplementationProvider] {
+        &self.providers
+    }
+
+    /// The opaque calls a proposal from those providers may name.
+    pub(crate) const fn calls(&self) -> &OpaqueCallRegistry {
+        &self.calls
+    }
+}
+
 /// Namespace of Tiler's own governed physical implementation provider.
 const GOVERNED_PHYSICAL_NAMESPACE: &str = "tiler";
 /// Name of Tiler's own governed physical implementation provider.

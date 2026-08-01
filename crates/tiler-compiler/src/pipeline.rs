@@ -47,7 +47,7 @@ use crate::explain::{
 };
 use crate::frontier::{
     FrontierError, FrontierRegionSubject, GovernedPhysicalProvider, ImplementationFrontier,
-    PhysicalImplementationProvider, enumerate_frontier,
+    PhysicalAuthorities, enumerate_frontier,
 };
 use crate::fusion::{
     FusionError, FusionNumericalProof, prove_fused_numerics, verify_fused_numerics,
@@ -578,12 +578,23 @@ impl From<SelectionError> for CompileError {
 }
 
 pub(crate) fn compile(request: CompilationRequest<'_>) -> Result<CompilationProduct, CompileError> {
-    compile_with_algebraic_configuration(request, AlgebraicRuleConfiguration::all())
+    compile_configured(
+        request,
+        AlgebraicRuleConfiguration::all(),
+        &PhysicalAuthorities::governed(),
+    )
 }
 
-fn compile_with_algebraic_configuration(
+/// Compiles under stated rewrite and physical authorities.
+///
+/// Both are what this build ships when [`compile`] states them, and both are
+/// stated at the entry rather than reconstructed further down: a stage that
+/// built its own authority would be answering a different question from the one
+/// the caller submitted, and no reader of the result could tell.
+fn compile_configured(
     request: CompilationRequest<'_>,
     algebraic_configuration: AlgebraicRuleConfiguration,
+    physical: &PhysicalAuthorities<'_>,
 ) -> Result<CompilationProduct, CompileError> {
     let semantic = request.program;
     let verified = verify_request(request)?;
@@ -602,9 +613,13 @@ fn compile_with_algebraic_configuration(
     for group in resolved_target_groups(&verified) {
         #[cfg(test)]
         CONTRACT_GROUP_COMPILATIONS.with(|count| count.set(count.get() + 1));
-        for (target_index, outcome) in
-            compile_contract_group(semantic, &verified, &group, algebraic_configuration)?
-        {
+        for (target_index, outcome) in compile_contract_group(
+            semantic,
+            &verified,
+            &group,
+            algebraic_configuration,
+            physical,
+        )? {
             let Some(slot) = outcomes.get_mut(target_index) else {
                 return Err(target_coordination_error("target-outcome-index"));
             };
@@ -625,6 +640,7 @@ fn compile_contract_group(
     verified: &crate::request::VerifiedCompilationRequest,
     group: &ResolvedTargetGroup,
     algebraic_configuration: AlgebraicRuleConfiguration,
+    physical: &PhysicalAuthorities<'_>,
 ) -> Result<Vec<(usize, TargetCompilationOutcome)>, CompileError> {
     // Semantic transformations are legal under one resolved contract. Running
     // this transaction once per distinct contract gives equal-contract targets
@@ -705,6 +721,7 @@ fn compile_contract_group(
                 &assessments,
                 budget_stop,
                 &candidates,
+                physical,
             ),
         )?;
         outcomes.push((original_target_index, outcome));
@@ -854,9 +871,10 @@ fn evaluate_preferred_groups<Item, Output, Error>(
 fn compile_candidate_target(
     candidate: &SemanticCandidate,
     verified: &crate::request::VerifiedTargetRequest,
+    physical: &PhysicalAuthorities<'_>,
 ) -> Result<CandidateTargetCompilation, CompileError> {
     let mut explain = ExplainWriter::new(verified)?;
-    match compile_target_with_explain(candidate, verified, &mut explain) {
+    match compile_target_with_explain(candidate, verified, physical, &mut explain) {
         Ok(portfolio) => {
             let expected_alternatives = portfolio
                 .alternatives
@@ -901,6 +919,7 @@ fn compile_semantic_portfolio_target(
     assessments: &[RewriteAssessment],
     budget_stop: Option<(u64, u64)>,
     candidates: &[SemanticCandidate],
+    physical: &PhysicalAuthorities<'_>,
 ) -> Result<TargetCompilationProduct, TargetCompileFailure> {
     let targeted = candidates
         .iter()
@@ -915,7 +934,7 @@ fn compile_semantic_portfolio_target(
         original.numerical_contracts().stated(),
         groups,
         |(candidate, request)| {
-            let compiled = compile_candidate_target(candidate, &request)?;
+            let compiled = compile_candidate_target(candidate, &request, physical)?;
             Ok::<_, CompileError>((compiled, candidate, request))
         },
         |(compiled, _, _)| compiled.portfolio.is_some(),
@@ -1553,6 +1572,7 @@ fn record_request_verification(
 fn compile_target_with_explain(
     candidate: &SemanticCandidate,
     verified: &crate::request::VerifiedTargetRequest,
+    physical: &PhysicalAuthorities<'_>,
     explain: &mut ExplainWriter,
 ) -> Result<ProgramPortfolio, TargetFailure> {
     let semantic = candidate.proposal.candidate();
@@ -1603,6 +1623,7 @@ fn compile_target_with_explain(
         semantic,
         verified,
         &formation,
+        physical,
         explain,
         region_root,
         region_records.whole_program,
