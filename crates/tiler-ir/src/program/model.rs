@@ -276,7 +276,19 @@ impl StorageScalar {
         }
     }
 
-    const fn byte_width(self) -> u64 {
+    /// Returns the bytes one unpacked element of this carrier occupies.
+    ///
+    /// This is the single width authority for a physical storage carrier: byte
+    /// counts, and the byte alignment a boundary value's first element requires,
+    /// both derive from it rather than from a per-consumer table. The match is
+    /// exhaustive so a widened carrier vocabulary states its width here, once,
+    /// instead of defaulting to some other carrier's.
+    ///
+    /// It is the *unpacked* width. A sub-byte element reaches storage inside a
+    /// carrier of this width under a [`StorageEncoding::BitPacked`] rule, and
+    /// `StorageEncoding::required_bytes` is what composes the two.
+    #[must_use]
+    pub const fn byte_width(self) -> u64 {
         match self {
             Self::U8 => 1,
             Self::F32 => 4,

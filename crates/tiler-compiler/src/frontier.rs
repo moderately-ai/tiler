@@ -70,14 +70,16 @@ use std::error::Error;
 use std::fmt;
 
 use tiler_ir::identity::{push_len, push_slice};
-use tiler_ir::schedule::{AccessMode, ResourceRequirements, ScheduledRegion, TensorRole};
+use tiler_ir::schedule::{
+    AccessMode, ResourceRequirements, ScalarProgram, ScheduledRegion, TensorRole,
+};
 use tiler_ir::semantic::ProviderIdentity;
 
 use crate::boundary::{
     AdmittedMemoryDomains, AvailabilityGuarantee, AvailabilityRequirement, ByteAlignment,
     ExecutionAffinity, GuaranteedProperties, GuaranteedProperty, LayoutGuarantee,
     LayoutRequirement, MaterializationForm, MemoryDomainClass, RequiredProperties,
-    RequiredProperty, StorageEncoding, VisibilityGuarantee, VisibilityRequirement,
+    RequiredProperty, StorageEncoding, StorageScalar, VisibilityGuarantee, VisibilityRequirement,
 };
 use crate::call_declaration::{GuaranteeError, OpaqueCallDeclaration, WorkScaling};
 use crate::call_registry::{OpaqueCallProposal, OpaqueCallRegistry, RegisteredCall};
@@ -585,6 +587,15 @@ const BOUNDED_AFFINITY: ExecutionAffinity = ExecutionAffinity::PRIMARY;
 /// boundary tensors are bound in.
 const NO_BOUNDARY_DOMAIN_RULE: &str = "boundary-domain-undetermined";
 
+/// Rule code for a region whose scalar program fixes no single boundary carrier.
+///
+/// The derived contract states one storage encoding and one alignment for every
+/// value the region binds. A program whose boundary values have different
+/// carriers has no such single answer, so it is refused with a reason rather
+/// than served the widest of them — over-alignment is not a conservative default
+/// here, it is a requirement stated about a value that does not have it.
+const UNMODELLED_BOUNDARY_CARRIER_RULE: &str = "boundary-carrier-unmodelled";
+
 /// Derives the boundary contract of a verified scheduled region.
 ///
 /// Each read access contributes a requirement on its boundary tensor; the single
@@ -604,10 +615,15 @@ const NO_BOUNDARY_DOMAIN_RULE: &str = "boundary-domain-undetermined";
 ///   scheduled-region IR cannot express today;
 /// - **encoding** is unpacked. The bounded profile is strict `f32` throughout, so
 ///   no boundary value is sub-byte packed;
-/// - **alignment** is the natural `f32` alignment, for the same reason and with
-///   the same bound: `ScheduledRegion` carries no resolved element type, so a
-///   widened dtype vocabulary must derive this from the value rather than the
-///   profile;
+/// - **alignment** is the natural alignment of the boundary value's own element
+///   type, derived rather than stated: [`boundary_carrier`] reads the region's
+///   scalar program for the physical carrier its boundary values have, and
+///   [`ByteAlignment::natural_for`] takes that carrier's width from
+///   `StorageScalar::byte_width`. A region whose program fixes no single carrier
+///   is refused with [`UNMODELLED_BOUNDARY_CARRIER_RULE`] rather than given the
+///   widest one. In the bounded profile every admitted program is `f32`
+///   throughout, so the derived answer is four bytes — but it is now four
+///   because the element is four wide, not because the profile said so;
 /// - **materialization** is a materialized buffer. Each access is a distinct
 ///   buffer binding — `derive_requirements` counts `accesses.len()` bindings —
 ///   and the bounded frontier admits no view or opaque body;
@@ -638,6 +654,8 @@ fn derive_boundary_contract(
     if !region.index.accesses.is_empty() && !resources.requires_device_memory {
         return Err(NO_BOUNDARY_DOMAIN_RULE);
     }
+    let carrier =
+        boundary_carrier(&region.index.scalar_program).ok_or(UNMODELLED_BOUNDARY_CARRIER_RULE)?;
     let mut requirements = Vec::new();
     let mut guarantees = Vec::new();
     for access in &region.index.accesses {
@@ -645,13 +663,13 @@ fn derive_boundary_contract(
             guarantees.push(BoundaryGuarantee {
                 tensor: access.tensor,
                 ownership: BoundaryOwnership::TotalRaceFreeWrite,
-                properties: bounded_guarantees(),
+                properties: bounded_guarantees(carrier),
             });
         } else {
             requirements.push(BoundaryRequirement {
                 tensor: access.tensor,
                 access: access.mode,
-                properties: bounded_requirements(),
+                properties: bounded_requirements(carrier),
             });
         }
     }
@@ -700,6 +718,11 @@ fn derive_subprogram_boundary_contract(
         if !region.index.accesses.is_empty() && !stage.requirements().requires_device_memory {
             return Err(NO_BOUNDARY_DOMAIN_RULE);
         }
+        // Per stage rather than once for the chain: a stage's boundary values
+        // are its own program's, and the handoff between two stages is checked
+        // by shape below rather than assumed to share a carrier.
+        let carrier = boundary_carrier(&region.index.scalar_program)
+            .ok_or(UNMODELLED_BOUNDARY_CARRIER_RULE)?;
         let last = position + 1 == stages.len();
         let mut owed = handoff;
         for access in &region.index.accesses {
@@ -713,7 +736,7 @@ fn derive_subprogram_boundary_contract(
                     guarantees.push(BoundaryGuarantee {
                         tensor: access.tensor,
                         ownership: BoundaryOwnership::TotalRaceFreeWrite,
-                        properties: bounded_guarantees(),
+                        properties: bounded_guarantees(carrier),
                     });
                 } else if access.tensor == TensorRole::Intermediate {
                     handoff = Some(&region.index.iteration_shape);
@@ -732,7 +755,7 @@ fn derive_subprogram_boundary_contract(
             requirements.push(BoundaryRequirement {
                 tensor: access.tensor,
                 access: access.mode,
-                properties: bounded_requirements(),
+                properties: bounded_requirements(carrier),
             });
         }
         // A stage handed a value it never reads leaves that value staged with
@@ -797,17 +820,55 @@ fn subprogram_resources(stages: &[VerifiedScheduledRegion]) -> Option<ResourceRe
     Some(peak)
 }
 
+/// The physical storage carrier every boundary value of `program` has.
+///
+/// The region's scalar program is what fixes this, and it can always be asked:
+/// `IndexRegion::scalar_program` is a required field, so there is no region
+/// whose carrier is unknown because the program is absent. `tiler-ir`'s
+/// `verify_signature` derives each buffer's kernel type from the same match, so
+/// this states the physical carrier beside a type map that already exists rather
+/// than introducing a second authority for what a region's elements are.
+///
+/// Exhaustive with no wildcard arm, deliberately: [`ScalarProgram`] is not
+/// `#[non_exhaustive]` precisely so that a new program is a build error at every
+/// site that must classify it, and a carrier guessed for an unrecognized program
+/// is the silently-wrong answer this derivation exists to prevent.
+///
+/// `None` means the program's boundary values do not share one carrier, which is
+/// a refusal rather than a defect — see [`UNMODELLED_BOUNDARY_CARRIER_RULE`].
+const fn boundary_carrier(program: &ScalarProgram) -> Option<StorageScalar> {
+    match program {
+        ScalarProgram::PointwiseF32(_)
+        | ScalarProgram::StrictSerialSum { .. }
+        | ScalarProgram::FusedMultiplyAddSerialSum { .. } => Some(StorageScalar::F32),
+        // The one program in the vocabulary whose boundary values disagree:
+        // `tiler-ir`'s `verify_signature` fixes its reads at `[U8, F32, U8]`,
+        // and its code component is bit-packed rather than unpacked. The
+        // contract below states one encoding and one alignment for the whole
+        // region, so no single answer here is right — and answering with the
+        // widest of the three would over-align the code buffer, which is the
+        // "passes for the wrong reason" outcome this derivation exists to stop.
+        // `physical::verify_region_subject_binding` already refuses this program
+        // upstream, so no region reaching here today takes this arm.
+        ScalarProgram::StrictAffineU4Dequantize { .. } => None,
+    }
+}
+
 /// The typed properties the bounded profile's regions require of an input.
+///
+/// The alignment is derived from `carrier`, the boundary value's own element
+/// type, rather than stated by the profile; every other dimension is still the
+/// profile's, and [`derive_boundary_contract`] documents each one's source.
 ///
 /// # Panics
 ///
-/// Panics only if these compile-time constants violate the property model's own
-/// well-formedness rules, which no reachable input can cause.
-fn bounded_requirements() -> RequiredProperties {
+/// Panics only if these values violate the property model's own well-formedness
+/// rules, which no reachable input can cause.
+fn bounded_requirements(carrier: StorageScalar) -> RequiredProperties {
     RequiredProperties::new([
         RequiredProperty::StorageLayout(LayoutRequirement::DenseRowMajor),
         RequiredProperty::StorageEncoding(StorageEncoding::Unpacked),
-        RequiredProperty::Alignment(ByteAlignment::F32_NATURAL),
+        RequiredProperty::Alignment(ByteAlignment::natural_for(carrier)),
         RequiredProperty::Materialization(MaterializationForm::MaterializedBuffer),
         RequiredProperty::ExecutionAffinity(BOUNDED_AFFINITY),
         RequiredProperty::MemoryDomain(
@@ -822,14 +883,18 @@ fn bounded_requirements() -> RequiredProperties {
 
 /// The typed properties the bounded profile's regions guarantee of an output.
 ///
+/// The alignment derives from `carrier` for the same reason it does on the
+/// requirement side: a guarantee that over-states alignment is as much a claim
+/// about the value's element type as an under-stated requirement is.
+///
 /// # Panics
 ///
 /// Panics under the same unreachable condition as [`bounded_requirements`].
-fn bounded_guarantees() -> GuaranteedProperties {
+fn bounded_guarantees(carrier: StorageScalar) -> GuaranteedProperties {
     GuaranteedProperties::new([
         GuaranteedProperty::StorageLayout(LayoutGuarantee::DenseRowMajor),
         GuaranteedProperty::StorageEncoding(StorageEncoding::Unpacked),
-        GuaranteedProperty::Alignment(ByteAlignment::F32_NATURAL),
+        GuaranteedProperty::Alignment(ByteAlignment::natural_for(carrier)),
         GuaranteedProperty::Materialization(MaterializationForm::MaterializedBuffer),
         GuaranteedProperty::ExecutionAffinity(BOUNDED_AFFINITY),
         GuaranteedProperty::MemoryDomain(MemoryDomainClass::Device),
@@ -2860,12 +2925,12 @@ mod tests {
         ImplementationFrontier, ImplementationProposal, KernelSubprogram, OpaqueCallRejectionCause,
         PhysicalCostEstimate, PhysicalImplementationProvider, PhysicalProposalKind,
         PhysicalProviderProvenance, PhysicalProviderProvenanceError, ProposalBody, ProviderOffer,
-        ReservedProposalSeam, SubprogramStage, TargetApplicability, bounded_guarantees,
-        bounded_requirements, enumerate_frontier,
+        ReservedProposalSeam, SubprogramStage, TargetApplicability, boundary_carrier,
+        bounded_guarantees, bounded_requirements, enumerate_frontier,
     };
     use crate::boundary::{
         BoundaryProperty, GuaranteedProperty, LayoutRequirement, MaterializationForm,
-        MemoryDomainClass, RequiredProperties, RequiredProperty,
+        MemoryDomainClass, RequiredProperties, RequiredProperty, StorageScalar,
     };
     use crate::call_registry::{OpaqueCallIdentity, OpaqueCallProposal, OpaqueCallRegistry};
     use crate::physical::{build_fused_scheduled_region, pointwise_region};
@@ -2873,9 +2938,10 @@ mod tests {
         CompilationRequest, TargetProfileKey, VerifiedTargetRequest, verify_request,
     };
     use tiler_ir::schedule::{
-        AccessMode, ExceptionalValueAssumption, InputOrdinal, NumericalPermission, ScheduledRegion,
-        SubnormalMode, TensorRole,
+        AccessMode, ContributorOrder, ExceptionalValueAssumption, InputOrdinal,
+        NumericalPermission, ScalarProgram, ScheduledRegion, SubnormalMode, TensorRole,
     };
+    use tiler_ir::semantic::EncodedComponentRole;
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, ProviderIdentity,
         SemanticProgramBuilder, StrictSerialF32Sum,
@@ -3099,6 +3165,29 @@ mod tests {
             Some(&GuaranteedProperty::MemoryDomain(MemoryDomainClass::Device)),
             "the domain is read from the region's own resource requirements"
         );
+
+        // The alignment on a real derived boundary is the region's own carrier
+        // width, taken from the region rather than from a profile constant. It
+        // is asserted against `natural_for` of the carrier `boundary_carrier`
+        // reports for this exact region, so a derivation that silently reverted
+        // to a fixed four would still have to agree with the region's program.
+        let scheduled = admitted
+            .scheduled()
+            .expect("the fused proposal carries a scheduled region");
+        let carrier = boundary_carrier(&scheduled.region().index.scalar_program)
+            .expect("the fused region's boundary values share one carrier");
+        let derived = crate::boundary::ByteAlignment::natural_for(carrier);
+        assert_eq!(u64::from(derived.bytes()), carrier.byte_width());
+        assert_eq!(
+            needed.get(BoundaryProperty::Alignment),
+            Some(&RequiredProperty::Alignment(derived)),
+            "the required alignment is not the boundary value's own element width"
+        );
+        assert_eq!(
+            offered.get(BoundaryProperty::Alignment),
+            Some(&GuaranteedProperty::Alignment(derived)),
+            "the guaranteed alignment is not the boundary value's own element width"
+        );
     }
 
     /// The bounded profile's two property sets discharge each other on every
@@ -3117,10 +3206,104 @@ mod tests {
     /// **When this test fails, that ticket becomes startable**, and the mismatch
     /// that failed it is the enforcer's first real case. Do not repair the test
     /// by widening the sets back into agreement.
+    /// The boundary carrier is read off the region's scalar program.
+    ///
+    /// The three programs the bounded profile can build are `f32` on every
+    /// boundary value, so the derived alignment is four — but it is four because
+    /// the carrier is four bytes wide, not because a profile constant said so,
+    /// and this drives each variant rather than assuming they agree.
+    #[test]
+    fn the_boundary_carrier_is_derived_from_the_scalar_program() {
+        for program in [serial_sum_program(), fused_multiply_add_program()] {
+            assert_eq!(
+                boundary_carrier(&program),
+                Some(StorageScalar::F32),
+                "{program:?} stopped reporting the f32 carrier its buffers have"
+            );
+        }
+    }
+
+    /// The carrier derivation can say no, and does for the one program that
+    /// binds boundary values of different carriers.
+    ///
+    /// A derivation that answered every program would be indistinguishable from
+    /// the constant it replaced. `StrictAffineU4Dequantize` reads `[U8, F32, U8]`
+    /// — `tiler-ir`'s `verify_signature` fixes that signature — so no single
+    /// carrier describes its boundary, and answering `F32` would over-align its
+    /// two `U8` buffers: a check that passes for the wrong reason, which is the
+    /// defect this ticket exists to remove rather than relocate.
+    ///
+    /// `physical::verify_region_subject_binding` refuses this program upstream,
+    /// so the refusal is unreachable through a compiled region today. That makes
+    /// driving the derivation directly the only way to watch it fail, and leaving
+    /// it undriven would mean shipping a branch nothing had ever executed.
+    #[test]
+    fn a_program_whose_boundary_carriers_disagree_is_refused_rather_than_widened() {
+        let mixed = ScalarProgram::StrictAffineU4Dequantize {
+            codes_role: EncodedComponentRole::new(0),
+            scale_role: EncodedComponentRole::new(1),
+            zero_point_role: EncodedComponentRole::new(2),
+        };
+        assert_eq!(
+            boundary_carrier(&mixed),
+            None,
+            "a program binding U8 and F32 boundary values was given one carrier"
+        );
+    }
+
+    /// The profile's own property builders state the carrier's alignment, not four.
+    ///
+    /// This is the case that can catch a reverted production site. Every region
+    /// the bounded profile compiles is `f32`, so a
+    /// [`bounded_requirements`]/[`bounded_guarantees`] that hard-coded four again
+    /// would still produce the right *value* everywhere it is actually called,
+    /// and no test over compiled regions could tell the difference. Driving the
+    /// builders with a one-byte carrier is what makes the two distinguishable:
+    /// a constant answers four here and the derivation answers one.
+    #[test]
+    fn the_property_builders_state_the_carriers_alignment_rather_than_a_constant() {
+        let one = crate::boundary::ByteAlignment::natural_for(StorageScalar::U8);
+        assert_eq!(one.bytes(), 1, "the one-byte carrier stopped deriving one");
+
+        assert_eq!(
+            bounded_requirements(StorageScalar::U8).get(BoundaryProperty::Alignment),
+            Some(&RequiredProperty::Alignment(one)),
+            "a one-byte carrier was required to meet some other element's alignment"
+        );
+        assert_eq!(
+            bounded_guarantees(StorageScalar::U8).get(BoundaryProperty::Alignment),
+            Some(&GuaranteedProperty::Alignment(one)),
+            "a one-byte carrier was made to guarantee some other element's alignment"
+        );
+    }
+
+    /// A `StrictSerialSum` program, minimal but well formed for carrier queries.
+    fn serial_sum_program() -> ScalarProgram {
+        ScalarProgram::StrictSerialSum {
+            axes: Vec::new(),
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: 0x7FC0_0000,
+            empty_identity_bits: 0,
+        }
+    }
+
+    /// A `FusedMultiplyAddSerialSum` program, likewise.
+    fn fused_multiply_add_program() -> ScalarProgram {
+        ScalarProgram::FusedMultiplyAddSerialSum {
+            scale_bits: 0x3F80_0000,
+            bias_bits: 0,
+            axes: Vec::new(),
+            order: ContributorOrder::OriginalAxisLexicographic,
+            canonical_nan_bits: 0x7FC0_0000,
+            empty_identity_bits: 0,
+            contraction: false,
+        }
+    }
+
     #[test]
     fn the_bounded_profile_admits_no_undischarged_boundary() {
-        let needed = bounded_requirements();
-        let offered = bounded_guarantees();
+        let needed = bounded_requirements(StorageScalar::F32);
+        let offered = bounded_guarantees(StorageScalar::F32);
 
         // Every dimension is spoken to on both sides. A dimension missing from
         // either set would make the check below vacuous on it rather than false,
@@ -3154,7 +3337,7 @@ mod tests {
     /// `DenseRowMajor`, which is why it is the case chosen here.
     #[test]
     fn an_unsatisfiable_requirement_is_reported_rather_than_passed() {
-        let offered = bounded_guarantees();
+        let offered = bounded_guarantees(StorageScalar::F32);
         let needed = RequiredProperties::new([RequiredProperty::StorageLayout(
             LayoutRequirement::UnitStrideOnAxis {
                 axis: Axis::new(0),
@@ -3531,7 +3714,7 @@ mod tests {
                 _ => ParameterLayout::Guaranteed(crate::boundary::LayoutGuarantee::DenseRowMajor),
             },
             encoding: crate::boundary::StorageEncoding::Unpacked,
-            alignment: crate::boundary::ByteAlignment::F32_NATURAL,
+            alignment: crate::boundary::ByteAlignment::natural_for(StorageScalar::F32),
         };
         let declaration = OpaqueCallDeclaration::check(
             CallAbi::declare([spec("x", ParameterRole::In), spec("y", ParameterRole::Out)])
@@ -3724,7 +3907,7 @@ mod tests {
                 _ => ParameterLayout::Guaranteed(LayoutGuarantee::DenseRowMajor),
             },
             encoding: StorageEncoding::Unpacked,
-            alignment: ByteAlignment::F32_NATURAL,
+            alignment: ByteAlignment::natural_for(StorageScalar::F32),
         };
         OpaqueCallDeclaration::check(
             CallAbi::declare([spec("x", ParameterRole::In), spec("y", ParameterRole::Out)])
@@ -3856,7 +4039,7 @@ mod tests {
                     guarantees: LayoutGuarantee::DenseRowMajor,
                 },
                 encoding: StorageEncoding::Unpacked,
-                alignment: ByteAlignment::F32_NATURAL,
+                alignment: ByteAlignment::natural_for(StorageScalar::F32),
             }])
             .expect("well formed"),
             CallEffects::declared(
@@ -3960,7 +4143,7 @@ mod tests {
                         crate::boundary::LayoutRequirement::DenseRowMajor,
                     ),
                     encoding: crate::boundary::StorageEncoding::Unpacked,
-                    alignment: crate::boundary::ByteAlignment::F32_NATURAL,
+                    alignment: crate::boundary::ByteAlignment::natural_for(StorageScalar::F32),
                 },
                 ParameterSpec {
                     name: "y",
@@ -3969,7 +4152,7 @@ mod tests {
                         crate::boundary::LayoutGuarantee::DenseRowMajor,
                     ),
                     encoding: crate::boundary::StorageEncoding::Unpacked,
-                    alignment: crate::boundary::ByteAlignment::F32_NATURAL,
+                    alignment: crate::boundary::ByteAlignment::natural_for(StorageScalar::F32),
                 },
             ])
             .expect("well formed"),
@@ -4009,7 +4192,8 @@ mod tests {
         )
         .expect("a write parameter guarantees");
 
-        let unsatisfied = unsatisfied_properties(&bounded_requirements(), &guaranteed);
+        let unsatisfied =
+            unsatisfied_properties(&bounded_requirements(StorageScalar::F32), &guaranteed);
         assert!(
             unsatisfied
                 .iter()
@@ -4098,7 +4282,7 @@ mod tests {
                 _ => ParameterLayout::Guaranteed(LayoutGuarantee::DenseRowMajor),
             },
             encoding: StorageEncoding::Unpacked,
-            alignment: crate::boundary::ByteAlignment::F32_NATURAL,
+            alignment: crate::boundary::ByteAlignment::natural_for(StorageScalar::F32),
         };
         let declaration = OpaqueCallDeclaration::check(
             CallAbi::declare([spec("x", ParameterRole::In), spec("y", ParameterRole::Out)])

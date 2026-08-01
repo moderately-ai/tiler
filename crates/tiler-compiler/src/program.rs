@@ -39,6 +39,7 @@ use tiler_ir::program::abi::{
     evaluate as abi_evaluate,
 };
 
+use crate::boundary::ByteAlignment;
 use crate::physical::{
     NumericalRealization, RegionId, VerifiedKernel, VerifiedScheduledRegion,
     lower_structured_kernel,
@@ -48,10 +49,31 @@ use crate::request::{LoweringProviderIdentity, TargetProfile, VerifiedTargetRequ
 use crate::target::feasibility::DeferredPredicate;
 use crate::target::feasibility::{FeasibilityRuleSetIdentity, GOVERNED_FEASIBILITY_RULE_SET};
 
-/// Element byte width of the bounded profile's single tensor element type.
-const ELEMENT_BYTES: u64 = 4;
-/// Byte alignment every bounded-profile value and allocation requires.
-const ELEMENT_ALIGNMENT: u32 = 4;
+/// The physical storage carrier every value this profile materializes has.
+///
+/// Named once, and every byte width and alignment below derives from it. The two
+/// constants this replaced stated `4` twice with no link to the carrier or to
+/// each other, so a second carrier would have had to be found by reading every
+/// arithmetic site rather than by changing one binding.
+const BOUNDED_CARRIER: StorageScalar = StorageScalar::F32;
+
+/// The byte width of one element of [`BOUNDED_CARRIER`], unpacked.
+///
+/// `StorageScalar::byte_width` is the authority; this names the profile's choice
+/// of carrier, not a width of its own.
+fn element_bytes() -> u64 {
+    BOUNDED_CARRIER.byte_width()
+}
+
+/// The byte alignment every value and allocation of [`BOUNDED_CARRIER`] requires.
+///
+/// Routed through [`ByteAlignment`] rather than written as an integer so the
+/// artifact layer's alignment is the same derived quantity the boundary contract
+/// states, and so a carrier whose width is not a positive power of two is
+/// refused here too instead of reaching `check_alignment` as a bare number.
+fn element_alignment() -> u32 {
+    ByteAlignment::natural_for(BOUNDED_CARRIER).bytes()
+}
 
 /// Arena position of one node of the program's ABI expression arena.
 ///
@@ -654,7 +676,7 @@ fn declare_host_abi(
     output_elements: u64,
 ) -> Result<HostAbi, ProgramError> {
     // The element byte width every accessible range scales by.
-    let element_bytes = builder.push_abi_root(AbiRoot::UnsignedLiteral(ELEMENT_BYTES))?;
+    let element_bytes = builder.push_abi_root(AbiRoot::UnsignedLiteral(element_bytes()))?;
     let input_elements = builder.push_abi_root(AbiRoot::UnsignedLiteral(input_elements))?;
     let output_elements = builder.push_abi_root(AbiRoot::UnsignedLiteral(output_elements))?;
     let abi = HostAbi {
@@ -697,7 +719,7 @@ fn declare_partial_abi(
     builder: &mut KernelProgramBuilder,
     partial_elements: u64,
 ) -> Result<PartialAbi, ProgramError> {
-    let element_bytes = builder.push_abi_root(AbiRoot::UnsignedLiteral(ELEMENT_BYTES))?;
+    let element_bytes = builder.push_abi_root(AbiRoot::UnsignedLiteral(element_bytes()))?;
     let elements = builder.push_abi_root(AbiRoot::UnsignedLiteral(partial_elements))?;
     Ok(PartialAbi {
         elements,
@@ -775,37 +797,44 @@ fn covered(members: &[SemanticMemberId]) -> Vec<SemanticOccurrence> {
         .collect()
 }
 
+/// Declares an allocation backing values of [`BOUNDED_CARRIER`].
+///
+/// The alignment is the carrier's rather than a constant of its own: an
+/// allocation has to be at least as aligned as every value placed in it, and
+/// deriving both from one carrier is what keeps that true without a check.
 fn storage(capacity_bytes: u64, ownership: AllocationOwnership) -> AllocationSpec {
     AllocationSpec {
         capacity_bytes,
-        alignment: ELEMENT_ALIGNMENT,
+        alignment: element_alignment(),
         memory_space: MemorySpace::Device,
         ownership,
     }
 }
 
 fn program_input(key: tiler_ir::semantic::InputKey, shape: Shape) -> MaterializedValueSpec {
+    let storage_scalar = BOUNDED_CARRIER;
     MaterializedValueSpec {
         origin: MaterializedOrigin::ProgramInput { key },
         role: ValueRole::Input,
         shape,
-        storage_scalar: StorageScalar::F32,
+        storage_scalar,
         encoding: StorageEncoding::Unpacked,
         element_type: KernelType::F32,
-        alignment: ELEMENT_ALIGNMENT,
+        alignment: ByteAlignment::natural_for(storage_scalar).bytes(),
         memory_space: MemorySpace::Device,
     }
 }
 
 fn internal(role: ValueRole, shape: Shape) -> MaterializedValueSpec {
+    let storage_scalar = BOUNDED_CARRIER;
     MaterializedValueSpec {
         origin: MaterializedOrigin::Internal,
         role,
         shape,
-        storage_scalar: StorageScalar::F32,
+        storage_scalar,
         encoding: StorageEncoding::Unpacked,
         element_type: KernelType::F32,
-        alignment: ELEMENT_ALIGNMENT,
+        alignment: ByteAlignment::natural_for(storage_scalar).bytes(),
         memory_space: MemorySpace::Device,
     }
 }
@@ -828,7 +857,7 @@ const fn write(view: ViewId, accessible_bytes: AbiExprId) -> StageAccess {
 
 fn byte_count(elements: u64) -> Result<u64, ProgramError> {
     elements
-        .checked_mul(ELEMENT_BYTES)
+        .checked_mul(element_bytes())
         .ok_or(ProgramError::Storage {
             rule: "required-byte-overflow",
         })

@@ -454,7 +454,7 @@ mod tests {
 
     use crate::boundary::{
         AdmittedMemoryDomains, ByteAlignment, ExecutionAffinity, LayoutGuarantee,
-        LayoutRequirement, MemoryDomainClass, StorageEncoding,
+        LayoutRequirement, MemoryDomainClass, StorageEncoding, StorageScalar,
     };
     use crate::call_abi::{ParameterLayout, ParameterSpec};
     /// A spec carrying the bounded profile's storage answers.
@@ -471,7 +471,7 @@ mod tests {
                 },
             },
             encoding: StorageEncoding::Unpacked,
-            alignment: ByteAlignment::F32_NATURAL,
+            alignment: ByteAlignment::natural_for(StorageScalar::F32),
         }
     }
 
