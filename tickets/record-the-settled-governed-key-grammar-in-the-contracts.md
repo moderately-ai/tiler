@@ -1,7 +1,7 @@
 ---
 id: record-the-settled-governed-key-grammar-in-the-contracts
 title: Record the settled governed-key grammar in the contracts
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [reconcile-the-two-target-profile-key-grammars]
@@ -9,6 +9,9 @@ scopes: [contracts/artifacts, contracts/decisions, contracts/foundation, researc
 shared_scopes: []
 paths: []
 tags: [identity, documentation]
+claimed_from: todo
+assignee: worker-key-grammar
+lease_expires_at: 1785581736
 ---
 ## User-visible outcome
 
