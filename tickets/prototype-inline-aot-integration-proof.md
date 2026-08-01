@@ -1,7 +1,7 @@
 ---
 id: prototype-inline-aot-integration-proof
 title: Prove the complete inline AOT workflow
-status: in-progress
+status: todo
 priority: p1
 dependencies: [prototype-macro-embedding-and-cargo-behavior, prototype-metal-runtime-proof, promote-the-metal-aot-compilation-identity, make-runtime-routing-commit-authority-one-shot, admit-multi-input-elementwise-programs-at-the-compiler-boundary, generate-cfg-gated-artifact-family-delivery]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/frontend, implementation/cache, implementation/compiler,
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, integration, inline-dx, milestone-0b]
-claimed_from: todo
-assignee: worker-prototype-inli
-lease_expires_at: 1785550316
 ---
 ## User-visible outcome
 
