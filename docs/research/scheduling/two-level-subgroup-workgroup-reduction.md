@@ -6,7 +6,8 @@ title: "The two-level subgroup-then-workgroup reduction"
 topics: ["scheduling", "gpu", "metal", "webgpu", "reductions", "numerics", "execution-hierarchy", "subgroup"]
 catalog_group: "physical-planning-lowering"
 research_status: "complete"
-disposition: "pending"
+disposition: "adopted"
+adopted_by: ["ADR-0096"]
 implementation_status: "not-started"
 evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.fusion-and-scheduling", "tiler.contract.ir"]

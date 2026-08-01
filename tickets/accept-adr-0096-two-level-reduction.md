@@ -1,7 +1,7 @@
 ---
 id: accept-adr-0096-two-level-reduction
 title: Accept or reject the two-level subgroup-then-workgroup reduction ADR
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: [land-the-two-level-reduction-adr]
 related: [compose-the-two-level-subgroup-and-workgroup-reduction, accept-adr-0094-subgroup-execution-tier]
@@ -45,3 +45,9 @@ If the acceptance relayed to whoever executes it turns out to be wrong, the repa
 ## Closes when
 
 Tom accepts or rejects it.
+
+## Closed 2026-08-01 — Tom accepted at the live session, with the correction
+
+**Fact — the provenance.** Tom accepted ADR 0096 on 2026-08-01 at the live session, presented by the coordinator with the decision-8 stale-ground finding stated first, and chose "accept with correction" over holding for re-derivation. The coordinator witnessed the acceptance directly and executed it: `decision_status` to `accepted`, both catalog rows moved, the research record's `disposition` to `adopted` with `adopted_by: ["ADR-0096"]`, and this node closed. If the relay were wrong the repair is bounded: those four moves reversed, this node reopened — nothing else was released on it, because no ticket depends on this node.
+
+**What was accepted.** The model's eight decisions, with decision 8 read under the recorded correction: one staging round is an initial-profile scope choice, not a vocabulary impossibility, and the multi-round composition is an owned open question. None of the seven public-boundary items is accepted; each arrives under ADR 0075 with its implementation ticket.
