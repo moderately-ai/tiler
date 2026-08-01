@@ -3501,11 +3501,11 @@ pub(crate) fn route_feature(key: &str, version: u32, payload: &[u8]) -> RouteReq
     )
 }
 
-/// Builds one well-formed quantitative floor.
-pub(crate) fn route_floor(minimum: u64) -> RouteRequirement {
+/// Builds one well-formed quantitative row.
+pub(crate) fn route_floor(required: u64) -> RouteRequirement {
     RouteRequirement::ResourceFloor(
-        RouteResourceFloor::new(RouteResourceDimension::SubgroupThreads, minimum)
-            .expect("a nonzero floor"),
+        RouteResourceFloor::new(RouteResourceDimension::SubgroupThreads, required)
+            .expect("a nonzero required quantity"),
     )
 }
 
@@ -3555,6 +3555,46 @@ fn every_route_resource_dimension_round_trips_through_its_governed_tag() {
     );
     assert_eq!(RouteResourceDimension::from_tag(0x00), None);
     assert_eq!(RouteResourceDimension::from_tag(0xff), None);
+}
+
+/// A subgroup width is satisfied by an exactly equal observation and nothing else.
+///
+/// The **wider** case is the load-bearing one and it is the case the superseded
+/// floor accepted: a device executing more threads per subgroup than the route
+/// was verified at runs lane arithmetic nothing checked, so admitting it is the
+/// silent wrongness this relation exists to refuse. The narrower case is driven
+/// beside it so a relation that refused everything could not pass as a fix.
+///
+/// Populations are named rather than sampled: every dimension the vocabulary
+/// carries is exercised, and the count is asserted, so a dimension added without
+/// a relation of its own lands here instead of leaving a subset checked.
+#[test]
+fn a_route_resource_row_is_satisfied_only_by_an_exactly_equal_observation() {
+    const REQUIRED: u64 = 32;
+
+    let mut checked = 0;
+    for dimension in RouteResourceDimension::ALL {
+        let row = RouteResourceFloor::new(dimension, REQUIRED).expect("a nonzero quantity");
+        assert_eq!(row.required(), REQUIRED);
+        assert!(
+            row.is_satisfied_by(REQUIRED),
+            "{dimension} must accept the width the route was verified at",
+        );
+        assert!(
+            !row.is_satisfied_by(REQUIRED - 1),
+            "{dimension} must refuse a narrower device",
+        );
+        assert!(
+            !row.is_satisfied_by(REQUIRED * 2),
+            "{dimension} must refuse a wider device, which a floor accepted",
+        );
+        checked += 1;
+    }
+    assert_eq!(
+        checked,
+        RouteResourceDimension::ALL.len(),
+        "every dimension the vocabulary names was checked",
+    );
 }
 
 /// Every synchronization vocabulary round-trips through this crate's own tags.
@@ -3690,7 +3730,7 @@ fn a_malformed_route_requirement_is_refused_by_its_own_cause() {
     assert!(RouteResourceFloor::new(RouteResourceDimension::SubgroupThreads, 32).is_ok());
     assert_eq!(
         RouteResourceFloor::new(RouteResourceDimension::SubgroupThreads, 0),
-        Err(RouteRequirementError::VacuousFloor {
+        Err(RouteRequirementError::ZeroResourceQuantity {
             dimension: RouteResourceDimension::SubgroupThreads,
         }),
     );
