@@ -1,7 +1,7 @@
 ---
 id: denote-a-reduction-region-in-the-inline-macro-grammar
 title: Denote a reduction region in the inline macro grammar
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [package-a-multi-entry-bundle-from-one-expansion, admit-multi-input-elementwise-programs-at-the-compiler-boundary]
@@ -9,6 +9,9 @@ scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, frontend, inline-dx]
+claimed_from: todo
+assignee: coordinator
+lease_expires_at: 1785612950
 ---
 ## User-visible outcome
 
