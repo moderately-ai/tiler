@@ -1,7 +1,7 @@
 ---
 id: bound-the-reference-contraction-iteration-space
 title: Name the reference contraction's iteration-space bound in its own diagnostic
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [admit-the-contraction-normative-reference]
@@ -9,6 +9,9 @@ scopes: [implementation/reference]
 shared_scopes: []
 paths: []
 tags: [implementation, reference, numerics, contraction]
+claimed_from: todo
+assignee: worker-ref-bound
+lease_expires_at: 1785566021
 ---
 The contraction reference bounds its multiply-accumulate work — `output_count * contracted_count`, which is larger than either operand and bounded by neither tensor limit the operands already passed — and reports the refusal as `ReferenceOperationError::ShapeTooLarge`, whose documented meaning is that *shape arithmetic* exceeded host limits.
 
