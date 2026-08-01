@@ -6,7 +6,7 @@ priority: p2
 dependencies: []
 related: [re-audit-adr-implementation-status-after-the-runtime-and-metal-landings]
 scopes: [contracts/decisions, implementation/runtime, research/runtime]
-shared_scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [runtime, decisions, correctness]
 ---

@@ -1,7 +1,7 @@
 ---
 id: design-model-level-qualification-and-optimization
 title: Design model-level correctness and performance qualification
-status: review
+status: done
 priority: p2
 dependencies: [define-first-metal-lm-workload, design-model-ingestion-and-complete-execution]
 related: [implement-analytical-component-cost-model, calibrate-device-cost-models, scope-first-quantized-lm-profile, land-the-model-level-qualification-record, measure-the-model-level-comparison-envelope-under-the-target-realization, define-the-model-level-conformance-corpus, build-the-model-level-measurement-harness, qualify-the-model-level-claims-per-apple-device-and-toolchain-row, supply-the-model-level-benchmark-protocol-to-cost-calibration, define-the-model-level-regression-policy, measure-b1-d-peak-residency-on-a-named-host]
@@ -9,9 +9,6 @@ scopes: [research/cost-model, research/apple-targets, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [design, testing, performance, conformance, language-model, metal]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785611639
 ---
 ## User-visible outcome
 

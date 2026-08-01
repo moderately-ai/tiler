@@ -1,7 +1,7 @@
 ---
 id: re-audit-adr-implementation-status-after-the-runtime-and-metal-landings
 title: Re-audit ADR implementation status after the runtime and Metal landings
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [close-remaining-adr-status-drift, re-audit-adr-0011-and-0019-status-after-the-vocabulary-widening, raise-the-adopted-research-records-to-their-landed-implementation-status]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions, research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, decisions, status-drift, graph-repair]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785611640
 ---
 ## User-visible outcome
 
