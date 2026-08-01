@@ -1,7 +1,7 @@
 ---
 id: reconcile-the-two-target-profile-key-grammars
 title: Reconcile the two target-profile key grammars
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/artifact, implementation/compiler, implementation/build]
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifacts, identity, validation]
+claimed_from: todo
+assignee: worker-reconcile-th
+lease_expires_at: 1785559830
 ---
 ## User-visible outcome
 

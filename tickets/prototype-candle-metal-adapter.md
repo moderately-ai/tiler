@@ -1,7 +1,7 @@
 ---
 id: prototype-candle-metal-adapter
 title: Prototype the Candle Metal adapter
-status: todo
+status: in-progress
 priority: p1
 dependencies: [prototype-inline-aot-integration-proof]
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/candle, implementation/runtime, implementation/workspace
 shared_scopes: [project/tickets, implementation/cargo-lock]
 paths: []
 tags: [implementation, integration, candle]
+claimed_from: todo
+assignee: worker-prototype-ca
+lease_expires_at: 1785559830
 ---
 ## User-visible outcome
 

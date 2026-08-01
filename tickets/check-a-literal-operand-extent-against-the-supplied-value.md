@@ -1,7 +1,7 @@
 ---
 id: check-a-literal-operand-extent-against-the-supplied-value
 title: Check a literal operand extent against the value supplied for it
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, correctness, inline-dx]
+claimed_from: todo
+assignee: worker-check-a-lite
+lease_expires_at: 1785559830
 ---
 ## Why this exists
 
