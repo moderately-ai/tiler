@@ -6,7 +6,9 @@
 
 mod bf16;
 mod corpus;
+mod format;
 mod perturb;
+mod promotion;
 mod routing;
 mod seams;
 
@@ -16,6 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut failed = Vec::new();
     report_seams(&mut failed);
     report_oracle(&mut failed);
+    report_promotion(&mut failed);
     report_routing(&mut failed)?;
     report_perturbations(&mut failed)?;
 
@@ -102,6 +105,27 @@ fn report_oracle(failed: &mut Vec<&'static str>) {
     );
 }
 
+/// Reports the computation, accumulator, and conversion stages.
+///
+/// Ordered so the generic rounder is validated against the trusted BF16 one
+/// before any stage that reads its answer, and so the two negative results —
+/// the fused route and the accumulator width — follow the positive one they are
+/// the exception to.
+fn report_promotion(failed: &mut Vec<&'static str>) {
+    println!("\n== computation, accumulator, and conversion ==");
+    for stage in promotion::stages() {
+        println!(
+            "  [{}] {}\n         {}",
+            if stage.passed { "OK  " } else { "FAIL" },
+            stage.name,
+            stage.detail
+        );
+        if !stage.passed {
+            failed.push(stage.name);
+        }
+    }
+}
+
 /// Reports the three-family routing matrix and asserts its shape.
 fn report_routing(failed: &mut Vec<&'static str>) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n== target routing matrix ==");
@@ -153,6 +177,9 @@ fn report_perturbations(failed: &mut Vec<&'static str>) -> Result<(), Box<dyn st
         perturb::fused_operations_are_unexpressible(),
         perturb::unmeasured_dtype_does_not_inherit()?,
         perturb::simulator_refusal_is_dtype_specific()?,
+        perturb::promoted_route_depends_on_binary32_precision(),
+        perturb::the_fused_witness_is_about_double_rounding(),
+        perturb::the_accumulator_witness_needs_contributors(),
     ];
     for perturbation in &perturbations {
         println!(

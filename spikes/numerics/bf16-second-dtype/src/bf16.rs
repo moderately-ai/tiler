@@ -2,19 +2,32 @@
 //!
 //! # Why the oracle is exact rational rather than host arithmetic
 //!
-//! Host-native `f32` arithmetic is **not** normative evidence for BF16. Rounding
-//! a mathematically exact product into `f32` and then into `bf16` rounds twice,
-//! and `f32`'s 24-bit significand does not exceed twice `bf16`'s 8-bit
-//! significand by enough to make the second rounding innocuous — which is the
-//! same arithmetic reason
-//! `crates/tiler-metal/src/target.rs` gives for why the measured Apple flush
-//! cannot separate native `bfloat` arithmetic from `f32`-precision evaluation.
-//! An oracle built on the host's rounding would therefore agree with a
-//! double-rounding implementation *because it shares the defect*.
+//! Every operation here is evaluated as an exact rational — no precision bound,
+//! no intermediate format — and rounded exactly once, at the observable
+//! materialization, by round-to-nearest-ties-to-even over BF16's value set. The
+//! reason is that the oracle must not depend on an arithmetic argument about
+//! intermediate widths, because that argument is *true for the two operations
+//! this spike admits and false for the fused one it does not*.
 //!
-//! So every operation here is evaluated as an exact rational — no precision
-//! bound, no intermediate format — and rounded exactly once, at the observable
-//! materialization, by round-to-nearest-ties-to-even over BF16's value set.
+//! **Correction, `design-the-bf16-computation-and-accumulator-contract`.** This
+//! comment previously argued that a host-`f32` oracle would be wrong because
+//! `f32`'s 24-bit significand "does not exceed twice `bf16`'s 8-bit significand
+//! by enough to make the second rounding innocuous". That reads the bound
+//! backwards. Figueroa's condition for an innocuous double rounding of one
+//! `+ - * /` or square root is `q >= 2p + 2`, which here is `24 >= 18` and
+//! **holds** — which is exactly why finding 24 of the retained Apple record says
+//! no *single* operation can expose an `f32` intermediate, and why
+//! `crates/tiler-metal/src/target.rs` states the same inequality in the same
+//! direction. [`crate::promotion`] now checks it directly: over 524,288 cases a
+//! promoted route and one exact rounding never disagree for a multiply or an
+//! add, and a precision-9 intermediate makes them disagree at once.
+//!
+//! The conclusion the original comment reached is unchanged and the reason is
+//! replaced. An exact-rational oracle is the right choice because it is
+//! independent of that bound rather than because the bound fails: the bound
+//! covers neither a fused multiply-add — where [`crate::promotion`] exhibits
+//! operands on which a promoted route differs by one ulp — nor an accumulation,
+//! nor any future operation this spike's children add.
 //!
 //! # The format
 //!
@@ -217,11 +230,15 @@ impl Rational {
         }
     }
 
-    fn numerator(&self) -> &BigInt {
+    /// Returns the normalized numerator.
+    #[must_use]
+    pub fn numerator(&self) -> &BigInt {
         &self.numerator
     }
 
-    fn denominator(&self) -> &BigInt {
+    /// Returns the normalized, strictly positive denominator.
+    #[must_use]
+    pub fn denominator(&self) -> &BigInt {
         &self.denominator
     }
 }
@@ -518,8 +535,19 @@ fn encode_magnitude(quanta: i64, exponent: i32) -> u16 {
 /// admits, stated here rather than inherited from a host type.
 #[must_use]
 pub fn multiply(left: Bf16, right: Bf16) -> ExactValue {
-    let (left_value, right_value) = (left.to_exact(), right.to_exact());
-    match (&left_value, &right_value) {
+    exact_multiply(&left.to_exact(), &right.to_exact())
+}
+
+/// Multiplies two already-decoded exact values, exactly and without rounding.
+///
+/// The operand-decoding half of [`multiply`] is separated from its arithmetic
+/// half because a promoted route composes *values*, not encodings: an operand
+/// that reached this point through a widening has no BF16 encoding to be
+/// re-decoded from, and re-encoding it to reuse [`multiply`] would insert the
+/// very rounding the route exists to avoid.
+#[must_use]
+pub fn exact_multiply(left_value: &ExactValue, right_value: &ExactValue) -> ExactValue {
+    match (left_value, right_value) {
         (ExactValue::Nan, _) | (_, ExactValue::Nan) => ExactValue::Nan,
         (ExactValue::Infinite { negative: a }, ExactValue::Infinite { negative: b }) => {
             ExactValue::Infinite { negative: a != b }
@@ -563,8 +591,15 @@ pub fn multiply(left: Bf16, right: Bf16) -> ExactValue {
 /// Adds two BF16 values under this spike's exact semantics.
 #[must_use]
 pub fn add(left: Bf16, right: Bf16) -> ExactValue {
-    let (left_value, right_value) = (left.to_exact(), right.to_exact());
-    match (&left_value, &right_value) {
+    exact_add(&left.to_exact(), &right.to_exact())
+}
+
+/// Adds two already-decoded exact values, exactly and without rounding.
+///
+/// Separated from [`add`] for the reason [`exact_multiply`] states.
+#[must_use]
+pub fn exact_add(left_value: &ExactValue, right_value: &ExactValue) -> ExactValue {
+    match (left_value, right_value) {
         (ExactValue::Nan, _) | (_, ExactValue::Nan) => ExactValue::Nan,
         (ExactValue::Infinite { negative: a }, ExactValue::Infinite { negative: b }) => {
             if a == b {
