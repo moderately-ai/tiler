@@ -5,7 +5,7 @@ status: review
 priority: p1
 dependencies: []
 related: [realize-parallel-reduction-strategies-on-metal, calibrate-and-activate-parallel-reduction-selection, package-a-multi-entry-bundle-from-one-expansion, decide-the-inline-frontend-numerical-contract, restore-the-spikes-against-the-composed-numerical-contract]
-scopes: [implementation/compiler, contracts/numerics, implementation/frontend, implementation/build, implementation/metal-aot, implementation/runtime, contracts/artifacts, contracts/navigation]
+scopes: [implementation/compiler, contracts/numerics, implementation/frontend, implementation/build, implementation/metal-aot, implementation/runtime, contracts/artifacts, contracts/navigation, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [numerics, public-boundary, contracts]
@@ -44,7 +44,8 @@ A caller states a numerical contract by resolving its dimensions directly — su
 - `implementation/build` — `crates/tiler-build/**`. Unheld; `tkt claims` names no live holder.
 - `implementation/metal-aot` — `prototypes/serial-sum-compile/src/main.rs`. Unheld.
 - `implementation/runtime` — `prototypes/serial-sum-run/src/proof.rs`, two sites (one doc line, one call). Held live by `route-or-refuse-the-device-translation-execution-policy`. File-level disjointness verified against that worker's actual branch: `git diff --name-only 2119b20...tkt/route-or-refuse-the-device-translation-execution-policy` printed nothing, so its branch is at the base and touches no file this branch does. That check is a point in time and is recorded as such.
-- `contracts/artifacts` — `docs/artifact-abi.md`, the identity-ledger row and the domain-step paragraph. Unheld.
+- `contracts/optimizer` — `docs/compiler/optimizer.md`, two sentences naming `StrictF32NumericalContract::governed_profile`, a function this change removes. A doc claim about a function that no longer exists is a defect rather than a cosmetic drift, which is why it was corrected rather than left. Unheld.
+- `contracts/artifacts` — `docs/artifact-abi.md`, the identity-ledger row and the domain-step paragraph. Unheld by any live claim; `state-the-backend-payload-validation-obligation-normatively` is `todo` with no lease, but its branch carries committed work on the same file — `git diff --name-only 2119b20...tkt/state-the-backend-payload-validation-obligation-normatively` lists `docs/artifact-abi.md`. The two edits are textually disjoint by section (its subject is the backend payload-validation obligation; this one adds an identity-ledger entry and a domain-step paragraph beside the existing ledger), but this is a *file*-level overlap and not a file-level disjointness proof. Flagged for the integrator rather than claimed as clean.
 - `contracts/navigation` — `docs/status.md`, two sentences: the identity ledger and a stale public type name. Held live by `land-the-two-level-reduction-adr`. Verified disjoint against its actual branch diff, which is `docs/decisions/0096-*.md`, `docs/decisions/README.md`, `docs/research/README.md`, `docs/research/scheduling/two-level-subgroup-workgroup-reduction.md`, `tickets/accept-adr-0096-two-level-reduction.md`, and `tickets/land-the-two-level-reduction-adr.md` — `docs/status.md` is not among them.
 
 `spikes/` was deliberately **not** edited: three spikes name a removed variant, no `make` target reaches them, and one of the three is the live subject of `restore-the-scalar-cpu-vertical-spike-against-the-current-crates`. `restore-the-spikes-against-the-composed-numerical-contract` carries the exact sites.
