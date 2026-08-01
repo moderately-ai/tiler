@@ -1,7 +1,7 @@
 ---
 id: realize-the-contraction-through-the-appendable-direct-path
 title: Realize the contraction through the appendable direct path
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-the-contraction-normative-reference]
 related: [realize-the-strict-contraction-on-metal, broaden-governed-physical-support-for-reassociated-programs, bound-the-reference-contraction-comparison-for-the-profile-cells]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, implementation/ir, implementation/metal, contr
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, physical-planning, metal, contraction, language-model]
+claimed_from: todo
+assignee: worker-direct-path
+lease_expires_at: 1785582259
 ---
 ## User-visible outcome
 
