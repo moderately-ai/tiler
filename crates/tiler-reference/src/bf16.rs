@@ -59,7 +59,7 @@ use tiler_ir::semantic::{
 
 use super::error::{
     ReferenceOperationError, ReferenceRegistryError, ReferenceValueError,
-    UnsupportedBf16Declaration,
+    UnsupportedBf16Declaration, dense_result_error,
 };
 use super::registry::{
     ReferenceCapabilityRevision, ReferenceEvaluationRequest, ReferenceOperation, ReferenceOutputs,
@@ -721,7 +721,7 @@ impl Bf16BinaryReference {
             })
             .collect::<Result<Vec<_>, _>>()?;
         Tensor::dense(Bf16::resolved_type(), result_shape.clone(), elements)
-            .map_err(|_| ReferenceOperationError::ShapeTooLarge)
+            .map_err(|source| dense_result_error(&source))
     }
 }
 

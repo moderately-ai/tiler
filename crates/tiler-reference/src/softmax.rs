@@ -64,7 +64,7 @@ use tiler_ir::semantic::{CanonicalValueView, F32, SOFTMAX_REDUCED_AXES_ATTRIBUTE
 use tiler_ir::shape::{Axis, Shape};
 
 use super::canonicalize_arithmetic_f32;
-use super::error::ReferenceOperationError;
+use super::error::{ReferenceOperationError, dense_result_error};
 use super::evaluate::{RowGeometry, decode_f32, f32_element, f32_elements};
 use super::registry::{ReferenceEvaluationRequest, ReferenceOperation, ReferenceOutputs};
 use super::silu::certified_exp_f32;
@@ -106,7 +106,7 @@ impl ReferenceOperation for SoftmaxF32Reference {
             .map(f32_element)
             .collect::<Result<Vec<ReferenceElement>, ReferenceOperationError>>()?;
         let tensor = Tensor::dense(F32::resolved_type(), shape.clone(), mapped)
-            .map_err(|_| ReferenceOperationError::ShapeTooLarge)?;
+            .map_err(|source| dense_result_error(&source))?;
         outputs.push(tensor)
     }
 }

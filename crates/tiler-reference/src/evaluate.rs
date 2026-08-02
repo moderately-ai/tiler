@@ -17,6 +17,7 @@ use tiler_ir::shape::{Axis, Shape};
 
 use super::error::{
     EvaluationError, ReferenceOperationError, ReferenceRegistryError, ReferenceResource,
+    dense_result_error,
 };
 use super::registry::{
     FrozenReferenceRegistry, ReferenceEvaluationRequest, ReferenceOutputs, ReferenceSignature,
@@ -275,7 +276,7 @@ pub(crate) fn binary(
         })
         .collect::<Result<Vec<_>, _>>()?;
     Tensor::dense(F32::resolved_type(), result_shape.clone(), elements)
-        .map_err(|_| ReferenceOperationError::ShapeTooLarge)
+        .map_err(|source| dense_result_error(&source))
 }
 
 pub(crate) fn strict_sum(input: &Tensor, axes: &[Axis]) -> Result<Tensor, ReferenceOperationError> {
@@ -303,7 +304,7 @@ pub(crate) fn strict_sum(input: &Tensor, axes: &[Axis]) -> Result<Tensor, Refere
     preflight_f32_output(output_count)?;
     if output_count == 0 {
         return Tensor::dense(F32::resolved_type(), output_shape, Vec::new())
-            .map_err(|_| ReferenceOperationError::ShapeTooLarge);
+            .map_err(|source| dense_result_error(&source));
     }
     let input_elements = f32_elements(input)?;
     let reduced_shape = Shape::try_new(reduced.iter().map(|axis| input.shape().extents()[*axis]))
@@ -314,7 +315,7 @@ pub(crate) fn strict_sum(input: &Tensor, axes: &[Axis]) -> Result<Tensor, Refere
     if reduced_count == 0 {
         let zero = f32_element(0.0_f32)?;
         return Tensor::dense(F32::resolved_type(), output_shape, vec![zero; output_count])
-            .map_err(|_| ReferenceOperationError::ShapeTooLarge);
+            .map_err(|source| dense_result_error(&source));
     }
     let input_strides = row_major_strides(input.shape())?;
     let output_strides = row_major_strides(&output_shape)?;
@@ -362,7 +363,7 @@ pub(crate) fn strict_sum(input: &Tensor, axes: &[Axis]) -> Result<Tensor, Refere
         ))?);
     }
     Tensor::dense(F32::resolved_type(), output_shape, elements)
-        .map_err(|_| ReferenceOperationError::ShapeTooLarge)
+        .map_err(|source| dense_result_error(&source))
 }
 
 /// Evaluates the partial values one pass of a split reduction must produce.
@@ -445,7 +446,7 @@ pub fn strict_partial_sums(
     preflight_f32_output(partial_count)?;
     if partial_count == 0 {
         return Tensor::dense(F32::resolved_type(), partial_shape, Vec::new())
-            .map_err(|_| ReferenceOperationError::ShapeTooLarge);
+            .map_err(|source| dense_result_error(&source));
     }
     let reduction_count = reduction_shape
         .element_count()
@@ -504,7 +505,7 @@ pub fn strict_partial_sums(
         }
     }
     Tensor::dense(F32::resolved_type(), partial_shape, elements)
-        .map_err(|_| ReferenceOperationError::ShapeTooLarge)
+        .map_err(|source| dense_result_error(&source))
 }
 
 /// Evaluates the whole reduction a declared split computes.
