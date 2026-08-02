@@ -29,6 +29,8 @@ Transfer that range with `### ` mapped to `## ` and change nothing else. Check i
 
 **The span carries no traceability section and therefore no relative links**, which is checked rather than assumed: `sed -n '<span>p' | grep -c ']('` returns `0` while the same command over the record's first hundred lines returns `3`. So there is no link to repoint and no fork risk from repointing one. Cross-references inside the span are by ADR number and contract name in prose, which resolve from either location.
 
+**Verified at the carrier's base `6f2601a`, because the numbers above had already moved once.** `grep -n '^---$'` on the record gives rules at 1, 15, 243, and 292, so the span is lines **245-290**, not the 241-286 this ticket was written with. Within that span, lines 245 and 247 are the `**Title:**` and `**Frontmatter:**` *directives* — they are consumed into the ADR's `# NNNN:` heading and its YAML frontmatter rather than landed as body prose, which is what the three sibling carriers did and what ADR 0096's own status line records ("diffing the source span against this record's `## Context`-through-alternatives range"). **The byte-identical body is therefore lines 249-290**, transferred with `### ` mapped to `## `. The check was watched failing on a one-word perturbation and on a one-line range misalignment before it was believed, and the link-free check reproduces at this base: `0` over 249-290 against `3` over lines 1-100.
+
 ## What the carrier writes fresh at the destination
 
 The traceability section, the normative-owner paragraph, the work-record paragraph, the implementation boundary, and the open questions — none of which exists in the span, and all of which must be written against the tree the ADR lands into rather than copied from a sibling.
