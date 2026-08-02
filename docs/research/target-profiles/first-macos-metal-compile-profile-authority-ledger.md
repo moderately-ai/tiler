@@ -48,9 +48,11 @@ A compile-profile row is scoped by *where the evidence came from*, and two diffe
 | Device | `Apple M4 Max` |
 | Apple GPU family | `apple9` (`device_apple9_support supported`) |
 
-Both rows are transcribed from `spikes/apple-targets/results/2026-07-31-numerics-covering-apple9-f32-unified-msl4-macos26-xcode26.6-metal32023.883/record.tsv`, keys `environment.*` and `probe.*`, run `environment.date_utc 2026-07-31T20:35:47Z`, harness `probe.harness_sha256 e7b831d61024efcad712bce1495c0f2d078ef9ac766308e20d4a424e2d547d04` at repository base revision `93ddc4a31271d70fffd85fbbfc52ac612dad0c89`.
+Both rows are transcribed from `spikes/apple-targets/results/2026-08-02-numerics-covering-apple9-f32-bf16-unified-msl4-macos26-xcode26.6-metal32023.883/record.tsv`, keys `environment.*` and `probe.*`, run `environment.date_utc 2026-08-02T16:32:20Z`, harness `probe.harness_sha256 17b8b8ddc7731ba1a11f6e971e17cf3fa874ff4153a52de95c634331693a9bb6` at repository base revision `0fcc952ac8f548f462eff6b204386253e65d2522`.
 
 **Why this is the 2026-07-31 record and not the 2026-07-30 one it replaces.** `close-or-retype-the-operand-permutation-inference` widened the harness by one kernel pair to isolate the operand-permutation row below, which moved the harness digest and therefore required a new run. Both environment tables above are byte-identical between the two records, and so is every case, comparison, and hazard row the 2026-07-30 record carried: the newer record differs from it in exactly 84 added `permutation_chain*` rows and the four provenance rows — date, harness digest, input-manifest digest, and base revision. The 2026-07-30 pair is retained beside it as the previous row. No measured value moved, which is the check that separates a widened harness from a changed one.
+
+**Why the 2026-08-02 record can carry the existing F32 rows as well as the new BF16 rows.** It added BF16 beside F32 under the same indivisible `-std=metal4.0` / `air64-apple-macos26.0` profile. Excluding BF16, all 864 covering and 996 exhaustive `case.*` and `comparison.*` rows are byte-identical to the 2026-07-31 MSL 4.0 record. The older record remains retained evidence; the byte comparison is the control that prevents adding a dtype from silently changing the rows already transcribed here.
 
 **The `macos26` in that directory name is the deployment minimum of the offline request, not the host OS version.** The host ran macOS 27.0. A reader reconciling the two should not "correct" either. The same warning is already carried by `crates/tiler-metal/src/applicability.rs`, and it is repeated here because this is the other document a reader arrives at with both numbers in view.
 
@@ -146,11 +148,18 @@ Five quantitative axes reach every current scheduled-region proposal, plus one o
 - **Authority:** Measurement, not a normative guarantee. The retained MSL 4 run dispatched F32 compute kernels on the macOS/Apple9 execution environment above and read back results, with `probe.dtypes f32` and `probe.status validated`. Every case carries an `execution_witness` on a non-subnormal operand reporting `status=executed`, which is what separates "the arithmetic ran" from "the kernel was optimized away".
 - **Validity:** `MeasuredEnvironment` — the exact offline compilation environment and the exact execution environment tabulated above, together.
 - **Phase:** `CompileProfile`, via `TargetCompileProfileMeasurementSource`, whose phase, authority, and validity are fixed by construction and cannot be widened to a portable claim.
-- **Inheritance is refused in every direction.** F16 and BF16 are `Unknown` on this profile: they were not measured under MSL 4.0, and the F32 row may not answer for them. The `express-metal-honourability-in-the-shared-form` record establishes that the measured Apple row *disagrees* across dtypes — F32 arithmetic flushes where F16 preserves on the same hardware in the same math modes — so inheritance here is not merely unproven, it is known to be unsound in at least one direction. No iOS family, physical or simulated, gains a row from this one.
+- **Inheritance is refused in every direction.** BF16 receives its own row below; F16 remains `Unknown` and may not inherit either measured answer. The `express-metal-honourability-in-the-shared-form` record establishes that the measured Apple row *disagrees* across dtypes — F32 arithmetic flushes where F16 preserves on the same hardware in the same math modes — so inheritance here is not merely unproven, it is known to be unsound in at least one direction. No iOS family, physical or simulated, gains a row from this one.
+
+### BF16 — `Dispatchable`
+
+- **Owner:** compiler `DTypeDispatchabilityFact` keyed by the exact governed `tiler::bf16@1` resolved type.
+- **Authority:** Measurement. The unified MSL 4.0 record states `device_bfloat_support supported`, dispatches every admitted BF16 case on this macOS Apple9 row, and records 91 `executed` witnesses in its covering matrix. The arithmetic-free `materialize_bf16` case also runs and returns all eight BF16 payloads unchanged.
+- **Validity and phase:** the same exact offline and execution environments above, at `CompileProfile`. This is not an Apple-wide or iOS claim.
+- **No inheritance:** F32 remains independently `Dispatchable`; F16 remains absent and therefore `Unknown`.
 
 ## Numerical rows
 
-Every numerical row in this profile is a **Measurement** under the exact offline compiler and flags, not a portable normative guarantee. Two of them are the complete exclusive subnormal tables; the rest are the honourability dimensions the compiler consults for the declared contract.
+Every numerical row in this profile is a **Measurement** under the exact offline compiler and flags, not a portable normative guarantee. F32 and BF16 each have complete exclusive input/result subnormal tables; the remaining rows are the F32 honourability dimensions the compiler consults for the current caller contract.
 
 **The flags are part of the row.** These facts describe what the *selected numerical realization* delivers through the *exact offline compiler*, so the bound declaration must carry that realization and the measurement source must carry that compiler build. The retained cases this ledger reads are the `safe` math-mode, `contract-off` ones, which is `NumericalRealization::strict_baseline`. A row read from a `relaxed` or `fast` case would be a different fact about a different compilation.
 
@@ -165,6 +174,17 @@ Every numerical row in this profile is a **Measurement** under the exact offline
 
 - **Measurement.** `case.macos.multiply_half.safe.O2.contract-off.results` returns `00000000` for `00800000`, the least positive *normal*, whose halved result is subnormal. That is the result-side dimension isolated: the operand is normal, so only the result can have been flushed.
 - **Declared form:** the same complete exclusive three-row table, on the result dimension.
+
+### BF16 input subnormals — flush to zero, preserving sign
+
+- **Measurement.** `case.macos.multiply_two_bf16.safe.O2.contract-off.results` maps `0040` to `0000` and `8040` to `8000`; its ordinary `3f80` witness returns `4000` with `status=executed`.
+- **Not materialization.** `materialize_bf16` returns `0001 0040 007f 0080 8040 8000 3eab 3f80` unchanged and records `float_operations none`.
+- **Declared form:** the complete exclusive three-row table for the exact `(ArithmeticType::Bf16, tiler::bf16@1)` subject — preserve unsupported, sign-preserving flush exact, always-positive flush unsupported.
+
+### BF16 result subnormals — flush to zero, preserving sign
+
+- **Measurement.** `case.macos.multiply_half_bf16.safe.O2.contract-off.results` maps the least positive normal `0080` to `0000`, while its ordinary `3f80` witness returns `3f00` with `status=executed`.
+- **Declared form:** the same complete exclusive three-row table on the result dimension. No F32 subject supplies either BF16 answer.
 
 ### The emitted float-operation attributes, which isolate four of the five remaining dimensions
 
@@ -222,6 +242,7 @@ That is a direct, isolated observation of what the selected realization permits,
 | `platform` | `MetalPlatform::MacOs` | No — backend-only artifact family |
 | `deployment_minimum` | `MetalDeploymentMinimum::new(26, 0)` | No — backend-only; recorded in emitted provenance and in the target triple |
 | `subnormal_arithmetic` (F32 entry) | `FlushesToZero { PreservesSign }` | **Yes** — into both F32 subnormal dimensions |
+| `subnormal_arithmetic` (BF16 entry) | `FlushesToZero { PreservesSign }` | **Yes** — into both BF16 subnormal dimensions |
 | `buffer_binding_limit` | 31 | **Yes** — into `BufferBindings` |
 
 **Fact.** The deployment minimum here is 26.0, because `probe.fixed_flags -std=metal4.0` and `environment.family.macos.requested_target air64-apple-macos26.0` are the inputs the retained measurement actually used. Reusing the older MSL 3.1 / macOS 14.0 record for this profile would attribute measurements to a compilation that did not produce them. Both prototypes stated that older record until the migration below; neither states any target fact now.
@@ -230,21 +251,22 @@ That is a direct, isolated observation of what the selected realization permits,
 
 ## Overlaps, and what validating one means
 
-Exactly two facts are stated in both vocabularies, and each must be validated where — and only where — the two mean the same thing.
+Exactly three facts are stated in both vocabularies, and each must be validated where — and only where — the two mean the same thing.
 
 1. **Buffer capacity.** `MetalTargetFacts::buffer_binding_limit` and `CapabilityAxis::BufferBindings` mean the same quantity. The compiler's offered capacity must be no greater than the Metal emission limit, or the compiler would admit a signature the emitter must then reject. Both are 31 here, from the same table row.
 2. **F32 subnormal behaviour.** The Metal record's F32 entry and the compiler's two subnormal dimensions mean the same thing, and the projection is total in one direction: `MetalSubnormalArithmetic::subnormal_mode` maps every Metal behaviour onto the shared vocabulary. The projection must happen exactly once; declaring it twice would put two rows at one phase and is refused by `declare_measured_*_subnormal_behaviour`'s complete-table conflict check.
+3. **BF16 subnormal behaviour.** The same total projection applies to the Metal record's independently measured BF16 entry and the exact governed BF16 arithmetic subject. Its two complete tables are transactional and exclusive; deleting the Metal row refuses construction, while substituting the behaviour moves descriptor identity.
 
 **Everything else is not an overlap and must not be validated as one.** Language, platform, and deployment minimum have no compiler counterpart. Two equal compiler profiles may legitimately coexist with different nonprojected Metal facts or emission realizations — but only where the difference is explicitly irrelevant to compiler feasibility, and each such fact must still be carried and validated by its own owner, where it continues to bind payload identity.
 
-**A specific warning against a sentence that would be easy to write.** An assessment of the F32 subnormal projection is an assessment of two dimensions of one dtype. It is not an assessment of `MetalTargetFacts`, which also carries a language standard, an artifact family, a deployment minimum, two unmeasured dtype rows, and a binding capacity.
+**A specific warning against a sentence that would be easy to write.** An assessment of either subnormal projection is an assessment of two dimensions of one exact dtype. It is not an assessment of `MetalTargetFacts`, which also carries a language standard, an artifact family, a deployment minimum, the unmeasured F16 row, and a binding capacity.
 
 ## What remains `Unknown` after this ledger
 
 Three things, and each is `Unknown` in the ADR 0043 sense — neither proved nor disproved — rather than refuted. A fourth entry follows them that is **not** `Unknown` but a measured, exactly located blocker, and it is recorded here because it is what a reader looking for "why can this profile not run a parallel reduction" needs.
 
 1. **Device address width.** No consumer, no authority, no row. Trigger recorded above.
-2. **F16 and BF16 on this profile.** Unmeasured under MSL 4.0. BF16 additionally has a *macOS-only* measurement on the older MSL 3.1 row and an iOS-Simulator pipeline-creation refusal; neither reaches this profile, and `spike-bf16-through-the-second-dtype-seams` owns the first non-F32 use of the mechanism and must consume this construction rather than adding a second backend dtype list.
+2. **F16 on this profile.** Unmeasured under MSL 4.0, absent, and therefore `Unknown`. BF16 is stated only for this macOS profile; both iOS families remain outside it and gain no row by inheritance.
 3. **Exact native translation identity.** [ADR 0086](../../decisions/0086-require-attributable-or-attested-native-translation.md), accepted 2026-07-31, decides that native device translation of a metallib during pipeline creation is a typed capability fact whose authority and provenance are `Unknown` on every macOS row currently observable.
 
 **Not `Unknown` — the contract vocabulary admits no parallel reduction on this hardware.** This profile now carries every *target* fact a parallel reduction needs: threadgroup memory at 32,768 bytes, the barrier realization, and both resolutions of reassociation. It still cannot plan one, and the blocker is on the other side of the request. The four registered numerical contracts are `tiler.strict-f32.v1`, `tiler.flush-f32.v1`, `tiler.relaxed-f32.v1`, and `tiler.reassociate-f32.v1`, and **none of them both flushes subnormals and permits reassociation**: the two that grant regrouping (`relaxed`, `reassociate`) are built on the strict reading and require *preserved* subnormals, which the F32 subnormal rows above measure this hardware refusing in every math mode, while the one this hardware can deliver (`flush`) widens subnormals alone and grants no regrouping. `tiler_compiler::session::CompileRequest` accepts only that four-value preset enumeration, so no caller outside `tiler-compiler` can state the combination either.
@@ -257,11 +279,11 @@ The consequence for work item 5 of the owning ticket is exact and worth stating 
 
 ## What consumed this ledger
 
-**Fact — the rows are constructed, and by one owner.** `tiler_build::BoundMetalCompileDeclaration` (`crates/tiler-build/src/metal_declaration.rs`) assembles the checked compiler `TargetProfile`, the exact `MetalTargetFacts`, the selected `MetalEmissionRealization` and `NumericalRealization`, the total `MetalTarget` projection, and the structured sources, from exactly the rows above. Its private `LedgerRows` record is the transcription, one field per row, so a mutation test can move one row and observe the descriptor move with it. The profile key is `tiler.metal.macos-apple9.msl4-0.f32.v1` and its canonical descriptor is 1,963 bytes — 1,741 until the barrier row and the permitted resolution of reassociation were added, and pinned by `the_declared_profile_states_one_barrier_realization` so this sentence cannot drift from the encoding it describes.
+**Fact — the rows are constructed, and by one owner.** `tiler_build::BoundMetalCompileDeclaration` (`crates/tiler-build/src/metal_declaration.rs`) assembles the checked compiler `TargetProfile`, the exact `MetalTargetFacts`, the selected `MetalEmissionRealization` and `NumericalRealization`, the total `MetalTarget` projection, and the structured sources, from exactly the rows above. Its private `LedgerRows` record is the transcription, one field per row, so a mutation test can move one row and observe the descriptor move with it. The F32-only endpoint used key `tiler.metal.macos-apple9.msl4-0.f32.v1` and a 1,963-byte descriptor. Adding independently sourced BF16 content creates the truthful key `tiler.metal.macos-apple9.msl4-0.f32-bf16.v1` rather than revising a key whose `.f32` component would become false, and the descriptor is 2,149 bytes. The before and after lengths are pinned by `the_declared_profile_states_one_barrier_realization`; the exact key and descriptor both feed `TargetProfileRef`, the standard Metal artifact identity moved from `3daf11256423c683a75f6aeb6b1e3578b1425d46e0899664ab5df156ca600db6` to `949841c610fef13473e4a4d14ee57a62b39ba09c5ed27a9c7ff16679853827d1`, and its cache subject moved from `0d09c0da9db85c70bb2270cbed3a67859b7718b07c605c45ca5d1a9f6adfa905` to `3bc5f57f3b3e2e07849a3830ec56a89e4332245685fa23c9db4da8a4f71c34d0`.
 
-The authority classes are carried as this ledger states them, not flattened. The quantitative and synchronization rows are external normative guarantees under four separately versioned references — the macOS 26.5 SDK dispatch header, the 2025-10-20 feature tables, the MSL 4.0 address-space chapter, and the MSL 4.0 threadgroup-synchronization section — while dispatchability and every numerical row carry one `TargetCompileProfileMeasurementSource` pairing the four offline toolchain components with the execution environment. The barrier row has a reference of its own rather than sharing the address-space one, so a reader repairing a stale synchronization row is sent to §6.9.1 rather than to the chapter establishing the `device` address space. Absent rows stay absent: no device-address-width row, a `PreparedKernelPreflight` query rather than a workgroup fact, and no F16 or BF16 row at all.
+The authority classes are carried as this ledger states them, not flattened. The quantitative and synchronization rows are external normative guarantees under four separately versioned references — the macOS 26.5 SDK dispatch header, the 2025-10-20 feature tables, the MSL 4.0 address-space chapter, and the MSL 4.0 threadgroup-synchronization section — while dispatchability and every numerical row carry one `TargetCompileProfileMeasurementSource` pairing the four offline toolchain components with the execution environment. The barrier row has a reference of its own rather than sharing the address-space one, so a reader repairing a stale synchronization row is sent to §6.9.1 rather than to the chapter establishing the `device` address space. Absent rows stay absent: no device-address-width row, a `PreparedKernelPreflight` query rather than a workgroup fact, and no F16 row.
 
-**Fact — exactly two overlaps are validated.** Compiler buffer capacity is checked no greater than the Metal emission limit, and the F32 subnormal projection runs once through `declare_metal_f32_subnormal_behaviour`. Nothing else is compared: a language standard, artifact family, and deployment minimum have no compiler counterpart, and a test asserts that changing the language standard moves the AOT target while leaving the compiler descriptor byte-identical.
+**Fact — exactly three overlaps are validated.** Compiler buffer capacity is checked no greater than the Metal emission limit; the F32 subnormal projection runs once through `declare_metal_f32_subnormal_behaviour`; and the declaration privately projects the independently measured BF16 row through the same shared mode conversion without widening the ratified public F32 boundary. Nothing else is compared: a language standard, artifact family, and deployment minimum have no compiler counterpart, and a test asserts that changing the language standard moves the AOT target while leaving the compiler descriptor byte-identical.
 
 **Fact — the migration landed and the deployment record moved with it.** `accept_or_publish_metal_plan` consumes the declaration and refuses a plan compiled under any other profile before emission, naming the key or the descriptor. Both prototypes now compile, emit, and route under it; neither states a target fact of its own, and both moved from MSL 3.1 / macOS 14.0 to MSL 4.0 / macOS 26.0.
 
@@ -273,7 +295,7 @@ The authority classes are carried as this ledger states them, not flattened. The
 
 Per the repository's research contract, this record closes with named outcomes rather than open notes.
 
-1. **Contract update, applied.** Every quantitative, index-arithmetic, dispatchability, and F32 subnormal row above has a named authority, an exact validity scope, and a reproducible reference, and the section above names the owner that constructed the bound declaration from exactly these rows and no others.
+1. **Contract update, applied.** Every quantitative, index-arithmetic, dispatchability, F32 subnormal, and BF16 subnormal row above has a named authority, an exact validity scope, and a reproducible reference, and the section above names the owner that constructed the bound declaration from exactly these rows and no others.
 2. **Explicitly deferred, with a trigger.** The device-address-width row stays absent until a KIR operation consumes it.
 3. **Explicitly deferred, with a trigger.** The runtime host offer stays unavailable until one of ADR 0086's three reconsideration triggers supplies the missing authority. No implementation task closes it.
 4. **Closed by the retained kernel, after the citation route was eliminated.** The operand-permutation row was an `Inference` because no retained case isolated it, and this outcome named two things that would close it. `close-or-retype-the-operand-permutation-inference` attempted the cheaper one — the MSL citation — first, and eliminated it: the vendored MSL 4.0 and 4.1 specifications contain no normative statement about operand order at all, and the sentence that comes closest is refuted on this very row by evidence already in this ledger. The derivation is recorded under "The route this row did not close by" below, so a later reader can refute the elimination rather than only the conclusion. The row is now an isolated `Measurement` beside its four neighbours, established by the retained `permutation_chain`/`permutation_chain_reordered` pair, and the numerical section above states it as one. Every numerical row on this profile is now a measurement under the exact offline compiler; none is an inference.
@@ -314,7 +336,7 @@ rg -n 'maxTotalThreadsPerThreadgroup' \
   "$(xcrun --sdk macosx --show-sdk-path)/System/Library/Frameworks/Metal.framework/Headers/MTLComputePipeline.h"
 
 # The two environments and the measured numerical rows.
-cd spikes/apple-targets/results/2026-07-31-numerics-covering-apple9-f32-unified-msl4-macos26-xcode26.6-metal32023.883
+cd spikes/apple-targets/results/2026-08-02-numerics-covering-apple9-f32-bf16-unified-msl4-macos26-xcode26.6-metal32023.883
 rg -n '^(probe|environment)\.' record.tsv
 rg -n 'case\.macos\.(multiply_two|multiply_half|materialize)\.safe\.O2\.contract-off\.(results|execution_witness)' record.tsv
 
