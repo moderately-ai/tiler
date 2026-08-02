@@ -1081,8 +1081,13 @@ fn verify_cooperative_semantics(
     //
     // The trailing axis is one coordinate per *participant*, so it takes the
     // extent product rather than the space's shape: the invocation index is
-    // linear whatever shape the tile arranges its participants in, and a space
-    // whose product does not exist is refused by the tile's own rule below.
+    // linear whatever shape the tile arranges its participants in.
+    //
+    // `verify_participant_space` already refused a space whose product does not
+    // exist, so this propagates rather than decides — written as a refusal and
+    // not an `expect` because the two authorities are ordered by `verify_intrinsic`
+    // rather than by a type, and a reordering should cost a diagnostic instead
+    // of a panic.
     let Some(participants) = tile.coordinates.participants.participants() else {
         return Err(cooperative(CooperativeTileRule::LocalCoordinates));
     };
@@ -1137,7 +1142,8 @@ fn verify_cooperative_tile(tile: &CooperativeTile) -> Result<(), ScheduledRegion
     // The space itself and its agreement with the launch were decided by
     // `verify_participant_space` before any proof arithmetic read the count, so
     // this propagates the product rather than re-deciding it — a second copy of
-    // either rule here is one that could never say no.
+    // either rule here is one that could never say no. It is a refusal rather
+    // than an `expect` for the reason the sibling site above states.
     let participant_count = space
         .participants()
         .ok_or_else(|| cooperative(CooperativeTileRule::LocalCoordinates))?;
