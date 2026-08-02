@@ -13,11 +13,12 @@
 //!
 //! `docs/ir.md`'s constraint-and-proof-context section specifies a `ShapeEnv`
 //! as scoped symbol declarations, source bindings, *and* a constraint
-//! environment over extent equalities, divisibility, nonnegativity, intervals,
-//! and factorization. This file owns the first two and the storage, identity,
-//! and lifecycle of the third; [`constraint`] owns the constraint vocabulary
-//! and the decision procedure, and its module documentation states the exact
-//! arithmetic fragment that procedure decides.
+//! environment over extent equalities (including a fixed two-addend equality),
+//! divisibility, nonnegativity, intervals, and factorization. This file owns the
+//! first two and the storage, identity, and lifecycle of the third;
+//! [`constraint`] owns the constraint vocabulary and the decision procedure,
+//! and its module documentation states the exact arithmetic fragment that
+//! procedure decides.
 //!
 //! # The invariants this module establishes
 //!
@@ -1457,6 +1458,78 @@ mod tests {
         consistent.build().unwrap();
     }
 
+    /// One decode step must not accept stale state whose observed result extent
+    /// disagrees with its context and token extents.
+    #[test]
+    fn a_decode_shaped_additive_mismatch_refuses_and_names_all_three_terms() {
+        let build = |sum: u64| {
+            let mut draft = ShapeEnvBuilder::new();
+            for (name, value) in [("S", sum), ("C", 14), ("T", 1)] {
+                let declared = symbol("decode/layer-0", name);
+                draft.declare(declared.clone()).unwrap();
+                draft.bind(&declared, static_binding(value)).unwrap();
+            }
+            draft
+                .require(required(ExtentRelation::additive_equality(
+                    ExtentTerm::Symbol(symbol("decode/layer-0", "S")),
+                    ExtentTerm::Symbol(symbol("decode/layer-0", "C")),
+                    ExtentTerm::Symbol(symbol("decode/layer-0", "T")),
+                )))
+                .unwrap();
+            draft.build()
+        };
+
+        let error =
+            build(13).expect_err("state valid over [0, 13) cannot verify when C = 14 and T = 1");
+        let ShapeEnvError::ContradictoryConstraints { conflict } = &error else {
+            panic!("the mismatch is a typed contradictory constraint, not {error}");
+        };
+        assert_eq!(
+            **conflict,
+            ConstraintConflict::AdditiveEqualityMismatch {
+                relation: ExtentRelation::additive_equality(
+                    ExtentTerm::Symbol(symbol("decode/layer-0", "S")),
+                    ExtentTerm::Symbol(symbol("decode/layer-0", "C")),
+                    ExtentTerm::Symbol(symbol("decode/layer-0", "T")),
+                ),
+                sum: 13,
+                addends: 15,
+            }
+        );
+        let diagnostic = error.to_string();
+        for term in ["S", "C", "T"] {
+            assert!(
+                diagnostic.contains(term),
+                "the three-term diagnostic must name {term}: {diagnostic}"
+            );
+        }
+
+        build(15).expect("S = 15 is consistent with C = 14 and T = 1");
+    }
+
+    /// Runtime-bound extents retain an additive requirement for preflight.
+    #[test]
+    fn a_runtime_bound_additive_relation_has_an_exhibited_model() {
+        let mut draft = draft_over(&["S", "C", "T", "capacity"]);
+        draft
+            .require(required(ExtentRelation::additive_equality(
+                term("S"),
+                term("C"),
+                term("T"),
+            )))
+            .unwrap();
+        draft
+            .require(required(ExtentRelation::non_negative_difference(
+                term("capacity"),
+                term("S"),
+            )))
+            .unwrap();
+        let environment = draft
+            .build()
+            .expect("the all-zero model proves the runtime-bound set satisfiable");
+        assert_eq!(environment.constraints().len(), 2);
+    }
+
     /// A relation outside the supported fragment is refused, never under-decided.
     ///
     /// "The solver algorithm and exact supported arithmetic fragment remain
@@ -1495,6 +1568,31 @@ mod tests {
         assert!(matches!(
             guarded.build(),
             Err(ShapeEnvError::UnsupportedRelation { .. })
+        ));
+
+        // An underdetermined additive equality is admitted only when the
+        // canonical lower-bound model exhibits a solution. `C >= 1` makes that
+        // model `(S, C, T) = (0, 1, 0)`, so this relation is conservatively
+        // refused rather than being admitted on "no contradiction found".
+        let mut additive = draft_over(&["S", "C", "T"]);
+        additive
+            .require(required(ExtentRelation::additive_equality(
+                term("S"),
+                term("C"),
+                term("T"),
+            )))
+            .unwrap();
+        additive
+            .require(required(
+                ExtentRelation::interval(term("C"), 1, 64).unwrap(),
+            ))
+            .unwrap();
+        assert!(matches!(
+            additive.build(),
+            Err(ShapeEnvError::UnsupportedRelation {
+                violation: FragmentViolation::UnderdeterminedAdditiveEquality { undetermined: 3 },
+                ..
+            })
         ));
 
         // In-fragment, a factorization with one undetermined term is solved
@@ -1782,6 +1880,36 @@ mod tests {
             reasoned_differently.build().unwrap().identity(),
             base.identity(),
             "provenance is part of identity, per the contract",
+        );
+
+        let mut additive = draft_over(&["n", "left", "right"]);
+        additive
+            .require(required(ExtentRelation::additive_equality(
+                term("n"),
+                term("left"),
+                term("right"),
+            )))
+            .unwrap();
+        let additive = additive.build().unwrap();
+        let mut reversed = draft_over(&["n", "left", "right"]);
+        reversed
+            .require(required(ExtentRelation::additive_equality(
+                term("n"),
+                term("right"),
+                term("left"),
+            )))
+            .unwrap();
+        let reversed = reversed.build().unwrap();
+        let empty = draft_over(&["n", "left", "right"]).build().unwrap();
+        assert_ne!(
+            additive.identity(),
+            empty.identity(),
+            "the fresh relation tag and all three terms enter identity",
+        );
+        assert_eq!(
+            additive.identity(),
+            reversed.identity(),
+            "commutative addend spelling is canonicalized before identity",
         );
     }
 

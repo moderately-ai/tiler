@@ -807,9 +807,9 @@ are not reported through Rust's causal `Error::source` chain.
 
 Semantic and index lowering share a typed `ShapeEnv` containing scoped symbol
 declarations, source bindings, and a constraint environment containing
-extent equalities, divisibility, nonnegativity, intervals, and factorization
-relationships. Facts record provenance: statically proven, frontend-required,
-or runtime-validated.
+extent equalities (including the fixed two-addend form `S == C + T`),
+divisibility, nonnegativity, intervals, and factorization relationships. Facts
+record provenance: statically proven, frontend-required, or runtime-validated.
 
 `ShapeExpr` is the expression language over that environment, and it is the
 one this contract names at every layer that computes an extent.
@@ -857,6 +857,23 @@ semantics. Canonical identity includes symbol declarations, root-binding
 provenance, and semantic constraints but excludes derived solver caches. The
 solver algorithm and exact supported arithmetic fragment remain implementation
 choices.
+
+**Fact — the implemented additive fragment is one relation, not a general
+expression prover.** `ExtentRelation::AdditiveEquality` relates exactly one sum
+term and two commutatively canonicalized addends. The three leaves remain
+`ExtentTerm`s — symbols or constants — so `SourcedExtent` remains static-or-one-
+root-symbol and every symbol still has exactly one root binding. The decision
+procedure solves a relation with at most one undetermined term exactly. With
+more free terms it admits the relation only when the canonical lower-bound model
+already exhibits a solution; otherwise it refuses the set as outside the
+implemented fragment rather than reporting an unproved satisfiable result.
+
+`C + T <= capacity` is stated without a second arithmetic form:
+`S == C + T` together with `capacity - S >= 0`. A direct three-addend equality
+is not implemented. Chaining two binary equalities through a fresh intermediate
+would violate the rule that every symbol is a root with exactly one binding, so
+a future three-term append needs its own bounded relation or the accepted
+`ShapeExpr` implementation; it must not manufacture an unbound helper symbol.
 
 **Fact — a semantic value's shape is fixed-extent in the implemented profile, and the symbolic vocabulary reaches only the index layer.** `crates/tiler-ir/src/shape.rs` is the "fixed shape vocabulary", its `Extent` wraps a `u64`, and `SemanticProgramBuilder::input` takes a `Shape`; the sourced constant-or-symbol vocabulary that `ShapeEnv` backs is exported from `tiler_ir::index`. So an extent symbol reaches an iteration domain, a tensor boundary axis, and a division divisor at layer 2, and reaches no semantic value at layer 1. That is a gap in this contract's own symbolic profile rather than a decided restriction: the accepted rule above is that each axis extent "may be a static integer or a scoped symbolic expression evaluated later". [The symbolic-semantic-extents record](research/shapes/symbolic-semantic-extents.md) runs the eliminations for how it is spelled, where the environment's identity enters, and what a frontend does with an extent unknown until dispatch, and files the delivery chain that closes it.
 

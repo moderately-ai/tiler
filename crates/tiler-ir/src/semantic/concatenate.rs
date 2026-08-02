@@ -23,17 +23,14 @@
 //! additive result extent, the same partitioned write, the same ownership proof.
 //! Specializing buys nothing and guarantees a second family later.
 //!
-//! # The interim extent contract, and why it is a refusal
+//! # The extent-domain boundary, and why it is a refusal
 //!
 //! The result extent on the concatenated axis is the *exact* sum of the operands'
-//! extents there. Nothing in this profile can state that sum as a relation:
-//! [`ExtentRelation`](crate::shape::ExtentRelation) admits `Equal`, `Divisible`,
-//! `NonNegativeDifference`, `Interval`, and `Factorization` over an
-//! [`ExtentTerm`](crate::shape::ExtentTerm) that is a symbol or a constant, and
-//! `NonNegativeDifference` — the nearest additive-looking relation — constrains a
-//! difference's *sign* rather than defining a sum. So the only thing that ties
-//! this family's result extent to its operands' is that
-//! [`concatenate_result_shape`] computes it exactly.
+//! extents there. [`ExtentRelation::AdditiveEquality`](crate::shape::ExtentRelation::AdditiveEquality)
+//! can retain that relationship for sourced extents without turning
+//! [`ExtentTerm`](crate::shape::ExtentTerm) into an expression tree. Semantic
+//! occurrences still carry static [`Extent`](crate::shape::Extent)s, so
+//! [`concatenate_result_shape`] computes the same relationship directly.
 //!
 //! Every extent a semantic occurrence can carry is a static
 //! [`Extent`](crate::shape::Extent), which is why the sum is computable at all
@@ -42,9 +39,9 @@
 //! to return that the operands determine: saturating at `u64::MAX`, wrapping, or
 //! choosing any other value would bind a result extent unrelated to the operands
 //! — the static-extent spelling of binding a fresh unconstrained symbol. It is
-//! refused under [`ConcatenateError::ResultExtentUnrelatable`] instead. Until an
-//! additive extent relation exists, that refusal is the whole of this family's
-//! extent handling, and it is written here rather than assumed.
+//! refused under [`ConcatenateError::ResultExtentUnrelatable`] instead. The
+//! additive relation does not widen the `u64` extent domain, so this refusal
+//! remains necessary and is written here rather than assumed.
 
 use std::error::Error;
 use std::fmt;
@@ -176,10 +173,9 @@ pub enum ConcatenateError {
     /// The exact result extent leaves the extent domain, so nothing relates it to
     /// the operands'.
     ///
-    /// **This is the family's whole interim extent handling.** The result extent
-    /// is the exact sum of the operands' extents on the concatenated axis, and no
-    /// relation in this profile can state that sum, so the sum being computable is
-    /// the only thing that ties the result to its operands. When it is not
+    /// The result extent is the exact sum of the operands' extents on the
+    /// concatenated axis. An additive relation can retain a representable sum,
+    /// but it cannot widen the extent domain. When the sum is not
     /// computable, every value this family could return would be one the operands
     /// do not determine — so it returns none. Saturating or wrapping here is the
     /// static-extent spelling of binding a fresh unconstrained symbol, and it
@@ -260,7 +256,7 @@ impl fmt::Display for ConcatenateError {
                 extent,
             } => write!(
                 formatter,
-                "the concatenated extent on axis {} leaves the extent domain: {accumulated} plus operand {operand}'s {extent} is not representable, and this profile can state no additive extent relation, so no result extent this family could bind would be related to its operands'",
+                "the concatenated extent on axis {} leaves the extent domain: {accumulated} plus operand {operand}'s {extent} is not representable; an additive extent relation does not widen that domain, so no result extent this family could bind would be related to its operands'",
                 axis.get()
             ),
             Self::MalformedAxisAttribute => {
@@ -415,7 +411,7 @@ pub(super) fn register_standard_concatenate(
 /// The complete normative definition of `tiler::concatenate-f32@1`.
 ///
 /// Held as a constant rather than written inline because it is where the
-/// zero-extent rule and the interim extent contract are stated, and a reader
+/// zero-extent rule and the extent-domain contract are stated, and a reader
 /// looking for either should find it under a name rather than inside a
 /// registration call.
 const CONCATENATE_F32_NORMATIVE_DEFINITION: &str = concat!(
@@ -433,8 +429,8 @@ const CONCATENATE_F32_NORMATIVE_DEFINITION: &str = concat!(
     "dtype promotion, no weak-scalar rule, and no numerical permission. ",
     "The result extent on the concatenated axis is the exact sum of the operands' extents on that axis, ",
     "derived from the operands and never declared by a caller. An occurrence whose exact sum leaves the ",
-    "extent domain is refused rather than saturated or wrapped: this profile can state no additive ",
-    "extent relation, so a result extent this family could not compute would not be related to its ",
+    "extent domain is refused rather than saturated or wrapped: an additive extent relation does not ",
+    "widen that domain, so a result extent this family could not compute would not be related to its ",
     "operands' at all. ",
     "A zero-extent operand is admitted and contributes no coordinate. It is not skipped: it must still ",
     "agree on rank, on resolved value type, and on every axis except the concatenated one. Joining ",

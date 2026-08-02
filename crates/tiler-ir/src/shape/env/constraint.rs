@@ -16,7 +16,8 @@
 //!
 //! The fragment is: **bounded interval–congruence constraints over equality
 //! classes of declared symbols, closed under non-strict comparison, plus
-//! factorizations with at most one undetermined term.** Concretely, after
+//! factorizations with at most one undetermined term and binary additive
+//! equalities for which the procedure can exhibit a model.** Concretely, after
 //! equality classes are formed, every admitted relation contributes one of
 //!
 //! - a merge of two classes ([`ExtentRelation::Equal`] between symbols),
@@ -24,7 +25,8 @@
 //! - a closed interval bound on a class ([`ExtentRelation::Interval`], and the
 //!   constant-sided forms of [`ExtentRelation::NonNegativeDifference`]),
 //! - a congruence `m | x` on a class ([`ExtentRelation::Divisible`]), or
-//! - a zero-weight difference edge `x >= y` between two classes.
+//! - a zero-weight difference edge `x >= y` between two classes, or
+//! - a fixed-arity equality `s == left + right`.
 //!
 //! Every extent is a `u64`, so every class starts at `[0, u64::MAX]` and the
 //! *unary* nonnegativity of an extent is a tautology. The nonnegativity kind is
@@ -60,6 +62,18 @@
 //! *not* read off a narrowed interval, so fragment membership is a syntactic,
 //! order-free property of the environment rather than a consequence of how far
 //! propagation happened to get.
+//!
+//! An additive equality is deliberately one relation over three terms, not an
+//! arithmetic node nested inside [`ExtentTerm`]. When all but at most one term
+//! are determined, the remaining term is solved exactly. With more free terms,
+//! the ordinary interval/congruence procedure first constructs its canonical
+//! lower-bound model and the additive equality is admitted only when that same
+//! model satisfies it. Otherwise the relation is refused as
+//! [`FragmentViolation::UnderdeterminedAdditiveEquality`]. This is conservative
+//! but complete on what it admits: every successful build has an exhibited
+//! model, while the common runtime-bound `S == C + T` case is admitted by the
+//! all-zero model and retained so a later launch-preflight validator can
+//! evaluate it against observed bindings.
 //!
 //! # Semantic input constraints and variant guards are not one list
 //!
@@ -143,9 +157,9 @@ impl fmt::Display for ExtentTerm {
 
 /// One relation over extent terms.
 ///
-/// The five variants are the five kinds `docs/ir.md` names for the constraint
-/// environment: extent equalities, divisibility, nonnegativity, intervals, and
-/// factorization relationships.
+/// The variants realize the kinds `docs/ir.md` names for the constraint
+/// environment: ordinary and fixed-additive extent equalities, divisibility,
+/// nonnegativity, intervals, and factorization relationships.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ExtentRelation {
     /// `left == right`.
@@ -153,6 +167,19 @@ pub enum ExtentRelation {
         /// Left side.
         left: ExtentTerm,
         /// Right side.
+        right: ExtentTerm,
+    },
+    /// `sum == left + right` in mathematical nonnegative-integer arithmetic.
+    ///
+    /// Fixed at two addends so admitting it does not turn [`ExtentTerm`] into a
+    /// recursively nestable expression language. A longer sum needs its own
+    /// governed relation rather than an unbound intermediate symbol.
+    AdditiveEquality {
+        /// The extent equal to the two-addend sum.
+        sum: ExtentTerm,
+        /// First addend.
+        left: ExtentTerm,
+        /// Second addend.
         right: ExtentTerm,
     },
     /// `divisor` divides `dividend` exactly.
@@ -195,6 +222,20 @@ impl ExtentRelation {
     #[must_use]
     pub const fn equal(left: ExtentTerm, right: ExtentTerm) -> Self {
         Self::Equal { left, right }
+    }
+
+    /// Asserts that `sum == left + right`.
+    ///
+    /// Addends are sorted because mathematical addition is commutative; the two
+    /// authoring orders therefore produce one canonical relation and identity.
+    #[must_use]
+    pub fn additive_equality(sum: ExtentTerm, left: ExtentTerm, right: ExtentTerm) -> Self {
+        let (left, right) = if left <= right {
+            (left, right)
+        } else {
+            (right, left)
+        };
+        Self::AdditiveEquality { sum, left, right }
     }
 
     /// Asserts that `divisor` divides `dividend`.
@@ -256,6 +297,7 @@ impl ExtentRelation {
             Self::NonNegativeDifference { .. } => 0x03,
             Self::Interval { .. } => 0x04,
             Self::Factorization { .. } => 0x05,
+            Self::AdditiveEquality { .. } => 0x06,
         }
     }
 
@@ -263,6 +305,11 @@ impl ExtentRelation {
     fn for_each_term(&self, mut visit: impl FnMut(&ExtentTerm)) {
         match self {
             Self::Equal { left, right } => {
+                visit(left);
+                visit(right);
+            }
+            Self::AdditiveEquality { sum, left, right } => {
+                visit(sum);
                 visit(left);
                 visit(right);
             }
@@ -300,6 +347,11 @@ impl ExtentRelation {
                 left.encode(bytes);
                 right.encode(bytes);
             }
+            Self::AdditiveEquality { sum, left, right } => {
+                sum.encode(bytes);
+                left.encode(bytes);
+                right.encode(bytes);
+            }
             Self::Divisible { dividend, divisor } => {
                 dividend.encode(bytes);
                 bytes.extend_from_slice(&divisor.get().to_be_bytes());
@@ -331,6 +383,9 @@ impl fmt::Display for ExtentRelation {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Equal { left, right } => write!(formatter, "{left} == {right}"),
+            Self::AdditiveEquality { sum, left, right } => {
+                write!(formatter, "{sum} == {left} + {right}")
+            }
             Self::Divisible { dividend, divisor } => write!(formatter, "{divisor} | {dividend}"),
             Self::NonNegativeDifference {
                 minuend,
@@ -468,6 +523,12 @@ pub enum FragmentViolation {
         /// How many of the relation's terms had no determined constant.
         undetermined: usize,
     },
+    /// The canonical model did not satisfy an additive equality with multiple
+    /// undetermined terms.
+    UnderdeterminedAdditiveEquality {
+        /// How many term positions were not pinned to constants.
+        undetermined: usize,
+    },
 }
 
 impl fmt::Display for FragmentViolation {
@@ -476,6 +537,10 @@ impl fmt::Display for FragmentViolation {
             Self::UnderdeterminedFactorization { undetermined } => write!(
                 formatter,
                 "{undetermined} undetermined terms in one factorization; the supported fragment admits at most one"
+            ),
+            Self::UnderdeterminedAdditiveEquality { undetermined } => write!(
+                formatter,
+                "{undetermined} undetermined terms in one additive equality and the canonical model does not satisfy it"
             ),
         }
     }
@@ -497,6 +562,15 @@ pub enum ConstraintConflict {
     FalseGroundRelation {
         /// The false relation.
         relation: ExtentRelation,
+    },
+    /// A fully observed additive equality has unequal sides.
+    AdditiveEqualityMismatch {
+        /// The rejected three-term relation.
+        relation: ExtentRelation,
+        /// Observed value of the sum term.
+        sum: u128,
+        /// Exact mathematical sum of the two observed addends.
+        addends: u128,
     },
     /// A factorization has no integer solution for its undetermined term.
     IndivisibleFactorization {
@@ -532,6 +606,14 @@ impl fmt::Display for ConstraintConflict {
                 "{symbol} is required to be both {first} and {second}"
             ),
             Self::FalseGroundRelation { relation } => write!(formatter, "`{relation}` is false"),
+            Self::AdditiveEqualityMismatch {
+                relation,
+                sum,
+                addends,
+            } => write!(
+                formatter,
+                "`{relation}` is false: the sum term is {sum} and the two addends total {addends}"
+            ),
             Self::IndivisibleFactorization {
                 relation,
                 product,
@@ -768,6 +850,7 @@ pub(super) fn solve(
     let edges = apply_relations(&mut classes, &index, &constants, relations, &mut domains)?;
     propagate(&mut classes, entries.len(), &edges, &mut domains);
     report_empty_domain(&mut classes, entries, &domains)?;
+    check_additive_model(&mut classes, &index, &constants, relations, &domains)?;
     Ok(Solution { classes, domains })
 }
 
@@ -1053,6 +1136,9 @@ fn apply_relations(
             // Merged and pinned already; a literal-only equality was refuted in
             // `merge_equalities` when false and asserts nothing when true.
             ExtentRelation::Equal { .. } => {}
+            ExtentRelation::AdditiveEquality { .. } => {
+                apply_additive_equality(classes, index, constants, relation, domains)?;
+            }
             ExtentRelation::Interval { term, lower, upper } => match term {
                 ExtentTerm::Symbol(symbol) => {
                     let root = classes.find(slot(index, symbol)?);
@@ -1096,6 +1182,111 @@ fn apply_relations(
         }
     }
     Ok(edges)
+}
+
+/// Solves an additive equality with at most one free term and defers the
+/// multi-free case to [`check_additive_model`].
+fn apply_additive_equality(
+    classes: &mut Classes,
+    index: &BTreeMap<&ShapeSymbol, usize>,
+    constants: &[Option<u64>],
+    relation: &ExtentRelation,
+    domains: &mut Domains,
+) -> Result<(), ShapeEnvError> {
+    let ExtentRelation::AdditiveEquality { sum, left, right } = relation else {
+        return Ok(());
+    };
+    let (sum_value, left_value, right_value) = (
+        resolve(classes, index, constants, sum)?,
+        resolve(classes, index, constants, left)?,
+        resolve(classes, index, constants, right)?,
+    );
+    match (sum_value, left_value, right_value) {
+        (Resolved::Known(sum_value), Resolved::Known(left), Resolved::Known(right)) => {
+            let addends = u128::from(left) + u128::from(right);
+            if u128::from(sum_value) != addends {
+                return Err(additive_mismatch(relation, u128::from(sum_value), addends));
+            }
+        }
+        (Resolved::Free(symbol), Resolved::Known(left), Resolved::Known(right)) => {
+            pin_domain(
+                classes,
+                index,
+                symbol,
+                u128::from(left) + u128::from(right),
+                domains,
+            )?;
+        }
+        (Resolved::Known(sum_value), Resolved::Free(symbol), Resolved::Known(right)) => {
+            let sum_value = u128::from(sum_value);
+            let right = u128::from(right);
+            let Some(left) = sum_value.checked_sub(right) else {
+                return Err(additive_mismatch(relation, sum_value, right));
+            };
+            pin_domain(classes, index, symbol, left, domains)?;
+        }
+        (Resolved::Known(sum_value), Resolved::Known(left), Resolved::Free(symbol)) => {
+            let sum_value = u128::from(sum_value);
+            let left = u128::from(left);
+            let Some(right) = sum_value.checked_sub(left) else {
+                return Err(additive_mismatch(relation, sum_value, left));
+            };
+            pin_domain(classes, index, symbol, right, domains)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn additive_mismatch(relation: &ExtentRelation, sum: u128, addends: u128) -> ShapeEnvError {
+    contradiction(ConstraintConflict::AdditiveEqualityMismatch {
+        relation: relation.clone(),
+        sum,
+        addends,
+    })
+}
+
+/// Proves the remaining additive equalities by the exact model the ordinary
+/// interval/congruence solver already constructed.
+fn check_additive_model(
+    classes: &mut Classes,
+    index: &BTreeMap<&ShapeSymbol, usize>,
+    constants: &[Option<u64>],
+    relations: &[&ExtentRelation],
+    domains: &Domains,
+) -> Result<(), ShapeEnvError> {
+    for relation in relations {
+        let ExtentRelation::AdditiveEquality { sum, left, right } = relation else {
+            continue;
+        };
+        let terms = [sum, left, right];
+        let mut undetermined = 0;
+        let mut values = [0_u128; 3];
+        for (position, term) in terms.into_iter().enumerate() {
+            values[position] = match resolve(classes, index, constants, term)? {
+                Resolved::Known(value) => u128::from(value),
+                Resolved::Free(symbol) => {
+                    undetermined += 1;
+                    let root = classes.find(slot(index, symbol)?);
+                    domains.lower[root]
+                }
+            };
+        }
+        if values[0] != values[1] + values[2] {
+            if undetermined <= 1 {
+                return Err(additive_mismatch(
+                    relation,
+                    values[0],
+                    values[1] + values[2],
+                ));
+            }
+            return Err(ShapeEnvError::UnsupportedRelation {
+                relation: Box::new((*relation).clone()),
+                violation: FragmentViolation::UnderdeterminedAdditiveEquality { undetermined },
+            });
+        }
+    }
+    Ok(())
 }
 
 fn apply_comparison(
