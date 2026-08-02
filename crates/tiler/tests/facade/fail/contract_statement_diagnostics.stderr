@@ -1,0 +1,47 @@
+error: this region states no numerical contract, so what its arithmetic means is undecided; add a `contract` statement to the declaration block, as in `contract flush_subnormals_to_zero_f32;`, naming one of `strict_f32`, `flush_subnormals_to_zero_f32`, `relaxed_f32`, `reassociate_f32`, `flush_and_reassociate_f32`. There is no default: a contract decides which results this program may return — whether subnormal operands flush to zero, and whether a sum may be regrouped — and two of these are different meanings rather than two settings, so choosing one here would choose what your program computes
+  --> tests/facade/fail/contract_statement_diagnostics.rs:23:21
+   |
+23 |       let _unstated = tiler::tensor! {
+   |  _____________________^
+24 | |         in a: f32[4], b: f32[4];
+25 | |         out a * b
+26 | |     };
+   | |_____^
+   |
+   = note: this error originates in the macro `tiler::tensor` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `fast_math` is not a numerical contract a region may state; this frontend names `strict_f32`, `flush_subnormals_to_zero_f32`, `relaxed_f32`, `reassociate_f32`, `flush_and_reassociate_f32`. Whether the target you deliver for can honour the contract you state is a separate question, answered by the compiler when it plans the region
+  --> tests/facade/fail/contract_statement_diagnostics.rs:31:18
+   |
+31 |         contract fast_math;
+   |                  ^^^^^^^^^
+
+error: `FLUSH_SUBNORMALS_TO_ZERO_F32` is not a numerical contract a region may state; this frontend names `strict_f32`, `flush_subnormals_to_zero_f32`, `relaxed_f32`, `reassociate_f32`, `flush_and_reassociate_f32`. Whether the target you deliver for can honour the contract you state is a separate question, answered by the compiler when it plans the region
+  --> tests/facade/fail/contract_statement_diagnostics.rs:39:18
+   |
+39 |         contract FLUSH_SUBNORMALS_TO_ZERO_F32;
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: expected `;` after a numerical contract name and found `-`
+  --> tests/facade/fail/contract_statement_diagnostics.rs:48:23
+   |
+48 |         contract flush-subnormals-to-zero-f32;
+   |                       ^
+
+error: this region already states a `contract` statement; a region states the numerical contract it compiles under once, because two statements would be two answers to what one region's arithmetic means and nothing here says which one it computes
+  --> tests/facade/fail/contract_statement_diagnostics.rs:57:9
+   |
+57 |         contract relaxed_f32;
+   |         ^^^^^^^^
+
+error: expected a numerical contract name and found `;`
+  --> tests/facade/fail/contract_statement_diagnostics.rs:64:17
+   |
+64 |         contract;
+   |                 ^
+
+error: the compiler recognizes this region and found no feasible plan for the declared Metal target profile under the `strict_f32` numerical contract this region states. Feasibility is a hard refusal with a reason rather than an expensive plan, and two causes are usual: a numerical contract the target profile's measured behaviour cannot honour, and a declared extent past its measured capacity. State a contract the target can honour, try smaller extents, or state `fallback-only` to expand with the semantic fallback on every target
+  --> tests/facade/fail/contract_statement_diagnostics.rs:75:9
+   |
+75 |         deliver macos;
+   |         ^^^^^^^

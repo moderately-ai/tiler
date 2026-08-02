@@ -28,8 +28,8 @@
 //!   the identifier that names the Rust value it will be supplied from.
 //!
 //! `binding` owns what `sym n;` means, `delivery` owns the artifact-family
-//! policy an expansion states, and `cache_root` owns where an expansion would
-//! look for an expansion cache.
+//! policy an expansion states, `numerics` owns the numerical contract it states,
+//! and `cache_root` owns where an expansion would look for an expansion cache.
 //!
 //! # What an invocation evaluates to
 //!
@@ -80,6 +80,7 @@ mod cache_root;
 mod delivery;
 mod family_cfg;
 mod grammar;
+mod numerics;
 mod region;
 mod tokens;
 
@@ -137,6 +138,7 @@ const ROUTE_FACTS_BINDING: &str = "__TILER_ROUTE_FACTS";
 /// tiler::tensor! {
 ///     sym n;
 ///     in a: f32[n], b: f32[n], c: f32[n];
+///     contract flush_subnormals_to_zero_f32;
 ///     out (a * b) + c
 /// }
 /// ```
@@ -144,8 +146,31 @@ const ROUTE_FACTS_BINDING: &str = "__TILER_ROUTE_FACTS";
 /// `sym` declares one symbolic extent, unified from every operand axis naming
 /// it. `in` declares the region's operands, each with its element type and its
 /// axes; an axis is a declared symbol or a literal extent, and either may carry
-/// a name. `out` names the single result expression. Both statements may be
-/// repeated, and `out` is terminal.
+/// a name. `contract` states the numerical contract the region computes under.
+/// `out` names the single result expression. `sym` and `in` may be repeated,
+/// `contract` may not, and `out` is terminal.
+///
+/// # The numerical contract
+///
+/// Every region states one, and there is no default: a contract decides which
+/// results the program may return — whether subnormal operands flush to zero,
+/// and whether a sum may be regrouped — and two of the admissible contracts are
+/// different meanings rather than two settings, so a region that states none is
+/// refused with a diagnostic naming the statement to add.
+///
+/// ```text
+/// contract strict_f32;                   // every freedom refused
+/// contract flush_subnormals_to_zero_f32; // subnormals flush to a signed zero
+/// contract reassociate_f32;              // one operand sequence may be regrouped
+/// contract flush_and_reassociate_f32;    // both of the two above
+/// contract relaxed_f32;                  // the reshaping freedoms, subnormals preserved
+/// ```
+///
+/// Whether the target a `deliver` statement selects can *honour* the stated
+/// contract is a separate question, answered by the compiler when it plans the
+/// region: a contract naming behaviour the target profile's measured declaration
+/// does not deliver is a hard refusal with a typed reason, never a quiet
+/// substitution.
 ///
 /// # The result expression
 ///
@@ -156,6 +181,7 @@ const ROUTE_FACTS_BINDING: &str = "__TILER_ROUTE_FACTS";
 /// ```text
 /// tiler::tensor! {
 ///     in x: f32[rows: 2, cols: 2];
+///     contract flush_subnormals_to_zero_f32;
 ///     out strict_serial_sum(x * 2.0 + 1.0, [cols])
 /// }
 /// ```
@@ -234,6 +260,15 @@ fn expand(trees: &[tokens::Tree<Span>], region: Span) -> Result<TokenStream, Ref
     let syntax = grammar::parse(trees, region).map_err(RegionError::from)?;
     let expansion = region::lower(&syntax)?;
 
+    // Resolved with the region's meaning and before anything about where it
+    // ships, because a numerical contract says which results the program may
+    // return rather than which targets receive it. It is resolved for every
+    // region, delivering or not: Tom's 2026-08-01 rule ends the default rather
+    // than moving it, so a `fallback-only` region has a stated meaning too. The
+    // refusals `region::lower` raises still come first, because each of those
+    // names a token the consumer wrote and an unstated contract names none.
+    let contract = numerics::stated_contract(syntax.contract.as_ref(), region)?;
+
     // The delivery policy is stated and validated before any token is produced,
     // and a policy this expansion cannot deliver returns the refusal instead of
     // the region. Emitting anyway would be the one thing ADR 0053 forbids
@@ -260,6 +295,7 @@ fn expand(trees: &[tokens::Tree<Span>], region: Span) -> Result<TokenStream, Ref
     let (delivery, route) = if selection.invokes_backend_compiler() {
         let delivered = aot::deliver(
             expansion.program.verified(),
+            contract,
             selection,
             &cache_root::RootEnvironment::from_process(),
             &tiler_metal_aot::driver::Toolchain::system(),
@@ -287,6 +323,9 @@ enum Refusal {
     /// The `deliver` statement names a profile, family, or deployment minimum
     /// this frontend cannot resolve.
     DeliveryStatement(delivery::StatementRefusal<Span>),
+    /// The region states no numerical contract, or states a name this frontend
+    /// does not publish.
+    Contract(numerics::ContractRefusal<Span>),
     /// The artifact-family delivery policy this expansion states is not one it
     /// can deliver.
     Delivery {
@@ -327,6 +366,7 @@ impl Refusal {
         match self {
             Self::Region(source) => *source.span(),
             Self::DeliveryStatement(source) => *source.span(),
+            Self::Contract(source) => *source.span(),
             Self::Delivery { span, .. }
             | Self::Aot { span, .. }
             | Self::MalformedEmission { span, .. } => *span,
@@ -339,6 +379,7 @@ impl fmt::Display for Refusal {
         match self {
             Self::Region(source) => source.fmt(formatter),
             Self::DeliveryStatement(source) => source.fmt(formatter),
+            Self::Contract(source) => source.fmt(formatter),
             Self::Delivery { source, .. } => source.fmt(formatter),
             Self::Aot { source, .. } => source.fmt(formatter),
             Self::MalformedEmission { source, .. } => write!(
@@ -359,6 +400,12 @@ impl From<RegionError<Span>> for Refusal {
 impl From<delivery::StatementRefusal<Span>> for Refusal {
     fn from(source: delivery::StatementRefusal<Span>) -> Self {
         Self::DeliveryStatement(source)
+    }
+}
+
+impl From<numerics::ContractRefusal<Span>> for Refusal {
+    fn from(source: numerics::ContractRefusal<Span>) -> Self {
+        Self::Contract(source)
     }
 }
 

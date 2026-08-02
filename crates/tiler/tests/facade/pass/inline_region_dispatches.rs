@@ -338,6 +338,7 @@ fn main() {
     let d = tiler::tensor! {
         in a: f32[4], b: f32[4], c: f32[4];
         deliver macos;
+        contract flush_subnormals_to_zero_f32;
         out (a * b) + c
     };
     let produced = d.expect("a pre-commit refusal is a fallback, not a region failure");
@@ -405,6 +406,7 @@ fn main() {
         );
         tiler::tensor! {
             in a: f32[4], b: f32[4], c: f32[4];
+            contract flush_subnormals_to_zero_f32;
             out (a * b) + c
         }
     };

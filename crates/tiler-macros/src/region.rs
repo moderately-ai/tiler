@@ -83,8 +83,10 @@
 //! reads — and `crates/tiler-compiler/tests/multi_input_elementwise_boundary.rs`
 //! carries the executable statement of the transition. What remains
 //! contract-dependent is `RelaxedF32`, which declines any fused
-//! multiply-then-add body at any input count; it is not the contract an
-//! expansion states, for the separate reason [`crate::aot`] records.
+//! multiply-then-add body at any input count — and a region may now state it,
+//! because [`crate::numerics`] decides which contracts are *nameable* and never
+//! which the target honours. Such a region is refused downstream, with the
+//! compiler's own reason, rather than here.
 //!
 //! [`AvailabilityPhase::LiveDevicePreflight`]: tiler_ir::program::abi::AvailabilityPhase::LiveDevicePreflight
 //! [`multiply_f32_op`]: tiler_ir::semantic::multiply_f32_op

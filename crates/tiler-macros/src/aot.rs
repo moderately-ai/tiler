@@ -8,10 +8,10 @@
 //! is a new authority: `tiler_compiler::session` optimizes, `tiler_metal`
 //! emits, `tiler_metal_aot` compiles, `tiler_artifact` identifies, and
 //! `tiler_cache` stores, and `tiler_build::accept_or_publish_metal_plan`
-//! sequences the five. What this module owns is the three decisions a *frontend*
+//! sequences the five. What this module owns is the two decisions a *frontend*
 //! must make and no one below it can: which target declaration a stated family
-//! selection corresponds to, which numerical contract to compile under, and
-//! where to look for the cache.
+//! selection corresponds to, and where to look for the cache. The numerical
+//! contract used to be a third and is now the region's own statement; see below.
 //!
 //! # Expansion runs inside `rustc`, so what runs when matters
 //!
@@ -94,11 +94,11 @@
 //! that today has exactly one entry, and gains a second when the measurement
 //! does.
 //!
-//! # The numerical contract was derived, and is now an open decision
+//! # The numerical contract was derived, then decided, and is now the region's
 //!
-//! The region grammar has no numerical statement, so the expansion states one.
-//! While a caller chose from four named presets there was nothing to choose: the
-//! bound declaration's measured `f32` row flushes subnormals to zero, so the
+//! This module used to state a contract, because the region grammar had no way
+//! to. While a caller chose from four named presets there was nothing to choose:
+//! the bound declaration's measured `f32` row flushes subnormals to zero, so the
 //! strict and permit-reassociation contracts — both of which require preserved
 //! input subnormals — were refused by the target's own numerical contract check
 //! before any plan was assessed, and the relaxed one permits arithmetic
@@ -106,15 +106,26 @@
 //! multiply adjacent to an add. One survived, and a test kept that a measured
 //! fact rather than a preference.
 //!
-//! **That test has since fired, exactly as it was designed to.**
-//! `NumericalContract` is composed from its dimensions now, so subnormal
-//! flushing and ordered regrouping are resolved independently and this
-//! declaration admits the combination of the two as well —
-//! `the_bound_declaration_admits_the_two_flushing_contracts` pins the pair.
-//! [`CONTRACT`] stays where it is because moving it would change what every
-//! expanded program *means*, not how it is planned, and
-//! `decide-the-inline-frontend-numerical-contract` is where that decision is
-//! recorded for Tom.
+//! That test fired, exactly as it was designed to: `NumericalContract` is
+//! composed from its dimensions now, so subnormal flushing and ordered
+//! regrouping resolve independently and this declaration admits the combination
+//! of the two as well — `the_bound_declaration_admits_the_two_flushing_contracts`
+//! pins the pair. Two admissible contracts is a real choice, and it is not a
+//! frontend's to make silently.
+//!
+//! **Tom decided it on 2026-08-01, at the live session** (relayed and executed by
+//! `state-the-numerical-contract-in-the-region-grammar`, whose provenance is
+//! `decide-the-inline-frontend-numerical-contract`): there is no default, the
+//! region states its numerical contract in its own text, and a region that
+//! states none is refused at expansion with a diagnostic naming what to write.
+//! So there is no contract constant here any more. [`deliver`] compiles under
+//! the contract its caller resolved from the region's own `contract` statement,
+//! and [`crate::numerics`] owns that vocabulary and both of its refusals.
+//!
+//! What stays here is the downstream half, and it is deliberately separate: a
+//! stated contract this declaration cannot honour is refused by the compiler's
+//! own target feasibility check, and reaches a consumer as
+//! [`AotRefusal::TargetCompile`] naming the contract that was stated.
 
 use core::fmt;
 
@@ -124,8 +135,7 @@ use tiler_build::{
 };
 use tiler_cache::expansion::{ExpansionCache, Resolution};
 use tiler_compiler::session::{
-    CompileFailure, CompileFailureClass, CompileRequest, NumericalContract, TargetCompileFailure,
-    compile,
+    CompileFailure, CompileFailureClass, CompileRequest, TargetCompileFailure, compile,
 };
 use tiler_compiler::target::{TargetRequest, TargetRequestError};
 use tiler_ir::semantic::SemanticProgram;
@@ -135,13 +145,7 @@ use tiler_metal_aot::input::{MetalTarget, OptimizationLevel};
 
 use crate::cache_root::{CacheRootDecision, RootEnvironment, RootRefusal, resolve};
 use crate::delivery::{DeliveryPlan, FamilyDelivery, PlanRefusal};
-
-/// The numerical contract every delivering expansion compiles under.
-///
-/// It was the sole survivor of an elimination and is now one of two admissible
-/// contracts; see this module's documentation for what changed and where the
-/// decision is recorded.
-pub(crate) const CONTRACT: NumericalContract = NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32;
+use crate::numerics::StatedContract;
 
 /// The optimization level every delivering expansion compiles at.
 ///
@@ -241,7 +245,18 @@ pub(crate) enum AotRefusal {
     /// The compiler refused the region before any target was qualified.
     Compile(CompileFailure),
     /// The compiler refused the region against the declared target profile.
-    TargetCompile(Box<TargetCompileFailure>),
+    ///
+    /// The stated contract's name is carried beside the failure because this is
+    /// where a contract the target cannot honour arrives: a region stating
+    /// `strict_f32` is refused here rather than in the grammar, and a diagnostic
+    /// that did not name the contract would leave a consumer with no reason to
+    /// look at the statement they wrote.
+    TargetCompile {
+        /// The name the region stated its contract by.
+        contract: &'static str,
+        /// The compiler's own target-scoped refusal.
+        source: Box<TargetCompileFailure>,
+    },
     /// The compiler produced no selected plan for the declared target.
     NoSelectedPlan,
     /// No expansion cache root could be resolved.
@@ -293,14 +308,14 @@ impl fmt::Display for AotRefusal {
             Self::Compile(source) => {
                 write!(formatter, "{}", rendered_refusal(source.class(), "at all"))
             }
-            Self::TargetCompile(source) => write!(
+            Self::TargetCompile { contract, source } => write!(
                 formatter,
                 "{}",
                 rendered_refusal(
                     source.class(),
                     &format!(
-                        "for the declared Metal target profile under the `{CONTRACT:?}` numerical \
-                         contract"
+                        "for the declared Metal target profile under the `{contract}` numerical \
+                         contract this region states"
                     ),
                 ),
             ),
@@ -364,11 +379,18 @@ fn rendered_refusal(class: CompileFailureClass, scope: &str) -> String {
              `admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary` is the \
              work that widens what is recognized"
         ),
+        // Two usual causes rather than one, and the first is new: since the
+        // region states its own numerical contract, a contract the target's
+        // measured behaviour cannot honour arrives here as a hard refusal.
+        // Naming only the extent would send a consumer who wrote `contract
+        // strict_f32;` to shrink a shape that was never the problem.
         CompileFailureClass::NoFeasiblePlan => format!(
-            "the compiler recognizes this region and found no feasible plan {scope}. A declared \
-             extent past the target's measured capacity is the usual cause, because feasibility is \
-             a hard refusal with a reason rather than an expensive plan: try smaller extents, or \
-             state `fallback-only` to expand with the semantic fallback on every target"
+            "the compiler recognizes this region and found no feasible plan {scope}. Feasibility \
+             is a hard refusal with a reason rather than an expensive plan, and two causes are \
+             usual: a numerical contract the target profile's measured behaviour cannot honour, \
+             and a declared extent past its measured capacity. State a contract the target can \
+             honour, try smaller extents, or state `fallback-only` to expand with the semantic \
+             fallback on every target"
         ),
         CompileFailureClass::BudgetExhausted => format!(
             "the compiler stopped searching for a plan {scope} because a deterministic search \
@@ -433,6 +455,11 @@ fn rendered_target(target: MetalTarget) -> String {
 /// Returns the exact refusing authority. Every one of them is a refusal rather
 /// than a downgrade to the semantic fallback, because ADR 0053 makes a selected
 /// family *required* on a matching consumer target.
+/// `contract` is the region's own stated numerical contract, resolved by
+/// [`crate::numerics`] and passed through unchanged: nothing here may narrow,
+/// widen, or substitute it to make the declared target feasible, so a contract
+/// this declaration cannot honour becomes [`AotRefusal::TargetCompile`] rather
+/// than a compilation under a different meaning.
 /// `environment` is the caller's snapshot of the two variables the cache-root
 /// policy is defined over rather than something read here, for
 /// [`crate::cache_root`]'s own reason: a decision that reaches for the process
@@ -445,6 +472,7 @@ fn rendered_target(target: MetalTarget) -> String {
 /// on a machine that does have them.
 pub(crate) fn deliver(
     program: Option<&SemanticProgram>,
+    contract: StatedContract,
     selection: ArtifactFamilySelection,
     environment: &RootEnvironment,
     toolchain: &Toolchain,
@@ -456,15 +484,18 @@ pub(crate) fn deliver(
 
     let targets =
         TargetRequest::new([declaration.profile().clone()]).map_err(AotRefusal::TargetRequest)?;
-    let batch =
-        compile(CompileRequest::new(program, CONTRACT, targets)).map_err(AotRefusal::Compile)?;
+    let batch = compile(CompileRequest::new(program, contract.contract(), targets))
+        .map_err(AotRefusal::Compile)?;
     let compilation = batch
         .into_targets()
         .pop()
         .ok_or(AotRefusal::NoSelectedPlan)?
         .into_parts()
         .1
-        .map_err(|failure| AotRefusal::TargetCompile(Box::new(failure)))?;
+        .map_err(|failure| AotRefusal::TargetCompile {
+            contract: contract.name(),
+            source: Box::new(failure),
+        })?;
     let plan = compilation.selected().ok_or(AotRefusal::NoSelectedPlan)?;
 
     let cache = open_cache(environment)?;

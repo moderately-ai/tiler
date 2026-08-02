@@ -23,11 +23,20 @@
 //! deliver macos 26.0, ios 26.0; // a family list, when a floor must be stated
 //! ```
 //!
+//! A fifth statement follows Tom's 2026-08-01 decision that no numerical
+//! contract may be assumed: `contract` states the numerical contract the region
+//! compiles under, beside the other three, and names it with one identifier.
+//!
+//! ```text
+//! contract flush_subnormals_to_zero_f32;
+//! ```
+//!
 //! This module owns exactly the shape of that text. It knows nothing about the
-//! semantic operation registry, the shape environment, artifact delivery, or
-//! what any name means — [`crate::region`] decides all of that, and
-//! [`crate::delivery`] decides which profiles and families exist. The split is
-//! what keeps a syntax error reported at the token that is wrong rather than at
+//! semantic operation registry, the shape environment, artifact delivery, the
+//! numerical contract vocabulary, or what any name means — [`crate::region`]
+//! decides all of that, [`crate::delivery`] decides which profiles and families
+//! exist, and [`crate::numerics`] decides which contracts do. The split is what
+//! keeps a syntax error reported at the token that is wrong rather than at
 //! whatever later stage first noticed: an unknown profile name is refused at the
 //! name by the module that owns the vocabulary, and a malformed deployment
 //! minimum is refused at the version by this one.
@@ -41,13 +50,14 @@
 //! and the spans are the ones the consumer's own tokens carry — the dtype error
 //! lands on the dtype, not on the operand and not on the invocation.
 //!
-//! # Statements repeat; `deliver` does not; the body terminates
+//! # Statements repeat; `deliver` and `contract` do not; the body terminates
 //!
 //! `sym` and `in` may each appear more than once, because nothing is gained by
 //! forcing one line and a region that grows an operand should not have to
-//! rewrite a list. `deliver` may appear at most once, because two `deliver`
-//! statements would be two delivery policies for one invocation and nothing
-//! about the text says which wins. `out` is terminal: it takes the rest of the
+//! rewrite a list. `deliver` and `contract` may each appear at most once,
+//! because two of either would be two answers to one question — which families
+//! this invocation builds for, and what its arithmetic means — and nothing about
+//! the text says which wins. `out` is terminal: it takes the rest of the
 //! invocation as one expression, so a second `out`, a stray `;`, or anything
 //! after the body is a refusal at that token rather than a silently ignored
 //! tail.
@@ -55,6 +65,13 @@
 //! No `deliver` statement is not a missing one. Its absence resolves to
 //! `FallbackOnly`, the policy every region stated before this statement existed,
 //! so a region written without it expands to exactly the tokens it did before.
+//!
+//! No `contract` statement *is* a missing one, and that asymmetry is Tom's
+//! decision rather than an oversight: an absent delivery policy builds nothing,
+//! while an absent numerical contract would have to be filled in with a meaning
+//! nobody wrote. This module still parses such a region — absence is a shape it
+//! can represent, and the refusal names a vocabulary this module does not own —
+//! so the refusal is [`crate::numerics`]'s.
 //!
 //! # A body reduces, and it names constants
 //!
@@ -99,6 +116,17 @@ const SYM_KEYWORD: &str = "sym";
 const IN_KEYWORD: &str = "in";
 /// The keyword introducing the artifact-family delivery statement.
 const DELIVER_KEYWORD: &str = "deliver";
+/// The keyword introducing the region's numerical contract statement.
+///
+/// `contract` rather than `numerics`, and the difference is what the statement
+/// denotes: a region does not state a field of study, it states one contract —
+/// the same word the compiler's own [`NumericalContract`] type is named for, and
+/// the same word `docs/integration/frontends.md` uses for the thing an expansion
+/// compiles under. Every admissible name ends in the arithmetic type it speaks
+/// for, so nothing about the statement reads as unqualified.
+///
+/// [`NumericalContract`]: tiler_compiler::session::NumericalContract
+const CONTRACT_KEYWORD: &str = "contract";
 /// The keyword introducing the region's result expression.
 const OUT_KEYWORD: &str = "out";
 
@@ -229,6 +257,22 @@ pub(crate) struct DeliverySyntax<S> {
     pub(crate) stated: StatedDelivery<S>,
 }
 
+/// One `contract` statement as its tokens spell it.
+///
+/// One identifier and a terminator, unlike [`DeliverySyntax`]: a contract name
+/// is a single ordinary identifier, so nothing here joins hyphens and the name
+/// carries the whole of what a consumer wrote. That is what lets an unknown name
+/// be refused at exactly the token that names it, rather than at the first
+/// fragment of a name Rust's lexer split.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ContractSyntax<S> {
+    /// The `contract` keyword, which is the token a refusal about the statement
+    /// as a whole is reported at.
+    pub(crate) keyword: S,
+    /// The contract's name, whose vocabulary [`crate::numerics`] owns.
+    pub(crate) name: Name<S>,
+}
+
 /// One operator the region body spells.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Operator {
@@ -306,6 +350,13 @@ pub(crate) struct RegionSyntax<S> {
     pub(crate) operands: Vec<OperandSyntax<S>>,
     /// The one `deliver` statement, or nothing when the region states none.
     pub(crate) delivery: Option<DeliverySyntax<S>>,
+    /// The one `contract` statement, or nothing when the region states none.
+    ///
+    /// `Option` because this module reports the *shape* of the text and a region
+    /// with no such statement is a shape it can read. That it is not a region
+    /// anything may expand is [`crate::numerics`]'s refusal, made where the
+    /// admissible names it must offer are known.
+    pub(crate) contract: Option<ContractSyntax<S>>,
     /// The `out` keyword, so a body-level refusal has a token.
     pub(crate) out: S,
     /// The result expression.
@@ -426,6 +477,11 @@ pub(crate) enum SyntaxError<S> {
         /// The second `deliver` keyword.
         span: S,
     },
+    /// The region states more than one `contract` statement.
+    RepeatedContractStatement {
+        /// The second `contract` keyword.
+        span: S,
+    },
     /// The region declares no `out` body.
     MissingBody {
         /// The invocation.
@@ -494,9 +550,9 @@ impl<S> fmt::Display for SyntaxError<S> {
             ),
             Self::ExpectedStatement { found, .. } => write!(
                 formatter,
-                "expected `{SYM_KEYWORD}`, `{IN_KEYWORD}`, `{DELIVER_KEYWORD}`, or \
-                 `{OUT_KEYWORD}` and found {found}; a region is a declaration block followed by \
-                 one `{OUT_KEYWORD}` expression"
+                "expected `{SYM_KEYWORD}`, `{IN_KEYWORD}`, `{DELIVER_KEYWORD}`, \
+                 `{CONTRACT_KEYWORD}`, or `{OUT_KEYWORD}` and found {found}; a region is a \
+                 declaration block followed by one `{OUT_KEYWORD}` expression"
             ),
             Self::RawIdentifier { name, .. } => write!(
                 formatter,
@@ -570,6 +626,13 @@ impl<S> fmt::Display for SyntaxError<S> {
                  artifact-family delivery policy once, because two statements would be two \
                  policies for one invocation and nothing here says which one delivers"
             ),
+            Self::RepeatedContractStatement { .. } => write!(
+                formatter,
+                "this region already states a `{CONTRACT_KEYWORD}` statement; a region states the \
+                 numerical contract it compiles under once, because two statements would be two \
+                 answers to what one region's arithmetic means and nothing here says which one it \
+                 computes"
+            ),
             Self::MissingBody { .. } => write!(
                 formatter,
                 "this region declares no result; add `{OUT_KEYWORD} <expression>`, which is the \
@@ -628,6 +691,7 @@ impl<S> SyntaxError<S> {
             | Self::ExpectedDeploymentMinimum { span, .. }
             | Self::MalformedDeploymentMinimum { span, .. }
             | Self::RepeatedDeliveryStatement { span }
+            | Self::RepeatedContractStatement { span }
             | Self::MissingBody { span }
             | Self::EmptyBody { span }
             | Self::ExpectedOperandReference { span, .. }
@@ -661,6 +725,7 @@ pub(crate) fn parse<S: Copy>(
     let mut symbols = Vec::new();
     let mut operands = Vec::new();
     let mut delivery = None;
+    let mut contract = None;
 
     loop {
         let Some(tree) = cursor.peek() else {
@@ -686,6 +751,18 @@ pub(crate) fn parse<S: Copy>(
                 }
                 delivery = Some(parse_delivery_statement(&mut cursor, keyword)?);
             }
+            Tree::Ident { name, raw, span } if !raw && name == CONTRACT_KEYWORD => {
+                let keyword = *span;
+                let _keyword = cursor.advance();
+                // Refused before the statement is read, for the reason a second
+                // `deliver` is: the repetition is what is wrong, and it is
+                // reported at the keyword that repeats rather than at whatever
+                // its name turns out to be.
+                if contract.is_some() {
+                    return Err(SyntaxError::RepeatedContractStatement { span: keyword });
+                }
+                contract = Some(parse_contract_statement(&mut cursor, keyword)?);
+            }
             Tree::Ident { name, raw, span } if !raw && name == OUT_KEYWORD => {
                 let out = *span;
                 let _keyword = cursor.advance();
@@ -701,6 +778,7 @@ pub(crate) fn parse<S: Copy>(
                     symbols,
                     operands,
                     delivery,
+                    contract,
                     out,
                     body,
                 });
@@ -802,6 +880,27 @@ fn parse_delivery_statement<S: Copy>(
             Err(SyntaxError::ExpectedDeliverySpecifier { found, span })
         }
     }
+}
+
+/// Reads `contract flush_subnormals_to_zero_f32;` after its keyword.
+///
+/// One ordinary identifier, then the terminator every declaration statement
+/// ends with. There is no list and no second production, because a region
+/// compiles under one numerical contract: a list would be several meanings for
+/// one program, and this grammar has no spelling for choosing between them.
+///
+/// The name is taken by [`Cursor::name`] rather than by
+/// [`parse_hyphenated_name`], which is what keeps a refusal about the vocabulary
+/// on the whole name: a hyphenated spelling would arrive as several tokens and
+/// carry only the first one's span, because joining spans needs the unstable
+/// `Span::join`.
+fn parse_contract_statement<S: Copy>(
+    cursor: &mut Cursor<'_, S>,
+    keyword: S,
+) -> Result<ContractSyntax<S>, SyntaxError<S>> {
+    let name = cursor.name("a numerical contract name", keyword)?;
+    let _terminator = cursor.punct(';', "after a numerical contract name", name.span)?;
+    Ok(ContractSyntax { keyword, name })
 }
 
 /// Reads one name that may carry hyphens, as `fallback-only` does.

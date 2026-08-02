@@ -5,37 +5,37 @@ error: `k` is used as an extent but never declared; add `sym k;` to the region's
    |                              ^
 
 error: `sym m;` is declared but no operand axis names it, so nothing supplies its value; give an operand an axis of extent `m`, or remove the declaration
-  --> tests/facade/fail/region_meaning_diagnostics.rs:18:16
+  --> tests/facade/fail/region_meaning_diagnostics.rs:19:16
    |
-18 |         sym n, m;
+19 |         sym n, m;
    |                ^
 
 error: operand `a` is declared twice; an interface key names one operand
-  --> tests/facade/fail/region_meaning_diagnostics.rs:26:23
+  --> tests/facade/fail/region_meaning_diagnostics.rs:28:23
    |
-26 |         in a: f32[n], a: f32[n];
+28 |         in a: f32[n], a: f32[n];
    |                       ^
 
 error: `sym n` is declared twice; one `sym` statement declares one extent variable, and every operand axis naming it is unified against that one declaration
-  --> tests/facade/fail/region_meaning_diagnostics.rs:33:13
+  --> tests/facade/fail/region_meaning_diagnostics.rs:36:13
    |
-33 |         sym n;
+36 |         sym n;
    |             ^
 
 error: `b` is used in the region's result but no `in` statement declares it; a region reads only the operands it declares, never a value from the surrounding Rust
-  --> tests/facade/fail/region_meaning_diagnostics.rs:43:17
+  --> tests/facade/fail/region_meaning_diagnostics.rs:48:17
    |
-43 |         out a * b
+48 |         out a * b
    |                 ^
 
 error: `*` cannot combine a `[4]` operand with a `[5]` one; operand shapes must match or one operand must be scalar
-  --> tests/facade/fail/region_meaning_diagnostics.rs:49:15
+  --> tests/facade/fail/region_meaning_diagnostics.rs:55:15
    |
-49 |         out a * b
+55 |         out a * b
    |               ^
 
 error: `*` cannot combine a `[n]` operand with a `[m]` one; operand shapes must match or one operand must be scalar
-  --> tests/facade/fail/region_meaning_diagnostics.rs:57:15
+  --> tests/facade/fail/region_meaning_diagnostics.rs:64:15
    |
-57 |         out a * b
+64 |         out a * b
    |               ^

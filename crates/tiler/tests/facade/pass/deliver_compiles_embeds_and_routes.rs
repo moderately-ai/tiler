@@ -205,6 +205,7 @@ fn main() {
     let d = tiler::tensor! {
         in a: f32[4], b: f32[4], c: f32[4];
         deliver macos;
+        contract flush_subnormals_to_zero_f32;
         out (a * b) + c
     };
 
@@ -220,6 +221,7 @@ fn main() {
     let (a, b, c) = (operand(), operand(), operand());
     let plain = tiler::tensor! {
         in a: f32[4], b: f32[4], c: f32[4];
+        contract flush_subnormals_to_zero_f32;
         out (a * b) + c
     };
     assert_eq!(
@@ -237,6 +239,7 @@ fn main() {
     let summed = tiler::tensor! {
         in x: f32[rows: 2, cols: 2];
         deliver macos;
+        contract flush_subnormals_to_zero_f32;
         out strict_serial_sum(x * 2.0 + 1.0, [cols])
     };
     assert_eq!(

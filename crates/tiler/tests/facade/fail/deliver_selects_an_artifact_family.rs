@@ -30,6 +30,7 @@ fn main() {
         sym n;
         in a: f32[n], b: f32[n];
         deliver macos;
+        contract flush_subnormals_to_zero_f32;
         out a * b
     };
 
@@ -37,6 +38,7 @@ fn main() {
     let _ios = tiler::tensor! {
         in a: f32[4], b: f32[4];
         deliver ios;
+        contract flush_subnormals_to_zero_f32;
         out a * b
     };
 
@@ -46,6 +48,7 @@ fn main() {
     let _both = tiler::tensor! {
         in a: f32[4], b: f32[4];
         deliver macos-and-ios;
+        contract flush_subnormals_to_zero_f32;
         out a * b
     };
 
@@ -53,6 +56,7 @@ fn main() {
     let _low = tiler::tensor! {
         in a: f32[4], b: f32[4];
         deliver macos 14.0;
+        contract flush_subnormals_to_zero_f32;
         out a * b
     };
 }
