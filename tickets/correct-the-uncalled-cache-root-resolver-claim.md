@@ -1,7 +1,7 @@
 ---
 id: correct-the-uncalled-cache-root-resolver-claim
 title: Correct the uncalled cache-root resolver claim at all four sites
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [re-own-or-close-the-open-questions-whose-owner-tickets-are-terminal]
@@ -9,6 +9,9 @@ scopes: [contracts/navigation, research/cache, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, cache, status-drift, graph-repair]
+claimed_from: todo
+assignee: coordinator
+lease_expires_at: 1785685776
 ---
 ## User-visible outcome
 
