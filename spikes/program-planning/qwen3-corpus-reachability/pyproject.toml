@@ -1,0 +1,39 @@
+# Environment for the Qwen3-0.6B-Base conformance-corpus reachability probe.
+#
+# It is the C1 conformance fixture's environment, copied rather than re-resolved,
+# and that is deliberate. This probe's product is a candidate corpus row whose
+# expected outcome a later run has to reproduce, and it is compared against
+# figures the fixture measured under exactly this resolution. A second resolution
+# would make "the same reference" an assumption instead of a checked fact, and a
+# probe that disagreed with the fixture would then be indistinguishable from a
+# probe that ran against a different `transformers`. `transformers` is fixed at
+# 4.51.0 because the checkpoint's own `config.json` declares that version, which
+# makes it the definitional reference rather than one candidate; `torch` is fixed
+# because reduction order in its CPU kernels is what a logit bit pattern is a
+# fingerprint of.
+[project]
+name = "qwen3-corpus-reachability"
+version = "0.1.0"
+description = "Reachability probe for the tie branch and the exceptional stored values of the pinned Qwen3-0.6B-Base checkpoint"
+requires-python = "==3.11.*"
+dependencies = [
+    "torch==2.6.0",
+    "transformers==4.51.0",
+    "tokenizers==0.21.1",
+    "safetensors==0.5.3",
+    "numpy==2.2.5",
+    # Not optional here despite being an optional extra of `transformers`:
+    # 4.51.0's `from_pretrained` defaults to the meta-device init path for a
+    # safetensors checkpoint and calls `init_empty_weights`, which lives in
+    # `accelerate`. Without it the load raises `NameError` before any tensor is
+    # read. The alternative -- `low_cpu_mem_usage=False` -- would materialize a
+    # randomly initialized model first and is a worse default for a fixture,
+    # because a weight that failed to load would be random rather than absent.
+    "accelerate==1.6.0",
+]
+
+# Tiler develops on macOS only, so the lock resolves for exactly that platform
+# rather than carrying resolutions (CUDA wheel variants above all) for hosts
+# this repository does not support.
+[tool.uv]
+environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]

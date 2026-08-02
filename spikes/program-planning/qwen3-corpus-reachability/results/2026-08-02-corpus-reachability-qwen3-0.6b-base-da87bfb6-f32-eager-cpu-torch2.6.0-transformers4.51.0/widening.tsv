@@ -1,0 +1,6 @@
+stored_class	widened_class	patterns
+infinite	infinite	2
+nan	nan	254
+normal	normal	65024
+subnormal	subnormal	254
+zero	zero	2
