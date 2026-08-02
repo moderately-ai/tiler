@@ -1,7 +1,7 @@
 ---
 id: package-a-multi-entry-bundle-from-one-expansion
 title: Package and dispatch a multi-entry bundle from one expansion
-status: todo
+status: in-progress
 priority: p2
 dependencies: [denote-a-reduction-region-in-the-inline-macro-grammar, compose-the-numerical-contract-from-its-decided-dimensions]
 related: [prototype-inline-aot-integration-proof, dispatch-a-tiler-region-on-metal-hardware, admit-multi-input-elementwise-programs-at-the-compiler-boundary, reach-a-reassociation-permitting-contract-from-a-bound-metal-declaration, calibrate-and-activate-parallel-reduction-selection]
@@ -10,8 +10,8 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, frontend, inline-dx, artifacts]
 claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785611640
+assignee: agent-multi-entry
+lease_expires_at: 1785689920
 ---
 ## User-visible outcome
 

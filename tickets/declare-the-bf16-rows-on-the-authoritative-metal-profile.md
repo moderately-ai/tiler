@@ -1,14 +1,17 @@
 ---
 id: declare-the-bf16-rows-on-the-authoritative-metal-profile
 title: Declare the measured BF16 dispatchability and subnormal rows on the Metal profile
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-a-bf16-scalar-arithmetic-subject]
 related: [spike-bf16-through-the-second-dtype-seams, construct-and-bind-the-first-authoritative-metal-compile-profile, measure-the-apple-subnormal-flush-for-the-remaining-mature-dtypes, decide-per-dtype-dispatchability-as-a-target-capability, measure-apple-numerics-on-physical-ios-device]
-scopes: [implementation/build, implementation/metal]
+scopes: [implementation/build, implementation/metal, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, bf16, target-profiles, metal, apple-targets]
+claimed_from: todo
+assignee: agent-bf16-rows
+lease_expires_at: 1785689920
 ---
 ## User-visible outcome
 
