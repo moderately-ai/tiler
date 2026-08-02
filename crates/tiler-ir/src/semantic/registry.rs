@@ -11,6 +11,7 @@ use crate::shape::Axis;
 use super::bf16::register_standard_bf16;
 use super::broadcast::register_standard_broadcast;
 use super::catalog::register_builtin_dtype_catalog;
+use super::concatenate::register_standard_concatenate;
 use super::contraction::register_standard_contraction;
 use super::operation::{
     CanonicalValueKind, F32_CONSTANT_BITS_ATTRIBUTE, OpKey, OperationAlgebraicCapabilities,
@@ -2137,6 +2138,11 @@ impl SemanticRegistryProvider for StandardSemantics {
         register_standard_softmax(registrar)?;
         register_standard_reindex(registrar)?;
         register_standard_broadcast(registrar)?;
+        // The third structural family, and the first with a variadic operand
+        // arity. It follows the two coordinate-mapping families because it is the
+        // one that *joins* values rather than remapping one; registration order
+        // fixes nothing about semantics.
+        register_standard_concatenate(registrar)?;
         register_standard_quantization(registrar)
     }
 }
