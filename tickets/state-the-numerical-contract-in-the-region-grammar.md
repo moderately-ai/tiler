@@ -1,7 +1,7 @@
 ---
 id: state-the-numerical-contract-in-the-region-grammar
 title: State the numerical contract in the region grammar, explicitly
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [decide-the-inline-frontend-numerical-contract, denote-a-reduction-region-in-the-inline-macro-grammar, calibrate-and-activate-parallel-reduction-selection]
@@ -9,6 +9,9 @@ scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, frontend, inline-dx, numerics, public-boundary]
+claimed_from: todo
+assignee: coordinator
+lease_expires_at: 1785634941
 ---
 ## User-visible outcome
 

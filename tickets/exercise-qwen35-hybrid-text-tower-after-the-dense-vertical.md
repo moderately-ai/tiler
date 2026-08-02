@@ -1,7 +1,7 @@
 ---
 id: exercise-qwen35-hybrid-text-tower-after-the-dense-vertical
 title: Exercise the Qwen3.5 hybrid text tower after the dense model vertical
-status: todo
+status: deferred
 priority: p2
 dependencies: [design-model-level-qualification-and-optimization]
 related: [define-first-metal-lm-workload, derive-transformer-operation-and-shape-surface]

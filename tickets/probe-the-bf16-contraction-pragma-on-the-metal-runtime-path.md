@@ -1,7 +1,7 @@
 ---
 id: probe-the-bf16-contraction-pragma-on-the-metal-runtime-path
 title: Probe the BF16 contraction pragma on the Metal runtime path
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [design-the-bf16-computation-and-accumulator-contract, probe-metal-runtime-compilation-numerics, declare-metal-numerical-honourability]
@@ -9,6 +9,9 @@ scopes: [research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, apple-targets, numerics, bf16, contraction, measurement]
+claimed_from: todo
+assignee: coordinator
+lease_expires_at: 1785634941
 ---
 ## User-visible outcome
 

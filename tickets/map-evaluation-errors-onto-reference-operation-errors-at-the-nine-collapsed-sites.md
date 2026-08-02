@@ -1,7 +1,7 @@
 ---
 id: map-evaluation-errors-onto-reference-operation-errors-at-the-nine-collapsed-sites
 title: Map evaluation errors onto reference-operation errors at the nine collapsed sites
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: coordinator
+lease_expires_at: 1785634941
 ---
 ## User-visible outcome
 
