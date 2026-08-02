@@ -1,7 +1,7 @@
 ---
 id: admit-a-bf16-scalar-arithmetic-subject
 title: Admit a BF16 scalar-arithmetic subject so a BF16 numerical row is statable
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [spike-bf16-through-the-second-dtype-seams, admit-a-caller-declared-target-profile, declare-metal-numerical-honourability, own-the-dtype-support-maturity-matrix]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, bf16, target-profiles, numerics]
-claimed_from: todo
-assignee: agent-bf16-r2
-lease_expires_at: 1785686685
 ---
 ## User-visible outcome
 
