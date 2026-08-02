@@ -32,13 +32,13 @@ static inline float tiler_canonicalize_nan_f32_7fc00000(float value) {
     return nan ? as_type<float>(0x7fc00000u) : value;
 }
 
-// Entry point tiler_kernel_c847162d8e9cb971
-//   kernel identity digest: c847162d8e9cb971
-//   scheduled region identity digest: 779a7c95293aa47c
+// Entry point tiler_kernel_84a19b3952217eba
+//   kernel identity digest: 84a19b3952217eba
+//   scheduled region identity digest: 3f4b18ba891ef7c9
 //   numerical profile: tiler.test.strict-f32
 //   buffer(0): Input 0 tensor, F32, Device space, Read access, 4 element(s)
 //   buffer(1): Intermediate tensor, F32, Device space, Write access, 4 element(s)
-kernel void tiler_kernel_c847162d8e9cb971(
+kernel void tiler_kernel_84a19b3952217eba(
         device const float *b0 [[buffer(0)]],
         device float *b1 [[buffer(1)]],
         uint tiler_global_invocation_index [[thread_position_in_grid]]) {

@@ -11,7 +11,7 @@ use crate::shape::{Axis, Shape};
 
 use super::cooperative::{
     ContributorArrival, CooperativePhase, CooperativeTile, LocalCoordinates, ParticipantRange,
-    StagedRead, StagedSpan, StagedWrite, WorkgroupStaging,
+    ParticipantSpace, StagedRead, StagedSpan, StagedWrite, WorkgroupStaging,
 };
 use super::error::{ContributorError, ElementCountOverflow};
 use super::handles::{BoundsWitnessId, InputOrdinal, OwnershipWitnessId, RegionId};
@@ -1616,9 +1616,41 @@ fn push_participant_range(bytes: &mut Vec<u8>, range: ParticipantRange) {
     bytes.extend_from_slice(&range.count.to_be_bytes());
 }
 
+/// Encodes the shape one cooperative tile's participants occupy.
+///
+/// The rank is framed through [`push_len`] and exactly `rank` extents follow, so
+/// the run's end is determined before it is read.
+///
+/// **The inline array's unused tail is deliberately not written.** Both this
+/// encoder and [`push_staged_span`] frame the rank and the *used* elements
+/// alone, which is what keeps identity injective on meaning in both directions:
+/// two spaces that differ in meaning differ in these bytes, because the rank and
+/// every used extent are all recoverable; and two spaces *equal* in meaning
+/// encode identically, because nothing beyond the rank reaches the bytes. The
+/// second direction is what a fixed-rank array would otherwise put at risk — a
+/// rank-one space whose tail held stale values would encode differently from an
+/// identical one whose tail held zeroes. `ParticipantSpace::new` zeroes the tail
+/// so the derived `Eq` and `Hash` agree with this encoding as well, and the two
+/// guarantees are separate: the constructor makes equality agree, and this
+/// encoder makes identity agree, and neither substitutes for the other.
+fn push_participant_space(bytes: &mut Vec<u8>, space: ParticipantSpace) {
+    push_len(bytes, space.rank());
+    for extent in space.extents() {
+        bytes.extend_from_slice(&extent.to_be_bytes());
+    }
+}
+
 /// Encodes the slots one participant addresses in one phase.
+///
+/// The strides lead, framed by their own rank, so a reader that has the
+/// participant space already knows the run length before it reads one; `offset`
+/// and `count` follow at positions the frame determines. The array's unused tail
+/// is not written, for the reason [`push_participant_space`] states in full.
 fn push_staged_span(bytes: &mut Vec<u8>, span: StagedSpan) {
-    bytes.extend_from_slice(&span.stride.to_be_bytes());
+    push_len(bytes, span.rank());
+    for stride in span.strides() {
+        bytes.extend_from_slice(&stride.to_be_bytes());
+    }
     bytes.extend_from_slice(&span.offset.to_be_bytes());
     bytes.extend_from_slice(&span.count.to_be_bytes());
 }
@@ -1719,15 +1751,16 @@ fn push_synchronization_point(bytes: &mut Vec<u8>, point: &SynchronizationPoint)
 /// phase record, because it scopes every one of them: a phase runs `rounds`
 /// times and an allocation's declared lifetime is a within-round one. That
 /// placement *inserts* into the payload rather than appending to it, and it is
-/// what `tiler.schedule.v4` exists for — see [`encode_identity`] for why an
-/// append here would not have been safe either.
+/// what `tiler.schedule.v4` existed for — see [`encode_identity`] for why an
+/// append there would not have been safe either, and for why the participant
+/// space and stride vector this now writes forced `v5`.
 fn push_cooperative_tile(bytes: &mut Vec<u8>, tile: &CooperativeTile) {
     let LocalCoordinates {
         source,
         participants,
     } = tile.coordinates;
     bytes.push(source.tag());
-    push_participant_range(bytes, participants);
+    push_participant_space(bytes, participants);
     bytes.extend_from_slice(&tile.rounds.to_be_bytes());
     push_len(bytes, tile.staging.len());
     for staging in &tile.staging {
@@ -1838,14 +1871,36 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
 /// versioned domain separator (ADR 0074 convention 3). This encoder was the
 /// only site that omitted the terminator.
 ///
-/// # Why this is a `v4` step
+/// # Why this is a `v5` step
 ///
-/// `v4` gives [`CooperativeTile`] its round count, so a tile can state that its
+/// `v5` widens the cooperative staging relation to two dimensions (ADR 0097). A
+/// tile's participants occupy a stated [`ParticipantSpace`] rather than a
+/// contiguous range, and a [`StagedSpan`] carries one stride per participant
+/// dimension rather than a single stride over a linear coordinate. Both changes
+/// land *inside* records that repeat — the coordinates of every tile, and every
+/// staged write and staged read of every phase — and both replace an unframed
+/// fixed-width run with a length-framed one, so every cooperative region's bytes
+/// move and no earlier reader keeps framing.
+///
+/// **An append was not available, and this time the encoding says so on its own
+/// terms rather than by the argument `v4` had to make.** A stride vector is not
+/// an added field beside a stride; it is a different relation in the same
+/// position, so there is no position to append to. The framing is what makes the
+/// widened form injective: the rank leads through `push_len`, exactly `rank`
+/// eight-byte elements follow, and `offset` and `count` sit at positions the
+/// frame determines — so no two spans differing in rank, strides, offset, or
+/// count share bytes, and the inline array's unused tail never enters the
+/// encoding at all, which is what keeps two spans *equal* in meaning from
+/// differing in identity.
+///
+/// # Why this was a `v4` step
+///
+/// `v4` gave [`CooperativeTile`] its round count, so a tile can state that its
 /// phase sequence repeats and that its staging is rewritten between rounds. The
 /// field lands *inside* the `0x35` topology payload, ahead of the staging and
 /// phase records, so every cooperative region's bytes move.
 ///
-/// **The append that would have avoided it is not available, and the reason is
+/// **The append that would have avoided it was not available, and the reason is
 /// worth stating because the arm's earlier extensions did rely on it.** Both
 /// `TAG_REDUCTION_COOPERATIVE_WORKGROUP` and the `arrival` byte after it were
 /// justified by "no cooperative region has ever reached a retained identity", a
@@ -1875,7 +1930,7 @@ fn push_schedule(bytes: &mut Vec<u8>, schedule: &KernelSchedule) {
 /// the domain.
 pub(super) fn encode_identity(region: &ScheduledRegion) -> CanonicalScheduledRegionIdentity {
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"tiler.schedule.v4\0");
+    bytes.extend_from_slice(b"tiler.schedule.v5\0");
     push_shape(&mut bytes, &region.index.iteration_shape);
     push_len(&mut bytes, region.index.accesses.len());
     for access in &region.index.accesses {

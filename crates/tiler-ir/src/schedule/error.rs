@@ -146,8 +146,23 @@ pub enum CooperativeTileRule {
     /// its workgroup leaves the remaining invocations outside every phase, and
     /// a synchronization point they never reach is divergent.
     ParticipantConvergence,
-    /// The local coordinate space is not the dense run `0..participants`.
+    /// The participant space is empty, has a zero extent, or its extent product
+    /// overflows.
+    ///
+    /// A rank above
+    /// [`MAX_COOPERATIVE_PARTICIPANT_RANK`](crate::schedule::MAX_COOPERATIVE_PARTICIPANT_RANK)
+    /// is deliberately *not* among these: the space's constructor makes it
+    /// unrepresentable, so nothing that reaches this rule can carry one.
     LocalCoordinates,
+    /// A staged span's stride vector does not have one entry per participant
+    /// dimension.
+    ///
+    /// Separate from [`Self::StagingCapacity`], which says a span leaves the
+    /// storage the tile declared, and from [`Self::LocalCoordinates`], which
+    /// says the participant space is malformed: this one says a well-formed span
+    /// and a well-formed space disagree about how many dimensions there are, and
+    /// neither is wrong on its own terms.
+    SpanRank,
     /// The phase ordinals are not the dense ascending run `0..phases`.
     PhaseSequence,
     /// A phase is reachable by only some of the tile's participants.
@@ -223,6 +238,7 @@ impl CooperativeTileRule {
         match self {
             Self::ParticipantConvergence => "cooperative-participant-convergence",
             Self::LocalCoordinates => "cooperative-local-coordinates",
+            Self::SpanRank => "cooperative-span-rank",
             Self::PhaseSequence => "cooperative-phase-sequence",
             Self::PhaseParticipation => "cooperative-phase-participation",
             Self::StagingLifetime => "cooperative-staging-lifetime",

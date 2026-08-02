@@ -10,8 +10,8 @@
 //! repair a schedule this verifier rejects.
 
 use super::cooperative::{
-    AntiDependencyEdge, ContributorArrival, CooperativeTile, ParticipantRange, StagedSpan,
-    VisibilityEdge,
+    AntiDependencyEdge, ContributorArrival, CooperativeTile, ParticipantRange, ParticipantSpace,
+    StagedSpan, VisibilityEdge,
 };
 use super::error::{
     CooperativeTileRule, ScheduleBuildError, ScheduleComponent, ScheduleLimitKind,
@@ -314,6 +314,19 @@ fn verify_intrinsic(region: &ScheduledRegion) -> Result<(), ScheduledRegionDiagn
         || !schedule.launch.zero_work_skips_dispatch
     {
         return Err(ScheduledRegionDiagnostic::LaunchCoverage);
+    }
+    // A cooperative tile's participant space is decided here, beside launch
+    // coverage, rather than with the rest of the tile's rules — because the
+    // participant count it determines is load-bearing *before* those rules run.
+    // `owned_output_positions` divides the work items by that count during proof
+    // verification, so a malformed space or one disagreeing with the launch
+    // would otherwise surface as a proof-reference mismatch: fail-closed, but
+    // naming the ownership proof for a defect entirely in the tile.
+    if let Some(tile) = cooperative_tile(&schedule.reduction) {
+        verify_participant_space(
+            tile.coordinates.participants,
+            schedule.threads_per_workgroup,
+        )?;
     }
     match &region.index.scalar_program {
         ScalarProgram::StrictAffineU4Dequantize { .. } => {
@@ -1065,7 +1078,14 @@ fn verify_cooperative_semantics(
     // makes the participant ordinal the innermost coordinate of the invocation
     // index, so a participant's local coordinate is derivable without a second
     // layout rule.
-    let participants = tile.coordinates.participants.count;
+    //
+    // The trailing axis is one coordinate per *participant*, so it takes the
+    // extent product rather than the space's shape: the invocation index is
+    // linear whatever shape the tile arranges its participants in, and a space
+    // whose product does not exist is refused by the tile's own rule below.
+    let Some(participants) = tile.coordinates.participants.participants() else {
+        return Err(cooperative(CooperativeTileRule::LocalCoordinates));
+    };
     // The round count is bounded before anything multiplies by it. A tile whose
     // phases never run stages nothing yet would still derive staged accesses,
     // visibility edges, and a synchronization requirement — a complete
@@ -1103,7 +1123,7 @@ fn verify_cooperative_semantics(
     {
         return Err(cooperative(CooperativeTileRule::ContributorSplit));
     }
-    verify_cooperative_tile(region, tile)
+    verify_cooperative_tile(tile)
 }
 
 /// Verifies one cooperative tile's cross-invocation dataflow.
@@ -1112,11 +1132,23 @@ fn verify_cooperative_semantics(
 /// addresses, which is why the governed bounds are checked first: enumeration is
 /// what makes disjointness and coverage exact instead of a modular argument, and
 /// an unbounded tile would make it unbounded work.
-fn verify_cooperative_tile(
-    region: &ScheduledRegion,
-    tile: &CooperativeTile,
-) -> Result<(), ScheduledRegionDiagnostic> {
-    let participants = tile.coordinates.participants;
+fn verify_cooperative_tile(tile: &CooperativeTile) -> Result<(), ScheduledRegionDiagnostic> {
+    let space = tile.coordinates.participants;
+    // The space itself and its agreement with the launch were decided by
+    // `verify_participant_space` before any proof arithmetic read the count, so
+    // this propagates the product rather than re-deciding it — a second copy of
+    // either rule here is one that could never say no.
+    let participant_count = space
+        .participants()
+        .ok_or_else(|| cooperative(CooperativeTileRule::LocalCoordinates))?;
+    // The linearized run the phases, the points, and the commit are stated over.
+    // They are runs rather than spaces because each is a claim about which
+    // invocations reach a program point, not about the shape they are arranged
+    // in.
+    let participants = ParticipantRange {
+        first: 0,
+        count: participant_count,
+    };
     if participants.count > MAX_COOPERATIVE_PARTICIPANTS
         || tile.phases.len() > MAX_COOPERATIVE_PHASES
         || tile
@@ -1134,18 +1166,6 @@ fn verify_cooperative_tile(
             .is_none_or(|slots| slots > MAX_COOPERATIVE_STAGING_SLOTS)
     {
         return Err(cooperative(CooperativeTileRule::StructuralLimit));
-    }
-    // Local coordinates are the dense run the participants occupy. A tile whose
-    // run does not start at zero leaves the workgroup's lower invocations with
-    // no coordinate, so nothing could say what they execute.
-    if participants.first != 0 || participants.count == 0 || participants.end().is_none() {
-        return Err(cooperative(CooperativeTileRule::LocalCoordinates));
-    }
-    // Uniform convergence. Every launched invocation of the workgroup is a
-    // participant, so a synchronization point placed in any phase is one they
-    // all reach.
-    if participants.count != u64::from(region.schedule.threads_per_workgroup) {
-        return Err(cooperative(CooperativeTileRule::ParticipantConvergence));
     }
     // Exactly one participant performs the region's owning write, which is what
     // makes `OneGlobalInvocationPerOutput` true of a workgroup that runs several
@@ -1229,7 +1249,7 @@ fn verify_cooperative_tile(
             let occupancy = written
                 .get_mut(usize::try_from(write.staging.get()).unwrap_or(usize::MAX))
                 .ok_or_else(|| cooperative(CooperativeTileRule::StagingCapacity))?;
-            for slot in addressed_slots(participants, write.span, staging.slots)? {
+            for slot in addressed_slots(space, write.span, staging.slots)? {
                 let slot = occupancy
                     .get_mut(usize::try_from(slot).unwrap_or(usize::MAX))
                     .ok_or_else(|| cooperative(CooperativeTileRule::StagingCapacity))?;
@@ -1255,7 +1275,15 @@ fn verify_cooperative_tile(
             if phase.id < staging.live_from || phase.id > staging.live_through {
                 return Err(cooperative(CooperativeTileRule::StagingLifetime));
             }
-            addressed_slots(participants, read.span, staging.slots)?;
+            // The result is discarded because coverage has already proved every
+            // in-range slot has a writer, so a read's addressed set needs no
+            // second occupancy pass — but the call is *not* discardable: it is
+            // what refuses a read whose stride vector disagrees with the tile's
+            // rank, and a read whose addressed slot leaves the allocation. A
+            // read admitted on either would emit a silently wrong broadcast,
+            // which is exactly the defect class a widened relation must not
+            // inherit.
+            addressed_slots(space, read.span, staging.slots)?;
             // Coverage above already proved every in-range slot has a writer, so
             // what remains is the *ordering*: the writer must be in an earlier
             // phase, or the read observes values its own phase is still
@@ -1276,7 +1304,7 @@ fn verify_cooperative_tile(
     if edges.is_empty() {
         return Err(cooperative(CooperativeTileRule::NoVisibilityEdge));
     }
-    verify_synchronization(tile, &edges, &tile.anti_dependency_edges())
+    verify_synchronization(tile, participants, &edges, &tile.anti_dependency_edges())
 }
 
 /// Verifies the synchronization authority that orders one tile's handoffs.
@@ -1294,12 +1322,16 @@ fn verify_cooperative_tile(
 /// point, and a point earns its place by discharging at least one of either —
 /// which is what lets a round boundary, whose whole job is the anti-dependency,
 /// be something other than redundant.
+///
+/// `participants` is the linearized run the caller derived from the tile's
+/// participant space, passed rather than re-derived so the two authorities
+/// cannot disagree about how many invocations a space holds.
 fn verify_synchronization(
     tile: &CooperativeTile,
+    participants: ParticipantRange,
     edges: &[VisibilityEdge],
     anti: &[AntiDependencyEdge],
 ) -> Result<(), ScheduledRegionDiagnostic> {
-    let participants = tile.coordinates.participants;
     // A tile whose participants are one invocation stages values it reads back
     // itself: program order already orders the handoff, so a point there is the
     // semantically redundant barrier this authority exists to eliminate.
@@ -1471,12 +1503,18 @@ fn resolve_staging(
 ///
 /// An address that overflows `u64` and one that merely exceeds the allocation
 /// are the same refusal, because both mean the span leaves the storage the tile
-/// declared.
+/// declared. A stride vector whose rank disagrees with the participant space's
+/// is a *different* refusal and is decided first: the span and the space are
+/// each well formed alone and disagree only with one another, so folding it into
+/// the capacity refusal would report a storage fault for a shape disagreement.
 fn addressed_slots(
-    participants: ParticipantRange,
+    participants: ParticipantSpace,
     span: StagedSpan,
     slots: u64,
 ) -> Result<Vec<u64>, ScheduledRegionDiagnostic> {
+    if span.rank() != participants.rank() {
+        return Err(cooperative(CooperativeTileRule::SpanRank));
+    }
     if span.count == 0 {
         return Err(cooperative(CooperativeTileRule::StagingCapacity));
     }
@@ -1492,6 +1530,45 @@ const fn cooperative(rule: CooperativeTileRule) -> ScheduledRegionDiagnostic {
     ScheduledRegionDiagnostic::CooperativeTile { rule }
 }
 
+/// Decides a cooperative tile's participant space and its agreement with the
+/// launch.
+///
+/// Two rules, together because they are the two ways a space can be wrong before
+/// anything reads the participant count: the space is not a space at all, or it
+/// is a well-formed space over a different number of invocations than the
+/// workgroup launches.
+///
+/// A rank above
+/// [`MAX_COOPERATIVE_PARTICIPANT_RANK`](super::MAX_COOPERATIVE_PARTICIPANT_RANK)
+/// is deliberately not decided here: `ParticipantSpace::new` makes it
+/// unrepresentable, so a check for it could never fail.
+fn verify_participant_space(
+    space: ParticipantSpace,
+    threads_per_workgroup: u32,
+) -> Result<(), ScheduledRegionDiagnostic> {
+    // An empty space names no participants; a zero extent gives it none; and a
+    // product that overflows `u64` is a count no launch could hold. Each is a
+    // malformed statement rather than a disagreement with something else, so
+    // they share the rule that names the space.
+    let Some(participants) = space
+        .participants()
+        .filter(|_| space.rank() != 0 && space.extents().iter().all(|extent| *extent != 0))
+    else {
+        return Err(cooperative(CooperativeTileRule::LocalCoordinates));
+    };
+    // Uniform convergence. Every launched invocation of the workgroup is a
+    // participant, so a synchronization point placed in any phase is one they
+    // all reach. The extent *product* is what the launch is compared against —
+    // the shape the participants are arranged in is a fact the launch geometry
+    // does not yet carry, which is why this stays a product equality and why a
+    // `[4, 64]` tile and a `[16, 16]` tile are equally admissible against a
+    // 256-thread workgroup.
+    if participants != u64::from(threads_per_workgroup) {
+        return Err(cooperative(CooperativeTileRule::ParticipantConvergence));
+    }
+    Ok(())
+}
+
 /// Returns the boundary output positions one region's owning write covers.
 ///
 /// Equal to the work-item count for every topology in which one invocation owns
@@ -1505,7 +1582,7 @@ fn owned_output_positions(region: &ScheduledRegion) -> Option<u64> {
     let Some(tile) = cooperative_tile(&region.schedule.reduction) else {
         return Some(work_items);
     };
-    let participants = tile.coordinates.participants.count;
+    let participants = tile.coordinates.participants.participants()?;
     if participants == 0 || !work_items.is_multiple_of(participants) {
         return None;
     }
@@ -1643,11 +1720,12 @@ mod tests {
     use super::*;
     use std::fmt::Write as _;
 
+    use crate::schedule::MAX_COOPERATIVE_PARTICIPANT_RANK;
     use crate::schedule::PointwiseF32ExpressionBuilder;
     use crate::schedule::cooperative::{
         AntiDependencyEdge, CooperativePhase, CooperativeTile, LocalCoordinateSource,
-        LocalCoordinates, ParticipantRange, StagedElement, StagedRead, StagedSpan, StagedWrite,
-        VisibilityEdge, WorkgroupStaging,
+        LocalCoordinates, ParticipantRange, ParticipantSpace, StagedElement, StagedRead,
+        StagedSpan, StagedWrite, VisibilityEdge, WorkgroupStaging,
     };
     use crate::schedule::handles::{
         BoundsWitnessId, OwnershipWitnessId, PhaseId, StagingId, SyncPointId,
@@ -1668,27 +1746,39 @@ mod tests {
     /// The pointwise program is encoded as a typed, framed topological graph,
     /// so its exact operand order, constants, root, and physical `f32` family are all pinned.
     ///
-    /// Rebaselined deliberately at the `tiler.schedule.v4` step, which gave
-    /// [`CooperativeTile`] its round count: this region stages nothing, so its
-    /// *payload* is untouched and only the separator moved — a claim
-    /// `the_round_step_moves_only_the_domain_separator` proves rather than
-    /// asserts, by comparing the two constants byte for byte past the tag.
+    /// Rebaselined deliberately at the `tiler.schedule.v5` step, which widened
+    /// the cooperative staging relation to two dimensions: this region stages
+    /// nothing, so its *payload* is untouched and only the separator moved — a
+    /// claim `the_staging_relation_step_moves_only_the_domain_separator` proves
+    /// rather than asserts, by comparing the two constants byte for byte past
+    /// the tag.
     ///
-    /// An earlier rebaseline recorded the `tiler.schedule.v3` step, which gave
-    /// `TensorRole::Input` and `PointwiseF32Node::Input` their input ordinals:
-    /// every input access and bounds proof gained four ordinal bytes and the
-    /// input leaf's framed length grew from nine to twenty-one. Before that, the
-    /// old `ScalarProgram::MultiplyThenAdd` tag (`0x21`) became the exact
+    /// Earlier rebaselines recorded the `tiler.schedule.v4` step, which gave
+    /// [`CooperativeTile`] its round count; the `v3` step, which gave
+    /// `TensorRole::Input` and `PointwiseF32Node::Input` their input ordinals,
+    /// so every input access and bounds proof gained four ordinal bytes and the
+    /// input leaf's framed length grew from nine to twenty-one; and before that,
+    /// the old `ScalarProgram::MultiplyThenAdd` tag (`0x21`) becoming the exact
     /// `ScalarProgram::PointwiseF32` expression encoding (`0x24`).
-    const STRICT_F32_REGION_IDENTITY_HEX: &str = "74696c65722e7363686564756c652e7634000000000000000002000000000000000200000000000000030000000000000002010000000000010100000000000200020100000001010000000000000000000000020000000001000000000011000000000000000600000001020011000000000000000600000000020000000000000006240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc0000001010101010101010100000000000000060000000101000000003100000000000000060000000101";
+    const STRICT_F32_REGION_IDENTITY_HEX: &str = "74696c65722e7363686564756c652e7635000000000000000002000000000000000200000000000000030000000000000002010000000000010100000000000200020100000001010000000000000000000000020000000001000000000011000000000000000600000001020011000000000000000600000000020000000000000006240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc0000001010101010101010100000000000000060000000101000000003100000000000000060000000101";
 
-    /// The same region's identity under `tiler.schedule.v3`.
+    /// The same region's identity under `tiler.schedule.v4`.
     ///
-    /// Retained rather than deleted, because it is what makes the `v4` step's
+    /// Retained rather than deleted, because it is what makes the `v5` step's
     /// blast radius a measured fact instead of an assurance: everything after
     /// the separator is byte-identical, so no region that stages nothing moved
     /// for any reason other than the version.
-    const STRICT_F32_REGION_IDENTITY_HEX_V3: &str = "74696c65722e7363686564756c652e7633000000000000000002000000000000000200000000000000030000000000000002010000000000010100000000000200020100000001010000000000000000000000020000000001000000000011000000000000000600000001020011000000000000000600000000020000000000000006240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc0000001010101010101010100000000000000060000000101000000003100000000000000060000000101";
+    ///
+    /// **Rebaselined from the `v3` value at the `v5` step, and the rebaseline is
+    /// the point rather than housekeeping.** Carried forward unchanged this
+    /// constant would have made the retained comparison a `v5`-against-`v3` one
+    /// — a claim about two separator steps combined, which is strictly weaker
+    /// than a claim about either: a payload change at one step exactly undone at
+    /// the next satisfies it. Moving it to the `v4` value keeps the comparison
+    /// proving exactly one step. That discards the `v3` datum deliberately; its
+    /// whole content was the `v3` to `v4` claim, which the commit that made it
+    /// already carries.
+    const STRICT_F32_REGION_IDENTITY_HEX_V4: &str = "74696c65722e7363686564756c652e7634000000000000000002000000000000000200000000000000030000000000000002010000000000010100000000000200020100000001010000000000000000000000020000000001000000000011000000000000000600000001020011000000000000000600000000020000000000000006240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc0000001010101010101010100000000000000060000000101000000003100000000000000060000000101";
 
     fn strict_numerical() -> NumericalRealization {
         NumericalRealization::new(
@@ -3311,7 +3401,7 @@ mod tests {
             rounds: 1,
             coordinates: LocalCoordinates {
                 source: LocalCoordinateSource::LocalLinearInvocation,
-                participants: ParticipantRange { first: 0, count: 3 },
+                participants: ParticipantSpace::new(&[3]).expect("rank one is within the bound"),
             },
             staging: vec![tile_staging(3, PhaseId::new(1))],
             phases: vec![
@@ -3320,11 +3410,7 @@ mod tests {
                     participation: ParticipantRange { first: 0, count: 3 },
                     writes: vec![StagedWrite {
                         staging: StagingId::FIRST,
-                        span: StagedSpan {
-                            stride: 1,
-                            offset: 0,
-                            count: 1,
-                        },
+                        span: StagedSpan::new(&[1], 0, 1).expect("rank one is within the bound"),
                     }],
                     reads: Vec::new(),
                 },
@@ -3334,11 +3420,7 @@ mod tests {
                     writes: Vec::new(),
                     reads: vec![StagedRead {
                         staging: StagingId::FIRST,
-                        span: StagedSpan {
-                            stride: 0,
-                            offset: 0,
-                            count: 3,
-                        },
+                        span: StagedSpan::new(&[0], 0, 3).expect("rank one is within the bound"),
                     }],
                 },
             ],
@@ -3391,6 +3473,7 @@ mod tests {
     ) -> ScheduledRegionBuilder {
         cooperative_builder_parts(
             split,
+            6,
             cooperative_topology_with(tile, split),
             reassociating_numerical(),
         )
@@ -3428,6 +3511,7 @@ mod tests {
         };
         cooperative_builder_parts(
             SPLIT,
+            6,
             ReductionTopology::CooperativeWorkgroup {
                 partition,
                 tile,
@@ -3442,8 +3526,16 @@ mod tests {
         )
     }
 
+    /// The fixture region, over a contracted extent the caller states.
+    ///
+    /// `contracted` is a parameter rather than the fixture's own `6` because the
+    /// two-dimensional tiles below need a participant count the `[2, 6]` domain
+    /// cannot split — the reduction shape, the contributor coverage, and the
+    /// launch width are one arithmetic, and a fixture that fixed one of them
+    /// would make the other two unstatable.
     fn cooperative_builder_parts(
         split: ContributorPartition,
+        contracted: u64,
         reduction: ReductionTopology,
         numerical: NumericalRealization,
     ) -> ScheduledRegionBuilder {
@@ -3462,7 +3554,7 @@ mod tests {
                 component_role: None,
                 mode: AccessMode::Read,
                 map: LogicalAccess::ReductionContributor {
-                    input_shape: Shape::from_dims([2, 6]),
+                    input_shape: Shape::from_dims([2, contracted]),
                     output_shape: Shape::from_dims([2]),
                     axes: vec![Axis::new(1)],
                     order: ContributorOrder::OriginalAxisLexicographic,
@@ -3487,7 +3579,7 @@ mod tests {
                 tensor: TensorRole::Intermediate,
                 component_role: None,
                 kind: BoundsProofKind::ReductionDomain {
-                    input_shape: Shape::from_dims([2, 6]),
+                    input_shape: Shape::from_dims([2, contracted]),
                     output_shape: Shape::from_dims([2]),
                     axes: vec![Axis::new(1)],
                     order: ContributorOrder::OriginalAxisLexicographic,
@@ -3868,7 +3960,8 @@ mod tests {
     #[test]
     fn a_single_participant_tile_cannot_carry_a_synchronization_point() {
         let mut tile = cooperative_tile_fixture();
-        tile.coordinates.participants = ParticipantRange { first: 0, count: 1 };
+        tile.coordinates.participants =
+            ParticipantSpace::new(&[1]).expect("rank one is within the bound");
         for phase in &mut tile.phases {
             phase.participation = ParticipantRange { first: 0, count: 1 };
         }
@@ -3901,7 +3994,7 @@ mod tests {
     #[test]
     fn the_convergence_derivation_refuses_a_phase_a_participant_skips() {
         let mut tile = cooperative_tile_fixture();
-        let participants = tile.coordinates.participants;
+        let participants = ParticipantRange { first: 0, count: 3 };
         assert!(phases_are_reached_by(
             &tile,
             &[PhaseId::FIRST, PhaseId::new(1)],
@@ -4120,7 +4213,8 @@ mod tests {
     fn overlapping_staged_writes_inside_one_round_are_still_refused() {
         assert_eq!(
             cooperative_rejection(round_perturbed(|tile| {
-                tile.phases[0].writes[0].span.stride = 0;
+                tile.phases[0].writes[0].span =
+                    StagedSpan::new(&[0], 0, 1).expect("rank one is within the bound");
             })),
             ScheduledRegionDiagnostic::CooperativeTile {
                 rule: CooperativeTileRule::StagingConflict,
@@ -4164,7 +4258,8 @@ mod tests {
     fn overlapping_staged_writes_are_rejected() {
         assert_eq!(
             cooperative_rejection(perturbed(|tile| {
-                tile.phases[0].writes[0].span.stride = 0;
+                tile.phases[0].writes[0].span =
+                    StagedSpan::new(&[0], 0, 1).expect("rank one is within the bound");
             })),
             ScheduledRegionDiagnostic::CooperativeTile {
                 rule: CooperativeTileRule::StagingConflict,
@@ -4215,18 +4310,362 @@ mod tests {
         );
     }
 
-    /// A participant run that does not start at local coordinate zero is rejected.
+    /// A malformed participant space is rejected, in each way it can be stated.
+    ///
+    /// The three the space's constructor admits and the verifier refuses: a
+    /// rank-zero space, which names no participants at all; a zero extent, whose
+    /// product is zero so no invocation has a coordinate; and a product that
+    /// overflows `u64`, which no launch could hold. A *rank* above
+    /// `MAX_COOPERATIVE_PARTICIPANT_RANK` is deliberately not among them —
+    /// `ParticipantSpace::new` refuses it, so it cannot reach this rule, and the
+    /// separate assertion below is what keeps that claim from being an
+    /// assurance.
     #[test]
-    fn an_invalid_local_coordinate_space_is_rejected() {
+    fn an_invalid_participant_space_is_rejected() {
+        let malformed = [Vec::new(), vec![0_u64], vec![3, 0], vec![u64::MAX, 2]];
+        for extents in malformed {
+            let space =
+                ParticipantSpace::new(&extents).expect("every case is within the rank bound");
+            assert_eq!(
+                cooperative_rejection(perturbed(|tile| {
+                    tile.coordinates.participants = space;
+                })),
+                ScheduledRegionDiagnostic::CooperativeTile {
+                    rule: CooperativeTileRule::LocalCoordinates,
+                },
+                "extents {extents:?} were admitted as a participant space"
+            );
+        }
         assert_eq!(
-            cooperative_rejection(perturbed(|tile| {
-                tile.coordinates.participants.first = 1;
-                for phase in &mut tile.phases {
-                    phase.participation.first = 1;
-                }
+            ParticipantSpace::new(&[2; MAX_COOPERATIVE_PARTICIPANT_RANK + 1]),
+            None,
+            "a rank above the governed bound was represented"
+        );
+        assert_eq!(
+            StagedSpan::new(&[1; MAX_COOPERATIVE_PARTICIPANT_RANK + 1], 0, 1),
+            None,
+            "a stride vector above the governed bound was represented"
+        );
+    }
+
+    // ---- The two-dimensional staging relation ----------------------------
+    //
+    // A 16x16 participant space, which is the shape ADR 0097 admits and the
+    // shape the measured `contract_tiled` kernel
+    // (`spikes/scheduling/metal_contraction_vertical/kernels.metal`) launches.
+    // The fixtures below differ from the rank-one ones above in the participant
+    // shape, the span ranks, and the contracted extent the split needs — and in
+    // nothing else, so a rejection names the widened rule rather than a
+    // difference the fixture happened to carry.
+
+    /// One side of the measured kernel's square tile.
+    const TILE_EXTENT: u64 = 16;
+    /// The tile's participants, which is also its launched workgroup width.
+    const TILE_PARTICIPANTS: u64 = TILE_EXTENT * TILE_EXTENT;
+    /// The split the two-dimensional fixture covers its contributors with.
+    const TILED_SPLIT: ContributorPartition = ContributorPartition {
+        partitions: TILE_PARTICIPANTS,
+        contributors_per_partition: 2,
+    };
+
+    /// A verifying tile over a 16x16 participant space.
+    ///
+    /// Its staged accesses are the rank-two spelling of the rank-one fixture's:
+    /// each participant writes its own slot, and every participant reads the
+    /// whole staged set. The `[1, 16]` write is the *transposed* form — the
+    /// exact profile `16 * (l % 16) + (l / 16)` that no single-term relation
+    /// over a linear coordinate expresses — so the fixture is a statement of the
+    /// thing this widening exists for rather than a rank-one tile wearing two
+    /// extents.
+    fn tiled_tile_fixture() -> CooperativeTile {
+        let participants = ParticipantSpace::new(&[TILE_EXTENT, TILE_EXTENT])
+            .expect("rank two is within the bound");
+        let range = ParticipantRange {
+            first: 0,
+            count: TILE_PARTICIPANTS,
+        };
+        let tile = CooperativeTile {
+            coordinates: LocalCoordinates {
+                source: LocalCoordinateSource::LocalWorkgroupPosition,
+                participants,
+            },
+            rounds: 1,
+            staging: vec![tile_staging(TILE_PARTICIPANTS, PhaseId::new(1))],
+            phases: vec![
+                CooperativePhase {
+                    id: PhaseId::FIRST,
+                    participation: range,
+                    writes: vec![StagedWrite {
+                        staging: StagingId::FIRST,
+                        span: StagedSpan::new(&[1, TILE_EXTENT], 0, 1)
+                            .expect("rank two is within the bound"),
+                    }],
+                    reads: Vec::new(),
+                },
+                CooperativePhase {
+                    id: PhaseId::new(1),
+                    participation: range,
+                    writes: Vec::new(),
+                    reads: vec![StagedRead {
+                        staging: StagingId::FIRST,
+                        span: StagedSpan::new(&[0, 0], 0, TILE_PARTICIPANTS)
+                            .expect("rank two is within the bound"),
+                    }],
+                },
+            ],
+            synchronization: Vec::new(),
+            commit: ParticipantRange { first: 0, count: 1 },
+        };
+        let subject =
+            required_subject(&tile.visibility_edges()).expect("the handoff states one subject");
+        CooperativeTile {
+            synchronization: vec![SynchronizationPoint {
+                id: SyncPointId::FIRST,
+                subject,
+                placement: SynchronizationPlacement::PhaseBoundary {
+                    preceding: PhaseId::FIRST,
+                    following: PhaseId::new(1),
+                },
+                participants: range,
+                convergence: ConvergenceEvidence::EveryParticipantReachesThePoint,
+            }],
+            ..tile
+        }
+    }
+
+    /// Applies one edit to the two-dimensional fixture and builds it.
+    fn tiled_perturbed(edit: impl FnOnce(&mut CooperativeTile)) -> ScheduledRegionBuilder {
+        let mut tile = tiled_tile_fixture();
+        edit(&mut tile);
+        cooperative_builder_parts(
+            TILED_SPLIT,
+            TILE_PARTICIPANTS * TILED_SPLIT.contributors_per_partition,
+            cooperative_topology_with(tile, TILED_SPLIT),
+            reassociating_numerical(),
+        )
+    }
+
+    /// A tile over a two-dimensional participant space verifies.
+    #[test]
+    fn a_two_dimensional_cooperative_tile_verifies() {
+        let verified = tiled_perturbed(|_| {})
+            .build()
+            .expect("the two-dimensional fixture verifies");
+        assert_eq!(
+            verified.requirements().threads_per_workgroup,
+            u32::try_from(TILE_PARTICIPANTS).expect("256 fits u32")
+        );
+        // The extent product is the participant count and the launched width;
+        // the shape is what the rank-one form could not state.
+        let tile = cooperative_tile(&verified.region().schedule.reduction)
+            .expect("the topology carries its tile");
+        assert_eq!(tile.coordinates.participants.rank(), 2);
+        assert_eq!(
+            tile.coordinates.participants.extents(),
+            [TILE_EXTENT, TILE_EXTENT]
+        );
+        assert_eq!(
+            tile.coordinates.participants.participants(),
+            Some(TILE_PARTICIPANTS)
+        );
+    }
+
+    /// The measured 16x16 kernel's four staged accesses are all statable.
+    ///
+    /// Each with a *contiguous* count, which is what `StagedSpan` addresses, and
+    /// each enumerating exactly the slots the kernel's own source indexes. The
+    /// two writes address one slot per participant and the two reads address
+    /// sixteen contiguous slots per participant, so the widened relation states
+    /// the tiling rather than encoding it.
+    ///
+    /// The stride table is ADR 0097's, and this is the substitution that turns
+    /// it from arithmetic on paper into an observed enumeration.
+    #[test]
+    fn the_measured_tile_kernels_four_staged_accesses_are_all_statable() {
+        let space = ParticipantSpace::new(&[TILE_EXTENT, TILE_EXTENT])
+            .expect("rank two is within the bound");
+        let slots = |strides: &[u64], count: u64| {
+            CooperativeTile::addressed_slots(
+                space,
+                StagedSpan::new(strides, 0, count).expect("rank two is within the bound"),
+            )
+            .expect("every address is representable")
+        };
+
+        // `a_tile[local_m * TILE + local_n]`: one slot per participant, and the
+        // 256 participants cover the 256 slots exactly once.
+        let a_write = slots(&[TILE_EXTENT, 1], 1);
+        assert_eq!(a_write.len(), 256);
+        let mut sorted = a_write.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 256);
+        assert_eq!(a_write[0], 0);
+        // Participant (0, 1) is linear index 1 and holds slot 1.
+        assert_eq!(a_write[1], 1);
+        // Participant (1, 0) is linear index 16 and holds slot 16.
+        assert_eq!(a_write[16], 16);
+
+        // `b_tile[local_n * TILE + local_m]`: the transpose, and the exact pair
+        // of points that refutes every single-term relation over a linear
+        // coordinate — `w(1) = 16` while `w(16) = 1`.
+        let b_write = slots(&[1, TILE_EXTENT], 1);
+        assert_eq!(b_write.len(), 256);
+        assert_eq!(b_write[0], 0);
+        assert_eq!(b_write[1], 16);
+        assert_eq!(b_write[16], 1);
+        let mut sorted = b_write.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 256, "the transposed write is a bijection");
+
+        // `a_tile[local_m * TILE + kk]`, `kk` in `0..16`: sixteen contiguous
+        // slots per participant, many-to-one in the column dimension.
+        let a_read = slots(&[TILE_EXTENT, 0], TILE_EXTENT);
+        assert_eq!(a_read.len(), 256 * 16);
+        assert_eq!(&a_read[..16], &(0..16).collect::<Vec<_>>()[..]);
+        // Participant (1, 0), linear index 16, reads the run beginning at 16.
+        assert_eq!(
+            &a_read[16 * 16..16 * 16 + 16],
+            &(16..32).collect::<Vec<_>>()[..]
+        );
+
+        // `b_tile[local_n * TILE + kk]`: the transpose of the read, so
+        // participant (0, 1) — linear index 1 — reads the run beginning at 16.
+        let b_read = slots(&[0, TILE_EXTENT], TILE_EXTENT);
+        assert_eq!(b_read.len(), 256 * 16);
+        assert_eq!(&b_read[..16], &(0..16).collect::<Vec<_>>()[..]);
+        assert_eq!(&b_read[16..32], &(16..32).collect::<Vec<_>>()[..]);
+    }
+
+    /// The occupancy map still refuses two writers reaching one slot.
+    ///
+    /// ADR 0097's own case, watched failing rather than asserted: perturbing the
+    /// transposed write's strides from `[1, 16]` to `[16, 16]` sends participant
+    /// `(0, 1)` and participant `(1, 0)` both to slot 16, and no point separates
+    /// two writes inside one phase. Disjointness is keyed on *slots*, so
+    /// re-indexing the participant domain does not weaken it.
+    #[test]
+    fn two_writers_reaching_one_slot_in_one_round_are_still_refused() {
+        let space = ParticipantSpace::new(&[TILE_EXTENT, TILE_EXTENT])
+            .expect("rank two is within the bound");
+        let colliding = StagedSpan::new(&[TILE_EXTENT, TILE_EXTENT], 0, 1)
+            .expect("rank two is within the bound");
+        // The collision itself, before the rule that refuses it: two distinct
+        // participants, one slot.
+        let addressed = CooperativeTile::addressed_slots(space, colliding)
+            .expect("every address is representable");
+        assert_eq!(addressed[1], 16, "participant (0, 1) addresses slot 16");
+        assert_eq!(addressed[16], 16, "participant (1, 0) addresses slot 16");
+
+        // The allocation is widened to hold the perturbed span's furthest
+        // address — `15 * 16 + 15 * 16` — so that the capacity rule, which is a
+        // different refusal, does not fire first and hide the one under test.
+        // Coverage would fail on this tile too, and does not get the chance:
+        // the occupancy walk refuses the second writer before it finishes.
+        assert_eq!(
+            cooperative_rejection(tiled_perturbed(|tile| {
+                tile.staging[0].slots = 15 * TILE_EXTENT + 15 * TILE_EXTENT + 1;
+                tile.phases[0].writes[0].span = colliding;
             })),
             ScheduledRegionDiagnostic::CooperativeTile {
-                rule: CooperativeTileRule::LocalCoordinates,
+                rule: CooperativeTileRule::StagingConflict,
+            }
+        );
+    }
+
+    /// The workgroup-width equality is over the extent *product*, and still fires.
+    ///
+    /// Perturbing the extents to a shape whose product is not the launched width
+    /// is refused; perturbing them to a *different shape with the same product*
+    /// is not, which is the whole content of the rule generalizing from a count
+    /// to a product. The launch plan carries no threadgroup shape to compare
+    /// against, and ADR 0097 records that as a stated deferral rather than an
+    /// omission — so this test pins what the rule does decide, not what a reader
+    /// might hope it does.
+    #[test]
+    fn the_workgroup_width_equality_is_over_the_extent_product() {
+        for extents in [
+            vec![TILE_EXTENT, TILE_EXTENT - 1],
+            vec![TILE_EXTENT, TILE_EXTENT + 1],
+            vec![TILE_EXTENT, 1],
+        ] {
+            let space = ParticipantSpace::new(&extents).expect("rank two is within the bound");
+            assert_eq!(
+                cooperative_rejection(tiled_perturbed(|tile| {
+                    tile.coordinates.participants = space;
+                })),
+                ScheduledRegionDiagnostic::CooperativeTile {
+                    rule: CooperativeTileRule::ParticipantConvergence,
+                },
+                "extents {extents:?} were admitted against a launch of {TILE_PARTICIPANTS}"
+            );
+        }
+        // And from the other side: holding the space and narrowing the launch
+        // is the perturbation the rank-one fixture already used, so the rule is
+        // reachable from either fact it relates.
+        let mut builder = tiled_perturbed(|_| {});
+        let schedule = builder
+            .schedule
+            .as_mut()
+            .expect("the fixture sets a schedule");
+        schedule.threads_per_workgroup = 255;
+        schedule.launch.threads_per_workgroup = 255;
+        assert_eq!(
+            cooperative_rejection(builder),
+            ScheduledRegionDiagnostic::CooperativeTile {
+                rule: CooperativeTileRule::ParticipantConvergence,
+            }
+        );
+        // A different arrangement of the same 256 participants passes the
+        // equality, because the product is what it compares.
+        tiled_perturbed(|tile| {
+            tile.coordinates.participants =
+                ParticipantSpace::new(&[4, 64]).expect("rank two is within the bound");
+            tile.phases[0].writes[0].span =
+                StagedSpan::new(&[64, 1], 0, 1).expect("rank two is within the bound");
+        })
+        .build()
+        .expect("a 4x64 arrangement of the same participants verifies");
+    }
+
+    /// A staged span whose rank disagrees with the tile's is refused by name.
+    ///
+    /// Both directions, because the two are different mistakes a producer makes
+    /// and neither is wrong on its own terms: a rank-two stride vector over a
+    /// rank-one space, and a rank-one one over a rank-two space. The read side
+    /// is checked separately from the write side, because a read's addressed set
+    /// is discarded and a rule that only fired on writes would admit the exact
+    /// silently-wrong broadcast this vocabulary exists to refuse.
+    #[test]
+    fn a_staged_span_whose_rank_disagrees_with_the_tile_is_refused() {
+        assert_eq!(
+            cooperative_rejection(perturbed(|tile| {
+                tile.phases[0].writes[0].span =
+                    StagedSpan::new(&[1, 0], 0, 1).expect("rank two is within the bound");
+            })),
+            ScheduledRegionDiagnostic::CooperativeTile {
+                rule: CooperativeTileRule::SpanRank,
+            }
+        );
+        assert_eq!(
+            cooperative_rejection(perturbed(|tile| {
+                tile.phases[1].reads[0].span =
+                    StagedSpan::new(&[0, 0], 0, 3).expect("rank two is within the bound");
+            })),
+            ScheduledRegionDiagnostic::CooperativeTile {
+                rule: CooperativeTileRule::SpanRank,
+            }
+        );
+        // And the same disagreement from the other side: a rank-two space whose
+        // spans still state one stride each.
+        assert_eq!(
+            cooperative_rejection(perturbed(|tile| {
+                tile.coordinates.participants =
+                    ParticipantSpace::new(&[3, 1]).expect("rank two is within the bound");
+            })),
+            ScheduledRegionDiagnostic::CooperativeTile {
+                rule: CooperativeTileRule::SpanRank,
             }
         );
     }
@@ -4469,19 +4908,24 @@ mod tests {
 
     /// A region that stages nothing moved for the version and nothing else.
     ///
-    /// The blast-radius proof for `tiler.schedule.v4`. The round count lands
-    /// inside the `0x35` cooperative payload, which a region with no tile never
-    /// reaches, so the only bytes that may differ from `v3` are the eighteen of
-    /// the domain separator — and that is checked here by comparing the two
-    /// recorded identities past it rather than by asserting it in prose.
+    /// The blast-radius proof for `tiler.schedule.v5`. The participant space and
+    /// the per-dimension stride vector both land inside the `0x35` cooperative
+    /// payload, which a region with no tile never reaches, so the only bytes
+    /// that may differ from `v4` are the eighteen of the domain separator — and
+    /// that is checked here by comparing the two recorded identities past it
+    /// rather than by asserting it in prose.
     ///
-    /// It is deliberately *not* an append proof. The step is an insertion, and
-    /// [`encode_identity`] records why an append was not available: the
-    /// cooperative arm ends in a length-prefixed axis list that can absorb eight
-    /// shifted bytes, so an old identity and a new one could coincide, and only
-    /// a verifier invariant — not the encoding — kept them apart.
+    /// The comparison is against the immediately preceding domain and not an
+    /// older one, which is what keeps it a one-step claim: two separator changes
+    /// agreeing past the tag say nothing about whether the payload moved at
+    /// either step individually.
+    ///
+    /// It is deliberately *not* an append proof. The step replaces an unframed
+    /// fixed-width run with a length-framed one, so there is no position to
+    /// append to; [`encode_identity`] records that, and records separately why
+    /// the `v4` step's own append was unavailable.
     #[test]
-    fn the_round_step_moves_only_the_domain_separator() {
+    fn the_staging_relation_step_moves_only_the_domain_separator() {
         // Eighteen bytes of `tiler.schedule.vN\0`, so thirty-six hex digits.
         const SEPARATOR: usize = 36;
 
@@ -4495,11 +4939,11 @@ mod tests {
         assert_eq!(hex, STRICT_F32_REGION_IDENTITY_HEX);
         assert_ne!(
             STRICT_F32_REGION_IDENTITY_HEX[..SEPARATOR],
-            STRICT_F32_REGION_IDENTITY_HEX_V3[..SEPARATOR]
+            STRICT_F32_REGION_IDENTITY_HEX_V4[..SEPARATOR]
         );
         assert_eq!(
             STRICT_F32_REGION_IDENTITY_HEX[SEPARATOR..],
-            STRICT_F32_REGION_IDENTITY_HEX_V3[SEPARATOR..]
+            STRICT_F32_REGION_IDENTITY_HEX_V4[SEPARATOR..]
         );
     }
 
@@ -4519,14 +4963,33 @@ mod tests {
         let variants: Vec<CooperativeTile> = vec![
             perturb_tile(|tile| tile.staging[0].slots = 4),
             perturb_tile(|tile| tile.staging[0].live_through = PhaseId::FIRST),
-            perturb_tile(|tile| tile.phases[0].writes[0].span.stride = 2),
+            perturb_tile(|tile| {
+                tile.phases[0].writes[0].span =
+                    StagedSpan::new(&[2], 0, 1).expect("rank one is within the bound");
+            }),
             perturb_tile(|tile| tile.phases[0].writes[0].span.offset = 1),
             perturb_tile(|tile| tile.phases[1].reads[0].span.count = 2),
             perturb_tile(|tile| tile.commit = ParticipantRange { first: 2, count: 1 }),
             perturb_tile(|tile| {
                 tile.phases[1].participation = ParticipantRange { first: 0, count: 2 };
             }),
-            perturb_tile(|tile| tile.coordinates.participants.count = 4),
+            perturb_tile(|tile| {
+                tile.coordinates.participants =
+                    ParticipantSpace::new(&[4]).expect("rank one is within the bound");
+            }),
+            // The participant *shape* separates identity too, not only the
+            // count it determines: a tile whose 3 participants are arranged
+            // `[3, 1]` states a different relation from one arranged `[3]`, and
+            // the span ranks that go with each differ, so the two must not share
+            // bytes even though both launch three invocations.
+            perturb_tile(|tile| {
+                tile.coordinates.participants =
+                    ParticipantSpace::new(&[3, 1]).expect("rank two is within the bound");
+                tile.phases[0].writes[0].span =
+                    StagedSpan::new(&[1, 0], 0, 1).expect("rank two is within the bound");
+                tile.phases[1].reads[0].span =
+                    StagedSpan::new(&[0, 0], 0, 3).expect("rank two is within the bound");
+            }),
             // The round count separates identity like every other tile field: a
             // schedule that rewrites its staging is a different program from one
             // that stages once, and the two must not share bytes.

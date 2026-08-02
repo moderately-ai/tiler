@@ -145,8 +145,8 @@ mod synchronization;
 pub use builder::ScheduledRegionBuilder;
 pub use cooperative::{
     AntiDependencyEdge, ContributorArrival, CooperativePhase, CooperativeTile,
-    LocalCoordinateSource, LocalCoordinates, ParticipantRange, StagedElement, StagedRead,
-    StagedSpan, StagedWrite, VisibilityEdge, WorkgroupStaging, workgroup_tree_tile,
+    LocalCoordinateSource, LocalCoordinates, ParticipantRange, ParticipantSpace, StagedElement,
+    StagedRead, StagedSpan, StagedWrite, VisibilityEdge, WorkgroupStaging, workgroup_tree_tile,
 };
 pub use error::{
     ContributorError, CooperativeTileRule, ElementCountOverflow, ScheduleBuildError,
@@ -203,6 +203,26 @@ pub const MAX_COOPERATIVE_PARTICIPANTS: u64 = 4_096;
 /// declared workgroup memory by the feasibility authority; this bound never
 /// stands in for that.
 pub const MAX_COOPERATIVE_STAGING_SLOTS: u64 = 65_536;
+/// Maximum participant dimensions admitted by one cooperative workgroup tile.
+///
+/// Deliberately not implied by [`MAX_COOPERATIVE_PARTICIPANTS`]: a space of unit
+/// extents has a product of one at any rank, so the participant bound does not
+/// bound the rank. What this bounds is the address sum a staged span evaluates
+/// and the frame its encoding writes, not the enumeration — the enumeration
+/// ranges over the extent product, which the participant bound already governs.
+///
+/// `3` and not more, because a threadgroup is at most three-dimensional on every
+/// target this repository names and a fourth dimension would be a shape no
+/// launch could declare. It is a verification bound rather than a hardware
+/// claim, exactly as its siblings are.
+///
+/// Unlike its siblings this bound is *structural*: it sizes the inline arrays
+/// [`ParticipantSpace`] and [`StagedSpan`] carry, so a rank above it is refused
+/// by their constructors and never reaches the verifier. That is deliberate —
+/// the ceiling is a property of the domain, so making it unrepresentable is
+/// stronger than refusing it late, and raising it stays a one-constant edit plus
+/// an identity recompute because the arrays sit behind those constructors.
+pub const MAX_COOPERATIVE_PARTICIPANT_RANK: usize = 3;
 /// Maximum phases admitted by one cooperative workgroup tile.
 pub const MAX_COOPERATIVE_PHASES: usize = 64;
 /// Maximum rounds one cooperative workgroup tile's phase sequence may execute.

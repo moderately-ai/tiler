@@ -16,7 +16,7 @@ use crate::schedule::{
     ExceptionalValueAssumption, ExecutionBinding, FencedSpaces, InputOrdinal, KernelSchedule,
     LaunchPlan, LocalCoordinateSource, LocalCoordinates, LogicalAccess, MemoryOrdering,
     NumericalPermission, NumericalRealization, OwnershipProof, OwnershipProofKind,
-    OwnershipWitnessId, ParticipantRange, PhaseId, PointwiseF32Expression,
+    OwnershipWitnessId, ParticipantRange, ParticipantSpace, PhaseId, PointwiseF32Expression,
     PointwiseF32ExpressionBuilder, ReductionPass, ReductionTopology, RegionId, ScalarProgram,
     ScheduledRegionBuilder, StagedElement, StagedRead, StagedSpan, StagedWrite, StagingId,
     SubnormalMode, SyncPointId, SynchronizationKind, SynchronizationPlacement,
@@ -1981,7 +1981,8 @@ fn cooperative_region() -> VerifiedScheduledRegion {
                     rounds: 1,
                     coordinates: LocalCoordinates {
                         source: LocalCoordinateSource::LocalLinearInvocation,
-                        participants: ParticipantRange { first: 0, count: 3 },
+                        participants: ParticipantSpace::new(&[3])
+                            .expect("rank one is within the bound"),
                     },
                     staging: vec![WorkgroupStaging {
                         id: StagingId::FIRST,
@@ -1996,11 +1997,8 @@ fn cooperative_region() -> VerifiedScheduledRegion {
                             participation: ParticipantRange { first: 0, count: 3 },
                             writes: vec![StagedWrite {
                                 staging: StagingId::FIRST,
-                                span: StagedSpan {
-                                    stride: 1,
-                                    offset: 0,
-                                    count: 1,
-                                },
+                                span: StagedSpan::new(&[1], 0, 1)
+                                    .expect("rank one is within the bound"),
                             }],
                             reads: Vec::new(),
                         },
@@ -2010,11 +2008,8 @@ fn cooperative_region() -> VerifiedScheduledRegion {
                             writes: Vec::new(),
                             reads: vec![StagedRead {
                                 staging: StagingId::FIRST,
-                                span: StagedSpan {
-                                    stride: 0,
-                                    offset: 0,
-                                    count: 3,
-                                },
+                                span: StagedSpan::new(&[0], 0, 3)
+                                    .expect("rank one is within the bound"),
                             }],
                         },
                     ],
