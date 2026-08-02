@@ -116,9 +116,11 @@ fn approved_region(axes: impl Fn() -> Vec<AxisSyntax<At>>) -> RegionSyntax<At> {
             operand("b", 20, "f32", axes()),
             operand("c", 30, "f32", axes()),
         ],
-        // A region's delivery policy decides nothing about what it means, which
-        // is why every case in this file states none.
+        // A region's delivery policy and its numerical contract decide nothing
+        // about what this module resolves — names, shapes, and the public
+        // logical program — which is why every case in this file states neither.
         delivery: None,
+        contract: None,
         out: At(40),
         body: approved_body(),
     }
@@ -363,6 +365,7 @@ fn a_region_without_operands_is_refused() {
         symbols: Vec::new(),
         operands: Vec::new(),
         delivery: None,
+        contract: None,
         out: At(40),
         body: reference("a", 52),
     };
@@ -530,6 +533,7 @@ fn serial_sum_region() -> RegionSyntax<At> {
             vec![named_axis("rows", 2, 12), named_axis("cols", 2, 14)],
         )],
         delivery: None,
+        contract: None,
         out: At(40),
         body: reduction(
             50,
@@ -889,7 +893,12 @@ fn a_symbolic_reduction_defers_its_public_logical_program() {
 /// No toolchain runs and no file is written: `compile` stops at a selected plan,
 /// which is the whole of "the compiler admits this region for the declared
 /// target". Producing the bytes is `crate::aot`'s, and the end-to-end path is
-/// `crates/tiler/tests/facade/pass/deliver_compiles_a_reduction.rs`.
+/// `crates/tiler/tests/facade/pass/deliver_compiles_embeds_and_routes.rs`.
+///
+/// The contract is the one the delivering fixtures state, resolved through the
+/// production vocabulary: a region states its own now, so there is no frontend
+/// constant to reach for, and naming one here would be a second answer to the
+/// question `crate::numerics` owns.
 fn plans_for_the_bound_declaration(region: &RegionSyntax<At>) -> bool {
     use tiler_build::BoundMetalCompileDeclaration;
     use tiler_compiler::session::{CompileRequest, compile};
@@ -904,7 +913,9 @@ fn plans_for_the_bound_declaration(region: &RegionSyntax<At>) -> bool {
         BoundMetalCompileDeclaration::first_macos_apple9().expect("the declaration assembles");
     let targets =
         TargetRequest::new([declaration.profile().clone()]).expect("a singleton target request");
-    compile(CompileRequest::new(program, crate::aot::CONTRACT, targets))
+    let contract = crate::numerics::resolve("flush_subnormals_to_zero_f32")
+        .expect("the flush-to-zero contract is statable");
+    compile(CompileRequest::new(program, contract.contract(), targets))
         .ok()
         .and_then(|batch| batch.into_targets().pop())
         .and_then(|outcome| outcome.into_parts().1.ok())
@@ -952,6 +963,8 @@ fn an_unrecognized_region_names_what_a_consumer_would_change() {
         );
         crate::aot::deliver(
             expansion.program.verified(),
+            crate::numerics::resolve("flush_subnormals_to_zero_f32")
+                .expect("the flush-to-zero contract is statable"),
             ArtifactFamilySelection::new(crate::delivery::NamedProfile::MacOs.policy())
                 .expect("the accepted macOS profile is a valid selection"),
             &crate::cache_root::RootEnvironment::new(

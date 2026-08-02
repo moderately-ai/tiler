@@ -11,8 +11,8 @@
 use crate::tokens::{Delimiter, Tree};
 
 use super::{
-    AxisExtentSyntax, AxisSyntax, DeploymentMinimumSyntax, Expression, FamilyMinimumSyntax,
-    Operator, RegionSyntax, ScalarSyntax, StatedDelivery, SyntaxError, parse,
+    AxisExtentSyntax, AxisSyntax, ContractSyntax, DeploymentMinimumSyntax, Expression,
+    FamilyMinimumSyntax, Operator, RegionSyntax, ScalarSyntax, StatedDelivery, SyntaxError, parse,
 };
 
 /// A span a test can construct and assert on.
@@ -166,6 +166,11 @@ fn the_approved_region_parses_to_its_declarations_and_body() {
     assert!(
         region.delivery.is_none(),
         "the approved region states no `deliver`, which is what makes its absence the default",
+    );
+    assert!(
+        region.contract.is_none(),
+        "a region with no `contract` statement is a shape this module reads; refusing it is \
+         `numerics`', where the names it must offer are known",
     );
 
     assert_eq!(region.out, At(30));
@@ -1076,6 +1081,199 @@ fn every_refusal_carries_the_span_of_its_own_token() {
     for (name, trees, expected) in cases {
         assert_eq!(*refused(&trees).span(), expected, "case `{name}`");
     }
+}
+
+/// A `contract` statement parses to the one name it states, with the keyword and
+/// the name each carrying their own token.
+///
+/// The name is one identifier, unlike a delivery profile: `macos-and-ios` needs
+/// hyphen joining and so carries only its first token's span, while a contract
+/// name carries the whole of what the consumer wrote. That is what lets
+/// [`crate::numerics`] refuse an unknown one at the name.
+#[test]
+fn a_contract_statement_parses_to_the_name_it_states() {
+    let region = parsed(&delivering(vec![
+        ident("contract", 10),
+        ident("flush_subnormals_to_zero_f32", 11),
+        punct(';', 12),
+    ]));
+    assert_eq!(
+        region.contract,
+        Some(ContractSyntax {
+            keyword: At(10),
+            name: super::Name {
+                text: "flush_subnormals_to_zero_f32".to_owned(),
+                span: At(11),
+            },
+        }),
+    );
+
+    // Where the statement sits in the declaration block changes nothing, matching
+    // every other statement.
+    let mut leading = vec![
+        ident("contract", 10),
+        ident("strict_f32", 11),
+        punct(';', 12),
+        ident("in", 1),
+        ident("a", 2),
+        punct(':', 3),
+        ident("f32", 4),
+        bracket(Vec::new(), 5),
+        punct(';', 6),
+    ];
+    leading.push(ident("out", 90));
+    leading.push(ident("a", 91));
+    assert_eq!(
+        parsed(&leading).contract.expect("stated").name.text,
+        "strict_f32",
+    );
+}
+
+/// A `contract` statement may appear once, and a second is refused at the
+/// keyword that repeats.
+#[test]
+fn a_second_contract_statement_is_refused_at_its_keyword() {
+    let mut statement = vec![
+        ident("contract", 10),
+        ident("strict_f32", 11),
+        punct(';', 12),
+    ];
+    statement.extend([
+        ident("contract", 20),
+        ident("relaxed_f32", 21),
+        punct(';', 22),
+    ]);
+    assert_eq!(
+        refused(&delivering(statement)),
+        SyntaxError::RepeatedContractStatement { span: At(20) },
+    );
+
+    // Refused at the repetition rather than at its name: the second statement
+    // names a contract this frontend publishes, so a rule that read the name
+    // first would report nothing wrong with it.
+    let mut unpublished = vec![
+        ident("contract", 10),
+        ident("strict_f32", 11),
+        punct(';', 12),
+    ];
+    unpublished.extend([ident("contract", 20), ident("nonsense", 21), punct(';', 22)]);
+    assert_eq!(
+        refused(&delivering(unpublished)),
+        SyntaxError::RepeatedContractStatement { span: At(20) },
+    );
+
+    // The accepting neighbour differs only in the second statement's absence.
+    assert!(
+        parsed(&delivering(vec![
+            ident("contract", 10),
+            ident("strict_f32", 11),
+            punct(';', 12),
+        ]))
+        .contract
+        .is_some(),
+    );
+}
+
+/// A `contract` statement states one name and terminates, and each way of
+/// getting that wrong is refused at its own token.
+#[test]
+fn a_malformed_contract_statement_is_refused_at_its_own_token() {
+    let cases: Vec<RefusalCase> = vec![
+        (
+            "no name at all",
+            delivering(vec![ident("contract", 10), punct(';', 11)]),
+            SyntaxError::ExpectedName {
+                role: "a numerical contract name",
+                found: "`;`".to_owned(),
+                span: At(11),
+            },
+        ),
+        (
+            "a literal where the name goes",
+            delivering(vec![
+                ident("contract", 10),
+                literal("32", 11),
+                punct(';', 12),
+            ]),
+            SyntaxError::ExpectedName {
+                role: "a numerical contract name",
+                found: "`32`".to_owned(),
+                span: At(11),
+            },
+        ),
+        (
+            "a raw identifier where the name goes",
+            delivering(vec![
+                ident("contract", 10),
+                raw_ident("strict_f32", 11),
+                punct(';', 12),
+            ]),
+            SyntaxError::RawIdentifier {
+                name: "strict_f32".to_owned(),
+                span: At(11),
+            },
+        ),
+        (
+            "no terminator",
+            delivering(vec![ident("contract", 10), ident("strict_f32", 11)]),
+            SyntaxError::ExpectedPunct {
+                expected: ';',
+                role: "after a numerical contract name",
+                found: "`out`".to_owned(),
+                span: At(90),
+            },
+        ),
+        (
+            // A hyphenated spelling is not this statement's shape: the `-` is
+            // where the terminator was required, so the refusal names that token
+            // rather than reporting an unpublished contract called `flush`.
+            "a hyphenated name",
+            delivering(vec![
+                ident("contract", 10),
+                ident("flush", 11),
+                punct('-', 12),
+                ident("f32", 13),
+                punct(';', 14),
+            ]),
+            SyntaxError::ExpectedPunct {
+                expected: ';',
+                role: "after a numerical contract name",
+                found: "`-`".to_owned(),
+                span: At(12),
+            },
+        ),
+        (
+            "two names",
+            delivering(vec![
+                ident("contract", 10),
+                ident("strict_f32", 11),
+                punct(',', 12),
+                ident("relaxed_f32", 13),
+                punct(';', 14),
+            ]),
+            SyntaxError::ExpectedPunct {
+                expected: ';',
+                role: "after a numerical contract name",
+                found: "`,`".to_owned(),
+                span: At(12),
+            },
+        ),
+    ];
+    assert_eq!(
+        cases.len(),
+        6,
+        "the population this test covers is every malformed statement shape, counted",
+    );
+    for (label, trees, expected) in cases {
+        assert_eq!(refused(&trees), expected, "case `{label}`");
+    }
+
+    // The accepting neighbour, differing from each rejected shape in one token.
+    let _parses = parsed(&delivering(vec![
+        ident("contract", 10),
+        ident("strict_f32", 11),
+        punct(';', 12),
+    ]));
 }
 
 /// `in x: f32[rows: 2, cols: 2]; out strict_serial_sum(x * 2.0 + 1.0, [cols])`,

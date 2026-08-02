@@ -16,6 +16,7 @@ fn main() {
     let _wrong_dtype = tiler::tensor! {
         sym n;
         in a: f64[n], b: f32[n];
+        contract flush_subnormals_to_zero_f32;
         out a * b
     };
 
@@ -23,6 +24,7 @@ fn main() {
     let _wrong_operator = tiler::tensor! {
         sym n;
         in a: f32[n], b: f32[n];
+        contract flush_subnormals_to_zero_f32;
         out a - b
     };
 
@@ -31,6 +33,7 @@ fn main() {
     let _compound_operator = tiler::tensor! {
         sym n;
         in a: f32[n], b: f32[n];
+        contract flush_subnormals_to_zero_f32;
         out a += b
     };
 
@@ -38,12 +41,14 @@ fn main() {
     let _named_call = tiler::tensor! {
         sym n;
         in a: f32[n];
+        contract flush_subnormals_to_zero_f32;
         out relu(a)
     };
 
     // A literal extent that is not a plain integer, refused at the literal.
     let _suffixed_extent = tiler::tensor! {
         in a: f32[4usize];
+        contract flush_subnormals_to_zero_f32;
         out a
     };
 
@@ -51,12 +56,14 @@ fn main() {
     let _no_body = tiler::tensor! {
         sym n;
         in a: f32[n];
+        contract flush_subnormals_to_zero_f32;
     };
 
     // Tokens after the result expression.
     let _trailing = tiler::tensor! {
         sym n;
         in a: f32[n];
+        contract flush_subnormals_to_zero_f32;
         out a;
     };
 

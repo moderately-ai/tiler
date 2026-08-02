@@ -1,77 +1,77 @@
 error: `2` is not a scalar constant; a region writes one as a plain real number with no suffix, as in `2.0`, `-1.5`, or `1e-6`, and a whole number still carries its point because `x * 2` is not what the surrounding Rust would have accepted either
-  --> tests/facade/fail/reduction_diagnostics.rs:22:35
+  --> tests/facade/fail/reduction_diagnostics.rs:23:35
    |
-22 |         out strict_serial_sum(x * 2 + 1.0, [cols])
+23 |         out strict_serial_sum(x * 2 + 1.0, [cols])
    |                                   ^
 
 error: `2.0f32` is not a scalar constant; a region writes one as a plain real number with no suffix, as in `2.0`, `-1.5`, or `1e-6`, and a whole number still carries its point because `x * 2` is not what the surrounding Rust would have accepted either
-  --> tests/facade/fail/reduction_diagnostics.rs:28:35
+  --> tests/facade/fail/reduction_diagnostics.rs:30:35
    |
-28 |         out strict_serial_sum(x * 2.0f32 + 1.0, [cols])
+30 |         out strict_serial_sum(x * 2.0f32 + 1.0, [cols])
    |                                   ^^^^^^
 
 error: `1e40` is not a value an `f32` constant can take; a region's scalar constant is a finite number, and a literal that rounds to an infinity would compute something other than what it spells
-  --> tests/facade/fail/reduction_diagnostics.rs:35:35
+  --> tests/facade/fail/reduction_diagnostics.rs:38:35
    |
-35 |         out strict_serial_sum(x * 1e40 + 1.0, [cols])
+38 |         out strict_serial_sum(x * 1e40 + 1.0, [cols])
    |                                   ^^^^
 
 error: expected `,` between a reduction's operand and its axes and found the end of the region
-  --> tests/facade/fail/reduction_diagnostics.rs:41:30
+  --> tests/facade/fail/reduction_diagnostics.rs:45:30
    |
-41 |         out strict_serial_sum(x * 2.0 + 1.0)
+45 |         out strict_serial_sum(x * 2.0 + 1.0)
    |                              ^^^^^^^^^^^^^^^
 
 error: `strict_serial_sum` is given no axis to reduce; name at least one axis of the expression it sums, as in `[cols]`, because a reduction over nothing is the expression itself
-  --> tests/facade/fail/reduction_diagnostics.rs:47:46
+  --> tests/facade/fail/reduction_diagnostics.rs:52:46
    |
-47 |         out strict_serial_sum(x * 2.0 + 1.0, [])
+52 |         out strict_serial_sum(x * 2.0 + 1.0, [])
    |                                              ^^
 
 error: expected the bracketed axis names `strict_serial_sum` reduces and found `cols`; a reduction states which axes it sums, as in `strict_serial_sum(x * 2.0 + 1.0, [cols])`
-  --> tests/facade/fail/reduction_diagnostics.rs:53:46
+  --> tests/facade/fail/reduction_diagnostics.rs:59:46
    |
-53 |         out strict_serial_sum(x * 2.0 + 1.0, cols)
+59 |         out strict_serial_sum(x * 2.0 + 1.0, cols)
    |                                              ^^^^
 
 error: `reduce_sum(…)` is a named operation call this profile does not register; `strict_serial_sum` is the one it does, and the approved syntax reserves the form for operations without an operator spelling rather than inventing a meaning the public logical program cannot express
-  --> tests/facade/fail/reduction_diagnostics.rs:59:13
+  --> tests/facade/fail/reduction_diagnostics.rs:66:13
    |
-59 |         out reduce_sum(x * 2.0 + 1.0, [cols])
+66 |         out reduce_sum(x * 2.0 + 1.0, [cols])
    |             ^^^^^^^^^^
 
 error: `depth` is not a named axis of the expression this reduction sums, which has the axes `rows`, `cols`; an axis is named by the shape that declares it, so write `depth` as one of that operand's axes, as in `f32[depth: 8]`
-  --> tests/facade/fail/reduction_diagnostics.rs:66:47
+  --> tests/facade/fail/reduction_diagnostics.rs:74:47
    |
-66 |         out strict_serial_sum(x * 2.0 + 1.0, [depth])
+74 |         out strict_serial_sum(x * 2.0 + 1.0, [depth])
    |                                               ^^^^^
 
 error: `cols` is not a named axis of the expression this reduction sums, which has no named axis; an axis is named by the shape that declares it, so write `cols` as one of that operand's axes, as in `f32[cols: 8]`
-  --> tests/facade/fail/reduction_diagnostics.rs:73:47
+  --> tests/facade/fail/reduction_diagnostics.rs:82:47
    |
-73 |         out strict_serial_sum(x * 2.0 + 1.0, [cols])
+82 |         out strict_serial_sum(x * 2.0 + 1.0, [cols])
    |                                               ^^^^
 
 error: `n` names more than one axis of the expression this reduction sums, so which axis to sum is not decided; give those axes distinct names in the shape that declares them, as in `f32[n: 8, other: 8]`
-  --> tests/facade/fail/reduction_diagnostics.rs:81:47
+  --> tests/facade/fail/reduction_diagnostics.rs:91:47
    |
-81 |         out strict_serial_sum(x * 2.0 + 1.0, [n])
+91 |         out strict_serial_sum(x * 2.0 + 1.0, [n])
    |                                               ^
 
 error: `cols` is named twice by one reduction; a reduction sums each axis once, and summing one twice is not a computation this vocabulary carries
-  --> tests/facade/fail/reduction_diagnostics.rs:87:53
+  --> tests/facade/fail/reduction_diagnostics.rs:98:53
    |
-87 |         out strict_serial_sum(x * 2.0 + 1.0, [cols, cols])
+98 |         out strict_serial_sum(x * 2.0 + 1.0, [cols, cols])
    |                                                     ^^^^
 
 error: axis 1 is named `cols` by one operand of this operation and `depth` by the other, so the axis its result exposes has no one name; name it the same way in both shapes, or leave it unnamed in one of them
-  --> tests/facade/fail/reduction_diagnostics.rs:94:33
-   |
-94 |         out strict_serial_sum(x * y + 1.0, [cols])
-   |                                 ^
+   --> tests/facade/fail/reduction_diagnostics.rs:106:33
+    |
+106 |         out strict_serial_sum(x * y + 1.0, [cols])
+    |                                 ^
 
 error: `-` is not an operation this region vocabulary carries; the governed semantic profile registers `*` and `+` over `f32`, and an operation with no public logical spelling is refused rather than approximated
-   --> tests/facade/fail/reduction_diagnostics.rs:101:35
+   --> tests/facade/fail/reduction_diagnostics.rs:114:35
     |
-101 |         out strict_serial_sum(x * -x + 1.0, [cols])
+114 |         out strict_serial_sum(x * -x + 1.0, [cols])
     |                                   ^

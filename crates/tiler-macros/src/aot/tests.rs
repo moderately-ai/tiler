@@ -28,9 +28,10 @@ use tiler_metal_aot::family::{
 };
 use tiler_metal_aot::input::{ApplePlatform, DeploymentMinimum, MslVersion};
 
-use super::{AotRefusal, CONTRACT, OPTIMIZATION, RouteFacts, deliver};
+use super::{AotRefusal, OPTIMIZATION, RouteFacts, deliver};
 use crate::cache_root::{DISABLE_VALUE, RootEnvironment};
 use crate::delivery::{NamedProfile, byte_string_literal};
+use crate::numerics::{StatedContract, resolve};
 
 /// The approved region `in a: f32[4], b: f32[4], c: f32[4]; out (a * b) + c`.
 ///
@@ -58,6 +59,20 @@ fn approved_region() -> SemanticProgram {
         .output(OutputKey::new("out").expect("a valid interface key"), sum)
         .expect("the output binds");
     builder.build().expect("the region verifies")
+}
+
+/// The contract `contract flush_subnormals_to_zero_f32;` states.
+///
+/// Resolved through the production vocabulary rather than named as a constant
+/// here, so these tests exercise the same name-to-contract table an expansion
+/// does and a name removed from it fails here instead of quietly diverging.
+///
+/// This one because it is the meaning every delivering fixture in this crate has
+/// been compiled under: the artifact identity folds the contract key, so a
+/// different name here would make every cached-identity claim below a claim
+/// about a different artifact.
+fn flushing() -> StatedContract {
+    resolve("flush_subnormals_to_zero_f32").expect("the flush-to-zero contract is statable")
 }
 
 /// The selection `deliver macos;` states.
@@ -102,6 +117,7 @@ fn a_delivering_expansion_publishes_and_then_hits() {
     let environment = stating(&root);
     let first = deliver(
         Some(&program),
+        flushing(),
         macos_selection(),
         &environment,
         &Toolchain::system(),
@@ -109,6 +125,7 @@ fn a_delivering_expansion_publishes_and_then_hits() {
     .expect("the first expansion builds");
     let second = deliver(
         Some(&program),
+        flushing(),
         macos_selection(),
         &environment,
         &Toolchain::system(),
@@ -166,6 +183,7 @@ fn a_disabled_cache_delivers_the_region_and_publishes_no_file() {
 
     let disabled = deliver(
         Some(&program),
+        flushing(),
         macos_selection(),
         &RootEnvironment::new(Some(std::ffi::OsString::from(DISABLE_VALUE)), None),
         &toolchain,
@@ -193,6 +211,7 @@ fn a_disabled_cache_delivers_the_region_and_publishes_no_file() {
     // assertion above would pass on a host where publication never works.
     let stated = deliver(
         Some(&program),
+        flushing(),
         macos_selection(),
         &stating(&root),
         &toolchain,
@@ -262,14 +281,18 @@ fn the_second_expansion_of_one_subject_compiles_nothing() {
         BoundMetalCompileDeclaration::first_macos_apple9().expect("the declaration assembles");
     let targets =
         TargetRequest::new([declaration.profile().clone()]).expect("a singleton target request");
-    let compilation = compile(CompileRequest::new(&program, CONTRACT, targets))
-        .expect("the region compiles")
-        .into_targets()
-        .pop()
-        .expect("one target outcome")
-        .into_parts()
-        .1
-        .expect("the declared target compiles");
+    let compilation = compile(CompileRequest::new(
+        &program,
+        flushing().contract(),
+        targets,
+    ))
+    .expect("the region compiles")
+    .into_targets()
+    .pop()
+    .expect("one target outcome")
+    .into_parts()
+    .1
+    .expect("the declared target compiles");
     let plan = compilation.selected().expect("one selected plan");
 
     let cache = ExpansionCache::open(directory.join("cache"));
@@ -299,28 +322,28 @@ fn the_second_expansion_of_one_subject_compiles_nothing() {
     let _ = std::fs::remove_dir_all(directory);
 }
 
-/// Two named numerical contracts are admissible, and `CONTRACT` is one of them.
+/// Two named numerical contracts are admissible, and both are statable from a
+/// region.
 ///
 /// **This test's predecessor asserted one, and it fired exactly as designed.**
 /// While a caller chose from four presets, the bound declaration admitted only
 /// the flush-to-zero one — the two granting regrouping required preserved
-/// subnormals this hardware measurably flushes — so `CONTRACT` was a derivation
-/// rather than a preference, and the assertion said so. `NumericalContract` is
-/// now composed from its dimensions, so flushing and regrouping can be resolved
-/// together, and this declaration admits that combination too.
+/// subnormals this hardware measurably flushes — so the frontend's contract was
+/// a derivation rather than a preference, and the assertion said so.
+/// `NumericalContract` is now composed from its dimensions, so flushing and
+/// regrouping can be resolved together, and this declaration admits that
+/// combination too.
 ///
-/// **So the frontend now has a real choice, and it is not this test's to make.**
-/// `CONTRACT` stays at the flush-to-zero contract because that is the meaning
-/// every expansion has been delivering, and moving it would change what every
-/// `tensor!` program *means* rather than how it is planned — a decision that
-/// belongs to Tom.
-/// [`decide-the-inline-frontend-numerical-contract`](../../../../tickets/decide-the-inline-frontend-numerical-contract.md)
-/// owns it, with the eliminations and the consequence of each option.
+/// **The choice that opened is the consumer's now, and Tom decided it should
+/// be**: on 2026-08-01, at the live session, he ended the default rather than
+/// moving it, so there is no frontend contract constant left for this test to
+/// check. What replaces that half is the reachability claim — every contract
+/// this declaration admits must be nameable from a region, or the frontend
+/// would be measuring a meaning no consumer can ask for.
 ///
-/// What this pins meanwhile is the pair, not a count: the population is named
-/// rather than counted, so a *third* admissible contract still fails here rather
-/// than passing under a loosened bound, and `CONTRACT` must remain one of the
-/// admitted ones rather than a contract the declaration cannot honour.
+/// What this pins is the pair, not a count: the population is named rather than
+/// counted, so a *third* admissible contract still fails here rather than
+/// passing under a loosened bound.
 #[test]
 fn the_bound_declaration_admits_the_two_flushing_contracts() {
     const CONTRACTS: [NumericalContract; 5] = [
@@ -351,12 +374,75 @@ fn the_bound_declaration_admits_the_two_flushing_contracts() {
             NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32,
             NumericalContract::FLUSH_AND_REASSOCIATE_F32,
         ],
-        "the admitted set moved; the frontend's contract is a decision, not a derivation",
+        "the admitted set moved; the contract a region states is a decision, not a derivation",
+    );
+    for contract in admitted {
+        assert!(
+            crate::numerics::statable(contract),
+            "this declaration honours {contract:?}, and no region can state it",
+        );
+    }
+}
+
+/// A stated contract this declaration cannot honour is refused here, not in the
+/// grammar.
+///
+/// The second layer of the split the region grammar deliberately does not
+/// pre-answer: `strict_f32` is a contract a consumer may state — it resolves,
+/// and it means exactly what it says — and the measured Apple `f32` row flushes
+/// subnormals in every math mode, so the compiler's own target feasibility check
+/// is what refuses it. Pre-answering that at the token would put a target
+/// measurement in the grammar, where a second measured declaration would have to
+/// contradict it.
+///
+/// The stated cache root does not exist and could not be created, which is what
+/// proves the refusal precedes every toolchain and cache step: a contract that
+/// got past it would fail on the root instead, with a different refusal.
+#[test]
+fn a_contract_this_declaration_cannot_honour_is_refused_at_the_target() {
+    let strict = resolve("strict_f32").expect("the strict contract is statable");
+    let refusal = deliver(
+        Some(&approved_region()),
+        strict,
+        macos_selection(),
+        &stating(std::path::Path::new("/tiler-no-such-cache-root")),
+        &Toolchain::system(),
+    )
+    .expect_err("this hardware's measured `f32` row cannot preserve input subnormals");
+
+    let AotRefusal::TargetCompile { contract, .. } = &refusal else {
+        panic!("unexpected refusal: {refusal:?}");
+    };
+    assert_eq!(
+        *contract, "strict_f32",
+        "the refusal must name the contract the region stated",
     );
     assert!(
-        admitted.contains(&CONTRACT),
-        "the frontend compiles under a contract this declaration cannot honour",
+        refusal.to_string().contains("`strict_f32`"),
+        "the diagnostic must quote the stated contract: {refusal}",
     );
+    assert!(
+        refusal.to_string().contains("cannot honour"),
+        "the diagnostic must name an unhonourable contract as a cause: {refusal}",
+    );
+
+    // The accepting neighbour, differing from the case above in the contract
+    // alone: the same program and the same selection deliver. Without it, a
+    // `deliver` broken in any other way would produce the refusal above too.
+    let root = scratch("contract-honoured");
+    let delivered = deliver(
+        Some(&approved_region()),
+        flushing(),
+        macos_selection(),
+        &stating(&root),
+        &Toolchain::system(),
+    )
+    .expect("this declaration honours the flush-to-zero contract");
+    assert!(
+        delivered.route_facts.is_some(),
+        "the accepting neighbour must produce an artifact, not a retained diagnostic",
+    );
+    let _ = std::fs::remove_dir_all(root);
 }
 
 /// A region carrying a symbolic extent refuses rather than compiling something
@@ -365,6 +451,7 @@ fn the_bound_declaration_admits_the_two_flushing_contracts() {
 fn a_symbolic_region_cannot_deliver_a_selected_family() {
     let refusal = deliver(
         None,
+        flushing(),
         macos_selection(),
         &stating(std::path::Path::new("/unreachable")),
         &Toolchain::system(),
@@ -448,6 +535,7 @@ fn every_unbuildable_selection_is_refused_before_any_toolchain_work() {
     for (selection, difference) in cases {
         let refusal = deliver(
             Some(&approved_region()),
+            flushing(),
             selection,
             &unreachable,
             &Toolchain::system(),
@@ -501,6 +589,7 @@ fn a_mixed_selection_refuses_by_naming_only_its_unmeasured_families() {
 
     let refusal = deliver(
         Some(&approved_region()),
+        flushing(),
         selection,
         &stating(std::path::Path::new("/tiler-no-such-cache-root")),
         &Toolchain::system(),
@@ -544,6 +633,7 @@ fn the_emitted_route_facts_name_the_embedded_artifact_rather_than_copying_it() {
     let program = approved_region();
     let delivered = deliver(
         Some(&program),
+        flushing(),
         macos_selection(),
         &stating(&root),
         &Toolchain::system(),
@@ -610,6 +700,7 @@ fn a_toolchain_failure_is_retained_under_the_family_it_belongs_to() {
     let program = approved_region();
     let delivered = deliver(
         Some(&program),
+        flushing(),
         macos_selection(),
         &stating(&root),
         &Toolchain::with_launcher(root.join("no-such-xcrun")),
@@ -712,7 +803,7 @@ fn resolved(root: &std::path::Path, program: &SemanticProgram) -> (ComposedSubje
         BoundMetalCompileDeclaration::first_macos_apple9().expect("the declaration assembles");
     let targets =
         TargetRequest::new([declaration.profile().clone()]).expect("a singleton target request");
-    let compilation = compile(CompileRequest::new(program, CONTRACT, targets))
+    let compilation = compile(CompileRequest::new(program, flushing().contract(), targets))
         .expect("the region compiles")
         .into_targets()
         .pop()
@@ -780,6 +871,7 @@ fn a_semantically_wrong_entry_is_a_typed_refusal_rather_than_a_silent_rebuild() 
 
     let refusal = deliver(
         Some(&approved_region()),
+        flushing(),
         macos_selection(),
         &stating(&poisoned),
         &Toolchain::system(),
@@ -812,6 +904,7 @@ fn a_damaged_entry_is_quarantined_and_rebuilt() {
     let environment = stating(&root);
     let first = deliver(
         Some(&program),
+        flushing(),
         macos_selection(),
         &environment,
         &Toolchain::system(),
@@ -833,6 +926,7 @@ fn a_damaged_entry_is_quarantined_and_rebuilt() {
 
     let second = deliver(
         Some(&program),
+        flushing(),
         macos_selection(),
         &environment,
         &Toolchain::system(),
@@ -872,6 +966,7 @@ fn a_fallback_only_selection_is_refused_before_any_backend_work() {
 
     let refusal = deliver(
         Some(&approved_region()),
+        flushing(),
         selection,
         &stating(std::path::Path::new("/tiler-no-such-cache-root")),
         &Toolchain::system(),

@@ -5,57 +5,58 @@ error: `f64` is not an element type a region may declare; this profile registers
    |               ^^^
 
 error: `-` is not an operation this region vocabulary carries; the governed semantic profile registers `*` and `+` over `f32`, and an operation with no public logical spelling is refused rather than approximated
-  --> tests/facade/fail/region_syntax_diagnostics.rs:26:15
+  --> tests/facade/fail/region_syntax_diagnostics.rs:28:15
    |
-26 |         out a - b
+28 |         out a - b
    |               ^
 
 error: `+=` is not an operation this region vocabulary carries; the governed semantic profile registers `*` and `+` over `f32`, and an operation with no public logical spelling is refused rather than approximated
-  --> tests/facade/fail/region_syntax_diagnostics.rs:34:15
+  --> tests/facade/fail/region_syntax_diagnostics.rs:37:15
    |
-34 |         out a += b
+37 |         out a += b
    |               ^
 
 error: `relu(…)` is a named operation call this profile does not register; `strict_serial_sum` is the one it does, and the approved syntax reserves the form for operations without an operator spelling rather than inventing a meaning the public logical program cannot express
-  --> tests/facade/fail/region_syntax_diagnostics.rs:41:13
+  --> tests/facade/fail/region_syntax_diagnostics.rs:45:13
    |
-41 |         out relu(a)
+45 |         out relu(a)
    |             ^^^^
 
 error: `4usize` is not a literal extent; a fixed axis is written as a plain non-negative integer with no suffix, as in `f32[4]`
-  --> tests/facade/fail/region_syntax_diagnostics.rs:46:19
+  --> tests/facade/fail/region_syntax_diagnostics.rs:50:19
    |
-46 |         in a: f32[4usize];
+50 |         in a: f32[4usize];
    |                   ^^^^^^
 
 error: this region declares no result; add `out <expression>`, which is the value the invocation evaluates to
-  --> tests/facade/fail/region_syntax_diagnostics.rs:51:20
+  --> tests/facade/fail/region_syntax_diagnostics.rs:56:20
    |
-51 |       let _no_body = tiler::tensor! {
+56 |       let _no_body = tiler::tensor! {
    |  ____________________^
-52 | |         sym n;
-53 | |         in a: f32[n];
-54 | |     };
+57 | |         sym n;
+58 | |         in a: f32[n];
+59 | |         contract flush_subnormals_to_zero_f32;
+60 | |     };
    | |_____^
    |
    = note: this error originates in the macro `tiler::tensor` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: found `;` after an expression that was already complete; a region declares exactly one result, and `out` takes the rest of the invocation
-  --> tests/facade/fail/region_syntax_diagnostics.rs:60:14
+  --> tests/facade/fail/region_syntax_diagnostics.rs:67:14
    |
-60 |         out a;
+67 |         out a;
    |              ^
 
 error: `tiler::tensor!` was given no region; a region declares its operands and its result, as in `sym n; in a: f32[n], b: f32[n]; out a * b`
-  --> tests/facade/fail/region_syntax_diagnostics.rs:64:18
+  --> tests/facade/fail/region_syntax_diagnostics.rs:71:18
    |
-64 |     let _empty = tiler::tensor!();
+71 |     let _empty = tiler::tensor!();
    |                  ^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the macro `tiler::tensor` (in Nightly builds, run with -Z macro-backtrace for more info)
 
-error: expected `sym`, `in`, `deliver`, or `out` and found `let`; a region is a declaration block followed by one `out` expression
-  --> tests/facade/fail/region_syntax_diagnostics.rs:68:9
+error: expected `sym`, `in`, `deliver`, `contract`, or `out` and found `let`; a region is a declaration block followed by one `out` expression
+  --> tests/facade/fail/region_syntax_diagnostics.rs:75:9
    |
-68 |         let a = 1;
+75 |         let a = 1;
    |         ^^^

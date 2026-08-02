@@ -96,6 +96,7 @@ fn main() {
     let d = tiler::tensor! {
         sym n;
         in a: f32[n], b: f32[n], c: f32[n];
+        contract flush_subnormals_to_zero_f32;
         out (a * b) + c
     };
     assert_eq!(
@@ -114,6 +115,7 @@ fn main() {
         tiler::tensor! {
             sym n;
             in a: f32[n], b: f32[n], c: f32[n];
+            contract flush_subnormals_to_zero_f32;
             out (a * b) + c
         }
     };
@@ -140,6 +142,7 @@ fn main() {
         tiler::tensor! {
             sym n;
             in a: f32[n], b: f32[n], c: f32[n];
+            contract flush_subnormals_to_zero_f32;
             out (a * b) + c
         }
     };
@@ -159,6 +162,7 @@ fn main() {
         let (a, b, c) = (f32_tensor(&[4]), f32_tensor(&[4]), f32_tensor(&[4]));
         tiler::tensor! {
             in a: f32[4], b: f32[4], c: f32[4];
+            contract flush_subnormals_to_zero_f32;
             out (a * b) + c
         }
     };
@@ -175,6 +179,7 @@ fn main() {
         let (a, b, c) = (f32_tensor(&[7]), f32_tensor(&[4]), f32_tensor(&[4]));
         tiler::tensor! {
             in a: f32[4], b: f32[4], c: f32[4];
+            contract flush_subnormals_to_zero_f32;
             out (a * b) + c
         }
     };
@@ -196,6 +201,7 @@ fn main() {
         let (a, b, c) = (f32_tensor(&[4, 1]), f32_tensor(&[4]), f32_tensor(&[4]));
         tiler::tensor! {
             in a: f32[4], b: f32[4], c: f32[4];
+            contract flush_subnormals_to_zero_f32;
             out (a * b) + c
         }
     };
@@ -216,6 +222,7 @@ fn main() {
         let x = f32_tensor(&[2, 3]);
         tiler::tensor! {
             in x: f32[rows: 2, cols: 3];
+            contract flush_subnormals_to_zero_f32;
             out strict_serial_sum(x * 2.0 + 1.0, [cols])
         }
     };
@@ -230,6 +237,7 @@ fn main() {
         let x = f32_tensor(&[2, 3]);
         tiler::tensor! {
             in x: f32[rows: 2, cols: 3];
+            contract flush_subnormals_to_zero_f32;
             out strict_serial_sum(x * 2.0 + -1.5, [rows, cols])
         }
     };
@@ -245,6 +253,7 @@ fn main() {
         tiler::tensor! {
             sym n;
             in x: f32[n, cols: 3];
+            contract flush_subnormals_to_zero_f32;
             out strict_serial_sum(x * 2.0 + 1.0, [cols])
         }
     };
@@ -262,6 +271,7 @@ fn main() {
         tiler::tensor! {
             sym n;
             in x: f32[cols: 3, n];
+            contract flush_subnormals_to_zero_f32;
             out strict_serial_sum(x * 2.0 + 1.0, [n])
         }
     };
@@ -279,6 +289,7 @@ fn main() {
         tiler::tensor! {
             sym n;
             in a: f32[n], s: f32[];
+            contract flush_subnormals_to_zero_f32;
             out a * s
         }
     };

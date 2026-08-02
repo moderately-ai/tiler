@@ -79,11 +79,13 @@ fn main() {
         sym n;
         in a: f32[n], b: f32[n], c: f32[n];
         deliver fallback-only;
+        contract flush_subnormals_to_zero_f32;
         out (a * b) + c
     };
     let unstated = tiler::tensor! {
         sym n;
         in a: f32[n], b: f32[n], c: f32[n];
+        contract flush_subnormals_to_zero_f32;
         out (a * b) + c
     };
 
@@ -108,6 +110,7 @@ fn main() {
         deliver fallback-only;
         sym n;
         in a: f32[n], b: f32[n], c: f32[n];
+        contract flush_subnormals_to_zero_f32;
         out (a * b) + c
     };
     assert_eq!(

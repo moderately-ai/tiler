@@ -19,12 +19,14 @@ fn main() {
     // is not what the surrounding Rust would have accepted either.
     let _integer_constant = tiler::tensor! {
         in x: f32[rows: 2, cols: 2];
+        contract flush_subnormals_to_zero_f32;
         out strict_serial_sum(x * 2 + 1.0, [cols])
     };
 
     // A suffixed constant, refused at the literal.
     let _suffixed_constant = tiler::tensor! {
         in x: f32[rows: 2, cols: 2];
+        contract flush_subnormals_to_zero_f32;
         out strict_serial_sum(x * 2.0f32 + 1.0, [cols])
     };
 
@@ -32,30 +34,35 @@ fn main() {
     // to an infinity.
     let _unrepresentable_constant = tiler::tensor! {
         in x: f32[rows: 2, cols: 2];
+        contract flush_subnormals_to_zero_f32;
         out strict_serial_sum(x * 1e40 + 1.0, [cols])
     };
 
     // A reduction with no axis list, refused after its operand.
     let _no_axes = tiler::tensor! {
         in x: f32[rows: 2, cols: 2];
+        contract flush_subnormals_to_zero_f32;
         out strict_serial_sum(x * 2.0 + 1.0)
     };
 
     // An empty axis list, refused at the list.
     let _empty_axes = tiler::tensor! {
         in x: f32[rows: 2, cols: 2];
+        contract flush_subnormals_to_zero_f32;
         out strict_serial_sum(x * 2.0 + 1.0, [])
     };
 
     // An axis argument that is not a list, refused at what was found.
     let _unbracketed_axis = tiler::tensor! {
         in x: f32[rows: 2, cols: 2];
+        contract flush_subnormals_to_zero_f32;
         out strict_serial_sum(x * 2.0 + 1.0, cols)
     };
 
     // A named call this profile does not register, refused at the name.
     let _unregistered_call = tiler::tensor! {
         in x: f32[rows: 2, cols: 2];
+        contract flush_subnormals_to_zero_f32;
         out reduce_sum(x * 2.0 + 1.0, [cols])
     };
 
@@ -63,6 +70,7 @@ fn main() {
     // name, and the refusal offers the names that exist.
     let _unknown_axis = tiler::tensor! {
         in x: f32[rows: 2, cols: 2];
+        contract flush_subnormals_to_zero_f32;
         out strict_serial_sum(x * 2.0 + 1.0, [depth])
     };
 
@@ -70,6 +78,7 @@ fn main() {
     // names axes rather than counting positions.
     let _unnamed_axis = tiler::tensor! {
         in x: f32[2, 2];
+        contract flush_subnormals_to_zero_f32;
         out strict_serial_sum(x * 2.0 + 1.0, [cols])
     };
 
@@ -78,12 +87,14 @@ fn main() {
     let _ambiguous_axis = tiler::tensor! {
         sym n;
         in x: f32[n, n];
+        contract flush_subnormals_to_zero_f32;
         out strict_serial_sum(x * 2.0 + 1.0, [n])
     };
 
     // One axis named twice by one reduction.
     let _repeated_axis = tiler::tensor! {
         in x: f32[rows: 2, cols: 2];
+        contract flush_subnormals_to_zero_f32;
         out strict_serial_sum(x * 2.0 + 1.0, [cols, cols])
     };
 
@@ -91,6 +102,7 @@ fn main() {
     // that combined them rather than resolved in favour of the left.
     let _conflicting_names = tiler::tensor! {
         in x: f32[rows: 2, cols: 2], y: f32[rows: 2, depth: 2];
+        contract flush_subnormals_to_zero_f32;
         out strict_serial_sum(x * y + 1.0, [cols])
     };
 
@@ -98,6 +110,7 @@ fn main() {
     // and nothing else.
     let _negated_operand = tiler::tensor! {
         in x: f32[rows: 2, cols: 2];
+        contract flush_subnormals_to_zero_f32;
         out strict_serial_sum(x * -x + 1.0, [cols])
     };
 }

@@ -10,6 +10,7 @@ fn main() {
     let _undeclared_symbol = tiler::tensor! {
         sym n;
         in a: f32[n], b: f32[k];
+        contract flush_subnormals_to_zero_f32;
         out a * b
     };
 
@@ -17,6 +18,7 @@ fn main() {
     let _unsourced_symbol = tiler::tensor! {
         sym n, m;
         in a: f32[n];
+        contract flush_subnormals_to_zero_f32;
         out a
     };
 
@@ -24,6 +26,7 @@ fn main() {
     let _duplicate_operand = tiler::tensor! {
         sym n;
         in a: f32[n], a: f32[n];
+        contract flush_subnormals_to_zero_f32;
         out a
     };
 
@@ -32,6 +35,7 @@ fn main() {
         sym n;
         sym n;
         in a: f32[n];
+        contract flush_subnormals_to_zero_f32;
         out a
     };
 
@@ -40,12 +44,14 @@ fn main() {
     let _unknown_operand = tiler::tensor! {
         sym n;
         in a: f32[n];
+        contract flush_subnormals_to_zero_f32;
         out a * b
     };
 
     // Shapes that are neither equal nor scalar, refused at the operator.
     let _incompatible_shapes = tiler::tensor! {
         in a: f32[4], b: f32[5];
+        contract flush_subnormals_to_zero_f32;
         out a * b
     };
 
@@ -54,6 +60,7 @@ fn main() {
     let _distinct_symbols = tiler::tensor! {
         sym n, m;
         in a: f32[n], b: f32[m];
+        contract flush_subnormals_to_zero_f32;
         out a * b
     };
 

@@ -21,6 +21,7 @@ fn main() {
     let _unknown_profile = tiler::tensor! {
         in a: f32[4];
         deliver macos-and-tvos;
+        contract flush_subnormals_to_zero_f32;
         out a
     };
 
@@ -28,6 +29,7 @@ fn main() {
     let _underscored_profile = tiler::tensor! {
         in a: f32[4];
         deliver fallback_only;
+        contract flush_subnormals_to_zero_f32;
         out a
     };
 
@@ -35,6 +37,7 @@ fn main() {
     let _unknown_family = tiler::tensor! {
         in a: f32[4];
         deliver ios-device 17.0;
+        contract flush_subnormals_to_zero_f32;
         out a
     };
 
@@ -43,6 +46,7 @@ fn main() {
     let _below_floor = tiler::tensor! {
         in a: f32[4];
         deliver macos 13.0;
+        contract flush_subnormals_to_zero_f32;
         out a
     };
 
@@ -50,6 +54,7 @@ fn main() {
     let _malformed_version = tiler::tensor! {
         in a: f32[4];
         deliver macos 14;
+        contract flush_subnormals_to_zero_f32;
         out a
     };
 
@@ -57,6 +62,7 @@ fn main() {
     let _malformed_list = tiler::tensor! {
         in a: f32[4];
         deliver macos 26.0, ios;
+        contract flush_subnormals_to_zero_f32;
         out a
     };
 
@@ -64,6 +70,7 @@ fn main() {
     let _repeated_family = tiler::tensor! {
         in a: f32[4];
         deliver macos 26.0, macos 27.0;
+        contract flush_subnormals_to_zero_f32;
         out a
     };
 
@@ -72,6 +79,7 @@ fn main() {
         in a: f32[4];
         deliver fallback-only;
         deliver fallback-only;
+        contract flush_subnormals_to_zero_f32;
         out a
     };
 }
