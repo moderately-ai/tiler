@@ -1,7 +1,7 @@
 ---
 id: package-a-multi-entry-bundle-from-one-expansion
 title: Package and dispatch a multi-entry bundle from one expansion
-status: in-progress
+status: done
 priority: p2
 dependencies: [denote-a-reduction-region-in-the-inline-macro-grammar, compose-the-numerical-contract-from-its-decided-dimensions]
 related: [prototype-inline-aot-integration-proof, dispatch-a-tiler-region-on-metal-hardware, admit-multi-input-elementwise-programs-at-the-compiler-boundary, reach-a-reassociation-permitting-contract-from-a-bound-metal-declaration, calibrate-and-activate-parallel-reduction-selection, dispatch-a-multi-entry-bundle-on-hardware]
@@ -9,9 +9,6 @@ scopes: [implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, frontend, inline-dx, artifacts]
-claimed_from: todo
-assignee: agent-multi-entry
-lease_expires_at: 1785689920
 ---
 ## User-visible outcome
 
@@ -41,7 +38,13 @@ One `tiler::tensor!` invocation whose selected plan needs more than one executab
 
 ## Closes when
 
-An expansion produces a multi-entry bundle, a consumer dispatches it, ordering is asserted and its violation observed failing, and `docs/integration/frontends.md`'s remaining-checks list moves the item from outstanding to landed with the citation.
+~~An expansion produces a multi-entry bundle, a consumer dispatches it, ordering is asserted and its violation observed failing, and `docs/integration/frontends.md`'s remaining-checks list moves the item from outstanding to landed with the citation.~~
+
+**Revised at integration, 2026-08-02 — two of the four clauses moved to a live ticket, and the parent closes on the rest.** An expansion produces a multi-entry bundle, and its ordering is asserted and its violation observed failing. **Delivered:** a `strict_serial_sum` region stating `flush_and_reassociate_f32` selects the two-kernel alternative (`alternatives=[2,2,3]`, selected `kernels=2, fused=false`) on the bound macOS declaration, and the embedded artifact decodes to 1 payload, 2 entries, edges `[(0,1)]`; under `flush_subnormals_to_zero_f32` the same program gives 1 kernel and 1 entry. The reversed-edge expectation was watched failing. The selected plan is read, never `alternatives().find(...)`, so the frontend does not override the optimizer — which was this ticket's first implementation key.
+
+**The hardware dispatch and the checklist move belong to [`dispatch-a-multi-entry-bundle-on-hardware`](dispatch-a-multi-entry-bundle-on-hardware.md), and could not have been done here.** The consumer is `spikes/runtime/**` (`research/runtime`) and the checklist is `docs/integration/**` (`contracts/integrations`); this ticket holds `implementation/frontend` alone. The in-tree consumer cannot substitute, and that was verified by reading rather than assumed: `route_with_adapter` calls `validate_payload` per entry and stops at the first refusal, so the `trybuild` fixture observes entry 0 and never the count.
+
+**One boundary a reader should not overstate.** The selecting window is exactly `[rows: 1, cols: 4]` on this declaration — `[1,8]`, `[1,16]`, `[1,64]`, `[1,1024]`, and `[2,4]` each refuse `NoFeasiblePlan`, and `[1,5]` refuses `InvalidCompilerOutput`, which is the defect `correct-the-declined-strategy-record-for-an-unsplittable-reduction` owns. Widening that window is `calibrate-and-activate-parallel-reduction-selection`'s. The payload-count assertion is a regression guard rather than evidence — one measured declaration means one delivery position, so nothing can make it fail today, and its doc comment says so.
 
 ## Blocked (2026-08-01, base `2aa0824`)
 

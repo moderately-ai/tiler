@@ -1,7 +1,7 @@
 ---
 id: integrate-the-contraction-vertical-into-the-runtime
 title: Run one profile contraction end to end through the AOT and runtime route
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [design-attention-program-vertical, prototype-metal-runtime-proof, prototype-metal-aot-slice, realize-the-tiled-contraction-schedule-and-its-metal-emission]
@@ -9,9 +9,6 @@ scopes: [implementation/runtime, implementation/metal-aot, implementation/artifa
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, runtime, artifacts, contraction, language-model]
-claimed_from: todo
-assignee: agent-contraction-vertical
-lease_expires_at: 1785690538
 ---
 ## User-visible outcome
 
@@ -38,6 +35,14 @@ A transformer block, an attention program, the KV cache, batching, or more than 
 ## Closes when
 
 One contraction of the L3 profile executes through the accepted route with a terminal-success check before readback, its result is bit-identical to the reference, and a deliberately corrupted artifact is refused rather than executed.
+
+**Satisfied 2026-08-02, with the extent boundary stated rather than implied.** One contraction of the L3 profile's index structure `td,od->to` runs end to end through the accepted AOT and runtime route at `activations[2,3] × weights[2,3] → projected[2,2]`: every device-decidable obligation discharged before `Preflight::commit`, exact `MTLCommandBufferStatusCompleted` before any readback, buffers retained across the wait, all five operand cases bit-identical to `tiler-reference`. The corrupted-envelope refusal was watched failing at the sidecar guard — `artifact.integrity: SectionDigestMismatch { section: 2 }`, never decoded or executed.
+
+**What is not covered, and it is an extent limit rather than a route limit.** The L3 profile's own correctness cells each publish ≥ 1024 output elements while `direct` launches one invocation per element and the declared profile's `grid_axis_threads` is `4`, so `w_decode_kv` resolves `target.grid-axis` / `Rejected("target-infeasible")` before any plan composes. That row lives in `crates/tiler-build`, outside this ticket's scopes, and is owned by [`raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells`](raise-the-metal-grid-axis-row-to-reach-the-l3-contraction-cells.md). The host matched the spike's retained correctness row on every recorded field, so the `result_sha256` cross-check is withheld **for extent alone** and retained as an unavailable predicate rather than converted into a claim.
+
+**Two results worth keeping.** `negative-zero-fold` returned `80000000` — the L3 record's own unseeded-fold counterexample, now reproduced through an artifact rather than the spike host — and `contraction-sensitive` returned `1.0` where a reassociated fold gives `0.0`, so `direct`'s strict-fold attribution holds on this route.
+
+**Six sites assumed one tensor input and were widened to read the artifact's declared interface**: `bind_interface`, `plan_route`, `device_preflight`, `prove_member`, `run`, and the producer's sidecar. `allocate_alternative` now refuses a multi-input program on the direct path instead of filling both buffers from one slice. `tiler-artifact`'s proof layer already carried N inputs and enforced arity — verified by reading `place`, `verify_cases`, and `project_interface` — so it is unchanged. The `operands[0]`-for-`operands[ordinal]` perturbation was watched failing **while every one-input member still passed**, which is the defect a one-input proof could not have caught.
 
 ## Outcome (2026-08-02)
 
