@@ -45,6 +45,32 @@ Run both the covering and exhaustive matrices, retain the result directories, an
 - A negative validator mutation that changes a producer-defining input or manifest byte and must fail, watched failing.
 - The research memo states which BF16 claims the MSL 4.0 row supports and which stay `Unknown`.
 
+## Outcome — measured 2026-08-02
+
+**Measurement.** `apple9-f32-bf16-unified-msl4-macos26` was added beside the F32 profile (producer commit `0fcc952ac8f548f462eff6b204386253e65d2522`) and both matrices retained: `spikes/apple-targets/results/2026-08-02-numerics-{covering,exhaustive}-apple9-f32-bf16-unified-msl4-macos26-xcode26.6-metal32023.883`. Environment: arm64 macOS 27.0 build 26A5388g, Xcode 26.6 build 17F113, macOS SDK 26.5 build 25F70, Apple M4 Max reporting Apple9 `supported`, registry ID 4294968452; offline Metal/AIR-LLD 32023.883, runtime `GPUCompiler.framework` `metalfe-32023.921`; `air64-apple-macos26.0` emitted `air64_v28-apple-macosx26.0.0`.
+
+**The BF16 flush dimensions at MSL 4.0**, identical under `safe`, `relaxed`, and `fast` and on both compilation paths — all seven of finding 24's dimensions, not only the three named above, because the harness sweeps every `bf16` kernel in all three modes:
+
+| dimension | kernel | operand → result | execution witness |
+| --- | --- | --- | --- |
+| input flush, multiply | `multiply_two_bf16` | `0040` → `0000` | `operand=3f80,expected=4000,observed=4000,status=executed` |
+| input flush, sign | `multiply_two_bf16` | `8040` → `8000` | `operand=3f80,expected=4000,observed=4000,status=executed` |
+| result flush, multiply | `multiply_half_bf16` | `0080` → `0000` | `operand=3f80,expected=3f00,observed=3f00,status=executed` |
+| input flush, additive path | `add_smallest_normal_bf16` | `8040` → `0080` | `operand=0080,expected=0100,observed=0100,status=executed` |
+| input flush, division | `divide_by_three_eighths_bf16` | `0040` → `0000` | `operand=3f80,expected=402b,observed=402b,status=executed` |
+| input flush, division, sign | `divide_by_three_eighths_bf16` | `8040` → `8000` | `operand=3f80,expected=402b,observed=402b,status=executed` |
+| result flush, division | `divide_by_three_bf16` | `0080` → `0000` | `operand=3f80,expected=3eab,observed=3eab,status=executed` |
+
+`materialize_bf16` returns `0001 0040 007f 0080 8040 8000 3eab 3f80` — all eight operands unchanged, `float_operations` `none` — so the zeros are attributable to arithmetic and not to a buffer round trip. `environment.family.macos.device_bfloat_support` is `supported`. Covering BF16 witness census: 91 `executed`, 8 `not-executed` (every `scale_one_bias_zero_bf16` case under `relaxed`/`fast` — the finding 7 trap the guard refuses), 18 `none` (`materialize_bf16` and `multiply_one_bf16`, declared witnessless). No `disagrees`.
+
+**The control that makes the attribution stick.** Excluding `bf16` rows, all 864 covering and 996 exhaustive `case.*`/`comparison.*` rows are byte-identical to the 2026-07-31 `apple9-f32-unified-msl4-macos26` record, so this profile's compilation is demonstrably the one the authoritative profile names. The F32 profile was not widened: its four retained records are byte-identical to what they were, and `probe.harness_sha256` on them is unchanged at `e7b831d61024efcad712bce1495c0f2d078ef9ac766308e20d4a424e2d547d04`.
+
+**What the MSL 4.0 row supports:** the macOS `bf16` subnormal flush across all seven isolated dimensions, its sign preservation, arithmetic-free materialization, and `bfloat` dispatchability — each on this exact Apple9/macOS/toolchain row, under this exact compilation.
+
+**What stays `Unknown`:** `f16` under MSL 4.0 (this profile does not carry it — `device_bfloat_support` aside, no `f16` case was measured); both iOS families entirely, so finding 26's simulator refusal and the iOS device's never-asked row remain MSL 3.1-only and are gated on `first-authoritative-ios-metal-compile-declaration`; any other Apple GPU family, OS or SDK build, compiler build, or deployment minimum; and the finding 24 hypothesis-A/native-`bfloat` distinction, which no single-operation probe can separate at this width.
+
+**Collateral this ticket caused, deliberately and reversibly.** Editing the shared harness moves `probe.harness_sha256`, so the current tree's validator now refuses the four retained F32 records with `validator digest mismatch`. Nothing measured moved. Revalidation runs from a detached worktree at each record's own `probe.repository_base_revision` (`0cd85ce5…` for the 2026-07-30 pair, `93ddc4a3…` for the 2026-07-31 pair); both 2026-07-31 records were re-validated that way at exit 0, and the procedure is recorded in the spike README and the research record. This was unavoidable: any harness edit does it, and the ticket requires one.
+
 ## Closes when
 
 A clean replay produces the retained MSL 4.0 / macOS 26 BF16 covering and exhaustive rows, the validator demonstrably rejects a mutated producer input, the Apple numerical behaviour record cites the new row beside findings 24 and 26 without overwriting them, and `declare-the-bf16-rows-on-the-authoritative-metal-profile` has a record it can transcribe under the profile's own compilation.

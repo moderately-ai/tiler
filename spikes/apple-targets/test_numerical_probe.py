@@ -1411,8 +1411,9 @@ The values are transcribed from the records rather than derived, so a record
 rewritten to agree with this table fails the completeness assertion below rather
 than passing quietly. They deliberately disagree across measurements: the same
 named Apple M4 Max reported `4294968621` on 2026-07-24 and 2026-07-25 and
-`4294968452` on 2026-07-27, 2026-07-30, and 2026-07-31. That disagreement is the
-measured fact, not decay, which is why it is asserted positively.
+`4294968452` on 2026-07-27, 2026-07-30, 2026-07-31, and 2026-08-02. That
+disagreement is the measured fact, not decay, which is why it is asserted
+positively.
 """
 
 MACOS_ONLY_REGISTRY_IDS: dict[str, str] = {
@@ -1420,6 +1421,8 @@ MACOS_ONLY_REGISTRY_IDS: dict[str, str] = {
     "2026-07-30-numerics-exhaustive-apple9-f32-unified-msl4-macos26-xcode26.6-metal32023.883": "4294968452",
     "2026-07-31-numerics-covering-apple9-f32-unified-msl4-macos26-xcode26.6-metal32023.883": "4294968452",
     "2026-07-31-numerics-exhaustive-apple9-f32-unified-msl4-macos26-xcode26.6-metal32023.883": "4294968452",
+    "2026-08-02-numerics-covering-apple9-f32-bf16-unified-msl4-macos26-xcode26.6-metal32023.883": "4294968452",
+    "2026-08-02-numerics-exhaustive-apple9-f32-bf16-unified-msl4-macos26-xcode26.6-metal32023.883": "4294968452",
 }
 """The named-profile records, which select the macOS family alone and so have no pair to check.
 
