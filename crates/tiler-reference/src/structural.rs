@@ -1,16 +1,18 @@
-//! Reference semantics for the two governed structural families.
+//! Reference semantics for the three governed structural families.
 //!
-//! `tiler::reindex-f32@1` and `tiler::broadcast-f32@1` move elements and compute
-//! nothing, so these evaluators decode no floating-point value and produce none:
-//! each result element is the operand element its coordinate map names, cloned
-//! byte for byte. The crate-wide [`canonicalize_arithmetic_f32`] rule is
-//! deliberately **not** applied — it exists for arithmetic that *produces* a
-//! result, and applying it here would rewrite a non-canonical NaN a program only
-//! transported, which is the one thing a structural family must never do.
+//! `tiler::reindex-f32@1`, `tiler::broadcast-f32@1`, and `tiler::concatenate-f32@1`
+//! move elements and compute nothing, so these evaluators decode no
+//! floating-point value and produce none: each result element is the operand
+//! element its coordinate map — or, for the concatenation, its operand block —
+//! names, cloned byte for byte. The crate-wide [`canonicalize_arithmetic_f32`]
+//! rule is deliberately **not** applied — it exists for arithmetic that
+//! *produces* a result, and applying it here would rewrite a non-canonical NaN a
+//! program only transported, which is the one thing a structural family must
+//! never do.
 //!
 //! [`canonicalize_arithmetic_f32`]: crate::canonicalize_arithmetic_f32
 //!
-//! Both evaluators recompute the family's own shape rule from the attribute
+//! All three evaluators recompute the family's own shape rule from the attribute
 //! rather than trusting the operand and result shapes the graph carries. The
 //! semantic registry already refused a malformed mapping at construction, so a
 //! disagreement here is invalid state rather than a caller error, and it is
@@ -20,10 +22,11 @@
 use std::cmp::Ordering;
 
 use tiler_ir::semantic::{
-    BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, BroadcastAxisSource, F32,
-    OperationAttributes, REINDEX_MAPPING_ATTRIBUTE, ReindexForm, ReindexFormKind,
+    BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, BroadcastAxisSource,
+    CONCATENATE_AXIS_ATTRIBUTE, F32, OperationAttributes, REINDEX_MAPPING_ATTRIBUTE, ReindexForm,
+    ReindexFormKind, concatenate_axis, concatenate_result_shape,
 };
-use tiler_ir::shape::Shape;
+use tiler_ir::shape::{Extent, Shape};
 
 use super::error::{ReferenceOperationError, dense_result_error};
 use super::evaluate::{decode_coordinate, f32_elements, preflight_f32_output, row_major_strides};
@@ -87,6 +90,85 @@ impl ReferenceOperation for BroadcastF32Reference {
         })
         .and_then(|tensor| outputs.push(tensor))
     }
+}
+
+pub(crate) struct ConcatenateF32Reference;
+
+impl ReferenceOperation for ConcatenateF32Reference {
+    fn evaluate(
+        &self,
+        request: ReferenceEvaluationRequest<'_>,
+        outputs: &mut ReferenceOutputs,
+    ) -> Result<(), ReferenceOperationError> {
+        let operands = request.operands();
+        let attributes = request.attributes();
+        if attributes.fields().len() != 1 {
+            return Err(ReferenceOperationError::InvalidApplication);
+        }
+        let Some(value) = attributes.get(CONCATENATE_AXIS_ATTRIBUTE) else {
+            return Err(ReferenceOperationError::InvalidApplication);
+        };
+        let axis =
+            concatenate_axis(value).map_err(|_| ReferenceOperationError::InvalidApplication)?;
+        let shapes: Vec<&Shape> = operands.iter().map(|operand| operand.shape()).collect();
+        let result_shape = concatenate_result_shape(axis, &shapes)
+            .map_err(|_| ReferenceOperationError::InvalidApplication)?;
+        let count = result_shape
+            .element_count()
+            .ok_or(ReferenceOperationError::ShapeTooLarge)?;
+        preflight_f32_output(count)?;
+        let position =
+            usize::try_from(axis.get()).map_err(|_| ReferenceOperationError::InvalidApplication)?;
+        let extents = result_shape.extents();
+        // Row-major splits the result into `outer` independent slabs, inside each
+        // of which the operands' rows sit end to end. Copying whole blocks rather
+        // than decoding a coordinate per element is what keeps the transport
+        // exact: an element is cloned, never decoded and re-encoded, so an
+        // exceptional payload arrives at the result as it left its operand.
+        let outer = dense_product(extents.get(..position).unwrap_or_default())?;
+        let inner = dense_product(
+            extents
+                .get(position.saturating_add(1)..)
+                .unwrap_or_default(),
+        )?;
+        let mut sources = Vec::with_capacity(operands.len());
+        for operand in operands.iter().copied() {
+            sources.push(f32_elements(operand)?);
+        }
+        let mut joined = Vec::with_capacity(count);
+        for slab in 0..outer {
+            for (elements, shape) in sources.iter().zip(&shapes) {
+                let extent = usize::try_from(shape.extents()[position].get())
+                    .map_err(|_| ReferenceOperationError::ShapeTooLarge)?;
+                let block = extent
+                    .checked_mul(inner)
+                    .ok_or(ReferenceOperationError::ShapeTooLarge)?;
+                let start = slab
+                    .checked_mul(block)
+                    .ok_or(ReferenceOperationError::ShapeTooLarge)?;
+                let end = start
+                    .checked_add(block)
+                    .ok_or(ReferenceOperationError::ShapeTooLarge)?;
+                let chunk = elements
+                    .get(start..end)
+                    .ok_or(ReferenceOperationError::InvalidApplication)?;
+                joined.extend(chunk.iter().cloned());
+            }
+        }
+        Tensor::dense(F32::resolved_type(), result_shape.clone(), joined)
+            .map_err(|source| dense_result_error(&source))
+            .and_then(|tensor| outputs.push(tensor))
+    }
+}
+
+/// Multiplies a run of extents into a host element count.
+fn dense_product(extents: &[Extent]) -> Result<usize, ReferenceOperationError> {
+    extents.iter().try_fold(1_usize, |product, extent| {
+        usize::try_from(extent.get())
+            .ok()
+            .and_then(|extent| product.checked_mul(extent))
+            .ok_or(ReferenceOperationError::ShapeTooLarge)
+    })
 }
 
 /// Builds a result tensor by reading one operand element per result coordinate.

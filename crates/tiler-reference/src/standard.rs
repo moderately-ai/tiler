@@ -7,8 +7,9 @@
 use std::sync::Arc;
 
 use tiler_ir::semantic::{
-    CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE, ProviderIdentity, TypeKey, add_f32_op,
-    broadcast_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op, rms_norm_f32_op,
+    CanonicalValueView, F32, F32_CONSTANT_BITS_ATTRIBUTE, MAX_CONCATENATE_OPERANDS,
+    MIN_CONCATENATE_OPERANDS, ProviderIdentity, TypeKey, add_f32_op, broadcast_f32_op,
+    concatenate_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op, rms_norm_f32_op,
     silu_f32_op, softmax_f32_op, strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
 };
 
@@ -25,7 +26,7 @@ use super::registry::{
 use super::rms_norm::rms_norm_reference;
 use super::silu::silu_reference;
 use super::softmax::softmax_reference;
-use super::structural::{BroadcastF32Reference, ReindexF32Reference};
+use super::structural::{BroadcastF32Reference, ConcatenateF32Reference, ReindexF32Reference};
 use super::tensor::{FloatBitOrder, ReferenceElement, Tensor, TensorPayloadView};
 
 pub(crate) struct StandardReferenceProvider;
@@ -107,6 +108,23 @@ impl ReferenceRegistryProvider for StandardReferenceProvider {
             revision,
             Arc::new(BroadcastF32Reference),
         )?;
+        // One capability per admitted arity, because a capability is keyed by an
+        // *exact* resolved signature and the concatenation's operand arity is a
+        // bounded range. Enumerating the range here is what makes the semantic
+        // schema and this provider agree: an arity the schema admitted and this
+        // loop skipped would verify and then fail to evaluate as a missing
+        // capability, which is a family admitting an occurrence nothing can answer
+        // for. The two bounds are the semantic layer's own, so widening the family
+        // widens this loop rather than leaving it behind.
+        for arity in MIN_CONCATENATE_OPERANDS..=MAX_CONCATENATE_OPERANDS {
+            let operands = (0..arity).map(|_| F32::resolved_type());
+            registrar.register(
+                concatenate_f32_op(),
+                ReferenceSignature::new(operands, [F32::resolved_type()])?,
+                revision,
+                Arc::new(ConcatenateF32Reference),
+            )?;
+        }
         // The activation's exponential is the first reference in this crate whose
         // value is not a rational function of its operands, so its implementation
         // certifies the rounding it reports instead of trusting a host library.

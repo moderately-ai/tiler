@@ -4,11 +4,12 @@ use crate::shape::{Axis, ShapeEvidence, StaticShape};
 
 use super::{
     BF16_CONSTANT_BITS_ATTRIBUTE, BROADCAST_AXIS_MAPPING_ATTRIBUTE, Bf16, BroadcastAxisMapping,
-    BuildError, CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField, CanonicalValue,
-    ContractionIndexStructure, F32, F32_CONSTANT_BITS_ATTRIBUTE, OperationAttributes,
-    REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, ReindexForm, SemanticProgramBuilder,
-    ShapedValue, Value, add_bf16_op, add_f32_op, broadcast_f32_op, canonical_bf16_bits,
-    constant_bf16_op, constant_f32_op, multiply_bf16_op, multiply_f32_op, reindex_f32_op,
+    BuildError, CONCATENATE_AXIS_ATTRIBUTE, CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField,
+    CanonicalValue, ContractionIndexStructure, F32, F32_CONSTANT_BITS_ATTRIBUTE,
+    OperationAttributes, REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, ReindexForm,
+    SemanticProgramBuilder, ShapedValue, Value, ValueId, add_bf16_op, add_f32_op, broadcast_f32_op,
+    canonical_bf16_bits, concatenate_f32_axis_attribute, concatenate_f32_op, constant_bf16_op,
+    constant_f32_op, multiply_bf16_op, multiply_f32_op, reindex_f32_op,
     rms_norm_f32_axis_attribute, rms_norm_f32_eps_attribute, rms_norm_f32_op, silu_f32_op,
     softmax_f32_axis_attribute, softmax_f32_op, strict_serial_sum_f32_op,
     strict_tensor_contraction_f32_op,
@@ -352,6 +353,47 @@ impl F32Broadcast {
         )])
         .map_err(BuildError::InvalidOperationAttributes)?;
         apply_single(builder, broadcast_f32_op(), attributes, &[input.erase()])
+    }
+}
+
+/// Binary32 `Concatenate` along one named axis.
+///
+/// Operand order is semantic — the result's coordinates on the concatenated axis
+/// run through the operands in the order given — so this facade takes a slice
+/// rather than a set, and reordering it states a different computation.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct F32Concatenate;
+
+impl F32Concatenate {
+    /// Applies the registered concatenation semantics.
+    ///
+    /// The axis is stated once and validated once, by the registered operation
+    /// authority. The result's shape is derived from the axis and the operands'
+    /// extents, never declared by a caller: the extent on the concatenated axis is
+    /// the exact sum of theirs, and an occurrence whose sum leaves the extent
+    /// domain is refused rather than saturated, because this profile can state no
+    /// additive extent relation to tie a bound extent back to its operands.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed construction error without mutating the graph on failure,
+    /// naming the rule the occurrence violated — an inadmissible operand count, a
+    /// rank disagreement, an axis outside the operands' rank, an extent
+    /// disagreement on an axis other than the concatenated one (naming both
+    /// observed extents), an operand that is not `tiler::f32@1`, or an
+    /// unrelatable result extent.
+    pub fn apply(
+        builder: &mut SemanticProgramBuilder,
+        inputs: &[Value<F32>],
+        axis: Axis,
+    ) -> Result<Value<F32>, BuildError> {
+        let attributes = OperationAttributes::new([CanonicalField::new(
+            CONCATENATE_AXIS_ATTRIBUTE,
+            concatenate_f32_axis_attribute(axis),
+        )])
+        .map_err(BuildError::InvalidOperationAttributes)?;
+        let operands: Vec<ValueId> = inputs.iter().map(|input| input.erase()).collect();
+        apply_single(builder, concatenate_f32_op(), attributes, &operands)
     }
 }
 

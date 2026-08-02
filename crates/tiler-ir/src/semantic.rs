@@ -11,6 +11,7 @@ pub mod accuracy;
 mod bf16;
 mod broadcast;
 mod catalog;
+mod concatenate;
 mod contraction;
 mod error;
 mod handles;
@@ -52,6 +53,13 @@ pub use broadcast::{
 pub use catalog::{
     admitted_complex_component_types, builtin_scalar_value_type_facts, builtin_scalar_value_types,
     complex_type_constructor, complex_value_type, microscaling_scheme_keys,
+};
+pub use concatenate::{
+    CONCATENATE_AXIS_ATTRIBUTE, CONCATENATE_FACT_EMPTY_OPERAND, CONCATENATE_FACT_OPERAND_ORDER,
+    CONCATENATE_FACT_RESULT_EXTENT, CONCATENATE_FACT_STORAGE_CLAIM,
+    CONCATENATE_FACT_TYPE_PROMOTION, CONCATENATE_FACT_VALUE_BEHAVIOUR, ConcatenateError,
+    MAX_CONCATENATE_OPERANDS, MIN_CONCATENATE_OPERANDS, concatenate_axis,
+    concatenate_f32_axis_attribute, concatenate_f32_op, concatenate_result_shape,
 };
 pub use contraction::{
     CONTRACTION_F32_FACT_ACCUMULATOR_TYPE, CONTRACTION_F32_FACT_ARITHMETIC_CONTRACTION_PERMITTED,
@@ -186,8 +194,9 @@ pub use softmax::{
     softmax_f32_reference_semantics,
 };
 pub use standard_operations::{
-    Bf16Add, Bf16Constant, Bf16Multiply, F32Add, F32Broadcast, F32Constant, F32Multiply,
-    F32Reindex, F32RmsNorm, F32Silu, F32Softmax, F32TensorContraction, StrictSerialF32Sum,
+    Bf16Add, Bf16Constant, Bf16Multiply, F32Add, F32Broadcast, F32Concatenate, F32Constant,
+    F32Multiply, F32Reindex, F32RmsNorm, F32Silu, F32Softmax, F32TensorContraction,
+    StrictSerialF32Sum,
 };
 pub use types::{
     AttributeFieldId, CanonicalField, CanonicalFloatBitsRef, CanonicalIntegerWidth,
