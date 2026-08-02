@@ -5422,4 +5422,86 @@ mod tests {
         let request = TargetRequest::new([second.clone(), first.clone()]).unwrap();
         assert_eq!(request.profiles(), &[second, first]);
     }
+
+    /// The shapes on which all three reduction strategies coexist, for one bound.
+    ///
+    /// A shape qualifies when both parallel strategies are expressible and a plan
+    /// is feasible. Both conditions are read from the code that decides them
+    /// rather than restated: `governed_partition` is what withholds the split and
+    /// the tree, and the grid-axis bound is what the prologue's one-invocation-
+    /// per-element launch is assessed against.
+    fn three_strategy_domain(grid_axis_bound: u64) -> Vec<(u64, u64)> {
+        let mut domain = Vec::new();
+        for rows in 1..=grid_axis_bound {
+            for contributors in 1..=grid_axis_bound {
+                if crate::physical::governed_partition(contributors).is_some()
+                    && rows * contributors <= grid_axis_bound
+                {
+                    domain.push((rows, contributors));
+                }
+            }
+        }
+        domain
+    }
+
+    /// **The measured-calibration trigger for parallel reduction selection.**
+    ///
+    /// [`calibrate-and-activate-parallel-reduction-selection`] needs a crossover:
+    /// a shape at which the winning reduction strategy changes. That needs at
+    /// least two shapes on which all three strategies exist and can be timed. On
+    /// the governed profile there is exactly one, so no crossover is measurable
+    /// and no calibration can be derived — a fit through one point is not a model.
+    ///
+    /// The single point is forced by arithmetic rather than found by sampling.
+    /// `governed_partition` withholds both parallel strategies below four
+    /// contributors, and the grid-axis bound caps `rows * contributors`, so
+    /// `4 <= contributors <= rows * contributors <= bound`. At `bound == 4` that
+    /// chain closes and admits only `(1, 4)`.
+    ///
+    /// **This test exists to fail when that changes.** The grid-axis row is a
+    /// deliberately conservative compile guarantee rather than a hardware maximum
+    /// — the macOS SDK's `dispatchThreads:` contract establishes no upper bound at
+    /// all — so raising it is expected eventually, and when it happens calibration
+    /// becomes possible and this assertion fires to say so. The retained sweep at
+    /// `spikes/program-planning/reduction-crossover` reports the new domain.
+    ///
+    /// The raised-bound case below is not decoration: without it a domain
+    /// computation that returned a one-element vector unconditionally would pass
+    /// the real assertion, and the check would be indistinguishable from one that
+    /// never ran.
+    ///
+    /// [`calibrate-and-activate-parallel-reduction-selection`]:
+    ///     ../../../tickets/calibrate-and-activate-parallel-reduction-selection.md
+    #[test]
+    fn only_one_shape_admits_all_three_reduction_strategies() {
+        let bound = TargetProfileBuilder::governed()
+            .quantitative
+            .iter()
+            .find(|declaration| declaration.axis == CapabilityAxis::GridAxisThreads)
+            .expect("the governed profile declares the grid-axis limit")
+            .bound;
+
+        let domain = three_strategy_domain(bound);
+        assert_eq!(
+            domain,
+            vec![(1, 4)],
+            "the three-strategy domain moved at grid-axis bound {bound}: measured calibration \
+             needs at least two shapes, so if this domain now has two or more, \
+             calibrate-and-activate-parallel-reduction-selection is unblocked — rerun \
+             spikes/program-planning/reduction-crossover for the new domain"
+        );
+
+        // The same derivation at a wider bound, so the single point above is a
+        // property of this profile rather than of the computation.
+        let widened = three_strategy_domain(8);
+        assert!(
+            widened.len() > 1,
+            "raising the grid-axis bound must admit more shapes, or this check cannot \
+             distinguish a narrow profile from a broken domain computation: {widened:?}"
+        );
+        assert!(
+            widened.contains(&(1, 4)) && widened.contains(&(2, 4)),
+            "the widened domain must extend the narrow one rather than replace it: {widened:?}"
+        );
+    }
 }

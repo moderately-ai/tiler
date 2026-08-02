@@ -366,6 +366,18 @@ approximated. Enumerating the split does not make it *win*; the structural cost
 model prices its extra dispatch and staged bytes, and preference belongs to
 measured calibration.
 
+### That measured calibration is currently unobtainable, and the reason is a target row
+
+Both paragraphs above defer preference to measured calibration. **Measurement, 2026-08-02 — that calibration cannot be derived on the authoritative profile, because the shapes it would need do not compile.** [The retained sweep](../../spikes/program-planning/reduction-crossover/README.md) compiled the reduction program family across 36 shapes against `tiler.metal.macos-apple9.msl4-0.f32.v1` under `NumericalContract::FLUSH_AND_REASSOCIATE_F32`, on a host matching the ledger's execution-environment row in every field. Exactly one shape retains all three strategies at once: one row of four contributors. Every wider shape is refused by hard feasibility on the grid axis, `event=feasibility:grid-axis:rejected:target-infeasible:threads=<required>:4`, at the pointwise prologue.
+
+A crossover is a shape at which the winner changes, so it needs at least two shapes on which the alternatives coexist and can be timed. One point admits no crossover, no calibration, and no held-out prediction — a fit through a single point is not a model. **So the correct state is the current one: all three strategies are enumerated and retained, the structural model prunes none of them wrongly, and no preference is asserted.** Activating a cost-based preference now would mean choosing a constant until the desired plan won, which is the failure the strategy tickets exist to prevent.
+
+The single point is forced by arithmetic rather than found by sampling. `governed_partition` withholds both parallel strategies below four contributors, and the grid-axis row caps the prologue's one-invocation-per-element launch, so `4 <= contributors <= rows * contributors <= grid_axis_bound`; at a bound of four that chain closes on one shape. The workgroup axis does not vary independently either, since the tree's participant count at four contributors is a fixed two-by-two split.
+
+The blocking row is the grid-axis bound, and it is **a deliberately conservative compile guarantee rather than a hardware maximum**: the macOS 26.5 SDK's `dispatchThreads:` contract proves extent four is representable and establishes no upper bound at all. Raising it needs a new normative source or a retained measurement — target-profile authority work, filed as [`establish-an-upper-bound-authority-for-the-metal-grid-axis-row`](../../tickets/establish-an-upper-bound-authority-for-the-metal-grid-axis-row.md). `target::tests::only_one_shape_admits_all_three_reduction_strategies` fails when the domain widens, so this section cannot go stale without something saying so.
+
+This is a statement about which plans exist, not about how fast any of them runs. Nothing was dispatched for it, and it makes no performance claim.
+
 ## Rearrangement schedules
 
 Alternatives include:
