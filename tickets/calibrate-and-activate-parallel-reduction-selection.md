@@ -1,9 +1,9 @@
 ---
 id: calibrate-and-activate-parallel-reduction-selection
 title: Calibrate and activate parallel reduction selection
-status: in-progress
+status: blocked
 priority: p1
-dependencies: [realize-parallel-reduction-strategies-on-metal]
+dependencies: [realize-parallel-reduction-strategies-on-metal, establish-an-upper-bound-authority-for-the-metal-grid-axis-row]
 related: [implement-parallel-reduction-strategies]
 scopes: [implementation/compiler, research/program-planning, contracts/optimizer]
 shared_scopes: [project/tickets, contracts/navigation]
