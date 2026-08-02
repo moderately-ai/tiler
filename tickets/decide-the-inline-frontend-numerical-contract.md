@@ -1,7 +1,7 @@
 ---
 id: decide-the-inline-frontend-numerical-contract
 title: Decide the numerical contract every inline expansion compiles under
-status: awaiting-decision
+status: done
 priority: p2
 dependencies: []
 related: [compose-the-numerical-contract-from-its-decided-dimensions, package-a-multi-entry-bundle-from-one-expansion, prototype-inline-aot-integration-proof, reach-a-reassociation-permitting-contract-from-a-bound-metal-declaration, calibrate-and-activate-parallel-reduction-selection]
@@ -33,3 +33,9 @@ tags: [frontend, numerics, public-boundary, decision]
 ## Closes when
 
 Tom states which contract `tiler_macros::aot::CONTRACT` names, the module documentation records the decision with its date and venue, and `the_bound_declaration_admits_the_two_flushing_contracts` asserts against the chosen one.
+
+## Decided 2026-08-01 — no default: the region states its contract explicitly
+
+**Tom decided at the live session, witnessed and executed by the coordinator.** Presented with keep-flush-only, move-to-flush-and-reassociate, and grammar-states-it, he chose the third with a sharper rule than the option offered: "avoid assuming defaults and be specific — we can always simplify and add sane defaults later when we know the shape of the project better." So the resolution is not a different default but the end of the default: a region states its numerical contract in the grammar, explicitly, and a region that states none is refused at expansion with a diagnostic naming what to write — the same explicitness rule the `strict_serial_sum` spelling was accepted under.
+
+**Transitional state, stated so nothing silently widens or breaks.** `tiler_macros::aot::CONTRACT` stays `FLUSH_SUBNORMALS_TO_ZERO_F32` — exactly today's meaning for every existing expansion — until the grammar surface lands; the module documentation gains this decision's date and venue when [`state-the-numerical-contract-in-the-region-grammar`](state-the-numerical-contract-in-the-region-grammar.md) executes it, and that ticket owns flipping the default into a refusal. `the_bound_declaration_admits_the_two_flushing_contracts` keeps asserting the pair; the choice among them moves to the consumer's own text.
