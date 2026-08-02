@@ -3,8 +3,8 @@ id: implement-the-two-dimensional-staging-relation-and-step-the-schedule-domain-
 title: Implement the two-dimensional staging relation and step the schedule domain to v5
 status: todo
 priority: p1
-dependencies: [land-the-two-dimensional-staging-relation-adr]
-related: [admit-a-two-dimensional-cooperative-staging-relation, admit-a-round-dependent-cooperative-staging-span, realize-the-tiled-contraction-schedule-and-its-metal-emission, realize-the-strict-contraction-on-metal]
+dependencies: [accept-adr-0097-two-dimensional-staging-relation]
+related: [land-the-two-dimensional-staging-relation-adr, admit-a-two-dimensional-cooperative-staging-relation, admit-a-round-dependent-cooperative-staging-span, realize-the-tiled-contraction-schedule-and-its-metal-emission, realize-the-strict-contraction-on-metal]
 scopes: [implementation/ir, contracts/artifacts, implementation/build, implementation/metal]
 shared_scopes: [project/tickets]
 paths: []
@@ -48,7 +48,7 @@ The round-dependent span and the per-access active-participant subset — [`admi
 
 ## Boundary
 
-Do not start before [`land-the-two-dimensional-staging-relation-adr`](land-the-two-dimensional-staging-relation-adr.md) is done — that is Tom's acceptance of the exact spelling, and the drafted boundary includes a breaking signature change (`CooperativeTile::addressed_slots` going by-reference) and the loss of `Copy` on four public types. Tom's 2026-08-01 acceptance of the step *in principle* is a relayed fact recorded in the producing ticket, and it explicitly does not accept the spelling.
+Do not start before [`accept-adr-0097-two-dimensional-staging-relation`](accept-adr-0097-two-dimensional-staging-relation.md) closes — that is Tom's acceptance of the exact spelling, and the drafted boundary includes a breaking signature change (`CooperativeTile::addressed_slots` going by-reference) and the loss of `Copy` on four public types. **Corrected 2026-08-02:** this dependency previously named [`land-the-two-dimensional-staging-relation-adr`](land-the-two-dimensional-staging-relation-adr.md) and described it as Tom's acceptance, which it is not — that ticket lands ADR 0097 at `decision_status: proposed`, a completed outcome the moment the file exists, so an edge to it cannot distinguish "written" from "decided" and would have surfaced this ticket in `ready` undecided. Tom's 2026-08-01 acceptance of the step *in principle* is a relayed fact recorded in the producing ticket, and it explicitly does not accept the spelling.
 
 ## Closes when
 
