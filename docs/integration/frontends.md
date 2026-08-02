@@ -270,11 +270,12 @@ literals.
 
 ### The accepted spelling
 
-Tom accepted the consumer-visible spelling on 2026-07-31 under [`accept-the-inline-artifact-family-profile-syntax`](../../tickets/accept-the-inline-artifact-family-profile-syntax.md), which closed Q-ART-008. An inline region states its delivery policy with a `deliver` statement in the declaration block beside `sym` and `in`, at most once, in either of two productions:
+Tom accepted the consumer-visible spelling on 2026-07-31 under [`accept-the-inline-artifact-family-profile-syntax`](../../tickets/accept-the-inline-artifact-family-profile-syntax.md), which closed Q-ART-008. An inline region states its delivery policy with a `deliver` statement in the declaration block beside `sym`, `in`, and `contract`, at most once, in either of two productions:
 
 ```text
 sym n;
 in a: f32[n], b: f32[n];
+contract flush_subnormals_to_zero_f32;
 deliver macos-and-ios;        // a named profile
 out a * b
 ```
@@ -282,6 +283,7 @@ out a * b
 ```text
 sym n;
 in a: f32[n], b: f32[n];
+contract flush_subnormals_to_zero_f32;
 deliver macos 14.0, ios 17.0; // a family list, when a floor must be stated
 out a * b
 ```
@@ -328,6 +330,29 @@ the resolved compiler fingerprint changes the cache key. Stable Cargo does not
 track those external changes, so users and CI must force the affected consumer
 crate to rebuild after a toolchain change. Cache deletion alone does not affect
 already generated Rust or compiled binaries.
+
+## Numerical contract statement
+
+Every region states the numerical contract it computes under, with a `contract` statement in the declaration block beside `sym`, `in`, and `deliver`, at most once:
+
+```text
+sym n;
+in a: f32[n], b: f32[n];
+contract flush_subnormals_to_zero_f32;
+out a * b
+```
+
+**There is no default, by decision.** Tom decided on 2026-08-01, at the live session, relayed through [`decide-the-inline-frontend-numerical-contract`](../../tickets/decide-the-inline-frontend-numerical-contract.md): a region states its contract in its own text rather than inheriting one. The reason is that the contracts are not settings on one meaning. Under the flushing-and-reassociating contract a reduction may be split or folded as a workgroup tree, so its result may differ from the flush-only reading in the last bits, and neither contract is stricter than the other in every respect — a frontend that picked one would be choosing what a consumer's program computes.
+
+The vocabulary is `strict_f32`, `flush_subnormals_to_zero_f32`, `relaxed_f32`, `reassociate_f32`, and `flush_and_reassociate_f32`. Each names the `tiler_compiler::session::NumericalContract` constant of the same name, in lowercase, following the `strict_serial_sum` precedent. This frontend names contracts and does not compose them: a composed contract would be a meaning statable by a consumer and unknown to the artifact identity, the explain trace, and the cache key, all of which name the compiler's own contract key. The vocabulary widens exactly when the compiler publishes another constant.
+
+Three refusals, at three different tokens, because they are three different mistakes:
+
+- A region stating no `contract` is refused **at the invocation**, since no token is responsible for an absence, with a diagnostic naming the statement to add and listing the vocabulary.
+- A statement naming something outside the vocabulary is refused **at the name**, with the vocabulary listed. Matching is exact — no case folding and no prefixes — so `FLUSH_SUBNORMALS_TO_ZERO_F32` is refused rather than folded onto the name beside it, because a name that is nearly a contract decides which results a program may return.
+- A second `contract` statement is refused **at the second keyword**, by the grammar rather than by the vocabulary, because two statements would be two meanings for one region.
+
+**Resolving a name is not admitting it, and the split is deliberate.** Every name above resolves; whether the delivered target can honour the contract is the compiler's own target feasibility question, reported at the `deliver` keyword with a typed reason naming the dimension. The measured Apple `f32` row flushes subnormals in every math mode, so a region stating `strict_f32` parses, means exactly what it says, and is refused later. Pre-answering that in the grammar would put a target fact where a second measured declaration would have to contradict it.
 
 ## Rust-analyzer and `cargo check`
 
@@ -393,7 +418,7 @@ let y = tiler::tensor! {
 };
 ```
 
-`tiler::tensor!` is the ratified public path, fixed by Tom on 2026-07-30 and recorded in [ADR 0088](../decisions/0088-admit-tiler-and-tiler-macros-as-the-frontend-pair.md); an earlier revision of this example spelled the macro `tiler!`, which was an illustrative spelling rather than a second decision. The region body above is still illustrative, but for a narrower reason than it once was: `tensor!` now has a grammar — a declaration block of `sym`, `in`, and `deliver` statements followed by one `out` expression — and that grammar admits no `let` binding and no operator beyond `*` and `+`, with each refused at the token that spells it. The named-call form is filled by exactly one call: `strict_serial_sum(<expression>, [<axis>, …])`, resolving to `tiler::strict-serial-sum-f32@1` and accepted by Tom on 2026-08-01 with the two forms that make it reachable — a binary32-exact scalar real literal in the body, rounded exactly as the equivalent Rust `f32` literal with a leading `-` signing the literal, and an optional axis name in an operand's declared shape (`f32[cols: 8]`), which is what a reduction names its axis by. `einops(…)`, `gelu(…)`, and every other name are still refused at the name, because the governed semantic profile registers no other operation without an operator spelling; the spelling is deliberately `strict_serial_sum` rather than `sum`, because the strict ascending fold is a numerical guarantee the name carries rather than a default the consumer discovers.
+`tiler::tensor!` is the ratified public path, fixed by Tom on 2026-07-30 and recorded in [ADR 0088](../decisions/0088-admit-tiler-and-tiler-macros-as-the-frontend-pair.md); an earlier revision of this example spelled the macro `tiler!`, which was an illustrative spelling rather than a second decision. The region body above is still illustrative, but for a narrower reason than it once was: `tensor!` now has a grammar — a declaration block of `sym`, `in`, `contract`, and `deliver` statements followed by one `out` expression — and that grammar admits no `let` binding and no operator beyond `*` and `+`, with each refused at the token that spells it. The region shown above also states no `contract`, which is a second reason it does not compile: that statement is mandatory, and the section below states why. The named-call form is filled by exactly one call: `strict_serial_sum(<expression>, [<axis>, …])`, resolving to `tiler::strict-serial-sum-f32@1` and accepted by Tom on 2026-08-01 with the two forms that make it reachable — a binary32-exact scalar real literal in the body, rounded exactly as the equivalent Rust `f32` literal with a leading `-` signing the literal, and an optional axis name in an operand's declared shape (`f32[cols: 8]`), which is what a reduction names its axis by. `einops(…)`, `gelu(…)`, and every other name are still refused at the name, because the governed semantic profile registers no other operation without an operator spelling; the spelling is deliberately `strict_serial_sum` rather than `sum`, because the strict ascending fold is a numerical guarantee the name carries rather than a default the consumer discovers.
 
 This preserves inline DX while making the whole fusion region explicit. Cross-
 invocation whole-program fusion would require a compiler plugin or runtime
