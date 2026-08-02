@@ -26,8 +26,8 @@ A BF16 program encodes to an artifact and decodes back to the same program, with
 
 ## Implementation keys
 
-- New tags in the artifact tables, with every existing tag value unchanged. An artifact encoded before this ticket must decode to the identical program after it.
-- `check_binding_access` gains the BF16 storage/kernel pairing, and continues to refuse every mismatched pair. A BF16 storage scalar bound to an F32 kernel type is refused.
+- **The tag tables and `check_binding_access` are no longer this ticket's work** — they land in `admit-the-bf16-type-and-carrier-into-every-total-map`. **Measurement, 2026-08-02 at `3990f9d`, `cargo check --workspace --all-targets`.** `element_type_tag` (`program/model.rs:1737`), `storage_scalar_tag` (`:1758`), and `check_binding_access` (`codec/validate.rs:369`) are exhaustive matches over two deliberately non-`#[non_exhaustive]` vocabularies, so `crates/tiler-artifact` stops compiling the moment `KernelType::Bf16` and `StorageScalar::Bf16` exist. The tags therefore cannot wait for this ticket. On arrival, *verify* that both tables and their `*_from_tag` decoders already carry BF16 with every earlier tag value unchanged, rather than adding them a second time.
+- What stays here is everything the tags are *for*: the round trip, the identity, and the refusals below. An artifact encoded before that widening must still decode to the identical program after it.
 - The dtype participates in program identity, so a BF16 program and an otherwise identical F32 program have different identities. Assert this directly; it is the property a cache is wrong about if it does not hold.
 - Resolve the `canonical_arithmetic_nan_bits` width question rather than widening the field by reflex. Coordinate with the delivered-realization redesign instead of introducing a second numerical record.
 - Decoder refusal for an unknown tag stays a typed refusal at decode time, before any byte is interpreted.
@@ -47,5 +47,6 @@ A BF16 program survives the encode/decode round trip, the dtype is in the identi
 ## Graph maintenance
 
 - Depends on the IR vocabulary existing, and on `redesign-the-delivered-realization-record-from-typed-evidence` because both change the artifact's numerical record and the second is already `todo` with that surface in scope. Landing this first would put a BF16-shaped patch into a record that ticket is replacing.
+- The artifact *tags* arrive earlier than that, through `admit-the-bf16-type-and-carrier-into-every-total-map`, which this ticket already depends on transitively. That extraction is a compilation fact and changes none of this ticket's deliverables — see the first implementation key.
 - `accept-the-delivered-realization-artifact-surface` is Tom's public-boundary ratification and is `todo`; it is `related` rather than a dependency, but a consequential change to the artifact's public numerical record goes to Tom before acceptance.
 - This ticket moves artifact identities. Any spike or prototype citing an artifact identity size will drift; recompute on the merged tree.

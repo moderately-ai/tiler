@@ -28,7 +28,7 @@ A verified BF16 kernel emits `bfloat` MSL, compiles, dispatches on the measured 
 
 ## Implementation keys
 
-- `msl_type` gains `bfloat`, and BF16 constants emit through the `ushort` reinterpretation rather than `float`.
+- `msl_type` gains `bfloat`, and BF16 constants emit through the `ushort` reinterpretation rather than `float`. **It will already have a BF16 arm when this ticket starts, and that arm is a refusal.** `admit-the-bf16-type-and-carrier-into-every-total-map` makes `msl_type` fallible and rejects BF16 by name, because `KernelType` is not `#[non_exhaustive]` and `crates/tiler-metal/src/emit.rs:812` stops compiling the moment the variant exists — and spelling `bfloat` there would have published an unmeasured capability while this ticket's profile dependency was still blocked. Replacing that refusal with the spelling is this ticket's job, and doing so is only admissible once the measured MSL 4.0 row is declared.
 - BF16 binary operations map to the operator and to `MetalFloatArithmeticType::Bf16`, so the subnormal obligation is recorded against the right dtype. The existing machinery already refuses to answer an unstated dtype from a neighbour's fact; do not weaken it.
 - A BF16 NaN canonicalization helper, distinct from `tiler_canonicalize_nan_f32_7fc00000`. The Apple harness's mangled name for the BF16 helper is in its recognizer and is the shape to match.
 - Emission refuses when the target states no BF16 subnormal fact — the `Unknown` path, which is what the iOS device gets.
