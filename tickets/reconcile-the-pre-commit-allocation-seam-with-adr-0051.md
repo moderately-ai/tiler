@@ -1,7 +1,7 @@
 ---
 id: reconcile-the-pre-commit-allocation-seam-with-adr-0051
 title: Reconcile the pre-commit allocation seam with ADR 0051
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [re-audit-adr-implementation-status-after-the-runtime-and-metal-landings, stop-the-identity-join-producer-race]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions, implementation/runtime, research/runtime, implemen
 shared_scopes: [project/tickets]
 paths: []
 tags: [runtime, decisions, correctness]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785634941
 ---
 ## User-visible outcome
 

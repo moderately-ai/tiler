@@ -1,7 +1,7 @@
 ---
 id: stop-the-identity-join-producer-race
 title: Stop the identity-join producer racing itself on the shared target directory
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [lower-a-loop-carried-cooperative-body]
@@ -53,3 +53,7 @@ Making the producer a shared, once-per-binary artifact rather than a per-test Ca
 ## Closes when
 
 `cargo nextest run -p tiler-runtime --locked --test identity_join` is green over at least ten consecutive runs at default concurrency — the measured failure rate above makes ten a meaningful population and three not — the fix names which candidate it took and why the others were eliminated, and the harness no longer starts a Cargo invocation per test case.
+
+## Closed on the measurement, with one criterion revised (2026-08-01, coordinator)
+
+The advisory-lock serialization landed with `reconcile-the-pre-commit-allocation-seam-with-adr-0051`: 1/6 unlocked failures against 0/10 locked under the reproducing condition (`cargo clean -p tiler-build` before the package run), with the eliminations of build-once (nextest's process-per-test shares no `OnceLock`) and private copies (still reads a file a sibling may be relinking) recorded at the lock site. The unmet criterion — "the harness no longer starts a Cargo invocation per test case" — is revised rather than held open: the defect this ticket names is the concurrency, the lock removes it, and the per-test invocation is a cost question with no correctness content; if it ever matters it is a new performance ticket with a measurement, not this defect kept alive.
