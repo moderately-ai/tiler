@@ -126,6 +126,7 @@ pub trait ReferenceOperation: Send + Sync + 'static {
 pub struct ReferenceEvaluationRequest<'a> {
     pub(crate) operands: &'a [&'a Tensor],
     pub(crate) attributes: &'a OperationAttributes,
+    pub(crate) iteration_step_allowance: usize,
 }
 
 impl fmt::Debug for ReferenceEvaluationRequest<'_> {
@@ -134,6 +135,7 @@ impl fmt::Debug for ReferenceEvaluationRequest<'_> {
             .debug_struct("ReferenceEvaluationRequest")
             .field("operand_count", &self.operands.len())
             .field("attributes", &self.attributes)
+            .field("iteration_step_allowance", &self.iteration_step_allowance)
             .finish()
     }
 }
@@ -149,6 +151,26 @@ impl<'a> ReferenceEvaluationRequest<'a> {
     #[must_use]
     pub const fn attributes(self) -> &'a OperationAttributes {
         self.attributes
+    }
+
+    /// Returns the iteration steps this occurrence is authorized to walk.
+    ///
+    /// An implementation whose work is not answerable from its operand and result
+    /// bounds must consult this and refuse above it under
+    /// [`ReferenceOperationError::IterationStepsExceeded`]; the governed
+    /// contraction is the one such family today, because its fold walks
+    /// `output_count * contracted_count` steps. An implementation whose cost is
+    /// linear in a bound the operands already passed has nothing to read here.
+    ///
+    /// This is the caller's stated authorization and never a per-walk budget: the
+    /// window an implementation may walk in one pass is still bounded by the
+    /// crate's own limit, and an occurrence over it is folded in several such
+    /// windows.
+    ///
+    /// [`ReferenceOperationError::IterationStepsExceeded`]: crate::ReferenceOperationError::IterationStepsExceeded
+    #[must_use]
+    pub const fn iteration_step_allowance(self) -> usize {
+        self.iteration_step_allowance
     }
 }
 

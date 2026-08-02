@@ -1121,6 +1121,9 @@ fn apply_constant(
         ReferenceEvaluationRequest {
             operands: &[],
             attributes,
+            // A constant walks no iteration space, so this allowance is inert
+            // here; it is the default one every registered occurrence receives.
+            iteration_step_allowance: crate::MAX_REFERENCE_TENSOR_ELEMENTS,
         },
         &mut outputs,
     );

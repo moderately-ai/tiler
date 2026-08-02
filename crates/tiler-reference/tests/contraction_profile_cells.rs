@@ -23,6 +23,17 @@
 //! unstaged evaluator refuses are folded in slabs to a result whose SHA-256 is the
 //! one an Apple M4 Max produced.
 //!
+//! **The same cell now also arrives through the whole-*program* path.**
+//! [`a_whole_program_evaluation_reaches_the_cell_its_default_evaluator_refuses`]
+//! drives `w_prefill_q` through [`ReferenceEvaluator::evaluate`] — a verified
+//! program, the registered capability, the registry's own dispatch — under an
+//! evaluator whose caller stated an iteration-step allowance, and reproduces the
+//! same device digest. The default evaluator's refusal is asserted in the same
+//! test on the same operands, so authorizing the work is watched as a number that
+//! can still say no rather than as a check that was removed. The two halves are
+//! not the same claim: the staged type is what a caller holding two tensors uses,
+//! and the evaluator is what a consumer holding a program calls.
+//!
 //! # Where the numbers come from
 //!
 //! - **Operands**: reconstructed from the probe's own `SplitMix64` stream,
@@ -47,7 +58,11 @@
 //! This is an exact scalar oracle with a coordinate decode per step, so a cell's
 //! cost is linear in its fold. [`the_staged_oracle_reaches_the_cheapest_refused_cell`]
 //! runs `w_decode_kv` (1,048,576 steps) and `w_prefill_q` (20,971,520) on every
-//! run, in 0.31 s. [`the_staged_oracle_reproduces_every_retained_profile_digest`]
+//! run, in 0.31 s, and
+//! [`a_whole_program_evaluation_reaches_the_cell_its_default_evaluator_refuses`]
+//! folds `w_prefill_q` twice more — once through the evaluator and once as a
+//! seven-slab partition to compare it against — in 0.49 s.
+//! [`the_staged_oracle_reproduces_every_retained_profile_digest`]
 //! covers all six — 1,104,150,528 steps — and is `#[ignore]`d for cost. Its
 //! invocation, and the run this file was landed with:
 //!
@@ -308,11 +323,17 @@ fn staged_result(
     elements
 }
 
-/// Evaluates one cell through the ordinary unstaged path, for its refusal or value.
-fn unstaged_result(
+/// Evaluates one cell as a whole program, for its refusal or its value.
+///
+/// The allowance is the caller's, so one helper serves both halves of the claim:
+/// at [`REFERENCE_STEP_LIMIT`] this is the ordinary evaluator every other consumer
+/// gets, and at a stated larger number it is the same evaluator authorized to
+/// spend more bounded windows on one occurrence.
+fn program_result(
     cell: &Cell,
     left: &Tensor,
     right: &Tensor,
+    iteration_step_allowance: usize,
 ) -> Result<Vec<ReferenceElement>, tiler_reference::EvaluationError> {
     let structure = projection_structure();
     let mut builder =
@@ -336,6 +357,7 @@ fn unstaged_result(
     let program = builder.build().expect("the program verifies");
     let outputs = ReferenceEvaluator::standard()
         .expect("the standard evaluator opens")
+        .with_iteration_step_allowance(iteration_step_allowance)
         .evaluate(
             &program,
             &[
@@ -437,12 +459,115 @@ fn the_staged_oracle_reaches_the_cheapest_refused_cell() {
     // whole-program path still refuses these operands, and refuses them by naming
     // the work bound rather than a storage one.
     let (left, right) = operands(refused);
-    let error = unstaged_result(refused, &left, &right)
+    let error = program_result(refused, &left, &right, REFERENCE_STEP_LIMIT)
         .expect_err("the unstaged fold exceeds the reference's work bound");
     let message = format!("{error}");
     assert!(
         message.contains("iteration space has 20971520 steps, exceeding 16777216"),
         "the refusal must name the work bound and the exact fold: {message}"
+    );
+}
+
+/// The whole-*program* path reaches the cell its default evaluator refuses.
+///
+/// The test above reaches `w_prefill_q` with no evaluator, program, or registry in
+/// the picture — a caller holding two tensors and writing the slab loop itself.
+/// This one reaches the same cell through [`ReferenceEvaluator::evaluate`], which
+/// is what a consumer with a verified program in hand actually calls, and where
+/// the fold's windows are the evaluator's own rather than the caller's.
+///
+/// **Three asks against one pair of operands, which is the content.** At the
+/// default allowance the same refusal fires, unchanged and quoted. One step short
+/// of the fold, a *stated* allowance refuses it too — so authorizing work is a
+/// number that can still say no rather than a switch that turns the check off. At
+/// the fold's own step count it evaluates, and what arrives is compared against
+/// the SHA-256 an Apple M4 Max produced for these bytes.
+///
+/// The bit-identity claim is against a **different partition** of the same fold:
+/// the evaluator spends two windows of 16,384 output elements and the comparison
+/// spends seven slabs of 3,000, and the two payloads must agree element for
+/// element. A comparison against a single-window fold is not available at this
+/// size, because a 20,971,520-step fold has no single-window form — so what is
+/// compared is two partitions and a device digest rather than one partition
+/// against itself. [`slab_boundaries_do_not_change_any_folded_value`] is where a
+/// single window and several are compared, at a size that admits both.
+#[test]
+fn a_whole_program_evaluation_reaches_the_cell_its_default_evaluator_refuses() {
+    let cell = &PROFILE_CELLS[1];
+    assert_eq!(cell.id, "w_prefill_q");
+    assert!(cell.steps > REFERENCE_STEP_LIMIT);
+    let structure = projection_structure();
+    let (left, right) = operands(cell);
+
+    // The evaluator every other consumer gets, unchanged.
+    let refused = program_result(cell, &left, &right, REFERENCE_STEP_LIMIT)
+        .expect_err("a default evaluator still refuses this fold");
+    assert!(
+        format!("{refused}").contains("iteration space has 20971520 steps, exceeding 16777216"),
+        "the default refusal must be byte-for-byte the one it always was: {refused}"
+    );
+
+    // A stated allowance one step short of the fold, so the check is watched
+    // saying no about the number it was actually given.
+    let refused = program_result(cell, &left, &right, cell.steps - 1)
+        .expect_err("a stated allowance below the fold refuses it");
+    assert!(
+        format!("{refused}").contains(&format!(
+            "iteration space has {} steps, exceeding {}",
+            cell.steps,
+            cell.steps - 1
+        )),
+        "a stated allowance must name itself and the fold it declined: {refused}"
+    );
+
+    // The plan the evaluator walks, as a number rather than as an inference from
+    // the result having arrived: `StagedStrictTensorContractionF32::governed` and
+    // the registered operation take their window width from one place.
+    let planned = StagedStrictTensorContractionF32::governed(&structure, &left, &right)
+        .expect("the governed contraction plans");
+    assert_eq!(planned.slab_output_count(), REFERENCE_STEP_LIMIT / 1024);
+    assert_eq!(
+        planned.slab_count(),
+        2,
+        "this fold needs more than one bounded window, which is what is being staged"
+    );
+
+    let started = Instant::now();
+    let elements = program_result(cell, &left, &right, cell.steps)
+        .expect("the fold's own step count admits it");
+    let elapsed = started.elapsed();
+    assert_eq!(
+        digest_of(&elements),
+        cell.result_sha256,
+        "the whole-program staged fold does not reproduce the retained `direct` result"
+    );
+
+    // A seven-slab partition of the identical fold, so the two windows above are
+    // established as unobservable in the values at this cell's own size.
+    let alternative = StagedStrictTensorContractionF32::governed_with_slab_output_count(
+        &structure, &left, &right, 3_000,
+    )
+    .expect("3,000 output elements per slab is under the work bound");
+    assert_eq!(alternative.slab_count(), 7);
+    let mut staged = Vec::with_capacity(alternative.output_count());
+    for slab in 0..alternative.slab_count() {
+        staged.extend(
+            alternative
+                .evaluate_slab(slab)
+                .expect("every planned slab is admitted"),
+        );
+    }
+    assert_eq!(
+        elements, staged,
+        "the window partition changed a folded value"
+    );
+
+    println!(
+        "{}: {} steps through the whole-program path in {} windows, {} ms",
+        cell.id,
+        cell.steps,
+        planned.slab_count(),
+        elapsed.as_millis(),
     );
 }
 
@@ -486,7 +611,8 @@ fn slab_boundaries_do_not_change_any_folded_value() {
     };
     let (left, right) = operands(&cell);
 
-    let baseline = unstaged_result(&cell, &left, &right).expect("a small fold is admitted");
+    let baseline = program_result(&cell, &left, &right, REFERENCE_STEP_LIMIT)
+        .expect("a small fold is admitted");
     assert!(
         baseline.windows(2).any(|pair| pair[0] != pair[1]),
         "a degenerate constant result would satisfy every equality below"
@@ -528,7 +654,8 @@ fn slab_boundaries_do_not_change_any_folded_value() {
     )
     .expect("the perturbed operand is well formed");
 
-    let moved = unstaged_result(&cell, &left, &right).expect("a small fold is admitted");
+    let moved = program_result(&cell, &left, &right, REFERENCE_STEP_LIMIT)
+        .expect("a small fold is admitted");
     assert_ne!(moved, baseline, "the fold ignored a contributing element");
     for width in [1_usize, 3, 5, 11, 64] {
         let staged = StagedStrictTensorContractionF32::governed_with_slab_output_count(
@@ -780,7 +907,7 @@ fn staged_region_result(
 /// that do not, and one wider than the whole space — commit identical bit
 /// patterns, and the whole-region path commits them too.
 ///
-/// The cross-check against `unstaged_result` is the part a second implementation
+/// The cross-check against `program_result` is the part a second implementation
 /// of the same arithmetic could not fake: the region and the registered
 /// contraction reach the same bits by different code.
 ///
@@ -802,7 +929,8 @@ fn span_boundaries_do_not_change_any_region_value() {
     let region = contraction_region(&scalars, &cell).expect("the mirrored region verifies");
     let (left, right) = operands(&cell);
 
-    let baseline = unstaged_result(&cell, &left, &right).expect("a small fold is admitted");
+    let baseline = program_result(&cell, &left, &right, REFERENCE_STEP_LIMIT)
+        .expect("a small fold is admitted");
     assert!(
         baseline.windows(2).any(|pair| pair[0] != pair[1]),
         "a degenerate constant result would satisfy every equality below"
@@ -835,7 +963,8 @@ fn span_boundaries_do_not_change_any_region_value() {
     )
     .expect("the perturbed operand is well formed");
 
-    let moved = unstaged_result(&cell, &left, &right).expect("a small fold is admitted");
+    let moved = program_result(&cell, &left, &right, REFERENCE_STEP_LIMIT)
+        .expect("a small fold is admitted");
     assert_ne!(moved, baseline, "the region ignored a contributing element");
     for span in [1_u64, 3, 5, 11, 64] {
         assert_eq!(
@@ -898,7 +1027,8 @@ fn an_incomplete_staged_walk_is_refused_rather_than_finished() {
     assert!(staged.is_exhausted());
     assert_eq!(
         region_elements(&staged.finish().expect("the covered walk finishes")),
-        unstaged_result(&cell, &left, &right).expect("a small fold is admitted"),
+        program_result(&cell, &left, &right, REFERENCE_STEP_LIMIT)
+            .expect("a small fold is admitted"),
     );
 }
 

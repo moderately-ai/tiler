@@ -56,17 +56,29 @@
 //! Saying so is the point: the check that can say no about the *site* is the
 //! signature decode, not a value comparison.
 //!
-//! # Two ways to walk one fold
+//! # Two ways to walk one fold, and the two numbers that bound them
 //!
 //! `ContractionFold` holds everything a contraction is parameterized by once the
 //! operands are validated, and two callers walk it. The registered operation
-//! walks the whole result in one call and refuses above the work bound, which is
-//! what a whole-program evaluation is held to.
-//! [`StagedStrictTensorContractionF32`] walks one output slab per call, each
-//! under that same bound, which is how a caller that has decided to pay the time
-//! reaches a fold larger than one call may perform. Neither carries its own
-//! arithmetic — that is what makes their agreement uninteresting and their
-//! results interchangeable.
+//! walks the whole result, in windows each of which passes the per-window work
+//! bound, and refuses a fold larger than the iteration-step allowance its
+//! evaluator carries. [`StagedStrictTensorContractionF32`] walks one output slab
+//! per call, each under that same bound, which is how a caller with no evaluator
+//! in the picture reaches a fold larger than one call may perform. Neither
+//! carries its own arithmetic — that is what makes their agreement uninteresting
+//! and their results interchangeable.
+//!
+//! The two numbers are deliberately not one. `MAX_REFERENCE_TENSOR_ELEMENTS`
+//! bounds **one window**: the steps a single uninterrupted walk of the iteration
+//! space may cost, and it does not move — a fold over it is spent as several
+//! windows, never as one larger one.
+//! [`ReferenceEvaluator::with_iteration_step_allowance`] states **how many steps
+//! one occurrence may spend in total**, defaults to that same constant, and is
+//! the caller's visible authorization for a fold that needs more than one window.
+//! Collapsing them would either put the unbounded ask back or make the caller's
+//! authorization silently widen what a single walk costs.
+//!
+//! [`ReferenceEvaluator::with_iteration_step_allowance`]: crate::ReferenceEvaluator::with_iteration_step_allowance
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -362,8 +374,14 @@ impl ReferenceOperation for StrictTensorContractionF32Reference {
             return Err(ReferenceOperationError::InvalidApplication);
         };
         let structure = contraction_structure(request.attributes())?;
-        contract_operands(&self.contract, &structure, left, right)
-            .and_then(|tensor| outputs.push(tensor))
+        contract_operands(
+            &self.contract,
+            &structure,
+            left,
+            right,
+            request.iteration_step_allowance(),
+        )
+        .and_then(|tensor| outputs.push(tensor))
     }
 }
 
@@ -392,6 +410,7 @@ pub(crate) fn contract_operands(
     structure: &ContractionIndexStructure,
     left: &Tensor,
     right: &Tensor,
+    iteration_step_allowance: usize,
 ) -> Result<Tensor, ReferenceOperationError> {
     let fold = ContractionFold::plan(contract, structure, left, right)?;
     // The fold performs `output_count * contracted_count` multiply-accumulate
@@ -401,17 +420,20 @@ pub(crate) fn contract_operands(
     // about the shapes is too large here, so `ShapeTooLarge` would send a reader
     // looking at the wrong quantity.
     //
-    // This is the bound a *whole-program* evaluation is held to, and it does not
-    // move: [`StagedStrictTensorContractionF32`] admits a larger total by walking
-    // slabs each of which passes this same test, never by relaxing it.
+    // The allowance is what this occurrence's *caller* authorized, and defaults to
+    // `MAX_REFERENCE_TENSOR_ELEMENTS` — so an evaluator nobody told otherwise
+    // refuses exactly the folds it always refused. What the allowance never
+    // widens is one window: `evaluate_every_output` spends several windows each
+    // passing the same per-window test [`StagedStrictTensorContractionF32`]
+    // applies, never one larger walk.
     let steps = fold.steps();
-    if steps > MAX_REFERENCE_TENSOR_ELEMENTS {
+    if steps > iteration_step_allowance {
         return Err(ReferenceOperationError::IterationStepsExceeded {
-            limit: MAX_REFERENCE_TENSOR_ELEMENTS,
+            limit: iteration_step_allowance,
             actual: steps,
         });
     }
-    let results = fold.evaluate_outputs(contract, 0, fold.output_count)?;
+    let results = fold.evaluate_every_output(contract)?;
     Tensor::dense(
         contract.result_type.clone(),
         fold.output_shape.clone(),
@@ -423,12 +445,14 @@ pub(crate) fn contract_operands(
 /// One contraction's validated fold, with every per-axis decision resolved.
 ///
 /// Extracted from [`contract_operands`] because two callers walk it: the
-/// registered operation, which walks every output element in one bounded call,
-/// and [`StagedStrictTensorContractionF32`], which walks one output slab per
-/// call. **One fold and not two** is the point — a staged evaluator carrying its
-/// own arithmetic would agree with the registered one for reasons that say
-/// nothing about either being right, which is the independence rule this crate is
-/// built on stated in the small.
+/// registered operation, which walks every output element in bounded windows the
+/// fold itself sizes, and [`StagedStrictTensorContractionF32`], which walks one
+/// output slab per call at a width its caller may choose. **One fold and not
+/// two** is the point — a staged evaluator carrying its own arithmetic would
+/// agree with the registered one for reasons that say nothing about either being
+/// right, which is the independence rule this crate is built on stated in the
+/// small. Both widths come from [`Self::window_output_count`] by default, so the
+/// two callers are held to one number rather than to two that happen to agree.
 struct ContractionFold<'operands> {
     /// Dense elements of each operand, in structure-operand order.
     elements: Vec<&'operands [ReferenceElement]>,
@@ -576,6 +600,63 @@ impl<'operands> ContractionFold<'operands> {
         self.output_count.saturating_mul(self.contracted_count)
     }
 
+    /// Output elements the widest window the per-window work bound admits covers.
+    ///
+    /// The division is defined because a zero contracted domain was refused during
+    /// planning. It reaches zero only when a *single* output element's fold is
+    /// already over the bound — the one case no windowing can reach, refused by
+    /// [`Self::evaluate_every_output`] rather than divided out of existence.
+    const fn window_output_count(&self) -> usize {
+        MAX_REFERENCE_TENSOR_ELEMENTS / self.contracted_count
+    }
+
+    /// Folds every output element, in windows each under the per-window bound.
+    ///
+    /// The whole result is what a caller of the registered operation asked for, and
+    /// how many windows it costs is this fold's own arithmetic rather than the
+    /// caller's; what the caller authorized is the *total*, which
+    /// [`contract_operands`] checked before calling here.
+    ///
+    /// A fold that fits one window takes the single-call path, so nothing that
+    /// evaluated before this windowing existed pays an extra traversal or an extra
+    /// copy of its result.
+    ///
+    /// Why concatenating the windows is the unstaged result and not an
+    /// approximation of it is [`StagedStrictTensorContractionF32`]'s "why a slab
+    /// boundary cannot change a folded value" argument, read out of the registered
+    /// signature; the windows below are the same partition of the same
+    /// [`Self::evaluate_outputs`] that argument was checked against.
+    fn evaluate_every_output(
+        &self,
+        contract: &ContractionContract,
+    ) -> Result<Vec<ReferenceElement>, ReferenceOperationError> {
+        let window = self.window_output_count();
+        if window == 0 {
+            // One output element's own fold is over the bound, so no partition of
+            // the result is admissible and there is nothing to narrow toward.
+            // Unreachable through well-formed tensors — ADR 0087's rule two puts
+            // every contracted index in both operands, so `contracted_count`
+            // divides each operand's element count, which `Tensor::dense` already
+            // bounded by this same constant. Refused rather than assumed away, and
+            // a reservation rather than a tested guarantee.
+            return Err(ReferenceOperationError::IterationStepsExceeded {
+                limit: MAX_REFERENCE_TENSOR_ELEMENTS,
+                actual: self.contracted_count,
+            });
+        }
+        if window >= self.output_count {
+            return self.evaluate_outputs(contract, 0, self.output_count);
+        }
+        let mut results = Vec::with_capacity(self.output_count);
+        let mut first_output = 0_usize;
+        while first_output < self.output_count {
+            let outputs = window.min(self.output_count - first_output);
+            results.extend(self.evaluate_outputs(contract, first_output, outputs)?);
+            first_output += outputs;
+        }
+        Ok(results)
+    }
+
     /// Folds `outputs` consecutive output elements, starting at `first_output`.
     ///
     /// The window is a window on the *result*, never on any fold: every element
@@ -656,8 +737,9 @@ impl<'operands> ContractionFold<'operands> {
 ///
 /// # What this is for, and what it deliberately does not change
 ///
-/// The unstaged fold behind [`ReferenceEvaluator`] refuses a fold of more than
-/// `MAX_REFERENCE_TENSOR_ELEMENTS` multiply-accumulate steps. That bound is not
+/// The fold behind [`ReferenceEvaluator`] refuses an occurrence of more than the
+/// evaluator's iteration-step allowance, which is `MAX_REFERENCE_TENSOR_ELEMENTS`
+/// multiply-accumulate steps unless a caller states otherwise. That bound is not
 /// about storage — the fold's memory is `output_count` elements whatever the step
 /// count — it is the one thing standing between a malformed program and an
 /// unbounded ask on host *time*. Four of the six correctness cells of the L3
@@ -665,14 +747,19 @@ impl<'operands> ContractionFold<'operands> {
 /// steps, `w_prefill_o` at 268,435,456, and `w_prefill_mlp_in` and
 /// `w_prefill_mlp_out` at 402,653,184 each.
 ///
-/// This type reaches those cells **without moving that bound by one step**. Each
+/// This type reaches those cells **without moving that bound by one step**, and
+/// with no evaluator, program, or registry in the picture. Each
 /// [`Self::evaluate_slab`] call folds a slab of output elements whose work passes
-/// exactly the test the unstaged fold applies, and the total is a loop the
-/// caller writes. So a program handed to [`ReferenceEvaluator`] still refuses at
-/// the same limit it always did, and the extra work here is authorized by visible
-/// caller code rather than by a constant nobody re-derives.
+/// exactly the per-window test, and the total is a loop the caller writes. So a
+/// program handed to a default [`ReferenceEvaluator`] still refuses at the same
+/// limit it always did, and the extra work here is authorized by visible caller
+/// code rather than by a constant nobody re-derives — which is the same
+/// authorization
+/// [`ReferenceEvaluator::with_iteration_step_allowance`] expresses as a stated
+/// number for a caller who does have a whole program in hand.
 ///
 /// [`ReferenceEvaluator`]: crate::ReferenceEvaluator
+/// [`ReferenceEvaluator::with_iteration_step_allowance`]: crate::ReferenceEvaluator::with_iteration_step_allowance
 ///
 /// # Why a slab boundary cannot change a folded value
 ///
@@ -758,9 +845,7 @@ impl<'operands> StagedStrictTensorContractionF32<'operands> {
             .map_err(StagedContractionError::UnsupportedDeclaration)?;
         let fold = ContractionFold::plan(&contract, structure, left, right)
             .map_err(StagedContractionError::Operation)?;
-        // `contracted_count` is at least one — a zero contracted domain was
-        // refused during planning — so the division is defined.
-        let slab_output_count = MAX_REFERENCE_TENSOR_ELEMENTS / fold.contracted_count;
+        let slab_output_count = fold.window_output_count();
         Self::admitted(contract, fold, slab_output_count)
     }
 
