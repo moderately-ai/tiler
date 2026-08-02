@@ -5,9 +5,11 @@
 //!
 //! The accepted subset is re-exported flat from [`crate::shape`]; this module
 //! itself is `pub(crate)`, so the decision procedure, its disjoint-set forest,
-//! and its per-class domains stay inside it. A frontend constructs an
-//! environment through [`ShapeEnvBuilder`] and reads it through [`ShapeEnv`]'s
-//! queries.
+//! and its per-class domains stay inside it. The additive relation and its
+//! corresponding conflict and fragment variants are a public draft pending
+//! Tom's acceptance, not part of that accepted subset. A frontend constructs
+//! an environment through [`ShapeEnvBuilder`] and reads it through
+//! [`ShapeEnv`]'s queries.
 //!
 //! # What this module owns
 //!
@@ -1507,6 +1509,59 @@ mod tests {
         build(15).expect("S = 15 is consistent with C = 14 and T = 1");
     }
 
+    /// A partially observed equality reports why the remaining extent cannot
+    /// inhabit the nonnegative extent domain; it is not a fully observed mismatch.
+    #[test]
+    fn an_observed_addend_exceeding_the_sum_names_the_negative_remainder() {
+        let build = |sum: u64| {
+            let mut draft = ShapeEnvBuilder::new();
+            for (name, binding) in [
+                ("S", static_binding(sum)),
+                ("known", static_binding(3)),
+                ("remaining", dynamic_binding("remaining")),
+            ] {
+                let declared = symbol("partial", name);
+                draft.declare(declared.clone()).unwrap();
+                draft.bind(&declared, binding).unwrap();
+            }
+            draft
+                .require(required(ExtentRelation::additive_equality(
+                    ExtentTerm::Symbol(symbol("partial", "S")),
+                    ExtentTerm::Symbol(symbol("partial", "remaining")),
+                    ExtentTerm::Symbol(symbol("partial", "known")),
+                )))
+                .unwrap();
+            draft.build()
+        };
+
+        let error = build(2).expect_err("2 == remaining + 3 needs a negative extent");
+        let ShapeEnvError::ContradictoryConstraints { conflict } = &error else {
+            panic!("the impossible remainder is a typed contradiction, not {error}");
+        };
+        assert_eq!(
+            **conflict,
+            ConstraintConflict::AddendExceedsSum {
+                relation: ExtentRelation::additive_equality(
+                    ExtentTerm::Symbol(symbol("partial", "S")),
+                    ExtentTerm::Symbol(symbol("partial", "remaining")),
+                    ExtentTerm::Symbol(symbol("partial", "known")),
+                ),
+                sum: 2,
+                addend: 3,
+                remaining: ExtentTerm::Symbol(symbol("partial", "remaining")),
+            }
+        );
+        let diagnostic = error.to_string();
+        for fact in ["sum 2", "addend 3", "remaining", "negative"] {
+            assert!(
+                diagnostic.contains(fact),
+                "the partial-observation diagnostic must contain {fact:?}: {diagnostic}"
+            );
+        }
+
+        build(3).expect("3 == remaining + 3 has the nonnegative solution remaining = 0");
+    }
+
     /// Runtime-bound extents retain an additive requirement for preflight.
     #[test]
     fn a_runtime_bound_additive_relation_has_an_exhibited_model() {
@@ -1893,10 +1948,17 @@ mod tests {
         let additive = additive.build().unwrap();
         let mut reversed = draft_over(&["n", "left", "right"]);
         reversed
+            .require(required(ExtentRelation::AdditiveEquality {
+                sum: term("n"),
+                left: term("right"),
+                right: term("left"),
+            }))
+            .unwrap();
+        reversed
             .require(required(ExtentRelation::additive_equality(
                 term("n"),
-                term("right"),
                 term("left"),
+                term("right"),
             )))
             .unwrap();
         let reversed = reversed.build().unwrap();
@@ -1909,7 +1971,12 @@ mod tests {
         assert_eq!(
             additive.identity(),
             reversed.identity(),
-            "commutative addend spelling is canonicalized before identity",
+            "direct and helper addend spellings are canonicalized before identity",
+        );
+        assert_eq!(
+            reversed.constraints().len(),
+            1,
+            "canonicalization precedes constraint sorting and deduplication",
         );
     }
 

@@ -218,6 +218,16 @@ pub enum ExtentRelation {
 }
 
 impl ExtentRelation {
+    /// Returns the canonical spelling used by environment storage and identity.
+    fn canonicalized(self) -> Self {
+        match self {
+            Self::AdditiveEquality { sum, left, right } => {
+                Self::additive_equality(sum, left, right)
+            }
+            relation => relation,
+        }
+    }
+
     /// Asserts that two terms are equal.
     #[must_use]
     pub const fn equal(left: ExtentTerm, right: ExtentTerm) -> Self {
@@ -431,10 +441,13 @@ pub struct SemanticInputConstraint {
 
 impl SemanticInputConstraint {
     /// Records one semantic input constraint with its provenance.
+    ///
+    /// This is the authoritative storage boundary for a semantic relation, so
+    /// it canonicalizes even a directly constructed public enum variant.
     #[must_use]
-    pub const fn new(relation: ExtentRelation, provenance: FactProvenance) -> Self {
+    pub fn new(relation: ExtentRelation, provenance: FactProvenance) -> Self {
         Self {
-            relation,
+            relation: relation.canonicalized(),
             provenance,
         }
     }
@@ -491,10 +504,13 @@ pub struct VariantGuard {
 
 impl VariantGuard {
     /// Records one variant guard against the planning decision it qualifies.
+    ///
+    /// This is the authoritative storage boundary for a guard relation, so it
+    /// canonicalizes even a directly constructed public enum variant.
     #[must_use]
-    pub const fn new(relation: ExtentRelation, applicability: GuardApplicability) -> Self {
+    pub fn new(relation: ExtentRelation, applicability: GuardApplicability) -> Self {
         Self {
-            relation,
+            relation: relation.canonicalized(),
             applicability,
         }
     }
@@ -572,6 +588,17 @@ pub enum ConstraintConflict {
         /// Exact mathematical sum of the two observed addends.
         addends: u128,
     },
+    /// One observed addend exceeds the observed sum, forcing a negative extent.
+    AddendExceedsSum {
+        /// The rejected three-term relation.
+        relation: ExtentRelation,
+        /// Observed value of the sum term.
+        sum: u128,
+        /// Observed value of the addend that already exceeds the sum.
+        addend: u128,
+        /// The undetermined addend that would have to be negative.
+        remaining: ExtentTerm,
+    },
     /// A factorization has no integer solution for its undetermined term.
     IndivisibleFactorization {
         /// The factorization.
@@ -613,6 +640,15 @@ impl fmt::Display for ConstraintConflict {
             } => write!(
                 formatter,
                 "`{relation}` is false: the sum term is {sum} and the two addends total {addends}"
+            ),
+            Self::AddendExceedsSum {
+                relation,
+                sum,
+                addend,
+                remaining,
+            } => write!(
+                formatter,
+                "`{relation}` has no nonnegative solution: addend {addend} exceeds sum {sum}, so {remaining} would have to be negative"
             ),
             Self::IndivisibleFactorization {
                 relation,
@@ -1221,7 +1257,7 @@ fn apply_additive_equality(
             let sum_value = u128::from(sum_value);
             let right = u128::from(right);
             let Some(left) = sum_value.checked_sub(right) else {
-                return Err(additive_mismatch(relation, sum_value, right));
+                return Err(addend_exceeds_sum(relation, sum_value, right, symbol));
             };
             pin_domain(classes, index, symbol, left, domains)?;
         }
@@ -1229,7 +1265,7 @@ fn apply_additive_equality(
             let sum_value = u128::from(sum_value);
             let left = u128::from(left);
             let Some(right) = sum_value.checked_sub(left) else {
-                return Err(additive_mismatch(relation, sum_value, left));
+                return Err(addend_exceeds_sum(relation, sum_value, left, symbol));
             };
             pin_domain(classes, index, symbol, right, domains)?;
         }
@@ -1243,6 +1279,20 @@ fn additive_mismatch(relation: &ExtentRelation, sum: u128, addends: u128) -> Sha
         relation: relation.clone(),
         sum,
         addends,
+    })
+}
+
+fn addend_exceeds_sum(
+    relation: &ExtentRelation,
+    sum: u128,
+    addend: u128,
+    remaining: &ShapeSymbol,
+) -> ShapeEnvError {
+    contradiction(ConstraintConflict::AddendExceedsSum {
+        relation: relation.clone(),
+        sum,
+        addend,
+        remaining: ExtentTerm::Symbol(remaining.clone()),
     })
 }
 
@@ -1273,7 +1323,7 @@ fn check_additive_model(
             };
         }
         if values[0] != values[1] + values[2] {
-            if undetermined <= 1 {
+            if undetermined == 0 {
                 return Err(additive_mismatch(
                     relation,
                     values[0],

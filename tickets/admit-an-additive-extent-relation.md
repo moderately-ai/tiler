@@ -43,9 +43,13 @@ the two addends because mathematical addition is commutative. A concrete
 mismatch returns the new typed
 `ConstraintConflict::AdditiveEqualityMismatch { relation, sum, addends }`, whose
 relation renders all three terms and whose numeric fields report both observed
-sides. `FragmentViolation::UnderdeterminedAdditiveEquality` is the fail-closed
-boundary for a symbolic set whose canonical model does not exhibit a solution.
-These new public variants and constructor are a tested draft, not self-accepted.
+sides. A partially observed relation whose known addend exceeds its known sum
+instead returns `ConstraintConflict::AddendExceedsSum { relation, sum, addend,
+remaining }`, because the remaining term would have to be negative; it does not
+mislabel those two observed values as a fully observed mismatch.
+`FragmentViolation::UnderdeterminedAdditiveEquality` is the fail-closed boundary
+for a symbolic set whose canonical model does not exhibit a solution. These new
+public variants and constructor are a tested draft, not self-accepted.
 
 **Inference — the representation elimination has one survivor.** Changing
 `SourcedExtent` is eliminated because it would make a sourced extent both a root
@@ -78,6 +82,11 @@ general `ShapeExpr` work; it must not weaken the one-root-binding invariant.
 
 **Fact — canonical identity is append-only.** The one relation encoder writes a
 fresh exhaustive tag `0x06` followed by the sum and both canonicalized addends.
+Both authoritative storage constructors canonicalize the public enum variant,
+including a caller's direct `AdditiveEquality` construction, before relation
+sorting, deduplication, or encoding; the convenience constructor is not the
+only line of defence. A regression inserts both direct reversed and helper
+spellings, observes one stored constraint, and observes the same identity.
 Tags `0x01..=0x05` and every pre-existing relation byte remain unchanged, so
 `tiler.shape-env.v3` does not move: this admits bytes for a previously
 unrepresentable subject and re-encodes no old subject. No other relation encoder
@@ -95,3 +104,11 @@ made the exact targeted test fail with the structured mismatch before the
 fixture was restored. Targeted `tiler-ir` nextest and doc-tests cover this host
 and implementation only; they do not prove a future runtime binder performs the
 required preflight evaluation.
+
+**Remaining serialized correction — not edited under this claim.** The
+`Sequence extension: Concatenate along one axis` row in `docs/roadmap.md` still
+says that `ExtentRelation` admits no additive relation and that `S == C + T`
+remains inexpressible. That sentence must be corrected after this draft is
+accepted and integrated. Its `contracts/navigation` scope is held by the BF16
+worker, so this branch deliberately records the exact stale claim here rather
+than colliding with that live work.
