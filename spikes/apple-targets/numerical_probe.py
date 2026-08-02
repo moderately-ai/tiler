@@ -951,9 +951,51 @@ APPLE9_F32_UNIFIED_MSL4_MACOS26 = Profile(
     GpuFamily.APPLE9,
 )
 
+APPLE9_F32_BF16_UNIFIED_MSL4_MACOS26 = Profile(
+    "apple9-f32-bf16-unified-msl4-macos26",
+    "tiler.apple-numerical-behaviour/v7",
+    "metal4.0",
+    "4.0",
+    (
+        Family(
+            "macos",
+            "MetalPlatform::MacOs",
+            "macosx",
+            "air64-apple-macos26.0",
+            Execution.MACOS_HOST,
+        ),
+    ),
+    (F32, BF16),
+    GpuFamily.APPLE9,
+)
+"""The same unified selection as the profile above, carrying `bf16` beside `f32`.
+
+**A second profile rather than a widened first one.** The four retained
+`apple9-f32-unified-msl4-macos26` results are cited by the target-profile
+authority ledger, and `probe.harness_sha256` covers this whole file, so widening
+that profile's case set would oblige a re-run whose record no longer carries the
+digest those citations pin. Declaring a neighbouring profile leaves every
+retained byte of the `f32` row where it is.
+
+**`f32` is carried deliberately and is not padding.** Two of this harness's
+shared probes are `f32` kernels — `archive_support` dispatches `multiply_two`,
+and the dispatch host rejects an entry whose dtype has no operand group — so a
+`bf16`-only profile would have had to change what `archive_support` measures for
+every profile in order to measure `bf16` for one. Carrying both dtypes leaves
+that path untouched, and it buys a control: this profile's `f32` rows are
+measured through the identical target, language, device, and compilers as the
+neighbouring profile's, so agreement between them is direct evidence that the
+`bf16` rows here were produced by the compilation the profile names rather than
+by a second one that merely resembles it.
+"""
+
 PROFILES = {
     profile.name: profile
-    for profile in (LEGACY_PROFILE, APPLE9_F32_UNIFIED_MSL4_MACOS26)
+    for profile in (
+        LEGACY_PROFILE,
+        APPLE9_F32_UNIFIED_MSL4_MACOS26,
+        APPLE9_F32_BF16_UNIFIED_MSL4_MACOS26,
+    )
 }
 
 HOST_FAMILY = "macos"

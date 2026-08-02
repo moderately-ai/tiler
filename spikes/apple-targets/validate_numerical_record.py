@@ -1,5 +1,26 @@
 #!/usr/bin/env python3
-"""Validate one retained Apple9 F32 unified-MSL4 numerical record."""
+"""Validate one retained named-profile Apple numerical record.
+
+Every profile-dependent expectation is read from the producer's own `Profile`
+object, resolved through the record's `probe.profile` row, rather than pinned
+here as a constant. That is what lets one validator certify more than one row
+without a second copy of these checks drifting from this one — and it is
+strictly narrower than a constant would be, because a record is now held to the
+identity of the profile *it names* instead of to whichever one this file
+happened to be written for.
+
+**Recovering the exact validator a retained record names.** Every record binds
+its producers by digest — `probe.harness_sha256`, `probe.host_source_sha256`,
+and `probe.validator_sha256` — and `validate_record` checks the *current tree's*
+bytes against them, so a record produced before any producer edit is revalidated
+from the revision it pins rather than from the working tree:
+
+    git -C <repo> show <probe.repository_base_revision>:spikes/apple-targets/validate_numerical_record.py
+
+`validate_revision_identity` is what makes that recovery sound: it holds the
+recorded revision to resolving blobs whose digests are the ones the record
+carries, so the pinned revision cannot name a producer set it did not run.
+"""
 
 from __future__ import annotations
 
@@ -13,15 +34,42 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPOSITORY = HERE.parents[1]
-SCHEMA = "tiler.apple-numerical-behaviour/v7"
 MANIFEST_SCHEMA = "tiler.apple-numerical-input-manifest/v1"
-PROFILE = "apple9-f32-unified-msl4-macos26"
 SHA256 = re.compile(r"[0-9a-f]{64}")
-RESULTS = re.compile(r"[0-9a-f]{8}(?: [0-9a-f]{8})+")
+MACOS_TARGET = re.compile(r"air64-apple-macos([0-9]+)[.]([0-9]+)")
 
 
 class RecordError(ValueError):
     """The retained record or one of its inputs is incomplete or inconsistent."""
+
+
+def results_pattern(digits: int) -> re.Pattern[str]:
+    """The exact shape a `results` row takes at one dtype's own rendered width.
+
+    Pinned per dtype rather than at `f32`'s eight digits, because a record
+    carrying a narrow dtype renders four. Two dtypes now share a width, so this
+    checks the shape of a row and never the identity of its format; only the
+    kernel named in the case key decides that, and the caller resolves the width
+    from that kernel's own dtype.
+    """
+    return re.compile(rf"[0-9a-f]{{{digits}}}(?: [0-9a-f]{{{digits}}})+")
+
+
+def resolve_profile(rows: dict[str, str], probe):
+    """Resolve the producer profile one record names, refusing an unnamed or legacy row.
+
+    The legacy profile is refused by name rather than by omission: it writes
+    `probe.status complete` and carries none of the retained-input rows this
+    validator checks, so accepting it here would report a weaker record as a
+    validated one.
+    """
+    name = require(rows, "probe.profile")
+    profile = probe.PROFILES.get(name)
+    if profile is None:
+        raise RecordError(f"probe.profile names no producer profile: {name}")
+    if profile is probe.LEGACY_PROFILE:
+        raise RecordError("the legacy profile does not produce a validated result directory")
+    return profile
 
 
 def digest(path: Path) -> str:
@@ -70,15 +118,16 @@ def require(
 
 def validate_manifest(record: Path, rows: dict[str, str], probe) -> None:
     """Validate the retained producer inputs and canonical generated sources."""
+    profile = resolve_profile(rows, probe)
     manifest_name = require(rows, "probe.input_manifest_file", "input-manifest.tsv")
     manifest = record.parent / manifest_name
     if digest(manifest) != require(rows, "probe.input_manifest_sha256", SHA256):
         raise RecordError("retained input manifest digest mismatch")
     inputs = read_rows(manifest)
     require(inputs, "schema", MANIFEST_SCHEMA)
-    require(inputs, "profile", PROFILE)
-    require(inputs, "msl_version", "metal4.0")
-    require(inputs, "runtime_language", "4.0")
+    require(inputs, "profile", profile.name)
+    require(inputs, "msl_version", profile.msl_version)
+    require(inputs, "runtime_language", profile.runtime_language)
     expected_inputs = {
         "spikes/apple-targets/numerical_probe.py",
         "spikes/apple-targets/numerical_probe_host.m",
@@ -99,7 +148,6 @@ def validate_manifest(record: Path, rows: dict[str, str], probe) -> None:
         for key, value in inputs.items()
         if key.startswith("source.")
     }
-    profile = probe.APPLE9_F32_UNIFIED_MSL4_MACOS26
     expected_sources = {
         f"sources/{name}.metal"
         for family in profile.families
@@ -116,6 +164,28 @@ def validate_manifest(record: Path, rows: dict[str, str], probe) -> None:
         kernel_name = source.stem
         if source.read_text(encoding="utf-8") != probe.BY_NAME[kernel_name].source():
             raise RecordError(f"retained source is not the canonical producer output: {relative}")
+
+
+def emitted_triple_pattern(family) -> re.Pattern[str]:
+    """The emitted triple one family's requested target must have produced.
+
+    Derived from the family's own `-target` rather than pinned, because the two
+    are different values and only the requested one is a producer input: the
+    front end raises the deployment floor and rewrites the platform spelling, so
+    `air64-apple-macos26.0` is emitted as `air64_v28-apple-macosx26.0.0`. What is
+    checked is the OS version surviving that rewrite, which is the part a wrong
+    target would move.
+
+    The leading component is deliberately unconstrained: `air64_v28` names the
+    AIR version this toolchain build emits, which is a property of the compiler
+    rather than of the requested target, and pinning it would fail a record on
+    the next toolchain for a reason that is not a defect.
+    """
+    matched = MACOS_TARGET.fullmatch(family.target)
+    if matched is None:
+        raise RecordError(f"no emitted-triple rule for requested target: {family.target}")
+    major, minor = matched.group(1), matched.group(2)
+    return re.compile(rf".*macosx{re.escape(major)}[.]{re.escape(minor)}[.]0")
 
 
 def revision_blob(revision: str, relative: str) -> bytes:
@@ -163,7 +233,7 @@ def validate_revision_identity(rows: dict[str, str]) -> None:
 
 def validate_population(rows: dict[str, str], probe) -> None:
     """Require the exact producer-defined cases, rows, witnesses, and comparisons."""
-    profile = probe.APPLE9_F32_UNIFIED_MSL4_MACOS26
+    profile = resolve_profile(rows, probe)
     selection = rows["probe.matrix"]
     offline = tuple(
         case
@@ -200,7 +270,9 @@ def validate_population(rows: dict[str, str], probe) -> None:
             raise RecordError(f"{case_key} has an incomplete or extra row family")
         case = expected_cases[case_key]
         kernel = probe.BY_NAME[case.kernel]
-        patterns = require(rows, f"case.{case_key}.results", RESULTS).split()
+        patterns = require(
+            rows, f"case.{case_key}.results", results_pattern(kernel.dtype.digits)
+        ).split()
         if len(patterns) != len(kernel.dtype.operands):
             raise RecordError(f"{case_key} returned the wrong operand population")
         values = tuple(int(pattern, 16) for pattern in patterns)
@@ -271,13 +343,17 @@ def validate_record(record: Path) -> None:
         raise RecordError("record does not end with probe.status=validated")
     rows = read_rows(record, require_value=False)
     probe = producer()
-    require(rows, "schema", SCHEMA)
-    require(rows, "probe.profile", PROFILE)
-    require(rows, "probe.families", "macos")
-    require(rows, "probe.dtypes", "f32")
-    require(rows, "probe.fixed_flags", "-std=metal4.0")
-    require(rows, "probe.runtime_fixed_options", "lang=4.0")
-    require(rows, "probe.required_gpu_family", "apple9")
+    profile = resolve_profile(rows, probe)
+    require(rows, "schema", profile.schema)
+    require(rows, "probe.families", " ".join(family.name for family in profile.families))
+    require(rows, "probe.dtypes", " ".join(dtype.name for dtype in profile.dtypes))
+    require(rows, "probe.fixed_flags", f"-std={profile.msl_version}")
+    require(rows, "probe.runtime_fixed_options", f"lang={profile.runtime_language}")
+    require(
+        rows,
+        "probe.required_gpu_family",
+        profile.required_gpu_family.value if profile.required_gpu_family else "none",
+    )
     require(rows, "probe.runtime_target_contract", "execution-environment-no-target-property")
     require(rows, "probe.validator_sha256", SHA256)
     if digest(Path(__file__).resolve()) != rows["probe.validator_sha256"]:
@@ -292,14 +368,27 @@ def validate_record(record: Path) -> None:
     validate_revision_identity(rows)
     require(rows, "probe.matrix", re.compile(r"covering|exhaustive"))
     require(rows, "environment.machine", "arm64")
-    require(rows, "environment.family.macos.requested_target", "air64-apple-macos26.0")
-    require(rows, "environment.family.macos.device_apple9_support", "supported")
-    require(rows, "environment.family.macos.device")
-    require(rows, "environment.family.macos.device_registry_id")
-    require(rows, "environment.family.macos.metal_version")
-    require(rows, "environment.family.macos.metallib_version")
-    require(rows, "environment.family.macos.runtime_compiler_build")
-    require(rows, "environment.family.macos.emitted_triple", re.compile(r".*macosx26[.]0[.]0"))
+    for family in profile.families:
+        prefix = f"environment.family.{family.name}"
+        require(rows, f"{prefix}.requested_target", family.target)
+        if profile.required_gpu_family is probe.GpuFamily.APPLE9:
+            require(rows, f"{prefix}.device_apple9_support", "supported")
+        require(rows, f"{prefix}.device")
+        require(rows, f"{prefix}.device_registry_id")
+        require(rows, f"{prefix}.metal_version")
+        require(rows, f"{prefix}.metallib_version")
+        require(rows, f"{prefix}.runtime_compiler_build")
+        require(rows, f"{prefix}.emitted_triple", emitted_triple_pattern(family))
+        # A profile that measures `bf16` asked its device whether it would run a
+        # `bfloat` kernel at all, so the answer has to be a measured one. The
+        # producer writes `unmeasured-by-profile` for a profile that never asked,
+        # and accepting that word here would let a record claim the dispatchability
+        # half of a `bf16` row it did not measure.
+        support = require(rows, f"{prefix}.device_bfloat_support")
+        if probe.BF16 in profile.dtypes and support == "unmeasured-by-profile":
+            raise RecordError(
+                f"{prefix}.device_bfloat_support is unmeasured, but the profile carries bf16"
+            )
     validate_population(rows, probe)
     validate_manifest(record, rows, probe)
 
