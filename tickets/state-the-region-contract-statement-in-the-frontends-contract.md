@@ -1,7 +1,7 @@
 ---
 id: state-the-region-contract-statement-in-the-frontends-contract
 title: State the region's `contract` statement in the frontends integration contract
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [state-the-numerical-contract-in-the-region-grammar, decide-the-inline-frontend-numerical-contract]
@@ -9,9 +9,6 @@ scopes: [contracts/integrations]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, frontend, numerics, inline-dx]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785685340
 ---
 ## User-visible outcome
 

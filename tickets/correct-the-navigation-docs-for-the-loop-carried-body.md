@@ -1,7 +1,7 @@
 ---
 id: correct-the-navigation-docs-for-the-loop-carried-body
 title: Correct the navigation docs falsified by the loop-carried body landing
-status: in-progress
+status: done
 priority: p2
 dependencies: [lower-a-loop-carried-cooperative-body]
 related: [lower-a-loop-carried-cooperative-body, realize-the-strict-contraction-on-metal]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, physical-planning, contraction]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785685340
 ---
 ## User-visible outcome
 
