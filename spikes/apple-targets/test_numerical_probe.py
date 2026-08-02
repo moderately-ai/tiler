@@ -218,9 +218,116 @@ def test_the_apple9_profile_is_one_exact_indivisible_selection() -> None:
     assert dict(PROBE.record_rows(run))[key] == ""
 
 
-def apple9_record_rows() -> dict[str, str]:
-    """Build a complete producer-defined covering population without a GPU."""
-    profile = PROBE.APPLE9_F32_UNIFIED_MSL4_MACOS26
+def test_the_bf16_profile_measures_the_f32_profiles_own_compilation() -> None:
+    """The `bf16` row is a neighbouring profile, not a widening of the `f32` one.
+
+    Two things have to hold at once for a `bf16` measurement taken here to be
+    transcribable onto the authoritative compile profile. The compilation must be
+    the one that profile names — same target, same language standard, same
+    device family — which is asserted field by field against the `f32` profile
+    rather than against a literal, so a later edit to either one cannot let them
+    drift apart silently. And the `f32` profile's own selection must be
+    untouched, because four retained records and the target-profile authority
+    ledger cite it.
+    """
+    f32_profile = PROBE.APPLE9_F32_UNIFIED_MSL4_MACOS26
+    profile = PROBE.APPLE9_F32_BF16_UNIFIED_MSL4_MACOS26
+    assert profile.name == "apple9-f32-bf16-unified-msl4-macos26"
+    assert profile is not f32_profile
+    assert PROBE.PROFILES[profile.name] is profile
+    assert f32_profile.dtypes == (PROBE.F32,), (
+        "the f32 profile's dtype set moved, which would oblige a re-run whose record no longer "
+        "carries the harness digest the retained citations pin"
+    )
+    assert profile.dtypes == (PROBE.F32, PROBE.BF16)
+    for field in ("schema", "msl_version", "runtime_language", "required_gpu_family"):
+        assert getattr(profile, field) == getattr(f32_profile, field), field
+    assert [(family.name, family.sdk, family.target) for family in profile.families] == [
+        (family.name, family.sdk, family.target) for family in f32_profile.families
+    ]
+    configuration = PROBE.Configuration("safe", "2", "off")
+    assert profile.offline_flags("macos", configuration) == f32_profile.offline_flags(
+        "macos", configuration
+    )
+    runtime = PROBE.RuntimeConfiguration("safe", "default")
+    assert profile.runtime_options(runtime) == f32_profile.runtime_options(runtime)
+    measured = {
+        PROBE.BY_NAME[case.kernel].dtype
+        for case in PROBE.cases("macos", PROBE.COVERING, profile)
+    }
+    assert measured == {PROBE.F32, PROBE.BF16}
+    kernels = {case.kernel for case in PROBE.cases("macos", PROBE.COVERING, profile)}
+    # The kernels the ticket's required evidence is read from: both flush
+    # directions, the sign row's kernel, and the arithmetic-free control that
+    # separates a flush from a buffer round trip.
+    for required in ("multiply_two_bf16", "multiply_half_bf16", "materialize_bf16"):
+        assert required in kernels, required
+    # Every `f32` case of the neighbouring profile is measured here too, which is
+    # what makes this profile's `f32` rows a control on the `bf16` ones rather
+    # than a second unrelated population.
+    assert {case.key for case in PROBE.cases("macos", PROBE.COVERING, f32_profile)} <= {
+        case.key for case in PROBE.cases("macos", PROBE.COVERING, profile)
+    }
+
+
+def test_the_validator_resolves_the_profile_the_record_names() -> None:
+    """A record is held to the identity of its own profile, and legacy is refused.
+
+    The validator used to pin one profile name as a constant, which made a second
+    measured row unvalidatable without a second copy of every check. Resolving
+    the profile from the record is narrower, not looser -- an unknown name and
+    the legacy profile are both refused -- so this pins the refusals rather than
+    only the acceptance.
+    """
+    profile = PROBE.APPLE9_F32_BF16_UNIFIED_MSL4_MACOS26
+    assert (
+        VALIDATOR.resolve_profile({"probe.profile": profile.name}, PROBE) is profile
+    )
+    with pytest.raises(VALIDATOR.RecordError, match="no producer profile"):
+        VALIDATOR.resolve_profile({"probe.profile": "apple9-invented"}, PROBE)
+    with pytest.raises(VALIDATOR.RecordError, match="legacy profile"):
+        VALIDATOR.resolve_profile({"probe.profile": PROBE.LEGACY_PROFILE.name}, PROBE)
+    with pytest.raises(VALIDATOR.RecordError, match="missing required field"):
+        VALIDATOR.resolve_profile({}, PROBE)
+
+
+def test_the_bf16_population_validates_at_its_own_rendered_width() -> None:
+    """A narrow-dtype record must pass the same population check the `f32` one does.
+
+    The width is the specific thing at risk: a `bf16` `results` row is four hex
+    digits and the validator's shape check was pinned at eight, so this fails on
+    a validator that assumed `f32`'s rendering. The negative half holds the
+    narrowed pattern to still rejecting a malformed row, so widening the check
+    cannot have been done by dropping it.
+    """
+    profile = PROBE.APPLE9_F32_BF16_UNIFIED_MSL4_MACOS26
+    rows = apple9_record_rows(profile)
+    VALIDATOR.validate_population(rows, PROBE)
+    bf16_results = {
+        key: value
+        for key, value in rows.items()
+        if key.endswith(".results") and "_bf16." in key
+    }
+    assert bf16_results, "the bf16 profile produced no bf16 results row to check"
+    for key, value in bf16_results.items():
+        assert all(len(pattern) == 4 for pattern in value.split()), (key, value)
+    widened = dict(rows)
+    key = next(iter(bf16_results))
+    widened[key] = " ".join(f"0000{pattern}" for pattern in rows[key].split())
+    with pytest.raises(VALIDATOR.RecordError):
+        VALIDATOR.validate_population(widened, PROBE)
+
+
+def apple9_record_rows(profile=None) -> dict[str, str]:
+    """Build a complete producer-defined covering population without a GPU.
+
+    Parameterized by profile so the narrow-dtype row is exercised by the same
+    portable check as the `f32` one. That is not symmetry for its own sake: a
+    `bf16` results row renders four hex digits where an `f32` row renders eight,
+    so a width pinned at `f32`'s would reject every row of the second profile,
+    and a host with no Apple toolchain is where that has to be caught.
+    """
+    profile = PROBE.APPLE9_F32_UNIFIED_MSL4_MACOS26 if profile is None else profile
     observations = {}
     for case in (
         *PROBE.cases("macos", PROBE.COVERING, profile),
@@ -351,8 +458,12 @@ def test_the_apple9_validator_requires_the_exact_population_and_linkage() -> Non
             VALIDATOR.validate_population(mutated, PROBE)
 
 
-def test_the_apple9_manifest_requires_every_unique_source() -> None:
-    profile = PROBE.APPLE9_F32_UNIFIED_MSL4_MACOS26
+@pytest.mark.parametrize(
+    "profile",
+    [PROBE.APPLE9_F32_UNIFIED_MSL4_MACOS26, PROBE.APPLE9_F32_BF16_UNIFIED_MSL4_MACOS26],
+    ids=lambda profile: profile.name,
+)
+def test_the_apple9_manifest_requires_every_unique_source(profile) -> None:
     with tempfile.TemporaryDirectory(prefix="tiler-source-inventory.") as directory:
         root = Path(directory)
         sources = root / "sources"
@@ -380,6 +491,7 @@ def test_the_apple9_manifest_requires_every_unique_source() -> None:
             encoding="utf-8",
         )
         rows = {
+            "probe.profile": profile.name,
             "probe.matrix": PROBE.COVERING,
             "probe.input_manifest_file": manifest.name,
             "probe.input_manifest_sha256": PROBE.digest(manifest),
