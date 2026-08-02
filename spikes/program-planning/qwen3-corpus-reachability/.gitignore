@@ -1,0 +1,7 @@
+# Regenerable local run product: the uv-managed virtual environment this probe
+# resolves from the checked-in `pyproject.toml` and `uv.lock`. The checkpoint
+# itself is never under this repository -- the workload profile's storage policy
+# places it in the Hugging Face cache outside the tree -- so no rule here
+# mentions it, and the retained evidence is the TSV record under `results/`
+# rather than any byte this rule covers.
+/local-work/
