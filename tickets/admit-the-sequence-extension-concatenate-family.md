@@ -1,17 +1,14 @@
 ---
 id: admit-the-sequence-extension-concatenate-family
 title: Admit the sequence-extension concatenate family
-status: in-progress
+status: done
 priority: p1
 dependencies: [scope-the-sequence-extending-tensor-family]
 related: [design-autoregressive-state-and-kv-cache, admit-an-additive-extent-relation, bind-the-kv-cache-through-the-artifact-and-runtime-interface, admit-the-reindex-and-broadcast-operation-families]
-scopes: [implementation/ir, implementation/reference, contracts/foundation]
+scopes: [implementation/ir, implementation/reference, contracts/foundation, implementation/compiler]
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [implementation, semantics, operation-families, kv-cache, language-model]
-claimed_from: todo
-assignee: agent-concat
-lease_expires_at: 1785697181
 ---
 ## User-visible outcome
 
@@ -34,3 +31,15 @@ No lowering, no fusion role, no structured-kernel construct, no `Slice`. A conca
 ## Closes when
 
 The key is registered with a schema, an inference, and a normative reference; the reference provider evaluates it; every refusal above has a test that fails without it; and the support matrix's sequence-extension row is updated from evidence.
+
+## Outcome — 2026-08-02, completed in one branch
+
+All of the above landed, plus the compiler seating the worker correctly stopped short of. The worker's own comment on this ticket is the delivery record; this section covers only what the coordinator did after it.
+
+**Why the seating was finished here rather than dispatched.** Registering any key in `StandardSemantics` breaks two `crates/tiler-compiler` tests that no edit inside the original scopes could satisfy: `policy.rs`'s set equality between the numerical capability table and the registry's keys, and `explain.rs`'s request digest folding the registry snapshot. The worker filed `seat-the-concatenate-family-in-the-compiler-capability-table` and recommended instead adding `implementation/compiler` here and finishing in one branch, on the ground that the follow-up would deadlock — it depended on this ticket, which could not reach `done` while the gate was red. That was right, and it is what happened: the scope was added, the two edits made, and **`seat-the-concatenate-family-in-the-compiler-capability-table` was deleted rather than dispatched.** One gate, nothing red on `main`.
+
+**`tiler::concatenate-f32@1` is listed in `UNPLANNED_OPERATIONS`, and for a stronger reason than the BF16 rows beside it.** BF16 is unplanned because no arithmetic in this build realizes it. Concatenate performs **no arithmetic at all**, so there is no numerical dimension a capability row could list — a row would be a claim about a target that concatenating elements never asks of one. The list's own invariant test was checked, not assumed: registered, rowless, resolving to no capability.
+
+**The request digest was recomputed on the merged tree, not pasted.** The worker observed `b81673209f732002` → `a7e2965962778aef` on its branch and explicitly said the value must be recomputed rather than copied; the merged tree produced the same value from an observed run, and the site carries a note saying why it moved.
+
+**Correction to the dispatch brief, which over-attributed one refusal to this ticket.** The brief framed the L5 stale-state case — an allocation valid over `[0, 13)` bound with `C = 14` — as refused by this family's interim behaviour. It is not, and the worker established why by reading: the semantic layer carries **only static extents** (`ShapeEnv`/`ShapeSymbol` appear zero times under `crates/tiler-ir/src/semantic/` and `crates/tiler-ir/src/program/`, while `Shape` appears in 20+ files there), so that case is unreachable from this family and belongs entirely to [`admit-an-additive-extent-relation`](admit-an-additive-extent-relation.md). What landed here is the static-extent half: derive the sum exactly, refuse when it leaves the domain rather than binding a plausible extent the operands do not determine. The graph edge was **not** inverted — only the brief's framing was loose.
