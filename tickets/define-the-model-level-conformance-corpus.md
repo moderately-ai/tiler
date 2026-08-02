@@ -1,7 +1,7 @@
 ---
 id: define-the-model-level-conformance-corpus
 title: Define the model-level conformance corpus and its refusals
-status: todo
+status: in-progress
 priority: p2
 dependencies: [land-the-model-level-qualification-record, measure-the-model-level-comparison-envelope-under-the-target-realization]
 related: [prove-the-c1-complete-model-execution, test-the-autoregressive-state-failure-cases, build-the-model-level-measurement-harness, define-the-model-level-regression-policy]
@@ -9,6 +9,9 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, conformance, testing, language-model, qwen, metal]
+claimed_from: todo
+assignee: agent-conformance
+lease_expires_at: 1785685152
 ---
 ## User-visible outcome
 

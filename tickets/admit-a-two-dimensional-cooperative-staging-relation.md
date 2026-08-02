@@ -10,8 +10,8 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, physical-planning, identity, deferred]
 claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785636853
+assignee: agent-staging-v5
+lease_expires_at: 1785685152
 ---
 ## User-visible outcome
 
