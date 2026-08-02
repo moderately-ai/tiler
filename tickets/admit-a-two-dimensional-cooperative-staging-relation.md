@@ -1,7 +1,7 @@
 ---
 id: admit-a-two-dimensional-cooperative-staging-relation
 title: Admit a cooperative staging relation a two-dimensional tile can state
-status: deferred
+status: todo
 priority: p1
 dependencies: []
 related: [realize-the-strict-contraction-on-metal, admit-a-cooperative-tile-over-shared-operands, realize-the-tiled-contraction-schedule-and-its-metal-emission, implement-the-single-workgroup-synchronized-reduction-strategy, admit-loop-carried-cooperative-staging]
@@ -43,3 +43,7 @@ Deferred rather than dispatchable, because its central act is an identity-domain
 ## Closes when
 
 A two-dimensional staged access is statable, its disjointness and coverage are still decided by enumeration under the governed bounds, every new rule has been watched refusing its own defect, and the identity step is complete: version moved at its owning layer, ledger updated in the same commit, every moved pin recomputed on the merged tree and enumerated in the report.
+
+## Activated 2026-08-01 — trigger 1 fired, with a co-derivation direction
+
+**Tom accepted the `tiler.schedule.v4` → `v5` step and the widened boundary at the live session, witnessed and executed by the coordinator.** The direction he chose sharpens what this ticket owns: the relation is **co-derived with ADR 0096's two-component coordinate** — one concept serving the tiled contraction's operand broadcast, the two-level composition's staged access by named coordinate component, and the log-depth tree's round-dependent span, rather than three widenings. ADR 0096 decision 4's two-component coordinate constrains the shape fork toward the first-class participant space over the divisor/modulus encoding; the elimination is still this ticket's to run and state, and the exact widened `StagedSpan`/`LocalCoordinates` boundary comes back to Tom as a draft under ADR 0075. The identity step lands once, completely, under the full ledger discipline the body above states.
