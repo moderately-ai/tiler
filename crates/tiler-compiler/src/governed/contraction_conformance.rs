@@ -22,9 +22,11 @@
 //!
 //! # The two comparisons have different reaches, and the difference is stated
 //!
-//! **The reference reaches both admitted profile cells.** `w_decode_kv` and
-//! `w_vocab_slice` are evaluated at their own extents, and each result digest is
-//! compared against the retained one.
+//! **The reference's unstaged fold reaches two profile cells in one call each.**
+//! `w_decode_kv` and `w_vocab_slice` are evaluated at their own extents, and each
+//! result digest is compared against the retained one. Its *staged* fold reaches
+//! all six; the section after next states which of those this file drives, and
+//! why not all of them.
 //!
 //! **The index-region oracle reaches the smaller of the two.**
 //! `MAX_EVALUATION_STEPS` caps one region evaluation at 16,777,216 scalar and
@@ -38,24 +40,41 @@
 //! which this work does not own, and a bound that had quietly moved would turn
 //! a stated boundary into an unnoticed one.
 //!
-//! # The four cells nothing here compares, and why
+//! # The reference's four-cell boundary was settled, and this file no longer states it
 //!
-//! `MAX_REFERENCE_TENSOR_ELEMENTS` bounds the *reference's* fold at 16,777,216
-//! steps, and `contract_operands` refuses `output_count * contracted_count`
-//! above it under `IterationStepsExceeded`. Recomputing the L3 profile's six
-//! correctness cells against that bound admits two and refuses four:
-//! `w_prefill_q` at 20,971,520 steps, `w_prefill_mlp_in` and `w_prefill_mlp_out`
-//! at 402,653,184, and `w_prefill_o` at 268,435,456. No operand or output tensor
-//! exceeds a limit; only the fold's step count does.
+//! `MAX_REFERENCE_TENSOR_ELEMENTS` bounds a *single* fold at 16,777,216 steps,
+//! and `contract_operands` still refuses `output_count * contracted_count` above
+//! it under `IterationStepsExceeded` — which four of the six L3 correctness cells
+//! exceed: `w_prefill_q` at 20,971,520 steps, `w_prefill_mlp_in` and
+//! `w_prefill_mlp_out` at 402,653,184, and `w_prefill_o` at 268,435,456. No
+//! operand or output tensor exceeds a limit; only the fold's step count does.
 //!
-//! **That boundary is owned by
-//! [`bound-the-reference-contraction-comparison-for-the-profile-cells`](../../../../tickets/bound-the-reference-contraction-comparison-for-the-profile-cells.md)
-//! and is deliberately not settled here.** Raising the bound, staging the
-//! comparison in slabs, or restating the deliverable as the retained digests are
-//! three different decisions with different costs, and an implementation ticket
-//! is the wrong place to pick one. What this file does instead is assert the
-//! refusal — so "four cells are uncompared" is a checked fact with a named
-//! reason rather than an omission a reader has to notice.
+//! **`bound-the-reference-contraction-comparison-for-the-profile-cells` (done,
+//! 2026-08-01) settled that boundary by staging the comparison rather than by
+//! moving the bound.** `StagedStrictTensorContractionF32` folds one output slab
+//! per call, each slab passing exactly the test the unstaged path applies, so all
+//! six cells are reachable and the whole-program refusal that protects the host is
+//! byte-for-byte unchanged. An earlier revision of this passage said the boundary
+//! was "deliberately not settled here" and that four cells were uncompared; both
+//! sentences are now false, and the two tests below are what make the correction
+//! checked rather than asserted —
+//! [`the_four_prefill_cells_are_refused_by_the_unstaged_fold_and_reached_by_the_staged_one`]
+//! drives both halves on the cheapest of the four.
+//!
+//! # What is still uncompared here, and what bounds it
+//!
+//! The **emitted index region** is compared at `w_decode_kv` alone, and the bound
+//! is the region oracle's cost rather than any refusal. **Measurement — Apple M4
+//! Max, 2026-08-01, dev profile**, from `tiler-reference`'s own
+//! `tests/contraction_profile_cells.rs`: the region oracle spends about 516 ns per
+//! budget step against the contraction fold's 9, because it allocates a rank-zero
+//! tensor per scalar value, resolves a registered capability per application, and
+//! revalidates every result. The six cells' 1.1 × 10⁹ fold steps are therefore
+//! hours of region walk, which is not a cost to put behind an `#[ignore]` and call
+//! evidence. Closing that gap needs a dispatched device comparison rather than a
+//! third host implementation, and
+//! [`integrate-the-contraction-vertical-into-the-runtime`](../../../../tickets/integrate-the-contraction-vertical-into-the-runtime.md)
+//! owns it.
 //!
 //! # Why the digest helper is written out here
 //!
@@ -76,7 +95,8 @@ use tiler_ir::shape::Shape;
 use tiler_reference::{
     FloatBitOrder, FrozenReferenceRegistry, FrozenScalarReferenceRegistry, IndexRegionAuthority,
     IndexRegionEvaluationError, IndexRegionEvaluator, IndexRegionInput, InputBinding,
-    ReferenceElement, ReferenceEvaluator, Tensor, TensorPayloadView,
+    ReferenceElement, ReferenceEvaluator, StagedStrictTensorContractionF32, Tensor,
+    TensorPayloadView,
 };
 
 use super::{governed_lowering_capabilities, governed_scalars};
@@ -121,13 +141,29 @@ const ADMITTED_CELLS: [Cell; 2] = [
     },
 ];
 
-/// The four cells the reference refuses, with the exact fold each would ask for.
+/// The four cells the *unstaged* fold refuses, with the exact fold each asks for.
 const REFUSED_CELLS: [(&str, u64, u64, u64, usize); 4] = [
     ("w_prefill_q", 10, 2048, 1024, 20_971_520),
     ("w_prefill_mlp_in", 128, 3072, 1024, 402_653_184),
     ("w_prefill_mlp_out", 128, 1024, 3072, 402_653_184),
     ("w_prefill_o", 128, 1024, 2048, 268_435_456),
 ];
+
+/// The cheapest of the four, which the staged fold reaches on every run.
+///
+/// One of the four rather than all of them, and the cheapest one deliberately: at
+/// the measured 9 ns per step its 20,971,520-step fold costs about 0.2 s, where
+/// the four together are 1.1 × 10⁹ steps. All six digests are checked in
+/// `tiler-reference`'s own `tests/contraction_profile_cells.rs`; what this cell
+/// buys *here* is that the boundary statement in this module's documentation
+/// cannot go stale again without a test noticing.
+const STAGED_CELL: Cell = Cell {
+    id: "w_prefill_q",
+    m: 10,
+    n: 2048,
+    k: 1024,
+    result_sha256: "1c54f5cd7265ee288ec79bcd9254243b78a95d57c3c489e5ea90bcc4298073c0",
+};
 
 /// The reference's own fold bound, restated from `tiler-reference`'s limit.
 const REFERENCE_STEP_LIMIT: usize = 16 * 1024 * 1024;
@@ -234,6 +270,16 @@ fn result_bits(tensor: &Tensor) -> Vec<u32> {
     let TensorPayloadView::Dense(elements) = tensor.payload() else {
         panic!("a contraction result is a dense f32 tensor")
     };
+    element_bits(elements)
+}
+
+/// Returns the exact `f32` bit patterns of a run of reference elements.
+///
+/// Split from [`result_bits`] because the staged fold hands back elements rather
+/// than an assembled tensor, and reassembling one only to read its payload back
+/// would put a shape and a dtype between the slabs and the digest they are
+/// compared through.
+fn element_bits(elements: &[ReferenceElement]) -> Vec<u32> {
     elements
         .iter()
         .map(|value| {
@@ -502,15 +548,21 @@ fn a_single_perturbed_contributor_breaks_every_comparison() {
     );
 }
 
-/// The four prefill cells are refused by the reference's work bound, by name.
+/// The four prefill cells are refused by the unstaged fold and reached by the
+/// staged one.
 ///
-/// The refusal is asserted rather than assumed, because "the reference cannot
-/// answer these" is the load-bearing half of this file's boundary statement: a
-/// bound that had quietly been raised, or a refusal reported under a different
-/// variant, would turn four uncompared cells into four cells nobody noticed were
-/// uncompared.
+/// Both halves are asserted, and neither implies the other. The refusal is the
+/// bound that protects a host from a whole-program fold it cannot afford, and a
+/// bound that had quietly been raised would silently change what "the reference
+/// refuses" names. The staged reach is the correction: a reader of this module
+/// once learned that four cells were uncompared *because the reference could not
+/// answer them*, and that has been false since
+/// `bound-the-reference-contraction-comparison-for-the-profile-cells` landed.
+/// Checking the reach against the same retained digest the two admitted cells are
+/// checked against is what keeps the corrected sentence from going stale in the
+/// other direction.
 #[test]
-fn the_four_prefill_cells_are_refused_by_the_references_work_bound() {
+fn the_four_prefill_cells_are_refused_by_the_unstaged_fold_and_reached_by_the_staged_one() {
     for (id, m, n, k, steps) in REFUSED_CELLS {
         assert!(
             steps > REFERENCE_STEP_LIMIT,
@@ -536,6 +588,44 @@ fn the_four_prefill_cells_are_refused_by_the_references_work_bound() {
             "{id}: the refusal must name the work bound, not another limit: {error}"
         );
     }
+
+    // The other half, on the cheapest of the four. The slabs are folded in index
+    // order and concatenated, which is exactly the staged procedure: the planner
+    // admits a slab width against the same bound the unstaged path is held to, and
+    // the loop below is the only authorization any slab has.
+    let cell = STAGED_CELL;
+    let left = prng_tensor(Shape::from_dims([cell.m, cell.k]), WORKLOAD_SEED);
+    let right = prng_tensor(
+        Shape::from_dims([cell.n, cell.k]),
+        WORKLOAD_SEED ^ RIGHT_SEED_MASK,
+    );
+    let staged = StagedStrictTensorContractionF32::governed(&projection_structure(), &left, &right)
+        .expect("the staged planner admits the profile's structure");
+    assert!(
+        staged.slab_count() > 1,
+        "a single-slab plan would fold {} steps at once and prove nothing about staging",
+        staged.output_count() * staged.contracted_count(),
+    );
+    let mut elements = Vec::with_capacity(staged.output_count());
+    for slab in 0..staged.slab_count() {
+        elements.extend(
+            staged
+                .evaluate_slab(slab)
+                .expect("every planned slab folds within the bound"),
+        );
+    }
+    assert_eq!(
+        elements.len(),
+        usize::try_from(cell.m * cell.n).expect("the cell's output count fits in usize"),
+        "{}: the slabs must cover the result exactly",
+        cell.id
+    );
+    assert_eq!(
+        result_digest(&element_bits(&elements)),
+        cell.result_sha256,
+        "{}: the staged fold does not reproduce the retained `direct` result",
+        cell.id
+    );
 }
 
 /// FIPS 180-4 SHA-256 over a byte string, as lowercase hexadecimal.

@@ -1,0 +1,39 @@
+---
+id: admit-a-cooperative-tile-over-shared-operands
+title: Admit a cooperative tile whose participants share operands rather than one output
+status: deferred
+priority: p1
+dependencies: [admit-a-two-dimensional-cooperative-staging-relation]
+related: [realize-the-strict-contraction-on-metal, realize-the-tiled-contraction-schedule-and-its-metal-emission, implement-the-single-workgroup-synchronized-reduction-strategy]
+scopes: [implementation/ir]
+shared_scopes: [project/tickets]
+paths: []
+tags: [implementation, ir, physical-planning, deferred]
+---
+## User-visible outcome
+
+A workgroup whose invocations each own **their own** output position, and cooperate only by staging shared *operand* data, is statable and verifiable — the relation a blocked GEMM tile has, and the one the existing cooperative tile is the inverse of.
+
+## Why this is a second relation and not a widening
+
+**Fact — the existing contract states the opposite relation, in three places.** `verify_cooperative_tile` (`crates/tiler-ir/src/schedule/builder.rs`) refuses `tile.commit.count != 1` under `CooperativeTileRule::CommitOwnership`, and its comment says why: exactly one committing participant "is what makes `OneGlobalInvocationPerOutput` true of a workgroup that runs several invocations over one output position". `owned_output_positions` divides `work_items` by the participant count for any region carrying a tile. `reduction_output_shape` requires the iteration shape to end in a trailing axis of exactly `partition.partitions`. `a_tile_committing_from_every_participant_is_rejected` and `a_cooperative_region_owns_one_position_per_workgroup` hold the first two.
+
+**Inference.** A 16×16 operand tile has `commit.count == 256`, `owned_output_positions == work_items`, and no trailing participant axis. Relaxing those three rules would not narrow the existing contract — it would delete the fact the contract exists to state, and the tree strategy rests on that fact. The two relations must therefore be separate and separately verified, which is the same reason `ReductionTopology` keeps `MultiPass` and `CooperativeWorkgroup` apart rather than parameterizing one.
+
+## What this owns
+
+- **The second tile relation**: participants sharing staged operand data, each committing one output, with its own commit and coverage rules. What replaces "exactly one committer" is a statement that the participants' owning writes are a bijection onto the workgroup's output block — and that statement has to be *checkable*, not asserted.
+- **The invocation-to-output map, and its ownership evidence.** `verify_contraction` requires `write.map == LogicalAccess::LinearIdentity` and the kernel lowering stores at the invocation value itself. Under a 16×16 tiling the owning output of global invocation `gid` is `(gid / 256 / (N/16) * 16 + gid % 256 / 16) * N + (gid / 256 % (N/16)) * 16 + gid % 256 % 16`, which equals `gid` only at `N == 16`. So this needs a new `LogicalAccess` variant for the tile-blocked map **and** a new `OwnershipProofKind`: `OneGlobalInvocationPerOutput` is discharged today by the identity map, and discharging it for a blocked map is a bijectivity argument nothing in the model currently makes. That is a new validation authority, and it is the part to be most sceptical about — an ownership proof that cannot fail is not evidence.
+- Whether the tail is refused or handled. The existing tile has no tail by contract, and a blocked map over extents that are not tile multiples has one. Refuse it explicitly rather than masking committers, and state which of the two this relation admits.
+
+## What this does not own
+
+The staged relation the tile's reads need ([`admit-a-two-dimensional-cooperative-staging-relation`](admit-a-two-dimensional-cooperative-staging-relation.md), a hard dependency: without it the tile's reads are unstatable and this relation would be verified over an access it cannot express), the contraction topology and its Metal body ([`realize-the-tiled-contraction-schedule-and-its-metal-emission`](realize-the-tiled-contraction-schedule-and-its-metal-emission.md)), and any cost model that would make the tile win.
+
+## Activation triggers
+
+Deferred behind its dependency and behind Tom's acceptance of two public boundaries — a second cooperative tile relation and a new `OwnershipProofKind`. It becomes work when [`admit-a-two-dimensional-cooperative-staging-relation`](admit-a-two-dimensional-cooperative-staging-relation.md) is `done` **and** Tom has accepted those two boundaries.
+
+## Closes when
+
+A tile whose participants each commit their own output verifies, its ownership evidence has been watched refusing a map that is not a bijection onto the declared block, the existing one-committer tile still verifies unchanged with its own rules intact, and the identity consequence of whatever the relation required is recorded.
