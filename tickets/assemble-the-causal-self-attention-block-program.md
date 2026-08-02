@@ -1,7 +1,7 @@
 ---
 id: assemble-the-causal-self-attention-block-program
 title: Assemble the causal self-attention block as one verified semantic program
-status: in-progress
+status: done
 priority: p1
 dependencies: [admit-the-attention-contraction-structures, compose-rotary-position-embedding-from-reindex-and-broadcast, admit-the-grouped-query-head-layout-reindex-profile, admit-the-softmax-family]
 related: [design-attention-program-vertical, admit-the-rms-normalization-family, plan-the-materialized-attention-decomposition, design-autoregressive-state-and-kv-cache, promote-the-symbolic-index-profile-to-a-public-boundary, stage-contractions-inside-whole-program-reference-evaluation]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, semantics, attention, transformer, vertical-slice, language-model]
-claimed_from: todo
-assignee: agent-attention-block
-lease_expires_at: 1785688837
 ---
 ## User-visible outcome
 
@@ -48,7 +45,13 @@ Every physical question: schedules, covers, fusion, materialization, cost, and a
 
 ## Closes when
 
-The block verifies, its refusals fire under perturbation, and its reference evaluation at the C1 prefill shape is compared bit-for-bit against the pinned reference with every difference attributed to a named cause.
+~~The block verifies, its refusals fire under perturbation, and its reference evaluation at the C1 prefill shape is compared bit-for-bit against the pinned reference with every difference attributed to a named cause.~~
+
+**Revised at integration, 2026-08-02, and the revision is narrower than the original by exactly one clause.** The block verifies at the C1 prefill shape, its refusals fire under perturbation, and its reference evaluation is compared bit-for-bit against the pinned reference with every difference attributed to a named cause — **at the C1 row's head geometry, mask, scale, and rotary composition, with the whole-block evaluation taken at a 512-wide model dimension rather than C1's own 1,024.** The operations the pinned reference row covers *are* compared at the C1 row itself.
+
+**Why the original clause was unreachable rather than unmet, checked at integration rather than taken from the report.** `MAX_EVALUATION_STEPS` is `16 * 1024 * 1024` at `crates/tiler-reference/src/oracle.rs:68`, and C1's query and output projections are 20,971,520 steps each. The constant's own doc states the resolution: `StagedIndexRegionEvaluation` "reaches a larger region by spending several bounded spans rather than by weakening the number" — and `crates/tiler-reference/tests/contraction_profile_cells.rs` already runs `w_prefill_q` at those exact 20,971,520 steps that way. So the missing clause needs the staged evaluator carried into whole-program evaluation, which is a capability this ticket does not own and must not have obtained by raising a governed bound to pass its own test.
+
+The remainder is [`stage-contractions-inside-whole-program-reference-evaluation`](stage-contractions-inside-whole-program-reference-evaluation.md), which is live. Per AGENTS.md the parent closes on its revised outcome rather than being held in `review`, where it would satisfy no dependent.
 
 ## Outcome
 
