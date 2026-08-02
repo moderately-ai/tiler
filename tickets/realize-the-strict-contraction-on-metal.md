@@ -1,7 +1,7 @@
 ---
 id: realize-the-strict-contraction-on-metal
 title: Realize the strict contraction as a tiled Metal scheduled kernel
-status: in-progress
+status: review
 priority: p1
 dependencies: [admit-the-contraction-normative-reference, admit-the-first-typed-synchronization-point-and-atomic-target-authority, realize-the-contraction-through-the-appendable-direct-path, lower-a-loop-carried-cooperative-body]
 related: [prototype-optimizer-conformance-gate, prototype-metal-runtime-proof, broaden-governed-physical-support-for-reassociated-programs, scope-einsum-contraction-support]
@@ -43,6 +43,21 @@ Structures 2 and 3, the split alternatives, the matrix-instruction route, any op
 ## Closes when
 
 A contraction of the profile compiles through the ordinary entry point, its results are bit-identical to the reference at every profile cell, the `K` precondition refuses with a typed reason that was watched firing, and an emitted module carries no fused multiply-add on the contraction's accumulation path.
+
+## Outcome — 2026-08-01, superseded
+
+**Both stop records below are historical and every blocker either named has been discharged.** They are preserved because their derivations are still the reason the vocabulary looks the way it does, but neither states the current wall. What discharged each:
+
+| Blocker, as recorded | What discharged it |
+| --- | --- |
+| "the structured-kernel verifier refuses synchronization unconditionally" (first record) | `admit-the-first-typed-synchronization-point-and-atomic-target-authority` and `implement-the-single-workgroup-synchronized-reduction-strategy` landed `SynchronizationPoint`, `CooperativeTile`, and the KIR `Barrier`/`StagedStore`/`StagedLoad` constructs; `verify.rs`'s refusal is now conditional on the region owning no tile (`verify_synchronization`). |
+| "`ResourceRequirements` has no synchronization dimension … restoring it is a domain step" (first record) | `ResourceRequirements::synchronization` is a `Option<SynchronizationSubject>` today (`schedule/model.rs`), and `local_memory_bytes` derives from the tile's staging through `cooperative_local_memory_bytes` rather than being hardcoded to zero. |
+| "`AddressSpace::Workgroup` … is dead code, not a seam" (first record) | Workgroup staging is a separate declaration list (`KernelBuilder::declare_staging`, `verify_cooperative`) outside the `[[buffer(N)]]` ordinal space, and `workgroup_staging_takes_no_argument_table_position` pins it. |
+| "the reference evaluator refuses four of the six correctness cells" (first record) | `bound-the-reference-contraction-comparison-for-the-profile-cells` (done) landed `StagedStrictTensorContractionF32`, which reaches all six *without moving the bound*; `crates/tiler-reference/tests/contraction_profile_cells.rs` reproduces every retained `result_sha256`. |
+| "a staging allocation reused across rounds … `CooperativeLoweringShape`" (second record) | `admit-loop-carried-cooperative-staging` landed `CooperativeTile::rounds`, `AntiDependencyEdge`, and `SynchronizationPlacement::RoundBoundary`; `lower-a-loop-carried-cooperative-body` landed `emit_loop_carried_cooperative`, which lowers a multi-round tile to a verified kernel that executes to the reference's bits. |
+| "no Metal emission of a multi-round body exists" (second record) | Still true, and now the *only* part of the second record that is. It is no longer a blocker on this ticket's path, because the schedule it would emit is not statable — see the current outcome at the end of this file. |
+
+The current derivation is [Outcome — 2026-08-01, the third stop and the exact wall](#outcome--2026-08-01-the-third-stop-and-the-exact-wall).
 
 ## Outcome
 
@@ -175,3 +190,99 @@ Item 2 is a new evidence class — the vocabulary can state no write-after-read 
 The roadmap edit is confined to the two sentences my landing falsifies — the `tiled` blocker sentence and the closing pointer. **It deliberately does not touch** the row's "four cells uncompared" claim or its `bound-the-reference-contraction-comparison-for-the-profile-cells` pointer, which the audit found stale and which `correct-the-roadmap-rows-falsified-by-the-contraction-and-accuracy-landings` (B1) owns in full. If B1 lands first, expect a textual conflict in exactly that cell and resolve toward B1's rewrite while preserving the `admit-loop-carried-cooperative-staging` pointer.
 
 **Public drafts for review, both in `tiler-metal` (ADR 0074 §7 draft boundaries, no new public item):** the emitted MSL spelling of workgroup staging (a function-scope `threadgroup` array named `tg{StagingId}`, not a `[[threadgroup(N)]]` binding) and of the local index (`uint … [[thread_index_in_threadgroup]]`, fixed rather than a `MetalEmissionRealization` selection). Both are emission-surface choices a consumer reads; neither adds a public type or changes a signature.
+
+## Outcome — 2026-08-01, the third stop and the exact wall
+
+**Stopped, on the stop condition this dispatch named third: "the tiled body proving inexpressible within the landed round vocabulary — record the exact wall."** The round vocabulary is no longer the limit and neither is anything the two earlier records blame. What blocks `tiled` is that the *cooperative tile* vocabulary describes a set of invocations cooperating on **one** output by splitting **one** contributor sequence, and the measured `tiled` kernel is 256 invocations each computing **its own** output that cooperate only by sharing *operand* data. Those are different relations, and four separate rules of the current model state the first one. No source file's semantics were changed on this path; what landed is the derivation, two corrections to claims the day's landings falsified, and the follow-up graph.
+
+### The measured kernel, restated exactly
+
+`spikes/scheduling/metal_contraction_vertical/kernels.metal:96-145`, threadgroup 16×16 over the free indices `(m, n)`, `K/16` rounds over contiguous chunks of the contracted index:
+
+- `a_tile[local_m*16 + local_n] = A[m][k0 + local_n]`, `b_tile[local_n*16 + local_m] = B[n][k0 + local_m]` — two 256-slot allocations, one slot written per participant per round;
+- `threadgroup_barrier`, then `for kk in 0..16: acc += a_tile[local_m*16 + kk] * b_tile[local_n*16 + kk]`;
+- one device store per participant, at its own `(m, n)`.
+
+### Wall 1 — the staged read is not a `StagedSpan`, and no relabelling fixes it
+
+**Fact.** A [`StagedSpan`](../crates/tiler-ir/src/schedule/cooperative.rs) addresses `count` contiguous slots at `stride * l + offset`, and `CooperativeTile::addressed_slots` enumerates it over the *linear* participant coordinate — `let base = span.stride.checked_mul(local).and_then(|scaled| scaled.checked_add(span.offset))?`. The tiled body's two reads need `base_a(l) = 16 * (l / 16)` and `base_b(l) = 16 * (l % 16)`, with `l = local_m * 16 + local_n` the MSL linear thread index.
+
+**Fact — each is refuted by two points.** For `base_a`: `base(0) = 0` and `base(1) = 0` force `stride = 0`, but `base(16) = 16`. For `base_b`: `base(0) = 0` forces `offset = 0` and `base(1) = 16` forces `stride = 16`, but `base(16) = 0` while `16 * 16 = 256`.
+
+**Inference — and no choice of participant labelling helps, which is what makes this a vocabulary wall rather than a spelling one.** Over a 256-element domain with no `u64` wraparound, `stride * l + offset` is constant when `stride = 0` and injective otherwise. `base_a` takes 16 distinct values with multiplicity 16 each, and so does `base_b`; neither profile is constant and neither is injective. The refutation is therefore over every permutation of the participants at once, not over the one the spike happens to use. **This is the essential content of the tiling** — threads in a tile row share an operand row and threads in a tile column share an operand column, so the read relation is deliberately many-to-one in *two* dimensions, and a one-dimensional affine span over a linear coordinate cannot state a two-dimensional broadcast.
+
+**Fact — widening it is an identity-domain step, on every candidate.** `push_staged_span` (`crates/tiler-ir/src/schedule/model.rs`) writes three unframed big-endian `u64`s with no tag. Adding a divisor and a modulus — the `OffsetTerm` shape the kernel lowering already uses for tensor offsets, and the narrowest form that covers both reads — inserts into that fixed sequence. A tagged alternative preserving the three-field form under tag `0x01` still prepends a byte to every existing encoding. Either way every cooperative region's bytes move and `tiler.schedule.v4` steps. `LocalCoordinateSource` is `#[non_exhaustive]`-free with one variant and its module documentation already states that multi-dimensional local coordinates are "absent rather than reserved"; a two-dimensional participant space additionally inserts into `push_participant_range`.
+
+### Wall 2 — the commit relation is inverted, not narrowed
+
+**Fact.** `verify_cooperative_tile` (`crates/tiler-ir/src/schedule/builder.rs`) refuses any tile whose `commit.count != 1`, under `CooperativeTileRule::CommitOwnership`, and its comment states why: exactly one committing participant "is what makes `OneGlobalInvocationPerOutput` true of a workgroup that runs several invocations over one output position". `a_tile_committing_from_every_participant_is_rejected` is the test that holds it.
+
+**Fact — two further rules say the same thing from the other side.** `owned_output_positions` divides `work_items` by the participant count for any region carrying a tile, and `reduction_output_shape` requires a cooperative region's iteration shape to end in a trailing axis of exactly `partition.partitions`. `a_cooperative_region_owns_one_position_per_workgroup` pins the first.
+
+**Inference.** The tiled contraction has `commit.count == 256`, `owned_output_positions == work_items`, and no trailing participant axis. Relaxing the three rules to admit it would not narrow the cooperative contract, it would delete the fact the contract exists to state, and `implement-the-single-workgroup-synchronized-reduction-strategy`'s tree depends on that fact. What is needed is a *second* tile relation — cooperation on shared operands rather than on one output — verified on its own terms.
+
+### Wall 3 — the invocation-to-output map is not the linear identity
+
+**Fact.** `verify_contraction` requires `write.map != LogicalAccess::LinearIdentity` to be false, and `emit_contraction` stores at the invocation value itself (`crates/tiler-ir/src/kernel/lower.rs`). `verify_intrinsic` additionally fixes `ExecutionBinding::GlobalLinearInvocation` with `work_items == grid_threads == element_count(iteration_shape)`.
+
+**Inference.** Under a 16×16 tiling with workgroup `w = gid / 256` and `lid = gid % 256`, the owning output of `gid` is `(w / (N/16) * 16 + lid / 16) * N + (w % (N/16)) * 16 + lid % 16`, which equals `gid` only when `N == 16`. The profile's `N` is 1024 to 8192. So `tiled` needs a tile-blocked bijection as its write map — a new `LogicalAccess` variant *and* a new `OwnershipProofKind`, because `OneGlobalInvocationPerOutput` is today discharged by the identity map rather than by a bijectivity argument. That is a new validation authority, not a tag.
+
+### Wall 4 — the topology dispatch, which is the cheap one
+
+**Fact.** `verify_intrinsic` dispatches on the *scalar program*: `StrictTensorContraction` reaches `verify_contraction`, which requires `ReductionTopology::Contraction` by `let … else`. `verify_access_and_semantics` — the only route to `verify_cooperative_semantics` — is reached solely by the four single-read reduction programs. So a contraction cannot carry a cooperative topology at all today.
+
+**Inference.** This one *is* an append: a new `ReductionTopology` variant at tag `0x36` beside `0x35`, with its own semantic-verification arm. It is listed because it is the one wall of the four that costs nothing, and because a reader who fixes only this one reaches walls 1 to 3 with a half-built variant.
+
+### What the brief expected to be the wall, and was not
+
+**Fact — two staging allocations are already admissible at the schedule layer.** `verify_cooperative_tile` loops over `tile.staging` and builds one occupancy map per allocation; `SynchronizationPoint::discharges` and `discharges_anti` (`crates/tiler-ir/src/schedule/synchronization.rs`) do not read the edge's `staging` field at all, so one phase-boundary point discharges both allocations' visibility edges and one round boundary discharges both anti-dependencies. The only refusal is in the *kernel lowering*: `cooperative_plan`'s `let ([staging], [produce, consume]) = …` (`crates/tiler-ir/src/kernel/lower.rs`), which is a declared narrowing of what this emission has a body for. Widening it is an emission change with no identity consequence. **Fact — the round budget is also not the wall**: `K/16` is 64 to 192 rounds against `MAX_COOPERATIVE_ROUNDS = 65,536`, and 512 slots is 2 KB against `MAX_COOPERATIVE_STAGING_SLOTS = 65,536`.
+
+### Why no substitute was made, restated on the current premise
+
+Unchanged from the first record and now with one more candidate eliminated. `direct` is byte-identical at all six cells and stays the delivered realization; substituting it would drop the `K ≡ 0 (mod 16)` refusal, which is `tiled`'s own precondition and has nothing to attach to. A 1×256 output block *is* expressible in the span vocabulary — its A staging is one shared row (`stride = 0`) and its B staging is 16 contiguous slots per participant (`stride = 16, count = 16`) — and it was eliminated on two grounds: it is not the measured realization, so its performance is unmeasured, and its B staging has no reuse at all (each staged element is read by exactly one participant), so it is staging overhead with no sharing rather than a tiling.
+
+### Deliverables from the ticket's own list
+
+| Required | Status |
+| --- | --- |
+| Tiled schedule as a retained alternative | **Not delivered.** Walls 1 to 4. No `ReductionTopology` variant added and no tag consumed. |
+| `K ≡ 0 (mod 16)` typed refusal | **Not delivered**, deliberately. It is `tiled`'s precondition and there is no tiled schedule to attach it to; `no_k_multiple_refusal_exists_on_the_direct_path` remains the assertion that a check which can never fire was not shipped. |
+| No FMA on the accumulation path | **Held**, by `the_contraction_kernel_emits_no_fused_multiply_add_on_its_accumulation_path` (`crates/tiler-metal/src/tests.rs`) under a compiled golden. |
+| Bit-identity at all six cells | **Delivered for `direct`, by the reference, and the compiler's own boundary statement corrected.** All six retained `result_sha256` reproduce through `StagedStrictTensorContractionF32`; `governed::contraction_conformance`'s claim that "the reference cannot answer four of them" was falsified by that landing and is corrected here, with the staged reach checked rather than asserted. Not delivered for `tiled`, which does not exist. |
+| Emission of a multi-round body in MSL | **Not delivered.** No schedule can reach it on this path; it belongs to whichever strategy first emits a multi-round tile, which is the tree's, not the contraction's. |
+
+### Follow-up filed rather than absorbed
+
+Ordered, and the first is the only one that can start:
+
+1. [`admit-a-two-dimensional-cooperative-staging-relation`](admit-a-two-dimensional-cooperative-staging-relation.md) — wall 1, the span and coordinate vocabulary, with its `tiler.schedule` domain step and its public boundaries.
+2. [`admit-a-cooperative-tile-over-shared-operands`](admit-a-cooperative-tile-over-shared-operands.md) — walls 2 and 3, the second tile relation and the tile-blocked ownership evidence.
+3. [`realize-the-tiled-contraction-schedule-and-its-metal-emission`](realize-the-tiled-contraction-schedule-and-its-metal-emission.md) — wall 4 plus the schedule, the `K` refusal, the two-allocation lowering, and the MSL body, on top of 1 and 2.
+
+All three are `deferred` with stated activation triggers rather than `todo`: none is dispatchable until Tom decides the identity step in 1, which is the boundary [AGENTS.md](../AGENTS.md) reserves.
+
+### Public boundary items for Tom, none self-accepted
+
+Nothing in this landing adds or moves a public item. What the derivation *proposes*, and what each ticket carries for decision rather than assuming:
+
+- The `tiler.schedule.v4` → `v5` domain step forced by any widening of `StagedSpan`, and with it every pinned schedule, kernel, and artifact identity that folds one.
+- A widened `StagedSpan`/`LocalCoordinates` (public, `tiler_ir::schedule`) and whether the divisor/modulus form or a two-dimensional participant space is the right shape.
+- A second cooperative tile relation and its `commit`/ownership contract, which weakens nothing in the existing one only if it is a separate relation.
+- A new `LogicalAccess` variant and a new `OwnershipProofKind` for the tile-blocked bijection — the second is a new validation authority.
+- A new `ReductionTopology` variant at tag `0x36`.
+
+### Identity consequences of what actually landed
+
+**None.** No tag, field, encoding, or emitted text changed. `crates/tiler-build/src/metal_plan.rs` was not edited and its `ARTIFACT_IDENTITY` and `CACHE_SUBJECT` pins were not touched; the six `crates/tiler-metal/goldens/*.metal` digests are unchanged. The only source edit is to a test module's documentation and one added assertion.
+
+### Measurement boundary
+
+Nothing was compiled for a device and nothing was dispatched on one in this landing. The six-cell agreement cited above is the *reference's* host fold against digests an Apple M4 Max produced on 2026-07-31, retained under `spikes/scheduling/metal_contraction_vertical/results/`; the compiler's own emitted index region is compared element by element at `w_decode_kv` only, because the index-region oracle costs about 516 ns per budget step and the six cells together are ~1.1 × 10⁹ fold steps. `integrate-the-contraction-vertical-into-the-runtime` still owns a dispatched comparison.
+
+### Unsupported cases, unchanged
+
+`CooperativeLoweringShape` still refuses more than one staging allocation, more than two phases, a staged span other than one-slot-per-participant write and whole-set read, a commit range not starting at participant zero, and a tile with other than one visibility and one anti-dependency edge. The log-depth tree stays absent for the two reasons `crates/tiler-ir/src/schedule/cooperative.rs` records — a per-access active-participant subset and a round-varying span — and the first of those is the same missing capability wall 1 names from the other side, which is why ticket 1 above lists the tree as a second consumer.
+
+### Coordination
+
+The `tiled` blocker pointer in `docs/roadmap.md` and `docs/status.md` named `lower-a-loop-carried-cooperative-body`, which landed today; both pointers are repointed here to the ticket that now blocks it. **The edit is confined to those pointers.** [`correct-the-navigation-docs-for-the-loop-carried-body`](correct-the-navigation-docs-for-the-loop-carried-body.md) (`todo`, unclaimed — `tkt claims` shows no live holder of `contracts/navigation`) owns the *other* falsified claim in the same paragraphs, that a multi-round body is representable and unlowered, and that claim is deliberately left to it. Expect a textual conflict in exactly those cells if it lands after this; resolve toward its rewrite while preserving the repointed blocker.
