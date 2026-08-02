@@ -1,7 +1,7 @@
 ---
 id: admit-a-two-dimensional-cooperative-staging-relation
 title: Admit a cooperative staging relation a two-dimensional tile can state
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [realize-the-strict-contraction-on-metal, admit-a-cooperative-tile-over-shared-operands, realize-the-tiled-contraction-schedule-and-its-metal-emission, implement-the-single-workgroup-synchronized-reduction-strategy, admit-loop-carried-cooperative-staging]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, research/scheduling]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, physical-planning, identity, deferred]
-claimed_from: todo
-assignee: agent-stagingv5-r2
-lease_expires_at: 1785686685
 ---
 ## User-visible outcome
 
