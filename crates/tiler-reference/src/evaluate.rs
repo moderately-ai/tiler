@@ -34,13 +34,23 @@ use super::{
 #[derive(Clone, Debug)]
 pub struct ReferenceEvaluator {
     registry: FrozenReferenceRegistry,
+    iteration_step_allowance: usize,
 }
 
 impl ReferenceEvaluator {
     /// Creates an evaluator with one explicit frozen capability snapshot.
+    ///
+    /// The iteration-step allowance is the crate's own per-window work bound,
+    /// which is the number one operation could always walk, so this constructor
+    /// changes no result and no refusal. Use
+    /// [`Self::with_iteration_step_allowance`] to state a different one, and
+    /// [`Self::iteration_step_allowance`] to read the one in force.
     #[must_use]
     pub const fn new(registry: FrozenReferenceRegistry) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            iteration_step_allowance: MAX_REFERENCE_TENSOR_ELEMENTS,
+        }
     }
 
     /// Creates an evaluator using Tiler's governed initial reference profile.
@@ -50,6 +60,52 @@ impl ReferenceEvaluator {
     /// Returns a typed registry construction error.
     pub fn standard() -> Result<Self, ReferenceRegistryError> {
         FrozenReferenceRegistry::standard().map(Self::new)
+    }
+
+    /// Returns this evaluator with one stated per-occurrence iteration-step
+    /// allowance.
+    ///
+    /// # What this authorizes, and what it deliberately cannot
+    ///
+    /// An operation's *work* is not answerable from its result: a contraction of
+    /// `[10, 2048]` from `[10, 1024]` and `[2048, 1024]` retains 20,480 elements
+    /// and walks 20,971,520 multiply-accumulate steps, which neither operand bound
+    /// nor result bound describes. The reference therefore holds one occurrence to
+    /// a step count, and by default that count is the crate's per-window work
+    /// bound — the one thing standing between a malformed program and an unbounded
+    /// ask on host time. [`Self::iteration_step_allowance`] reports it rather than
+    /// this sentence: it is 16,777,216 today, and the accessor is the authority.
+    ///
+    /// A caller that has decided to pay for a larger fold states the number here.
+    /// **The stated number is the authorization**, in visible caller code, which is
+    /// the same discipline [`crate::StagedStrictTensorContractionF32`] expresses as
+    /// a loop the caller writes: neither reaches a larger fold by moving a constant
+    /// nobody re-derives. What the allowance never does is widen what *one* walk of
+    /// the iteration space may cost — an occurrence over the per-window bound is
+    /// folded in windows each of which passes exactly the test a single-window fold
+    /// passes, so raising this number buys more bounded windows and never a larger
+    /// one.
+    ///
+    /// The whole program's total is still this number times the occurrence count,
+    /// exactly as it was when the number was fixed; the allowance moves where the
+    /// per-occurrence limit comes from and not what kind of limit it is.
+    ///
+    /// A value below the default narrows the evaluator rather than widening it,
+    /// which is a legitimate ask — a caller that wants an expensive program
+    /// declined early states a smaller number. A zero allowance declines every
+    /// fold, including a one-step one.
+    #[must_use]
+    pub fn with_iteration_step_allowance(self, allowance: usize) -> Self {
+        Self {
+            registry: self.registry,
+            iteration_step_allowance: allowance,
+        }
+    }
+
+    /// Returns the iteration steps one operation occurrence may walk.
+    #[must_use]
+    pub const fn iteration_step_allowance(&self) -> usize {
+        self.iteration_step_allowance
     }
 
     /// Returns the exact capability snapshot used for evaluation.
@@ -109,6 +165,7 @@ impl ReferenceEvaluator {
                 ReferenceEvaluationRequest {
                     operands: &operand_values,
                     attributes: operation.attributes(),
+                    iteration_step_allowance: self.iteration_step_allowance,
                 },
                 &mut output_writer,
             );

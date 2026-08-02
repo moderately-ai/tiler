@@ -107,29 +107,34 @@
 //! results of `rsqrt` and `exp` themselves — which the RMS-normalization and
 //! softmax family corpora own.
 //!
-//! # The measurement boundary, stated rather than hidden
+//! # The whole block evaluates at the C1 row's own model dimension
 //!
-//! **The whole block does not reference-evaluate at the C1 row's own model
-//! dimension, and the reason is a bound rather than a defect.**
-//! `contract_operands` refuses a fold of more than 16,777,216 multiply-accumulate
-//! steps, which is what a whole-program evaluation is held to. At the C1 prefill
-//! row the query projection and the output projection are 20,971,520 steps each,
-//! so both are refused;
-//! [`the_reference_work_bound_refuses_the_c1_projections`] watches that refusal
-//! and quotes it. The block therefore **verifies** at the C1 row's exact extents
-//! and **evaluates** end to end at the C1 row's exact head geometry — ten new
-//! positions, ten context positions, sixteen query heads over eight groups, head
-//! dimension 128, the same mask, the same scale, the same rotary composition, all
-//! three contraction index structures — with the model dimension reduced to 512
-//! so that the two dense projections fit that bound. The reduced dimension is the
-//! single extent that differs, and it is named at every site that uses it.
+//! It did not always. A fold of more than 16,777,216 multiply-accumulate steps is
+//! more than one uninterrupted walk of a contraction's iteration space may cost,
+//! and at the C1 prefill row the query projection and the output projection are
+//! 20,971,520 steps each — so a default evaluator refuses both, and
+//! [`the_reference_work_bound_refuses_the_c1_projections`] still watches that
+//! refusal and quotes it verbatim.
 //!
-//! The two refused projections are ordinary structure-1 contractions and are not
-//! unevidenced at C1: `w_prefill_q` in `contraction_profile_cells.rs` is exactly
-//! this block's operation 2 at this row, reproduced through
-//! `StagedStrictTensorContractionF32` against a digest an Apple M4 Max produced.
-//! What is missing is a whole-*program* evaluation that stages a contraction
-//! internally, which is filed rather than worked around here.
+//! What the end-to-end evaluation below does is **state the allowance** rather
+//! than reduce an extent: [`ReferenceEvaluator::with_iteration_step_allowance`]
+//! takes [`C1_LARGEST_FOLD`], the block's own largest fold computed from its own
+//! extents, and an occurrence over one window is then folded in several windows
+//! each of which passes exactly the test a single-window fold passes. No bound
+//! moved, and the number is the block's arithmetic rather than a round figure —
+//! an occurrence needing one step more would be refused.
+//!
+//! So the block **verifies and evaluates** at the C1 row's exact extents: ten new
+//! positions, ten context positions, a 1,024-wide model dimension, sixteen query
+//! heads over eight groups, head dimension 128, the same mask, the same scale, the
+//! same rotary composition, and all three contraction index structures. Nothing is
+//! reduced, and no extent differs from the row.
+//!
+//! The two large projections are separately evidenced against a device at exactly
+//! these extents: `w_prefill_q` in `contraction_profile_cells.rs` is this block's
+//! operation 2 at this row, and reproduces a digest an Apple M4 Max produced by
+//! two routes — the staged contraction type, and the same whole-program evaluator
+//! this file drives.
 //!
 //! This file establishes nothing about a plan, a schedule, a cover, a kernel, a
 //! device, or any block-level numeric tolerance; none is exercised, and the last
@@ -181,13 +186,22 @@ const MAX_POSITION_EMBEDDINGS: u64 = 32_768;
 const C1_POSITIONS: u64 = 10;
 /// The C1 row's model dimension, which the two dense projections are sized by.
 const C1_HIDDEN: usize = 1_024;
-/// The model dimension the end-to-end evaluation runs at.
+
+/// The largest fold any occurrence of the block performs at the C1 prefill row.
 ///
-/// The C1 row's own 1,024 puts the query and output projections at 20,971,520
-/// multiply-accumulate steps each, over the reference evaluator's 16,777,216-step
-/// whole-program bound. 512 is the largest power of two that clears it, and it is
-/// the *only* extent of the block that differs from the C1 row.
-const EVALUATED_HIDDEN: usize = 512;
+/// The query projection folds `10 * 2048` output elements over the 1,024-wide
+/// model dimension, and the output projection `10 * 1024` over the 2,048-wide
+/// concatenated head axis; both are 20,971,520 multiply-accumulate steps. Every
+/// other occurrence is far smaller — the score and value contractions are 204,800
+/// steps each, and the key and value projections half of a query projection.
+///
+/// This is the iteration-step allowance the end-to-end evaluation states, and it
+/// is written as the block's own arithmetic rather than as a round number so that
+/// an occurrence needing one step more is refused rather than quietly admitted.
+const C1_LARGEST_FOLD: usize = 10 * QUERY_WIDTH * C1_HIDDEN;
+
+/// The `10` above and the row's own new-position count are one number.
+const _: () = assert!(C1_POSITIONS == 10);
 
 /// `128 ** -0.5` rounded to binary32, from `attention_scaling_f32` in the record.
 const ATTENTION_SCALE_BITS: u32 = 0x3db5_04f3;
@@ -1071,7 +1085,15 @@ impl BlockFixture {
 }
 
 /// Evaluates one block program against one fixture and returns its three outputs.
-fn evaluate_block(program: &SemanticProgram, fixture: &BlockFixture) -> [Vec<u32>; 3] {
+///
+/// The allowance is the caller's rather than this helper's, because it is the
+/// only thing separating an evaluation of this block at the C1 row from a refusal
+/// of it — so a reader of a call site sees which of the two is being asked for.
+fn evaluate_block(
+    program: &SemanticProgram,
+    fixture: &BlockFixture,
+    iteration_step_allowance: usize,
+) -> [Vec<u32>; 3] {
     let owned = fixture.bindings();
     let bindings: Vec<InputBinding<'_>> = owned
         .iter()
@@ -1079,6 +1101,7 @@ fn evaluate_block(program: &SemanticProgram, fixture: &BlockFixture) -> [Vec<u32
         .collect();
     let outputs = ReferenceEvaluator::standard()
         .expect("the standard evaluator opens")
+        .with_iteration_step_allowance(iteration_step_allowance)
         .evaluate(program, &bindings)
         .expect("the block evaluates");
     let [residual, key_rope, value_heads] = outputs.as_slice() else {
@@ -2227,21 +2250,22 @@ fn a_masked_position_contributes_a_signed_zero_to_the_value_contraction() {
 
 // --- the reference work bound ----------------------------------------------------
 
-/// The whole block does not evaluate at the C1 row's own model dimension.
+/// A default evaluator still refuses the C1 projections, and says why.
 ///
-/// `contract_operands` refuses a fold of more than `MAX_REFERENCE_TENSOR_ELEMENTS`
-/// multiply-accumulate steps, which is the bound a whole-program evaluation is
-/// held to and which `StagedStrictTensorContractionF32` reaches past by walking
-/// slabs rather than by relaxing. Both of the C1 row's dense projections are
-/// 20,971,520 steps — `10 * 2048 * 1024` for the query and `10 * 1024 * 2048` for
-/// the output — so both are refused.
+/// A fold of more than `MAX_REFERENCE_TENSOR_ELEMENTS` multiply-accumulate steps
+/// is more than one uninterrupted walk of a contraction's iteration space may
+/// cost, and an evaluator whose caller stated no allowance is held to exactly that
+/// number. Both of the C1 row's dense projections are 20,971,520 steps —
+/// `10 * 2048 * 1024` for the query and `10 * 1024 * 2048` for the output — so a
+/// default evaluator refuses both, exactly as it did before this block evaluated
+/// at this row.
 ///
-/// Watched rather than asserted from arithmetic, and quoted, because this is the
-/// exact reason the end-to-end comparison below runs at a reduced model
-/// dimension. The two refused projections are ordinary structure-1 contractions
-/// and are separately evidenced at this row: `w_prefill_q` in
-/// `contraction_profile_cells.rs` is this block's operation 2 at these extents,
-/// reproduced through the staged evaluator against a retained device digest.
+/// **This is the check the end-to-end test's allowance must not have removed**,
+/// which is why it is watched and quoted here rather than derived. Three asks
+/// against one program isolate what the allowance does: the default refuses, one
+/// step short of the fold refuses under the *stated* number, and the fold's own
+/// step count evaluates. The extents never move, so nothing here can be explained
+/// by the block instead of by the fold's size.
 #[test]
 fn the_reference_work_bound_refuses_the_c1_projections() {
     let extents = c1_extents();
@@ -2252,48 +2276,77 @@ fn the_reference_work_bound_refuses_the_c1_projections() {
         .iter()
         .map(|(key, tensor)| InputBinding::new(key, tensor))
         .collect();
-    let refused = ReferenceEvaluator::standard()
-        .expect("the standard evaluator opens")
+    let evaluator = ReferenceEvaluator::standard().expect("the standard evaluator opens");
+    assert_eq!(
+        evaluator.iteration_step_allowance(),
+        16_777_216,
+        "an evaluator nobody told otherwise carries the number it always did"
+    );
+    let refused = evaluator
         .evaluate(&program, &bindings)
-        .expect_err("the C1 query projection exceeds the whole-program work bound");
+        .expect_err("the C1 query projection exceeds one window's work bound");
     let message = refused.to_string();
     assert!(
         message.contains("iteration space has 20971520 steps, exceeding 16777216"),
         "the refusal names the exact step count and the exact bound: {message}"
     );
 
-    // The admitted neighbour, so the refusal is known to be about the fold's size
-    // and not about the block: the same program at the reduced model dimension
-    // evaluates, and every other extent is identical.
-    let reduced = BlockExtents {
-        hidden: EVALUATED_HIDDEN,
-        ..extents
-    };
-    let reduced_fixture = BlockFixture::new(reduced);
-    let _ = evaluate_block(&build_block(reduced), &reduced_fixture);
+    // A stated allowance one step short of the block's largest fold, so
+    // authorizing work is watched as a number that can still say no.
+    let refused = ReferenceEvaluator::standard()
+        .expect("the standard evaluator opens")
+        .with_iteration_step_allowance(C1_LARGEST_FOLD - 1)
+        .evaluate(&program, &bindings)
+        .expect_err("an allowance below the largest fold refuses it");
+    let message = refused.to_string();
+    assert!(
+        message.contains(&format!(
+            "iteration space has {C1_LARGEST_FOLD} steps, exceeding {}",
+            C1_LARGEST_FOLD - 1
+        )),
+        "a stated allowance names itself and the fold it declined: {message}"
+    );
+
+    // The admitted neighbour, at the same extents: one more step of allowance and
+    // the identical program evaluates.
+    let _ = evaluate_block(&program, &fixture, C1_LARGEST_FOLD);
 }
 
 // --- the end-to-end comparison ----------------------------------------------------
 
 /// Every one of the block's forty-eight occurrences, evaluated end to end.
 ///
-/// At the C1 row's own head geometry — ten new positions, ten context positions,
-/// sixteen query heads over eight groups, head dimension 128, the causal mask, the
-/// scale, the rotary composition, and all three contraction index structures — with
-/// the model dimension at [`EVALUATED_HIDDEN`] rather than the C1 row's 1,024, for
-/// the reason [`the_reference_work_bound_refuses_the_c1_projections`] watches.
+/// **At the C1 row's own extents, with nothing reduced**: ten new positions, ten
+/// context positions, a 1,024-wide model dimension, sixteen query heads over eight
+/// groups, head dimension 128, the causal mask, the scale, the rotary composition,
+/// and all three contraction index structures.
+///
+/// The two 20,971,520-step projections exceed what one uninterrupted walk of a
+/// contraction's iteration space may cost, so the evaluator is given
+/// [`C1_LARGEST_FOLD`] as its per-occurrence iteration-step allowance and folds
+/// each of them in several bounded windows.
+/// [`the_reference_work_bound_refuses_the_c1_projections`] is the other half of
+/// that: it drives this same program with no allowance stated and with one step
+/// too few, and watches both refuse.
 ///
 /// The expectation is the independent recomputation, whose boundary
-/// [`recompute_block`] states.
+/// [`recompute_block`] states — and which is what makes the windowing checkable
+/// here rather than assumed: `recompute_block` folds each projection in one pass
+/// of a hand-written loop, so a window boundary that had moved a value would
+/// disagree with it.
 #[test]
 fn the_block_evaluates_end_to_end_against_an_independent_recomputation() {
-    let environment = shape_environment(C1_POSITIONS, C1_POSITIONS);
-    let extents = BlockExtents::resolve(&environment, EVALUATED_HIDDEN)
-        .expect("both symbols are pinned and bounded");
+    // The premise this test rests on, and the reason it needs an allowance at all:
+    // the block's largest fold is over what one window may walk, so each of the
+    // two projections is spent as several. `w_prefill_q` in
+    // `contraction_profile_cells.rs` is this block's operation 2 at these exact
+    // extents, and asserts that window count is two.
+    const { assert!(C1_LARGEST_FOLD > 16_777_216) };
+    let extents = c1_extents();
     let program = build_block(extents);
     let fixture = BlockFixture::new(extents);
 
-    let [residual_out, key_rope, value_heads] = evaluate_block(&program, &fixture);
+    let [residual_out, key_rope, value_heads] = evaluate_block(&program, &fixture, C1_LARGEST_FOLD);
     let expected = recompute_block(&fixture);
 
     assert_eq!(
@@ -2313,7 +2366,7 @@ fn the_block_evaluates_end_to_end_against_an_independent_recomputation() {
         "the whole block, through both attention contractions and the residual, \
          is bit for bit"
     );
-    assert_eq!(residual_out.len(), 10 * EVALUATED_HIDDEN);
+    assert_eq!(residual_out.len(), 10 * C1_HIDDEN);
     assert_eq!(key_rope.len(), GROUPS * 10 * HEAD_DIM);
 
     // The perturbation, so the three zeros above are properties of the
@@ -2329,7 +2382,8 @@ fn the_block_evaluates_end_to_end_against_an_independent_recomputation() {
         program.operation_count(),
         "the two readings differ in two attributes and in nothing else"
     );
-    let [tiled_residual, tiled_key_rope, tiled_value_heads] = evaluate_block(&tiled, &fixture);
+    let [tiled_residual, tiled_key_rope, tiled_value_heads] =
+        evaluate_block(&tiled, &fixture, C1_LARGEST_FOLD);
     assert_ne!(
         differing(&tiled_residual, &expected.residual_out),
         0,
