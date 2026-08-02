@@ -1,7 +1,7 @@
 ---
 id: correct-the-declined-strategy-record-for-an-unsplittable-reduction
 title: Correct the declined-strategy explain record for an unsplittable reduction
-status: in-progress
+status: review
 priority: p1
 dependencies: []
 related: []

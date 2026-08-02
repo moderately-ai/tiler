@@ -536,7 +536,7 @@ fn record_declined_strategy(
                     rejection: if stage == ExplainStage::NumericalLegality {
                         RejectionClass::NumericalIllegal
                     } else {
-                        RejectionClass::NotApplicable
+                        RejectionClass::IntrinsicInvalid
                     },
                 },
                 vec![parent],
@@ -1444,12 +1444,129 @@ pub(super) fn record_cost_and_selection(
 #[cfg(test)]
 mod tests {
     use super::{
-        CostUnit, ExplainEvent, ExplainStage, FactValue, Quantity, analytical_quantity,
-        opaque_call_rejection_event, target_quantity,
+        CompilationRequest, CostUnit, ExplainEvent, ExplainStage, FactValue, Quantity,
+        analytical_quantity, compile, opaque_call_rejection_event, target_quantity,
     };
     use crate::explain::{ExplainDisposition, ExplainError};
     use crate::frontier::{OpaqueCallRejectionCause, WorkResolutionError};
-    use tiler_ir::semantic::{ResolvedValueType, TypeKey};
+    use crate::physical::PhysicalError;
+    use crate::pipeline::{CompileError, NoFeasiblePlanError};
+    use crate::request::{StrictF32NumericalContract, TargetProfile};
+    use tiler_ir::semantic::{
+        F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, ResolvedValueType,
+        SemanticProgram, SemanticProgramBuilder, StrictSerialF32Sum, TypeKey,
+    };
+    use tiler_ir::shape::{Axis, Shape};
+
+    fn reassociating_reduction(contributors: u64) -> SemanticProgram {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(
+                InputKey::new("input").unwrap(),
+                Shape::from_dims([1, contributors]),
+            )
+            .unwrap();
+        let scale = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+        let bias = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).unwrap();
+        let product = F32Multiply::apply(&mut builder, input, scale).unwrap();
+        let mapped = F32Add::apply(&mut builder, product, bias).unwrap();
+        let sum = StrictSerialF32Sum::apply(&mut builder, mapped, [Axis::new(1)]).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), sum)
+            .unwrap();
+        builder.build().unwrap()
+    }
+
+    fn flush_and_reassociate_request(program: &SemanticProgram) -> CompilationRequest<'_> {
+        let mut request = CompilationRequest::governed_under(
+            program,
+            StrictF32NumericalContract::governed_flush_and_reassociate(),
+        );
+        request.target_profiles = vec![TargetProfile::flush_only_for_test(
+            "tiler.target.flush-and-reassociate-decline-test.v1",
+        )];
+        request
+    }
+
+    /// An unsplittable extent is an ordinary intrinsic strategy decline, not a
+    /// candidate-applicability verdict and not malformed compiler output.
+    #[test]
+    fn no_admissible_partition_is_retained_and_does_not_abort_compilation() {
+        let program = reassociating_reduction(2);
+        let product = compile(flush_and_reassociate_request(&program))
+            .expect("the composed contract reaches physical enumeration");
+        let compiled = product.targets[0]
+            .compiled()
+            .expect("the serial alternative survives both parallel declines");
+        let declines = compiled
+            .explain
+            .records()
+            .iter()
+            .filter(|record| {
+                record.rule().key().as_str() == "frontier.strategy-decline.v1"
+                    && record.event().disposition() == ExplainDisposition::RejectedIntrinsic
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            declines.len(),
+            2,
+            "both unsplittable strategies are explained"
+        );
+        assert!(declines.iter().any(|record| {
+            matches!(
+                record.event(),
+                ExplainEvent::Check { assessment, .. }
+                    if assessment.reason().is_some_and(|reason| {
+                        reason.as_str() == "no-admissible-partition"
+                    })
+            )
+        }));
+        assert!(declines.iter().all(|record| {
+            matches!(
+                record.event(),
+                ExplainEvent::Check { assessment, .. }
+                    if assessment.reason().is_some_and(|reason| {
+                        reason.as_str() == "no-admissible-partition"
+                            || reason.as_str() == "no-admissible-participant-count"
+                    })
+            )
+        }));
+    }
+
+    /// The decline record must not mask the next honest result: a prime extent
+    /// above the target's grid bound has no feasible serial fallback.
+    #[test]
+    fn prime_extent_reaches_the_grid_axis_feasibility_refusal() {
+        let program = reassociating_reduction(5);
+        let product = compile(flush_and_reassociate_request(&program))
+            .expect("a target-local refusal remains an ordered outcome");
+        let CompileError::Explained { source, explain } = product.targets[0]
+            .failure()
+            .expect("five threads exceed the profile's four-thread grid bound")
+        else {
+            panic!("the target-local refusal retains its explanation")
+        };
+        assert!(matches!(
+            source.as_ref(),
+            CompileError::NoFeasiblePlan(NoFeasiblePlanError::Physical(PhysicalError::Target {
+                rule: "grid-axis",
+                required: 5,
+                available: 4,
+                ..
+            }))
+        ));
+        assert!(explain.records().iter().any(|record| {
+            matches!(
+                record.event(),
+                ExplainEvent::Feasibility {
+                    predicate,
+                    required: Quantity::Threads(5),
+                    available: Quantity::Threads(4),
+                    ..
+                } if predicate.as_str() == "grid-axis"
+            )
+        }));
+    }
 
     /// Every analytical unit maps to its namesake typed quantity.
     ///
