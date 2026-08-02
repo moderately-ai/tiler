@@ -1,7 +1,7 @@
 ---
 id: land-the-model-level-qualification-record
 title: Land the model-level qualification record at its destination
-status: review
+status: done
 priority: p2
 dependencies: [design-model-level-qualification-and-optimization]
 related: [define-first-metal-lm-workload, design-model-ingestion-and-complete-execution]
@@ -9,9 +9,6 @@ scopes: [research/program-planning, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [docs, carrier, research, language-model, navigation]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785636853
 ---
 ## User-visible outcome
 
