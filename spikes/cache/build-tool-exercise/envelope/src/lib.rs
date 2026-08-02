@@ -136,7 +136,7 @@ fn assemble(
             digest: PayloadDigest::from_bytes([0xe1, 0xe2, 0xe3])
                 .expect("a bounded payload digest"),
             compatibility: profile.clone(),
-            execution_policy: ArtifactExecutionPolicy::RequiresDeviceTranslation,
+            execution_policy: ArtifactExecutionPolicy::NativeImage,
         })
         .expect("the declared payload is accepted");
 
