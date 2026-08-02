@@ -120,6 +120,24 @@ fn wrap(values: &[f32], session: &Context) -> Tensor<Metal> {
 /// emits `&[&a, &b, &c]` over the identifiers the `in` list names — so they have
 /// to be values in this scope, and a by-reference parameter would produce a
 /// double reference the seam's slice cannot take.
+///
+/// `contract flush_subnormals_to_zero_f32;` is what this region's arithmetic
+/// actually means on the target it delivers for, and it is the narrowest true
+/// statement of it rather than the first one the grammar accepts. Three of the
+/// five statable contracts are refused at the `deliver` target before any bytes
+/// exist — `strict_f32`, `reassociate_f32`, and `relaxed_f32` each require
+/// preserved input subnormals, and the measured Apple `f32` row flushes in every
+/// math mode, which `crates/tiler-macros/src/aot/tests.rs`'s
+/// `the_bound_declaration_admits_the_two_flushing_contracts` pins as the admitted
+/// pair. Of the two that remain, `flush_and_reassociate_f32` additionally
+/// authorizes ordered regrouping of a same-operation operand sequence, and this
+/// region holds none: `(a * b) + c` is a pointwise chain with no reduction and no
+/// operand sequence to regroup, so stating it would claim a freedom nothing here
+/// exercises and nothing here measures. `flush_subnormals_to_zero_f32` names the
+/// two dimensions the hardware measurably moves and refuses every other, which is
+/// the meaning under which [`oracle`] is the right comparison — contraction stays
+/// forbidden in both, so the "deliberately not `mul_add`" argument is unaffected
+/// either way.
 fn dispatch_region(session: &Context) -> Result<HostTensor, BindError<HostError>> {
     let (a, b, c) = (
         wrap(&LEFT, session),
@@ -129,6 +147,7 @@ fn dispatch_region(session: &Context) -> Result<HostTensor, BindError<HostError>
     tiler::tensor! {
         in a: f32[4], b: f32[4], c: f32[4];
         deliver macos;
+        contract flush_subnormals_to_zero_f32;
         out (a * b) + c
     }
 }
@@ -140,6 +159,20 @@ fn dispatch_region(session: &Context) -> Result<HostTensor, BindError<HostError>
 /// facade's fallback path constructs the region's *declared* result and does not
 /// evaluate the expression, so this is a comparison of shape and stored scalar
 /// and not of arithmetic.
+///
+/// It states the same contract as [`dispatch_region`] because it is the same
+/// region — the whole claim this function makes is that `deliver` is the only
+/// difference between the two, and a second contract would make them two
+/// programs and leave that claim unsupported.
+///
+/// **The statement is inert on this path, and saying so is the point.** With no
+/// `deliver`, `tiler-macros`' `expand` resolves the contract and then takes the
+/// branch that never calls `aot::deliver`, so nothing compiles under it and no
+/// target feasibility check sees it. That is not a defect here: the fallback
+/// performs no arithmetic at all, so there is no behaviour for a contract to
+/// constrain. The gap is owned by
+/// `tickets/check-the-stated-contract-on-the-semantic-fallback-path.md`, which is
+/// `deferred` until the fallback evaluates something.
 fn fallback_only_region(session: &Context) -> Result<HostTensor, BindError<HostError>> {
     let (a, b, c) = (
         wrap(&LEFT, session),
@@ -148,6 +181,7 @@ fn fallback_only_region(session: &Context) -> Result<HostTensor, BindError<HostE
     );
     tiler::tensor! {
         in a: f32[4], b: f32[4], c: f32[4];
+        contract flush_subnormals_to_zero_f32;
         out (a * b) + c
     }
 }

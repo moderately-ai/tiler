@@ -9,8 +9,8 @@ implementation_status: "spike-only"
 evidence_classes: ["executable-model", "bounded-measurement"]
 supports: ["tiler.research.runtime.execution-contract"]
 entrypoints: ["spikes/runtime/inline-dispatch/src/main.rs", "spikes/runtime/inline-dispatch/src/adapter.rs", "spikes/runtime/inline-dispatch/src/buffer.rs"]
-last_verified: "2026-08-01"
-verified_at_commit: "8366ecd"
+last_verified: "2026-08-02"
+verified_at_commit: "93e253d"
 ticket: "dispatch-a-tiler-region-on-metal-hardware"
 ---
 
@@ -22,6 +22,7 @@ An ordinary crate writes
 let d = tiler::tensor! {
     in a: f32[4], b: f32[4], c: f32[4];
     deliver macos;
+    contract flush_subnormals_to_zero_f32;
     out (a * b) + c
 };
 ```
@@ -38,6 +39,18 @@ Two properties of the workspace, each one line to reproduce, and neither is a li
 - the root manifest's `[workspace.lints.rust] unsafe_code = "forbid"` cannot be relaxed by an inner attribute at any scope, and `metal` 0.33.0's only storage accessor is `Buffer::contents() -> *mut c_void`, so no member crate may read what a kernel wrote.
 
 Relaxing the workspace `forbid` for one named crate is the other placement the ticket named, and it is not this spike's to choose: AGENTS.md reserves that to Tom. A separate workspace costs nothing already decided, so this crate carries its own `[workspace]` table and sets `unsafe_code = "deny"` — a hard error everywhere except the one site that opts in by name.
+
+## The contract each region states, and why it is that one
+
+**Fact.** Both regions state `contract flush_subnormals_to_zero_f32;`. Since [`state-the-numerical-contract-in-the-region-grammar`](../../../tickets/state-the-numerical-contract-in-the-region-grammar.md) landed Tom's 2026-08-01 decision that no numerical contract may be assumed, a region stating none is refused at expansion; before that statement was added here, this spike did not build, and the refusal it produced is quoted under "Every check was watched failing" below.
+
+**Fact.** Three of the five statable contracts cannot be delivered for `deliver macos;` at all. `strict_f32`, `reassociate_f32`, and `relaxed_f32` each require preserved input subnormals, and the measured Apple `f32` row flushes them in every math mode; `crates/tiler-macros/src/aot/tests.rs`'s `the_bound_declaration_admits_the_two_flushing_contracts` pins the admitted pair as `FLUSH_SUBNORMALS_TO_ZERO_F32` and `FLUSH_AND_REASSOCIATE_F32`.
+
+**Inference.** Of the two that remain, `flush_and_reassociate_f32` additionally authorizes ordered regrouping of one same-operation operand sequence, and this region contains none — `(a * b) + c` is a pointwise chain with no reduction. Stating it would claim a freedom the program cannot exercise and the transcript does not measure, so `flush_subnormals_to_zero_f32` is the narrowest true statement of what this region computes under: the two dimensions the hardware measurably moves, every other freedom refused. Contraction stays forbidden under **both**, so the oracle's "deliberately not `mul_add`" argument is independent of the choice.
+
+**Measurement — the contract is an input to the kernel identity, and this choice is what preserves the transcript below.** Stating `flush_and_reassociate_f32` on the delivering region instead, on the host in the table, produced `tiler_kernel_f4013709b41a2116` in place of `tiler_kernel_ae031ce7240f7495`; the object length, binding count, launch, and every value were unchanged, and the run still passed its oracle. So the statement above is not cosmetic — a different admissible contract compiles a different artifact.
+
+**Fact — the fallback-only region's statement is inert, and that is not this spike's gap.** With no `deliver`, `tiler-macros`' `expand` resolves the contract and then takes the branch that never calls `aot::deliver`, so nothing compiles under it and no feasibility check sees it. The fallback performs no arithmetic at all, so there is no behaviour for a contract to constrain. It states the same contract as the delivering region because it is the same region — `deliver` being the only difference is the whole claim that function makes. [`check-the-stated-contract-on-the-semantic-fallback-path`](../../../tickets/check-the-stated-contract-on-the-semantic-fallback-path.md) owns the gap and is `deferred` until the fallback evaluates something.
 
 ## Running it
 
@@ -62,16 +75,18 @@ Both exit `0` on success and `1` on any disagreement, including an oracle mismat
 | Rust | `nightly-2026-07-19`, from the repository pin |
 | Metal compiler | Apple metal version 32023.883 (`metalfe-32023.883`), target `air64-apple-darwin27.0.0` |
 | `metal` crate | 0.33.0, the version the root `[workspace.dependencies]` pins |
-| repository commit | `29a9680` plus `reconcile-the-pre-commit-allocation-seam-with-adr-0051` |
+| repository commit | `93e253d` plus `state-a-numerical-contract-in-the-inline-dispatch-spike` |
 
-## Transcript, 2026-08-01
+## Transcript, 2026-08-01, re-verified 2026-08-02
 
 Verbatim, `cargo run --release`. Re-recorded when
 [`reconcile-the-pre-commit-allocation-seam-with-adr-0051`](../../../tickets/reconcile-the-pre-commit-allocation-seam-with-adr-0051.md)
 split the seam's sizing stage from its allocating one, which is why
 `allocate-dispatch` appears between `plan-dispatch` and `dispatch`.
 
-**Measurement — the entry symbol drifted, and not from this change.** It was
+**Measurement — adding the `contract` statement moved nothing in this transcript.** Re-run on 2026-08-02 on the host in the table above, at the base commit in it, with both regions stating `flush_subnormals_to_zero_f32`: every line below is reproduced byte for byte, entry symbol `tiler_kernel_ae031ce7240f7495` included. That is the expected result rather than a lucky one — before Tom's decision the frontend compiled every delivering expansion under a constant that was exactly `NumericalContract::FLUSH_SUBNORMALS_TO_ZERO_F32` (`crates/tiler-macros/src/aot.rs` at `990290d`, since removed), so restating that contract in the region's own text reproduces the same `CompileRequest` the recorded run was taken under. Under any other admissible contract it would not, as the identity measurement above shows.
+
+**Measurement — the entry symbol drifted once before, and not from that change.** It was
 `tiler_kernel_ce0acbceb6c201da` when this record was written at `8366ecd` and is
 `tiler_kernel_ae031ce7240f7495` at the base above. The object length, binding
 count, launch, and every value are unchanged. The one-line check that places the
@@ -142,15 +157,19 @@ The rest of the output is identical to the sound run except that the `committed 
 
 ## Every check was watched failing
 
-Each perturbation below was applied to the working tree, run, and reverted.
+Each perturbation below was applied to the working tree, run, and reverted — except the fourth, which needed no applying, because it is the state the checked-in spike was already in.
 
 | check | perturbation | observed |
 |---|---|---|
 | the oracle | `left * right + addend` → `left * right - addend` | `ORACLE DISAGREES: the kernel wrote [6.5, -5.0, -2.0, 1.0] and this consumer's own arithmetic gives [5.5, -7.0, -6.0, 7.0]`, exit `1` |
 | the readback delivers the value | `buffer::read_into` removed from `dispatch` | `ORACLE DISAGREES: the kernel wrote [0.0, 0.0, 0.0, 0.0] and this consumer's own arithmetic gives [6.5, -5.0, -2.0, 1.0]`, exit `1` |
 | the post-commit refusal | `--halt-after-commit` | `BindError::DispatchFailed`, no value returned, exit `0` for the perturbed mode |
+| a region must state a contract | both `contract` statements removed | two expansion errors, one per region, each opening "this region states no numerical contract, so what its arithmetic means is undecided" and naming the five admissible names, reported at the invocation; `cargo run` exit `101` |
+| the stated contract reaches the compiler | `flush_subnormals_to_zero_f32` → `strict_f32` on the delivering region | one expansion error, "the compiler recognizes this region and found no feasible plan for the declared Metal target profile under the `strict_f32` numerical contract this region states", reported at the `deliver` keyword; `cargo run` exit `101` |
 
-The second is what proves the kernel's answer reaches the consumer through the readback and not from anywhere else: without it the region returns the fallback's zero-filled declared result. There is deliberately **no** separate "the result is not all zeros" check, because the oracle already refuses that state for this region and a check that cannot reach a verdict the first did not reach is a check nothing could watch fail.
+The readback row is what proves the kernel's answer reaches the consumer through the readback and not from anywhere else: without it the region returns the fallback's zero-filled declared result. There is deliberately **no** separate "the result is not all zeros" check, because the oracle already refuses that state for this region and a check that cannot reach a verdict the first did not reach is a check nothing could watch fail.
+
+The two contract rows are what make the `contract` statement load-bearing rather than decorative. The first of them is not a hypothetical perturbation at all — it is a recording of the state this spike was actually in at `93e253d`, before the statement was added. The second shows that the name a region writes is carried into the compile request and refused there by the target's own measured behaviour, with the consumer's own word quoted back in the diagnostic.
 
 ## The one `unsafe` site
 
