@@ -1,7 +1,7 @@
 ---
 id: state-a-numerical-contract-in-the-inline-dispatch-spike
 title: State a numerical contract in the inline-dispatch spike's two regions
-status: in-progress
+status: review
 priority: p2
 dependencies: []
 related: [state-the-numerical-contract-in-the-region-grammar]
