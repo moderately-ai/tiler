@@ -1,7 +1,7 @@
 ---
 id: measure-macos-apple9-bf16-under-unified-msl4-profile
 title: Measure macOS Apple9 BF16 under the unified MSL 4 profile
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [measure-macos-apple9-f32-under-unified-msl4-profile, measure-the-apple-subnormal-flush-for-the-remaining-mature-dtypes, declare-the-bf16-rows-on-the-authoritative-metal-profile, first-authoritative-ios-metal-compile-declaration]
@@ -9,6 +9,9 @@ scopes: [research/apple-targets]
 shared_scopes: [project/tickets]
 paths: []
 tags: [metal, numerics, bf16, target-profiles, evidence, measurement]
+claimed_from: todo
+assignee: agent-bf16-measure
+lease_expires_at: 1785691167
 ---
 ## User-visible outcome
 
