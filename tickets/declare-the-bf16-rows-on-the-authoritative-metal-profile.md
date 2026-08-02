@@ -1,7 +1,7 @@
 ---
 id: declare-the-bf16-rows-on-the-authoritative-metal-profile
 title: Declare the measured BF16 dispatchability and subnormal rows on the Metal profile
-status: in-progress
+status: todo
 priority: p1
 dependencies: [admit-a-bf16-scalar-arithmetic-subject, measure-macos-apple9-bf16-under-unified-msl4-profile]
 related: [spike-bf16-through-the-second-dtype-seams, construct-and-bind-the-first-authoritative-metal-compile-profile, measure-the-apple-subnormal-flush-for-the-remaining-mature-dtypes, decide-per-dtype-dispatchability-as-a-target-capability, measure-apple-numerics-on-physical-ios-device, record-the-compilation-selection-in-target-measurement-provenance]
@@ -9,9 +9,6 @@ scopes: [implementation/build, implementation/metal, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, bf16, target-profiles, metal, apple-targets]
-claimed_from: todo
-assignee: agent-bf16-profile
-lease_expires_at: 1785705054
 ---
 ## User-visible outcome
 
@@ -70,12 +67,31 @@ done
 
 **What the narrowing does not weaken.** The *Why both rows land together* argument above is about the macOS dispatchability row and the macOS subnormal row sharing one descriptor identity and one golden — it is untouched, and those two still land together. The `Unknown`-is-not-`Unsupported` discipline is likewise untouched: with no iOS profile at all, both iOS families remain `Unknown` by absence, which is the correct answer for a question nobody asked.
 - `f16` still resolves `Unknown` on every profile, so a measured BF16 row did not fill a neighbour's omission. The existing test asserting this for `f16` against `f32` is the pattern.
-- A strict-subnormal-preserving contract is refused for BF16 on macOS with a named numerical gap, since the measured behaviour flushes.
+- ~~A strict-subnormal-preserving contract is refused for BF16 on macOS with a named numerical gap, since the measured behaviour flushes.~~
+
+**Split on 2026-08-02 after reading the consumer boundary.** The profile can
+state the complete BF16 subnormal tables now, but no public request can ask them
+the strict-BF16 question: `NumericalContract` documents that every resolution is
+for `f32`, its only builder entry point is `strict_f32`, and a pure-BF16 program
+is refused at the request boundary with `dtype-f32` before target numerical
+feasibility. Substituting `STRICT_F32` would inherit a neighbouring dtype's
+contract, while a test-only resolver in `tiler-build` would prove no caller path.
+[`state-and-check-a-bf16-numerical-contract`](state-and-check-a-bf16-numerical-contract.md)
+owns the consequential compiler/public-boundary work and depends on this
+profile ticket; this ticket owes the complete exclusive tables and their
+identity, not an unreachable consumer proof.
 - The profile descriptor's byte length and identity are recorded before and after.
 
 ## Closes when
 
-The three families carry their three distinct BF16 answers, the measured flush is declared and its host/toolchain/family boundary is stated in the ledger rather than generalized, every refusal above is observed failing, the profile key and descriptor movement are recorded, and `docs/dtype-support.md`'s BF16 `Target-family dispatchability` cell moves from `architectural seam` to a stated claim.
+The macOS profile carries measured BF16 `Dispatchable` while retaining F32
+`Dispatchable` and F16 `Unknown`; the measured BF16 flush is declared as complete
+exclusive input/result tables and its exact host/toolchain/family boundary is
+stated in the ledger rather than generalized; the new rows' own negative
+perturbations are observed failing; the profile key and descriptor movement are
+recorded; and `docs/dtype-support.md` moves only BF16's numerical-honourability
+and target-family-dispatchability cells to the exact stated claims. The iOS
+matrix and the end-to-end BF16 contract refusal remain with their split tickets.
 
 ## Graph maintenance
 
@@ -85,3 +101,6 @@ The three families carry their three distinct BF16 answers, the measured flush i
 - The two iOS answers are gated on `first-authoritative-ios-metal-compile-declaration`, which is `deferred`. It is deliberately **not** a dependency — a parked state never satisfies a dependent — so this ticket's reachable outcome once the MSL 4.0 BF16 measurement lands is the macOS half alone. Splitting the iOS half into its own ticket, or narrowing this one's stated outcome to macOS, is the coordinator's call and is not assumed here.
 - `measure-apple-numerics-on-physical-ios-device` is `deferred` and must not be a dependency — `deferred` never satisfies a dependent. It is the only route to closing the iOS-device `Unknown`, and it stays `related`.
 - A differing physical-iOS result would reopen `declare-metal-numerical-honourability`; say so rather than assuming the family agrees.
+- `state-and-check-a-bf16-numerical-contract` depends on this ticket and owns the
+  first caller-visible consumption of the BF16 subnormal tables. Do not widen
+  this ticket into the compiler's F32-only numerical-contract boundary.
