@@ -1,7 +1,7 @@
 ---
 id: calibrate-and-activate-parallel-reduction-selection
 title: Calibrate and activate parallel reduction selection
-status: todo
+status: in-progress
 priority: p1
 dependencies: [realize-parallel-reduction-strategies-on-metal]
 related: [implement-parallel-reduction-strategies]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, research/program-planning, contracts/optimizer
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: agent-calibrate
+lease_expires_at: 1785697181
 ---
 ## User-visible outcome
 

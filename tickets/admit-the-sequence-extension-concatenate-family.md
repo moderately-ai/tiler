@@ -1,7 +1,7 @@
 ---
 id: admit-the-sequence-extension-concatenate-family
 title: Admit the sequence-extension concatenate family
-status: todo
+status: in-progress
 priority: p1
 dependencies: [scope-the-sequence-extending-tensor-family]
 related: [design-autoregressive-state-and-kv-cache, admit-an-additive-extent-relation, bind-the-kv-cache-through-the-artifact-and-runtime-interface, admit-the-reindex-and-broadcast-operation-families]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/reference, contracts/foundation]
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [implementation, semantics, operation-families, kv-cache, language-model]
+claimed_from: todo
+assignee: agent-concat
+lease_expires_at: 1785697181
 ---
 ## User-visible outcome
 
