@@ -26,6 +26,16 @@
 //!
 //! The numerical and reference identities are opaque strings the artifact layer
 //! cannot check, and are therefore claims by this producer rather than proofs.
+//!
+//! # One operand payload per declared input, and why that is the shape
+//!
+//! [`ProofCaseSpec`] takes one payload per artifact-declared input and the
+//! builder places them into the artifact's own interface order, refusing a key
+//! the artifact does not declare and a declared key left unsupplied. That was
+//! already true when only the one-input serial sum used it; what changed with
+//! the contraction is that a *second* payload is now actually published, so the
+//! arity obligations the builder always carried are exercised rather than
+//! merely available. Nothing in this module treats the first input specially.
 
 use tiler_artifact::program::VerifiedArtifactProgram;
 use tiler_artifact::proof::{
@@ -45,7 +55,19 @@ use tiler_reference::{
 const NUMERICAL_IDENTITY: &[u8] = b"tiler.numerical.flush-subnormals-to-zero-f32";
 /// Governed key of the implementation that produced the expected bytes.
 const REFERENCE_IDENTITY: &[u8] = b"tiler.reference.standard-evaluator.v1";
-/// The operand cases this producer publishes, as `(key, one row pattern)`.
+/// The serial sum's declared input key.
+const INPUT_KEY: &str = "input";
+/// The serial sum's declared output key.
+const OUTPUT_KEY: &str = "result";
+/// The contraction's first declared input: the activations operand, `[M, K]`.
+const ACTIVATIONS_KEY: &str = "activations";
+/// The contraction's second declared input: the weights operand, `[N, K]`.
+const WEIGHTS_KEY: &str = "weights";
+/// The contraction's declared output key, `[M, N]`.
+const PROJECTED_KEY: &str = "projected";
+
+/// The operand cases this producer publishes for the serial sum, as
+/// `(key, one row pattern)`.
 ///
 /// Each names the numerical class it exists to exercise, rather than a number
 /// that happens to be interesting. A contract either holds at these values or
@@ -82,10 +104,152 @@ const OPERAND_CASES: [(&str, [u32; 3]); 5] = [
         [0x4b80_0000, 0xcb80_0000, 0x3f80_0000],
     ),
 ];
-/// The artifact's declared input key.
-const INPUT_KEY: &str = "input";
-/// The artifact's declared output key.
-const OUTPUT_KEY: &str = "result";
+
+/// The exact extents the contraction case table below is written for.
+///
+/// Stated as constants and checked rather than assumed, because the table is
+/// literal `[[u32; K]; M]` and `[[u32; K]; N]` rows: a producer that moved the
+/// published contraction to another shape while leaving this table alone would
+/// publish operands for a program it did not compile, and the sidecar builder
+/// would only catch it if the element count happened to disagree.
+const CONTRACTION_M: u64 = 2;
+/// See [`CONTRACTION_M`].
+const CONTRACTION_N: u64 = 2;
+/// See [`CONTRACTION_M`].
+const CONTRACTION_K: u64 = 3;
+
+/// The operand cases this producer publishes for the contraction, as
+/// `(key, activations rows, weights rows)`.
+///
+/// **Each case is the same numerical class the serial-sum table names, restated
+/// at the two-operand site**, because that is where the contraction's own
+/// obligations live: the contributor sequence is over *products* of two
+/// operands rather than over one operand's elements, so a case that exercises a
+/// reduction of stored values does not by itself exercise a reduction of
+/// computed ones.
+///
+/// `td,od->to`: `projected[t, o]` is the fold over `d` of
+/// `activations[t, d] * weights[o, d]`, seeded from the first product and never
+/// from `+0.0`.
+/// One contraction operand case: a stable key, the activations rows, and the
+/// weights rows, each as `[M or N][K]` big-endian `f32` bit patterns.
+///
+/// Named rather than written inline because the tuple is the shape the case
+/// table repeats five times, and a reader repairing one row needs to see which
+/// literal is which operand.
+///
+/// The extents are literals rather than `CONTRACTION_M as usize` and friends,
+/// because an array length is a `usize` and the constants are `u64` extents;
+/// the cast is what the lint objects to and what [`cases_for`] makes
+/// unnecessary — it refuses any shape but the one below, so the literals here
+/// and the constants above are held together by a check rather than by a
+/// conversion.
+type ContractionCase = (&'static str, [[u32; 3]; 2], [[u32; 3]; 2]);
+
+const CONTRACTION_CASES: [ContractionCase; 5] = [
+    // The ordinary case. Every product and every partial sum is exactly
+    // representable, so this is the row where a disagreement means a wiring
+    // defect rather than a rounding one:
+    // [1,2,3]·[1,1,1] = 6, [1,2,3]·[2,2,2] = 12,
+    // [4,5,6]·[1,1,1] = 15, [4,5,6]·[2,2,2] = 30.
+    (
+        "ordinary",
+        [
+            [0x3f80_0000, 0x4000_0000, 0x4040_0000], // 1.0, 2.0, 3.0
+            [0x4080_0000, 0x40a0_0000, 0x40c0_0000], // 4.0, 5.0, 6.0
+        ],
+        [
+            [0x3f80_0000, 0x3f80_0000, 0x3f80_0000], // 1.0, 1.0, 1.0
+            [0x4000_0000, 0x4000_0000, 0x4000_0000], // 2.0, 2.0, 2.0
+        ],
+    ),
+    // **The unseeded fold, made observable.** Every product of the first
+    // activation row is `-0.0`, so the fold's result is `-0.0` if and only if it
+    // is seeded from the first product. A kernel that seeds at `+0.0` returns
+    // `0x0000_0000`, which is the exact counterexample the L3 record measured
+    // and the reason the profile declares no seed.
+    (
+        "negative-zero-fold",
+        [
+            [0x8000_0000, 0x8000_0000, 0x8000_0000], // -0.0, -0.0, -0.0
+            [0x3f80_0000, 0x0000_0001, 0xbf80_0000], // 1.0, least subnormal, -1.0
+        ],
+        [
+            [0x3f80_0000, 0x3f80_0000, 0x3f80_0000], // 1.0, 1.0, 1.0
+            [0x3f80_0000, 0x3f80_0000, 0x3f80_0000], // 1.0, 1.0, 1.0
+        ],
+    ),
+    // A NaN with a non-canonical payload, entering through the activations
+    // operand. Whether the payload survives the multiply and the fold is the
+    // difference between propagating a NaN and minting a canonical one.
+    (
+        "non-canonical-nan",
+        [
+            [0x7fc0_1234, 0x3f80_0000, 0x4000_0000], // non-canonical NaN, 1.0, 2.0
+            [0x3f80_0000, 0x4000_0000, 0x4040_0000], // 1.0, 2.0, 3.0
+        ],
+        [
+            [0x3f80_0000, 0x3f80_0000, 0x3f80_0000],
+            [0x3f80_0000, 0x3f80_0000, 0x3f80_0000],
+        ],
+    ),
+    // Infinity in one operand against a finite other, so the product is infinite
+    // and the fold stays infinite rather than becoming a large finite number.
+    (
+        "infinity",
+        [
+            [0x7f80_0000, 0x3f80_0000, 0xbf80_0000], // +inf, 1.0, -1.0
+            [0x3f80_0000, 0x4000_0000, 0x4040_0000],
+        ],
+        [
+            [0x3f80_0000, 0x3f80_0000, 0x3f80_0000],
+            [0x3f80_0000, 0x3f80_0000, 0x3f80_0000],
+        ],
+    ),
+    // **Contraction-sensitive, and the case the whole numerical contract is
+    // for.** Serially the first output is `(2^24 + -2^24) + 1.0 = 1.0`;
+    // reassociated as `2^24 + (-2^24 + 1.0)` it is `0.0`, and a fused
+    // multiply-add reaches a third value. The L3 record attributes the `direct`
+    // realization uniquely to the strict fold on exactly this distinction.
+    (
+        "contraction-sensitive",
+        [
+            [0x4b80_0000, 0xcb80_0000, 0x3f80_0000], // 2^24, -2^24, 1.0
+            [0x3f80_0000, 0x3f80_0000, 0x3f80_0000],
+        ],
+        [
+            [0x3f80_0000, 0x3f80_0000, 0x3f80_0000],
+            [0x3f80_0000, 0x3f80_0000, 0x3f80_0000],
+        ],
+    ),
+];
+
+/// Which program family a published member carries.
+///
+/// The sidecar's operand and expectation shapes follow from the family, so the
+/// producer states it once rather than letting each call site rebuild the case
+/// table.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProofFamily {
+    /// `sum((input * 1.0) + 0.0)` over the reduced axis of a `[rows, columns]`
+    /// input.
+    SerialSum {
+        /// Rows of the declared input; each reduces to one output element.
+        rows: u64,
+        /// Columns of the declared input; the reduced axis.
+        columns: u64,
+    },
+    /// The L3 profile's index structure `td,od->to` over `[m, k]` activations
+    /// and `[n, k]` weights, publishing `[m, n]`.
+    Contraction {
+        /// Rows of the activations operand and of the result.
+        m: u64,
+        /// Rows of the weights operand and columns of the result.
+        n: u64,
+        /// The contracted extent, shared by both operands.
+        k: u64,
+    },
+}
 
 /// Why a proof-case sidecar could not be published.
 #[derive(Debug)]
@@ -94,6 +258,18 @@ pub enum SidecarError {
     Build(ProofBuildError),
     /// The verified record did not encode.
     Encode(ProofCodecError),
+    /// A published contraction shape has no operand table written for it.
+    ///
+    /// Its own class rather than a panic: the case table below is literal rows,
+    /// so a producer that moves the published contraction to another shape must
+    /// move the table with it, and the refusal names both shapes so a reader
+    /// sees which one to change.
+    UnwrittenContractionShape {
+        /// The extents the producer asked for.
+        requested: (u64, u64, u64),
+        /// The extents the case table is written for.
+        written: (u64, u64, u64),
+    },
 }
 
 impl std::fmt::Display for SidecarError {
@@ -101,8 +277,23 @@ impl std::fmt::Display for SidecarError {
         match self {
             Self::Build(cause) => write!(formatter, "the proof sidecar draft refused: {cause:?}"),
             Self::Encode(cause) => write!(formatter, "the proof sidecar did not encode: {cause:?}"),
+            Self::UnwrittenContractionShape {
+                requested: (m, n, k),
+                written: (wm, wn, wk),
+            } => write!(
+                formatter,
+                "the producer publishes a {m}x{n}x{k} contraction and this module's operand table \
+                 is written for {wm}x{wn}x{wk}; move the table with the shape",
+            ),
         }
     }
+}
+
+/// One named operand a case supplies, with the shape it is read at.
+struct Operand {
+    key: InputKey,
+    shape: Shape,
+    bits: Vec<u32>,
 }
 
 /// Fills one `rows` by `columns` input by cycling one operand row.
@@ -120,12 +311,16 @@ fn input_bits(pattern: [u32; 3], rows: u64, columns: u64) -> Vec<u32> {
     bits
 }
 
-/// Evaluates the program under the governed reference to get expected outputs.
-fn reference_bits(program: &SemanticProgram, bits: &[u32], rows: u64, columns: u64) -> Vec<u32> {
-    let key = InputKey::new(INPUT_KEY).expect("the input key is valid");
-    let tensor = Tensor::dense(
+/// Flattens a literal row table into one dense operand.
+fn rows_of(table: [[u32; 3]; 2]) -> Vec<u32> {
+    table.into_iter().flatten().collect()
+}
+
+/// Builds one reference tensor from big-endian `f32` bit patterns.
+fn tensor(shape: &Shape, bits: &[u32]) -> Tensor {
+    Tensor::dense(
         F32::resolved_type(),
-        Shape::from_dims([rows, columns]),
+        shape.clone(),
         bits.iter()
             .map(|value| {
                 ReferenceElement::from_float_bits(
@@ -136,10 +331,29 @@ fn reference_bits(program: &SemanticProgram, bits: &[u32], rows: u64, columns: u
             })
             .collect(),
     )
-    .expect("the input tensor is well formed");
+    .expect("the input tensor is well formed")
+}
+
+/// Evaluates the program under the governed reference to get expected outputs.
+///
+/// **Every declared operand is bound, not the first one.** The evaluator takes
+/// the whole binding set, so a family with two inputs supplies two bindings and
+/// the oracle evaluates the program the artifact actually declares. A version of
+/// this that bound only the leading operand would have evaluated a different
+/// program and reported its bits as normative.
+fn reference_bits(program: &SemanticProgram, operands: &[Operand]) -> Vec<u32> {
+    let tensors: Vec<Tensor> = operands
+        .iter()
+        .map(|operand| tensor(&operand.shape, &operand.bits))
+        .collect();
+    let bindings: Vec<InputBinding<'_>> = operands
+        .iter()
+        .zip(&tensors)
+        .map(|(operand, tensor)| InputBinding::new(&operand.key, tensor))
+        .collect();
     let outputs = ReferenceEvaluator::standard()
         .expect("the governed reference profile composes")
-        .evaluate(program, &[InputBinding::new(&key, &tensor)])
+        .evaluate(program, &bindings)
         .expect("the reference evaluates the program");
     match outputs[0].payload() {
         TensorPayloadView::Dense(elements) => elements
@@ -162,6 +376,63 @@ fn payload_bytes(bits: &[u32]) -> Vec<u8> {
     bits.iter().flat_map(|value| value.to_be_bytes()).collect()
 }
 
+/// Returns this family's named cases, each as its full operand set.
+fn cases_for(family: ProofFamily) -> Result<Vec<(&'static str, Vec<Operand>)>, SidecarError> {
+    match family {
+        ProofFamily::SerialSum { rows, columns } => Ok(OPERAND_CASES
+            .into_iter()
+            .map(|(key, pattern)| {
+                (
+                    key,
+                    vec![Operand {
+                        key: InputKey::new(INPUT_KEY).expect("the input key is valid"),
+                        shape: Shape::from_dims([rows, columns]),
+                        bits: input_bits(pattern, rows, columns),
+                    }],
+                )
+            })
+            .collect()),
+        ProofFamily::Contraction { m, n, k } => {
+            if (m, n, k) != (CONTRACTION_M, CONTRACTION_N, CONTRACTION_K) {
+                return Err(SidecarError::UnwrittenContractionShape {
+                    requested: (m, n, k),
+                    written: (CONTRACTION_M, CONTRACTION_N, CONTRACTION_K),
+                });
+            }
+            Ok(CONTRACTION_CASES
+                .into_iter()
+                .map(|(key, activations, weights)| {
+                    (
+                        key,
+                        vec![
+                            Operand {
+                                key: InputKey::new(ACTIVATIONS_KEY)
+                                    .expect("the activations key is valid"),
+                                shape: Shape::from_dims([m, k]),
+                                bits: rows_of(activations),
+                            },
+                            Operand {
+                                key: InputKey::new(WEIGHTS_KEY).expect("the weights key is valid"),
+                                shape: Shape::from_dims([n, k]),
+                                bits: rows_of(weights),
+                            },
+                        ],
+                    )
+                })
+                .collect())
+        }
+    }
+}
+
+/// Returns the output key this family publishes under.
+fn output_key_for(family: ProofFamily) -> OutputKey {
+    let key = match family {
+        ProofFamily::SerialSum { .. } => OUTPUT_KEY,
+        ProofFamily::Contraction { .. } => PROJECTED_KEY,
+    };
+    OutputKey::new(key).expect("the output key is valid")
+}
+
 /// Builds and encodes the proof-case sidecar for one published artifact.
 ///
 /// # Errors
@@ -172,8 +443,7 @@ fn payload_bytes(bits: &[u32]) -> Vec<u8> {
 pub fn encoded(
     artifact: &VerifiedArtifactProgram,
     program: &SemanticProgram,
-    rows: u64,
-    columns: u64,
+    family: ProofFamily,
 ) -> Result<Vec<u8>, SidecarError> {
     let mut draft = ProofSidecarBuilder::new(
         artifact,
@@ -187,22 +457,19 @@ pub fn encoded(
     )
     .map_err(SidecarError::Build)?;
 
+    let output_key = output_key_for(family);
     // Every case over the same program, so the runner compares one artifact
     // against several operand classes rather than needing an artifact each.
-    for (key, pattern) in OPERAND_CASES {
-        let inputs = input_bits(pattern, rows, columns);
-        let expected = reference_bits(program, &inputs, rows, columns);
+    for (key, operands) in cases_for(family)? {
+        let expected = reference_bits(program, &operands);
         draft
             .push_case(ProofCaseSpec {
                 key: ProofCaseKey::new(key).expect("the case key is valid"),
-                inputs: vec![(
-                    InputKey::new(INPUT_KEY).expect("the input key is valid"),
-                    payload_bytes(&inputs),
-                )],
-                expected: vec![(
-                    OutputKey::new(OUTPUT_KEY).expect("the output key is valid"),
-                    payload_bytes(&expected),
-                )],
+                inputs: operands
+                    .iter()
+                    .map(|operand| (operand.key.clone(), payload_bytes(&operand.bits)))
+                    .collect(),
+                expected: vec![(output_key.clone(), payload_bytes(&expected))],
             })
             .map_err(SidecarError::Build)?;
     }
