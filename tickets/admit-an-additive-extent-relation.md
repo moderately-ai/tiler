@@ -1,7 +1,7 @@
 ---
 id: admit-an-additive-extent-relation
 title: Admit an additive extent relation so a concatenated extent is checkable
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-the-sequence-extension-concatenate-family]
 related: [design-autoregressive-state-and-kv-cache, scope-the-sequence-extending-tensor-family, promote-the-symbolic-index-profile-to-a-public-boundary]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, shapes, extents, kv-cache, language-model]
+claimed_from: todo
+assignee: agent-additive
+lease_expires_at: 1785704070
 ---
 ## User-visible outcome
 

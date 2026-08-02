@@ -1,7 +1,7 @@
 ---
 id: correct-the-declined-strategy-record-for-an-unsplittable-reduction
 title: Correct the declined-strategy explain record for an unsplittable reduction
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, defect, explain]
+claimed_from: todo
+assignee: agent-decline
+lease_expires_at: 1785704070
 ---
 ## User-visible outcome
 
