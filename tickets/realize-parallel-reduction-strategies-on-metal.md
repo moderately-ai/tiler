@@ -1,7 +1,7 @@
 ---
 id: realize-parallel-reduction-strategies-on-metal
 title: Realize parallel reduction strategies on Metal
-status: todo
+status: in-progress
 priority: p1
 dependencies: [implement-the-target-neutral-multi-pass-reduction-strategy, implement-the-single-workgroup-synchronized-reduction-strategy, declare-a-required-gpu-family-in-the-artifact, construct-and-bind-the-first-authoritative-metal-compile-profile, compose-the-numerical-contract-from-its-decided-dimensions]
 related: [implement-parallel-reduction-strategies]
@@ -9,6 +9,9 @@ scopes: [implementation/metal, implementation/build, implementation/runtime, imp
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: agent-metal-reduction
+lease_expires_at: 1785687056
 ---
 ## User-visible outcome
 
@@ -67,3 +70,17 @@ Neither strategy executed against the reference; no negative fixture for insuffi
 ### Verification
 
 `cargo nextest run --workspace --locked` green at 2236 tests before the ledger edits; per-package `tiler-build` green at 69. Each new check was mutation-proved: removing `declare_synchronization_realization` fails both the descriptor-text test and the dimension sweep, and each of the row's five dimensions plus its verdict was separately perturbed and observed moving the descriptor.
+
+## Correction 2026-08-02 — the blocker above is closed, and the executable half is dispatchable
+
+**Fact.** *The blocker, located exactly* is now stale and must not be read forward. `NumericalContract` is composed from its dimensions rather than chosen from a four-value preset list, so subnormal flushing and ordered regrouping resolve independently and `NumericalContract::FLUSH_AND_REASSOCIATE_F32` is an ordinary statement — `crates/tiler-compiler/src/session.rs:1402`. `register-a-flush-and-reassociate-numerical-contract` is `closed`. Reproduce in one line:
+
+```sh
+rg -n 'pub const FLUSH_AND_REASSOCIATE_F32' crates/tiler-compiler/src/session.rs
+```
+
+**Fact — the positive successor exists and names both strategies.** `a_flush_and_reassociate_contract_reaches_a_parallel_portfolio` (`crates/tiler-build/src/metal_plan.rs:1006`) drives both halves of the old gap record first — the strict-based regrouping contract still refused on `InputSubnormals` rather than on the regrouping, and the flush-only contract still retaining no split — and then asserts that the composed contract's portfolio retains, beside the serial fold, both the multi-pass split and the single-workgroup tree. So a plan now exists on the authoritative Apple profile.
+
+**Inference.** *What is therefore unrun* is unchanged in content but no longer blocked: it stated every unrun predicate was "downstream of a plan existing, and no plan exists". A plan exists. The remaining work is the executable half only — both strategies against the reference on a qualified host, the four negative fixtures driven before routing commit, command-buffer terminal success preceding readback, and asynchronous resources surviving final use.
+
+**Boundary.** The profile-fact half stays complete and is not reopened. `correct-the-declined-strategy-record-for-an-unsplittable-reduction` still owns the sub-four-contributor `InvalidCompilerOutput` defect; size fixtures above it rather than around it.
