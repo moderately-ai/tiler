@@ -176,6 +176,7 @@ use tiler_compiler::session::{
 use tiler_compiler::target::{TargetRequest, TargetRequestError};
 use tiler_ir::program::abi::{AbiRoot, ExprNode};
 use tiler_ir::program::{ValueRole, VerifiedKernelProgram};
+use tiler_ir::schedule::ContributorPartition;
 use tiler_ir::semantic::{
     ContractionIndex, ContractionIndexStructure, F32, F32Add, F32Constant, F32Multiply,
     F32TensorContraction, InputKey, OutputKey, SemanticProgram, SemanticProgramBuilder,
@@ -192,6 +193,7 @@ use tiler_metal_aot::driver::Toolchain;
 use tiler_metal_aot::input::{CompileRequest, OptimizationLevel};
 use tiler_reference::{
     FloatBitOrder, InputBinding, ReferenceElement, ReferenceEvaluator, Tensor, TensorPayloadView,
+    strict_partitioned_sum,
 };
 use tiler_runtime::load::{
     DecodedProgram, ExecutionEnvironment, LiveDeviceObservation, LiveDeviceQualification,
@@ -245,18 +247,14 @@ const PARALLEL_ROWS: u64 = 1;
 /// reassociation-permitting contract: this shape is sized above that defect
 /// rather than around it, so a regression there fails here rather than hiding.
 const PARALLEL_COLUMNS: u64 = 4;
-/// The operands the parallel strategies reduce, and the two properties they hold.
+/// The **contributor-set** half of the parallel operand pair.
 ///
-/// **Every grouping is exact, which is what makes one oracle valid for all
-/// three strategies.** The contract these run under *permits* ordered
+/// **Every grouping is exact, which is what makes one serial-fold oracle valid
+/// for all three strategies.** The contract these run under *permits* ordered
 /// regrouping, so a split and a tree may legitimately sum in an order the
-/// reference's declared left fold does not — and against grouping-sensitive
-/// operands a bit-for-bit comparison would then refuse a correct
-/// implementation. Distinct small powers of two are exactly representable and
-/// their partial sums are too, so every partition and every tree depth produces
-/// the identical `f32`. That bounds the claim rather than weakening it: what is
-/// proved is that each strategy reduces the declared contributor *set*
-/// correctly, not that regrouped rounding was observed.
+/// reference's declared left fold does not. Distinct small powers of two are
+/// exactly representable and their partial sums are too, so every partition and
+/// every tree depth produces the identical `f32`.
 ///
 /// **Every subset has a distinct sum, so a dropped or double-counted
 /// contributor cannot cancel.** These are the failure modes a parallel reduction
@@ -267,14 +265,68 @@ const PARALLEL_COLUMNS: u64 = 4;
 /// its rows repeat `1.0`, so dropping one contributor and double-counting
 /// another agree.
 ///
-/// The grouping-sensitive operands — the signed zero, the subnormal, the
-/// non-canonical NaN payload — stay on the serial path, where the reference's
-/// order *is* the contract's order and a disagreement means what it says.
+/// **What it cannot say, stated exactly.** Because every grouping is exact,
+/// every order-preserving regrouping of these four operands produces
+/// `0x41700000` and *no other value* — so the comparison against the serial
+/// fold has an empty refusal population among legal groupings and cannot
+/// observe rounding at all. That is why it is one half of a pair rather than
+/// the whole claim; [`GROUPING_SENSITIVE_OPERANDS`] is the other half, and
+/// `the_operand_pair_covers_what_each_half_alone_cannot` in this file's test
+/// module pins both counts. Named rather than linked: that module is
+/// `#[cfg(test)]`, so an intra-doc link to it does not resolve when the crate is
+/// documented, which is a rustdoc error rather than a dead link.
 const PARALLEL_OPERANDS: [u32; 4] = [
     0x3f80_0000, // 1.0
     0x4000_0000, // 2.0
     0x4080_0000, // 4.0
     0x4100_0000, // 8.0
+];
+/// The **rounding** half of the parallel operand pair, chosen so the declared
+/// regroupings disagree by exactly one rounding step.
+///
+/// Written as bit patterns rather than decimal literals because the whole point
+/// is which representable value each operand is: `4.4703484e-8` names a printed
+/// approximation, and `0x3340_0000` names the operand.
+///
+/// | bits | value | in units of `ulp(1.0)` = `2^-23` |
+/// | --- | --- | --- |
+/// | `0x3f40_0000` | `0.75` | — |
+/// | `0x3e80_0000` | `0.25` | — |
+/// | `0x3340_0000` | `3 * 2^-26` | `0.375` |
+/// | `0x3300_0000` | `2^-25` | `0.25` |
+///
+/// **The derivation, so the two answers are attributable rather than merely
+/// different.** `governed_partition(4)` is two partitions of two, so both
+/// parallel strategies fold `(a0 + a1) + (a2 + a3)` while the serial fold folds
+/// `((a0 + a1) + a2) + a3`; both share the prefix `0.75 + 0.25 = 1.0`, exact.
+/// The serial fold then adds `0.375 ulp` and `0.25 ulp` in turn, and each lands
+/// below the half-ulp boundary on its own, so each rounds back to `1.0`. The
+/// declared regrouping adds them to each other first — `0.625 ulp`, exact,
+/// because both are dyadic — and one add of `1.0 + 0.625 ulp` rounds *up*. So
+/// the parallel answer is `0x3f800001` and the serial answer is `0x3f800000`:
+/// one ULP apart, and the difference is one named rounding step rather than a
+/// tolerance.
+///
+/// **No step is a tie**, deliberately: `0.375`, `0.25`, and `0.625` are each
+/// strictly off the half-ulp boundary, so nothing here depends on round-half-to-
+/// even and a host resolving ties differently would still produce these bits.
+/// Every operand is normal — the smallest is `2^-25`, a hundred binades above
+/// the subnormal boundary — so the flush-to-zero half of the contract changes
+/// none of them, and `x * 1.0 + 0.0` is bit-identity on each, which is what lets
+/// the reduction oracle be applied to these operands rather than to the
+/// prologue's output.
+///
+/// **What it cannot say, stated exactly.** Its subset sums are *not* distinct:
+/// of the sixteen single-contributor corruptions of the declared grouping —
+/// each slot dropped, and each slot taking another slot's value — fifteen change
+/// the answer and one does not (slot 3 taking slot 2's value also yields
+/// `0x3f800001`). [`PARALLEL_OPERANDS`] leaves none of the sixteen undetected,
+/// which is why both sets run rather than one replacing the other.
+const GROUPING_SENSITIVE_OPERANDS: [u32; 4] = [
+    0x3f40_0000, // 0.75
+    0x3e80_0000, // 0.25
+    0x3340_0000, // 3 * 2^-26, which is 0.375 ulp(1.0)
+    0x3300_0000, // 2^-25,     which is 0.25  ulp(1.0)
 ];
 /// Interface key of the serial sum's one input.
 const INPUT_KEY: &str = "input";
@@ -546,10 +598,12 @@ fn contraction_program(m: u64, n: u64, k: u64) -> SemanticProgram {
     builder.build().expect("the program verifies")
 }
 
-/// Evaluates the same semantic program through the independent oracle.
-fn reference_bits(program: &SemanticProgram, bits: &[u32], rows: u64, columns: u64) -> Vec<u32> {
-    let key = InputKey::new(INPUT_KEY).expect("the input key is valid");
-    let tensor = Tensor::dense(
+/// Builds the reference tensor one operand set states.
+///
+/// Bit patterns throughout, in the byte order the sidecar reader uses, so a
+/// signed zero, a subnormal, and a non-canonical NaN reach the oracle unchanged.
+fn operand_tensor(bits: &[u32], rows: u64, columns: u64) -> Tensor {
+    Tensor::dense(
         F32::resolved_type(),
         Shape::from_dims([rows, columns]),
         bits.iter()
@@ -562,12 +616,12 @@ fn reference_bits(program: &SemanticProgram, bits: &[u32], rows: u64, columns: u
             })
             .collect(),
     )
-    .expect("the input tensor is well formed");
-    let outputs = ReferenceEvaluator::standard()
-        .expect("the governed reference profile composes")
-        .evaluate(program, &[InputBinding::new(&key, &tensor)])
-        .expect("the reference evaluates the program");
-    match outputs[0].payload() {
+    .expect("the input tensor is well formed")
+}
+
+/// Reads a dense reference tensor back as `f32` bit patterns.
+fn dense_bits(tensor: &Tensor) -> Vec<u32> {
+    match tensor.payload() {
         TensorPayloadView::Dense(elements) => elements
             .iter()
             .map(|element| {
@@ -578,6 +632,17 @@ fn reference_bits(program: &SemanticProgram, bits: &[u32], rows: u64, columns: u
             .collect(),
         _ => panic!("expected a dense f32 reference output"),
     }
+}
+
+/// Evaluates the same semantic program through the independent oracle.
+fn reference_bits(program: &SemanticProgram, bits: &[u32], rows: u64, columns: u64) -> Vec<u32> {
+    let key = InputKey::new(INPUT_KEY).expect("the input key is valid");
+    let tensor = operand_tensor(bits, rows, columns);
+    let outputs = ReferenceEvaluator::standard()
+        .expect("the governed reference profile composes")
+        .evaluate(program, &[InputBinding::new(&key, &tensor)])
+        .expect("the reference evaluates the program");
+    dense_bits(&outputs[0])
 }
 
 /// Returns the envelope path the invocation names.
@@ -1895,6 +1960,391 @@ fn prove_parallel_strategies(
         "both parallel strategies and the serial fold agree bit for bit with the reference on {} \
          element(s)",
         reference.len(),
+    );
+    Ok(())
+}
+
+/// The blocked contributor partition one dispatched alternative declares.
+///
+/// **Read from the plan's own published launch geometry, never assumed.** The
+/// two parallel strategies declare the *same* split — `governed_partition`'s
+/// balanced exact split, blocked and contiguous — and each publishes it in a
+/// different observable, which is why this reads a different quantity per
+/// strategy rather than one field:
+///
+/// - The **tree** runs one participant per partition inside one workgroup, so
+///   its declared `threads_per_workgroup` is the partition count. That is the
+///   same observable [`classify_strategy`] recognizes it by, read here from the
+///   kernel program's own stages rather than from the artifact-facing ABI view,
+///   because these are the literals [`dispatch_alternative`] actually encodes.
+/// - The **split** stages the partials in a tensor whose partition axis is
+///   innermost, so its partial pass launches `output_elements * partitions`
+///   threads where its final pass launches `output_elements`. The ratio is the
+///   partition count and needs no row count from this build.
+/// - The **serial fold** declares no split at all, and the degenerate partition
+///   of one contributor each is exactly its left fold. Nothing is read for it,
+///   and that is stated rather than hidden: what makes it non-circular is that
+///   [`prove_grouping_sensitive_case`] cross-checks this partition's oracle
+///   against `tiler-reference`'s evaluation of the whole semantic program,
+///   which is the independent statement of the declared order.
+///
+/// A partition that does not cover the contributor sequence exactly once each
+/// is refused rather than rounded: both strategies decline an inexact split
+/// rather than padding one, so a ragged partition here means this reader stopped
+/// measuring what it names.
+fn declared_partition(
+    alternative: PlanAlternative<'_>,
+    strategy: Option<ParallelStrategy>,
+    contributors: u64,
+) -> Result<ContributorPartition, ProofError> {
+    let program = alternative.abi().kernel_program();
+    let expressions = program.abi_expressions();
+    let mut stages = Vec::new();
+    for stage in program.execution_order() {
+        let launch = stage.launch();
+        stages.push((
+            literal_extent(expressions, launch.grid_threads)?,
+            literal_extent(expressions, launch.threads_per_workgroup)?,
+        ));
+    }
+    let partitions = match strategy {
+        Some(ParallelStrategy::SingleWorkgroupTree) => stages
+            .iter()
+            .map(|(_, workgroup)| *workgroup)
+            .max()
+            .unwrap_or(1),
+        Some(ParallelStrategy::MultiPassSplit) => {
+            let [_pointwise, partial, combine] = stages.as_slice() else {
+                return Err(ProofError::UndeclaredGrouping {
+                    strategy: strategy_label(strategy).to_owned(),
+                    detail: format!(
+                        "a split declares three stages and this one declares {}",
+                        stages.len()
+                    ),
+                });
+            };
+            if combine.0 == 0 {
+                return Err(ProofError::UndeclaredGrouping {
+                    strategy: strategy_label(strategy).to_owned(),
+                    detail:
+                        "the combining stage launches no thread, so it names no partition count"
+                            .to_owned(),
+                });
+            }
+            partial.0 / combine.0
+        }
+        None => contributors,
+    };
+    if partitions == 0 || !contributors.is_multiple_of(partitions) {
+        return Err(ProofError::UndeclaredGrouping {
+            strategy: strategy_label(strategy).to_owned(),
+            detail: format!(
+                "{partitions} partition(s) do not cover {contributors} contributor(s) exactly once \
+                 each"
+            ),
+        });
+    }
+    let partition = ContributorPartition {
+        partitions,
+        contributors_per_partition: contributors / partitions,
+    };
+    if !partition.covers(contributors) {
+        return Err(ProofError::UndeclaredGrouping {
+            strategy: strategy_label(strategy).to_owned(),
+            detail: format!("{partition:?} does not cover {contributors} contributor(s)"),
+        });
+    }
+    Ok(partition)
+}
+
+/// Names one classified alternative for a message.
+fn strategy_label(strategy: Option<ParallelStrategy>) -> &'static str {
+    match strategy {
+        Some(strategy) => strategy.as_str(),
+        None => "serial-fold",
+    }
+}
+
+/// Evaluates the reduction one declared grouping computes, through the
+/// independent oracle.
+///
+/// `tiler_reference::strict_partitioned_sum` is the second exact oracle the
+/// reference crate already owns for exactly this question, and its own
+/// documentation states why it has to exist: "a contract that permits
+/// reassociation admits a set of results, so no oracle can answer *the* value
+/// for it; what a plan can be checked against is the one order it selected".
+/// This proof reaches that oracle from a device rather than restating it.
+///
+/// It is applied to the *operands* rather than to the pointwise prologue's
+/// output, and that is sound only while `x * 1.0 + 0.0` is bit-identity on this
+/// operand set — which [`prove_grouping_sensitive_case`]'s calibration step
+/// checks by requiring the degenerate partition's answer to equal the reference
+/// evaluator's answer for the whole program, prologue included.
+fn partitioned_reference(
+    bits: &[u32],
+    rows: u64,
+    columns: u64,
+    partition: ContributorPartition,
+) -> Result<Vec<u32>, ProofError> {
+    let tensor = operand_tensor(bits, rows, columns);
+    let reduced = strict_partitioned_sum(
+        &tensor,
+        &[Axis::new(1)],
+        partition.partitions,
+        partition.contributors_per_partition,
+    )
+    .map_err(|cause| ProofError::UndeclaredGrouping {
+        strategy: "reference".to_owned(),
+        detail: format!("{partition:?} is not an evaluable split: {cause}"),
+    })?;
+    Ok(dense_bits(&reduced))
+}
+
+/// Every `f32` value an order-preserving regrouping of one contributor sequence
+/// can produce.
+///
+/// This is the *permitted set* — the population a reassociating contract
+/// authorizes — and it is deliberately not the acceptance criterion. Requiring
+/// membership would accept a strategy that produced some other legal grouping
+/// than the one it declared, which is precisely the failure a declared-grouping
+/// oracle exists to catch. What it is used for is the refusal population: every
+/// member that is not the declared grouping's answer is a wrong-but-in-range
+/// answer the oracle must say no to, and a run that cannot name one has a check
+/// that cannot fail.
+///
+/// **Membership is not asserted either, and the absence is deliberate.** A
+/// [`ContributorPartition`] expresses only a blocked uniform split, and every
+/// blocked split of a contributor sequence is an order-preserving regrouping of
+/// it, so an assertion that the declared grouping's value lies in this set could
+/// not fail for any partition [`declared_partition`] can return. It was written,
+/// perturbed, and found unreachable — the calibration step below catches a wrong
+/// oracle first and the empty-population refusal catches a truncated
+/// enumeration first — so it was removed rather than kept as a check that cannot
+/// say no.
+///
+/// Enumerated by splitting at every position and combining the two sides'
+/// values, which is the same construction
+/// [Numerical semantics](../../../docs/numerical-semantics.md)'s bounded
+/// result-set oracle uses for three through six leaves; for four contributors it
+/// yields the five full binary groupings that preserve leaf order.
+fn ordered_associations(bits: &[u32]) -> Vec<u32> {
+    let [single] = bits else {
+        let mut values = Vec::new();
+        for split in 1..bits.len() {
+            for left in ordered_associations(&bits[..split]) {
+                for right in ordered_associations(&bits[split..]) {
+                    values.push((f32::from_bits(left) + f32::from_bits(right)).to_bits());
+                }
+            }
+        }
+        return values;
+    };
+    vec![*single]
+}
+
+/// The one comparison this case's oracle makes.
+///
+/// Named rather than written inline at each site, because "the check was watched
+/// failing" is only true if the refusal below is produced by the *same*
+/// expression that accepted the observed answer. Two spellings of equality would
+/// leave the observed comparison unexercised by the refusal.
+fn declared_grouping_admits(expected: &[u32], candidate: &[u32]) -> bool {
+    expected == candidate
+}
+
+/// This case enumerates one row's contributor sequence, so it holds while the
+/// parallel shape is one row and stops the build otherwise.
+const _: () = assert!(
+    PARALLEL_ROWS == 1,
+    "the grouping-sensitive case enumerates one row's orderings; a wider shape needs the \
+     enumeration to run per row before this constant moves",
+);
+
+/// Executes both parallel strategies on operands whose grouping changes the
+/// answer, and holds each to the grouping it declared.
+///
+/// **This is the claim [`prove_parallel_strategies`] deliberately cannot make.**
+/// That case runs operands every grouping of which is exact, so its serial-fold
+/// oracle is valid for all three strategies — and its refusal population among
+/// legal groupings is therefore *empty*: no answer a reassociating contract
+/// permits would have failed it. What it proves is contributor-set correctness.
+/// This case runs the same three alternatives on operands where the declared
+/// regroupings genuinely disagree, so the oracle has to change shape.
+///
+/// # The oracle, and why a serial fold and a tolerance are both wrong here
+///
+/// A serial fold is wrong because disagreement with it is the *expected* outcome
+/// for a legally regrouped strategy: it would refuse the split and the tree for
+/// being right. A tolerance is wrong because
+/// [Correctness and testing](../../../docs/correctness-and-testing.md) holds
+/// that a difference is attributed to a named cause or it is a defect, and
+/// "within a bound" admits every value in an interval — including values no
+/// legal grouping produces, and including the *other* strategy's answer, so it
+/// could not tell a strategy that grouped as it declared from one that did not.
+///
+/// What replaces both is the exact value the strategy's *own declared grouping*
+/// produces, evaluated through the independent reference. The comparison stays
+/// bit for bit; what moves is which order the oracle is asked about, and it is
+/// read from the plan by [`declared_partition`] rather than assumed.
+///
+/// # Why this is not the device checked against its own opinion
+///
+/// The partition is a *declaration* — what the plan published it would do — and
+/// the bits are what the device did, so the comparison is "this device grouped
+/// the way this plan declared". The evaluation is `tiler-reference`'s, which
+/// shares no code with the compiler's lowering, the emitter, or the kernel. And
+/// the degenerate partition is cross-checked against the reference evaluator's
+/// run of the whole semantic program, so the oracle is calibrated against the
+/// declared order by an independent path before any strategy is judged by it.
+fn prove_grouping_sensitive_case(
+    device: &Device,
+    declaration: &BoundMetalCompileDeclaration,
+) -> Result<(), ProofError> {
+    let program = serial_sum_program(PARALLEL_ROWS, PARALLEL_COLUMNS);
+    let bits = GROUPING_SENSITIVE_OPERANDS.to_vec();
+    let contributors = PARALLEL_COLUMNS;
+
+    // The calibration step, before any strategy is judged. The degenerate
+    // partition — one contributor each, combined in ascending order — *is* the
+    // declared serial order, so the partitioned oracle at it must agree with the
+    // reference evaluator's run of the whole program. Agreement establishes two
+    // things at once: that this file is asking the oracle about the order the
+    // program declares, and that the pointwise prologue `x * 1.0 + 0.0` is
+    // bit-identity on these operands, which is what lets every partition below
+    // be evaluated over the operands rather than over the prologue's output.
+    let serial_order = ContributorPartition {
+        partitions: contributors,
+        contributors_per_partition: 1,
+    };
+    let reference = reference_bits(&program, &bits, PARALLEL_ROWS, PARALLEL_COLUMNS);
+    let serial_expected =
+        partitioned_reference(&bits, PARALLEL_ROWS, PARALLEL_COLUMNS, serial_order)?;
+    if !declared_grouping_admits(&reference, &serial_expected) {
+        return Err(ProofError::GroupingOracleUncalibrated {
+            evaluator: reference,
+            partitioned: serial_expected,
+        });
+    }
+
+    let permitted = ordered_associations(&bits);
+    let mut distinct = permitted.clone();
+    distinct.sort_unstable();
+    distinct.dedup();
+    println!(
+        "  operands {:08x?}: {} order-preserving grouping(s) over {contributors} contributor(s) \
+         producing {} distinct value(s) {:08x?}; the declared serial order is {:08x?}",
+        bits,
+        permitted.len(),
+        distinct.len(),
+        distinct,
+        serial_expected,
+    );
+
+    let targets =
+        TargetRequest::new([declaration.profile().clone()]).map_err(ProofError::TargetRequest)?;
+    let compilation = compile(CompilerRequest::new(
+        &program,
+        NumericalContract::FLUSH_AND_REASSOCIATE_F32,
+        targets,
+    ))
+    .map_err(ProofError::Compile)?
+    .into_targets()
+    .pop()
+    .ok_or(ProofError::NoSelection)?
+    .into_parts()
+    .1
+    .map_err(|_| ProofError::UnrealizableNumerics)?;
+
+    let retained = compilation.alternatives().len();
+    let mut seen = Vec::new();
+    let mut folds = 0_usize;
+    let mut refusals = 0_usize;
+    for alternative in compilation.alternatives() {
+        let strategy = classify_strategy(alternative)?;
+        let label = strategy_label(strategy);
+        if let Some(strategy) = strategy {
+            seen.push(strategy);
+        } else {
+            folds += 1;
+        }
+        let partition = declared_partition(alternative, strategy, contributors)?;
+        let expected = partitioned_reference(&bits, PARALLEL_ROWS, PARALLEL_COLUMNS, partition)?;
+
+        // The refusal population, built by asking the oracle about every value
+        // this contract permits and keeping the ones it says no to. The ask is
+        // the refusal — there is no second pass re-checking the same predicate
+        // on the same values, because that pass could not fail. Empty means the
+        // oracle had nothing legal to refuse on these operands, which is the
+        // exact condition `PARALLEL_OPERANDS` is in and the reason this case
+        // exists.
+        let mut foreign = Vec::new();
+        for value in &distinct {
+            if !declared_grouping_admits(&expected, std::slice::from_ref(value)) {
+                foreign.push(*value);
+            }
+        }
+        if foreign.is_empty() {
+            return Err(ProofError::NoRefusableGrouping {
+                strategy: label.to_owned(),
+                permitted: distinct.clone(),
+            });
+        }
+
+        let report = dispatch_alternative(device, declaration, alternative, &bits)?;
+        println!(
+            "  {label} ({}): declared {} partition(s) of {} contributor(s), {} encoder(s), widest \
+             workgroup {}, {} byte(s) of threadgroup memory, {:08x?} against its declared \
+             grouping's {:08x?} — {} from the serial fold's {:08x?}",
+            alternative.stable_id(),
+            partition.partitions,
+            partition.contributors_per_partition,
+            report.encoders,
+            report.widest_workgroup,
+            report.threadgroup_bytes,
+            report.bits,
+            expected,
+            if declared_grouping_admits(&serial_expected, &expected) {
+                "indistinguishable"
+            } else {
+                "one legal regrouping away"
+            },
+            serial_expected,
+        );
+        if !declared_grouping_admits(&expected, &report.bits) {
+            return Err(ProofError::GroupingMismatch {
+                strategy: label.to_owned(),
+                partitions: partition.partitions,
+                contributors_per_partition: partition.contributors_per_partition,
+                device: report.bits,
+                expected,
+            });
+        }
+
+        // Each refused value is a *legal* answer under this contract, so what
+        // the count records is the oracle saying no to a wrong-but-permitted
+        // result — by the same function that just admitted the device's bits.
+        refusals += foreign.len();
+        println!(
+            "    refused {} legal grouping(s) this strategy did not declare: {:08x?}",
+            foreign.len(),
+            foreign,
+        );
+    }
+
+    for strategy in [
+        ParallelStrategy::MultiPassSplit,
+        ParallelStrategy::SingleWorkgroupTree,
+    ] {
+        if !seen.contains(&strategy) {
+            return Err(ProofError::StrategyAbsent { strategy, retained });
+        }
+    }
+    if folds == 0 {
+        return Err(ProofError::SerialFoldReplaced { retained });
+    }
+    println!(
+        "every alternative matched its own declared grouping bit for bit, and {refusals} \
+         wrong-but-permitted grouping(s) were refused across {retained} alternative(s)",
     );
     Ok(())
 }
@@ -3741,6 +4191,18 @@ fn run() -> Result<(), ProofError> {
     println!("the parallel reduction strategies, dispatched and compared against the reference:");
     prove_parallel_strategies(device, &declaration)?;
 
+    // ---- the grouping-sensitive half of the same pair ---------------------
+    // The section above proves each strategy reduces the declared contributor
+    // *set* correctly, on operands whose every grouping is exact. This one
+    // proves each strategy rounds the way the grouping it published rounds, on
+    // operands where the groupings disagree — which the section above cannot
+    // observe and does not claim.
+    println!(
+        "the same strategies on grouping-sensitive operands, each held to its own declared \
+              grouping:"
+    );
+    prove_grouping_sensitive_case(device, &declaration)?;
+
     // ---- the envelope path -----------------------------------------------
     let (bytes, sidecar) = read_artifact(&envelope_path)?;
     let mut decoded = DecodedProgram::decode(&bytes, SOLE_DELIVERY).map_err(ProofError::Load)?;
@@ -4042,6 +4504,54 @@ enum ProofError {
     SerialFoldReplaced {
         retained: usize,
     },
+    /// An alternative's published launch geometry names no covering partition.
+    ///
+    /// A refusal rather than a fallback to some default grouping: both parallel
+    /// strategies decline an inexact split rather than padding one, so a
+    /// partition that does not cover the contributor sequence exactly once each
+    /// means this reader stopped measuring what it names — and an oracle asked
+    /// about the wrong order would report the device as wrong.
+    UndeclaredGrouping {
+        strategy: String,
+        detail: String,
+    },
+    /// The partitioned oracle at the declared serial order disagrees with the
+    /// reference evaluator's run of the whole program.
+    ///
+    /// The calibration that makes every per-strategy comparison mean something,
+    /// and its own class because the repair is in neither the device nor the
+    /// strategies: either this file is asking the oracle about an order the
+    /// program does not declare, or the pointwise prologue is not bit-identity
+    /// on these operands and the reduction oracle may not be applied to them.
+    GroupingOracleUncalibrated {
+        evaluator: Vec<u32>,
+        partitioned: Vec<u32>,
+    },
+    /// Every legal regrouping of these operands produces one value, so the
+    /// oracle has nothing it could refuse.
+    ///
+    /// Reported as loudly as a wrong answer, because a check that cannot fail
+    /// measures nothing. This is the exact condition [`PARALLEL_OPERANDS`] is
+    /// in by construction, and reaching it here means the grouping-sensitive
+    /// operands stopped being sensitive.
+    NoRefusableGrouping {
+        strategy: String,
+        permitted: Vec<u32>,
+    },
+    /// A strategy's answer is not the one its own declared grouping produces.
+    ///
+    /// Distinct from [`Self::Mismatch`] because the reference is different: this
+    /// carries the split the plan published, so a reader sees which order was
+    /// expected rather than only that two bit patterns differ. Under a
+    /// reassociating contract "the reference" is not a single value, and a
+    /// message implying one would send a reader looking for the wrong defect.
+    GroupingMismatch {
+        strategy: String,
+        partitions: u64,
+        contributors_per_partition: u64,
+        device: Vec<u32>,
+        expected: Vec<u32>,
+    },
     /// An ABI launch quantity is not the declared literal this reader requires.
     NonLiteralLaunch {
         position: u32,
@@ -4230,6 +4740,42 @@ impl fmt::Display for ProofError {
             Self::SerialFoldReplaced { retained } => write!(
                 formatter,
                 "the portfolio retained {retained} alternative(s) and the serial fold is not among them"
+            ),
+            Self::UndeclaredGrouping { strategy, detail } => write!(
+                formatter,
+                "the {strategy} publishes no contributor partition this oracle can be asked \
+                 about: {detail}",
+            ),
+            Self::GroupingOracleUncalibrated {
+                evaluator,
+                partitioned,
+            } => write!(
+                formatter,
+                "the reference evaluator returns {evaluator:08x?} for the whole program and the \
+                 partitioned oracle returns {partitioned:08x?} at the declared serial order; \
+                 either the orders disagree or the pointwise prologue is not bit-identity on \
+                 these operands",
+            ),
+            Self::NoRefusableGrouping {
+                strategy,
+                permitted,
+            } => write!(
+                formatter,
+                "every order-preserving regrouping of these operands produces {permitted:08x?}, \
+                 so the {strategy}'s oracle has no wrong-but-permitted answer it could refuse and \
+                 observes no rounding",
+            ),
+            Self::GroupingMismatch {
+                strategy,
+                partitions,
+                contributors_per_partition,
+                device,
+                expected,
+            } => write!(
+                formatter,
+                "the {strategy} declares {partitions} partition(s) of \
+                 {contributors_per_partition} contributor(s) and returned {device:08x?}, and that \
+                 grouping produces {expected:08x?}",
             ),
             Self::NonLiteralLaunch { position, node } => write!(
                 formatter,
@@ -5617,6 +6163,202 @@ mod tests {
             covered,
             REDUCTION_CLASSES.len(),
             "every published reduction class is covered, not the ones that happened to run",
+        );
+    }
+
+    /// The operand pair covers what each half alone cannot, counted on both
+    /// sides.
+    ///
+    /// **The numbers are the point, and they are the reason two operand sets
+    /// run rather than one.** Over four contributors there are five
+    /// order-preserving groupings. On [`super::PARALLEL_OPERANDS`] all five
+    /// produce one value, so a comparison against the serial fold has *nothing*
+    /// it could refuse among legal answers — it cannot observe rounding, which
+    /// is exactly what that constant's own documentation says and what this
+    /// pins. On [`super::GROUPING_SENSITIVE_OPERANDS`] they produce two, so the
+    /// declared-grouping oracle has a wrong-but-permitted answer to refuse.
+    ///
+    /// The converse count is asserted too, because the sensitive set is weaker
+    /// where the exact one is strong: of the sixteen single-contributor
+    /// corruptions of the declared grouping, the exact set leaves none
+    /// undetected and the sensitive set leaves one. Neither half is a
+    /// replacement for the other, and a later edit that dropped one would have
+    /// to change these numbers to do it.
+    #[test]
+    fn the_operand_pair_covers_what_each_half_alone_cannot() {
+        let exact = super::ordered_associations(&super::PARALLEL_OPERANDS);
+        let sensitive = super::ordered_associations(&super::GROUPING_SENSITIVE_OPERANDS);
+        assert_eq!(exact.len(), 5, "four contributors admit five orderings");
+        assert_eq!(sensitive.len(), 5, "four contributors admit five orderings");
+
+        let distinct = |mut values: Vec<u32>| {
+            values.sort_unstable();
+            values.dedup();
+            values
+        };
+        assert_eq!(
+            distinct(exact),
+            vec![0x4170_0000],
+            "every grouping of the exact operands is the same f32, so nothing legal is refusable",
+        );
+        assert_eq!(
+            distinct(sensitive),
+            vec![0x3f80_0000, 0x3f80_0001],
+            "the sensitive operands must separate the declared groupings by exactly one rounding \
+             step",
+        );
+
+        // The corruption counts, over the population this states: each slot
+        // dropped, and each slot taking another slot's value. That is the
+        // failure a partition boundary off by one or an unsynchronized staged
+        // read produces, and it is the property the exact set holds and the
+        // sensitive one does not.
+        let escaped = |operands: [u32; 4]| {
+            let declared = super::ContributorPartition {
+                partitions: 2,
+                contributors_per_partition: 2,
+            };
+            let correct = super::partitioned_reference(&operands, 1, 4, declared)
+                .expect("the declared split is evaluable");
+            let mut population = 0_usize;
+            let mut escaped = 0_usize;
+            for slot in 0..4 {
+                for source in 0..5 {
+                    let mut corrupt = operands;
+                    // Source 4 is the dropped case: the contributor is replaced
+                    // by the reduction's own identity element.
+                    corrupt[slot] = if source == 4 {
+                        0.0_f32.to_bits()
+                    } else if source == slot {
+                        continue;
+                    } else {
+                        operands[source]
+                    };
+                    population += 1;
+                    let observed = super::partitioned_reference(&corrupt, 1, 4, declared)
+                        .expect("a corrupted operand set is still evaluable");
+                    if super::declared_grouping_admits(&correct, &observed) {
+                        escaped += 1;
+                    }
+                }
+            }
+            (population, escaped)
+        };
+        assert_eq!(
+            escaped(super::PARALLEL_OPERANDS),
+            (16, 0),
+            "the exact operands must leave no contributor corruption undetected",
+        );
+        assert_eq!(
+            escaped(super::GROUPING_SENSITIVE_OPERANDS),
+            (16, 1),
+            "the sensitive operands leave exactly one corruption undetected, which is why the \
+             exact set still runs",
+        );
+    }
+
+    /// The grouping oracle refuses a legal regrouping the strategy did not
+    /// declare.
+    ///
+    /// **This is the refusal the hardware run watches, carried into the gate.**
+    /// The value refused is not garbage and not out of tolerance: it is the
+    /// serial fold's answer, which a reassociation-permitting contract fully
+    /// authorizes and which any bounded-error oracle would accept. What makes it
+    /// wrong is only that the strategy under test published a different
+    /// grouping, and that is the whole distinction a tolerance cannot draw.
+    ///
+    /// Both directions are asserted, so neither reading is an accident of which
+    /// grouping happens to round up.
+    #[test]
+    fn the_grouping_oracle_refuses_a_legal_grouping_the_strategy_did_not_declare() {
+        let operands = super::GROUPING_SENSITIVE_OPERANDS;
+        let parallel = super::partitioned_reference(
+            &operands,
+            1,
+            4,
+            super::ContributorPartition {
+                partitions: 2,
+                contributors_per_partition: 2,
+            },
+        )
+        .expect("the declared parallel split is evaluable");
+        let serial = super::partitioned_reference(
+            &operands,
+            1,
+            4,
+            super::ContributorPartition {
+                partitions: 4,
+                contributors_per_partition: 1,
+            },
+        )
+        .expect("the degenerate partition is the declared serial order");
+
+        assert_eq!(parallel, vec![0x3f80_0001]);
+        assert_eq!(serial, vec![0x3f80_0000]);
+        assert!(
+            super::declared_grouping_admits(&parallel, &parallel),
+            "an oracle that refused the answer its own declared grouping produces would refuse \
+             every correct strategy",
+        );
+        assert!(
+            !super::declared_grouping_admits(&parallel, &serial),
+            "the parallel oracle must refuse the serial fold's answer, which is legal under this \
+             contract and is not what the parallel strategies declared",
+        );
+        assert!(
+            !super::declared_grouping_admits(&serial, &parallel),
+            "and the serial oracle must refuse the parallel answer, so neither direction is an \
+             accident",
+        );
+
+        // The same refusal is unreachable on the exact operands, which is the
+        // measured statement of why they cannot carry this claim.
+        let exact_parallel = super::partitioned_reference(
+            &super::PARALLEL_OPERANDS,
+            1,
+            4,
+            super::ContributorPartition {
+                partitions: 2,
+                contributors_per_partition: 2,
+            },
+        )
+        .expect("the declared parallel split is evaluable");
+        let exact_serial = super::partitioned_reference(
+            &super::PARALLEL_OPERANDS,
+            1,
+            4,
+            super::ContributorPartition {
+                partitions: 4,
+                contributors_per_partition: 1,
+            },
+        )
+        .expect("the degenerate partition is the declared serial order");
+        assert!(
+            super::declared_grouping_admits(&exact_parallel, &exact_serial),
+            "on the exact operands the two groupings agree, so no refusal exists to watch",
+        );
+    }
+
+    /// A partition that does not cover the contributor sequence is refused
+    /// rather than rounded into one that does.
+    #[test]
+    fn a_partition_that_covers_nothing_is_refused_by_the_reference() {
+        // Three partitions of two cover six, and this row has four. Both
+        // strategies decline an inexact split rather than padding it, so the
+        // oracle must decline to answer for one too.
+        let refusal = super::partitioned_reference(
+            &super::GROUPING_SENSITIVE_OPERANDS,
+            1,
+            4,
+            super::ContributorPartition {
+                partitions: 3,
+                contributors_per_partition: 2,
+            },
+        )
+        .expect_err("a split that does not cover the contributors has no exact value");
+        assert!(
+            matches!(refusal, ProofError::UndeclaredGrouping { .. }),
+            "an inexact split must be refused as an undeclarable grouping: {refusal}",
         );
     }
 
