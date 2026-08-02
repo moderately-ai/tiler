@@ -820,6 +820,12 @@ pub(crate) fn fused_region(
 /// measured evidence, and nothing in this slice makes a split win on
 /// preference.
 ///
+/// Returns `None` when no exact split with at least two partitions and at least
+/// two contributors per partition exists — every contributor count below four,
+/// and every prime one. A partition holding a single contributor folds nothing,
+/// so offering it would add a dispatch that does no work, and an inexact split
+/// would leave a ragged final partition this profile does not lower.
+///
 /// # The measured evidence is not obtainable on the current profile
 ///
 /// **Measurement, 2026-08-02** — [the retained sweep] compiled this program
@@ -842,15 +848,9 @@ pub(crate) fn fused_region(
 /// bound at all. Raising it needs a new authority, which is target-profile work
 /// filed as `establish-an-upper-bound-authority-for-the-metal-grid-axis-row`.
 /// `target::tests::only_one_shape_admits_all_three_reduction_strategies` fails
-/// when the domain widens, so this paragraph cannot go stale silently.
+/// when the domain widens, so this section cannot go stale silently.
 ///
 /// [the retained sweep]: ../../../spikes/program-planning/reduction-crossover/README.md
-///
-/// Returns `None` when no exact split with at least two partitions and at least
-/// two contributors per partition exists — every contributor count below four,
-/// and every prime one. A partition holding a single contributor folds nothing,
-/// so offering it would add a dispatch that does no work, and an inexact split
-/// would leave a ragged final partition this profile does not lower.
 pub(crate) fn governed_partition(contributors: u64) -> Option<ContributorPartition> {
     if contributors < 4 {
         return None;

@@ -75,6 +75,18 @@ A crossover, a calibration, and a held-out prediction each need at least two poi
 - Four doc comments in `crates/tiler-compiler` that named this ticket as owner of "replacing it with measured evidence" now record that the evidence is not obtainable on this profile and name the blocking row — they were making unreachable work look reachable.
 - `docs/compiler/fusion-and-scheduling.md` gains the same correction where it defers preference to measured calibration.
 
+### Required evidence, clause by clause
+
+Stated separately because three of the five are **unreachable rather than satisfied**, and a summary that did not separate them would read as a pass.
+
+| Clause | Status |
+| --- | --- |
+| Retained raw measurements identify stable crossover regions **or explicitly report that none was established** | **Satisfied, on the second branch.** Raw rows retained; none established, with the reason. |
+| Calibration predicts held-out rows within a stated error bound | **Unreachable, and deliberately not faked.** No calibration exists, so no bound is stated and no held-out row is predicted. A bound quoted from a single point would be fabricated. |
+| Serial remains selected below its measured crossover | **Vacuously true, and observed at the one shape.** There is no measured crossover to be below. At `1x4` the sweep records `selected=serial-fold`, and structural dominance is what selects it — unchanged by this work. |
+| An unavailable environment makes no performance claim | **Vacuous, and not claimed as demonstrated.** The environment was available and matched the ledger row in every field, so the unavailable path was never exercised. What holds instead is stronger and was checked: *no* performance claim is made at all, from any environment. |
+| Perturbing the calibrated term or environment identity changes or refuses the selection evidence | **Unreachable.** There is no calibrated term, and no selection evidence is derived from environment identity. The analogous perturbation was done on the term that actually bounds the result: the declared grid-axis row was moved from 4 to 8 and the trigger test failed with the widened domain `[(1, 4), (1, 6), (1, 8), (2, 4)]`. |
+
 ### Measurement boundary
 
 One profile (`tiler.metal.macos-apple9.msl4-0.f32.v1`), one contract, one program family (multiply-add prologue into a trailing-axis sum), `f32` only. The result is about **which plans exist**, not how fast any of them runs; nothing was dispatched, so no performance claim of any kind is made. It does not generalize to another Apple family, OS row, dtype, or to any profile with a different grid-axis bound.
