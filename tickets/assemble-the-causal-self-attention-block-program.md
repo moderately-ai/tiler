@@ -4,7 +4,7 @@ title: Assemble the causal self-attention block as one verified semantic program
 status: in-progress
 priority: p1
 dependencies: [admit-the-attention-contraction-structures, compose-rotary-position-embedding-from-reindex-and-broadcast, admit-the-grouped-query-head-layout-reindex-profile, admit-the-softmax-family]
-related: [design-attention-program-vertical, admit-the-rms-normalization-family, plan-the-materialized-attention-decomposition, design-autoregressive-state-and-kv-cache, promote-the-symbolic-index-profile-to-a-public-boundary]
+related: [design-attention-program-vertical, admit-the-rms-normalization-family, plan-the-materialized-attention-decomposition, design-autoregressive-state-and-kv-cache, promote-the-symbolic-index-profile-to-a-public-boundary, stage-contractions-inside-whole-program-reference-evaluation]
 scopes: [implementation/ir, implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
@@ -49,3 +49,18 @@ Every physical question: schedules, covers, fusion, materialization, cost, and a
 ## Closes when
 
 The block verifies, its refusals fire under perturbation, and its reference evaluation at the C1 prefill shape is compared bit-for-bit against the pinned reference with every difference attributed to a named cause.
+
+## Outcome
+
+Landed as `crates/tiler-reference/tests/causal_self_attention_block.rs`: the complete twenty-two-step block, **forty-eight semantic occurrences** over the eight already-registered keys, built through the public builder, with twelve ordered inputs and three ordered named outputs (`h_out`, `k_rope`, `v_heads`). Nothing was registered, admitted, or widened — the block is a shape over existing families, and the four named dependencies were each verified by reading the source they landed rather than by their status field.
+
+**Delivered as stated.** The block verifies at the C1 prefill row's exact extents. `T` and `S` are two separate `ShapeEnv` symbols, each bound to an input dimension, each bounded to `[1, 32768]` and pinned to the row, and never joined by an equality. All five required refusals fire and are quoted with their diagnostic codes, each beside an admitted neighbour: `broadcast.mapping.extent-disagreement` (mask against the wrong key extent), `rms-norm.f32.weight-shape` (a `[128]` per-head weight against the 1,024-wide hidden axis), `reindex.split.not-surjective` and `reindex.split.not-total` (head splits whose factors do not multiply out), `contraction.rule.summed-index-in-one-operand`, and `ExtentRefusal::NoUpperBound` via `ExtentInterval::states_no_upper_bound`. The masked-position numerical case is retained against the probe's own pinned bits, in both signs.
+
+**Reference comparison against the pinned `transformers` 4.51.0 bits.** The retained record's `row_h0_t2_scores_raw` is driven through the block's own operations 16, 17 and 18 — under the block's real `mask_mapping` at the workload's eight groups and two repetitions — and reproduces `row_h0_t2_scores_scaled`, `row_h0_t2_scores_masked`, and `row_h0_t2_probs` **bit for bit, 0 of 10 differing on each row**. No `torch` seed is needed because the record retains the score row before the scale. **There were no unattributed bit differences to attribute.**
+
+**Measurement boundary, and the one part not delivered as written.** The whole block does *not* reference-evaluate at the C1 row's own 1,024-wide model dimension: `contract_operands` refuses a fold above 16,777,216 steps, and the query and output projections are 20,971,520 each at that row. The refusal is watched and quoted rather than inferred. The block therefore evaluates end to end — all forty-eight occurrences, all three contraction index structures, the C1 row's own head geometry, mask, scale, and rotary composition — at a **512**-wide model dimension against an independent recomputation, at 0 differing elements on all three outputs, with the repeat-tile head reading as a live perturbation. Raising the bound was rejected rather than taken: it is what a whole-program evaluation is deliberately held to, and `contraction_profile_cells.rs` already reaches four larger cells — `w_prefill_q` among them, at these exact extents — without moving it. Filed as [`stage-contractions-inside-whole-program-reference-evaluation`](stage-contractions-inside-whole-program-reference-evaluation.md).
+
+**Two facts found while building that the L4 design did not record.**
+
+- **The prefill block cannot be bound at `S > T`.** It computes its own key from its own input, so the score tensor's key extent is whatever the key path produced, and a mask asserting a wider context is refused at the mask add under `binary.shape`. A decode step is therefore *not* reachable by rebinding `S` alone — it is this program with `k_rope` and `v_heads` arriving as inputs, which is exactly why naming them as outputs is the seam. The design's "widening it is a binding change rather than a graph change" is true of the *row* (`T = S = 10` against `18`, where every key and every non-extent attribute is identical) and false of the context alone.
+- **An explicit `BroadcastAxisMapping` carries its declared result extents into canonical identity**, so all ten of the block's broadcast occurrences have row-dependent attribute bytes. A program byte-identical across rows would need mappings carrying extent *symbols*, which the semantic vocabulary does not have. Both are pinned as checks rather than left as prose.
