@@ -1,7 +1,7 @@
 ---
 id: preflight-the-structural-gather-output-before-it-is-materialized
 title: Preflight the structural gather output before it is materialized
-status: review
+status: done
 priority: p3
 dependencies: []
 related: [map-evaluation-errors-onto-reference-operation-errors-at-the-nine-collapsed-sites]
@@ -9,9 +9,6 @@ scopes: [implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785636853
 ---
 ## User-visible outcome
 
