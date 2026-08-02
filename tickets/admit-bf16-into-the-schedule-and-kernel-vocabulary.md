@@ -1,11 +1,11 @@
 ---
 id: admit-bf16-into-the-schedule-and-kernel-vocabulary
 title: Admit BF16 into the schedule, kernel, and physical-carrier vocabularies
-status: in-progress
+status: blocked
 priority: p1
-dependencies: [register-the-bf16-semantic-operation-signatures, evaluate-bf16-reference-semantics, derive-boundary-alignment-from-the-element-type]
+dependencies: [register-the-bf16-semantic-operation-signatures, evaluate-bf16-reference-semantics, derive-boundary-alignment-from-the-element-type, admit-the-bf16-type-and-carrier-into-every-total-map]
 related: [spike-bf16-through-the-second-dtype-seams]
-scopes: [implementation/ir]
+scopes: [implementation/ir, implementation/compiler, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, bf16, kernel-ir, schedule, physical]
@@ -31,6 +31,29 @@ A verified BF16 kernel exists: a scheduled region whose scalar program is BF16, 
 
 **Inference.** [The BF16 spike](../spikes/numerics/bf16-second-dtype/README.md) classified all of these as *legitimately F32-specific*: the operand type is part of each operation's identity and each tag is in the artifact encoding, so these are new variants beside the existing ones, never renames. They move together because a kernel type with no constant, or a constant with no operation, is not a state the verifier can accept — the vocabulary is only coherent as a set.
 
+## Why `scopes: [implementation/ir]` could not deliver this, and what was extracted
+
+**Measurement, 2026-08-02, worktree at base `3990f9d`, pinned toolchain, `CARGO_TARGET_DIR=./target cargo check --workspace --all-targets`.** Adding only `KernelType::Bf16` and `StorageScalar::Bf16` — the two variants this ticket's first and fourth bullets require — stops the build at eight sites, six of them outside `crates/tiler-ir/**`. `cargo` halts at the first failing crate, so the enumeration took four rounds, each patching the previous round's sites and re-running; every patch was reverted afterwards and `git status --porcelain` was empty before the commit that carries this text.
+
+| Site | Scope |
+| --- | --- |
+| `crates/tiler-ir/src/program/model.rs:543` `element_bytes` | `implementation/ir` |
+| `crates/tiler-ir/src/program/model.rs:1389` `push_element_type` | `implementation/ir` |
+| `crates/tiler-artifact/src/program/model.rs:1737` `element_type_tag` | `implementation/artifact` |
+| `crates/tiler-artifact/src/program/model.rs:1758` `storage_scalar_tag` | `implementation/artifact` |
+| `crates/tiler-artifact/src/program/codec/validate.rs:369` `check_binding_access` | `implementation/artifact` |
+| `crates/tiler-compiler/src/physical.rs:2085` `index_arithmetic_requirement` | `implementation/compiler` |
+| `crates/tiler-metal/src/emit.rs:812` `msl_type` | `implementation/metal` |
+| `crates/tiler-compiler/src/boundary.rs:2130` alignment-representability test | `implementation/compiler` |
+
+**Fact.** `KernelType`, `StorageScalar`, and `ScalarProgram` are each deliberately **not** `#[non_exhaustive]`, and each says so in its own doc comment: they are cross-crate total maps into artifact identity, and ADR 0074 convention 5b makes widening one a build error at every encoder that must decide the new variant's meaning. `ScalarProgram`'s doc comment additionally carries a compile-tested example asserting that an out-of-crate exhaustive match keeps compiling.
+
+**Fact.** `ScalarProgram::PointwiseBf16` — this ticket's seventh implementation key in effect — additionally breaks `crates/tiler-compiler/src/physical.rs:1588-1738` and `crates/tiler-compiler/src/frontier.rs:856-871`. The second of those is the map from a scalar program to its `StorageScalar`, which *is* the "physical carrier" half of this ticket's stated outcome; it lives in `tiler-compiler`, not in `tiler-ir`.
+
+**Inference.** The three enum widenings this ticket needs cannot be staged: `KernelConstant::Bf16Bits`, `BinaryOp::Bf16Add`/`Bf16Multiply`, and `ConvertOp::CanonicalizeBf16Nan` are all `#[non_exhaustive]` and would widen freely, but each one's `value_type`/`operand_type`/`result_type` must return a `KernelType`, so `KernelType::Bf16` is a hard prerequisite for all of them and cannot be deferred. There is therefore no subset of this ticket that both delivers part of the user-visible outcome and leaves the workspace compiling from `implementation/ir` alone.
+
+**Consequence.** The compile-forced cross-crate minimum was extracted into `admit-the-bf16-type-and-carrier-into-every-total-map`, which this ticket now depends on. That ticket makes `msl_type` *refuse* BF16 rather than spell it, so no unmeasured Metal capability becomes reachable while `declare-the-bf16-rows-on-the-authoritative-metal-profile` is blocked. What remains here is the BF16 pointwise expression, the scalar-program variant, the schedule and kernel verification, the lowering, and the frontier carrier mapping — and the last of those is why this ticket's scopes now include `implementation/compiler`, and the `docs/dtype-support.md` cells in its "Closes when" are why they include `contracts/navigation`.
+
 ## Implementation keys
 
 - New variants with **new** tags. Every existing tag keeps its value; the artifact encoding depends on them and an existing artifact must not change meaning.
@@ -51,9 +74,15 @@ A verified BF16 kernel exists: a scheduled region whose scalar program is BF16, 
 
 A BF16 kernel is verified and agrees bit-for-bit with the reference oracle, the mixed-dtype and payload-width refusals are observed failing, the canonicalization perturbation is observed failing, F32 identities are unchanged, and the `Kernel vocabulary` and `Physical carrier and encoding` cells for BF16 move in `docs/dtype-support.md`.
 
+## Two questions the body did not state, found while measuring
+
+**Fact.** `crates/tiler-ir/Cargo.toml` names no dependency on `tiler-reference`, and `crates/tiler-reference/Cargo.toml` depends on `tiler-ir`. The "Required evidence" bullet asking a *lowered kernel's* interpreted result to agree bit-for-bit with `tiler-reference` therefore cannot be discharged inside `crates/tiler-ir/**`: the only crate that already sees both is `tiler-compiler`. **Inference.** Either that bullet moves to a ticket holding `implementation/compiler` — which this ticket now holds — or it is discharged in-crate against an oracle that is not independent, which is the weaker claim and should not be recorded as the stronger one. Take the first route and say which crate the comparison ran in.
+
+**Fact.** `NumericalRealization::canonical_arithmetic_nan_bits` is a `u32` (`crates/tiler-ir/src/schedule/numerics.rs`), and BF16's canonical arithmetic NaN is the 16-bit `0x7fc0` (`CANONICAL_BF16_ARITHMETIC_NAN_BITS`, `crates/tiler-ir/src/semantic/bf16.rs`). **Inference.** A BF16 region has to put a 16-bit pattern in a 32-bit field, and which reading applies is not stated anywhere today. Widening the field would move the schedule *and* kernel identity encodings and is an identity-domain step this ticket must not take on its own. The reachable answer is to state the invariant — the field carries the region's own arithmetic type's canonical pattern, zero-extended — document it at the field, and have the schedule verifier *require* it for a BF16 region, so the reading is checked rather than assumed. Note that `carry-bf16-through-the-artifact-encoding-and-identity` reaches the same question at the artifact's own `NumericalFacts` and defers it to `redesign-the-delivered-realization-record-from-typed-evidence`; keep the two answers consistent or say why they differ.
+
 ## Graph maintenance
 
-- Depends on the operation signatures (nothing to schedule otherwise), on the reference oracle (nothing to compare against otherwise), and on the boundary-alignment derivation (the physical carrier cannot state its alignment otherwise).
-- Gates `carry-bf16-through-the-artifact-encoding-and-identity` and `lower-bf16-to-metal`.
+- Depends on the operation signatures (nothing to schedule otherwise), on the reference oracle (nothing to compare against otherwise), on the boundary-alignment derivation (the physical carrier cannot state its alignment otherwise), and on `admit-the-bf16-type-and-carrier-into-every-total-map` (no green commit is reachable otherwise — see the measurement above).
+- Gates `carry-bf16-through-the-artifact-encoding-and-identity` and `lower-bf16-to-metal` **for behaviour, not for compilation**. Both of those tickets say they depend on "the IR vocabulary existing"; what they actually needed to compile was extracted into `admit-the-bf16-type-and-carrier-into-every-total-map`, which lands ahead of all three. Neither of their real deliverables — the artifact round trip and identity, the `bfloat` emission and dispatch — is affected by that extraction.
 - Optimizer legality is **not** in scope. A BF16 rewrite rule needs its own legality argument, because the reassociation and contraction permissions are per-arithmetic-type and BF16's are not F32's.
 - This ticket moves identity tags in `tiler-ir`. Every downstream golden and every spike citing a kernel or program identity may drift; recompute on the merged tree rather than picking a side.
