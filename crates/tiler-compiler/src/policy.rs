@@ -749,9 +749,11 @@ mod tests {
     /// each dimension it listed into `is_consumable`'s union, which is what
     /// decides whether a *contract* may permit that dimension at all, so writing
     /// one would widen this build's numerical surface on the strength of an
-    /// operation nothing downstream can realize. `ScalarArithmetic` admits only
-    /// the governed `f32` association, so no BF16 numerical row can be stated on
-    /// a target profile either.
+    /// operation nothing downstream can realize. A BF16 numerical row *is*
+    /// statable on a target profile now that `ScalarArithmetic` derives the
+    /// arithmetic/value-type association from the registered descriptor, and
+    /// that does not change this: a subject a profile can speak about is not an
+    /// operation this build can plan, and none is declared here.
     const UNPLANNED_OPERATIONS: &[&str] = &[
         "tiler::add-bf16@1",
         "tiler::constant-bf16@1",
