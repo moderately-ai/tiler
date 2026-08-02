@@ -121,8 +121,9 @@ use tiler_compiler::session::{
 };
 use tiler_compiler::target::{TargetRequest, TargetRequestError};
 use tiler_ir::semantic::{
-    F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
-    SemanticProgramBuilder, StrictSerialF32Sum,
+    ContractionIndex, ContractionIndexStructure, F32, F32Add, F32Constant, F32Multiply,
+    F32TensorContraction, InputKey, OutputKey, SemanticProgram, SemanticProgramBuilder,
+    StrictSerialF32Sum,
 };
 use tiler_ir::shape::{Axis, Shape};
 #[cfg(test)]
@@ -183,6 +184,46 @@ const REDUCTION_CLASSES: [(&str, u64); 3] = [
 /// stages through one intermediate. Publishing both is the point of the proof:
 /// the two are different programs on the device and must agree bit for bit.
 const PLAN_ROLES: [&str; 2] = ["selected", "materialized"];
+
+/// The class name of the published contraction member.
+///
+/// One member rather than a matrix: at this shape the portfolio retains exactly
+/// one alternative for the contraction, so there is no materialized twin to
+/// publish beside it and claiming a role pair would name a file that cannot be
+/// written.
+const CONTRACTION_CLASS: &str = "contraction";
+
+/// Rows of the published contraction's activations operand, and of its result.
+///
+/// **The whole `M x N` output has to fit the grid axis**, and the authoritative
+/// declaration's `GridAxisThreads` row is a deliberately conservative four-thread
+/// compile guarantee. The `direct` realization launches one invocation per
+/// output element, so `M * N <= 4` is the entire shape budget; `2 x 2` spends it
+/// on a result with more than one row *and* more than one column, which is what
+/// makes the two operand access relations — `(t, o, d) -> (t, d)` never
+/// mentioning `o`, and `(t, o, d) -> (o, d)` never mentioning `t` — separately
+/// observable. A `1 x 4` or `4 x 1` result would let a kernel that confused the
+/// two still agree.
+///
+/// **The L3 profile's own cells are refused at this bound and are not published
+/// here.** Its smallest correctness cell is `w_decode_kv` at `M=1, N=1024`,
+/// whose 1,024 output elements resolve `target.grid-axis` as
+/// `required: Threads(1024), available: Threads(4)` before any plan composes.
+/// That is a property of the declared profile rather than of the contraction,
+/// and raising it is a target-fact change in `tiler-build`.
+const CONTRACTION_M: u64 = 2;
+/// Rows of the published contraction's weights operand, and columns of its
+/// result. See [`CONTRACTION_M`] for why the product is bounded at four.
+const CONTRACTION_N: u64 = 2;
+/// The contracted extent, shared by both operands.
+///
+/// Three, and deliberately not a multiple of any tile or split width. The L3
+/// record states the `direct` realization's preconditions as "none beyond
+/// `K >= 1`", so publishing at a `K` that a tile-width check would reject is
+/// what keeps the absence of such a check on this path a measured fact rather
+/// than an untested claim. Three contributors is also the smallest extent at
+/// which the fold's *order* is observable.
+const CONTRACTION_K: u64 = 3;
 
 /// Suffix appended to the envelope path to name the proof-case sidecar.
 ///
@@ -265,6 +306,57 @@ fn serial_sum_program(rows: u64, columns: u64) -> SemanticProgram {
         .output(
             OutputKey::new("result").expect("the output key is valid"),
             sum,
+        )
+        .expect("the output binds");
+    builder.build().expect("the program verifies")
+}
+
+/// The L3 profile's index structure, `td,od->to`.
+///
+/// Spelled with arbitrary frontend index labels rather than with `0, 1, 2`, so
+/// the renaming-invariant canonical encoding ADR 0087 requires is exercised by
+/// the published artifact rather than assumed: `ab,cb->ac` and this spelling
+/// must reach the same canonical bytes, and a producer that only ever used the
+/// canonical labels would never find out.
+fn contraction_structure() -> ContractionIndexStructure {
+    ContractionIndexStructure::new(
+        [
+            [ContractionIndex::new(19), ContractionIndex::new(3)],
+            [ContractionIndex::new(14), ContractionIndex::new(3)],
+        ],
+        [ContractionIndex::new(19), ContractionIndex::new(14)],
+    )
+    .expect("the profile's index structure passes every structural admission rule")
+}
+
+/// Builds `activations[m, k] x weights[n, k] -> projected[m, n]`.
+///
+/// The first program this producer publishes with **two tensor inputs**. Its
+/// interface is therefore the first one whose sidecar carries two operand
+/// payloads and whose routed variant binds two program-input buffers, which is
+/// the whole reason it exists beside the serial sum rather than replacing it.
+fn contraction_program(m: u64, n: u64, k: u64) -> SemanticProgram {
+    let mut builder =
+        SemanticProgramBuilder::try_standard().expect("the governed profile composes");
+    let activations = builder
+        .input::<F32>(
+            InputKey::new("activations").expect("the activations key is valid"),
+            Shape::from_dims([m, k]),
+        )
+        .expect("the activations operand binds");
+    let weights = builder
+        .input::<F32>(
+            InputKey::new("weights").expect("the weights key is valid"),
+            Shape::from_dims([n, k]),
+        )
+        .expect("the weights operand binds");
+    let projected =
+        F32TensorContraction::apply(&mut builder, &contraction_structure(), activations, weights)
+            .expect("the contraction applies");
+    builder
+        .output(
+            OutputKey::new("projected").expect("the output key is valid"),
+            projected,
         )
         .expect("the output binds");
     builder.build().expect("the program verifies")
@@ -393,10 +485,48 @@ fn run() -> Result<(), ProducerError> {
                     .find(|alternative| !alternative.is_fused())
                     .ok_or(ProducerError::NoMaterializedAlternative)?,
             };
-            publish_member(&publication, class, role, columns, &program, plan)?;
+            publish_member(
+                &publication,
+                class,
+                role,
+                sidecar::ProofFamily::SerialSum {
+                    rows: ROWS,
+                    columns,
+                },
+                &program,
+                plan,
+            )?;
             published += 1;
         }
     }
+
+    // ---- the contraction member ------------------------------------------
+    // A different program *family*, not another reduction class, and published
+    // as its own member for that reason: it is the first program here with two
+    // tensor inputs, so it exercises the arity obligations the sidecar builder
+    // and the routed ABI have always carried and that one input can never fire.
+    let contraction = contraction_program(CONTRACTION_M, CONTRACTION_N, CONTRACTION_K);
+    let compilation = compile_under(&declaration, &contraction)?;
+    println!(
+        "{CONTRACTION_CLASS} ({CONTRACTION_M}x{CONTRACTION_N}x{CONTRACTION_K}, \
+         {} declared input(s)): target profile {}",
+        contraction.input_count(),
+        compilation.target_profile_key(),
+    );
+    publish_member(
+        &publication,
+        CONTRACTION_CLASS,
+        "selected",
+        sidecar::ProofFamily::Contraction {
+            m: CONTRACTION_M,
+            n: CONTRACTION_N,
+            k: CONTRACTION_K,
+        },
+        &contraction,
+        compilation.selected().ok_or(ProducerError::NoSelection)?,
+    )?;
+    published += 1;
+
     println!(
         "published {published} proof member(s) under {}",
         base.display()
@@ -415,7 +545,7 @@ fn publish_member(
     publication: &Publication<'_>,
     class: &str,
     role: &str,
-    columns: u64,
+    family: sidecar::ProofFamily,
     program: &SemanticProgram,
     plan: tiler_compiler::session::PlanAlternative<'_>,
 ) -> Result<(), ProducerError> {
@@ -454,7 +584,7 @@ fn publish_member(
     // refuses stops the publication instead of leaving an envelope on disk with
     // no record describing it.
     let sidecar_bytes =
-        sidecar::encoded(artifact, program, ROWS, columns).map_err(ProducerError::Sidecar)?;
+        sidecar::encoded(artifact, program, family).map_err(ProducerError::Sidecar)?;
 
     let envelope_path = proof_member(publication.base, class, role);
     let sidecar_path = proof_sidecar(&envelope_path);
@@ -562,8 +692,9 @@ impl fmt::Display for ProducerError {
 #[cfg(test)]
 mod tests {
     use super::{
-        COLUMNS, OPTIMIZATION, PLAN_ROLES, REDUCTION_CLASSES, ROWS, compile_under, declaration,
-        serial_sum_program, sidecar,
+        COLUMNS, CONTRACTION_CLASS, CONTRACTION_K, CONTRACTION_M, CONTRACTION_N, OPTIMIZATION,
+        PLAN_ROLES, REDUCTION_CLASSES, ROWS, compile_under, declaration, serial_sum_program,
+        sidecar,
     };
     use crate::{ArtifactCodecFailure, decode_artifact};
     use tiler_artifact::program::PayloadPlatform;
@@ -981,8 +1112,15 @@ mod tests {
             }
             Resolution::Uncached { envelope, .. } => envelope.clone(),
         };
-        let sidecar_bytes =
-            sidecar::encoded(&artifact, &program, ROWS, COLUMNS).expect("the sidecar builds");
+        let sidecar_bytes = sidecar::encoded(
+            &artifact,
+            &program,
+            sidecar::ProofFamily::SerialSum {
+                rows: ROWS,
+                columns: COLUMNS,
+            },
+        )
+        .expect("the sidecar builds");
         let _ = std::fs::remove_dir_all(directory);
         (artifact, envelope, sidecar_bytes)
     }
@@ -1089,7 +1227,7 @@ mod tests {
     #[test]
     fn the_member_names_are_the_ones_the_runner_opens() {
         let base = std::path::Path::new("/tmp/a.tiler");
-        let names: Vec<String> = REDUCTION_CLASSES
+        let mut names: Vec<String> = REDUCTION_CLASSES
             .iter()
             .flat_map(|(class, _)| {
                 PLAN_ROLES
@@ -1098,6 +1236,11 @@ mod tests {
             })
             .map(|path| path.display().to_string())
             .collect();
+        names.push(
+            super::proof_member(base, CONTRACTION_CLASS, "selected")
+                .display()
+                .to_string(),
+        );
         assert_eq!(
             names,
             [
@@ -1107,6 +1250,7 @@ mod tests {
                 "/tmp/a.tiler.singleton.materialized",
                 "/tmp/a.tiler.nontrivial.selected",
                 "/tmp/a.tiler.nontrivial.materialized",
+                "/tmp/a.tiler.contraction.selected",
             ],
         );
         assert_eq!(
@@ -1164,6 +1308,110 @@ mod tests {
             "`prototypes/serial-sum-run` assembles one fixture per class from its own copy of \
              this matrix; a class or extent changed here must change there too",
         );
+        assert_eq!(
+            (
+                CONTRACTION_CLASS,
+                CONTRACTION_M,
+                CONTRACTION_N,
+                CONTRACTION_K
+            ),
+            ("contraction", 2, 2, 3),
+            "`prototypes/serial-sum-run` opens the contraction member by this class name and \
+             checks the artifact's declared interface against these extents; moving the \
+             published contraction means moving its half too",
+        );
+    }
+
+    /// The published contraction is a two-input program, and its interface is
+    /// the one the sidecar binds.
+    ///
+    /// **The arity is the deliverable, so it is asserted rather than assumed.**
+    /// Every other program this producer publishes has one tensor input, so a
+    /// regression that collapsed the contraction back to one — a recognizer
+    /// change, a builder that deduplicated identical operand shapes — would
+    /// leave every existing case green while removing the only thing this
+    /// member exists to carry.
+    #[test]
+    fn the_published_contraction_declares_two_tensor_inputs() {
+        let program = super::contraction_program(CONTRACTION_M, CONTRACTION_N, CONTRACTION_K);
+        assert_eq!(program.input_count(), 2);
+        assert_eq!(program.operation_count(), 1);
+    }
+
+    /// A contraction shape the operand table is not written for is refused.
+    ///
+    /// The negative half of [`the_published_shape_matrix_is_the_one_the_runner_expects`]'s
+    /// contraction row, and the one that makes the constants load-bearing: the
+    /// case table is literal `[[u32; 3]; 2]` rows, so a producer that moved the
+    /// published shape and left the table alone would otherwise publish
+    /// operands for a program it did not compile.
+    #[test]
+    fn a_contraction_shape_without_an_operand_table_is_refused() {
+        let (artifact, program) = published_contraction();
+        // The published shape still builds, which is what makes the refusal
+        // below evidence about the shape rather than about the artifact.
+        sidecar::encoded(
+            &artifact,
+            &program,
+            sidecar::ProofFamily::Contraction {
+                m: CONTRACTION_M,
+                n: CONTRACTION_N,
+                k: CONTRACTION_K,
+            },
+        )
+        .expect("the published contraction shape has an operand table");
+
+        let error = sidecar::encoded(
+            &artifact,
+            &program,
+            sidecar::ProofFamily::Contraction { m: 4, n: 1, k: 8 },
+        )
+        .expect_err("no operand table is written for a 4x1x8 contraction");
+        assert!(
+            matches!(
+                error,
+                sidecar::SidecarError::UnwrittenContractionShape {
+                    requested: (4, 1, 8),
+                    written: (2, 2, 3),
+                }
+            ),
+            "the refusal must name both shapes: {error}",
+        );
+    }
+
+    /// Produces the contraction artifact this producer publishes, and the
+    /// program it was compiled from.
+    ///
+    /// Reaches `xcrun`, like [`published`], because a sidecar is bound to a
+    /// *verified artifact* and the only way to obtain one is to carry a checked
+    /// plan through the real offline path.
+    fn published_contraction() -> (
+        tiler_artifact::program::VerifiedArtifactProgram,
+        tiler_ir::semantic::SemanticProgram,
+    ) {
+        let directory = std::env::temp_dir().join(format!(
+            "tiler-prototype-contraction-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id(),
+        ));
+        let cache = ExpansionCache::open(directory.join("cache"));
+        let program = super::contraction_program(CONTRACTION_M, CONTRACTION_N, CONTRACTION_K);
+        let declaration = declared();
+        let compilation =
+            compile_under(&declaration, &program).expect("the declared contraction compiles");
+        let selected = compilation.selected().expect("a selected alternative");
+        let accepted = tiler_build::accept_or_publish_metal_plan(
+            &cache,
+            &Toolchain::system(),
+            &program,
+            selected,
+            std::slice::from_ref(&declaration),
+            OPTIMIZATION,
+        )
+        .expect("the checked contraction plan resolves");
+        let artifact = accepted.artifact().clone();
+        let _ = std::fs::remove_dir_all(directory);
+        (artifact, program)
     }
 
     /// Measures whether `xcrun` produced byte-identical `metallib` output twice.

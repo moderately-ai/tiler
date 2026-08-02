@@ -166,7 +166,7 @@ use tiler_artifact::program::{
     TargetProfileRef,
 };
 use tiler_artifact::proof::{
-    DecodedProofSidecar, ProofAssociationError, ProofCodecError, decode_proof_sidecar,
+    DecodedProofSidecar, ProofAssociationError, ProofCaseRef, ProofCodecError, decode_proof_sidecar,
 };
 use tiler_build::{BoundMetalCompileDeclaration, BoundMetalDeclarationError};
 use tiler_compiler::session::{
@@ -177,8 +177,9 @@ use tiler_compiler::target::{TargetRequest, TargetRequestError};
 use tiler_ir::program::abi::{AbiRoot, ExprNode};
 use tiler_ir::program::{ValueRole, VerifiedKernelProgram};
 use tiler_ir::semantic::{
-    F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
-    SemanticProgramBuilder, StrictSerialF32Sum,
+    ContractionIndex, ContractionIndexStructure, F32, F32Add, F32Constant, F32Multiply,
+    F32TensorContraction, InputKey, OutputKey, SemanticProgram, SemanticProgramBuilder,
+    StrictSerialF32Sum,
 };
 use tiler_ir::shape::{Axis, Shape};
 use tiler_metal::applicability::{
@@ -275,10 +276,27 @@ const PARALLEL_OPERANDS: [u32; 4] = [
     0x4080_0000, // 4.0
     0x4100_0000, // 8.0
 ];
-/// Interface key of the program's one input.
+/// Interface key of the serial sum's one input.
 const INPUT_KEY: &str = "input";
-/// Interface key of the program's one output.
+/// Interface key of the serial sum's one output.
 const OUTPUT_KEY: &str = "result";
+/// Interface key of the contraction's first operand, `[M, K]`.
+const CONTRACTION_ACTIVATIONS_KEY: &str = "activations";
+/// Interface key of the contraction's second operand, `[N, K]`.
+///
+/// The key the whole ticket turns on: it is the first program input in this
+/// workspace that is not the *only* program input, so every place that resolved
+/// a binding by comparing against one constant had to learn to resolve an
+/// ordinal instead.
+const CONTRACTION_WEIGHTS_KEY: &str = "weights";
+/// Interface key of the contraction's one output, `[M, N]`.
+const CONTRACTION_OUTPUT_KEY: &str = "projected";
+/// Class name of the published contraction member.
+///
+/// `prototypes/serial-sum-compile` writes this name. Nothing links the two
+/// crates, so each pins it in a test naming the other side, exactly as
+/// [`SIDECAR_SUFFIX`] and [`REDUCTION_CLASSES`] are pinned.
+const CONTRACTION_CLASS: &str = "contraction";
 /// Suffix appended to the envelope path to name the proof-case sidecar.
 ///
 /// `prototypes/serial-sum-compile` writes this name. Nothing links the two
@@ -364,6 +382,57 @@ fn decode_f32_bits(
         .collect())
 }
 
+/// Reads one case's operand payloads, one per input the artifact declares.
+///
+/// **Every payload, and each at its own declared element count.** The superseded
+/// spelling was `case.inputs().next()`, which read the leading payload and
+/// ignored the rest; against a one-input artifact that is the whole set and
+/// against a two-input one it is half of it, silently. The sidecar layer already
+/// guarantees one payload per declared input — it refuses a case that supplies
+/// any other number — so a count disagreement here is this reader's own defect
+/// and is reported as one.
+fn case_operands(
+    interface: &DeclaredInterface,
+    case: ProofCaseRef<'_>,
+) -> Result<Vec<Vec<u32>>, ProofError> {
+    let payloads: Vec<_> = case.inputs().collect();
+    if payloads.len() != interface.inputs.len() {
+        return Err(ProofError::SidecarInterfaceArity {
+            sidecar: payloads.len(),
+            artifact: interface.inputs.len(),
+        });
+    }
+    payloads
+        .iter()
+        .zip(&interface.inputs)
+        .map(|(payload, declared)| {
+            // Bound to the key as well as to the position: the sidecar places
+            // its payloads into the artifact's interface order, so a
+            // disagreement here means the two orders have drifted apart and
+            // every operand after it would be written into the wrong buffer.
+            if payload.key().as_str() != declared.key {
+                return Err(ProofError::SidecarInterfaceKey {
+                    sidecar: payload.key().as_str().to_owned(),
+                    artifact: declared.key.clone(),
+                });
+            }
+            decode_f32_bits("input", declared.elements, payload.bytes())
+        })
+        .collect()
+}
+
+/// Reads one case's expected output payload at the declared element count.
+fn case_expected(
+    interface: &DeclaredInterface,
+    case: ProofCaseRef<'_>,
+) -> Result<Vec<u32>, ProofError> {
+    let payload = case
+        .expected()
+        .next()
+        .ok_or(ProofError::SidecarWithoutCases)?;
+    decode_f32_bits("expected", interface.output_elements, payload.bytes())
+}
+
 /// The authoritative macOS Metal declaration both paths compile and emit under.
 ///
 /// Stated by `tiler-build` rather than here. This runner used to hold its own
@@ -423,6 +492,55 @@ fn serial_sum_program(rows: u64, columns: u64) -> SemanticProgram {
         .output(
             OutputKey::new(OUTPUT_KEY).expect("the output key is valid"),
             sum,
+        )
+        .expect("the output binds");
+    builder.build().expect("the program verifies")
+}
+
+/// The L3 profile's index structure, `td,od->to`.
+///
+/// Spelled with the same arbitrary frontend index labels the producer uses, so
+/// the two processes reach the same canonical encoding through the
+/// renaming-invariant rule ADR 0087 requires rather than by both happening to
+/// write the canonical labels.
+fn contraction_structure() -> ContractionIndexStructure {
+    ContractionIndexStructure::new(
+        [
+            [ContractionIndex::new(19), ContractionIndex::new(3)],
+            [ContractionIndex::new(14), ContractionIndex::new(3)],
+        ],
+        [ContractionIndex::new(19), ContractionIndex::new(14)],
+    )
+    .expect("the profile's index structure passes every structural admission rule")
+}
+
+/// Builds `activations[m, k] x weights[n, k] -> projected[m, n]`.
+///
+/// Reconstructed here for the same reason the serial sum is: the envelope
+/// carries no semantic program, so naming the computation the artifact packages
+/// requires deriving it independently and comparing canonical identities.
+fn contraction_program(m: u64, n: u64, k: u64) -> SemanticProgram {
+    let mut builder =
+        SemanticProgramBuilder::try_standard().expect("the governed profile composes");
+    let activations = builder
+        .input::<F32>(
+            InputKey::new(CONTRACTION_ACTIVATIONS_KEY).expect("the activations key is valid"),
+            Shape::from_dims([m, k]),
+        )
+        .expect("the activations operand binds");
+    let weights = builder
+        .input::<F32>(
+            InputKey::new(CONTRACTION_WEIGHTS_KEY).expect("the weights key is valid"),
+            Shape::from_dims([n, k]),
+        )
+        .expect("the weights operand binds");
+    let projected =
+        F32TensorContraction::apply(&mut builder, &contraction_structure(), activations, weights)
+            .expect("the contraction applies");
+    builder
+        .output(
+            OutputKey::new(CONTRACTION_OUTPUT_KEY).expect("the output key is valid"),
+            projected,
         )
         .expect("the output binds");
     builder.build().expect("the program verifies")
@@ -554,14 +672,43 @@ fn read_artifact(path: &Path) -> Result<(Vec<u8>, DecodedProofSidecar), ProofErr
     Ok((bytes, sidecar))
 }
 
-/// Reads the shape the artifact declares, proves it is this program's *form*,
-/// and binds its extents.
+/// One input an artifact declares, read rather than assumed.
+///
+/// The extents are kept alongside the element count because the two answer
+/// different questions: a buffer is sized from the count, and a *family* is
+/// recognized from the shape — `[M, K]` and `[N, K]` are the same count at
+/// `M = N` and are still two different operands.
+#[derive(Clone, Debug)]
+struct DeclaredInput {
+    key: String,
+    extents: Vec<u64>,
+    elements: u64,
+}
+
+/// The whole interface one artifact declares.
+///
+/// **Ordered as the artifact orders it, and that order is load-bearing.** The
+/// sidecar's case payloads, the routed `BindingTarget::ProgramInput` keys, and
+/// this vector are three views of one interface; the ordinal a binding resolves
+/// to here is the ordinal its operands are read from, so a host that sorted or
+/// deduplicated this list would bind the right number of buffers with the wrong
+/// bytes in them — a wrong answer rather than a refusal.
+#[derive(Clone, Debug)]
+struct DeclaredInterface {
+    inputs: Vec<DeclaredInput>,
+    output_key: String,
+    output_elements: u64,
+    abi: AbiFacts,
+}
+
+/// Reads the interface an artifact declares, and binds every declared shape.
 ///
 /// The envelope carries no semantic program — the oracle's input — so the runner
 /// reconstructs one to compare against. What it takes from the artifact is the
-/// interface: the keys, the logical resolved types, and the exact input shape. What it
-/// supplies is the body, and a disagreement there cannot be checked here; it
-/// would surface as a bit disagreement, which is why the direct path exists.
+/// interface: the keys, the logical resolved types, and the exact operand
+/// shapes. What it supplies is the body, and a disagreement there cannot be
+/// checked here; it would surface as a bit disagreement, which is why the direct
+/// path exists.
 ///
 /// **The declared shape is read rather than asserted equal to [`COLUMNS`], and
 /// that is the design rather than a gap.** What this runner may take from an
@@ -579,64 +726,185 @@ fn read_artifact(path: &Path) -> Result<(Vec<u8>, DecodedProofSidecar), ProofErr
 /// producer could package only the degenerate single-contributor reduction and
 /// this path ran a `4x1` against the direct path's `4x3`. Nothing here changed
 /// when that closed, which is what reading rather than asserting bought.
-fn bind_interface(decoded: &DecodedProgram) -> Result<(u64, u64, AbiFacts), ProofError> {
+///
+/// **No input count is expected here**, deliberately. This function reads what
+/// the artifact declares and refuses only what it cannot represent; which
+/// cardinality a given program family requires is
+/// [`require_serial_sum_interface`]'s and [`require_contraction_interface`]'s to
+/// state.
+fn bind_declared_interface(decoded: &DecodedProgram) -> Result<DeclaredInterface, ProofError> {
     let f32_type = F32::resolved_type().canonical_encoding();
-    let inputs: Vec<_> = decoded.inputs().collect();
-    let [input] = inputs.as_slice() else {
-        return Err(ProofError::Interface(format!(
-            "the artifact declares {} inputs and this program declares 1",
-            inputs.len(),
-        )));
-    };
-    let [rows, columns] = input.shape().extents() else {
-        return Err(ProofError::Interface(format!(
-            "the artifact's input is {}, and this program reduces a rank-2 input",
-            input.shape(),
-        )));
-    };
-    if input.key().as_str() != INPUT_KEY || input.resolved_type_encoding() != f32_type.as_bytes() {
-        return Err(ProofError::Interface(format!(
-            "the artifact's input is {:?} of logical type {:02x?}, this program's is \
-             {INPUT_KEY:?} of canonical F32",
-            input.key().as_str(),
-            input.resolved_type_encoding(),
-        )));
+    let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
+    let mut inputs = Vec::with_capacity(decoded.inputs().len());
+    // **Every declared input, in the artifact's own interface order.** This loop
+    // is the widening: it used to be `let [input] = inputs.as_slice()`, which
+    // refused a two-operand program at the interface before any of the rest of
+    // this file could be wrong about it, and which bound exactly one shape into
+    // the ABI facts. A contraction declares two, and both of their extents are
+    // ABI inputs — the result's own shape depends on one axis of each — so
+    // binding only the leading operand would leave the launch geometry resolved
+    // against a fact the artifact never supplied.
+    for (position, input) in decoded.inputs().enumerate() {
+        if input.resolved_type_encoding() != f32_type.as_bytes() {
+            return Err(ProofError::Interface(format!(
+                "the artifact's input {position} {:?} has logical type {:02x?} and this proof \
+                 binds canonical F32 only",
+                input.key().as_str(),
+                input.resolved_type_encoding(),
+            )));
+        }
+        let extents: Vec<u64> = input
+            .shape()
+            .extents()
+            .iter()
+            .map(|extent| extent.get())
+            .collect();
+        binder
+            .bind_input_shape(input.key(), input.shape())
+            .map_err(|cause| {
+                ProofError::Interface(format!(
+                    "the declared shape of input {position} {:?} does not bind: {cause}",
+                    input.key().as_str(),
+                ))
+            })?;
+        inputs.push(DeclaredInput {
+            key: input.key().as_str().to_owned(),
+            elements: extents.iter().product(),
+            extents,
+        });
     }
 
     let outputs: Vec<_> = decoded.outputs().collect();
     let [output] = outputs.as_slice() else {
         return Err(ProofError::Interface(format!(
-            "the artifact declares {} outputs and this program declares 1",
+            "the artifact declares {} outputs and this proof reads back exactly 1",
             outputs.len(),
         )));
     };
-    let published: u64 = output
-        .shape()
-        .extents()
-        .iter()
-        .map(|extent| extent.get())
-        .product();
-    if output.key().as_str() != OUTPUT_KEY
-        || output.resolved_type_encoding() != f32_type.as_bytes()
-        || published != rows.get()
-    {
+    if output.resolved_type_encoding() != f32_type.as_bytes() {
         return Err(ProofError::Interface(format!(
-            "the artifact's output is {:?} of {} and logical type {:02x?}, and reducing its \
-             input's inner axis publishes {} F32 element(s) under {OUTPUT_KEY:?}",
+            "the artifact's output {:?} has logical type {:02x?} and this proof reads canonical \
+             F32 only",
             output.key().as_str(),
-            output.shape(),
             output.resolved_type_encoding(),
-            rows.get(),
         )));
     }
 
-    let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
-    binder
-        .bind_input_shape(input.key(), input.shape())
-        .map_err(|cause| {
-            ProofError::Interface(format!("the declared input shape does not bind: {cause}"))
-        })?;
-    Ok((rows.get(), columns.get(), binder.build()))
+    Ok(DeclaredInterface {
+        inputs,
+        output_key: output.key().as_str().to_owned(),
+        output_elements: output
+            .shape()
+            .extents()
+            .iter()
+            .map(|extent| extent.get())
+            .product(),
+        abi: binder.build(),
+    })
+}
+
+/// Requires the declared interface to be the serial sum's, and returns its extents.
+///
+/// Split from [`bind_declared_interface`] so the *reading* of an interface and
+/// the *expectation* of one program family are two steps. Reading is what the
+/// runner may take from an artifact; expecting is this build's own claim, and
+/// keeping them apart is what let a second family be added without either one
+/// growing a special case for the other.
+fn require_serial_sum_interface(interface: &DeclaredInterface) -> Result<(u64, u64), ProofError> {
+    let [input] = interface.inputs.as_slice() else {
+        return Err(ProofError::Interface(format!(
+            "the artifact declares {} input(s) and the serial sum declares 1",
+            interface.inputs.len(),
+        )));
+    };
+    let [rows, columns] = input.extents.as_slice() else {
+        return Err(ProofError::Interface(format!(
+            "the artifact's input has rank {} and the serial sum reduces a rank-2 input",
+            input.extents.len(),
+        )));
+    };
+    if input.key != INPUT_KEY || interface.output_key != OUTPUT_KEY {
+        return Err(ProofError::Interface(format!(
+            "the artifact's interface is {:?} -> {:?} and the serial sum's is \
+             {INPUT_KEY:?} -> {OUTPUT_KEY:?}",
+            input.key, interface.output_key,
+        )));
+    }
+    if interface.output_elements != *rows {
+        return Err(ProofError::Interface(format!(
+            "the artifact publishes {} F32 element(s) and reducing a {rows}x{columns} input's \
+             inner axis publishes {rows}",
+            interface.output_elements,
+        )));
+    }
+    Ok((*rows, *columns))
+}
+
+/// Requires the declared interface to be the contraction's, and returns `(M, N, K)`.
+///
+/// **The shared contracted extent is checked rather than taken from one
+/// operand.** `td,od->to` requires `activations[M, K]` and `weights[N, K]` to
+/// agree on `K`, and an artifact whose two operands disagreed would describe a
+/// program the structure's own extent-agreement rule refuses — so reading `K`
+/// off the first operand and never looking at the second would turn a
+/// malformed interface into a silently wrong buffer length.
+fn require_contraction_interface(
+    interface: &DeclaredInterface,
+) -> Result<(u64, u64, u64), ProofError> {
+    let [activations, weights] = interface.inputs.as_slice() else {
+        return Err(ProofError::Interface(format!(
+            "the artifact declares {} input(s) and the contraction declares 2",
+            interface.inputs.len(),
+        )));
+    };
+    if activations.key != CONTRACTION_ACTIVATIONS_KEY
+        || weights.key != CONTRACTION_WEIGHTS_KEY
+        || interface.output_key != CONTRACTION_OUTPUT_KEY
+    {
+        return Err(ProofError::Interface(format!(
+            "the artifact's interface is ({:?}, {:?}) -> {:?} and the contraction's is \
+             ({CONTRACTION_ACTIVATIONS_KEY:?}, {CONTRACTION_WEIGHTS_KEY:?}) -> \
+             {CONTRACTION_OUTPUT_KEY:?}",
+            activations.key, weights.key, interface.output_key,
+        )));
+    }
+    let ([m, left_k], [n, right_k]) = (activations.extents.as_slice(), weights.extents.as_slice())
+    else {
+        return Err(ProofError::Interface(format!(
+            "the contraction's operands have ranks {} and {}, and `td,od->to` reads two rank-2 \
+             operands",
+            activations.extents.len(),
+            weights.extents.len(),
+        )));
+    };
+    if left_k != right_k {
+        return Err(ProofError::Interface(format!(
+            "the artifact's operands contract over {left_k} and {right_k}, and `td,od->to` \
+             shares one contracted extent",
+        )));
+    }
+    let published = m
+        .checked_mul(*n)
+        .ok_or_else(|| ProofError::Interface(format!("a {m}x{n} result has no element count")))?;
+    if interface.output_elements != published {
+        return Err(ProofError::Interface(format!(
+            "the artifact publishes {} F32 element(s) and a {m}x{n} contraction publishes \
+             {published}",
+            interface.output_elements,
+        )));
+    }
+    Ok((*m, *n, *left_k))
+}
+
+/// Reads the shape the artifact declares and binds this build's serial-sum
+/// expectation onto it.
+///
+/// Retained under its original name because its contract is unchanged for the
+/// serial sum: the extents come from the artifact and never from [`ROWS`].
+fn bind_interface(decoded: &DecodedProgram) -> Result<(u64, u64, AbiFacts), ProofError> {
+    let interface = bind_declared_interface(decoded)?;
+    let (rows, columns) = require_serial_sum_interface(&interface)?;
+    Ok((rows, columns, interface.abi))
 }
 
 /// Compiles this build's alternatives for the shape *the artifact* declares.
@@ -1331,10 +1599,25 @@ fn allocate_alternative(
 
     let mut output = None;
     let mut readback = 0_usize;
+    let mut inputs = 0_usize;
     for value in program.values() {
         let slot = index_of(&value.allocation());
         match value.role() {
             ValueRole::Input => {
+                // **One program input, and this path says so rather than
+                // assuming it.** `bits` is a single operand slice, so a program
+                // with two inputs would have the same operands written into
+                // both — a plausible tensor computed from the wrong bytes, which
+                // is the one failure class this file treats as worse than a
+                // refusal. The direct path is the serial sum's alone and the
+                // envelope path is where multi-operand programs are routed, so
+                // the honest move is to refuse here rather than to widen a path
+                // nothing multi-operand reaches; a caller that brings one must
+                // widen this deliberately.
+                inputs += 1;
+                if inputs > 1 {
+                    return Err(ProofError::DirectPathMultiInput { inputs });
+                }
                 let operands: Vec<f32> = bits.iter().map(|value| f32::from_bits(*value)).collect();
                 crate::buffer::write_f32(&buffers[slot], &operands);
             }
@@ -1999,8 +2282,15 @@ fn probe_fail_closed(subject: &ProbeSubject<'_>) -> Result<(), ProofError> {
 /// never re-asks a question whose answer could have refused the route.
 #[derive(Clone, Copy, Debug)]
 enum Placement {
-    /// The buffer holding the program input the artifact names.
-    Input,
+    /// The buffer holding one program input the artifact names.
+    ///
+    /// **Carries the ordinal of that input in the artifact's declared interface,
+    /// and that is the widening.** This used to be a bare `Input`, which was
+    /// sufficient only while exactly one program input existed: a two-operand
+    /// route binds two buffers, and a placement that could not say *which*
+    /// operand a slot takes would fill both from the same host slice and return
+    /// a plausible tensor computed from the wrong bytes.
+    Input(usize),
     /// The buffer receiving the program output the artifact names.
     Output,
     /// Entry-internal storage: named by nothing, sized by its own
@@ -2035,7 +2325,10 @@ struct PlacedSlot {
 /// not device-*free*, but they are decidable, and [`device_preflight`] takes
 /// them before the same commit. Nothing that a device can answer is left for
 /// after it.
-fn plan_route(preflight: &Preflight<'_>) -> Result<Vec<Vec<PlacedSlot>>, ProofError> {
+fn plan_route(
+    preflight: &Preflight<'_>,
+    interface: &DeclaredInterface,
+) -> Result<Vec<Vec<PlacedSlot>>, ProofError> {
     let mut plan = Vec::with_capacity(preflight.entries().len());
     for (position, routed) in preflight.entries().iter().enumerate() {
         let launch = routed.launch();
@@ -2057,14 +2350,44 @@ fn plan_route(preflight: &Preflight<'_>) -> Result<Vec<Vec<PlacedSlot>>, ProofEr
         let mut slots = Vec::with_capacity(routed.bindings().len());
         for binding in routed.bindings() {
             let placement = match binding.binding().target() {
-                BindingTarget::ProgramInput(key) if key.as_str() == INPUT_KEY => Placement::Input,
+                // Resolved against the artifact's *own* declared input order
+                // rather than against a key constant this build holds. That is
+                // what makes one function place a one-operand reduction and a
+                // two-operand contraction without knowing which it is looking
+                // at: a program input the artifact does not declare has no
+                // ordinal, and falls through to the refusal below.
+                BindingTarget::ProgramInput(key) => interface
+                    .inputs
+                    .iter()
+                    .position(|declared| declared.key == key.as_str())
+                    .map_or_else(
+                        || {
+                            Err(ProofError::UnboundBinding {
+                                entry: position,
+                                slot: binding.slot(),
+                                target: format!(
+                                    "ProgramInput({:?}), which this artifact does not declare",
+                                    key.as_str(),
+                                ),
+                            })
+                        },
+                        |ordinal| Ok(Placement::Input(ordinal)),
+                    )?,
                 BindingTarget::ProgramOutput(keys)
-                    if keys.len() == 1 && keys[0].as_str() == OUTPUT_KEY =>
+                    if keys.len() == 1 && keys[0].as_str() == interface.output_key =>
                 {
                     Placement::Output
                 }
                 BindingTarget::Internal => Placement::Internal,
-                other => {
+                // Named rather than left to a wildcard, and the widening is why:
+                // every `ProgramInput` is now resolved above, so the only target
+                // that can still fall through is an output whose key or arity is
+                // not this artifact's. A catch-all here would additionally
+                // swallow a *new* `BindingTarget` variant as an ordinary
+                // refusal, where the repository's posture is that a variant
+                // added to the vocabulary must be a build error at every site
+                // that decides on it.
+                other @ BindingTarget::ProgramOutput(_) => {
                     return Err(ProofError::UnboundBinding {
                         entry: position,
                         slot: binding.slot(),
@@ -2230,6 +2553,21 @@ enum PreflightRefusal {
     /// binding target this proof does not place, so a route that reaches here
     /// declares an interface the proof cannot observe at all.
     NoOutputBinding,
+    /// A routed slot takes a program input the caller supplied no operands for.
+    ///
+    /// Systemic, and an assertion against this binary's own composition rather
+    /// than against the artifact: the ordinal was resolved from the same
+    /// declared interface the operand set is built from, so reaching this means
+    /// a caller passed an operand set of the wrong arity — one slice for a
+    /// two-operand route, say. It is stated as a typed refusal rather than an
+    /// index panic because a wrong-arity operand set would otherwise either
+    /// abort or, worse, silently reuse operand zero for every input.
+    UnsuppliedOperand {
+        entry: usize,
+        slot: usize,
+        ordinal: usize,
+        supplied: usize,
+    },
 }
 
 impl PreflightRefusal {
@@ -2250,7 +2588,8 @@ impl PreflightRefusal {
             Self::ThreadgroupMemoryExceeded { .. }
             | Self::BindingExceedsBufferLimit { .. }
             | Self::UndersizedAllocation { .. }
-            | Self::NoOutputBinding => PreflightPhase::Resources,
+            | Self::NoOutputBinding
+            | Self::UnsuppliedOperand { .. } => PreflightPhase::Resources,
         }
     }
 
@@ -2279,7 +2618,9 @@ impl PreflightRefusal {
             | Self::WorkgroupTooLarge { .. }
             | Self::ThreadgroupMemoryExceeded { .. }
             | Self::BindingExceedsBufferLimit { .. } => PreflightClass::RouteMiss,
-            Self::UndersizedAllocation { .. } | Self::NoOutputBinding => PreflightClass::Systemic,
+            Self::UndersizedAllocation { .. }
+            | Self::NoOutputBinding
+            | Self::UnsuppliedOperand { .. } => PreflightClass::Systemic,
         }
     }
 }
@@ -2352,6 +2693,16 @@ impl fmt::Display for PreflightRefusal {
             Self::NoOutputBinding => {
                 formatter.write_str("no entry of this route binds the program output")
             }
+            Self::UnsuppliedOperand {
+                entry,
+                slot,
+                ordinal,
+                supplied,
+            } => write!(
+                formatter,
+                "entry {entry} slot {slot} takes declared input {ordinal} and this run supplied \
+                 {supplied} operand set(s)"
+            ),
         }
     }
 }
@@ -2584,8 +2935,8 @@ fn device_preflight(
     preflight: &Preflight<'_>,
     pipelines: &[ComputePipelineState],
     plan: &[Vec<PlacedSlot>],
-    operands: &[u32],
-    rows: u64,
+    operands: &[Vec<u32>],
+    readback: u64,
 ) -> Result<PreparedRoute, PreflightRefusal> {
     let facts = device_facts(device);
     let routed = preflight.entries();
@@ -2658,7 +3009,9 @@ fn device_preflight(
                 shared
             } else {
                 let options = match placed.placement {
-                    Placement::Input | Placement::Output => MTLResourceOptions::StorageModeShared,
+                    Placement::Input(_) | Placement::Output => {
+                        MTLResourceOptions::StorageModeShared
+                    }
                     Placement::Internal => MTLResourceOptions::StorageModePrivate,
                 };
                 let buffer = device.new_buffer(placed.needed.max(1), options);
@@ -2667,14 +3020,28 @@ fn device_preflight(
                 buffer
             };
             match placed.placement {
-                Placement::Input => {
+                Placement::Input(ordinal) => {
+                    // Indexed by the ordinal `plan_route` resolved from the
+                    // artifact's own interface, so each operand buffer receives
+                    // the payload the sidecar supplied for *that* input. The
+                    // lookup cannot miss: the ordinal came from a position in
+                    // this same interface, and the caller supplies one operand
+                    // set per declared input.
+                    let bits =
+                        operands
+                            .get(ordinal)
+                            .ok_or(PreflightRefusal::UnsuppliedOperand {
+                                entry: position,
+                                slot,
+                                ordinal,
+                                supplied: operands.len(),
+                            })?;
                     // The assertion inside `write_f32` is the backstop for a
-                    // length disagreement, and it is unreachable here: the
+                    // length disagreement, and it is unreachable here: each
                     // operand count was checked against the shape the artifact
-                    // declares, and this buffer's length is that same shape's
-                    // accessible byte range.
-                    let values: Vec<f32> =
-                        operands.iter().map(|bits| f32::from_bits(*bits)).collect();
+                    // declares for its own input, and this buffer's length is
+                    // that same shape's accessible byte range.
+                    let values: Vec<f32> = bits.iter().map(|bits| f32::from_bits(*bits)).collect();
                     crate::buffer::write_f32(&buffer, &values);
                 }
                 Placement::Output => output = Some(buffer.clone()),
@@ -2702,7 +3069,7 @@ fn device_preflight(
         // `plan_route` refuses every binding target this proof does not place,
         // and this program declares one output, so some entry bound it.
         output: output.ok_or(PreflightRefusal::NoOutputBinding)?,
-        readback: usize::try_from(rows).expect("the proof's row count fits a usize"),
+        readback: usize::try_from(readback).expect("the proof's output count fits a usize"),
         facts,
     })
 }
@@ -2819,8 +3186,8 @@ fn probe_device_preflight(
     device: &Device,
     preflight: &Preflight<'_>,
     plan: &[Vec<PlacedSlot>],
-    operands: &[u32],
-    rows: u64,
+    operands: &[Vec<u32>],
+    readback: u64,
 ) -> Result<(), ProofError> {
     // Every perturbation below targets the route's first entry. One entry is
     // enough to establish that the device produces each refusal, and the
@@ -2922,7 +3289,7 @@ fn probe_device_preflight(
     // above evidence about its own perturbation rather than about the route.
     let pipelines = prepare_pipelines(device, preflight.entries())
         .map_err(|refusal| ProofError::DevicePreflight(Box::new(refusal)))?;
-    device_preflight(device, preflight, &pipelines, plan, operands, rows)
+    device_preflight(device, preflight, &pipelines, plan, operands, readback)
         .map_err(|refusal| ProofError::DevicePreflight(Box::new(refusal)))?;
     println!("  the unperturbed route prepares: every stage cleared before the commit");
     Ok(())
@@ -3064,26 +3431,17 @@ fn prove_member(
         // A fresh decode per case: see this function's own note on why.
         let mut decoded =
             DecodedProgram::decode(&bytes, SOLE_DELIVERY).map_err(ProofError::Load)?;
-        let (rows, declared_columns, abi) = bind_interface(&decoded)?;
         // Re-read per case rather than trusted from above, because the shape is
         // what every remaining check is scaled by; a member whose variants
         // disagreed about it would otherwise be measured against the first one.
+        let interface = bind_declared_interface(&decoded)?;
+        require_serial_sum_interface(&interface)?;
 
-        let inputs = case
-            .inputs()
-            .next()
-            .ok_or(ProofError::SidecarWithoutCases)
-            .and_then(|payload| {
-                decode_f32_bits("input", rows * declared_columns, payload.bytes())
-            })?;
-        let expected = case
-            .expected()
-            .next()
-            .ok_or(ProofError::SidecarWithoutCases)
-            .and_then(|payload| decode_f32_bits("expected", rows, payload.bytes()))?;
+        let operands = case_operands(&interface, case)?;
+        let expected = case_expected(&interface, case)?;
 
         let preparation = decoded
-            .prepare(&environment, &recorded, &abi)
+            .prepare(&environment, &recorded, &interface.abi)
             .map_err(ProofError::Load)?;
         let (preflight, pipelines) = resolve_prepared_route(device, preparation)?;
 
@@ -3092,9 +3450,16 @@ fn prove_member(
         // compare.
         require_derived_program(&compilation, preflight.kernel_program_identity())?;
 
-        let plan = plan_route(&preflight)?;
-        let prepared = device_preflight(device, &preflight, &pipelines, &plan, &inputs, rows)
-            .map_err(|refusal| ProofError::DevicePreflight(Box::new(refusal)))?;
+        let plan = plan_route(&preflight, &interface)?;
+        let prepared = device_preflight(
+            device,
+            &preflight,
+            &pipelines,
+            &plan,
+            &operands,
+            interface.output_elements,
+        )
+        .map_err(|refusal| ProofError::DevicePreflight(Box::new(refusal)))?;
 
         let routed = preflight.commit();
         let entries = routed.entries().len();
@@ -3126,6 +3491,160 @@ fn prove_member(
     println!(
         "  {class}.{role}: {rows}x{columns} declared, {proved} case(s) agree, \
          {expected_entries} dispatch(es), {expected_shared} shared allocation(s)",
+    );
+    Ok(proved)
+}
+
+/// Proves the published two-input contraction end to end through the accepted route.
+///
+/// **This is the L3 remainder, and what it establishes is the *route* rather
+/// than the realization.** The L3 record measured six contraction realizations
+/// under a hand-written Objective-C host: a spike that produces no artifact, has
+/// no identity, resolves no capability, and answers no applicability predicate.
+/// What runs here is an offline-produced metallib loaded through the accepted
+/// AOT path, with artifact identity carrying the offline compiler's provenance
+/// and the exact native translator identity left `Unknown` per ADR 0086 — the
+/// refusal [`offer_the_declared_profile`] prints before any routing commit.
+///
+/// # What makes this member different from every other one
+///
+/// Two tensor inputs. Every other program this proof routes declares one, so
+/// this is the first route whose entries bind two program-input buffers, whose
+/// sidecar carries two operand payloads per case, and whose ABI facts are bound
+/// from two declared shapes. The functions it calls are the same ones the
+/// serial-sum members call — [`bind_declared_interface`], [`plan_route`],
+/// [`device_preflight`] — and that is deliberate: a second code path would have
+/// let the one-input assumptions survive in the first.
+///
+/// # The ordering is the contract, not a sequence
+///
+/// Every obligation this host can decide is discharged while `Preflight` is
+/// still held: the interface, the operand lengths, the derived program identity,
+/// the placements, the pipelines, the launch capacity, and the allocations. Only
+/// then is `commit` called, and nothing after it may take a fallback. The
+/// command buffer's terminal state is checked inside [`submit`] *before* the
+/// host reads a byte back, so a failed dispatch is reported as a dispatch
+/// failure rather than compared as arithmetic.
+fn prove_contraction(
+    device: &Device,
+    declaration: &BoundMetalCompileDeclaration,
+    base: &Path,
+) -> Result<usize, ProofError> {
+    let path = proof_member(base, CONTRACTION_CLASS, "selected");
+    let (bytes, sidecar) = read_artifact(&path)?;
+    let environment = declared_route_environment(declaration)?;
+    let recorded = RecordedArtifactProgramIdentity::from_bytes(sidecar.artifact_identity_bytes())
+        .map_err(ProofError::RecordedIdentity)?;
+
+    // Read once for the report; every case re-reads it from its own decode.
+    let declared = DecodedProgram::decode(&bytes, SOLE_DELIVERY).map_err(ProofError::Load)?;
+    let shape = bind_declared_interface(&declared)?;
+    let (m, n, k) = require_contraction_interface(&shape)?;
+    drop(declared);
+    // Compiled only to *name* the program the artifact claims to package, for
+    // the shape the artifact itself declares. Nothing emitted here reaches the
+    // device; what this buys is the one binding between the two processes a
+    // sidecar cannot forge, and it is checked before the commit because a route
+    // to a program this process did not derive is a reason to abandon rather
+    // than to execute and compare.
+    let compilation = compile_under(declaration, &contraction_program(m, n, k))?;
+    println!(
+        "  the artifact declares {} input(s): {} -> {:?} [{m}, {n}], contracted extent {k}",
+        shape.inputs.len(),
+        shape
+            .inputs
+            .iter()
+            .map(|input| format!("{:?} {:?}", input.key, input.extents))
+            .collect::<Vec<_>>()
+            .join(", "),
+        shape.output_key,
+    );
+
+    // The fail-closed probes against these exact bytes, before the positive
+    // route is claimed. This is where the closing condition's "a deliberately
+    // corrupted artifact is refused rather than executed" is discharged for the
+    // contraction: `probe_damaged_section_content` flips a byte of the carried
+    // metallib and requires the refusal, and `probe_accepted_baseline` requires
+    // the unperturbed subject to route, so the refusal is evidence about the
+    // damage rather than about the member.
+    println!("  fail-closed probes against the contraction's exact bytes:");
+    probe_fail_closed(&ProbeSubject {
+        bytes: &bytes,
+        expected: &recorded,
+        environment: &environment,
+        abi: &shape.abi,
+    })?;
+
+    let mut proved = 0_usize;
+    for case in sidecar.cases() {
+        // A fresh decode per case, for the reason `prove_member` records: a
+        // decoded program yields exactly one commit, which is ADR 0051
+        // expressed structurally rather than remembered.
+        let mut decoded =
+            DecodedProgram::decode(&bytes, SOLE_DELIVERY).map_err(ProofError::Load)?;
+        let interface = bind_declared_interface(&decoded)?;
+        require_contraction_interface(&interface)?;
+
+        let operands = case_operands(&interface, case)?;
+        let expected = case_expected(&interface, case)?;
+
+        let preparation = decoded
+            .prepare(&environment, &recorded, &interface.abi)
+            .map_err(ProofError::Load)?;
+        let (preflight, pipelines) = resolve_prepared_route(device, preparation)?;
+        require_derived_program(&compilation, preflight.kernel_program_identity())?;
+        let plan = plan_route(&preflight, &interface)?;
+
+        // Both operand buffers are placed and filled here, before the commit,
+        // and the count is asserted rather than assumed: a route that bound one
+        // program-input slot would leave the second operand unwritten and
+        // return a tensor computed from an uninitialised buffer.
+        let bound_inputs: usize = plan
+            .iter()
+            .flatten()
+            .filter(|slot| matches!(slot.placement, Placement::Input(_)))
+            .count();
+        if bound_inputs != interface.inputs.len() {
+            return Err(ProofError::UnboundOperand {
+                bound: bound_inputs,
+                declared: interface.inputs.len(),
+            });
+        }
+
+        let prepared = device_preflight(
+            device,
+            &preflight,
+            &pipelines,
+            &plan,
+            &operands,
+            interface.output_elements,
+        )
+        .map_err(|refusal| ProofError::DevicePreflight(Box::new(refusal)))?;
+
+        // ---- the routing commit, one way ---------------------------------
+        let routed = preflight.commit();
+        let observed = dispatch_prepared(device, &routed, &prepared)?;
+        if observed != expected {
+            return Err(ProofError::Mismatch {
+                path: "contraction",
+                device: observed,
+                reference: expected,
+            });
+        }
+        println!(
+            "    {}: {observed:08x?} against {expected:08x?}",
+            case.key(),
+        );
+        proved += 1;
+    }
+
+    if proved == 0 {
+        return Err(ProofError::SidecarWithoutCases);
+    }
+    println!(
+        "  {m}x{n}x{k} contraction: {proved} operand case(s) agree bit for bit with the published \
+         reference, over {} declared operand(s)",
+        shape.inputs.len(),
     );
     Ok(proved)
 }
@@ -3230,7 +3749,9 @@ fn run() -> Result<(), ProofError> {
         decoded.variant_count(),
         decoded.required_features(),
     );
-    let (rows, columns, abi) = bind_interface(&decoded)?;
+    let interface = bind_declared_interface(&decoded)?;
+    let (rows, columns) = require_serial_sum_interface(&interface)?;
+    let abi = interface.abi.clone();
     println!("the artifact declares a {rows} by {columns} input");
     // Producer-declared equality, NOT host-earned eligibility. The refusal above
     // is the applicability answer; this environment states the profile the
@@ -3306,25 +3827,24 @@ fn run() -> Result<(), ProofError> {
     // Both payloads are checked against the element count the *artifact*
     // declares, not against each other: a record that agrees with itself and
     // not with the interface it names is still describing another program.
-    let envelope_bits = case
-        .inputs()
-        .next()
-        .ok_or(ProofError::SidecarWithoutCases)
-        .and_then(|payload| decode_f32_bits("input", rows * columns, payload.bytes()))?;
-    let envelope_reference = case
-        .expected()
-        .next()
-        .ok_or(ProofError::SidecarWithoutCases)
-        .and_then(|payload| decode_f32_bits("expected", rows, payload.bytes()))?;
+    let envelope_operands = case_operands(&interface, case)?;
+    let envelope_reference = case_expected(&interface, case)?;
 
     // Placement first, then the device. Both are decided while a fallback is
     // still permitted, and between them they discharge every obligation this
     // host can decide — which is what makes the commit below infallible in fact
     // and not only in signature. See `plan_route` and `device_preflight`.
     let (preflight, pipelines) = resolve_prepared_route(device, preparation)?;
-    let plan = plan_route(&preflight)?;
-    let prepared = device_preflight(device, &preflight, &pipelines, &plan, &envelope_bits, rows)
-        .map_err(|refusal| ProofError::DevicePreflight(Box::new(refusal)))?;
+    let plan = plan_route(&preflight, &interface)?;
+    let prepared = device_preflight(
+        device,
+        &preflight,
+        &pipelines,
+        &plan,
+        &envelope_operands,
+        interface.output_elements,
+    )
+    .map_err(|refusal| ProofError::DevicePreflight(Box::new(refusal)))?;
     let facts = &prepared.facts;
     println!(
         "device preflight: {} ({}), {} thread(s) per threadgroup, {} byte(s) of threadgroup \
@@ -3337,7 +3857,13 @@ fn run() -> Result<(), ProofError> {
         facts.recommended_working_set,
     );
     println!("device-preflight refusals against this exact route:");
-    probe_device_preflight(device, &preflight, &plan, &envelope_bits, rows)?;
+    probe_device_preflight(
+        device,
+        &preflight,
+        &plan,
+        &envelope_operands,
+        interface.output_elements,
+    )?;
     println!("post-commit refusals, which no fallback follows:");
     probe_submission_status(device)?;
 
@@ -3432,6 +3958,20 @@ fn run() -> Result<(), ProofError> {
          with the published reference",
         REDUCTION_CLASSES.len() * PLAN_ROLES.len(),
     );
+
+    // ---- the contraction vertical ----------------------------------------
+    // The L3 remainder: one contraction of the profile's index structure
+    // `td,od->to`, carried through the accepted AOT and runtime route rather
+    // than through a spike's own dispatch host. It runs last because everything
+    // above establishes that the route works for a one-operand program, so a
+    // failure here isolates to what this member adds — a second tensor input.
+    println!("the contraction vertical, through the accepted AOT and runtime route:");
+    let contraction_cases = prove_contraction(device, &declaration, &base)?;
+    println!(
+        "{contraction_cases} contraction case(s) proved through the accepted route; the L3 \
+         profile's own cells are refused by this profile's four-thread grid-axis row and are not \
+         published here",
+    );
     Ok(())
 }
 
@@ -3452,6 +3992,22 @@ enum ProofError {
         role: &'static str,
         declared: u64,
         recorded: usize,
+    },
+    /// A case binds a different number of operands than the artifact declares.
+    ///
+    /// Reachable only through a reader defect: the sidecar layer refuses a case
+    /// whose payload count is not the artifact's declared input count, so both
+    /// halves of this comparison come from records that already agree. It is a
+    /// named refusal rather than a `zip` that silently takes the shorter side,
+    /// which is what would drop the second operand of a contraction.
+    SidecarInterfaceArity {
+        sidecar: usize,
+        artifact: usize,
+    },
+    /// A case's operand is placed under a different key than the artifact declares.
+    SidecarInterfaceKey {
+        sidecar: String,
+        artifact: String,
     },
     SidecarAssociation(ProofAssociationError),
     /// The identity recorded beside the artifact is not statable as one.
@@ -3493,6 +4049,26 @@ enum ProofError {
     },
     /// The alternative's program publishes no named output to read back.
     NoProgramOutput,
+    /// The route bound storage for fewer program inputs than the artifact declares.
+    ///
+    /// The check that makes "two inputs actually reached the device" a measured
+    /// fact rather than an inference from the interface. A route binding one
+    /// slot for a two-operand program would dispatch against an unwritten
+    /// buffer, and an unwritten `StorageModeShared` allocation is zeroed rather
+    /// than poisoned — so the result would be a plausible tensor, not a crash.
+    UnboundOperand {
+        bound: usize,
+        declared: usize,
+    },
+    /// The direct path was handed a program with more than one tensor input.
+    ///
+    /// The direct path binds one operand slice by local knowledge, so it cannot
+    /// place a second input without being told which is which. A multi-operand
+    /// program belongs on the envelope path, where the artifact's declared
+    /// interface supplies the ordinals.
+    DirectPathMultiInput {
+        inputs: usize,
+    },
     Emit,
     UnrealizableNumerics,
     Toolchain,
@@ -3624,6 +4200,16 @@ impl fmt::Display for ProofError {
                  and the sidecar records {recorded}",
                 declared.saturating_mul(F32_BYTES),
             ),
+            Self::SidecarInterfaceArity { sidecar, artifact } => write!(
+                formatter,
+                "a proof case binds {sidecar} operand payload(s) and the artifact declares \
+                 {artifact} input(s)",
+            ),
+            Self::SidecarInterfaceKey { sidecar, artifact } => write!(
+                formatter,
+                "a proof case places an operand under {sidecar:?} where the artifact declares \
+                 {artifact:?}",
+            ),
             Self::Sidecar(cause) => {
                 write!(formatter, "the proof sidecar did not decode: {cause}")
             }
@@ -3652,6 +4238,17 @@ impl fmt::Display for ProofError {
             Self::NoProgramOutput => {
                 formatter.write_str("the alternative's program publishes no named output")
             }
+            Self::UnboundOperand { bound, declared } => write!(
+                formatter,
+                "the route binds storage for {bound} program input(s) and the artifact declares \
+                 {declared}; an unbound operand buffer is read as zeroes rather than refused",
+            ),
+            Self::DirectPathMultiInput { inputs } => write!(
+                formatter,
+                "the direct path binds one operand slice by local knowledge and this program \
+                 declares {inputs} tensor input(s); route a multi-operand program through the \
+                 envelope path, where the artifact declares which operand each binding takes",
+            ),
             Self::Emit => formatter.write_str("the selected kernels have no Metal realization"),
             Self::UnrealizableNumerics => formatter
                 .write_str("the target cannot honour the kernels' declared numerical contract"),
@@ -3844,29 +4441,33 @@ mod tests {
     //! hardware run is what would notice.
 
     use super::{
-        BACKEND_KEY, BINDING_APPLE_FAMILIES, DeviceFacts, LiveDeviceObservation,
-        LiveDeviceQualification, LoadRejection, METAL_MINIMUM_GPU_FAMILY,
-        METAL_MINIMUM_GPU_FAMILY_VERSION, MetalGpuFamily, MetalGpuFamilySupport,
-        MetalHostApplicabilityPolicy, PLAN_ROLES, Path, ProbeSubject, ProbedGpuFamily,
-        REDUCTION_CLASSES, REPRESENTATION_KEY, ROWS, RoutePreparation, RouteRequirement,
-        RouteResourceDimension, SOLE_DELIVERY, bind_interface, binding_apple_enumerator,
-        compile_under, decide_live_device_requirement, declaration, declared_route_environment,
-        evaluate_metal_host_applicability, expected_shape, normalized_architecture,
-        observe_host_environment, probe_accepted_baseline, probe_damaged_interior_byte,
-        probe_damaged_section_content, probe_foreign_expected_identity, probe_other_backend_family,
+        BACKEND_KEY, BINDING_APPLE_FAMILIES, CONTRACTION_ACTIVATIONS_KEY, CONTRACTION_CLASS,
+        CONTRACTION_OUTPUT_KEY, CONTRACTION_WEIGHTS_KEY, DeclaredInput, DeclaredInterface,
+        DeviceFacts, LiveDeviceObservation, LiveDeviceQualification, LoadRejection,
+        METAL_MINIMUM_GPU_FAMILY, METAL_MINIMUM_GPU_FAMILY_VERSION, MetalGpuFamily,
+        MetalGpuFamilySupport, MetalHostApplicabilityPolicy, PLAN_ROLES, Path, Placement,
+        ProbeSubject, ProbedGpuFamily, ProofError, REDUCTION_CLASSES, REPRESENTATION_KEY, ROWS,
+        RoutePreparation, RouteRequirement, RouteResourceDimension, SOLE_DELIVERY,
+        bind_declared_interface, bind_interface, binding_apple_enumerator, compile_under,
+        contraction_program, decide_live_device_requirement, declaration,
+        declared_route_environment, evaluate_metal_host_applicability, expected_shape,
+        normalized_architecture, observe_host_environment, probe_accepted_baseline,
+        probe_damaged_interior_byte, probe_damaged_section_content,
+        probe_foreign_expected_identity, probe_other_backend_family,
         probe_other_profile_descriptor, probe_other_profile_key, probe_truncated_envelope,
-        proof_member, serial_sum_program, stating_probed_family,
+        proof_member, require_contraction_interface, require_serial_sum_interface,
+        serial_sum_program, stating_probed_family,
     };
     use tiler_artifact::program::{
-        AbiExprId, AbiFacts, ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey,
-        BackendEntryRef, BackendFeatureRequirement, BackendKey, BindingKind, BindingSpec,
-        BindingTarget, BufferAccess, CapabilityKey, CompilationEnvironment, DeferredPredicateSpec,
-        EntrySpec, FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec, PayloadContent,
-        PayloadEntryMapping, PayloadMetadata, PayloadPlatform, PayloadProvenance,
-        RecordedArtifactProgramIdentity, RepresentationKey, RouteFeatureKey,
-        RouteRequirementSubject, RouteResourceFloor, SchemaVersion, SelectedProvider,
-        TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, ToolComponent,
-        VariantSpec, VerifiedArtifactProgram,
+        AbiExprId, AbiFactBinder, AbiFacts, ArtifactExecutionPolicy, ArtifactProgramBuilder,
+        AvailabilityPhase, BackendEntryKey, BackendEntryRef, BackendFeatureRequirement, BackendKey,
+        BindingKind, BindingSpec, BindingTarget, BufferAccess, CapabilityKey,
+        CompilationEnvironment, DeferredPredicateSpec, EntrySpec, FeasibilityRuleSetKey,
+        FeasibilityRuleSetRef, LaunchSpec, PayloadContent, PayloadEntryMapping, PayloadMetadata,
+        PayloadPlatform, PayloadProvenance, RecordedArtifactProgramIdentity, RepresentationKey,
+        RouteFeatureKey, RouteRequirementSubject, RouteResourceFloor, SchemaVersion,
+        SelectedProvider, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
+        ToolComponent, VariantSpec, VerifiedArtifactProgram,
     };
     use tiler_build::BoundMetalCompileDeclaration;
     use tiler_compiler::session::{Compilation, PlanAlternative};
@@ -3958,6 +4559,208 @@ mod tests {
     /// The authoritative declaration every fixture below compiles and routes under.
     fn declared() -> BoundMetalCompileDeclaration {
         declaration().expect("the authoritative declaration assembles")
+    }
+
+    /// The published contraction's extents, restated here as the runner's half
+    /// of a pinned pair.
+    ///
+    /// `prototypes/serial-sum-compile` states the same three numbers and the
+    /// same class name. Nothing links the two crates, so this pair is the only
+    /// thing comparing them — the same arrangement [`SIDECAR_SUFFIX`] and the
+    /// reduction matrix are under, and for the same reason: a producer that
+    /// moved the published contraction while this half kept opening the old
+    /// shape would leave a green gate over a member that cannot route.
+    const FIXTURE_CONTRACTION: (u64, u64, u64) = (2, 2, 3);
+
+    /// The runner's half of the published contraction interface, pinned.
+    #[test]
+    fn the_published_contraction_member_is_the_one_the_producer_writes() {
+        assert_eq!(CONTRACTION_CLASS, "contraction");
+        assert_eq!(FIXTURE_CONTRACTION, (2, 2, 3));
+        assert_eq!(
+            (
+                CONTRACTION_ACTIVATIONS_KEY,
+                CONTRACTION_WEIGHTS_KEY,
+                CONTRACTION_OUTPUT_KEY,
+            ),
+            ("activations", "weights", "projected"),
+        );
+        assert_eq!(
+            proof_member(
+                std::path::Path::new("/tmp/a.tiler"),
+                CONTRACTION_CLASS,
+                "selected"
+            )
+            .display()
+            .to_string(),
+            "/tmp/a.tiler.contraction.selected",
+        );
+    }
+
+    /// Builds one declared interface literal, for the family-recognition cases.
+    fn interface_of(inputs: &[(&str, &[u64])], output: (&str, u64)) -> DeclaredInterface {
+        DeclaredInterface {
+            inputs: inputs
+                .iter()
+                .map(|(key, extents)| DeclaredInput {
+                    key: (*key).to_owned(),
+                    elements: extents.iter().product(),
+                    extents: extents.to_vec(),
+                })
+                .collect(),
+            output_key: output.0.to_owned(),
+            output_elements: output.1,
+            abi: AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight).build(),
+        }
+    }
+
+    /// The contraction interface is recognized, and every way of not being one
+    /// is refused.
+    ///
+    /// **The negatives are the point.** A recognizer that only ever saw the
+    /// artifact its own producer writes would accept anything, and each row
+    /// below is a way an interface could be wrong that would otherwise reach the
+    /// device: a missing operand binds one buffer for a two-operand kernel, a
+    /// contracted extent disagreement sizes one operand against the other's `K`,
+    /// swapped keys write each operand into the other's buffer, and a wrong
+    /// output count reads back the wrong number of elements.
+    #[test]
+    fn the_contraction_interface_is_recognized_and_every_miss_is_refused() {
+        let good = interface_of(
+            &[("activations", &[2, 3]), ("weights", &[2, 3])],
+            ("projected", 4),
+        );
+        assert_eq!(
+            require_contraction_interface(&good).expect("the published interface is recognized"),
+            (2, 2, 3),
+        );
+
+        let misses: [(&str, DeclaredInterface); 5] = [
+            (
+                "one operand where the contraction declares two",
+                interface_of(&[("activations", &[2, 3])], ("projected", 4)),
+            ),
+            (
+                "operands that contract over different extents",
+                interface_of(
+                    &[("activations", &[2, 3]), ("weights", &[2, 5])],
+                    ("projected", 4),
+                ),
+            ),
+            (
+                "operands under keys the contraction does not declare",
+                interface_of(
+                    &[("weights", &[2, 3]), ("activations", &[2, 3])],
+                    ("projected", 4),
+                ),
+            ),
+            (
+                "an output element count that is not M times N",
+                interface_of(
+                    &[("activations", &[2, 3]), ("weights", &[2, 3])],
+                    ("projected", 6),
+                ),
+            ),
+            (
+                "a rank-3 operand",
+                interface_of(
+                    &[("activations", &[2, 3, 1]), ("weights", &[2, 3])],
+                    ("projected", 4),
+                ),
+            ),
+        ];
+        for (miss, interface) in misses {
+            let refusal = require_contraction_interface(&interface)
+                .expect_err(&format!("{miss} must be refused"));
+            assert!(
+                matches!(refusal, ProofError::Interface(_)),
+                "{miss} was refused as {refusal} rather than as an interface disagreement",
+            );
+        }
+
+        // And the serial sum's own interface is not mistaken for a contraction,
+        // which is what keeps the two families' recognizers separate rather
+        // than one accepting the other's artifacts.
+        require_contraction_interface(&interface_of(&[("input", &[1, 3])], ("result", 1)))
+            .expect_err("a one-input reduction is not a contraction");
+        require_serial_sum_interface(&good).expect_err("a contraction is not a serial sum");
+    }
+
+    /// A two-operand route places each declared program input at its own ordinal.
+    ///
+    /// **This is the widening, checked without a device.** The binary proves the
+    /// operands reach the GPU and return the reference's bits; this proves the
+    /// step underneath it — that `plan_route` resolves *two distinct* ordinals
+    /// from the artifact's own declared interface — in the ordinary gate, where
+    /// it runs on every commit rather than by hand on hardware.
+    ///
+    /// The superseded spelling matched one key constant and produced a
+    /// placement carrying no ordinal at all, so a two-operand route would have
+    /// placed both slots identically. That defect is unreachable now, and this
+    /// case is what keeps it unreachable.
+    #[test]
+    fn a_two_operand_route_places_each_declared_input_at_its_own_ordinal() {
+        let (m, n, k) = FIXTURE_CONTRACTION;
+        let semantic = contraction_program(m, n, k);
+        let declaration = declared();
+        let compilation =
+            compile_under(&declaration, &semantic).expect("the declared contraction compiles");
+        let alternative = compilation.selected().expect("a selected plan alternative");
+        let artifact = assemble(&semantic, &compilation, alternative);
+        let bytes = artifact.encode().expect("the contraction envelope encodes");
+        let expected = recorded_identity(&artifact);
+        let environment =
+            declared_route_environment(&declaration).expect("the declared environment composes");
+
+        let mut decoded = DecodedProgram::decode(&bytes, SOLE_DELIVERY)
+            .expect("the assembled contraction envelope decodes");
+        let interface = bind_declared_interface(&decoded).expect("the declared interface binds");
+        assert_eq!(
+            interface.inputs.len(),
+            2,
+            "the fixture must be a two-operand program or it checks nothing",
+        );
+        assert_eq!(
+            require_contraction_interface(&interface).expect("the contraction is recognized"),
+            (m, n, k),
+        );
+
+        let preflight = qualify_without_requirements(
+            decoded
+                .prepare(&environment, &expected, &interface.abi)
+                .expect("the contraction route prepares"),
+        )
+        .resolve_target_properties(|_| u64::MAX)
+        .expect("the contraction's target requirements hold");
+
+        let placed =
+            super::plan_route(&preflight, &interface).expect("the host places every routed slot");
+        let ordinals: Vec<usize> = placed
+            .iter()
+            .flatten()
+            .filter_map(|slot| match slot.placement {
+                Placement::Input(ordinal) => Some(ordinal),
+                Placement::Output | Placement::Internal => None,
+            })
+            .collect();
+        assert_eq!(
+            ordinals,
+            vec![0, 1],
+            "each declared operand must take its own ordinal; a repeated one would fill both \
+             buffers from the same payload",
+        );
+
+        // The interface is genuinely consulted rather than recorded: routing the
+        // same preflight against an interface that declares other input keys
+        // leaves every program-input binding unresolvable, and the refusal names
+        // the key the artifact actually declared.
+        let foreign = interface_of(&[("input", &[m, k])], ("projected", m * n));
+        let refusal = super::plan_route(&preflight, &foreign)
+            .expect_err("an interface that declares other keys places no program input");
+        assert!(
+            matches!(refusal, ProofError::UnboundBinding { .. }),
+            "the refusal must name the unplaceable binding: {refusal}",
+        );
     }
 
     /// States a fixture artifact's derived identity as a recording.
@@ -5262,10 +6065,10 @@ mod tests {
             declared_route_environment(&declaration).expect("the declared environment composes");
         let mut decoded = DecodedProgram::decode(&bytes, SOLE_DELIVERY)
             .expect("the partial-window envelope decodes");
-        let (_, _, abi) = bind_interface(&decoded).expect("the declared interface binds");
+        let interface = bind_declared_interface(&decoded).expect("the declared interface binds");
         let preflight = qualify_without_requirements(
             decoded
-                .prepare(&environment, &expected, &abi)
+                .prepare(&environment, &expected, &interface.abi)
                 .expect("the partial-window route prepares"),
         )
         .resolve_target_properties(|_| u64::MAX)
@@ -5292,7 +6095,8 @@ mod tests {
             );
         }
 
-        let plan = super::plan_route(&preflight).expect("the host places every routed slot");
+        let plan =
+            super::plan_route(&preflight, &interface).expect("the host places every routed slot");
         for end in [shared.producer(), shared.consumer()] {
             let placed = plan[end.entry()][end.slot()];
             assert_eq!(placed.offset, PARTIAL_WINDOW_OFFSET);
