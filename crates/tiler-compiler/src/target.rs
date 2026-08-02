@@ -9,6 +9,16 @@
 //! The compiler-governed source and exact-emulation proof constructors remain
 //! private because a caller cannot manufacture either authority.
 //!
+//! [`ScalarArithmetic::new`] is **not** covered by that acceptance. It is the
+//! validated arithmetic/value-type construction route added later so a BF16
+//! numerical row could be stated at all, and a new public method on an
+//! already-public type falls in the gap ADR 0075's two category lists leave —
+//! neither a new namespace, trait, promotion, or breaking signature change, nor
+//! one of the categories a coordinator may merge unaided. It is a tested
+//! concrete draft of that interface awaiting a boundary decision of its own, and
+//! this sentence is what a reader should find rather than an acceptance that was
+//! never given.
+//!
 //! ```
 //! use tiler_compiler::target::{
 //!     DTypeDispatchability, DeviceAddressWidth, IndexArithmeticSupport,
@@ -139,7 +149,11 @@ use tiler_ir::schedule::{
     ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission,
     SubnormalMode, SynchronizationSubject,
 };
-use tiler_ir::semantic::{F32, ResolvedValueType};
+use tiler_ir::semantic::{
+    CanonicalField, CanonicalValue, CanonicalValueView, F32, ResolvedValueType,
+    SCALAR_TYPE_FACT_CLASS, SCALAR_TYPE_FACT_WIDTH_BITS, builtin_scalar_value_type_facts,
+    builtin_scalar_value_types,
+};
 
 use crate::target::feasibility::{
     CapabilityAxis, CapabilityFact, CapabilityQuery, CheckedTargetProfile,
@@ -1286,26 +1300,62 @@ impl ScalarArithmetic {
             .expect("the governed F32 arithmetic subject is registered")
     }
 
-    /// Returns the sole scalar-arithmetic subject this compiler currently
-    /// registers: the complete governed `tiler::f32@1` resolved type.
+    /// Returns the governed `tiler::f32@1` scalar-arithmetic subject.
     ///
-    /// There is no `(ArithmeticType, ResolvedValueType)` public constructor.
-    /// Such a constructor could pair a width with a merely similar type and
-    /// claim arithmetic semantics no registry admitted.
+    /// Kept beside [`Self::new`] because this pair is named at more call sites
+    /// than every other combined and cannot fail, so those sites carry no
+    /// unreachable error path.
     #[must_use]
     pub fn f32() -> Self {
         Self::governed_f32()
     }
 
-    fn new(
+    /// Pairs one arithmetic type with the semantic value type it computes in.
+    ///
+    /// The association is proven from the governed built-in scalar catalog, not
+    /// from the spelling of either argument: a similar-looking name is not
+    /// evidence that an arithmetic type's semantics were ever defined over a
+    /// value identity. [`ArithmeticType::canonical_type_key`] names the durable
+    /// dtype identity of the arithmetic type, the catalog states which
+    /// identities it registers and what format each one is, and this constructor
+    /// admits the pair only when the value type's registered descriptor states
+    /// the same format class and the same width as the arithmetic type's own
+    /// registered descriptor does.
+    ///
+    /// Constructing a subject is not declaring a fact about it. A profile that
+    /// declares no row for the subject leaves every dimension `Unknown` for it,
+    /// exactly as it does for a dimension it never mentions.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TargetProfileBuildError::UnvalidatedScalarArithmetic`] when the
+    /// value type is not a registered governed scalar, when its descriptor
+    /// states no format class and width — a logical predicate identity states a
+    /// value cardinality instead, and has no format an arithmetic subject could
+    /// match — or when either disagrees with the arithmetic type's own
+    /// registered format. Disagreement is the case a pair of similar formats
+    /// falls into: `tiler::u32@1` shares `f32`'s width and differs in class,
+    /// while `tiler::f16@1` shares `f32`'s class and differs in width.
+    pub fn new(
         arithmetic: ArithmeticType,
         resolved_type: ResolvedValueType,
     ) -> Result<Self, TargetProfileBuildError> {
-        // `F32` is the only arithmetic/type association this compiler has
-        // registered. Similar-looking names are not evidence that an F16,
-        // BF16, or F64 semantic type exists, so those pairs remain behind this
-        // validation seam until a named registry authority can prove them.
-        if arithmetic != ArithmeticType::F32 || resolved_type != F32::resolved_type() {
+        // Both sides are read from the one catalog, so neither this compiler nor
+        // a caller is the authority for what a format is. The arithmetic type's
+        // own lookup failing is not reachable through any argument — every
+        // variant names a registered identity, which `tiler-ir` pins with a test
+        // of its own — and it stays a refusal rather than a panic so that a
+        // catalog and an arithmetic vocabulary which have drifted apart refuse a
+        // subject instead of admitting one no registry describes.
+        let arithmetic_facts = registered_arithmetic_facts(arithmetic)
+            .ok_or(TargetProfileBuildError::UnvalidatedScalarArithmetic)?;
+        let subject_facts = builtin_scalar_value_type_facts(&resolved_type)
+            .ok_or(TargetProfileBuildError::UnvalidatedScalarArithmetic)?;
+        let arithmetic_format = registered_scalar_format(&arithmetic_facts)
+            .ok_or(TargetProfileBuildError::UnvalidatedScalarArithmetic)?;
+        let subject_format = registered_scalar_format(&subject_facts)
+            .ok_or(TargetProfileBuildError::UnvalidatedScalarArithmetic)?;
+        if subject_format != arithmetic_format {
             return Err(TargetProfileBuildError::UnvalidatedScalarArithmetic);
         }
         Ok(Self {
@@ -1328,6 +1378,52 @@ impl ScalarArithmetic {
         bytes.push(self.arithmetic.tag());
         push_slice(bytes, self.resolved_type.canonical_encoding().as_bytes());
     }
+}
+
+/// Returns the registered descriptor of the identity `arithmetic` names.
+///
+/// The arithmetic vocabulary states a durable dtype spelling and the built-in
+/// scalar catalog states which spellings it registers and describes. Resolving
+/// one through the other is what keeps this compiler from carrying a second copy
+/// of a format's parameters: a copy is a second place for the format to be
+/// wrong, and the copy is what a caller's pair would then be checked against.
+///
+/// `None` when no catalog row carries that spelling.
+fn registered_arithmetic_facts(arithmetic: ArithmeticType) -> Option<CanonicalValue> {
+    builtin_scalar_value_types()
+        .into_iter()
+        .find(|value| {
+            value
+                .nominal_key()
+                .is_some_and(|key| key.to_string() == arithmetic.canonical_type_key())
+        })
+        .as_ref()
+        .and_then(builtin_scalar_value_type_facts)
+}
+
+/// Returns the format class and stated width of one registered scalar descriptor.
+///
+/// `None` when the descriptor states neither, which is a real answer rather than
+/// a malformed one: a logical-predicate row states a value cardinality and no
+/// width at all, so there is no format for an arithmetic subject to agree with.
+fn registered_scalar_format(facts: &CanonicalValue) -> Option<(&str, u64)> {
+    let CanonicalValueView::Record(fields) = facts.view() else {
+        return None;
+    };
+    let field = |id| {
+        fields
+            .iter()
+            .find(|field| field.id() == id)
+            .map(CanonicalField::value)
+    };
+    let CanonicalValueView::Utf8(class) = field(SCALAR_TYPE_FACT_CLASS)?.view() else {
+        return None;
+    };
+    let CanonicalValueView::Unsigned { bits, .. } = field(SCALAR_TYPE_FACT_WIDTH_BITS)?.view()
+    else {
+        return None;
+    };
+    Some((class, bits))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3496,9 +3592,11 @@ mod tests {
         FeasibilityProposal,
     };
     use crate::target::honourability::{
-        CompilerBuildIdentity, CompilerBuildRole, ExecutionEnvironmentIdentity, MeasurementContext,
-        NumericalRequirement, ProvenanceIdentity, RelaxationRequirement,
+        CANONICAL_DIMENSIONS, CompilerBuildIdentity, CompilerBuildRole,
+        ExecutionEnvironmentIdentity, MeasurementContext, NumericalRequirement, ProvenanceIdentity,
+        RelaxationRequirement,
     };
+    use tiler_ir::schedule::{ApproximationEnvelope, MaterializationRounding};
     use tiler_ir::semantic::{CanonicalValue, TypeArguments, TypeKey};
 
     fn nominal(name: impl AsRef<str>) -> ResolvedValueType {
@@ -3642,16 +3740,208 @@ mod tests {
         );
     }
 
+    /// The governed identity `arithmetic` names, as the catalog spells it.
+    fn governed_scalar(name: &str) -> ResolvedValueType {
+        ResolvedValueType::nominal(TypeKey::new("tiler", name, 1).unwrap())
+    }
+
+    /// Every arithmetic type constructs a subject over its own governed identity.
+    ///
+    /// All four, not BF16 alone: a route that admitted one named dtype would be
+    /// the widened equality check under another name, and the point of deriving
+    /// admissibility from the catalog is that no dtype is special-cased in it.
     #[test]
-    fn scalar_subject_admits_only_the_registered_f32_association() {
+    fn every_arithmetic_type_constructs_a_subject_over_its_own_governed_identity() {
+        for (arithmetic, name) in [
+            (ArithmeticType::F16, "f16"),
+            (ArithmeticType::Bf16, "bf16"),
+            (ArithmeticType::F32, "f32"),
+            (ArithmeticType::F64, "f64"),
+        ] {
+            let resolved_type = governed_scalar(name);
+            let subject = ScalarArithmetic::new(arithmetic, resolved_type.clone())
+                .unwrap_or_else(|error| panic!("{name} is a governed identity: {error}"));
+            assert_eq!(subject.arithmetic(), arithmetic);
+            assert_eq!(subject.resolved_type(), &resolved_type);
+        }
         assert_eq!(
-            ScalarArithmetic::new(ArithmeticType::F32, nominal("u4")),
-            Err(TargetProfileBuildError::UnvalidatedScalarArithmetic)
+            ScalarArithmetic::new(ArithmeticType::F32, F32::resolved_type()),
+            Ok(ScalarArithmetic::f32()),
+            "the governed F32 subject keeps the exact pair every existing profile names",
+        );
+    }
+
+    /// Each way a pair can fail the catalog is refused, and none is a build error.
+    ///
+    /// The width and class cases are chosen so that exactly one field
+    /// disagrees: `tiler::f16@1` shares `f32`'s `ieee-binary` class and states a
+    /// different width, and `tiler::u32@1` states `f32`'s width and a different
+    /// class. A rule reading only one of the two fields would admit one of them.
+    #[test]
+    fn a_pair_the_catalog_does_not_back_is_refused_for_a_stated_reason() {
+        let refused = Err(TargetProfileBuildError::UnvalidatedScalarArithmetic);
+
+        // An unregistered identity, against every arithmetic type: a `test`
+        // namespace is not the governed catalog however the name is spelled.
+        for arithmetic in ArithmeticType::ALL {
+            for name in ["f16", "bf16", "f32", "f64", "u4"] {
+                assert_eq!(
+                    ScalarArithmetic::new(arithmetic, nominal(name)),
+                    refused,
+                    "test::{name}@1 is not a registered governed identity",
+                );
+            }
+        }
+
+        // A registered identity whose stated width disagrees with the
+        // arithmetic type's.
+        let f32_width = registered_scalar_format(
+            &registered_arithmetic_facts(ArithmeticType::F32).expect("f32 is governed"),
+        )
+        .expect("the governed f32 row states a format")
+        .1;
+        let f16_width = registered_scalar_format(
+            &builtin_scalar_value_type_facts(&governed_scalar("f16")).expect("f16 is governed"),
+        )
+        .expect("the governed f16 row states a format")
+        .1;
+        assert_eq!((f32_width, f16_width), (32, 16));
+        assert_eq!(
+            ScalarArithmetic::new(ArithmeticType::F32, governed_scalar("f16")),
+            refused,
         );
         assert_eq!(
-            ScalarArithmetic::new(ArithmeticType::F16, nominal("f16")),
-            Err(TargetProfileBuildError::UnvalidatedScalarArithmetic)
+            ScalarArithmetic::new(ArithmeticType::F64, governed_scalar("f32")),
+            refused,
         );
+
+        // A registered identity of the arithmetic type's exact width whose
+        // format class is another family's.
+        assert_eq!(
+            ScalarArithmetic::new(ArithmeticType::F32, governed_scalar("u32")),
+            refused,
+        );
+        assert_eq!(
+            ScalarArithmetic::new(ArithmeticType::F32, governed_scalar("decimal32")),
+            refused,
+        );
+        assert_eq!(
+            ScalarArithmetic::new(ArithmeticType::Bf16, governed_scalar("f16")),
+            refused,
+            "bf16 and f16 share a width and differ in class",
+        );
+
+        // A registered identity whose descriptor states no width at all.
+        assert_eq!(
+            ScalarArithmetic::new(ArithmeticType::F16, governed_scalar("bool")),
+            refused,
+        );
+
+        // An identity that is not a nominal scalar row.
+        let complex = ResolvedValueType::parameterized(
+            TypeKey::new("tiler", "complex", 1).unwrap(),
+            TypeArguments::new([CanonicalValue::value_type(F32::resolved_type())]).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(ScalarArithmetic::new(ArithmeticType::F32, complex), refused);
+    }
+
+    /// A format is unique to one governed identity, over the whole catalog.
+    ///
+    /// This is the invariant that lets admissibility be decided on class and
+    /// width: were two governed rows to share both, each would be constructible
+    /// as the other's arithmetic subject. Nothing in `tiler-ir` promises that,
+    /// so it is counted here rather than assumed, and a catalog row added with a
+    /// colliding format fails this test instead of silently widening a subject.
+    #[test]
+    fn every_arithmetic_type_names_exactly_one_governed_format() {
+        for arithmetic in ArithmeticType::ALL {
+            let facts = registered_arithmetic_facts(arithmetic)
+                .unwrap_or_else(|| panic!("{} is registered", arithmetic.canonical_type_key()));
+            let format = registered_scalar_format(&facts)
+                .unwrap_or_else(|| panic!("{} states a format", arithmetic.canonical_type_key()));
+            let sharing: Vec<_> = builtin_scalar_value_types()
+                .into_iter()
+                .filter(|value| {
+                    builtin_scalar_value_type_facts(value)
+                        .is_some_and(|facts| registered_scalar_format(&facts) == Some(format))
+                })
+                .filter_map(|value| value.nominal_key().map(TypeKey::to_string))
+                .collect();
+            assert_eq!(
+                sharing,
+                vec![arithmetic.canonical_type_key().to_owned()],
+                "{} shares its format class and width with another governed identity",
+                arithmetic.canonical_type_key(),
+            );
+        }
+    }
+
+    /// Constructing a subject declares nothing about it.
+    ///
+    /// A profile carrying the complete governed F32 declaration says nothing
+    /// about BF16, and the fail-closed clause applies to the subject coordinate
+    /// exactly as it does to the dimension one. Every dimension is required in
+    /// one proposal and the undeclared set is counted, so a resolution that
+    /// answered some of them would not be mistaken for silence about all.
+    #[test]
+    fn a_constructed_subject_no_profile_declares_is_unknown_on_every_dimension() {
+        let subject = ScalarArithmetic::new(ArithmeticType::Bf16, governed_scalar("bf16"))
+            .expect("bf16 is a governed identity");
+        let behaviour = |dimension| match dimension {
+            NumericalDimension::InputSubnormals | NumericalDimension::ResultSubnormals => {
+                DimensionBehaviour::Subnormals(SubnormalMode::Preserve)
+            }
+            NumericalDimension::Contraction
+            | NumericalDimension::Reassociation
+            | NumericalDimension::Permutation
+            | NumericalDimension::SignedZero
+            | NumericalDimension::ReciprocalTransform => {
+                DimensionBehaviour::Transform(NumericalPermission::Forbidden)
+            }
+            NumericalDimension::ApproximateIntrinsics => {
+                DimensionBehaviour::Approximation(ApproximationEnvelope::Forbidden)
+            }
+            NumericalDimension::NanAssumptions | NumericalDimension::InfinityAssumptions => {
+                DimensionBehaviour::ExceptionalValue(ExceptionalValueAssumption::MakeNoAssumption)
+            }
+            NumericalDimension::MaterializationRounding => {
+                DimensionBehaviour::Rounding(MaterializationRounding::NearestTiesToEven)
+            }
+        };
+        let proposal = FeasibilityProposal::new(
+            "undeclared-bf16-subject",
+            Vec::new(),
+            CANONICAL_DIMENSIONS
+                .iter()
+                .map(|dimension| {
+                    NumericalRequirement::new(
+                        *dimension,
+                        subject.arithmetic(),
+                        subject.resolved_type().clone(),
+                        behaviour(*dimension),
+                    )
+                })
+                .collect(),
+        )
+        .unwrap();
+        let profile = TargetProfileBuilder::governed().try_build().unwrap();
+        let FeasibilityOutcome::Unknown(unknown) = profile
+            .checked()
+            .assess(&proposal, AvailabilityPhase::CompileProfile)
+        else {
+            panic!("a profile declaring only F32 rows answers nothing about BF16");
+        };
+        let undeclared: Vec<_> = unknown
+            .dimensions()
+            .iter()
+            .map(|dimension| {
+                assert_eq!(dimension.arithmetic(), ArithmeticType::Bf16);
+                assert_eq!(dimension.resolved_type(), subject.resolved_type());
+                dimension.dimension()
+            })
+            .collect();
+        assert_eq!(undeclared, CANONICAL_DIMENSIONS);
     }
 
     #[test]
