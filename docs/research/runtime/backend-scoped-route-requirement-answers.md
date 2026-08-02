@@ -278,7 +278,7 @@ A region delivering `macos` compiles to a plan whose emitted kernel uses an Appl
 
 **Validated.** `resolve_live_device_requirements` (`route.rs:450-466`) matches `(RouteRequirement::BackendFeature(_), LiveDeviceObservation::Feature(true))` and the row is satisfied. The loader never saw `b"Apple8"` as anything but bytes.
 
-**What this licenses.** The route proceeds to `RoutePreparation`, then pipeline preparation, prepared-entry properties, `plan_dispatch`, and `Preflight::commit`. The requirement at position 0 of variant 0 holds on this bound device for this attempt.
+**What this licenses.** The route proceeds to `RoutePreparation`, then pipeline preparation, prepared-entry properties, `plan_dispatch`, `Preflight::commit`, and `allocate_dispatch`. The requirement at position 0 of variant 0 holds on this bound device for this attempt.
 
 **What it must not license — the ADR 0086 boundary, stated as the negative.** It does **not** license the claim that this host may offer `tiler.metal.macos-apple9.msl4-0.f32.v1`. `evaluate_metal_host_applicability` on the very same M4 Max, with every one of its six environment predicates matching the retained measured row byte for byte, returns `UnknownNativeTranslationAuthority` — the doc-test at `applicability.rs:725-759` asserts exactly that. The dispatch that follows a satisfied family row is settled on producer-declared equality, not host-earned eligibility, and `spikes/runtime/inline-dispatch` prints that distinction as a labelled diagnostic on every successful run. **A satisfied `minimum-gpu-family` row answers one of seven predicates and says nothing about the seventh.**
 

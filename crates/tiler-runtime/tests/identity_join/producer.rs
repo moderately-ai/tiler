@@ -16,6 +16,32 @@
 //! link `tiler-build`, and if it could, the separation the suite exists to
 //! measure would be gone.
 //!
+//! # Why those invocations are serialized, and why nothing cheaper works
+//!
+//! nextest runs each test in its own **process**, so several `cargo run`
+//! invocations contend for one `target/` at once. Cargo's build lock serializes
+//! their builds and not their executions, so a sibling's relink replaces the
+//! inode of an example binary that is already running and the kernel kills it —
+//! `signal: 9 (SIGKILL)`, empty stdout, empty stderr, on a cold target directory
+//! and never on a warm one. That is the hazard [AGENTS.md] names: a process that
+//! re-executes a binary owns a private copy of it, because the shared Cargo
+//! hardlink under `target/` is unlinked and relinked by sibling invocations.
+//!
+//! An exclusive advisory lock over the whole invocation is what closes it, and
+//! the three cheaper shapes were each eliminated for a stated reason rather than
+//! passed over. A `OnceLock` shares nothing: the thirteen cases are thirteen
+//! processes, and an in-process cell is not a lock between them — this is the
+//! decisive one. A nextest setup script would work under nextest and would leave
+//! `cargo test` racing exactly as before, which makes a fixture correct only
+//! under one runner. Copying the built example to a private path narrows the
+//! window without closing it: the copy reads a file a sibling may be relinking,
+//! and it still needs a contended `cargo build --example` first.
+//!
+//! The lock is held across the child's *execution* and not merely its build,
+//! because the execution is the half that dies.
+//!
+//! [AGENTS.md]: ../../../../AGENTS.md
+//!
 //! # What is read back
 //!
 //! Two files per variant and nothing else. Nothing in this module reaches into
@@ -83,11 +109,26 @@ pub const SOUND: &str = "sound";
 /// than a case under test, and the process output is included so the failure
 /// says which.
 pub fn produce() -> Produced {
-    let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-        .join("identity-join")
-        .join(format!("{}", std::process::id()));
+    let base = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("identity-join");
+    std::fs::create_dir_all(&base).expect("the producer's shared directory is creatable");
+    // Keyed by process id so the *outputs* of concurrent cases never collide.
+    // That was already true and is not what the lock below is for.
+    let root = base.join(format!("{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).expect("the producer root is creatable");
+
+    // One producer invocation at a time across every process running this
+    // binary. See the module header for the failure this closes and for the
+    // shapes that do not close it. The lock lives beside the per-process output
+    // trees and outlives them, because a lock file a case deleted would let the
+    // next pair of cases contend again.
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(base.join("producer.lock"))
+        .expect("the producer lock file is creatable");
+    lock.lock().expect("the producer lock is acquirable");
 
     let output = Command::new(env!("CARGO"))
         .args([
@@ -105,6 +146,10 @@ pub fn produce() -> Produced {
         .current_dir(workspace_root())
         .output()
         .expect("cargo runs from the workspace root");
+    // Released before the assertions rather than at the end of scope: everything
+    // below reads this process's own tree, and holding the lock through a panic's
+    // unwind would serialize a failure report for no reason.
+    drop(lock);
     assert!(
         output.status.success(),
         "the build-time producer failed ({}):\nstdout:\n{}\nstderr:\n{}",

@@ -158,13 +158,19 @@ fn pointwise_reference_bits() -> Vec<u32> {
 }
 
 /// The stages a route runs when nothing refuses.
-const COMPLETE_ROUTE: [Stage; 7] = [
+///
+/// Sizing and allocating are two of them, on the two sides of the routing
+/// commit. Their order in this list is the evidence that the seam allocates
+/// after committing rather than before: a route that reversed them would produce
+/// a log that is the same length and still wrong.
+const COMPLETE_ROUTE: [Stage; 8] = [
     Stage::Bind,
     Stage::ValidatePayload,
     Stage::ObserveLiveDevice,
     Stage::PrepareEntries,
     Stage::ObservePreparedEntry,
     Stage::PlanDispatch,
+    Stage::AllocateDispatch,
     Stage::Dispatch,
 ];
 
@@ -231,6 +237,7 @@ fn a_route_requiring_nothing_still_passes_through_both_device_stages() {
             // `PlanDispatch` here proves.
             Stage::PrepareEntries,
             Stage::PlanDispatch,
+            Stage::AllocateDispatch,
             Stage::Dispatch,
         ],
     );
@@ -871,9 +878,13 @@ fn the_commit_is_the_only_boundary_that_forecloses_a_fallback() {
             failure.fallback_permitted(),
             "{perturbation:?} is reached before the commit: {failure}",
         );
+        // The allocating stage rather than the dispatch, because that is now the
+        // first thing on the other side of the commit: a refusal that reached it
+        // would have acquired program storage a fallback then discards, which is
+        // exactly what ADR 0051 forbids.
         assert!(
-            !host.stages.contains(&Stage::Dispatch),
-            "{perturbation:?} must not reach a dispatch",
+            !host.stages.contains(&Stage::AllocateDispatch),
+            "{perturbation:?} must not reach an allocation",
         );
     }
 }
@@ -953,7 +964,7 @@ fn the_routed_interface_is_the_one_the_artifact_declares() {
 /// the difference the empty case above cannot show: a seam that validated one
 /// payload, prepared once, or asked about one prepared entry and then executed
 /// two would produce a *shorter* log and the same result.
-const MATERIALIZED_ROUTE: [Stage; 9] = [
+const MATERIALIZED_ROUTE: [Stage; 10] = [
     Stage::Bind,
     Stage::ValidatePayload,
     Stage::ValidatePayload,
@@ -962,6 +973,7 @@ const MATERIALIZED_ROUTE: [Stage; 9] = [
     Stage::ObservePreparedEntry,
     Stage::ObservePreparedEntry,
     Stage::PlanDispatch,
+    Stage::AllocateDispatch,
     Stage::Dispatch,
 ];
 
@@ -1039,37 +1051,42 @@ fn a_two_stage_route_shares_one_allocation_and_matches_the_reference() {
     );
 }
 
-/// A shared allocation short of the published range refuses before the commit.
+/// A shared allocation short of what the plan sized it for is a terminal failure.
 ///
 /// The one allocation this planner sizes from *two* statements rather than one,
 /// which is why it is the one where its own arithmetic has to be checked against
-/// the route instead of trusted. Refusing here is what keeps the interpreter's
-/// bounds check unreachable: a route that committed on a short buffer would
-/// either read past it or fail after the point where failing is reportable only.
+/// what came back instead of trusted. Under ADR 0051 that check happens after the
+/// commit, because the allocation does — so it is a `Failure` that forecloses a
+/// fallback, and the priced consequence of moving allocation past the commit:
+/// the pre-commit stage sized the pair correctly and only the acquisition was
+/// short, which is an allocator defect and not a route to take elsewhere.
+///
+/// The stage log is the evidence that it is post-commit rather than the error
+/// class alone: `AllocateDispatch` ran and `Dispatch` did not.
 #[test]
-fn a_shared_allocation_shorter_than_the_route_publishes_refuses_before_the_commit() {
+fn a_shared_allocation_shorter_than_the_plan_sized_it_fails_after_the_commit() {
     let (outcome, host) = route(
         &FixtureSpec::materialized(),
         ScalarHostAdapter::new(&OPERANDS).perturbed(Perturbation::UndersizeSharedAllocation),
     );
     let Err(failure) = outcome else {
-        panic!("a shared allocation short of the route's range must refuse");
+        panic!("a shared allocation short of the plan's own length must fail");
     };
     assert!(
         matches!(
             failure,
-            AdapterRouteFailure::Plan(adapter::ScalarRefusal::UndersizedStorage {
+            AdapterRouteFailure::Allocation(image::ExecutionFault::UndersizedStorage {
                 entry: 0,
                 slot: 1,
                 required: SCRATCH_BYTES,
-                supplied: SHORT_SCRATCH_BYTES,
+                held: SHORT_SCRATCH_BYTES,
             }),
         ),
-        "expected a planning refusal naming the producing end of the pairing: {failure}",
+        "expected an allocation failure naming the producing end of the pairing: {failure}",
     );
     assert!(
-        failure.fallback_permitted(),
-        "a planning refusal arrives while a fallback is still permitted",
+        !failure.fallback_permitted(),
+        "the route committed before its storage was acquired, so nothing follows",
     );
     assert_eq!(
         host.stages,
@@ -1082,8 +1099,9 @@ fn a_shared_allocation_shorter_than_the_route_publishes_refuses_before_the_commi
             Stage::ObservePreparedEntry,
             Stage::ObservePreparedEntry,
             Stage::PlanDispatch,
+            Stage::AllocateDispatch,
         ],
-        "nothing is dispatched once an allocation has refused",
+        "nothing is dispatched once an allocation failed",
     );
 }
 
@@ -1537,16 +1555,21 @@ fn a_filtered_portfolio_refuses_at_binding_and_still_permits_a_fallback() {
     );
 }
 
-/// The materialized member's own pre-commit refusals still permit a fallback.
+/// The materialized member's outcomes fall on the side of the commit they belong on.
 ///
 /// The same population claim the fused member makes, over the perturbations only
 /// a multi-entry route can reach. Kept separate rather than merged because the
 /// two members refuse in different places, and a single list would hide which
 /// member a regression came from.
+///
+/// Both populations are written out, because the whole content of this ticket's
+/// change is *which* list a perturbation belongs to: a shared allocation that
+/// comes back short is no longer recoverable, and a caller's undersized operand
+/// still is. Asserting only the recoverable half would leave the move invisible
+/// here.
 #[test]
-fn the_multi_entry_pre_commit_refusals_still_permit_a_fallback() {
+fn the_multi_entry_outcomes_sit_on_the_side_of_the_commit_they_belong_on() {
     for perturbation in [
-        Perturbation::UndersizeSharedAllocation,
         Perturbation::RefusePreparation,
         Perturbation::UndersizedInput,
     ] {
@@ -1562,8 +1585,26 @@ fn the_multi_entry_pre_commit_refusals_still_permit_a_fallback() {
             "{perturbation:?} is reached before the commit: {failure}",
         );
         assert!(
-            !host.stages.contains(&Stage::Dispatch),
-            "{perturbation:?} must not reach a dispatch",
+            !host.stages.contains(&Stage::AllocateDispatch),
+            "{perturbation:?} must not reach an allocation",
         );
     }
+
+    let (outcome, host) = route(
+        &FixtureSpec::materialized(),
+        ScalarHostAdapter::new(&OPERANDS).perturbed(Perturbation::UndersizeSharedAllocation),
+    );
+    let failure = outcome.expect_err("an undersized shared allocation must fail");
+    assert!(
+        !failure.fallback_permitted(),
+        "an allocation is acquired after the commit, so nothing follows it: {failure}",
+    );
+    assert!(
+        host.stages.contains(&Stage::AllocateDispatch),
+        "the failure is reached through the allocating stage",
+    );
+    assert!(
+        !host.stages.contains(&Stage::Dispatch),
+        "a route whose storage failed must not be dispatched",
+    );
 }

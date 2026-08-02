@@ -602,17 +602,6 @@ pub enum RouteRefusal {
         /// The device's single-buffer limit.
         limit: u64,
     },
-    /// A binding's accessible range does not fit the storage bound to it.
-    UndersizedStorage {
-        /// Position of the entry in the route's execution order.
-        entry: usize,
-        /// Zero-based ABI slot.
-        slot: usize,
-        /// Bytes the route requires be reachable.
-        needed: u64,
-        /// Bytes the bound allocation holds.
-        held: u64,
-    },
     /// A binding's offset plus its extent does not fit an unsigned range.
     BindingRangeOverflow {
         /// Position of the entry in the route's execution order.
@@ -643,11 +632,6 @@ pub enum RouteRefusal {
     },
     /// No entry of this route binds the program output.
     NoOutputBinding,
-    /// Candle's allocator refused a request this route needs.
-    Allocation {
-        /// What Candle reported.
-        detail: String,
-    },
     /// Candle's own pending work could not be brought to a terminal state.
     ///
     /// Flushed before anything is encoded, because the tensor this route reads
@@ -739,16 +723,6 @@ impl fmt::Display for RouteRefusal {
                 "candle-metal.plan: entry {entry} slot {slot} must reach {needed} byte(s) and one \
                  buffer holds at most {limit}",
             ),
-            Self::UndersizedStorage {
-                entry,
-                slot,
-                needed,
-                held,
-            } => write!(
-                formatter,
-                "candle-metal.plan: entry {entry} slot {slot} needs {needed} byte(s) reachable \
-                 and the bound storage holds {held}",
-            ),
             Self::BindingRangeOverflow {
                 entry,
                 slot,
@@ -775,12 +749,6 @@ impl fmt::Display for RouteRefusal {
             ),
             Self::NoOutputBinding => formatter
                 .write_str("candle-metal.plan: no entry of this route binds the program output"),
-            Self::Allocation { detail } => {
-                write!(
-                    formatter,
-                    "candle-metal.plan: Candle's allocator refused: {detail}"
-                )
-            }
             Self::PendingCandleWork { detail } => write!(
                 formatter,
                 "candle-metal.plan: Candle's pending work did not reach a terminal state: \
@@ -798,6 +766,31 @@ impl std::error::Error for RouteRefusal {}
 /// and ADR 0051 forbids selecting another plan afterwards.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DispatchFailure {
+    /// Candle's allocator refused a request the committed route needs.
+    ///
+    /// Post-commit under ADR 0051: program storage is acquired only from the
+    /// committed execution authority, so there is no route left to fall back to
+    /// when the allocator says no.
+    Allocation {
+        /// What Candle reported.
+        detail: String,
+    },
+    /// An allocation came back shorter than the plan sized it for.
+    ///
+    /// A defect report rather than a routing input. Every buffer is requested at
+    /// the length the pre-commit plan derived from the route, so reaching this
+    /// means the allocator did not honour a request it accepted — or that a
+    /// caller bound a shorter tensor than the artifact declares.
+    UndersizedStorage {
+        /// Position of the entry in the route's execution order.
+        entry: usize,
+        /// Zero-based ABI slot.
+        slot: usize,
+        /// Bytes the plan sized the allocation for.
+        needed: u64,
+        /// Bytes the bound allocation holds.
+        held: u64,
+    },
     /// The command buffer could not be created or encoded into.
     EncoderUnavailable {
         /// Position of the entry in the route's execution order, or the route
@@ -828,6 +821,20 @@ pub enum DispatchFailure {
 impl fmt::Display for DispatchFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Allocation { detail } => write!(
+                formatter,
+                "candle-metal.allocate: Candle's allocator refused the committed route: {detail}",
+            ),
+            Self::UndersizedStorage {
+                entry,
+                slot,
+                needed,
+                held,
+            } => write!(
+                formatter,
+                "candle-metal.allocate: entry {entry} slot {slot} was sized for {needed} byte(s) \
+                 and the bound storage holds {held}, after the route committed",
+            ),
             Self::EncoderUnavailable { entry } => match entry {
                 Some(entry) => write!(
                     formatter,
@@ -1011,12 +1018,6 @@ mod tests {
                 needed: 2,
                 limit: 1,
             },
-            RouteRefusal::UndersizedStorage {
-                entry: 0,
-                slot: 0,
-                needed: 2,
-                held: 1,
-            },
             RouteRefusal::BindingRangeOverflow {
                 entry: 0,
                 slot: 0,
@@ -1030,9 +1031,6 @@ mod tests {
             },
             RouteRefusal::EmptyLaunchNotSkippable { entry: 0 },
             RouteRefusal::NoOutputBinding,
-            RouteRefusal::Allocation {
-                detail: "out of memory".to_owned(),
-            },
             RouteRefusal::PendingCandleWork {
                 detail: "command buffer error".to_owned(),
             },

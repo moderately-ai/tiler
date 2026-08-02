@@ -221,9 +221,28 @@ impl LiveExecutionContext {
 /// caller may try another artifact.
 ///
 /// [`Self::Failure`] is post-commit and reports rather than retries. Reaching
-/// [`Self::dispatch`] means the route committed, and ADR 0051 forbids selecting
-/// another plan afterwards. [`AdapterRouteFailure::fallback_permitted`] is the
-/// same split, readable by a caller.
+/// [`Self::allocate_dispatch`] or [`Self::dispatch`] means the route committed,
+/// and ADR 0051 forbids selecting another plan afterwards.
+/// [`AdapterRouteFailure::fallback_permitted`] is the same split, readable by a
+/// caller.
+///
+/// # Sizing and allocating are two stages, on the two sides of the commit
+///
+/// ADR 0051 places program allocation after the routing commit: "only the
+/// resulting committed execution authority may allocate program resources or
+/// encode work", so that "program allocations and partial encodings never
+/// precede a fallback decision". [`Self::plan_dispatch`] is therefore the
+/// pre-commit half and acquires nothing — it derives each binding's range,
+/// compares it against the limits this context declares, and records which
+/// storage every slot will take — while [`Self::allocate_dispatch`] is the
+/// post-commit half, reached only from a [`RoutedDispatch`], which is the type
+/// [`Preflight::commit`] mints.
+///
+/// The cost of that division is priced rather than hidden: a device that cannot
+/// hold the plan is terminal at the allocating stage instead of recoverable.
+/// Pre-commit sizing against declared limits catches all but the allocator's own
+/// residue, and that residue failing loudly is a defect signal — an allocator
+/// returning less than a length it accepted — rather than a routing input.
 ///
 /// # No adapter identity, no version, no capability query
 ///
@@ -351,35 +370,84 @@ pub trait RuntimeAdapter {
         request: TargetPropertyRequest<'_>,
     ) -> u64;
 
-    /// Sizes, allocates, and binds everything the route will dispatch.
+    /// Sizes what the route will dispatch and checks its capacity, acquiring nothing.
     ///
     /// The last chance to refuse. Called with a [`Preflight`] — every obligation
     /// the loader can decide is already discharged, and the route has not
-    /// committed — so an adapter allocates storage, honours the paired
-    /// [`Preflight::shared_allocations`], fills host-visible inputs, and compares
-    /// each binding's required byte range against the storage it holds. All of
-    /// that is discarded if the route is abandoned.
+    /// committed — so an adapter derives each binding's required byte range from
+    /// what the route publishes, compares it against the limits this context
+    /// declares, resolves which storage every slot will be backed by, and pairs
+    /// the slots [`Preflight::shared_allocations`] says must share one
+    /// allocation. What it records is a statement about storage, never storage.
     ///
-    /// Encoding and submission do **not** belong here. They are program work, and
-    /// they run in [`Self::dispatch`] after the commit.
+    /// **No program storage is acquired here, and that is ADR 0051 rather than a
+    /// style.** A program output, program temporary, validation record, or
+    /// private transaction result taken at this stage would precede a fallback
+    /// decision the caller is still permitted to make, and abandoning the route
+    /// would leave an observable resource effect a retry could duplicate.
+    /// Backend-internal library and pipeline state is the reversible kind and
+    /// belongs in [`Self::prepare_entries`]; program storage belongs in
+    /// [`Self::allocate_dispatch`], after the commit.
+    ///
+    /// What this stage can still refuse is everything statable without storage:
+    /// a byte range whose offset and extent do not form an addressable interval,
+    /// a range larger than one allocation this context admits, a launch wider
+    /// than the prepared pipeline admits, a binding naming an input the caller
+    /// did not supply or a target this consumer does not place, and
+    /// caller-supplied storage shorter than the route's published range — the
+    /// caller's storage already exists, so comparing against it acquires nothing.
     ///
     /// # Errors
     ///
     /// Returns [`Self::Refusal`] when the route cannot be carried out on this
-    /// context — storage that does not fit, a launch wider than the device
-    /// admits, an input the caller did not supply.
+    /// context. A fallback is still permitted.
     fn plan_dispatch(
         &mut self,
         context: &LiveExecutionContext,
         preflight: &Preflight<'_>,
     ) -> Result<(), Self::Refusal>;
 
+    /// Acquires and binds the program storage the **committed** route dispatches.
+    ///
+    /// Reached only from a [`RoutedDispatch`], and that is the enforcement rather
+    /// than the documentation: the only way to obtain one is
+    /// [`Preflight::commit`], so an adapter cannot be handed the authority to
+    /// allocate program storage before the route has committed.
+    ///
+    /// An adapter allocates each program output and temporary, honours the
+    /// paired [`RoutedDispatch::shared_allocations`] so both ends of a data
+    /// dependency address one allocation, fills host-visible inputs, and asserts
+    /// that every allocation came back holding the range [`Self::plan_dispatch`]
+    /// sized it for.
+    ///
+    /// **That observed-length assertion is a defect report, not a routing
+    /// input.** Every allocation is requested at the length the route states, so
+    /// reaching it means an allocator returned less than a request it accepted.
+    /// Failing loudly is the signal; refusing recoverably against an allocation
+    /// made before the commit is the arrangement this stage replaces.
+    ///
+    /// Encoding and submission do **not** belong here either. They run in
+    /// [`Self::dispatch`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Failure`]. The route has committed, so an allocation that
+    /// fails is reported to the caller and never resolved by routing somewhere
+    /// else.
+    fn allocate_dispatch(
+        &mut self,
+        context: &LiveExecutionContext,
+        routed: &RoutedDispatch<'_>,
+    ) -> Result<(), Self::Failure>;
+
     /// Encodes, submits, and observes the committed route to terminal success.
     ///
-    /// Everything here is past the one-way commit. An adapter encodes each entry
-    /// in the order [`RoutedDispatch::entries`] publishes, submits, waits for a
-    /// terminal outcome, reads back what its completion carries, and keeps every
-    /// asynchronous resource alive through its final device use.
+    /// Everything here is past the one-way commit, and the storage it encodes
+    /// against was acquired by [`Self::allocate_dispatch`] on the same side of
+    /// it. An adapter encodes each entry in the order [`RoutedDispatch::entries`]
+    /// publishes, submits, waits for a terminal outcome, reads back what its
+    /// completion carries, and keeps every asynchronous resource alive through
+    /// its final device use.
     ///
     /// # Errors
     ///
@@ -408,13 +476,17 @@ pub trait RuntimeAdapter {
 /// 4. the adapter reports each live-device requirement and the loader compares;
 /// 5. the adapter prepares every entry;
 /// 6. the adapter reports each prepared-entry property and the loader compares;
-/// 7. the adapter sizes, allocates, and binds;
+/// 7. the adapter sizes the dispatch and checks its capacity, acquiring nothing;
 /// 8. the route commits, once and infallibly;
-/// 9. the adapter encodes, submits, and observes terminal success.
+/// 9. the adapter allocates and binds the committed route's program storage;
+/// 10. the adapter encodes, submits, and observes terminal success.
 ///
 /// Steps 1 through 7 may refuse and a fallback is permitted throughout. Step 8
-/// cannot fail — every decidable obligation was discharged before it — and step
-/// 9 reports rather than retries.
+/// cannot fail — every decidable obligation was discharged before it — and steps
+/// 9 and 10 report rather than retry. That step 9 sits *after* step 8 is ADR
+/// 0051's placement of program allocation, and the reason step 7 exists as its
+/// own stage: what a device can be asked without acquiring anything is asked
+/// while abandoning the route is still free.
 ///
 /// # Errors
 ///
@@ -471,6 +543,12 @@ pub fn route_with_adapter<A: RuntimeAdapter>(
     // and there is no branch here that could: the only value left is a
     // `RoutedDispatch`, and no variant of it selects a plan.
     let routed = preflight.commit();
+    // ADR 0051's "only the resulting committed execution authority may allocate
+    // program resources". The authority is the value, so the ordering is carried
+    // by the argument type rather than by this line's position.
+    adapter
+        .allocate_dispatch(&context, &routed)
+        .map_err(AdapterRouteFailure::Allocation)?;
     adapter
         .dispatch(&context, &routed)
         .map_err(AdapterRouteFailure::Dispatch)
@@ -479,9 +557,10 @@ pub fn route_with_adapter<A: RuntimeAdapter>(
 /// Why one artifact did not run to completion through a selected adapter.
 ///
 /// The stage is carried rather than flattened, because "this host cannot execute
-/// these bytes", "this payload is malformed", "this device is too small", and
-/// "the submission did not complete" are four different things to do next, and
-/// only the last of them forecloses a fallback.
+/// these bytes", "this payload is malformed", "this device is too small", "the
+/// storage the committed route needs could not be acquired", and "the submission
+/// did not complete" are five different things to do next, and only the last two
+/// foreclose a fallback.
 ///
 /// `#[non_exhaustive]` under ADR 0074 convention 5a: a stage added to the route
 /// lands here additively, and no crate outside this one has to match the set
@@ -505,11 +584,18 @@ pub enum AdapterRouteFailure<R, F> {
     },
     /// The adapter could not prepare the route's entries.
     Preparation(R),
-    /// The adapter could not size, allocate, or bind what the route dispatches.
-    Plan(R),
-    /// The committed dispatch did not complete.
+    /// The adapter could not size what the route dispatches within this context.
     ///
-    /// The one variant after which ADR 0051 permits no fallback.
+    /// The last refusal before the commit, and the one that costs nothing to
+    /// take: nothing was acquired to reach it.
+    Plan(R),
+    /// The committed route's program storage could not be acquired or bound.
+    ///
+    /// Past the commit. ADR 0051 places program allocation on this side of the
+    /// boundary, which makes a device that cannot hold the plan terminal here
+    /// rather than recoverable at [`Self::Plan`].
+    Allocation(F),
+    /// The committed dispatch did not complete.
     Dispatch(F),
 }
 
@@ -517,7 +603,9 @@ impl<R, F> AdapterRouteFailure<R, F> {
     /// Returns whether ADR 0051 still permits this caller to take a fallback.
     ///
     /// True for every refusal reached before the routing commit and false for
-    /// [`Self::Dispatch`], which is the only outcome reached after it.
+    /// [`Self::Allocation`] and [`Self::Dispatch`], the two outcomes reached
+    /// after it. The split follows the two associated error types exactly: a
+    /// variant carrying `R` is pre-commit and a variant carrying `F` is not.
     ///
     /// Written as an exhaustive match with no wildcard arm (ADR 0074 convention
     /// 3): a stage added to the route must be classified deliberately here, and
@@ -531,7 +619,7 @@ impl<R, F> AdapterRouteFailure<R, F> {
             | Self::Payload { .. }
             | Self::Preparation(_)
             | Self::Plan(_) => true,
-            Self::Dispatch(_) => false,
+            Self::Allocation(_) | Self::Dispatch(_) => false,
         }
     }
 }
@@ -562,6 +650,11 @@ impl<R: fmt::Display, F: fmt::Display> fmt::Display for AdapterRouteFailure<R, F
                 formatter,
                 "adapter.plan: the adapter cannot carry out this route: {refusal}",
             ),
+            Self::Allocation(failure) => write!(
+                formatter,
+                "adapter.allocation: the committed route's storage could not be acquired, and no \
+                 fallback follows: {failure}",
+            ),
             Self::Dispatch(failure) => write!(
                 formatter,
                 "adapter.dispatch: the committed route did not complete, and no fallback follows: \
@@ -583,7 +676,7 @@ where
             | Self::Payload { refusal, .. }
             | Self::Preparation(refusal)
             | Self::Plan(refusal) => Some(refusal),
-            Self::Dispatch(failure) => Some(failure),
+            Self::Allocation(failure) | Self::Dispatch(failure) => Some(failure),
         }
     }
 }
@@ -594,14 +687,14 @@ mod tests {
     use crate::load::{DecodedProgram, LoadRejection};
     use tiler_artifact::program::ArtifactCodecFailure;
 
-    /// Every stage reached before the commit permits a fallback, and the one
-    /// stage after it does not.
+    /// Every stage reached before the commit permits a fallback, and the two
+    /// stages after it do not.
     ///
     /// Asserted over a written-out population rather than over whatever the enum
     /// happens to hold, so a stage added without being classified is visible as a
     /// missing row here as well as a build error in `fallback_permitted`.
     #[test]
-    fn only_a_post_commit_dispatch_failure_forecloses_a_fallback() {
+    fn no_post_commit_stage_permits_a_fallback_and_every_pre_commit_one_does() {
         let load: AdapterRouteFailure<&str, &str> = AdapterRouteFailure::Load(
             LoadRejection::Artifact(match DecodedProgram::decode(b"short", 0) {
                 Err(LoadRejection::Artifact(failure)) => failure,
@@ -624,12 +717,16 @@ mod tests {
                 "{failure:?} is reached before the commit and must permit a fallback",
             );
         }
-        let committed: AdapterRouteFailure<&str, &str> =
-            AdapterRouteFailure::Dispatch("submission did not complete");
-        assert!(
-            !committed.fallback_permitted(),
-            "a post-commit dispatch failure must not permit a fallback",
-        );
+        let committed: [AdapterRouteFailure<&str, &str>; 2] = [
+            AdapterRouteFailure::Allocation("the device returned no buffer"),
+            AdapterRouteFailure::Dispatch("submission did not complete"),
+        ];
+        for failure in &committed {
+            assert!(
+                !failure.fallback_permitted(),
+                "{failure:?} is reached after the commit and must foreclose a fallback",
+            );
+        }
     }
 
     /// The display form names the stage and keeps the cause readable.
@@ -643,6 +740,7 @@ mod tests {
             },
             AdapterRouteFailure::Preparation("cause"),
             AdapterRouteFailure::Plan("cause"),
+            AdapterRouteFailure::Allocation("cause"),
             AdapterRouteFailure::Dispatch("cause"),
         ]
         .iter()

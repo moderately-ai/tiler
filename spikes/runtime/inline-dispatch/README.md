@@ -62,11 +62,25 @@ Both exit `0` on success and `1` on any disagreement, including an oracle mismat
 | Rust | `nightly-2026-07-19`, from the repository pin |
 | Metal compiler | Apple metal version 32023.883 (`metalfe-32023.883`), target `air64-apple-darwin27.0.0` |
 | `metal` crate | 0.33.0, the version the root `[workspace.dependencies]` pins |
-| repository commit | `8366ecd` plus this spike |
+| repository commit | `29a9680` plus `reconcile-the-pre-commit-allocation-seam-with-adr-0051` |
 
 ## Transcript, 2026-08-01
 
-Verbatim, `cargo run --release`:
+Verbatim, `cargo run --release`. Re-recorded when
+[`reconcile-the-pre-commit-allocation-seam-with-adr-0051`](../../../tickets/reconcile-the-pre-commit-allocation-seam-with-adr-0051.md)
+split the seam's sizing stage from its allocating one, which is why
+`allocate-dispatch` appears between `plan-dispatch` and `dispatch`.
+
+**Measurement — the entry symbol drifted, and not from this change.** It was
+`tiler_kernel_ce0acbceb6c201da` when this record was written at `8366ecd` and is
+`tiler_kernel_ae031ce7240f7495` at the base above. The object length, binding
+count, launch, and every value are unchanged. The one-line check that places the
+drift elsewhere: `git status --porcelain -- crates/tiler-compiler crates/tiler-ir
+crates/tiler-macros crates/tiler-metal crates/tiler-metal-aot crates/tiler-build
+crates/tiler-artifact` reports nothing on this branch, so the kernel identity's
+inputs were untouched by it and the value moved with work landed between the two
+commits. Re-running this spike is what detects such drift, which is the trade
+[AGENTS.md](../../../AGENTS.md) records for keeping a cited transcript.
 
 ```
 device: Apple M4 Max
@@ -79,12 +93,13 @@ stage: validate-payload
 stage: prepare-entries
 stage: observe-prepared-entry
 stage: plan-dispatch
+stage: allocate-dispatch
 stage: dispatch
 handover: a = [1.5, -2.0, 0.25, 8.0]
 handover: b = [4.0, 3.0, -16.0, 0.5]
 handover: c = [0.5, 1.0, 2.0, -3.0]
 handover: out = 16 byte(s) to write
-entry 0: symbol "tiler_kernel_ce0acbceb6c201da", 3859 object byte(s), 4 binding(s), launch 4×1
+entry 0: symbol "tiler_kernel_ae031ce7240f7495", 3859 object byte(s), 4 binding(s), launch 4×1
 plan: 1 entry(ies), 0 shared allocation(s)
 committed route completed: 1/1 entry(ies) encoded, terminal status Completed, profile tiler.metal.macos-apple9.msl4-0.f32.v1
 DIAGNOSTIC — producer-declared equality against tiler.metal.macos-apple9.msl4-0.f32.v1, NOT host-earned eligibility
@@ -151,6 +166,7 @@ Every other Metal call this spike makes — device creation, library loading, fu
 ## Unsupported cases and measurement boundary
 
 - **Live-device route requirements are refused, not answered, and that is now a deliberate interim rather than an open gap.** The region delivered here declares none — `observe-live-device` is absent from the stage list, which is what zero rows looks like — so nothing in that method ran on this transcript. Both arms answer `LiveDeviceObservation::Unrecognized`, which is fail-closed: the loader refuses the route and the region takes its declared result. The `tiler.metal.route-requirement.minimum-gpu-family` row *is* answerable from `MTLDevice::supportsFamily`, but its payload vocabulary is `tiler_metal::applicability::MetalGpuFamily` and a consumer may not name an internal crate; spelling the family names again here would mint a second authority over a governed vocabulary. [Backend-scoped route-requirement answers](../../../docs/research/runtime/backend-scoped-route-requirement-answers.md) is the design record that derives the channel, and it records fail-closed as the explicit interim while the design is unimplemented — so `Unrecognized` here is the correct answer rather than a placeholder, and it stays correct until a backend publishes an answer surface a consumer may reach. **That surface is a public-boundary question for Tom rather than something to work around locally**; the record's own finding is that the neutral answer channel already exists and works, and what a consumer is missing is the payload decoder, not a channel.
-- **One entry, four bindings, no shared allocations.** The multi-entry and shared-allocation paths in `plan_dispatch` are written and compiled but not exercised by this region; `crates/tiler-runtime/tests/adapter_route` is where those paths have watched evidence, against a host interpreter.
+- **One entry, four bindings, no shared allocations.** The multi-entry and shared-allocation paths in `plan_dispatch` and `allocate_dispatch` are written and compiled but not exercised by this region; `crates/tiler-runtime/tests/adapter_route` is where those paths have watched evidence, against a host interpreter.
+- **The post-commit allocation failure is unwatched here.** `DispatchFailure::UndersizedStorage` is reachable only from an allocator that returns less than a length it accepted, and Metal's does not on this host — provoking one is not something this spike can do without lying about what it allocated. `crates/tiler-runtime/tests/adapter_route::a_shared_allocation_shorter_than_the_plan_sized_it_fails_after_the_commit` is where that classification has watched evidence, against a host interpreter whose allocator this repository controls. What this run does establish about the split is the *stage order*: `allocate-dispatch` appears after `plan-dispatch` and before `dispatch` in the transcript above, which is the ordering ADR 0051 asks for.
 - **No performance claim.** Nothing here is timed, warmed up, or repeated. It is a correctness artifact.
 - **One host.** Every statement above is about the machine in the table, at that OS build, with that Metal compiler and that device. `metallib` translation during pipeline creation remains `Unknown` under ADR 0086 on every macOS row currently observable, so a completed dispatch is not eligibility and this spike claims none.

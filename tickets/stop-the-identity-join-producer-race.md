@@ -31,6 +31,21 @@ tags: [research]
 
 Every failure is `the build-time producer failed (signal: 9 (SIGKILL))` with empty stdout and empty stderr — a process-level kill of the subprocess, never a nonzero exit or a failed assertion, which is what places the defect in the harness rather than in anything the tests are about. `cargo nextest run --workspace --locked` was green three times before this surfaced and red on a single `identity_join` case twice afterwards, always a different case, which is the rate the table predicts. The same workspace run excluding this one binary is green (2,268 passed, 7 skipped) and the binary serialized is green (13 passed).
 
+## Landed 2026-08-01 in `reconcile-the-pre-commit-allocation-seam-with-adr-0051`, and what is left
+
+**The mechanism this ticket derived is closed.** The race fired in that ticket's own worktree — `an_entry_mapping_reaching_no_packaged_entry_is_refused_from_bytes`, `producer.rs:108`, `signal: 9 (SIGKILL)`, empty stdout and stderr — and it holds `implementation/runtime`, so the fix landed there rather than being filed twice. `produce()` now takes an exclusive advisory lock (`std::fs::File::lock`) on `$CARGO_TARGET_TMPDIR/identity-join/producer.lock` across the whole `cargo run`, **including the child's execution** and not merely its build, which is the half that dies.
+
+**The candidates were eliminated in the module header rather than passed over.** A `OnceLock` shares nothing across thirteen *processes*, which is the decisive elimination and the one this ticket's own candidate list did not price. A nextest setup script would fix nextest and leave `cargo test` racing, making the fixture correct under one runner. A private copy narrows the window without closing it — the copy reads a file a sibling may be relinking, and it still needs a contended `cargo build --example` first.
+
+**Measurement — 2026-08-01, this host (Apple M4 Max, macOS, `nightly-2026-07-19`), in the ticket worktree at base `29a9680`.** The probe is `cargo clean -p tiler-build` before each `cargo nextest run -p tiler-runtime --locked`, which forces the producer example cold every time; that is the condition the table above identifies and it is what the *first* attempt at this measurement got wrong. Narrowing to `--test identity_join` with a `touch` instead of a clean produced ten green runs **without** the lock — a control that proved nothing, and a uniform pass over a population expected to be heterogeneous.
+
+| Invocation | Runs | Runs with a failure |
+| --- | --- | --- |
+| unlocked, `clean -p tiler-build` + `nextest -p tiler-runtime` | 6 | **1** (SIGKILL) |
+| the same with the lock | 10 | **0** |
+
+**What is not done, and why this ticket is not closed here.** The third closing criterion — "the harness no longer starts a Cargo invocation per test case" — is *unmet*, deliberately. The invocations are serialized rather than eliminated, because the defect is concurrency and not invocation count, and every shape that removes the per-case invocation across processes is either a lock (this) or a runner-specific setup script (rejected above). After the first, each invocation builds nothing. Tom or the coordinator decides whether to close on the measurement or to revise that criterion; the fix stands either way.
+
 ## What this owns
 
 Making the producer a shared, once-per-binary artifact rather than a per-test Cargo invocation. Candidates worth eliminating explicitly rather than picking: producing once behind a `OnceLock` guarded by a file lock so the thirteen cases share one tree; running it once from a nextest setup script; or copying the built example to a per-process private path before executing it, which is the shape AGENTS' own sentence points at. Note that `produce()` already keys its output tree by `std::process::id()`, so the *outputs* do not collide — it is the shared `cargo run` and the binary it relinks that do, and a fix that only separates the trees will not move the table above.
