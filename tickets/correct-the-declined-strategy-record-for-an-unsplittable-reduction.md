@@ -1,7 +1,7 @@
 ---
 id: correct-the-declined-strategy-record-for-an-unsplittable-reduction
 title: Correct the declined-strategy explain record for an unsplittable reduction
-status: review
+status: done
 priority: p1
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, defect, explain]
-claimed_from: todo
-assignee: agent-decline
-lease_expires_at: 1785704070
 ---
 ## User-visible outcome
 
@@ -42,3 +39,18 @@ The same program at `Shape::from_dims([1, 4])` compiles under all four. The diff
 ## Closes when
 
 The two-contributor program above compiles under all four registered contracts; its trace contains a declined-strategy record naming `no-admissible-partition`; and a deliberately malformed stage event is still rejected by the explain writer, observed failing.
+
+## Outcome — 2026-08-02
+
+The defect was the stage/class pair, not strategy selection: intrinsic scheduling
+declines were emitted as `NotApplicable`, a class intentionally valid only at
+candidate enumeration. They now use `IntrinsicInvalid`; numerical-permission
+declines remain `NumericalIllegal`, and no decline record is suppressed.
+
+The regression drives the composed flush-and-reassociate contract. Two
+contributors compile through the serial fallback while retaining both intrinsic
+strategy declines, including `no-admissible-partition`; prime extent five reaches
+the honest typed grid-axis refusal (`required = 5`, `available = 4`). The existing
+malformed-event test still rejects an intrinsic-scheduling `NotApplicable` event.
+Independent correctness review of `6c523003` found no blocking issue and no
+public-boundary, target-limit, or identity-domain consequence.
