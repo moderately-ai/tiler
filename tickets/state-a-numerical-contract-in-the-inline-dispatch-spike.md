@@ -1,7 +1,7 @@
 ---
 id: state-a-numerical-contract-in-the-inline-dispatch-spike
 title: State a numerical contract in the inline-dispatch spike's two regions
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [state-the-numerical-contract-in-the-region-grammar]
@@ -9,9 +9,6 @@ scopes: [research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [spike, frontend, numerics, runtime]
-claimed_from: todo
-assignee: agent-inline-numerics
-lease_expires_at: 1785685152
 ---
 ## User-visible outcome
 

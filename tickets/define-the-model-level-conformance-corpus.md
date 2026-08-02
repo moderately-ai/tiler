@@ -10,8 +10,8 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [research, conformance, testing, language-model, qwen, metal]
 claimed_from: todo
-assignee: agent-conformance
-lease_expires_at: 1785685152
+assignee: agent-conformance-r2
+lease_expires_at: 1785686685
 ---
 ## User-visible outcome
 

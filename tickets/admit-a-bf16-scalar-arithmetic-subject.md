@@ -10,8 +10,8 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, bf16, target-profiles, numerics]
 claimed_from: todo
-assignee: agent-bf16-subject
-lease_expires_at: 1785685152
+assignee: agent-bf16-r2
+lease_expires_at: 1785686685
 ---
 ## User-visible outcome
 
