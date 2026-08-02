@@ -1,7 +1,7 @@
 ---
 id: realize-parallel-reduction-strategies-on-metal
 title: Realize parallel reduction strategies on Metal
-status: in-progress
+status: done
 priority: p1
 dependencies: [implement-the-target-neutral-multi-pass-reduction-strategy, implement-the-single-workgroup-synchronized-reduction-strategy, declare-a-required-gpu-family-in-the-artifact, construct-and-bind-the-first-authoritative-metal-compile-profile, compose-the-numerical-contract-from-its-decided-dimensions]
 related: [implement-parallel-reduction-strategies]
@@ -9,9 +9,6 @@ scopes: [implementation/metal, implementation/build, implementation/runtime, imp
 shared_scopes: [project/tickets]
 paths: []
 tags: []
-claimed_from: todo
-assignee: agent-metal-reduction
-lease_expires_at: 1785687056
 ---
 ## User-visible outcome
 
@@ -115,3 +112,7 @@ All three equal the reference `41700000` (15.0). **The strategy labels are carri
 **Command-buffer terminal success precedes readback, and asynchronous resources survive their final use.** Every parallel dispatch goes through `submit`, which admits a readback only on `Completed`. The buffers are owned by one value that outlives the submission, and the split's intermediate is one allocation referenced by the stage that writes it and the stage that reads it — allocated per *allocation*, never per binding, which is the case that would fail open rather than refuse. Ordering is one encoder per stage, which Metal orders unconditionally within a command buffer.
 
 **What remains unrun.** No grouping-sensitive numerical case (boundary above). No hardware drive of a family-authority refusal (no producer emits the row). No delivery-time synchronization check (filed). Measured crossover and winner activation stay with `calibrate-and-activate-parallel-reduction-selection`, untouched.
+
+**Coordinator note at integration, 2026-08-02 — the remainder is three live tickets, so this one closes.** Each unrun predicate above now has an owner rather than sitting in this ticket's prose: [`check-synchronization-realization-before-the-routing-commit`](check-synchronization-realization-before-the-routing-commit.md), filed by the worker; [`emit-a-route-requirement-from-the-build-producer-so-a-family-authority-refusal-is-drivable`](emit-a-route-requirement-from-the-build-producer-so-a-family-authority-refusal-is-drivable.md), for the producer-side absence that keeps the family-authority fixture off hardware; and [`drive-a-grouping-sensitive-numerical-case-through-the-parallel-reduction-strategies`](drive-a-grouping-sensitive-numerical-case-through-the-parallel-reduction-strategies.md), for the rounding evidence the exact-by-construction operand set deliberately does not carry. The `Closes when` clause requiring Tom to review public backend/runtime boundaries is satisfied vacuously and was checked rather than waived: every item the run added is private to `prototypes/serial-sum-run`, and no new public API landed in `tiler-metal`, `tiler-runtime`, or `tiler-artifact`.
+
+**Verified at integration rather than taken from the report.** The three absence checks the outcome above rests on were re-run at base `dc13abb` with a control pattern proving the search works: `git grep 'local_memory_bytes' -- prototypes/` empty, `git grep 'max_threadgroup_memory_length' -- crates/ prototypes/` empty, `git grep 'RouteRequirement' -- crates/tiler-build/src` empty, against `git grep -c 'DeviceFacts' -- prototypes/` returning hits.
