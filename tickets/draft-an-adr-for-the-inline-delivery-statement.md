@@ -1,7 +1,7 @@
 ---
 id: draft-an-adr-for-the-inline-delivery-statement
 title: Draft a proposed ADR recording the accepted inline `deliver` statement
-status: todo
+status: in-progress
 priority: p2
 dependencies: [accept-the-inline-artifact-family-profile-syntax]
 related: [generate-cfg-gated-artifact-family-delivery, prototype-inline-proc-macro-frontend]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [documentation, decisions, inline-dx, frontend, apple-targets]
+claimed_from: todo
+assignee: agent-deliver-adr
+lease_expires_at: 1785696202
 ---
 ## Why this exists
 
