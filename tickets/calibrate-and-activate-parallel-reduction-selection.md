@@ -9,9 +9,6 @@ scopes: [implementation/compiler, research/program-planning, contracts/optimizer
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: []
-claimed_from: todo
-assignee: agent-calibrate
-lease_expires_at: 1785697181
 ---
 ## User-visible outcome
 
