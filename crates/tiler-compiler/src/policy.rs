@@ -754,8 +754,18 @@ mod tests {
     /// arithmetic/value-type association from the registered descriptor, and
     /// that does not change this: a subject a profile can speak about is not an
     /// operation this build can plan, and none is declared here.
+    /// `tiler::concatenate-f32@1` is here for a different reason than the BF16
+    /// three, and the difference is worth keeping. BF16 is unplanned because no
+    /// arithmetic in this build realizes it. Concatenate is unplanned because
+    /// nothing *physical* realizes it at all — the family is semantic and
+    /// reference-evaluable, with no lowering, fusion role, or kernel construct —
+    /// and it consumes no numerical freedom for a stronger reason than the BF16
+    /// rows do: it performs no arithmetic, so there is no dimension a capability
+    /// row could list. A row would be a claim about a target that concatenating
+    /// elements never asks of one.
     const UNPLANNED_OPERATIONS: &[&str] = &[
         "tiler::add-bf16@1",
+        "tiler::concatenate-f32@1",
         "tiler::constant-bf16@1",
         "tiler::multiply-bf16@1",
     ];
