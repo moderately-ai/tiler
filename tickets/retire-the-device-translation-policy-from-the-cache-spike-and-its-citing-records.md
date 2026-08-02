@@ -1,7 +1,7 @@
 ---
 id: retire-the-device-translation-policy-from-the-cache-spike-and-its-citing-records
 title: Retire the device-translation policy from the cache spike and its citing records
-status: review
+status: done
 priority: p2
 dependencies: []
 related: [route-or-refuse-the-device-translation-execution-policy, restore-the-spikes-against-the-composed-numerical-contract]
@@ -9,9 +9,6 @@ scopes: [research/cache, research/extensions, research/target-profiles]
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifacts, spikes, documentation]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785634941
 ---
 ## User-visible outcome
 
