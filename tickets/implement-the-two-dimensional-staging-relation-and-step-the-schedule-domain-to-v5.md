@@ -1,14 +1,17 @@
 ---
 id: implement-the-two-dimensional-staging-relation-and-step-the-schedule-domain-to-v5
 title: Implement the two-dimensional staging relation and step the schedule domain to v5
-status: todo
+status: in-progress
 priority: p1
 dependencies: [accept-adr-0097-two-dimensional-staging-relation]
 related: [land-the-two-dimensional-staging-relation-adr, admit-a-two-dimensional-cooperative-staging-relation, admit-a-round-dependent-cooperative-staging-span, realize-the-tiled-contraction-schedule-and-its-metal-emission, realize-the-strict-contraction-on-metal]
-scopes: [implementation/ir, contracts/artifacts, implementation/build, implementation/metal]
+scopes: [implementation/ir, contracts/artifacts, implementation/build, implementation/metal, research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, ir, physical-planning, identity, schedule-version]
+claimed_from: todo
+assignee: agent-v5-identity
+lease_expires_at: 1785694007
 ---
 ## User-visible outcome
 
