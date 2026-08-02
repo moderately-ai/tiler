@@ -9,7 +9,9 @@ use tiler_ir::semantic::{
     quantize_strict_affine_op,
 };
 
-use super::error::{ReferenceOperationError, ReferenceRegistryError, ReferenceValueError};
+use super::error::{
+    ReferenceOperationError, ReferenceRegistryError, ReferenceValueError, dense_result_error,
+};
 use super::registry::{
     ReferenceCapabilityRevision, ReferenceEvaluationRequest, ReferenceOperation, ReferenceOutputs,
     ReferenceRegistryRegistrar, ReferenceSignature, ReferenceValueValidator,
@@ -174,7 +176,7 @@ fn quantize(
         );
     }
     let codes = Tensor::dense(profile.code_type.clone(), expressed.shape().clone(), codes)
-        .map_err(|_| ReferenceOperationError::InvalidApplication)?;
+        .map_err(|source| dense_result_error(&source))?;
     outputs.push(compound_value(profile, &codes, scale, zero_point)?)
 }
 
@@ -205,7 +207,7 @@ fn dequantize(
         .collect::<Result<Vec<_>, _>>()?;
     outputs.push(
         Tensor::dense(F32::resolved_type(), encoded.shape().clone(), elements)
-            .map_err(|_| ReferenceOperationError::InvalidApplication)?,
+            .map_err(|source| dense_result_error(&source))?,
     )
 }
 

@@ -25,7 +25,7 @@ use tiler_ir::semantic::{
 };
 use tiler_ir::shape::Shape;
 
-use super::error::ReferenceOperationError;
+use super::error::{ReferenceOperationError, dense_result_error};
 use super::evaluate::{decode_coordinate, f32_elements, row_major_strides};
 use super::registry::{ReferenceEvaluationRequest, ReferenceOperation, ReferenceOutputs};
 use super::tensor::Tensor;
@@ -134,7 +134,7 @@ fn gather(
         gathered.push(element.clone());
     }
     Tensor::dense(F32::resolved_type(), result_shape.clone(), gathered)
-        .map_err(|_| ReferenceOperationError::ShapeTooLarge)
+        .map_err(|source| dense_result_error(&source))
 }
 
 /// Writes the operand coordinate one result coordinate reads, per admitted form.

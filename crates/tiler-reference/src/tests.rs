@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use super::error::dense_result_error;
 use super::evaluate::{
     EvaluationRetention, ReferenceWork, decode_f32, f32_element, f32_elements,
     reserve_evaluation_work, row_major_strides, strict_sum,
@@ -1447,6 +1448,89 @@ fn compound_root_elements_participate_in_the_aggregate_bound() {
         )],
     )
     .unwrap();
+}
+
+/// Each dense-construction cause reaches the operation vocabulary under its own
+/// name, rather than all four arriving as `ShapeTooLarge`.
+///
+/// The population is the four failures `Tensor::dense` can report, and it is
+/// counted here rather than sampled: three are produced by calling the
+/// constructor, and the retained-byte bound is stated because producing it needs
+/// more than `MAX_REFERENCE_TENSOR_BYTES` of real element payload. Pairwise
+/// distinctness is asserted because a mapping that answered one name for
+/// everything would satisfy every individual row of the table below by accident.
+#[test]
+fn every_dense_construction_cause_reports_under_its_own_name() {
+    let element_limit = u64::try_from(MAX_REFERENCE_TENSOR_ELEMENTS).unwrap();
+    let causes = [
+        // `element_count` overflows the host, before any bound is consulted.
+        Tensor::dense(
+            F32::resolved_type(),
+            Shape::from_dims([u64::MAX, u64::MAX]),
+            Vec::new(),
+        )
+        .unwrap_err(),
+        // The logical element bound, refused before the payload is read.
+        Tensor::dense(
+            F32::resolved_type(),
+            Shape::from_dims([element_limit + 1]),
+            Vec::new(),
+        )
+        .unwrap_err(),
+        // The payload length disagrees with the shape it was given.
+        Tensor::dense(
+            F32::resolved_type(),
+            Shape::from_dims([3]),
+            vec![ReferenceElement::new([0_u8; 4]).unwrap()],
+        )
+        .unwrap_err(),
+        EvaluationError::ResourceExceeded {
+            resource: ReferenceResource::TensorBytes,
+            limit: MAX_REFERENCE_TENSOR_BYTES,
+            actual: MAX_REFERENCE_TENSOR_BYTES + 1,
+        },
+    ];
+    assert_eq!(
+        causes[..3],
+        [
+            EvaluationError::ShapeTooLarge,
+            EvaluationError::ResourceExceeded {
+                resource: ReferenceResource::TensorElements,
+                limit: MAX_REFERENCE_TENSOR_ELEMENTS,
+                actual: MAX_REFERENCE_TENSOR_ELEMENTS + 1,
+            },
+            EvaluationError::ElementCount {
+                expected: 3,
+                actual: 1,
+            },
+        ]
+    );
+
+    let reported: Vec<_> = causes.iter().map(dense_result_error).collect();
+    assert_eq!(
+        reported,
+        [
+            ReferenceOperationError::ShapeTooLarge,
+            ReferenceOperationError::OutputElementsExceeded {
+                limit: MAX_REFERENCE_TENSOR_ELEMENTS,
+                actual: MAX_REFERENCE_TENSOR_ELEMENTS + 1,
+            },
+            ReferenceOperationError::InvalidApplication,
+            ReferenceOperationError::OutputResourceExceeded {
+                limit: MAX_REFERENCE_TENSOR_BYTES,
+                actual: MAX_REFERENCE_TENSOR_BYTES + 1,
+            },
+        ]
+    );
+    for (left_index, left) in reported.iter().enumerate() {
+        for (right_index, right) in reported.iter().enumerate() {
+            assert_eq!(
+                left == right,
+                left_index == right_index,
+                "cause {left_index} and cause {right_index} report the same name"
+            );
+        }
+    }
 }
 
 #[test]

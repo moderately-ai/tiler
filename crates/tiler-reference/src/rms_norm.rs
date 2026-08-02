@@ -80,7 +80,7 @@ use tiler_ir::shape::{Axis, Shape};
 
 use super::accuracy::{CertifiedEnclosure, EnclosurePrecision, rsqrt_enclosure};
 use super::canonicalize_arithmetic_f32;
-use super::error::ReferenceOperationError;
+use super::error::{ReferenceOperationError, dense_result_error};
 use super::evaluate::{RowGeometry, decode_f32, f32_element, f32_elements};
 use super::registry::{ReferenceEvaluationRequest, ReferenceOperation, ReferenceOutputs};
 use super::tensor::{ReferenceElement, Tensor};
@@ -123,7 +123,7 @@ impl ReferenceOperation for RmsNormF32Reference {
             .map(f32_element)
             .collect::<Result<Vec<ReferenceElement>, ReferenceOperationError>>()?;
         let tensor = Tensor::dense(F32::resolved_type(), shape.clone(), mapped)
-            .map_err(|_| ReferenceOperationError::ShapeTooLarge)?;
+            .map_err(|source| dense_result_error(&source))?;
         outputs.push(tensor)
     }
 }

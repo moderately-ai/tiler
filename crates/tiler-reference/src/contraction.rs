@@ -88,6 +88,7 @@ use tiler_ir::shape::{Extent, Shape};
 use super::MAX_REFERENCE_TENSOR_ELEMENTS;
 use super::error::{
     ReferenceOperationError, StagedContractionError, UnsupportedContractionDeclaration,
+    dense_result_error,
 };
 use super::evaluate::{
     decode_coordinate, decode_f32, f32_element, f32_elements, preflight_f32_output,
@@ -416,7 +417,7 @@ pub(crate) fn contract_operands(
         fold.output_shape.clone(),
         results,
     )
-    .map_err(|_| ReferenceOperationError::ShapeTooLarge)
+    .map_err(|source| dense_result_error(&source))
 }
 
 /// One contraction's validated fold, with every per-axis decision resolved.

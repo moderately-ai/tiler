@@ -868,3 +868,117 @@ impl Error for EvaluationError {
         }
     }
 }
+
+/// Reports a dense result-tensor construction failure in the operation vocabulary.
+///
+/// [`Tensor::dense`] answers in [`EvaluationError`] because `tensor` owns what a
+/// reference value *is*; a registered implementation answers in
+/// [`ReferenceOperationError`]. Every family that builds its result densely
+/// crosses that boundary, and each crossed it by discarding the cause and naming
+/// [`ReferenceOperationError::ShapeTooLarge`] — a name that is wrong wherever the
+/// call site already established the element count, which is most of them, and
+/// that drops the limit and the size that bound an exceeded budget.
+///
+/// The mapping is by the quantity the constructor rejected rather than by the
+/// constructor the failure came from:
+///
+/// | cause | reported as |
+/// | --- | --- |
+/// | [`EvaluationError::ShapeTooLarge`] | [`ReferenceOperationError::ShapeTooLarge`] |
+/// | [`ReferenceResource::TensorElements`] over its limit | [`ReferenceOperationError::OutputElementsExceeded`] |
+/// | [`ReferenceResource::TensorBytes`] over its limit | [`ReferenceOperationError::OutputResourceExceeded`] |
+/// | [`EvaluationError::ElementCount`] | [`ReferenceOperationError::InvalidApplication`] |
+///
+/// The two resource rows are the variants `preflight_f32_output` already raises
+/// for those same two quantities against those same two constants, so a family
+/// that preflights its output and one that does not now refuse an over-budget
+/// result under one name and carrying one pair of numbers.
+///
+/// The domain is [`Tensor::dense`] alone, which is why the resources it cannot
+/// bound are named rather than mapped. [`Tensor::compound`] additionally bounds
+/// component count and recursive depth, and this vocabulary has no name for a
+/// depth, so a compound construction is reported at its own call sites.
+///
+/// **What any of it can actually report today.** Fourteen call sites apply this
+/// mapping, and thirteen of them are defensive. Every one takes the result
+/// shape's element count successfully before constructing, so
+/// [`EvaluationError::ShapeTooLarge`] — the name all fourteen used to report — is
+/// the one cause that cannot arrive at any of them. `ElementCount` needs an
+/// implementation whose payload disagrees with the result shape it declared for
+/// itself. The retained-byte bound is unreachable by arithmetic rather than by
+/// argument: every site builds elements of at most four bytes, so a payload can
+/// weigh at most `4 * MAX_REFERENCE_TENSOR_ELEMENTS` bytes, which is exactly
+/// `MAX_REFERENCE_TENSOR_BYTES` and therefore never over it, and the element
+/// bound is tested first regardless. That leaves the element bound, which
+/// `preflight_f32_output` already refuses ahead of the constructor everywhere it
+/// is called — the two reductions, the two split-reduction passes, and the
+/// contraction fold — and which the remaining families cannot exceed because
+/// their result shape is an operand's, already bounded when that operand was
+/// built. The single site left is `structural::gather`, whose broadcast caller
+/// replicates: a result larger than its operand can exceed the element bound
+/// there, and reaching it costs materializing more than
+/// `MAX_REFERENCE_TENSOR_ELEMENTS` elements first. That cost is why the mapping
+/// is tested against the constructor rather than through a family.
+///
+/// [`Tensor::dense`]: crate::Tensor::dense
+/// [`Tensor::compound`]: crate::Tensor::compound
+pub(crate) fn dense_result_error(source: &EvaluationError) -> ReferenceOperationError {
+    match *source {
+        EvaluationError::ShapeTooLarge => ReferenceOperationError::ShapeTooLarge,
+        EvaluationError::ResourceExceeded {
+            resource,
+            limit,
+            actual,
+        } => match resource {
+            ReferenceResource::TensorElements => {
+                ReferenceOperationError::OutputElementsExceeded { limit, actual }
+            }
+            ReferenceResource::TensorBytes => {
+                ReferenceOperationError::OutputResourceExceeded { limit, actual }
+            }
+            // A dense construction bounds exactly the two resources above. The
+            // rest of this vocabulary bounds one element, a compound value, or a
+            // whole evaluation, and no dense construction reaches any of them.
+            ReferenceResource::ElementBytes
+            | ReferenceResource::Components
+            | ReferenceResource::ComponentDepth
+            | ReferenceResource::EvaluationBytes
+            | ReferenceResource::EvaluationElements
+            | ReferenceResource::EvaluationComponents => {
+                ReferenceOperationError::InvalidApplication
+            }
+        },
+        // Everything below is invalid state rather than an exceeded bound, which
+        // is why one name answers for all of it.
+        //
+        // `ElementCount` says the implementation produced a payload whose length
+        // disagrees with the result shape it declared for itself. Both facts are
+        // its own, so the disagreement is reported — as the structural and
+        // contraction families report every other recompute disagreement —
+        // instead of being resolved in favour of either side.
+        //
+        // A dense construction produces none of the rest. They are named one by
+        // one rather than caught by a wildcard, so that a new evaluation cause is
+        // a build error here instead of a silent return to the collapse this
+        // replaced.
+        EvaluationError::ElementCount { .. }
+        | EvaluationError::InputCount { .. }
+        | EvaluationError::InputKey { .. }
+        | EvaluationError::InputShape { .. }
+        | EvaluationError::InputType { .. }
+        | EvaluationError::EmptyFloatBits
+        | EvaluationError::DuplicateComponentRole { .. }
+        | EvaluationError::ReferenceRegistry(_)
+        | EvaluationError::MissingCapability { .. }
+        | EvaluationError::MissingValueCapability { .. }
+        | EvaluationError::SemanticAuthority { .. }
+        | EvaluationError::SemanticValueAuthority { .. }
+        | EvaluationError::CapabilityAuthorityMismatch { .. }
+        | EvaluationError::ValueCapabilityAuthorityMismatch { .. }
+        | EvaluationError::Value { .. }
+        | EvaluationError::Operation { .. }
+        | EvaluationError::ResultShape { .. }
+        | EvaluationError::ResultType { .. }
+        | EvaluationError::MalformedProgram => ReferenceOperationError::InvalidApplication,
+    }
+}
