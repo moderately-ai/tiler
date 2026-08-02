@@ -5,7 +5,7 @@ status: todo
 priority: p2
 dependencies: []
 related: [package-a-multi-entry-bundle-from-one-expansion, prototype-inline-aot-integration-proof]
-scopes: [implementation/frontend, implementation/workspace]
+scopes: [implementation/workspace, implementation/ir]
 shared_scopes: [project/tickets]
 tags: [testing, gate, determinism, process-lifetime]
 ---
@@ -80,18 +80,27 @@ IR construction and starts no process. A search across all 111 Rust source
 files under `crates/tiler-ir` found no `std::process` or `Command::new`; its one
 `.spawn` match is a scoped Rust thread. The process owner is trybuild.
 
-**Fact — the only child path that can carry nextest's capture handles past the
-test is trybuild 1.0.118's initial Cargo build.** Inspection of that exact
-dependency's `src/cargo.rs` found nine process invocation sites. The metadata, fixture
-build/check, and fixture run calls use `Command::output`, so they replace
+**Fact — one reachable trybuild path inherits nextest's capture handles.**
+Inspection of trybuild 1.0.118's `src/cargo.rs` found nine process invocation
+sites. The metadata, fixture build/check, and fixture run calls use
+`Command::output`, so they replace
 stdout/stderr with their own pipes and cannot return until those pipes reach
 EOF. The clean and `--keep-going` probes send both streams to `Stdio::null`.
-The remaining `build_dependencies` call uses `Command::status` without
-redirecting either stream, so Cargo and its compiler/linker descendants inherit
-the test's nextest capture handles. Cargo itself is waited. Therefore a nextest
-leak from this test is an inherited stdout or stderr handle retained for more
-than nextest's default 100 ms by a descendant of that initial Cargo build; it
-is not an unreaped `xcrun`/`metal` child owned by this repository.
+Two sites use `Command::status` without redirecting either stream: the
+`generate-lockfile` fallback and the initial dependency build. The fallback was
+unreachable in every measured run because this checkout had one `Cargo.lock`;
+the initial dependency build was reachable, so Cargo and its compiler/linker
+descendants inherited the test's nextest capture handles. Cargo itself is
+waited.
+
+**Inference — the observed leak came from a descendant of that reachable
+initial Cargo build.** Nextest's verdict means a process retained captured
+stdout or stderr for more than its default 100 ms after the test exited, and
+the audit above leaves the initial dependency build as the only reachable
+trybuild call that inherited those handles. This identifies the handle and the
+reachable ownership chain, not the exact retaining process: the leaking run's
+descriptor/process chain was not captured. It does establish that the leak was
+not an unreaped `xcrun`/`metal` child owned by this repository.
 
 **Measurement — process sampling did not name the transient descendant.** One
 full-workspace run was sampled every 20 ms and observed the expected
@@ -102,15 +111,21 @@ orphan was observed. The exact process retaining the inherited descriptor is
 therefore still unknown. Calling the `rustc` or `clang` observed in a non-leaky
 run the culprit would turn timing correlation into a false finding.
 
-**Stop — the remaining investigation and any repair are outside this claim.**
-The named test and its fixture live in `implementation/ir`, which this ticket
-does not hold and which `admit-an-additive-extent-relation` held concurrently
-during this investigation. No implementation file changed. Resume when that
-exclusive claim is free; reproduce with status reporting set to `all` and
-capture the live process/descriptor chain on the leaking run. If the retained
-process is controlled by repository code, add an omission perturbation that
-leaks before fixing ownership on every path. If it is trybuild/Cargo/compiler
-teardown latency outside repository control, establish the exact process and
-closure duration before proposing a narrowly justified per-test timeout; the
-current evidence does not authorize changing the failure-only profile,
-silencing leak reports, adding sleeps, or marking this done.
+**Stop — the remaining investigation and any repair collide with a live IR
+claim.** The named test and its fixture live in `implementation/ir`, which
+`admit-an-additive-extent-relation` held concurrently during this
+investigation. This ticket now claims that scope so the board cannot redispatch
+the collision. `implementation/frontend` was removed: the named test never
+reaches that code, so no surviving repair path can require it.
+`implementation/workspace` remains because an exact finding of unavoidable
+trybuild/Cargo/compiler teardown latency could justify a narrowly scoped
+nextest override in `.config/nextest.toml`; retaining the scope does not presume
+that outcome. No implementation file changed. Resume when the exclusive IR
+claim is free; reproduce with status reporting set to `all` and capture the
+live process/descriptor chain on the leaking run. If the retained process is
+controlled by repository code, add an omission perturbation that leaks before
+fixing ownership on every path. If it is trybuild/Cargo/compiler teardown
+latency outside repository control, establish the exact process and closure
+duration before proposing that override; the current evidence does not
+authorize changing the failure-only profile, silencing leak reports, adding
+sleeps, or marking this done.
