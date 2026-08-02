@@ -1,7 +1,7 @@
 ---
 id: list-the-corpus-reachability-spike-in-the-spike-index
 title: List the corpus reachability spike in the spike index
-status: todo
+status: done
 priority: p3
 dependencies: []
 related: [define-the-model-level-conformance-corpus, design-model-level-qualification-and-optimization]
