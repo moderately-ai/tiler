@@ -900,7 +900,7 @@ impl Error for EvaluationError {
 /// depth, so a compound construction is reported at its own call sites.
 ///
 /// **What any of it can actually report today.** Fourteen call sites apply this
-/// mapping, and thirteen of them are defensive. Every one takes the result
+/// mapping, and every one of them is defensive. Every one takes the result
 /// shape's element count successfully before constructing, so
 /// [`EvaluationError::ShapeTooLarge`] — the name all fourteen used to report — is
 /// the one cause that cannot arrive at any of them. `ElementCount` needs an
@@ -910,15 +910,17 @@ impl Error for EvaluationError {
 /// weigh at most `4 * MAX_REFERENCE_TENSOR_ELEMENTS` bytes, which is exactly
 /// `MAX_REFERENCE_TENSOR_BYTES` and therefore never over it, and the element
 /// bound is tested first regardless. That leaves the element bound, which
-/// `preflight_f32_output` already refuses ahead of the constructor everywhere it
-/// is called — the two reductions, the two split-reduction passes, and the
-/// contraction fold — and which the remaining families cannot exceed because
-/// their result shape is an operand's, already bounded when that operand was
-/// built. The single site left is `structural::gather`, whose broadcast caller
-/// replicates: a result larger than its operand can exceed the element bound
-/// there, and reaching it costs materializing more than
-/// `MAX_REFERENCE_TENSOR_ELEMENTS` elements first. That cost is why the mapping
-/// is tested against the constructor rather than through a family.
+/// `preflight_f32_output` refuses ahead of the constructor at every site whose
+/// result could reach it — the two reductions, the two split-reduction passes,
+/// the contraction fold, and `structural::gather` — and which the remaining
+/// families cannot exceed because their result shape is an operand's, already
+/// bounded when that operand was built. `gather` is the site where that bound is
+/// genuinely reachable, because its broadcast caller replicates and so produces a
+/// result larger than the operand it reads; it preflights the count rather than
+/// materializing more than `MAX_REFERENCE_TENSOR_ELEMENTS` elements to be told
+/// no. Nothing therefore drives an over-budget dense construction through a
+/// family any more, which is why the mapping is tested against the constructor
+/// directly.
 ///
 /// [`Tensor::dense`]: crate::Tensor::dense
 /// [`Tensor::compound`]: crate::Tensor::compound
