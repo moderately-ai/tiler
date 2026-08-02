@@ -1,17 +1,14 @@
 ---
 id: admit-ordered-multi-output-programs-at-the-compiler-request-boundary
 title: Admit ordered multi-output programs at the compiler request boundary
-status: in-progress
+status: todo
 priority: p1
-dependencies: [admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary]
-related: [admit-multi-input-elementwise-programs-at-the-compiler-boundary, accept-the-public-compiler-facade-boundary]
+dependencies: [admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary, implement-general-dag-partitioning, carry-artifact-program-output-order-into-kernel-program-identity]
+related: [admit-multi-input-elementwise-programs-at-the-compiler-boundary, accept-the-public-compiler-facade-boundary, admit-elementwise-epilogues-over-a-materialized-intermediate]
 scopes: [implementation/compiler, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler-api, conformance]
-claimed_from: todo
-assignee: agent-multi-output
-lease_expires_at: 1785688837
 ---
 ## User-visible outcome
 
@@ -19,24 +16,46 @@ A semantic program declaring several ordered named outputs compiles, so the conf
 
 ## Why this exists
 
-**Fact — two guards make single-output a boundary invariant.** `crates/tiler-compiler/src/request.rs:2228` opens `select_supported_strategy` with `if program.output_count() != 1`, and `crates/tiler-compiler/src/program.rs:1234` carries the same condition on the program-assembly path. A program with two ordered outputs is refused before a strategy is selected.
+**Fact — two guards make single-output a boundary invariant.** `crates/tiler-compiler/src/request.rs:2491` opens `select_supported_strategy` with `if program.output_count() != 1`, and `crates/tiler-compiler/src/program.rs:1254` carries the same condition on the program-assembly path. A program with two ordered outputs is refused before a strategy is selected. (Both line numbers moved again between this ticket's second correction and its dispatch — `:2228` and `:1234` at the time of writing — so verify by reading rather than by seeking the line.)
 
 *Corrected by [`admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary`](admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary.md).* This paragraph read "four guards" at `request.rs:2184`, `:2377`, and `:2581` — one per whole-program template. The general recognizer replaced those three templates with one occurrence walk, so the three per-template guards became the single program-wide one above, checked once before the output's producing occurrence is classified. The count changed; the invariant did not, and neither did this ticket's obligation.
 
 **Fact — the conformance gate's multi-output row is therefore a permanent negative test.** `docs/correctness-and-testing.md:106-111` requires the optimizer conformance owner to exercise "non-isomorphic and fan-out or multi-output graphs" *before the public compiler facade is accepted*; `:117` records the consequence in the gate's own words — "Ordered multi-output programs are rejected explicitly rather than compiled, so the multi-output row of the requirement above is a negative test." The test is `ordered_multi_output_programs_reject_explicitly` at `crates/tiler-compiler/src/pipeline/conformance.rs:389`.
 
-**Inference — the gap contradicts the architectural contract directly.** AGENTS.md requires modelling programs "as typed operations and values with ordered named outputs and multi-result support — not one SQL-like root or a single output tensor". A boundary refusing every multi-output program is the single-output root that clause forbids, and no other node owns lifting it. [`admit-multi-input-elementwise-programs-at-the-compiler-boundary`](admit-multi-input-elementwise-programs-at-the-compiler-boundary.md) (`done`) is the precedent for how such a limit is located, measured, and lifted — and its outcome shows the wall is usually one layer below the guard, so this ticket's first obligation is to locate the multi-output wall in `tiler-ir` before editing any guard.
+**Inference — the gap contradicts the architectural contract directly.** AGENTS.md requires modelling programs "as typed operations and values with ordered named outputs and multi-result support — not one SQL-like root or a single output tensor". A boundary refusing every multi-output program is the single-output root that clause forbids. [`admit-multi-input-elementwise-programs-at-the-compiler-boundary`](admit-multi-input-elementwise-programs-at-the-compiler-boundary.md) (`done`) is the precedent for how such a limit is located, measured, and lifted — and its outcome shows the wall is usually one layer below the guard, so this ticket's first obligation was to locate the multi-output wall before editing any guard.
+
+## The wall was located, and it is not where the precedent predicted (2026-08-02)
+
+**Fact — `tiler-ir` is not the wall.** The expectation on dispatch, from the multi-input precedent, was a missing schedule or artifact noun. There is none. `KernelProgramBuilder::push_output` (`crates/tiler-ir/src/program/builder.rs:714-765`) is general and bounded by `MAX_PROGRAM_OUTPUTS` (4096, `crates/tiler-ir/src/program/mod.rs:329`), not by one. `program::tests::storage_reuse_is_admitted_only_with_an_explicit_handoff` (`crates/tiler-ir/src/program/tests.rs:1706-1737`) builds and *verifies* a two-output program — `sum_a` and `sum_b` across four stages and five allocations — and asserts `outputs().len() == 2`. `program::tests::a_missing_named_output_is_rejected` (`:1756-1769`) already discharges this ticket's third required failure case, a plan naming fewer outputs than the program declares, as `KernelProgramDiagnostic::MissingNamedOutput`; `KernelProgramBuildError::DuplicateOutput` covers the collision case.
+
+`TensorRole::Output` carrying no ordinal (`crates/tiler-ir/src/schedule/model.rs:54-55`, beside `Input { ordinal }` at `:48-51`) reads like the multi-input wall repeating and is not one. A region writes one owning tensor, several regions write several, and the program layer binds each stage's buffers to values positionally — which `ValueRole::fills` states outright at `crates/tiler-ir/src/program/model.rs:91-111` ("a stage binds its buffers to values positionally, so the ordinal is discharged by that position and this check owes only the class").
+
+**Fact — the wall is this crate's planner.** `verify_artifact_refinements` matches the scheduled regions against exactly three fixed strategy shapes — `[single]`, `[_, _]`, `[_, _, _]` at `crates/tiler-compiler/src/program.rs:1228-1236` — which are the fused, materialized two-stage, and split-reduction forms of a **single-output** pipeline, and then reads the one output with `semantic.outputs().next()` at `:1244`. Nothing upstream produces a cover assigning regions to several ordered outputs.
+
+**Fact — that widening is already owned by another ticket.** [`implement-general-dag-partitioning`](implement-general-dag-partitioning.md) (`todo`, p1) closing condition 2 is "Named and multi-result outputs are planned as ordered graph outputs, not reduced to a single root, and a plan naming fewer outputs than the program declares is rejected rather than accepted as a subset" — this ticket's obligation exactly. This ticket now depends on it. Relaxing `output-arity` first could only admit a program the planner cannot cover, failing mid-pipeline instead of refusing at the boundary, which is the outcome the multi-input precedent calls "strictly worse than refusing".
+
+**Fact — half the ordering obligation already holds.** Output order is identity at the semantic layer: `crates/tiler-ir/src/semantic/identity.rs:128-132` encodes the output list in declaration order with no sort, and `canonical_traversal` (`:143-170`) seeds the canonical value numbering by visiting outputs in that order. The other half does not: the artifact identity encoder sorts its output records at `crates/tiler-ir/src/program/model.rs:1788`, so two `KernelProgram`s differing only in `push_output` order share identity. That is split out as [`carry-artifact-program-output-order-into-kernel-program-identity`](carry-artifact-program-output-order-into-kernel-program-identity.md) and is also a dependency — admitting multi-output over an identity that cannot tell two output orders apart would satisfy this ticket's guard while violating its own ordering boundary.
+
+**Fact — one cost the vocabulary imposes, recorded so the planner work does not rediscover it.** `ValueRole` is exclusive and `fills` refuses an `Output` value for a `TensorRole::Intermediate` buffer, enforced at `crates/tiler-ir/src/program/builder.rs:1130`. A program that both publishes an intermediate and consumes it therefore needs a copy stage reading `Intermediate` and writing `Output`. That is the shape `pipeline::conformance`'s own multi-output fixture has — it publishes `scaled` and reduces it into `reduced` — and building that copy stage is blocked by [`admit-elementwise-epilogues-over-a-materialized-intermediate`](admit-elementwise-epilogues-over-a-materialized-intermediate.md), since no elementwise region this profile builds reads a materialized intermediate. A multi-output program with *independent* outputs does not hit this.
+
+**Evidence.** `crates/tiler-compiler/tests/multi_output_boundary.rs` is the executable form of everything above: the `output-arity` refusal against a compiling one-output control, the colliding-key case, the semantic-layer ordering guarantee, and the `fills` constraint pinned so a `ValueRole` widening reports itself. Each of its four assertions was observed failing under a deliberate perturbation before being trusted.
 
 ## Boundaries
 
 - Recognizer generalization is [`admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary`](admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary.md)'s and is this ticket's dependency; do not widen templates here.
 - Output *order* is identity, not presentation. A widening that admits two outputs but leaves them interchangeable would satisfy the guard and violate the contract. Ordering enters the schedule and artifact identity encodings exhaustively, with no previously encodable program's bytes moving.
-- If the wall proves to be in the scheduled-region or artifact vocabulary rather than in `tiler-compiler`, file that widening as its own ticket and depend on it — do not widen a compiler guard onto a physical layer that cannot express the result.
+- If the wall proves to be in the scheduled-region or artifact vocabulary rather than in `tiler-compiler`, file that widening as its own ticket and depend on it — do not widen a compiler guard onto a physical layer that cannot express the result. *Resolved 2026-08-02: the vocabulary was not the wall; the planner was. Both dependencies below were filed or added on that finding.*
 
 ## Required failure-path evidence
 
 Each run against a case that must fail and observed failing, against an accepted neighbour: two declared outputs colliding on one semantic value; a program declaring more outputs than the plan names; a plan naming fewer outputs than the program declares (the same rule [`implement-general-dag-partitioning`](implement-general-dag-partitioning.md) states as its closing condition 2); and two programs differing only in output order yielding distinct identities.
 
+Status of each after the 2026-08-02 wall survey, all in `crates/tiler-compiler/tests/multi_output_boundary.rs` unless noted. Colliding outputs: **done**, `two_output_keys_publishing_one_value_refuse_under_output_arity`. A plan naming fewer outputs than the program declares: **already discharged one layer down**, by `tiler-ir`'s `a_missing_named_output_is_rejected` against `KernelProgramDiagnostic::MissingNamedOutput`; re-asserting it here needs a compiler-built multi-output plan and so waits on the planner. Two programs differing only in output order yielding distinct identities: **done at the semantic layer**, `two_programs_differing_only_in_output_order_have_distinct_identities`; **open at the artifact layer**, which is the dependency filed below. A program declaring more outputs than the plan names: **waits on the planner**, for the same reason as its converse.
+
 ## Closes when
 
-`ordered_multi_output_programs_reject_explicitly` is flipped from a refusal expectation to a compilation, with the transition demonstrated failing at the unwidened base; `docs/correctness-and-testing.md:117`'s sentence naming the multi-output row a negative test is corrected in the same change; and every ordering obligation above is checked by a check observed failing.
+1. [`implement-general-dag-partitioning`](implement-general-dag-partitioning.md) can plan a cover assigning regions to several ordered outputs, and [`carry-artifact-program-output-order-into-kernel-program-identity`](carry-artifact-program-output-order-into-kernel-program-identity.md) has made output order part of artifact identity. Both are dependencies; neither is this ticket's work.
+2. Both `output_count() != 1` guards are relaxed together — the request boundary and the artifact refinement path — since relaxing either alone admits a program the other refuses.
+3. `ordered_multi_output_programs_reject_explicitly` is flipped from a refusal expectation to a compilation, with the transition demonstrated failing at the unwidened base.
+4. `docs/correctness-and-testing.md`'s sentence naming the multi-output row a negative test is corrected in the same change, and `crates/tiler-compiler/tests/multi_output_boundary.rs`'s header — which currently records *why* the boundary holds — is rewritten to record what moved, as the multi-input precedent file was.
+5. Every remaining ordering obligation above is checked by a check observed failing.

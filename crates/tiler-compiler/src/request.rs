@@ -2447,9 +2447,6 @@ fn resolve_numerical_contract(
 /// Recognition may only admit what the physical layer can express, so three
 /// walls below this boundary are refused *at* it, each under its own rule:
 ///
-/// - **Multiple outputs** (`output-arity`). Every region builder writes one
-///   owning tensor; `admit-ordered-multi-output-programs-at-the-compiler-request-boundary`
-///   owns the widening and depends on this ticket.
 /// - **An operation the region vocabulary cannot spell** (`operation-set`).
 ///   `tiler::silu-f32@1`, `tiler::reindex-f32@1`, and `tiler::broadcast-f32@1`
 ///   each have a registered *lowering* capability, but no
@@ -2480,6 +2477,28 @@ fn resolve_numerical_contract(
 /// actually ends in rather than by enumeration order: a program whose output is
 /// a reduction gets the reduction's reason, one whose output is a contraction
 /// gets the contraction's, and any other gets the elementwise walk's.
+///
+/// # The one refusal here that is *not* a wall below this boundary
+///
+/// **Multiple outputs** (`output-arity`) is refused for a different reason than
+/// the three above, and reading it as a physical-vocabulary gap sends the
+/// widening at the wrong crate. `tiler-ir` already expresses ordered
+/// multi-output: [`tiler_ir::program::KernelProgramBuilder::push_output`] is
+/// general and bounded by [`tiler_ir::program::MAX_PROGRAM_OUTPUTS`] rather than
+/// by one, its verifier already rejects a plan naming fewer outputs than the
+/// program declares, and its own tests build and verify a two-output program.
+/// A region writing one owning tensor is not the obstruction either — several
+/// regions write several, and the program layer binds each stage's buffers to
+/// values positionally, which [`tiler_ir::program::ValueRole::fills`] states.
+///
+/// What is missing is *this crate's* planner: `program.rs`'s artifact
+/// refinement matches the scheduled regions against three fixed strategy
+/// shapes, all single-output pipelines, and nothing upstream produces a cover
+/// assigning regions to several ordered outputs. `implement-general-dag-partitioning`
+/// closing condition 2 owns exactly that. Relaxing this guard before it lands
+/// could only admit a program the planner cannot cover — failing mid-pipeline
+/// instead of refusing here, which is strictly worse than refusing.
+/// `crates/tiler-compiler/tests/multi_output_boundary.rs` holds the evidence.
 fn select_supported_strategy(program: &SemanticProgram) -> Result<NormalizedProgram, RequestError> {
     // Program-wide properties first, each under the rule that names it. A
     // program failing one of these fails it for every shape below, so reporting
