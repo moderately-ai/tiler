@@ -62,8 +62,13 @@ done
 
 ## Required evidence
 
-- BF16 resolves `Dispatchable` on the macOS profile, `Unsupported` on the simulator profile, and `Unknown` on the device profile, all at `AvailabilityPhase::CompileProfile` — three distinct answers, asserted as a matrix whose shape is checked rather than three independent facts.
-- `f32` resolves `Dispatchable` on all three, so no refusal is a dead profile.
+- ~~BF16 resolves `Dispatchable` on the macOS profile, `Unsupported` on the simulator profile, and `Unknown` on the device profile, all at `AvailabilityPhase::CompileProfile` — three distinct answers, asserted as a matrix whose shape is checked rather than three independent facts.~~ ~~`f32` resolves `Dispatchable` on all three, so no refusal is a dead profile.~~
+
+**Narrowed to the macOS family at integration, 2026-08-02, and the iOS half is split out.** BF16 resolves `Dispatchable` on the **macOS** profile at `AvailabilityPhase::CompileProfile`, and `f32` still resolves `Dispatchable` there, so the row is not a dead profile. The two iOS answers move to [`declare-the-bf16-ios-family-answers-on-authoritative-ios-profiles`](declare-the-bf16-ios-family-answers-on-authoritative-ios-profiles.md).
+
+**The derivation, so it can be refuted rather than only the conclusion.** The three-family matrix needs an authoritative iOS-Simulator profile and an iOS-device profile. Neither exists, and `first-authoritative-ios-metal-compile-declaration` is `deferred` — a parked state that satisfies no dependent — so a ticket requiring that matrix could never reach `ready` no matter what evidence arrived. Both candidates were tested: keeping the ticket whole makes it permanently unreachable, which is the same deadlock `re-point-the-boundary-property-enforcer-edges-after-the-provider-seam-landed` was filed to repair elsewhere in this graph; narrowing makes the macOS half reachable the moment [`measure-macos-apple9-bf16-under-unified-msl4-profile`](measure-macos-apple9-bf16-under-unified-msl4-profile.md) lands, and parks the iOS half behind its own real prerequisite. Only the second survives, so this was derived rather than escalated.
+
+**What the narrowing does not weaken.** The *Why both rows land together* argument above is about the macOS dispatchability row and the macOS subnormal row sharing one descriptor identity and one golden — it is untouched, and those two still land together. The `Unknown`-is-not-`Unsupported` discipline is likewise untouched: with no iOS profile at all, both iOS families remain `Unknown` by absence, which is the correct answer for a question nobody asked.
 - `f16` still resolves `Unknown` on every profile, so a measured BF16 row did not fill a neighbour's omission. The existing test asserting this for `f16` against `f32` is the pattern.
 - A strict-subnormal-preserving contract is refused for BF16 on macOS with a named numerical gap, since the measured behaviour flushes.
 - The profile descriptor's byte length and identity are recorded before and after.
