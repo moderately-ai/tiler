@@ -7,7 +7,7 @@ topics: ["program-planning", "language-model", "conformance", "attribution", "nu
 experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement", "executable-model"]
-supports: ["tiler.research.program-planning.first-metal-lm-workload", "tiler.research.program-planning.complete-model-ingestion-and-execution"]
+supports: ["tiler.research.program-planning.first-metal-lm-workload", "tiler.research.program-planning.complete-model-ingestion-and-execution", "tiler.research.program-planning.model-level-qualification"]
 entrypoints: ["spikes/program-planning/qwen3-conformance-fixture/produce_fixture.py", "spikes/program-planning/qwen3-conformance-fixture/verify_fixture.py"]
 last_verified: "2026-08-01"
 ticket: "measure-the-model-level-comparison-envelope-under-the-target-realization"

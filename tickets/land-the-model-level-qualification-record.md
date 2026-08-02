@@ -1,7 +1,7 @@
 ---
 id: land-the-model-level-qualification-record
 title: Land the model-level qualification record at its destination
-status: in-progress
+status: review
 priority: p2
 dependencies: [design-model-level-qualification-and-optimization]
 related: [define-first-metal-lm-workload, design-model-ingestion-and-complete-execution]

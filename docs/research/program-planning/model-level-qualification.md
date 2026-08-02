@@ -1,124 +1,4 @@
 ---
-id: design-model-level-qualification-and-optimization
-title: Design model-level correctness and performance qualification
-status: done
-priority: p2
-dependencies: [define-first-metal-lm-workload, design-model-ingestion-and-complete-execution]
-related: [implement-analytical-component-cost-model, calibrate-device-cost-models, scope-first-quantized-lm-profile, land-the-model-level-qualification-record, measure-the-model-level-comparison-envelope-under-the-target-realization, define-the-model-level-conformance-corpus, build-the-model-level-measurement-harness, qualify-the-model-level-claims-per-apple-device-and-toolchain-row, supply-the-model-level-benchmark-protocol-to-cost-calibration, define-the-model-level-regression-policy, measure-b1-d-peak-residency-on-a-named-host]
-scopes: [research/cost-model, research/apple-targets, contracts/navigation]
-shared_scopes: [project/tickets]
-paths: []
-tags: [design, testing, performance, conformance, language-model, metal]
----
-## User-visible outcome
-
-"This model is correct and optimized on this Metal target" becomes four separately-supported claims — correctness against reference outputs, feasibility, estimated cost, measured performance — with comparison tolerances derived from the effective numerical contract *before* results are observed, never after.
-
-Define how Tiler will establish that a supported language model is both correct
-and optimized on its declared Metal target. Correctness, feasibility, estimated
-cost, and measured performance remain separate claims.
-
-## Required design
-
-- Select model-level reference outputs and adversarial inputs for prompt,
-  prefill, decode, exceptional values, sequence bounds, and persistent state.
-- Define exact or tolerance-based comparison from the effective numerical
-  contract rather than choosing thresholds after observing results.
-- Define the Apple device-family and toolchain matrix for each claim.
-- Specify cold and warm time to first token, decode latency, tokens per second,
-  peak and persistent memory, artifact preparation, dispatch count,
-  materialization count, and cache behavior.
-- Distinguish correctness gates, performance measurements, cost-model
-  calibration data, and regression thresholds.
-- Define how failures remain attributable to frontend, compiler, backend,
-  artifact, runtime, or consumer boundaries.
-
-## Ticket-producing outcome
-
-File separate tickets for the conformance corpus, measurement harness, device
-qualification, cost-model calibration, kernel or schedule improvements exposed
-by evidence, and regression policy. Do not turn an unmeasured performance goal
-into a normative guarantee or file optimization work without a measured
-bottleneck.
-
-## Closes when
-
-The complete-model vertical has a reproducible correctness and performance
-qualification plan; every metric names an environment and procedure; baseline
-and quantized paths can be compared without conflating claims; and justified
-follow-up work is represented by scoped tickets.
-
-## Activation trigger — added 2026-07-27 by `scope-optimized-metal-lm-inference`
-
-**Rung L8** of the language-model inference ladder in [`docs/roadmap.md`](../docs/roadmap.md).
-
-**Active when:** L1 and L6 both deliver.
-
-**Rests on:** L1 and L6.
-
-Do not start this before its trigger fires. Each rung's scope is derived from the rung below it, so beginning early means deriving a surface from an assumption rather than from delivered evidence — which is how a discovery ticket turns into a rewrite.
-
-## Graph maintenance (applies to every LM-ladder rung)
-
-- **The two bounded rows this rung qualifies are already fixed by [`docs/research/program-planning/first-metal-lm-workload.md`](../docs/research/program-planning/first-metal-lm-workload.md)** — a 10-token/8-step conformance row whose every logit is retainable, and a four-point prompt/decode benchmark matrix bounded at 8,320 of the checkpoint's declared 32,768 positions because F32 residency and materialized-score workspace cross unmeasured thresholds above it. Extending the matrix upward is legitimate and needs a residency measurement on a named host first.
-- **This rung owns the comparison bound, which L1 deliberately left `Unknown` rather than guessing.** The conformance level is `bounded error`, and the profile records why a model-level constant cannot be composed from per-operation tolerances. It also names the measurable half: the reference's own F32 sensitivity envelope for the exact conformance prompt, obtained by evaluating the pinned reference under two independently legal orderings and retaining the per-position deviation. [`retain-the-qwen-conformance-reference-logit-fixture`](retain-the-qwen-conformance-reference-logit-fixture.md) produces that envelope, so this rung derives a budget from retained evidence rather than starting the measurement itself — and must still state the declared realization's subnormal and elementary-function behaviour as the other half, since the qualified Apple9 row flushes F32 subnormals where a CPU reference preserves them.
-- **This rung consumes the selected workload**: pinned `Qwen/Qwen3-0.6B-Base` widened to F32, batch 1, with bounded prompt, context, and decode lengths. Qualify that exact model and reference path rather than a generic transformer. If the workload is superseded after this analysis starts, the analysis is re-derived, not patched — say which parts survived and which did not.
-- **Every requirement this analysis finds that Tiler cannot express today becomes a capability ticket**, filed with the exact operation/shape/dtype evidence from the trace, linked here and to the roadmap rung. Do not widen this ticket to implement any of them.
-- **On close, update the ladder table in `docs/roadmap.md`** — its rung for this ticket currently reads "none", and nothing updates it automatically (the docs have no gate; a reader is the only check).
-
-- **Measured-performance claims are M3-host measurements** — the qualification design must name the bench host discipline (serial runs, interleaved A/B), and its measured rows are `Measurement`s tied to exact environments, per the research standards.
-
-## Stop condition — the record's home is outside this ticket's scopes (2026-08-01)
-
-**Fact — the scope map, read from `ticketsplease.toml` rather than recalled.** This ticket declares `research/cost-model`, `research/apple-targets`, and `contracts/navigation`, plus the shared `project/tickets`. `research/cost-model` covers `docs/research/cost-model/**` and `spikes/cost-model/**`; `research/apple-targets` covers `docs/research/apple-targets/**` and `spikes/apple-targets/**`; `contracts/navigation` is an explicit file list containing `docs/roadmap.md`, `docs/research/README.md`, `docs/status.md`, `docs/open-questions.md`, and eight others. `research/program-planning` — `docs/research/program-planning/**` and `spikes/program-planning/**` — is a separate scope this ticket does not hold.
-
-**Inference — the qualification record's home is `docs/research/program-planning/`, and the elimination leaves one survivor rather than a fork.** Four candidates were tested against where a reader looking for "how is this model qualified" would go, and against whether the record's spine — four separately supported claims — survives the placement.
-
-| Candidate home | Survives? | Ground |
-| --- | --- | --- |
-| `docs/research/program-planning/model-level-qualification.md` | **Yes** | Its subject is the qualification of one complete model *program*, which is what L1 and L6 already own in this directory and in the `physical-planning-lowering` catalog group. [L7's own "Why this record lives in `research/numerics`" section](../docs/research/numerics/first-quantized-lm-profile.md) is the precedent for placing a ladder rung by its subject rather than by the ladder: L7 sits in `research/numerics` because its subject is a quantized value scheme. L8's subject is a model program's qualification. |
-| `docs/research/cost-model/` | No | Estimated cost is *one* of this rung's four claims and the weakest-supported of them — eight of the analytical model's nine components are `Unknown` today. Filing the record here names it by its weakest quarter, and buries the conformance corpus, the comparison bound, and the regression policy in a directory whose one existing record is a costing plan. |
-| `docs/research/apple-targets/` | No | The device-and-toolchain matrix genuinely belongs to this scope's subject, and nothing else in the record does. A qualification record here puts correctness-gate design and regression policy inside a target-behaviour measurement record, and leaves the reader of `numerical-behaviour.md` — a 554-line measurement corpus — to discover a design document folded into it. |
-| Split across the two held research scopes | No | The record's spine is that correctness, feasibility, estimated cost, and measured performance stay four claims. A split files the cost claim in one directory and the device claim in another, and leaves the conformance corpus, the comparison bound, the attribution ladder, and the regression policy without a home in either — which is most of the rung. |
-
-**So this is a dispatch-scope error rather than an architecture fork, and it is reported rather than repaired here.** One candidate survives, so there is no decision for Tom in the placement itself; what there is, is a scope this ticket does not hold and must not self-grant. The ticket's own `scopes` list sits in `tickets/**` and is therefore editable from the shared `project/tickets` scope — which is exactly why editing it would be a silent scope expansion rather than an accident, and it was not done.
-
-**Fact — no live ticket holds `research/program-planning`, so the carrier is dispatchable immediately.** The check, reproducible in one line, is `tkt list --status in-progress` followed by reading each result's `scopes` line: at this branch's base commit `2aa0824` the seven in-progress tickets hold `implementation/compiler`, `implementation/ir`, `research/scheduling`, `implementation/frontend`, `contracts/decisions` + `research/runtime`, `implementation/metal` + `implementation/build` + `implementation/runtime` + `implementation/artifact` + `contracts/artifacts`, and this ticket's own three. None is `research/program-planning`.
-
-**What was done instead, following the corpus's own discipline for a record that cannot reach its destination.** `AGENTS.md` fixes the shape: a research record whose scopes cannot reach a destination drafts the destination body verbatim-landable inside the record and files a carrier ticket, and the transfer is byte-identical. The work record here is this ticket, so the complete record body is drafted below and [`land-the-model-level-qualification-record`](land-the-model-level-qualification-record.md) carries the transfer. The drafted span's relative links resolve from `docs/research/program-planning/` and therefore not from `tickets/`; per the same convention that condition is stated beside the span rather than repaired inside it, because repointing forks the transfer and spends the byte-identity that makes the span quotable.
-
-## Outcome — 2026-08-01
-
-**The design is derived and drafted; nothing is measured and nothing executes.** What this rung delivers is: the four claims kept apart with what each may and may not say; the model-level comparison bound converted from L1's deliberate `Unknown` into a bounded experiment with exact inputs, outputs, and a stop condition, whose budget is derived from accepted contracts and measured target facts *before* any Tiler result exists; the adversarial corpus derived from the refusals L4, L5, and L6 already own; the per-claim Apple device and toolchain matrix; the decomposition of "time to first token" into four separately attributable terms the architecture forces; the bench-host discipline with the amendment L3's own cache-residency measurement forces on it; the attribution ladder with the portability constraint that follows from the correctness host and the bench host being two different machines; the regression policy; and eight dependency-ordered tickets.
-
-**No optimization work is filed, because no bottleneck is measured.** Nothing in this rung establishes a latency, a throughput, or a device-optimal claim, and the record says so in its own terms rather than leaving it to a reader.
-
-**Tickets filed from this rung.**
-
-| Order | Ticket | Outcome | Waits on |
-| --- | --- | --- | --- |
-| 0 | [`land-the-model-level-qualification-record`](land-the-model-level-qualification-record.md) | The drafted body below lands byte-identically at `docs/research/program-planning/model-level-qualification.md` and the research catalog gains its row. | this ticket |
-| 1 | [`measure-the-model-level-comparison-envelope-under-the-target-realization`](measure-the-model-level-comparison-envelope-under-the-target-realization.md) | The admissible model-level comparison bound for C1 is measured from the pinned reference alone, under the joint perturbation the qualified target's realization actually applies. Closes the `Unknown` L1 left. | [`retain-the-qwen-conformance-reference-logit-fixture`](retain-the-qwen-conformance-reference-logit-fixture.md) (done) |
-| 2 | [`define-the-model-level-conformance-corpus`](define-the-model-level-conformance-corpus.md) | The adversarial corpus beyond C1 exists as named rows with the exact refusal each must produce, including the consistently-wrong-cursor case no other suite can reach. | 0, 1 |
-| 3 | [`build-the-model-level-measurement-harness`](build-the-model-level-measurement-harness.md) | One harness produces every measured row with a three-state record schema, counted populations, and a demonstrated failing perturbation per check. | 0, [`drive-the-complete-forward-pass-over-three-artifacts`](drive-the-complete-forward-pass-over-three-artifacts.md) |
-| 4 | [`qualify-the-model-level-claims-per-apple-device-and-toolchain-row`](qualify-the-model-level-claims-per-apple-device-and-toolchain-row.md) | The per-claim device and toolchain matrix becomes a maintained record with `Unknown` where a row is unmeasured. | 3 |
-| 5 | [`supply-the-model-level-benchmark-protocol-to-cost-calibration`](supply-the-model-level-benchmark-protocol-to-cost-calibration.md) | The one activation input [`calibrate-device-cost-models`](calibrate-device-cost-models.md) still names as missing — a reproducible benchmark protocol — exists against this workload. | 3 |
-| 6 | [`define-the-model-level-regression-policy`](define-the-model-level-regression-policy.md) | Correctness gates, performance reports, and the environment-change rule are separated, with no latency threshold set before a baseline exists. | 2, 3 |
-| 7 | [`measure-b1-d-peak-residency-on-a-named-host`](measure-b1-d-peak-residency-on-a-named-host.md) | L1's own condition for extending the benchmark matrix above 8,320 positions is met or the bound is confirmed. | 3 |
-
-**Nothing is filed for** a model-level latency target, a tokens-per-second guarantee, a kernel or schedule improvement, a second conformance host, or a quantized-versus-F32 acceptance threshold — each is either eliminated in the record below with its ground, or owned by a rung that already has it.
-
-## Drafted record body — verbatim-landable at `docs/research/program-planning/model-level-qualification.md`
-
-**Transferred on 2026-08-01, and from here the span is provenance rather than an authority.** [`land-the-model-level-qualification-record`](land-the-model-level-qualification-record.md) landed it at [`docs/research/program-planning/model-level-qualification.md`](../docs/research/program-planning/model-level-qualification.md) under the two transformations named below and nothing else; the landed file is what a reader and a citation should reach, and the span is kept unedited only so the transfer stays checkable line for line. That is also why a correction to the design does not come back here: the landed record carries a dated post-transfer correction section *outside* the transferred span, which is where the conditionals this span left open — the joint comparison bound, the exact-greedy gate's condition, and the P-flush term — were recorded once [`measure-the-model-level-comparison-envelope-under-the-target-realization`](measure-the-model-level-comparison-envelope-under-the-target-realization.md) settled them.
-
-**How to transfer it, and the two mechanical steps that are named rather than hidden.** The span below the rule is the destination file's complete content. Two transformations apply and nothing else changes: the fenced YAML block becomes the file's delimited frontmatter, restoring the `---` delimiters the fence stands in for; and every `###` heading in the span is promoted to `##`, since the span is nested one level under this heading and the destination is not. A transfer that edits anything else is a fork rather than a transfer.
-
-**The link condition, stated beside the span rather than repaired inside it.** Every relative link in the span is written to resolve from `docs/research/program-planning/`, which is where it will live and where it does not resolve from `tickets/`. That is the standing convention `AGENTS.md` records for a drafted body, and repointing them here would trade a reader's inconvenience for the byte-identity that makes the span landable at all. Every link in this ticket *outside* the span resolves from `tickets/`.
-
----
-
-```yaml
 schema: "tiler-doc/v1"
 id: "tiler.research.program-planning.model-level-qualification"
 kind: "research"
@@ -132,13 +12,13 @@ evidence_classes: ["primary-source-synthesis", "bounded-measurement"]
 informs: ["tiler.contract.correctness-and-testing", "tiler.contract.numerical-semantics"]
 depends_on: ["tiler.research.program-planning.first-metal-lm-workload", "tiler.research.program-planning.complete-model-ingestion-and-execution", "tiler.research.runtime.autoregressive-state-and-kv-cache", "tiler.research.numerics.first-quantized-lm-profile", "tiler.research.apple-targets.numerical-behaviour", "tiler.research.scheduling.first-metal-contraction-realizations", "tiler.research.cost-model.bootstrap-cost-model"]
 ticket: "design-model-level-qualification-and-optimization"
-```
+---
 
-### Model-level correctness and performance qualification
+## Model-level correctness and performance qualification
 
 **Status:** durable design record for rung L8 of the language-model inference ladder. It is a research outcome, not a capability: nothing here registers an operation, admits a key, widens a budget, fixes a normative contract, sets a threshold, or authorizes implementation. It moves no row of the [operation-family support matrix](../../roadmap.md#operation-family-support-matrix) and no cell of the [dtype support ledger](../../dtype-support.md). **It contains no measurement of any Tiler execution, because none exists.** What it delivers is how "this model is correct and optimized on this Metal target" becomes four separately supported claims, the derivation of the model-level comparison bound L1 deliberately left `Unknown`, the corpus and matrix each claim needs, the bench-host discipline, the attribution ladder, the regression policy, and eight dependency-ordered tickets.
 
-### Traceability
+## Traceability
 
 - **Work record:** [`design-model-level-qualification-and-optimization`](../../../tickets/design-model-level-qualification-and-optimization.md), which holds the scope derivation that placed this file here and the drafted body it was transferred from.
 - **Ladder position:** rung L8 of [the roadmap's language-model ladder](../../roadmap.md#the-ladder). Its trigger reads "L1 and L6 deliver"; L1 delivered on 2026-07-31 and L6 on 2026-08-01, both under the **design-rung** reading of capability wording that Tom fired for L5 on 2026-07-31 and that every delivered rung has followed since.
@@ -148,7 +28,7 @@ ticket: "design-model-level-qualification-and-optimization"
 
 Claims are labelled **Fact** when traced to inspected source, primary documentation, or a merged record, **Inference** when derived from stated facts, **Measurement** when tied to an exact environment and procedure, and **Proposal** when not yet accepted or tested.
 
-### The four claims, and what each may say
+## The four claims, and what each may say
 
 **Proposal — the separation, stated so that a reader can tell in one line which claim a sentence belongs to.** The ticket's user-visible outcome is that "this model is correct and optimized on this Metal target" stops being one sentence. It becomes four, and the point of the separation is that each fails differently and each is repaired by different work.
 
@@ -163,13 +43,13 @@ Claims are labelled **Fact** when traced to inspected source, primary documentat
 
 **Inference — two of the ticket's requested metrics are correctness gates wearing performance clothes, and classifying them wrongly would lose them.** Dispatch count and materialization count are not measurements on this workload: L6 fixes one forward pass at exactly **30 executions over exactly 3 artifact identities**, and the complete C1 row at **270 executions**, and records that "a build that produced a fourth would have specialized something it must not". Those are exact invariants a test asserts and that can fail; reporting them as performance numbers would let a fourth identity appear as a regression to be triaged rather than as a build that must not ship. They are listed under correctness below and appear in the performance section only as inputs to a cost-per-dispatch reading.
 
-### Correctness: the oracle, and the bound this rung owns
+## Correctness: the oracle, and the bound this rung owns
 
-#### The oracle is L1's and is not re-derived
+### The oracle is L1's and is not re-derived
 
 **Fact.** Five observables after prefill and after every decode step: logit agreement under a `bounded error` level; greedy-token equality; the declared tie policy, where the greedy token is the lowest vocabulary index attaining the maximum and a bit-identical top-two pair is recorded as a tie rather than resolved; termination as EOS 151643 or the row's fixed budget and never implicitly; and plan determinism on the Tiler side alone. L1 also fixes the method: an error bound is a relation between two complete computations and is not the sum of per-operation tolerances, so nothing here composes one.
 
-#### The bound: three named perturbations, derived before any Tiler result exists
+### The bound: three named perturbations, derived before any Tiler result exists
 
 **Fact — what is already measured, and exactly what it covers.** The retained fixture evaluated the pinned reference under two independently legal F32 orderings and retained the per-position deviation. Across all 18 C1 positions the largest whole-vocabulary deviation is **2.048e-4** (`f64_unmodified`) and **2.007e-4** (`f64_promoted`); restricted to the reference's own top-32 entries it is 7.82e-5 and 7.44e-5, at most 78 ULP under both. The greedy token agrees at every position under both, and between 483 and 3,863 of each position's 151,936 logits are bit-identical between orderings — under 3%.
 
@@ -195,13 +75,13 @@ Claims are labelled **Fact** when traced to inspected source, primary documentat
 
 **Measurement boundary — what the bound qualifies.** One prompt, one checkpoint revision, one reference revision, 18 positions, batch 1, greedy, F32. It qualifies nothing about a B1-length row, another prompt, another checkpoint, or the quantized path. Extending it to a B1 row is possible and costs what L1's retention policy says it costs: at 512 prompt tokens the complete logit set is 296.8 MiB, so a B1 comparison retains a bounded summary rather than every logit, and its bound is a different measurement rather than this one applied further.
 
-#### The reference-side qualification needs no device, and that is the schedule's most useful property
+### The reference-side qualification needs no device, and that is the schedule's most useful property
 
 **Inference.** P-reorder is measured. P-flush and P-elem are perturbations of a CPU reference. So the entire bound is obtainable today, on the correctness host, with no Tiler execution, no Metal compilation, and no live device — while L6's five refusals still stand between this design and a compiled model. The measurement that closes L1's `Unknown` is therefore not blocked by the ladder, and it is filed as the first ticket for that reason.
 
 **Proposal — the mechanism, with its own verification, because a flush that does not flush would silently return the reordering envelope again.** The candidate mechanism for P-flush is the host FPU's own flush-to-zero mode, which on this Apple-silicon correctness host sets ARM `FPCR.FZ`; `torch.set_flush_denormal` is the reachable spelling and reports whether it took effect. **The verification is mandatory and is a positive control rather than a return value**: a hand-built tensor expression whose exact result is F32-subnormal must return a sign-preserving zero with the mode on and the subnormal with it off, in the same process, and the BLAS-backed contraction path must be checked separately from the elementwise path because they need not share the mode. If either control fails, the mechanism does not establish P-flush and the term stays `Unknown` rather than being approximated — the stop condition is stated that way in the ticket.
 
-### The adversarial corpus, derived from refusals that already exist
+## The adversarial corpus, derived from refusals that already exist
 
 **Proposal — the rows, and where each comes from.** The ticket asks for prompt, prefill, decode, exceptional values, sequence bounds, and persistent state. Every row below is derived from a boundary L4, L5, or L6 already named, so the corpus tests the design rather than inventing hazards for it.
 
@@ -223,7 +103,7 @@ Claims are labelled **Fact** when traced to inspected source, primary documentat
 
 **Inference — two rows a reader would expect are deliberately absent, and their absence is derived.** A *subnormal weight* row is unreachable from this checkpoint: L1 records that BF16 is a truncated F32, so even a BF16 subnormal widens to an F32 **normal** and the target's flush cannot touch it. A row supplying one would test a path this workload does not have, and would invite the reading that the workload has subnormal weight inputs. A *NaN or infinite weight* row is likewise not a corpus case but a one-line check against bytes the fixture already digests — the retained `host.tsv` carries one digest over all 310 widened F32 tensors — and it belongs to the ingestion ticket rather than to a conformance corpus.
 
-### Feasibility is a separate verdict, and the harness must be able to say it
+## Feasibility is a separate verdict, and the harness must be able to say it
 
 **Fact — a qualification run today refuses at five places, and they are five different remedies.** L6 enumerates them with their exact sites: the deterministic budgets refuse all three programs (P2 exceeds three of four); the whole-program recognizer refuses all three and a budget widening does not admit a transformer; the inline route refuses a symbolic region; the facade cannot dispatch; and the Candle custom-op path cannot carry a decoder layer at all.
 
@@ -233,7 +113,7 @@ Claims are labelled **Fact** when traced to inspected source, primary documentat
 
 **Inference — a model-level fallback is all-or-nothing per forward pass and the corpus must contain the negative.** L6 fixes that the preflight decision is taken once before the first routing commit over the bound facts of all thirty executions, and that after it no execution may fall back. The corpus row is a build in which one execution's route is made to fail after another's commit: the required outcome is a refusal naming both ordinals, never a completed pass. **Inference — and for this workload the fallback arm is empty by construction**, because the effective policy is subnormal-flushing, contraction-free, safe-math F32 and a strict realization has no valid fallback under the Candle contract's own numerical-scope rule. The negative test is still required, because "empty by construction" is a property of this workload's contract selection rather than of the mechanism.
 
-### Estimated cost: what the model says today, and what it may not be asked
+## Estimated cost: what the model says today, and what it may not be asked
 
 **Fact — the analytical model produces no model-level latency and none may be quoted from it.** `tiler.cost.analytical.v1` reports nine governed components in canonical order with `Exact`, `Bounded`, and `Unknown` kept apart; exactly one, `Allocation`, is computed exactly, and eight are `Unknown`. It never enters dominance — the frontier refuses an estimate claiming the analytical key — so structural cost remains the sole pruning input and the analytical numbers are, today, an explain-only report. `Unknown` is deliberately not zero, because a caller substituting zero would report a plan as free.
 
@@ -243,9 +123,9 @@ Claims are labelled **Fact** when traced to inspected source, primary documentat
 
 **Proposal — and hard feasibility never enters the cost.** A row that L6's five refusals reject is reported as infeasible with its reason. The temptation this rung is most exposed to is the one the numerical contract names by spelling: treating a flush-tolerant plan as a cheaper alternative to a preserving one. The qualification harness must therefore never rank two plans that resolved different numerical contracts, and its record schema carries the resolved contract on every row so that a comparison across two of them is detectable rather than plausible.
 
-### Measured performance: the metrics, decomposed as the architecture forces
+## Measured performance: the metrics, decomposed as the architecture forces
 
-#### Time to first token is four terms, not one
+### Time to first token is four terms, not one
 
 **Inference — this is the decomposition, and it is forced rather than chosen.** A single TTFT number for this system is not attributable, because the four costs it would sum are paid at different times, by different layers, and against different caches.
 
@@ -258,7 +138,7 @@ Claims are labelled **Fact** when traced to inspected source, primary documentat
 
 **Inference — three consequences follow and only the first is obvious.** "Cold TTFT" and "warm TTFT" differ by the runtime-preparation term alone, because artifact preparation is not at run time under the accepted inline AOT flow and model load is not repeated. The two caches are different caches with different keys and different lifetimes — one content-addressed and immutable on disk at build time, one scoped to a live device and context — so a single cold/warm axis over "the cache" would conflate them, and a report that did would be unable to say which one a change moved. And the runtime-preparation term is *exactly three pipeline creations*, which makes it an invariant to assert rather than a number to watch: a cold run creating four pipelines has specialized something, and L5's third cache-identity invariant says exactly what — a build that specialized on `S` would mint a distinct pipeline per decode step, nine at C1 and one hundred and twenty-nine at B1-d.
 
-#### Decode latency carries an irreducible host round trip, by construction
+### Decode latency carries an irreducible host round trip, by construction
 
 **Fact.** L5 derives it: a greedy decode loop cannot form step *n+1*'s input token without reading step *n*'s logits on the host, which crosses ADR 0033's device completion boundary in full — terminal completion, a post-completion status check, error-record visibility and coherence, record validation, and only then interpretation. The cursor's advance is tied to that same observation and adds no synchronization.
 
@@ -266,7 +146,7 @@ Claims are labelled **Fact** when traced to inspected source, primary documentat
 
 **Proposal — tokens per second is admitted only as the reciprocal of a measured per-token latency, and is labelled as that.** L1 already excluded aggregate throughput because batch is 1 and a throughput figure would need batching the profile deliberately excludes. Restated here because "tokens per second" is the phrase most likely to reappear as a batched number once a harness exists.
 
-#### Peak and persistent memory: the measurement falsifies the arithmetic
+### Peak and persistent memory: the measurement falsifies the arithmetic
 
 **Fact — L6 supplies the figures and labels every one an Inference.** C1 prefill 2,394,286,488 B (2.2299 GiB); C1 decode 8 ≤ 2,393,069,056 B (2.2287 GiB); B1-d final decode ≤ 6,203,791,360 B (5.7777 GiB); B1-d prefill 28,074,307,592 B (26.1462 GiB) unfused, 10,895,486,984 B (10.1472 GiB) under D-B, and 5,917,459,976 B (5.5111 GiB) under D-B with final-position logits.
 
@@ -274,13 +154,13 @@ Claims are labelled **Fact** when traced to inspected source, primary documentat
 
 **Fact — and it is the condition L1 attached to extending the benchmark matrix.** L1's exclusion table reads "Contexts beyond 8,320 tokens … A residency measurement on a named host, under L8", and its B1 section says the same: "Extending the matrix upward is legitimate work; it needs a residency measurement on a named host first, and it belongs to L8." That measurement is filed, and until it exists no row above 8,320 positions may be added to the matrix.
 
-#### Dispatch, materialization, and cache behaviour
+### Dispatch, materialization, and cache behaviour
 
 **Proposal — the exact counts are correctness assertions and appear here only as denominators.** 30 executions per forward pass; 270 for the C1 row; 3 artifact identities; one weight-set binding per layer per pass with the tied `[151936, 1024]` matrix bound twice per pass; the tiled value-contraction realization selected at exactly one of C1's nine executions, at `S = 16`. A per-dispatch cost reading divides a measured pass time by these; a *change* in any of them is a build defect and not a performance movement.
 
 **Proposal — materialization count is reported per program and per plan, because the two decompositions differ in it.** L4's D-A and D-B differ precisely in which intermediates are materialized, and L6's residency table shows the model-level consequence. A single model-wide materialization count would be a number that changed for two unrelated reasons.
 
-### The bench-host discipline, and the amendment the model level forces
+## The bench-host discipline, and the amendment the model level forces
 
 **Fact — two hosts, and the split is not incidental.** Every retained numerical, conformance, and attribution digest in this corpus was produced on an **Apple M4 Max**, macOS 27.0 build 26A5388g, and the qualified target row `apple9-f32-unified-msl4-macos26` is measured there. Every retained timing in this corpus was produced on the **Apple M3 Pro** bench host, macOS 27.0 build 26A5378n, Xcode 26.6 build 17F113, offline compiler `metalfe-32023.883`. **Fact — the two report the same highest GPU family and identical threadgroup limits**, differing only in buffer and working-set size, so nothing about the split is visible in a capability query and a number from the wrong host is not detectable by inspecting the device.
 
@@ -296,7 +176,7 @@ Claims are labelled **Fact** when traced to inspected source, primary documentat
 
 **Fact — one field on every measured row is `Unknown` and must stay so.** ADR 0086 and L1 both record that exact native translation identity is unavailable through the AOT route: the source-JIT compiler `metalfe-32023.921` qualifies the `newLibraryWithSource` comparison rows and is not evidence about the AOT route, and substituting it would certify a relationship no measurement established. A measured-performance row taken through the AOT route records the offline compiler `metalfe-32023.883` as artifact provenance and the native translator as `Unknown`.
 
-### The Apple device-family and toolchain matrix, per claim
+## The Apple device-family and toolchain matrix, per claim
 
 **Proposal — the matrix is per claim because the claims have different device dependencies**, and the precedent for splitting it that way is the numerical-behaviour record's own compile-side/device-side table, which reaches three families unevenly and says so.
 
@@ -315,7 +195,7 @@ Claims are labelled **Fact** when traced to inspected source, primary documentat
 
 **Proposal — every unmeasured cell reads `Unknown` and is never predicted from a neighbour.** The corpus has already refuted one such prediction with a measurement: the subnormal flush was inferred dtype-independent from a module-level declaration and measured to be false, `f16` preserving what `f32` flushes. The same rule applies across device families, across toolchain builds, and inside the integer domain.
 
-### The attribution ladder, and the constraint that the two hosts impose on it
+## The attribution ladder, and the constraint that the two hosts impose on it
 
 **Fact — L6 built the surface and deliberately did not compare against it.** The retained fixture holds per-layer `h_out` digests, per-layer post-RoPE `k_rope` and `v_heads` digests, the rotary table in full, the mask in full, the four host computations, and a digest over the widened F32 weights — with the digest unit one *position* of one tensor rather than one tensor, "which is what resolves a disagreement to a pass as well as to a layer". L6 states that nothing has been compared against it and that the propagation question is this rung's.
 
@@ -339,7 +219,7 @@ Claims are labelled **Fact** when traced to inspected source, primary documentat
 
 **Inference — the surface answers *where* and not *how far*, and that gap is deliberate.** The fixture carries no envelope on the attribution surface: the float64 passes are not hooked, so nothing says how far an intermediate may legally deviate. Whether a per-execution disagreement implies a model-level one, and by how much, is error propagation over 30 executions — and by the same rule that forbids composing the model bound from per-operation tolerances, it may not be composed from per-execution ones. **So the ladder localizes a failure and does not grade an intermediate.** An intermediate that differs is a lead, not a verdict; the verdict is at rung 6.
 
-### Regression policy
+## Regression policy
 
 **Proposal — correctness regresses as a gate, performance regresses as a report, and the two never share a threshold.**
 
@@ -350,7 +230,7 @@ Claims are labelled **Fact** when traced to inspected source, primary documentat
 - **An intermittent conformance failure is a defect in the mechanism.** It is root-caused and fixed; it is never re-run until green, never loosened, and never labelled flaky.
 - **Every check is demonstrated able to fail.** The retained fixture is the standard: an altered logit digest failed against a stale manifest on both the manifest re-hash and the logit-byte re-hash, and an altered greedy token with a *consistently* re-hashed manifest still failed on the top-32 head and the decode-chain cross-checks. A model-level check without a recorded failing perturbation is not yet evidence.
 
-### The quantized path: comparable without conflating claims
+## The quantized path: comparable without conflating claims
 
 **Fact — L7 handed this question here and supplied its measured inputs.** Its record states that "whether the quantized program is an acceptable approximation of the F32 model is an ingestion and qualification question that `design-model-level-qualification-and-optimization` owns, and this record supplies its measured inputs rather than a budget."
 
@@ -363,7 +243,7 @@ Claims are labelled **Fact** when traced to inspected source, primary documentat
 
 **Proposal — so the comparison table the qualification harness produces has one row per path and one column per claim**, and the F32 row's correctness column cites the joint-perturbation bound while the quantized row's cites zero tolerance against its own reference. Neither path's correctness column ever cites the other's number.
 
-### What this rung does not decide
+## What this rung does not decide
 
 - **Any latency, throughput, or device-optimal claim.** Nothing here measures a Tiler execution, and L7's own analytical projection for a fused quantized decode is explicitly a hypothesis with a named experiment attached.
 - **Any performance threshold.** No baseline exists on any host for any row of this workload.
@@ -373,8 +253,28 @@ Claims are labelled **Fact** when traced to inspected source, primary documentat
 - **Any second measurement host, and any B1-length conformance row.** Both are possible and neither is needed by anything today.
 - **The exact public surface of anything.** The harness's record schema, the corpus's spelling, and any measurement API are drafts; acceptance of a public boundary is Tom's regardless of how the derivation ran, and this record requests no crate admission.
 
-### Consequences for the ladder
+## Consequences for the ladder
 
 **Inference.** L8's stated capability is "model-level correctness and performance qualification", and that is not what this rung delivered. What it delivered is the qualification design written down: four claims with what each may and may not say, the model-level comparison bound converted from L1's `Unknown` into a joint-perturbation measurement whose three terms each name an accepted authority, an adversarial corpus every row of which is derived from a refusal L4, L5, or L6 already owns, the per-claim device and toolchain matrix, TTFT decomposed into the four terms the architecture forces, the bench-host discipline with the amendment L3's own cache-residency artefact forces on it, the attribution ladder with the portability constraint the two-host split imposes, the regression policy, and the structural separation that lets the baseline and quantized paths be compared without conflating claims. Nothing compiles, dispatches, executes, or is measured on the Tiler side; no operation family moved a rung; the four-claim maturity vocabulary does not apply to a research record.
 
 **Inference — the honest sequencing, which is the one useful thing this rung says about the ladder's shape.** The reference-side half of the bound is obtainable *today*, with no device and no Tiler execution, while L6's five refusals still stand. So the measurement that closes L1's `Unknown` does not wait on the ladder, and the qualification design is available before the thing it qualifies exists — which is the correct order, because a tolerance derived after a result is seen is not a tolerance.
+
+## Post-transfer correction — 2026-08-01
+
+**This section is outside the transferred span, and that boundary is the point.** Everything above it is the record body drafted inside [`design-model-level-qualification-and-optimization`](../../../tickets/design-model-level-qualification-and-optimization.md) and landed here byte-identically under the two mechanical transformations that ticket names: the fenced YAML block became this file's delimited frontmatter, and every heading in the span was de-nested one level — `###` to `##`, and the `####` subheadings under them to `###`, since a promotion that moved only the first would have left a skipped level the de-nesting exists to prevent. The span is therefore still quotable line for line against its source, and it is not edited in place. Corrections land here, dated, so that the record and its source stay comparable.
+
+**What settled, and where the evidence is.** The span above was written before [`measure-the-model-level-comparison-envelope-under-the-target-realization`](../../../tickets/measure-the-model-level-comparison-envelope-under-the-target-realization.md) ran. That ticket is now done, and it closes the conditionals the span deliberately left open. Its results are retained in [the C1 conformance and attribution reference fixture](../../../spikes/program-planning/qwen3-conformance-fixture/README.md) as two files beside the thirteen already there — `joint.tsv`, 72 rows, and `perturbation.tsv`, 60 keys — in the `2026-08-01-c1-conformance-attribution-qwen3-0.6b-base-da87bfb6-f32-eager-cpu-torch2.6.0-transformers4.51.0` result directory. Every figure below is read from those two files rather than from the ticket's summary of them.
+
+**Measurement — the joint bound is a number.** *The bound: three named perturbations* above proposes evaluating the pinned reference with P-reorder, P-flush, and P-elem applied together and calls that single deviation the bound. It has been evaluated. Over all 18 positions and all four joint variants the largest whole-vocabulary deviation from the plain F32 pass is **2.2101e-4** (`0.00022101402282714844`), set at position 0 by `joint_unmodified_alternating`; restricted to the reference's own top-32 order it is **1.0872e-4**, at most **87 ULP**. Three separately measured maxima are produced nowhere in the record, which is the composition the span forbids and the retained record also refuses.
+
+**Measurement — the exact greedy gate's condition holds, with three orders of magnitude to spare.** The span makes the gate conditional: it stands "as long as the measured band stays below the smallest runner-up gap", and says plainly that if it does not, the gate is recorded as no longer carried rather than kept and hoped for. The condition is met. The smallest runner-up gap is **0.2660789489746094** at position 10, the band's ratio against it is **8.3063e-4** — about **1,204×** below the gap — and all 72 joint rows agree with the baseline's greedy token, so agreement holds at all 18 positions under every variant. The gate is kept, and the retained record recomputes the verdict from the band and the gap rather than asserting it.
+
+**Measurement — P-flush is established, and it is the identity on this row.** The span's stop condition — if either positive control fails, the term stays `Unknown` rather than being approximated — did not fire. `torch.set_flush_denormal` returned `true` for both directions, so its return value decided nothing and the two controls did: an elementwise `float32 (-1e-38) * 0.01` returned `0x800116c2` with the mode off and `0x80000000` with it on, and a `[64, 2] @ [2, 64]` `torch.matmul` whose exact sum is `-2^-133` returned `0x80010000` off and `0x80000000` on. The BLAS control contracts two normal terms whose exact *sum* is the negative subnormal, with no subnormal input or intermediate, so the flush of the result is the only step that can set the sign — a subnormal *product* through a gemm cannot distinguish the two behaviours, because `(−0) + (+0) = +0` against a zero accumulator. Both paths therefore match the target row's measured sign-preserving flush. Separately, the plain F32 pass re-evaluated with the mode in force is **bit-identical to the baseline at all 18 positions**: no arithmetic site of this row produces or consumes an F32 subnormal, so the term is carried and contributes nothing to the band. That is a fact about this row's dynamic range — BF16 weights widen to F32 normals, masked softmax entries underflow to exact zero rather than through the subnormal range — and not a fact about the mechanism.
+
+**Measurement — P-elem, sized from the registered contract, and reduction order stays dominant.** The exponential subordinate to `tiler::softmax-f32@1` and `tiler::silu-f32@1` is moved 12 ULP under `tiler::ulp-reference-gap@1` and the reciprocal square root subordinate to `tiler::rms-norm-f32@1` by one ULP, the supremum of the `Faithful` band — the sizing the span derives, and the retained verifier now refuses a record that uses Table 8.1's 4 instead. The perturbation widens the reordering envelope from 2.048e-4 to 2.2101e-4, about **8%**, so the span's claim that reduction order is the dominant term on this row survives its own measurement.
+
+**Correction — the band is a measured sample, not a proven upper bound, and the span's "That single quantity is the bound" is looser than the retained record.** Two sign policies are retained — `outward` and `alternating` — and the band is the maximum over both; neither is a search over the 2^N per-element sign assignments, which is combinatorial and per output. So **the true worst case within these registered contracts is at least the measured band and is not bounded above by it.** The span's own asymmetry still governs how the band is used — outside is a defect, inside is only indistinguishable — but a reader who took the band for a proven ceiling would read a legal realization above it as a defect. [`search-the-p-elem-sign-assignment-for-the-model-level-band`](../../../tickets/search-the-p-elem-sign-assignment-for-the-model-level-band.md) is filed `deferred` against exactly that gap, activated only once a Tiler result lands near the band.
+
+**The matrix row above is now understated.** *The Apple device-family and toolchain matrix, per claim* records the reference-side bound as "P-reorder measured; P-flush and P-elem measurable today". All three are now measured, jointly. That also discharges the span's *The reference-side qualification needs no device* claim as fact rather than inference: the measurement ran on the correctness host with no Metal compilation, no device, and no Tiler execution, while L6's five refusals still stand.
+
+**Measurement boundary — unchanged by any of the above.** Apple M4 Max, macOS 27.0 build 26A5388g; Python 3.11.12, `torch` 2.6.0, `transformers` 4.51.0, single-threaded. One checkpoint revision, one reference revision, one prompt, 18 positions, batch 1, greedy, F32. Nothing here qualifies a B1-length row, another prompt, another checkpoint, another host, or the quantized path.
