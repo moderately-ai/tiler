@@ -26,7 +26,7 @@ use tiler_ir::semantic::{
 use tiler_ir::shape::Shape;
 
 use super::error::{ReferenceOperationError, dense_result_error};
-use super::evaluate::{decode_coordinate, f32_elements, row_major_strides};
+use super::evaluate::{decode_coordinate, f32_elements, preflight_f32_output, row_major_strides};
 use super::registry::{ReferenceEvaluationRequest, ReferenceOperation, ReferenceOutputs};
 use super::tensor::Tensor;
 
@@ -104,6 +104,14 @@ fn gather(
     let count = result_shape
         .element_count()
         .ok_or(ReferenceOperationError::ShapeTooLarge)?;
+    // Refused here rather than in the broadcast evaluator alone, because this is
+    // where the result is reserved and filled: `Tensor::dense` below rejects the
+    // same count under the same name, but only after this function has cloned an
+    // element per result coordinate. The check is defensive for the reindex
+    // family, whose result is a permutation of an operand already inside the
+    // bound, and load-bearing for the broadcast family, whose replicated axes
+    // make the result larger than the operand it reads.
+    preflight_f32_output(count)?;
     let input_strides = row_major_strides(input.shape())?;
     let result_strides = row_major_strides(result_shape)?;
     let mut result_coordinate = vec![0_usize; result_shape.rank()];

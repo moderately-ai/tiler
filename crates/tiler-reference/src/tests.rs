@@ -16,19 +16,20 @@ use super::registry::ReferenceRegistrationBatch;
 use super::standard::StandardReferenceProvider;
 use super::*;
 use tiler_ir::semantic::{
-    AttributeFieldId, Bf16Add, Bf16Constant, Bf16Multiply, CanonicalField, CanonicalValue,
-    CanonicalValueKind, F32, F32Add, F32Constant, F32Multiply, InputKey, NormativeDefinitionRef,
-    OperationArity, OperationAttributeSchema, OperationConformance, OperationDefinition,
-    OperationDefinitionFacts, OperationEffect, OperationInferenceError, OperationInferencer,
-    OperationSchema, OutputKey, SemanticProgramBuilder, SemanticRegistryBuilder,
-    SemanticRegistryProvider, SemanticRegistryRegistrar, StrictSerialF32Sum, TypeDefinitionFacts,
-    Value, ValueTypeDefinition, ValueTypeDefinitionKey,
+    AttributeFieldId, Bf16Add, Bf16Constant, Bf16Multiply, BroadcastAxisMapping,
+    BroadcastAxisSource, CanonicalField, CanonicalValue, CanonicalValueKind, F32, F32Add,
+    F32Broadcast, F32Constant, F32Multiply, InputKey, NormativeDefinitionRef, OperationArity,
+    OperationAttributeSchema, OperationConformance, OperationDefinition, OperationDefinitionFacts,
+    OperationEffect, OperationInferenceError, OperationInferencer, OperationSchema, OutputKey,
+    SemanticProgramBuilder, SemanticRegistryBuilder, SemanticRegistryProvider,
+    SemanticRegistryRegistrar, StrictSerialF32Sum, TypeDefinitionFacts, Value, ValueTypeDefinition,
+    ValueTypeDefinitionKey,
 };
 use tiler_ir::semantic::{
     FrozenSemanticRegistry, OpKey, OperationAttributes, ProviderIdentity, ResolvedValueType,
     SemanticProgram, TypeKey,
 };
-use tiler_ir::shape::{Axis, Shape};
+use tiler_ir::shape::{Axis, Extent, Shape};
 
 fn constant_bits(graph: &mut SemanticProgramBuilder, bits: u32) -> Value<F32> {
     F32Constant::apply(graph, bits).unwrap()
@@ -1531,6 +1532,97 @@ fn every_dense_construction_cause_reports_under_its_own_name() {
             );
         }
     }
+}
+
+/// A replicating broadcast is refused before its result is built, not after.
+///
+/// The replicating broadcast is the one dense reference site whose result can
+/// exceed the element bound at all: `Replicate` adds a result axis with no
+/// operand axis behind it, so the result is larger than the operand every other
+/// family's result is bounded by.
+///
+/// The refusal is *measured* rather than asserted. The declared result carries
+/// `3 * 2^58` elements, and the check below establishes that a
+/// `Vec<ReferenceElement>` of that length is not a representable allocation on
+/// this host — so a `gather` that still reserved its payload first would panic
+/// with a capacity overflow rather than reach any refusal. Returning the typed
+/// error is therefore evidence that nothing was reserved, cloned, or walked, and
+/// the same test cannot pass while materializing.
+#[test]
+fn a_replicating_broadcast_is_refused_before_its_result_is_materialized() {
+    const REPLICATED: u64 = 1 << 58;
+    let count = usize::try_from(REPLICATED).unwrap() * 3;
+    assert!(
+        count
+            .checked_mul(size_of::<ReferenceElement>())
+            .is_none_or(|bytes| bytes > usize::try_from(isize::MAX).unwrap()),
+        "the measurement needs a payload no allocation can represent, and \
+         {count} elements of {} bytes is one this host could attempt",
+        size_of::<ReferenceElement>()
+    );
+
+    // The rank pad the RMS-normalization weight uses, widened until the result
+    // exceeds the bound: `[3] -> [2^58, 3]`.
+    let mapping = BroadcastAxisMapping::new(
+        [Extent::new(REPLICATED), Extent::new(3)],
+        [
+            BroadcastAxisSource::Replicate,
+            BroadcastAxisSource::FromOperand(Axis::new(0)),
+        ],
+    )
+    .unwrap();
+    let mut graph = SemanticProgramBuilder::try_standard().unwrap();
+    let operand = graph
+        .input::<F32>(InputKey::new("weight").unwrap(), Shape::from_dims([3]))
+        .unwrap();
+    let replicated = F32Broadcast::apply(&mut graph, &mapping, operand).unwrap();
+    graph
+        .output(OutputKey::new("result").unwrap(), replicated)
+        .unwrap();
+    let program = graph.build().unwrap();
+
+    let weight = f32_tensor(Shape::from_dims([3]), vec![1.0, 2.0, 3.0]);
+    let key = InputKey::new("weight").unwrap();
+    let error = evaluate_program(&program, &[InputBinding::new(&key, &weight)]).unwrap_err();
+    let EvaluationError::Operation { source, .. } = error else {
+        panic!("an over-budget broadcast is refused by its implementation, not {error}");
+    };
+    assert_eq!(
+        source,
+        ReferenceOperationError::OutputElementsExceeded {
+            limit: MAX_REFERENCE_TENSOR_ELEMENTS,
+            actual: count,
+        }
+    );
+
+    // The neighbour, so the refusal above is known to discriminate the element
+    // count rather than the mapping: the same rank pad within the bound
+    // evaluates, and replicates.
+    let admitted = BroadcastAxisMapping::new(
+        [Extent::new(2), Extent::new(3)],
+        [
+            BroadcastAxisSource::Replicate,
+            BroadcastAxisSource::FromOperand(Axis::new(0)),
+        ],
+    )
+    .unwrap();
+    let mut graph = SemanticProgramBuilder::try_standard().unwrap();
+    let operand = graph
+        .input::<F32>(InputKey::new("weight").unwrap(), Shape::from_dims([3]))
+        .unwrap();
+    let replicated = F32Broadcast::apply(&mut graph, &admitted, operand).unwrap();
+    graph
+        .output(OutputKey::new("result").unwrap(), replicated)
+        .unwrap();
+    let program = graph.build().unwrap();
+    let outputs = evaluate_program(&program, &[InputBinding::new(&key, &weight)]).unwrap();
+    assert_eq!(
+        outputs,
+        [f32_tensor(
+            Shape::from_dims([2, 3]),
+            vec![1.0, 2.0, 3.0, 1.0, 2.0, 3.0]
+        )]
+    );
 }
 
 #[test]
