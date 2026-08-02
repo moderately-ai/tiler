@@ -19,9 +19,10 @@ use tiler_cache::expansion::{ComposedSubject, ExpansionCache, Resolution};
 use tiler_compiler::session::{CompileRequest, NumericalContract, compile};
 use tiler_compiler::target::TargetRequest;
 use tiler_ir::semantic::{
-    F32, F32Add, F32Multiply, InputKey, OutputKey, SemanticProgram, SemanticProgramBuilder,
+    F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
+    SemanticProgramBuilder, StrictSerialF32Sum,
 };
-use tiler_ir::shape::Shape;
+use tiler_ir::shape::{Axis, Shape};
 use tiler_metal_aot::driver::Toolchain;
 use tiler_metal_aot::family::{
     ArtifactDeliveryPolicy, ArtifactFamilySelection, FamilyRequirement, SelectedFamily,
@@ -983,4 +984,259 @@ fn a_fallback_only_selection_is_refused_before_any_backend_work() {
         refusal.to_string().contains("no artifact family"),
         "the diagnostic must say so too: {refusal}",
     );
+}
+
+/// The reduction region `in x: f32[rows: 1, cols: 4]; out strict_serial_sum(x *
+/// 2.0 + 1.0, [cols])`, as a verified program.
+///
+/// Built here rather than driven through the grammar for [`approved_region`]'s
+/// reason, and two tests that *do* write it as text are what keep the parser
+/// producing it: `crate::region`'s
+/// `the_recognized_serial_sum_shape_is_reachable_from_a_region` parses this shape,
+/// and `crates/tiler/tests/facade/pass/deliver_compiles_embeds_and_routes.rs`
+/// states it in a consumer crate under the contract measured below.
+///
+/// **One row and four contributors, which is the window rather than an example
+/// chosen from a range.** The reduction is where the split lives, so the extents
+/// are the ones that reach it: the governed partition splits four two-by-two, and
+/// four is also the largest the bound declaration's measured grid-axis capacity
+/// admits. Measured on this declaration under `flush_and_reassociate_f32`,
+/// `[rows: 1, cols: 8]` and `[rows: 2, cols: 4]` are both refused as
+/// `NoFeasiblePlan` — under a contract permitting regrouping the whole-program
+/// fused plan is withheld, so a portfolio with no admissible split has no plan at
+/// all — and `[rows: 1, cols: 5]` is refused as `InvalidCompilerOutput`, the
+/// unsplittable-reduction defect
+/// `correct-the-declined-strategy-record-for-an-unsplittable-reduction` owns.
+fn split_region() -> SemanticProgram {
+    let mut builder =
+        SemanticProgramBuilder::try_standard().expect("the governed profile composes");
+    let input = builder
+        .input::<F32>(
+            InputKey::new("x").expect("a valid interface key"),
+            Shape::from_dims([1, 4]),
+        )
+        .expect("the input binds");
+    let scale = F32Constant::apply(&mut builder, 2.0_f32.to_bits()).expect("the scale");
+    let bias = F32Constant::apply(&mut builder, 1.0_f32.to_bits()).expect("the bias");
+    let product = F32Multiply::apply(&mut builder, input, scale).expect("the product");
+    let mapped = F32Add::apply(&mut builder, product, bias).expect("the sum");
+    let reduced =
+        StrictSerialF32Sum::apply(&mut builder, mapped, [Axis::new(1)]).expect("the reduction");
+    builder
+        .output(
+            OutputKey::new("out").expect("a valid interface key"),
+            reduced,
+        )
+        .expect("the output binds");
+    builder.build().expect("the region verifies")
+}
+
+/// What one stated contract packages, read off the artifact an expansion embeds.
+///
+/// The entry count and the ordering come from the *decoded* envelope rather than
+/// from the producer's verified artifact, because bytes are what a consumer
+/// receives; the two are proven to name one identity before the value this is
+/// read from exists.
+struct Packaged {
+    /// Kernels in the plan the selection policy chose.
+    kernels: usize,
+    /// Whether one region covered the whole program.
+    fused: bool,
+    /// The artifact's canonical identity.
+    identity: Vec<u8>,
+    /// Backend payloads the artifact carries, across every delivery position.
+    payloads: usize,
+    /// Executable entries the routed variant declares, in execution order.
+    entries: usize,
+    /// Every stage dependency, as positions in that same execution order.
+    edges: Vec<(usize, usize)>,
+}
+
+/// Renders the identity as a length rather than as its bytes.
+///
+/// A derived `Debug` puts several hundred decimal byte values in front of the
+/// four numbers every assertion below is actually about, which is a failure
+/// message a reader has to search rather than read.
+impl std::fmt::Debug for Packaged {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Packaged")
+            .field("kernels", &self.kernels)
+            .field("fused", &self.fused)
+            .field("payloads", &self.payloads)
+            .field("entries", &self.entries)
+            .field("edges", &self.edges)
+            .field("identity_bytes", &self.identity.len())
+            .finish()
+    }
+}
+
+/// Compiles one region under one stated contract and reads back what it packages.
+fn packaged(
+    program: &SemanticProgram,
+    declaration: &BoundMetalCompileDeclaration,
+    cache: &ExpansionCache,
+    toolchain: &Toolchain,
+    contract: StatedContract,
+) -> Packaged {
+    let targets =
+        TargetRequest::new([declaration.profile().clone()]).expect("a singleton target request");
+    let compilation = compile(CompileRequest::new(program, contract.contract(), targets))
+        .expect("the region compiles")
+        .into_targets()
+        .pop()
+        .expect("one target outcome")
+        .into_parts()
+        .1
+        .expect("the declared target honours this contract");
+    let selected = compilation.selected().expect("one selected plan");
+    let accepted = tiler_build::accept_or_publish_metal_plan(
+        cache,
+        toolchain,
+        program,
+        selected,
+        std::slice::from_ref(declaration),
+        OPTIMIZATION,
+    )
+    .expect("the selected plan builds");
+
+    let variant = accepted
+        .decoded()
+        .variants()
+        .next()
+        .expect("one routed variant");
+    let order: Vec<Vec<u8>> = variant
+        .execution_order()
+        .map(|entry| entry.stage_key().to_vec())
+        .collect();
+    let position = |key: &[u8]| {
+        order
+            .iter()
+            .position(|stage| stage.as_slice() == key)
+            .expect("a stage dependency's endpoint is sequenced")
+    };
+    let edges = variant
+        .stage_dependencies()
+        .map(|edge| {
+            (
+                position(edge.predecessor().stage_key()),
+                position(edge.successor().stage_key()),
+            )
+        })
+        .collect();
+    Packaged {
+        kernels: selected.kernels().len(),
+        fused: selected.is_fused(),
+        identity: accepted.artifact().canonical_identity().as_bytes().to_vec(),
+        payloads: accepted.artifact().payloads().len(),
+        entries: order.len(),
+        edges,
+    }
+}
+
+/// A region whose selected plan needs two entries packages **both** of them in
+/// the one artifact its expansion embeds.
+///
+/// This is what `docs/integration/frontends.md`'s "macro-local bundle does not
+/// mean one GPU kernel" has never had evidence for. Nothing here selects the
+/// split: the region states `flush_and_reassociate_f32`, and the split is what
+/// the compiler's own selection policy returns from
+/// `Compilation::selected()` under it. Handing
+/// `accept_or_publish_metal_plan` a non-selected alternative would produce a
+/// two-entry artifact today and would make this frontend override the optimizer,
+/// which is why the plan is read from the selection rather than searched for.
+///
+/// **What is asserted, in order.** The selected plan has two kernels and is not
+/// fused. The artifact carries one payload — [`deliver`]'s `[payload] =
+/// artifact.payloads()` refusal is about the delivery-position axis, and a
+/// multi-entry plan is one payload with several entries, so a widening there
+/// would have been the wrong repair. The decoded variant declares two entries and
+/// one stage dependency, running front to back: the ordering a consumer must
+/// dispatch in is the artifact's own statement rather than a convention.
+/// And the identity the expansion publishes to the consumer's loader is that
+/// artifact's, so the entries counted above are the ones the embedded bytes carry.
+///
+/// **The perturbation is the contract**, not the program. The same region under
+/// `flush_subnormals_to_zero_f32` selects the whole-program fused plan, whose
+/// artifact declares one entry and no dependency — so the entry, ordering, and
+/// identity assertions above all fail against it, watched doing so. Its cost is a
+/// second Metal compilation, deliberately: a perturbation that shared the first
+/// one's artifact would be comparing a value with itself.
+///
+/// The payload count is the one assertion here that nothing available can make
+/// fail, and it is kept as a regression guard rather than presented as evidence:
+/// one measured declaration means one delivery position, so a second payload
+/// needs the second measurement
+/// `first-authoritative-ios-metal-compile-declaration` owns.
+#[test]
+fn a_split_selection_packages_every_entry_in_the_one_embedded_artifact() {
+    let directory = scratch("multi-entry");
+    let program = split_region();
+    let declaration =
+        BoundMetalCompileDeclaration::first_macos_apple9().expect("the declaration assembles");
+    let cache = ExpansionCache::open(directory.join("cache"));
+    let toolchain = Toolchain::system();
+    let reassociating =
+        || resolve("flush_and_reassociate_f32").expect("the composed contract is statable");
+
+    let split = packaged(&program, &declaration, &cache, &toolchain, reassociating());
+    assert_eq!(
+        (split.kernels, split.fused),
+        (2, false),
+        "the compiler's own selection must be the multi-entry plan: {split:?}",
+    );
+    assert_eq!(
+        split.payloads, 1,
+        "several entries are one payload; a second payload would be a second family: {split:?}",
+    );
+    assert_eq!(
+        split.entries, 2,
+        "both entries must be packaged, or the consumer receives half a program: {split:?}",
+    );
+    assert_eq!(
+        split.edges,
+        vec![(0, 1)],
+        "the artifact must declare the order its entries run in: {split:?}",
+    );
+
+    let fused = packaged(&program, &declaration, &cache, &toolchain, flushing());
+    assert_eq!(
+        (fused.kernels, fused.fused),
+        (1, true),
+        "the perturbing contract must select the whole-program plan: {fused:?}",
+    );
+    assert_eq!(
+        (fused.entries, fused.edges.as_slice()),
+        (1, [].as_slice()),
+        "one entry has nothing to order, so every assertion above can fail: {fused:?}",
+    );
+
+    // The expansion the consumer writes embeds that exact artifact. Its cache
+    // root is the scratch directory rather than the one above, so the identity is
+    // reproduced from a second independent build instead of read back from the
+    // first.
+    let delivered = deliver(
+        Some(&program),
+        reassociating(),
+        macos_selection(),
+        &stating(&directory),
+        &toolchain,
+    )
+    .expect("the split region delivers");
+    assert_eq!(
+        delivered
+            .route_facts
+            .as_ref()
+            .map(RouteFacts::artifact_identity),
+        Some(split.identity.as_slice()),
+        "the embedded bytes must be the artifact whose entries were counted",
+    );
+    assert!(
+        delivered.plan.items_source().contains(&format!(
+            "const {}: &[u8] = b\"",
+            crate::delivery::ARTIFACT_BINDING
+        )),
+        "one invocation embeds one artifact carrying both entries",
+    );
+    let _ = std::fs::remove_dir_all(directory);
 }

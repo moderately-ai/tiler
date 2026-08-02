@@ -255,4 +255,37 @@ fn main() {
         Buffer::dense(StorageScalar::F32, vec![2]),
         "the region's result is `f32[rows]`, one rank below its operand",
     );
+
+    // The same reduction under a contract that permits regrouping, which is the
+    // first region a consumer can write whose *selected* plan needs more than one
+    // executable entry. Nothing here asks for two kernels: `strict_serial_sum`
+    // states a computation and `flush_and_reassociate_f32` states what its
+    // arithmetic may do, and the compiler's selection policy answers with a
+    // split — under the flush-only contract above, the same text selects one
+    // fused kernel instead. So the whole difference between a one-entry and a
+    // two-entry bundle is a statement about meaning, exactly as the region
+    // grammar's "nothing in the expression states a *plan*" says it should be.
+    //
+    // What this file can show is the producer half: the expansion runs the eight
+    // steps for a plan the compiler split, and embeds one artifact carrying both
+    // entries. That both are in there, in the order they must run, is asserted
+    // where the artifact is readable — `tiler-macros`'
+    // `a_split_selection_packages_every_entry_in_the_one_embedded_artifact`.
+    //
+    // `[rows: 1, cols: 4]` is the window rather than a taste: the governed
+    // partition splits four contributors two-by-two, and four is also the largest
+    // the bound declaration's measured grid-axis capacity admits, so wider or
+    // taller shapes are refused before any plan exists.
+    let x: Tensor<Toy> = Tensor::new(Buffer::dense(StorageScalar::F32, vec![1, 4]), ());
+    let split = tiler::tensor! {
+        in x: f32[rows: 1, cols: 4];
+        deliver macos;
+        contract flush_and_reassociate_f32;
+        out strict_serial_sum(x * 2.0 + 1.0, [cols])
+    };
+    assert_eq!(
+        split.expect("the operand honours the region's declared interface"),
+        Buffer::dense(StorageScalar::F32, vec![1]),
+        "a multi-entry bundle changes what is packaged, never the region's declared interface",
+    );
 }

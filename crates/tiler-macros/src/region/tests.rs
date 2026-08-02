@@ -879,27 +879,34 @@ fn a_symbolic_reduction_defers_its_public_logical_program() {
     );
 }
 
-/// Compiles one region's public logical program against the bound macOS
-/// declaration and returns whether a plan was selected.
+/// Compiles one region's public logical program under one stated contract
+/// against the bound macOS declaration, and returns how many kernels the plan
+/// the selection policy chose dispatches.
+///
+/// `None` means no plan was selected at all, whether the compiler refused the
+/// whole program or the declared target could not honour the stated contract.
+/// The two are not distinguished because every caller here asks a reachability
+/// question, and `crate::aot`'s tests own the refusals' shapes.
 ///
 /// The compiler is invoked from *this* file rather than only from
 /// `crate::aot`'s tests, and the reason is what those tests say about
 /// themselves: they build their programs by hand so that a grammar change
-/// cannot fail them for an unrelated reason. The claim below is exactly the one
-/// they therefore cannot make — that a region a consumer can *write* denotes a
-/// whole program this build recognizes — and that is a claim about the grammar,
-/// so it is checked beside the grammar.
+/// cannot fail them for an unrelated reason. The claims below are exactly the
+/// ones they therefore cannot make — that a region a consumer can *write*
+/// denotes a whole program this build recognizes, and that the plan chosen for
+/// one is the multi-entry one — and both are claims about the grammar, so they
+/// are checked beside the grammar.
 ///
 /// No toolchain runs and no file is written: `compile` stops at a selected plan,
 /// which is the whole of "the compiler admits this region for the declared
 /// target". Producing the bytes is `crate::aot`'s, and the end-to-end path is
 /// `crates/tiler/tests/facade/pass/deliver_compiles_embeds_and_routes.rs`.
 ///
-/// The contract is the one the delivering fixtures state, resolved through the
+/// The contract is named as a region spells it and resolved through the
 /// production vocabulary: a region states its own now, so there is no frontend
 /// constant to reach for, and naming one here would be a second answer to the
 /// question `crate::numerics` owns.
-fn plans_for_the_bound_declaration(region: &RegionSyntax<At>) -> bool {
+fn selected_kernels(region: &RegionSyntax<At>, contract: &str) -> Option<usize> {
     use tiler_build::BoundMetalCompileDeclaration;
     use tiler_compiler::session::{CompileRequest, compile};
     use tiler_compiler::target::TargetRequest;
@@ -913,13 +920,25 @@ fn plans_for_the_bound_declaration(region: &RegionSyntax<At>) -> bool {
         BoundMetalCompileDeclaration::first_macos_apple9().expect("the declaration assembles");
     let targets =
         TargetRequest::new([declaration.profile().clone()]).expect("a singleton target request");
-    let contract = crate::numerics::resolve("flush_subnormals_to_zero_f32")
-        .expect("the flush-to-zero contract is statable");
+    let contract = crate::numerics::resolve(contract).expect("the stated contract is statable");
     compile(CompileRequest::new(program, contract.contract(), targets))
         .ok()
         .and_then(|batch| batch.into_targets().pop())
         .and_then(|outcome| outcome.into_parts().1.ok())
-        .is_some_and(|compilation| compilation.selected().is_some())
+        .and_then(|compilation| {
+            compilation
+                .selected()
+                .map(|selected| selected.kernels().len())
+        })
+}
+
+/// Compiles one region's public logical program against the bound macOS
+/// declaration and returns whether a plan was selected.
+///
+/// The contract is the one the delivering fixtures state; see
+/// [`selected_kernels`] for why it is spelled rather than named as a constant.
+fn plans_for_the_bound_declaration(region: &RegionSyntax<At>) -> bool {
+    selected_kernels(region, "flush_subnormals_to_zero_f32").is_some()
 }
 
 /// The reduction this grammar spells reaches a whole program the compiler
@@ -936,6 +955,53 @@ fn the_recognized_serial_sum_shape_is_reachable_from_a_region() {
     assert!(
         plans_for_the_bound_declaration(&static_region()),
         "the approved pointwise region must still plan, or the assertion above proves nothing",
+    );
+}
+
+/// `in x: f32[rows: 1, cols: 4]; out strict_serial_sum(x * 2.0 + 1.0, [cols])`.
+///
+/// [`serial_sum_region`] at the one shape whose selected plan splits. Four
+/// contributors along the reduced axis is both what the governed partition
+/// divides two-by-two and the most the bound declaration's measured grid-axis
+/// capacity admits, so it is the window rather than a size chosen from a range.
+fn splitting_serial_sum_region() -> RegionSyntax<At> {
+    RegionSyntax {
+        operands: vec![operand(
+            "x",
+            10,
+            "f32",
+            vec![named_axis("rows", 1, 12), named_axis("cols", 4, 14)],
+        )],
+        ..serial_sum_region()
+    }
+}
+
+/// A reduction a consumer *writes* reaches a selected plan with two entries.
+///
+/// The region grammar has no spelling for a plan — "how many kernels a region
+/// becomes … is decided against a target profile and has no spelling here" — so
+/// the only thing this text states beyond the computation is what its arithmetic
+/// may do, and the multi-entry plan is the compiler's answer rather than a
+/// request. That is the property
+/// `package-a-multi-entry-bundle-from-one-expansion` needed and the reason the
+/// contract is the perturbation below: the identical region under the flush-only
+/// contract selects one whole-program kernel, so a build that had stopped
+/// splitting would fail the first assertion rather than pass both.
+///
+/// What the packaged artifact then carries is asserted where the bytes are —
+/// `crate::aot`'s `a_split_selection_packages_every_entry_in_the_one_embedded_artifact`.
+#[test]
+fn the_reduction_grammar_reaches_a_multi_entry_selected_plan() {
+    let region = splitting_serial_sum_region();
+    assert_eq!(
+        selected_kernels(&region, "flush_and_reassociate_f32"),
+        Some(2),
+        "a region permitting regrouping must select the split, not merely retain it",
+    );
+    assert_eq!(
+        selected_kernels(&region, "flush_subnormals_to_zero_f32"),
+        Some(1),
+        "the same text under the flush-only contract must select one whole-program kernel",
     );
 }
 
