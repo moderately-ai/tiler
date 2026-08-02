@@ -5,7 +5,7 @@ status: todo
 priority: p1
 dependencies: []
 related: [admit-ordered-multi-output-programs-at-the-compiler-request-boundary, implement-general-dag-partitioning]
-scopes: [implementation/ir]
+scopes: [implementation/ir, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, identity, artifacts]

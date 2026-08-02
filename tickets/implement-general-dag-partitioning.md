@@ -3,8 +3,8 @@ id: implement-general-dag-partitioning
 title: Implement general DAG partition search
 status: todo
 priority: p1
-dependencies: [implement-boundary-property-enforcers, implement-analytical-component-cost-model]
-related: []
+dependencies: [implement-analytical-component-cost-model]
+related: [implement-boundary-property-enforcers]
 scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
@@ -16,7 +16,23 @@ The planner can partition a real DAG — fan-out, multi-result outputs, delibera
 
 Extend partition planning to realistic DAGs with fan-out, named/multi-result outputs, legal shared-work duplication, materialization choices, and budgeted memoized search. Verify complete coverage and boundaries against exhaustive small-graph oracles and explain pruning.
 
-## Dependency note (2026-07-28)
+## The re-read this ticket asked for, run 2026-08-02 — the edge was backwards and is removed
+
+The note below asks that the enforcer dependency "be re-read — not merely re-checked — when this ticket is picked up", and then makes that impossible: a `todo` p1 behind a `deferred` dependency never reaches `ready`, so it is never picked up. [`re-point-the-boundary-property-enforcer-edges-after-the-provider-seam-landed`](re-point-the-boundary-property-enforcer-edges-after-the-provider-seam-landed.md) exists for exactly that deadlock, and this is its outcome. Both tickets were read in full against each other, and the two facts it named as unsettled were checked rather than assumed.
+
+**Fact — nothing this ticket must deliver consumes an enforcer.** All seven `Closes when` conditions are about fan-out, ordered multi-outputs, duplication legality, materialization as a per-edge choice, budget and memoization, oracle agreement, and explain output. None requires a boundary mismatch to be reconciled; none names an enforcer.
+
+**Fact — this ticket's own Graph maintenance says it *produces* the enforcer's input.** It records that materialization choices "likely fire the enforcers trigger", that "the failing constant test is the signal", and that "its mismatch is the enforcer's first case". A ticket that supplies another ticket's first real case is upstream of it, not blocked behind it. The dependency is therefore **removed** and the relation kept as `related`. It is not deleted to unblock a frontier — it is inverted because both tickets' own texts say so, and the inversion is recorded here so it can be refuted.
+
+**Fact — the other dependency is satisfied.** `implement-analytical-component-cost-model` is `done`, so with the enforcer edge removed this ticket's dependencies are met and it can reach `ready`.
+
+**Fact — the enforcer's restart condition now has a graph edge, and it is not this ticket.** [`implement-boundary-property-enforcers`](implement-boundary-property-enforcers.md)'s own 2026-07-28 restatement supersedes the constant-test trigger the note below cites: the startable condition is "a compile-path provider proposes an opaque call whose contract the composing consumer refuses", which "arrives with caller-supplied physical providers". That is [`drive-an-external-physical-implementation-provider-through-compilation`](drive-an-external-physical-implementation-provider-through-compilation.md), which is now a dependency of the enforcer ticket rather than a sentence in it.
+
+**Fact — `PhysicalAuthorities::composed` still has no production caller, checked rather than assumed.** `grep -rn 'PhysicalAuthorities' crates/` returns the composed constructor only inside `crates/tiler-compiler/src/pipeline/tests.rs`; the sole production construction is `PhysicalAuthorities::governed()` at `crates/tiler-compiler/src/pipeline.rs:591`. So the refused handoff is still unreachable on the production path, exactly as the enforcer ticket says.
+
+**Finding, recorded rather than resolved — the provider route may not be sufficient on its own, and whoever picks up the enforcer ticket must settle it.** [ADR 0090](../docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md):125 states that "out-of-crate opaque-call registration stays compiler-owned and crate-private per ADR 0078's correction" and that "no caller of any kind registers one on the compile path". `register-opaque-calls-on-the-compile-path`, which ADR 0090 names as owning that internal wiring gap, is `done` — yet `composed` still has no production caller. So whether a *caller-supplied* provider can produce the refused handoff at all, given that registration stays crate-private, is an open question the enforcer's restart condition assumes an answer to. This is flagged, not decided: deciding it needs the provider work in front of it.
+
+## Dependency note (2026-07-28) — superseded above, retained for its derivation
 
 `implement-boundary-property-enforcers` is **`deferred`**, not in progress, so this ticket is not waiting on work someone is doing. Its deferral is a finding rather than a scheduling choice — the bounded profile admits no boundary mismatch for an enforcer to reconcile — and its restart condition is a **failing test** rather than a person: `frontier.rs::the_bounded_profile_admits_no_undischarged_boundary` (`crates/tiler-compiler/src/frontier.rs:2107`). The full derivation, the per-dimension table showing why no mismatch is currently expressible, and the list of changes that would fire the trigger are recorded at `tickets/implement-boundary-property-enforcers.md:23-50`; do not restate them here, and do not treat that ticket's `deferred` status as an invitation to start it.
 

@@ -3,8 +3,8 @@ id: implement-boundary-property-enforcers
 title: Implement executable boundary-property enforcers
 status: deferred
 priority: p1
-dependencies: [implement-boundary-property-model, transfer-synchronization-and-resource-lifetime-contract]
-related: [device-placement-and-memory-domain-contract]
+dependencies: [implement-boundary-property-model, transfer-synchronization-and-resource-lifetime-contract, drive-an-external-physical-implementation-provider-through-compilation]
+related: [device-placement-and-memory-domain-contract, implement-general-dag-partitioning]
 scopes: [implementation/compiler, implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
@@ -64,3 +64,13 @@ Also corrected: the integrate ticket's twice-made prediction that the constant t
 The mismatch is now reachable through the real selection authority with a test-level provider. `selection::tests::an_opaque_alias_view_is_refused_by_a_materialized_consumer` admits an opaque pointwise producer declaring `MayAliasInputs`, composes it against the scheduled reduction's `MaterializedBuffer` requirement, and observes `BoundaryDisagreement::UndischargedHandoff` naming `BoundaryProperty::Materialization`. Replacing the declaration with `Aliasing::Distinct` admits the plan and makes the test fail, so the fixture distinguishes the mismatch rather than passing on an empty frontier.
 
 The ticket remains deferred after re-evaluation. The production compile path still has no caller-supplied physical provider or opaque-call registry, so no user compilation can reach this mismatch and no executable enforcer can yet be selected. The startable condition remains the first compile-path provider that produces such a refused handoff; the new test proves the selection and property layers are ready to identify that first case exactly.
+
+## The restart condition is a graph edge now, 2026-08-02
+
+**Why this changed.** Three re-evaluations above state the startable condition in prose and none of them put it in the graph, so the ticket that would fire it and the ticket waiting on it were connected by nothing a scheduler can read. Meanwhile [`implement-general-dag-partitioning`](implement-general-dag-partitioning.md) depended on *this* ticket — a `deferred` state that satisfies no dependent — which made a p1 permanently unreachable and stranded two open questions it owns (`docs/open-questions.md` Q-PLAN-002 and Q-PLAN-005). [`re-point-the-boundary-property-enforcer-edges-after-the-provider-seam-landed`](re-point-the-boundary-property-enforcer-edges-after-the-provider-seam-landed.md) owns the repair; this is its outcome on this side.
+
+**Fact — the edges now match the prose.** This ticket depends on [`drive-an-external-physical-implementation-provider-through-compilation`](drive-an-external-physical-implementation-provider-through-compilation.md), which is the "caller-supplied physical providers" the restatement above names. `implement-general-dag-partitioning` no longer depends on this ticket, because nothing it must deliver consumes an enforcer and its own Graph maintenance says it *supplies* the enforcer's first case; it is `related` in both directions instead.
+
+**Fact — still unreachable on the production path, checked rather than carried forward.** `grep -rn 'PhysicalAuthorities' crates/` finds `PhysicalAuthorities::composed` only in `crates/tiler-compiler/src/pipeline/tests.rs`; the sole production construction is `PhysicalAuthorities::governed()` at `crates/tiler-compiler/src/pipeline.rs:591`. The deferral above stands on its own terms.
+
+**Open question this ticket must settle before it starts, and it is not settled here.** [ADR 0090](../docs/decisions/0090-compose-backends-per-responsibility-rather-than-per-backend.md):125 states that "out-of-crate opaque-call registration stays compiler-owned and crate-private per ADR 0078's correction" and that "no caller of any kind registers one on the compile path". The wiring gap it names as owning that, `register-opaque-calls-on-the-compile-path`, is `done` — and `composed` still has no production caller. **So whether a caller-supplied provider can produce the refused handoff at all, while registration stays crate-private, is an assumption the restart condition rests on rather than a fact it has.** If the provider work lands and the handoff is still unreachable, the restart condition is wrong rather than unmet, and it must be restated rather than waited on. Do not treat the new dependency edge as evidence that the condition is satisfiable.
