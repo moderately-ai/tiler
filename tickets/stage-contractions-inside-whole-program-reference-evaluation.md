@@ -1,7 +1,7 @@
 ---
 id: stage-contractions-inside-whole-program-reference-evaluation
 title: Reach a whole-program reference evaluation whose contractions exceed the per-call work bound
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [assemble-the-causal-self-attention-block-program, admit-the-attention-contraction-structures, retain-the-c1-attention-block-conformance-evidence, integrate-the-attention-block-into-the-runtime]
@@ -9,9 +9,6 @@ scopes: [implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, reference, evaluation, contraction, language-model]
-claimed_from: todo
-assignee: agent-staged-eval
-lease_expires_at: 1785694007
 ---
 ## User-visible outcome
 
