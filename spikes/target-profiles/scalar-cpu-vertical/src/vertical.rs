@@ -332,14 +332,16 @@ fn assemble(
             SchemaVersion::new(1, 0),
             profile_ref.clone(),
             // A native image, and the claim is narrow rather than convenient.
-            // `ArtifactExecutionPolicy`'s own documentation says a payload must
-            // not claim this "merely because no source is compiled at run time"
-            // and that output still needing device-specific pipeline creation is
-            // `RequiresDeviceTranslation`. This image needs neither: the bytes
-            // are decoded and executed as they stand, with no target-specific
+            // `ArtifactExecutionPolicy`'s own documentation says this value
+            // means "the target's own API loads these bytes as they stand", and
+            // that the enum answers delivery alone rather than whether a device
+            // does work of its own between a load and a dispatch. This image
+            // satisfies the strict reading of that one question: the bytes are
+            // decoded and executed as they stand, with no target-specific
             // translation, specialization, or pipeline object between them and
-            // the dispatch. The README records that the two-value vocabulary is
-            // nonetheless a GPU-shaped dichotomy.
+            // the dispatch. The README records that the vocabulary is
+            // nonetheless GPU-shaped, with no way to say "an interpreted image",
+            // "a JIT input", or "a dynamically linked object".
             ArtifactExecutionPolicy::NativeImage,
             PayloadContent {
                 metadata: PayloadMetadata {
