@@ -89,7 +89,7 @@ accepted. Unresolved questions are collected in
 
 ### Physical planning and lowering
 
-- [0097: Admit a two-dimensional cooperative staging relation over a stated participant space](0097-admit-a-two-dimensional-cooperative-staging-relation.md) — proposed; contracts: [IR stack and invariants](../ir.md), [Fusion and scheduling](../compiler/fusion-and-scheduling.md), [Artifact envelope and Metal kernel ABI profile](../artifact-abi.md); evidence: [A two-dimensional cooperative staging relation](../research/scheduling/two-dimensional-cooperative-staging-relation.md)
+- [0097: Admit a two-dimensional cooperative staging relation over a stated participant space](0097-admit-a-two-dimensional-cooperative-staging-relation.md) — accepted; contracts: [IR stack and invariants](../ir.md), [Fusion and scheduling](../compiler/fusion-and-scheduling.md), [Artifact envelope and Metal kernel ABI profile](../artifact-abi.md); evidence: [A two-dimensional cooperative staging relation](../research/scheduling/two-dimensional-cooperative-staging-relation.md)
 - [0094: Bind a subgroup combine to a register-transfer tree with a stated stride order and a proved lane identity](0094-bind-a-subgroup-combine-to-a-register-transfer-tree.md) — accepted; contracts: [Fusion and scheduling](../compiler/fusion-and-scheduling.md), [IR stack and invariants](../ir.md), [Metal AOT backend](../backends/metal.md), [Artifact envelope and Metal kernel ABI profile](../artifact-abi.md); evidence: [The subgroup execution tier](../research/scheduling/subgroup-execution-tier.md)
 - [0093: Bind vector lanes to the map or the contributor partition, never to the combine order](0093-bind-vector-lanes-to-the-map-or-the-contributor-partition.md) — accepted; contracts: [Fusion and scheduling](../compiler/fusion-and-scheduling.md), [Proposed CPU/SIMD target profile](../backends/cpu.md), [IR stack and invariants](../ir.md); evidence: [The CPU vector-lane tier](../research/scheduling/cpu-vector-lane-tier.md), [CPU vector realization facts](../research/target-profiles/cpu-vector-realization-facts.md)
 - [0068: Co-locate ABI expressions with executable program IR](0068-co-locate-abi-expressions-with-executable-program-ir.md) — accepted; contracts: [System architecture](../architecture.md), [IR stack and invariants](../ir.md), [Artifact envelope and Metal kernel ABI profile](../artifact-abi.md); evidence: [Ownership of target-neutral ABI expressions](../research/program-planning/abi-expression-ownership.md)
@@ -234,7 +234,7 @@ accepted. Unresolved questions are collected in
 - [0094: Bind a subgroup combine to a register-transfer tree with a stated stride order and a proved lane identity](0094-bind-a-subgroup-combine-to-a-register-transfer-tree.md) — accepted
 - [0095: Decline a distributivity permission and keep contraction-chain regrouping rejected](0095-decline-a-distributivity-permission.md) — accepted
 - [0096: Compose the subgroup and workgroup reduction levels in one topology over a stated two-component coordinate](0096-compose-the-subgroup-and-workgroup-reduction-levels.md) — accepted
-- [0097: Admit a two-dimensional cooperative staging relation over a stated participant space](0097-admit-a-two-dimensional-cooperative-staging-relation.md) — proposed
+- [0097: Admit a two-dimensional cooperative staging relation over a stated participant space](0097-admit-a-two-dimensional-cooperative-staging-relation.md) — accepted
 <!-- END GENERATED ADR CHRONOLOGY -->
 
 ## Template

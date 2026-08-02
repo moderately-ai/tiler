@@ -6,7 +6,8 @@ title: "A two-dimensional cooperative staging relation"
 topics: ["scheduling", "ir", "gpu", "metal", "contraction", "identity", "public-boundary"]
 catalog_group: "physical-planning-lowering"
 research_status: "complete"
-disposition: "pending"
+disposition: "adopted"
+adopted_by: ["ADR-0097"]
 implementation_status: "not-started"
 evidence_classes: ["primary-source-synthesis"]
 informs: ["tiler.contract.ir", "tiler.contract.fusion-and-scheduling"]

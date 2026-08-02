@@ -46,9 +46,24 @@ This is the failure mode the whole ticket is shaped around: a stepped version ov
 
 The round-dependent span and the per-access active-participant subset — [`admit-a-round-dependent-cooperative-staging-span`](admit-a-round-dependent-cooperative-staging-span.md) owns them at `deferred`, and the record derives why they are a second relation rather than a wider parameter of this one. ADR 0096's items 1, 4, 5, 6, and 7 stay where they are; item 6's `0x36` appends-only argument must be re-made at the encoding site on the `v5` tree if it lands after this step.
 
+## The boundary is accepted, 2026-08-02, and decision 3's spelling is amended
+
+**Tom accepted ADR 0097 on 2026-08-02 in the Claude Code coordination session, witnessed directly by the coordinator who recorded it** — not relayed. He was asked one atomic question, how the per-dimension strides and extents should be spelled, and chose the fixed-rank inline array over the drafted `Vec<u64>`, instructing that downstream work volume was not a consideration and the most correct solution was wanted.
+
+**Build to this spelling, not to the `Vec` in the research record's drafted boundary.** ADR 0097's *Amendment at acceptance* section is normative and the research record's §6 draft is superseded on this one point:
+
+- `strides` and `extents` are fixed-rank inline arrays of `MAX_COOPERATIVE_PARTICIPANT_RANK` elements carried beside a rank, **private, behind a constructor that enforces array/rank coherence and zeroes the unused tail**.
+- `StagedSpan`, `StagedWrite`, `StagedRead`, and `LocalCoordinates` **keep `Copy`**. If your change removes `Copy` from any of them, you have built the wrong spelling.
+- `CooperativeTile::addressed_slots` **keeps its by-value parameters**. Boundary item 7 is withdrawn; there is no breaking signature change in this work.
+- **The encoding frames the rank and the used strides only.** The unused array tail must not reach the identity bytes, or two spans equal in meaning would differ in identity — the injectivity obligation is unchanged from what the `Vec` spelling owed, and it is now yours to discharge at the encoding site.
+
+**The ceiling is a domain fact, and the constructor is what keeps it cheap.** `MAX_COOPERATIVE_PARTICIPANT_RANK` is `3` because a threadgroup is at most three-dimensional on every target this repository names. Because the array size sits behind the constructor, raising the ceiling later is a one-constant edit plus an identity recompute rather than an API break — which is part of why this spelling was chosen.
+
+**This is not the alternative ADR 0097 eliminated.** That record rejects *a rank-two coordinate pair with two named stride fields* on the ground that a three-dimensional threadgroup "would need a second identity-domain step to reach". A rank-three array reaches it immediately, so that ground does not apply. Do not re-derive the elimination as if it did.
+
 ## Boundary
 
-Do not start before [`accept-adr-0097-two-dimensional-staging-relation`](accept-adr-0097-two-dimensional-staging-relation.md) closes — that is Tom's acceptance of the exact spelling, and the drafted boundary includes a breaking signature change (`CooperativeTile::addressed_slots` going by-reference) and the loss of `Copy` on four public types. **Corrected 2026-08-02:** this dependency previously named [`land-the-two-dimensional-staging-relation-adr`](land-the-two-dimensional-staging-relation-adr.md) and described it as Tom's acceptance, which it is not — that ticket lands ADR 0097 at `decision_status: proposed`, a completed outcome the moment the file exists, so an edge to it cannot distinguish "written" from "decided" and would have surfaced this ticket in `ready` undecided. Tom's 2026-08-01 acceptance of the step *in principle* is a relayed fact recorded in the producing ticket, and it explicitly does not accept the spelling.
+~~Do not start before [`accept-adr-0097-two-dimensional-staging-relation`](accept-adr-0097-two-dimensional-staging-relation.md) closes~~ — **satisfied 2026-08-02, see above.** The original text is retained for its statement of what the acceptance covered: it closes — that is Tom's acceptance of the exact spelling, and the drafted boundary includes a breaking signature change (`CooperativeTile::addressed_slots` going by-reference) and the loss of `Copy` on four public types. **Corrected 2026-08-02:** this dependency previously named [`land-the-two-dimensional-staging-relation-adr`](land-the-two-dimensional-staging-relation-adr.md) and described it as Tom's acceptance, which it is not — that ticket lands ADR 0097 at `decision_status: proposed`, a completed outcome the moment the file exists, so an edge to it cannot distinguish "written" from "decided" and would have surfaced this ticket in `ready` undecided. Tom's 2026-08-01 acceptance of the step *in principle* is a relayed fact recorded in the producing ticket, and it explicitly does not accept the spelling.
 
 ## Closes when
 
