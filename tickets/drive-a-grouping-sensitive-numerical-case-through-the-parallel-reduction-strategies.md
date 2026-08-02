@@ -1,16 +1,13 @@
 ---
 id: drive-a-grouping-sensitive-numerical-case-through-the-parallel-reduction-strategies
 title: Drive a grouping-sensitive numerical case through the parallel reduction strategies
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [realize-parallel-reduction-strategies-on-metal, calibrate-and-activate-parallel-reduction-selection, implement-parallel-reduction-strategies, settle-contraction-chain-distributivity-permission]
 scopes: [implementation/runtime, contracts/numerics]
 shared_scopes: [project/tickets]
 tags: [numerics, reductions, evidence-gap, measurement]
-claimed_from: todo
-assignee: agent-grouping
-lease_expires_at: 1785696201
 ---
 ## User-visible outcome
 
