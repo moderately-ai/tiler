@@ -1,0 +1,41 @@
+rows	contributors	work_items	portfolio	alternatives	strategies	selected	refusal
+1	1	1	batch-failed	0			CompileFailure { class: InvalidCompilerOutput, explain: "44 records" }
+1	2	2	batch-failed	0			CompileFailure { class: InvalidCompilerOutput, explain: "44 records" }
+1	3	3	batch-failed	0			CompileFailure { class: InvalidCompilerOutput, explain: "44 records" }
+1	4	4	yes	3	multi-pass-split,serial-fold,single-workgroup-tree	serial-fold	
+1	5	5	batch-failed	0			CompileFailure { class: InvalidCompilerOutput, explain: "44 records" }
+1	6	6	no	0			event=feasibility:grid-axis:rejected:target-infeasible:threads=6:4
+1	8	8	no	0			event=feasibility:grid-axis:rejected:target-infeasible:threads=8:4
+1	9	9	no	0			event=feasibility:grid-axis:rejected:target-infeasible:threads=9:4
+1	12	12	no	0			event=feasibility:grid-axis:rejected:target-infeasible:threads=12:4
+1	16	16	no	0			event=feasibility:grid-axis:rejected:target-infeasible:threads=16:4
+1	64	64	no	0			event=feasibility:grid-axis:rejected:target-infeasible:threads=64:4 | event=feasibility:grid-axis:rejected:target-infeasible:threads=8:4
+1	1024	1024	no	0			event=feasibility:grid-axis:rejected:target-infeasible:threads=1024:4 | event=feasibility:grid-axis:rejected:target-infeasible:threads=32:4
+2	1	2	batch-failed	0			CompileFailure { class: InvalidCompilerOutput, explain: "44 records" }
+2	2	4	batch-failed	0			CompileFailure { class: InvalidCompilerOutput, explain: "44 records" }
+2	3	6	batch-failed	0			CompileFailure { class: InvalidCompilerOutput, explain: "44 records" }
+2	4	8	no	0			event=feasibility:grid-axis:rejected:target-infeasible:threads=8:4
+2	5	10	batch-failed	0			CompileFailure { class: InvalidCompilerOutput, explain: "44 records" }
+2	6	12	no	0			event=feasibility:grid-axis:rejected:target-infeasible:threads=12:4 | event=feasibility:grid-axis:rejected:target-infeasible:threads=6:4
+2	8	16	no	0			event=feasibility:grid-axis:rejected:target-infeasible:threads=16:4 | event=feasibility:grid-axis:rejected:target-infeasible:threads=8:4
+2	9	18	no	0			event=feasibility:grid-axis:rejected:target-infeasible:threads=18:4 | event=feasibility:grid-axis:rejected:target-infeasible:threads=6:4
+2	12	24	no	0			event=feasibility:grid-axis:rejected:target-infeasible:threads=24:4 | event=feasibility:grid-axis:rejected:target-infeasible:threads=8:4
+2	16	32	no	0			event=feasibility:grid-axis:rejected:target-infeasible:threads=32:4 | event=feasibility:grid-axis:rejected:target-infeasible:threads=8:4
+2	64	128	no	0			event=feasibility:grid-axis:rejected:target-infeasible:threads=128:4 | event=feasibility:grid-axis:rejected:target-infeasible:threads=16:4
+2	1024	2048	no	0			event=feasibility:grid-axis:rejected:target-infeasible:threads=2048:4 | event=feasibility:grid-axis:rejected:target-infeasible:threads=64:4
+4	1	4	batch-failed	0			CompileFailure { class: InvalidCompilerOutput, explain: "44 records" }
+4	2	8	batch-failed	0			CompileFailure { class: InvalidCompilerOutput, explain: "44 records" }
+4	3	12	batch-failed	0			CompileFailure { class: InvalidCompilerOutput, explain: "44 records" }
+4	4	16	no	0			event=feasibility:grid-axis:rejected:target-infeasible:threads=16:4 | event=feasibility:grid-axis:rejected:target-infeasible:threads=8:4
+4	5	20	batch-failed	0			CompileFailure { class: InvalidCompilerOutput, explain: "44 records" }
+4	6	24	no	0			event=feasibility:grid-axis:rejected:target-infeasible:threads=12:4 | event=feasibility:grid-axis:rejected:target-infeasible:threads=24:4
+4	8	32	no	0			event=feasibility:grid-axis:rejected:target-infeasible:threads=16:4 | event=feasibility:grid-axis:rejected:target-infeasible:threads=32:4
+4	9	36	no	0			event=feasibility:grid-axis:rejected:target-infeasible:threads=12:4 | event=feasibility:grid-axis:rejected:target-infeasible:threads=36:4
+4	12	48	no	0			event=feasibility:grid-axis:rejected:target-infeasible:threads=16:4 | event=feasibility:grid-axis:rejected:target-infeasible:threads=48:4
+4	16	64	no	0			event=feasibility:grid-axis:rejected:target-infeasible:threads=16:4 | event=feasibility:grid-axis:rejected:target-infeasible:threads=64:4
+4	64	256	no	0			event=feasibility:grid-axis:rejected:target-infeasible:threads=256:4 | event=feasibility:grid-axis:rejected:target-infeasible:threads=32:4
+4	1024	4096	no	0			event=feasibility:grid-axis:rejected:target-infeasible:threads=128:4 | event=feasibility:grid-axis:rejected:target-infeasible:threads=4096:4
+
+# shapes retaining all three strategies: 1
+#   rows=1 contributors=4
+# NO CROSSOVER IS MEASURABLE: a crossover needs at least two shapes on which all three alternatives exist, and this profile admits 1.

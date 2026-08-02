@@ -1,0 +1,24 @@
+[package]
+name = "reduction-crossover"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Its own workspace root, following `spikes/target-profiles/scalar-cpu-vertical`:
+# `make` never reaches here, and the spike's dependency set is its own. The path
+# dependencies below still resolve their `[lints]` through the repository
+# workspace they belong to.
+[workspace]
+
+[dependencies]
+tiler-build = { path = "../../../crates/tiler-build" }
+tiler-compiler = { path = "../../../crates/tiler-compiler" }
+tiler-ir = { path = "../../../crates/tiler-ir" }
+
+[lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"

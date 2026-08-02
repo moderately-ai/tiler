@@ -820,6 +820,32 @@ pub(crate) fn fused_region(
 /// measured evidence, and nothing in this slice makes a split win on
 /// preference.
 ///
+/// # The measured evidence is not obtainable on the current profile
+///
+/// **Measurement, 2026-08-02** — [the retained sweep] compiled this program
+/// family across 36 shapes against the authoritative Apple profile under
+/// `NumericalContract::FLUSH_AND_REASSOCIATE_F32`, and **exactly one shape
+/// retains all three reduction strategies at once: one row of four
+/// contributors.** So there is no crossover to measure and no calibration to
+/// derive: both need at least two shapes on which the alternatives can be
+/// compared, and a fit through one point is not a model.
+///
+/// The single point is forced by arithmetic rather than found by sampling. This
+/// function withholds both parallel strategies below four contributors, and the
+/// profile's grid-axis row caps the prologue's one-invocation-per-element launch,
+/// so `4 <= contributors <= rows * contributors <= grid_axis_bound`. At a bound
+/// of four that chain closes on a single shape.
+///
+/// The blocking row is the grid-axis bound, and it is a deliberately
+/// conservative compile guarantee rather than a hardware maximum — the macOS SDK
+/// contract it cites proves extent four is representable and establishes no upper
+/// bound at all. Raising it needs a new authority, which is target-profile work
+/// filed as `establish-an-upper-bound-authority-for-the-metal-grid-axis-row`.
+/// `target::tests::only_one_shape_admits_all_three_reduction_strategies` fails
+/// when the domain widens, so this paragraph cannot go stale silently.
+///
+/// [the retained sweep]: ../../../spikes/program-planning/reduction-crossover/README.md
+///
 /// Returns `None` when no exact split with at least two partitions and at least
 /// two contributors per partition exists — every contributor count below four,
 /// and every prime one. A partition holding a single contributor folds nothing,
@@ -1101,6 +1127,13 @@ impl WorkgroupTreeUnavailable {
 /// the same reason: it keeps both levels' folds as short as one choice can, and
 /// `calibrate-and-activate-parallel-reduction-selection` owns replacing it with
 /// measured evidence. Nothing here makes the tree win.
+///
+/// That measured evidence is not currently obtainable, and the derivation is on
+/// [`governed_partition`] rather than repeated here: one shape on the
+/// authoritative profile retains all three strategies, so no crossover exists to
+/// calibrate against. The participant count is doubly fixed as a result — the
+/// one measurable shape has four contributors, which this function splits into
+/// two partitions of two, so the workgroup width does not vary either.
 ///
 /// # Errors
 ///

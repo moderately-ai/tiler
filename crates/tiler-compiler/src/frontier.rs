@@ -2960,6 +2960,11 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
 /// parallelism the structural model does not measure, which is exactly why
 /// `calibrate-and-activate-parallel-reduction-selection` owns preference and
 /// this slice only enumerates.
+///
+/// That preference is still unassigned, and not for want of trying: on the
+/// authoritative profile exactly one shape retains all three strategies, so
+/// there is no crossover to measure. See [`crate::physical::governed_partition`]
+/// for the derivation and the row that blocks it.
 fn propose_split(
     request: &VerifiedTargetRequest,
     applicability: &TargetApplicability,
@@ -3021,6 +3026,11 @@ fn propose_split(
 /// output — is not something the structural model measures, which is exactly why
 /// `calibrate-and-activate-parallel-reduction-selection` owns preference and
 /// this slice only enumerates.
+///
+/// That preference is still unassigned, and not for want of trying: on the
+/// authoritative profile exactly one shape retains all three strategies, so
+/// there is no crossover to measure. See [`crate::physical::governed_partition`]
+/// for the derivation and the row that blocks it.
 fn propose_workgroup_tree(
     request: &VerifiedTargetRequest,
     applicability: &TargetApplicability,
