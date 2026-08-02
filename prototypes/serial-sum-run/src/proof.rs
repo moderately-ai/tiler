@@ -170,9 +170,12 @@ use tiler_artifact::proof::{
 };
 use tiler_build::{BoundMetalCompileDeclaration, BoundMetalDeclarationError};
 use tiler_compiler::session::{
-    Compilation, CompileFailure, CompileRequest as CompilerRequest, NumericalContract, compile,
+    Compilation, CompileFailure, CompileRequest as CompilerRequest, NumericalContract,
+    PlanAlternative, compile,
 };
 use tiler_compiler::target::{TargetRequest, TargetRequestError};
+use tiler_ir::program::abi::{AbiRoot, ExprNode};
+use tiler_ir::program::{ValueRole, VerifiedKernelProgram};
 use tiler_ir::semantic::{
     F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgram,
     SemanticProgramBuilder, StrictSerialF32Sum,
@@ -220,6 +223,58 @@ const ROWS: u64 = 4;
 /// deliberately disagreeing on the row count, which is what the gate's
 /// published-shape case relies on.
 const COLUMNS: u64 = 3;
+/// Rows of the parallel strategies' input.
+///
+/// **One, because the widest stage has to fit the grid axis.** The
+/// authoritative profile's `GridAxisThreads` row admits four threads, and the
+/// multi-pass split's *pointwise* stage launches one invocation per element. At
+/// one row of [`PARALLEL_COLUMNS`] contributors that is four, exactly at the
+/// limit; a second row makes it eight and the whole compilation fails
+/// `target.grid-axis` before any plan composes, so there would be no strategy
+/// left to execute.
+const PARALLEL_ROWS: u64 = 1;
+/// Contributors reduced per output on the parallel strategies' input.
+///
+/// **Four, because below that nothing splits.** `governed_partition` requires at
+/// least two partitions of at least two contributors each, so four is the
+/// smallest extent at which a split or a workgroup tree exists to be retained at
+/// all. It is also the smallest extent *above*
+/// `correct-the-declined-strategy-record-for-an-unsplittable-reduction`, which
+/// records a sub-four reduction failing with `InvalidCompilerOutput` under a
+/// reassociation-permitting contract: this shape is sized above that defect
+/// rather than around it, so a regression there fails here rather than hiding.
+const PARALLEL_COLUMNS: u64 = 4;
+/// The operands the parallel strategies reduce, and the two properties they hold.
+///
+/// **Every grouping is exact, which is what makes one oracle valid for all
+/// three strategies.** The contract these run under *permits* ordered
+/// regrouping, so a split and a tree may legitimately sum in an order the
+/// reference's declared left fold does not — and against grouping-sensitive
+/// operands a bit-for-bit comparison would then refuse a correct
+/// implementation. Distinct small powers of two are exactly representable and
+/// their partial sums are too, so every partition and every tree depth produces
+/// the identical `f32`. That bounds the claim rather than weakening it: what is
+/// proved is that each strategy reduces the declared contributor *set*
+/// correctly, not that regrouped rounding was observed.
+///
+/// **Every subset has a distinct sum, so a dropped or double-counted
+/// contributor cannot cancel.** These are the failure modes a parallel reduction
+/// actually has — a partition boundary off by one, a participant whose partial
+/// is never combined, an unsynchronized read of a partial written by another
+/// invocation — and with powers of two each of them changes the result to a
+/// value no correct grouping produces. [`ROW_PATTERNS`] would not do this job:
+/// its rows repeat `1.0`, so dropping one contributor and double-counting
+/// another agree.
+///
+/// The grouping-sensitive operands — the signed zero, the subnormal, the
+/// non-canonical NaN payload — stay on the serial path, where the reference's
+/// order *is* the contract's order and a disagreement means what it says.
+const PARALLEL_OPERANDS: [u32; 4] = [
+    0x3f80_0000, // 1.0
+    0x4000_0000, // 2.0
+    0x4080_0000, // 4.0
+    0x4100_0000, // 8.0
+];
 /// Interface key of the program's one input.
 const INPUT_KEY: &str = "input";
 /// Interface key of the program's one output.
@@ -1119,6 +1174,448 @@ fn dispatch_direct(
     })
 }
 
+/// Which parallel reduction strategy one retained alternative realizes.
+///
+/// **Recognized by an observable each strategy alone has, not by a name.** The
+/// compiler publishes a plan alternative's kernels and its ABI, never its
+/// reduction topology, so asking "is this the tree?" has to be answered from
+/// what the alternative *declares*. The multi-pass split is the only alternative
+/// with three stages — pointwise, partial, and final. The single-workgroup tree
+/// is the only one declaring an entry wider than one thread per workgroup: it
+/// launches one invocation per participant inside one workgroup, where every
+/// independent-invocation region declares a width of one. The serial fold
+/// declares neither.
+///
+/// This mirrors `tiler-build`'s own
+/// `a_flush_and_reassociate_contract_reaches_a_parallel_portfolio`, which
+/// recognizes the same two strategies through the same two observables. It is
+/// deliberately the same rule rather than a second one: that fixture proves the
+/// portfolio *retains* them on this profile, and this binary proves they *run*,
+/// so a divergence in what "the tree" means would make the two claims about
+/// different things.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ParallelStrategy {
+    /// Three stages: map, reduce each partition, combine the partials.
+    MultiPassSplit,
+    /// One workgroup whose participants reduce cooperatively through a tree.
+    SingleWorkgroupTree,
+}
+
+impl ParallelStrategy {
+    /// A stable lowercase identifier for this strategy.
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::MultiPassSplit => "multi-pass-split",
+            Self::SingleWorkgroupTree => "single-workgroup-tree",
+        }
+    }
+}
+
+impl fmt::Display for ParallelStrategy {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// Resolves one ABI arena position to the unsigned literal it must be.
+///
+/// **A position is not a width, and reading it as one is silent.** Every launch
+/// quantity on the alternatives this profile retains is a declared literal, so a
+/// node that is not one means the derivation moved and this reader stopped
+/// measuring what it names. That is a refusal rather than a skip: a skipped
+/// entry would leave a strategy unrecognized and the run would report proving
+/// one strategy while believing it had proved two.
+fn literal_extent(expressions: &[ExprNode], position: u32) -> Result<u64, ProofError> {
+    let index = usize::try_from(position).expect("an arena position fits a usize");
+    match expressions.get(index) {
+        Some(ExprNode::Root(AbiRoot::UnsignedLiteral(value))) => Ok(*value),
+        other => Err(ProofError::NonLiteralLaunch {
+            position,
+            node: format!("{other:?}"),
+        }),
+    }
+}
+
+/// Classifies one retained alternative by the two observables above.
+///
+/// Returns `None` for the serial fold, which declares neither three stages nor a
+/// workgroup wider than one thread.
+fn classify_strategy(
+    alternative: PlanAlternative<'_>,
+) -> Result<Option<ParallelStrategy>, ProofError> {
+    let abi = alternative.abi();
+    let expressions = abi.expressions();
+    let mut widest = 0_u64;
+    for entry in abi.entries() {
+        widest = widest.max(literal_extent(expressions, entry.threads_per_workgroup())?);
+    }
+    if widest > 1 {
+        return Ok(Some(ParallelStrategy::SingleWorkgroupTree));
+    }
+    if alternative.kernels().len() == 3 {
+        return Ok(Some(ParallelStrategy::MultiPassSplit));
+    }
+    Ok(None)
+}
+
+/// What one dispatched alternative did, beyond the bits it produced.
+///
+/// Reported so the run's own output distinguishes the three strategies by
+/// evidence rather than by the label this binary assigned them: a "tree" that
+/// launched one thread per workgroup and reserved no threadgroup memory would be
+/// a misclassification, and printing both quantities is what makes that visible
+/// instead of plausible.
+struct DispatchReport {
+    bits: Vec<u32>,
+    /// Widest workgroup any stage of this alternative declared.
+    widest_workgroup: u64,
+    /// Most threadgroup memory any of its compiled pipelines statically reserves.
+    threadgroup_bytes: u64,
+    /// How many command encoders the submission carried, in execution order.
+    encoders: usize,
+}
+
+/// The device storage one alternative's dispatch binds, resolved before encoding.
+///
+/// Held as one value so every buffer outlives the submission that reads it.
+/// A multi-pass split's intermediate is referenced by the stage that writes it
+/// and by the stage that reads it, and dropping either view would leave the
+/// encoder holding a binding to freed memory — the one failure in this file that
+/// would be a wrong answer rather than a refusal.
+struct AlternativeStorage {
+    /// One buffer per program allocation, in the program's own allocation order.
+    buffers: Vec<Buffer>,
+    /// The buffer the named program output lands in.
+    output: Buffer,
+    /// How many `f32` elements to read back out of it.
+    readback: usize,
+}
+
+/// Allocates every buffer one alternative's program needs, input already written.
+///
+/// **One buffer per *allocation*, never per binding.** Two stages of a split
+/// address one intermediate, and the program states that by placing both values
+/// in one allocation. A host allocating per binding would hand the consumer a
+/// fresh buffer, the producer's partials would never reach it, and the reduction
+/// would read uninitialised device memory — a wrong answer rather than a
+/// refusal. `AllocationRef` compares by identity within its program, which is
+/// what makes the lookup below exact rather than a length coincidence.
+fn allocate_alternative(
+    device: &Device,
+    program: &VerifiedKernelProgram,
+    bits: &[u32],
+) -> Result<AlternativeStorage, ProofError> {
+    let allocations: Vec<_> = program.allocations().collect();
+    let mut buffers = Vec::with_capacity(allocations.len());
+    for allocation in &allocations {
+        // Host-visible only where the host actually reads or writes: a program
+        // input it fills and a program output it reads back. A temporary is
+        // private, which is what the split's intermediate is.
+        let host_visible = allocation
+            .values()
+            .any(|value| matches!(value.role(), ValueRole::Input | ValueRole::Output));
+        let options = if host_visible {
+            MTLResourceOptions::StorageModeShared
+        } else {
+            MTLResourceOptions::StorageModePrivate
+        };
+        buffers.push(device.new_buffer(allocation.capacity_bytes().max(1), options));
+    }
+
+    let index_of = |target: &_| {
+        allocations
+            .iter()
+            .position(|candidate| candidate == target)
+            .expect("every value's allocation is one this program declares")
+    };
+
+    let mut output = None;
+    let mut readback = 0_usize;
+    for value in program.values() {
+        let slot = index_of(&value.allocation());
+        match value.role() {
+            ValueRole::Input => {
+                let operands: Vec<f32> = bits.iter().map(|value| f32::from_bits(*value)).collect();
+                crate::buffer::write_f32(&buffers[slot], &operands);
+            }
+            ValueRole::Output => {
+                readback = usize::try_from(value.required_bytes() / F32_BYTES)
+                    .expect("the proof's output element count fits a usize");
+                output = Some(buffers[slot].clone());
+            }
+            ValueRole::Temporary => {}
+        }
+    }
+
+    Ok(AlternativeStorage {
+        buffers,
+        output: output.ok_or(ProofError::NoProgramOutput)?,
+        readback,
+    })
+}
+
+/// Emits, compiles, and dispatches one retained alternative on this device.
+///
+/// **Every dispatch parameter is read from the compiler's own record**, and that
+/// is what makes a multi-stage launch here evidence rather than a hand-written
+/// guess: the argument-table index of each buffer comes from the emitter's
+/// binding table, the byte window from the program's own view, and both launch
+/// extents from the ABI arena. Nothing about the topology is assumed, which is
+/// why one function dispatches the fold, the split, and the tree unchanged.
+///
+/// This is the *direct* path — local knowledge, no envelope — and it stays
+/// labelled as such. It is evidence about the compiler and the emitter, never
+/// about the delivery mechanism, and it is never a fallback for the envelope
+/// path.
+fn dispatch_alternative(
+    device: &Device,
+    declaration: &BoundMetalCompileDeclaration,
+    alternative: PlanAlternative<'_>,
+    bits: &[u32],
+) -> Result<DispatchReport, ProofError> {
+    let kernels: Vec<_> = alternative.kernels().iter().collect();
+    let unit = emit_translation_unit(&kernels, declaration.metal_facts(), declaration.emission())
+        .map_err(|_| ProofError::Emit)?;
+    // Emission succeeds even when the target cannot honour the declared
+    // contract, so conformance is asked explicitly rather than inferred.
+    unit.require_declared_realization()
+        .map_err(|_| ProofError::UnrealizableNumerics)?;
+    let request = CompileRequest::new(
+        unit.source(),
+        declaration.aot_target(),
+        OptimizationLevel::Default,
+        declaration.numerical_realization(),
+    );
+    let compiled = Toolchain::system()
+        .compile(&request)
+        .map_err(|_| ProofError::Toolchain)?;
+
+    let program = alternative.abi().kernel_program();
+    let expressions = program.abi_expressions();
+    let storage = allocate_alternative(device, program, bits)?;
+
+    // Resolved before the submission, so the encode below looks nothing up and
+    // has no failure of its own to report.
+    let mut stages = Vec::new();
+    let mut widest_workgroup = 0_u64;
+    let mut threadgroup_bytes = 0_u64;
+    for stage in program.execution_order() {
+        let identity = stage.kernel().canonical_identity();
+        let emitted = unit
+            .entry_points()
+            .iter()
+            .find(|entry| entry.kernel_identity() == identity)
+            .ok_or(ProofError::Emit)?;
+        let pipeline = pipeline_for(device, &compiled.metallib, emitted.symbol())?;
+
+        let launch = stage.launch();
+        let grid_threads = literal_extent(expressions, launch.grid_threads)?;
+        let threads_per_workgroup = literal_extent(expressions, launch.threads_per_workgroup)?;
+        // `dispatch_threads` has no meaning at zero and inventing one thread
+        // would run a body the plan did not ask for, so a zero-thread stage is
+        // refused rather than encoded — the same rule `plan_route` applies on
+        // the envelope path. No shape this function is called at produces one;
+        // the guard is here so that stays a fact rather than an assumption.
+        if grid_threads == 0 {
+            return Err(ProofError::EmptyLaunch {
+                entry: stages.len(),
+                skipped: false,
+            });
+        }
+        // The declared workgroup is compared against what *this* pipeline
+        // admits, before anything is encoded. A tree declaring more
+        // participants than the compiled function accepts is a refusal here
+        // rather than a submission failure later.
+        workgroup_fits(
+            stages.len(),
+            emitted.symbol(),
+            threads_per_workgroup,
+            pipeline.max_total_threads_per_threadgroup(),
+        )
+        .map_err(|refusal| ProofError::DevicePreflight(Box::new(refusal)))?;
+        // Threadgroup memory the compiled function statically reserves, against
+        // what this device admits per threadgroup. The tree is the first
+        // strategy here that reserves any, and an unchecked overrun is a
+        // pipeline the device would refuse at encode time.
+        let reserved = pipeline.static_threadgroup_memory_length();
+        local_memory_fits(
+            stages.len(),
+            emitted.symbol(),
+            reserved,
+            device.max_threadgroup_memory_length(),
+        )
+        .map_err(|refusal| ProofError::DevicePreflight(Box::new(refusal)))?;
+        widest_workgroup = widest_workgroup.max(threads_per_workgroup);
+        threadgroup_bytes = threadgroup_bytes.max(reserved);
+
+        // The emitter states which argument-table index each buffer parameter
+        // binds at, and a stage binds its buffers to its accesses positionally.
+        let buffers = emitted.buffers();
+        let mut placements = Vec::new();
+        for (position, access) in stage.accesses().enumerate() {
+            let binding = buffers.get(position).ok_or(ProofError::Emit)?;
+            let view = access.view();
+            let slot = program
+                .allocations()
+                .position(|candidate| candidate == view.value().allocation())
+                .expect("every accessed value's allocation is one this program declares");
+            placements.push((
+                binding.index(),
+                storage.buffers[slot].clone(),
+                view.window().offset,
+            ));
+        }
+        stages.push((pipeline, placements, grid_threads, threads_per_workgroup));
+    }
+
+    let encoders = stages.len();
+    let bits = submit(
+        device,
+        &storage.output,
+        storage.readback,
+        |command_buffer| {
+            // **One encoder per stage, and that is the ordering guarantee.**
+            // Metal orders encoders within a command buffer unconditionally,
+            // with an implicit barrier between them, so a combining stage never
+            // overlaps the partial stage whose output it reads. Commands inside
+            // one encoder carry no such order, which is why the split does not
+            // share one.
+            for (pipeline, placements, grid_threads, threads_per_workgroup) in &stages {
+                let encoder = command_buffer.new_compute_command_encoder();
+                encoder.set_compute_pipeline_state(pipeline);
+                for (index, buffer, offset) in placements {
+                    encoder.set_buffer(u64::from(*index), Some(buffer), *offset);
+                }
+                encoder.dispatch_threads(
+                    MTLSize::new(*grid_threads, 1, 1),
+                    MTLSize::new(*threads_per_workgroup, 1, 1),
+                );
+                encoder.end_encoding();
+            }
+        },
+    )?;
+
+    // Both `storage` and `stages` are still live here, and that is the retention
+    // this function owes: `submit` waits for the command buffer's terminal state
+    // before returning, so every buffer the encode bound is held across the whole
+    // device lifetime of the work that reads it. They hold *clones* of one
+    // `MTLBuffer` per allocation rather than separate allocations — a retain, not
+    // a copy — so it is the pair outliving the submission that matters, not
+    // either one alone.
+    drop(stages);
+    drop(storage);
+    Ok(DispatchReport {
+        bits,
+        widest_workgroup,
+        threadgroup_bytes,
+        encoders,
+    })
+}
+
+/// Executes both parallel reduction strategies and compares each to the oracle.
+///
+/// **This is the claim the compiling cooperative golden cannot make.** A golden
+/// establishes that a cooperative kernel *compiles*; it says nothing about
+/// whether the barrier synchronizes, whether the threadgroup allocation is
+/// reachable, or whether the tree computes the declared sum. Compilation success
+/// is not a capability fact, so each strategy is emitted, linked, dispatched,
+/// and compared bit for bit against `tiler-reference`'s independent evaluation
+/// of the same semantic program.
+///
+/// **Both strategies, and the serial fold beside them.** The portfolio is
+/// required to retain all three: a run that found only the fold would mean the
+/// contract or the profile stopped reaching the parallel strategies, and a run
+/// that found the strategies but not the fold would mean they replaced rather
+/// than joined it. Each is dispatched, so an agreement is three independent
+/// realizations of one declared reduction arriving at the same bits.
+///
+/// The comparison is on exact bit patterns rather than an epsilon. The contract
+/// permits ordered regrouping and the reference evaluates the *declared*
+/// contributor order, so agreement here is a statement that the regrouping the
+/// compiler chose is one the contract actually authorizes.
+fn prove_parallel_strategies(
+    device: &Device,
+    declaration: &BoundMetalCompileDeclaration,
+) -> Result<(), ProofError> {
+    let program = serial_sum_program(PARALLEL_ROWS, PARALLEL_COLUMNS);
+    let bits = PARALLEL_OPERANDS.to_vec();
+    let reference = reference_bits(&program, &bits, PARALLEL_ROWS, PARALLEL_COLUMNS);
+
+    // The composed contract, stated rather than defaulted. Every parallel
+    // reduction regroups the declared contributor sequence, and Apple `f32`
+    // arithmetic flushes subnormals in every math mode, so this is the one
+    // contract under which a split or a tree is a legal implementation of this
+    // program on this hardware.
+    let targets =
+        TargetRequest::new([declaration.profile().clone()]).map_err(ProofError::TargetRequest)?;
+    let compilation = compile(CompilerRequest::new(
+        &program,
+        NumericalContract::FLUSH_AND_REASSOCIATE_F32,
+        targets,
+    ))
+    .map_err(ProofError::Compile)?
+    .into_targets()
+    .pop()
+    .ok_or(ProofError::NoSelection)?
+    .into_parts()
+    .1
+    .map_err(|_| ProofError::UnrealizableNumerics)?;
+
+    let retained = compilation.alternatives().len();
+    println!(
+        "parallel portfolio at {PARALLEL_ROWS}x{PARALLEL_COLUMNS} under a flush-and-reassociate \
+         contract: {retained} alternative(s)",
+    );
+
+    let mut seen = Vec::new();
+    let mut folds = 0_usize;
+    for alternative in compilation.alternatives() {
+        let strategy = classify_strategy(alternative)?;
+        let report = dispatch_alternative(device, declaration, alternative, &bits)?;
+        let label = if let Some(strategy) = strategy {
+            seen.push(strategy);
+            strategy.as_str()
+        } else {
+            folds += 1;
+            "serial-fold"
+        };
+        println!(
+            "  {label} ({}): {} encoder(s) in order, widest workgroup {}, {} byte(s) of \
+             threadgroup memory reserved, {:08x?} against {reference:08x?}",
+            alternative.stable_id(),
+            report.encoders,
+            report.widest_workgroup,
+            report.threadgroup_bytes,
+            report.bits,
+        );
+        if report.bits != reference {
+            return Err(ProofError::Mismatch {
+                path: "parallel",
+                device: report.bits,
+                reference,
+            });
+        }
+    }
+
+    for strategy in [
+        ParallelStrategy::MultiPassSplit,
+        ParallelStrategy::SingleWorkgroupTree,
+    ] {
+        if !seen.contains(&strategy) {
+            return Err(ProofError::StrategyAbsent { strategy, retained });
+        }
+    }
+    if folds == 0 {
+        return Err(ProofError::SerialFoldReplaced { retained });
+    }
+    println!(
+        "both parallel strategies and the serial fold agree bit for bit with the reference on {} \
+         element(s)",
+        reference.len(),
+    );
+    Ok(())
+}
+
 /// The exact inputs a fail-closed probe perturbs one element of.
 ///
 /// Grouped rather than passed as four arguments so a probe's signature shows
@@ -1693,6 +2190,26 @@ enum PreflightRefusal {
         declared: u64,
         capacity: u64,
     },
+    /// An entry reserves more threadgroup memory than this device admits.
+    ///
+    /// **The one derived requirement that had no reader.**
+    /// `crates/tiler-artifact/src/program/requirement.rs` states that
+    /// threadgroup memory is deliberately absent from the neutral
+    /// `RouteResourceDimension` vocabulary because the requirement side is
+    /// already stated — by `ResourceRequirements::local_memory_bytes` — and is
+    /// "checked directly against the device by an adapter", naming this
+    /// prototype as the adapter that does it. Until this variant existed the
+    /// document described a check nothing performed: no code in the workspace
+    /// read `local_memory_bytes` off a routed entry, and none read
+    /// `maxThreadgroupMemoryLength` at all. A cooperative reduction is the first
+    /// strategy here that reserves any, so the gap became reachable at the same
+    /// moment a plan that uses it did.
+    ThreadgroupMemoryExceeded {
+        entry: usize,
+        symbol: String,
+        declared: u64,
+        capacity: u64,
+    },
     /// A binding must reach more bytes than one buffer can hold here.
     BindingExceedsBufferLimit {
         entry: usize,
@@ -1727,7 +2244,11 @@ impl PreflightRefusal {
             Self::FunctionAbsent { .. } => PreflightPhase::Function,
             Self::PipelineRejected { .. } => PreflightPhase::Pipeline,
             Self::WorkgroupTooLarge { .. } => PreflightPhase::LaunchGeometry,
-            Self::BindingExceedsBufferLimit { .. }
+            // A resource stage rather than a launch-geometry one: the quantity
+            // is storage the entry reserves, and it is compared against a
+            // device capacity rather than against a pipeline's thread capacity.
+            Self::ThreadgroupMemoryExceeded { .. }
+            | Self::BindingExceedsBufferLimit { .. }
             | Self::UndersizedAllocation { .. }
             | Self::NoOutputBinding => PreflightPhase::Resources,
         }
@@ -1756,6 +2277,7 @@ impl PreflightRefusal {
             }
             Self::PipelineRejected { .. }
             | Self::WorkgroupTooLarge { .. }
+            | Self::ThreadgroupMemoryExceeded { .. }
             | Self::BindingExceedsBufferLimit { .. } => PreflightClass::RouteMiss,
             Self::UndersizedAllocation { .. } | Self::NoOutputBinding => PreflightClass::Systemic,
         }
@@ -1800,6 +2322,15 @@ impl fmt::Display for PreflightRefusal {
                 formatter,
                 "entry {entry}'s {symbol:?} admits {capacity} thread(s) per threadgroup and the artifact declares {declared}"
             ),
+            Self::ThreadgroupMemoryExceeded {
+                entry,
+                symbol,
+                declared,
+                capacity,
+            } => write!(
+                formatter,
+                "entry {entry}'s {symbol:?} reserves {declared} byte(s) of threadgroup memory and this device admits {capacity}"
+            ),
             Self::BindingExceedsBufferLimit {
                 entry,
                 slot,
@@ -1841,6 +2372,7 @@ impl fmt::Display for PreflightRefusal {
 struct DeviceFacts {
     name: String,
     max_threads_per_threadgroup: u64,
+    max_threadgroup_memory_length: u64,
     max_buffer_length: u64,
     recommended_working_set: u64,
     apple_family: ProbedGpuFamily,
@@ -2098,6 +2630,20 @@ fn device_preflight(
             launch.threads_per_workgroup(),
             pipeline.max_total_threads_per_threadgroup(),
         )?;
+        // The requirement the *artifact* proved, against the capacity the
+        // device reports. Read from the routed entry's own resource record
+        // rather than from the prepared pipeline: the pipeline's static
+        // reservation is what the compiled function happens to hold, and the
+        // record is what the packaged program declared it needs. A disagreement
+        // between them is a producer defect, and comparing the declared side is
+        // what lets this refuse a route the device would otherwise accept and
+        // then run short.
+        local_memory_fits(
+            position,
+            symbol,
+            entry.entry().resources().local_memory_bytes,
+            facts.max_threadgroup_memory_length,
+        )?;
 
         // Sized from the route rather than from the operand slice: the artifact
         // states how many bytes each binding must reach, and deriving a length
@@ -2182,6 +2728,32 @@ fn workgroup_fits(
     Ok(())
 }
 
+/// Whether one entry's reserved threadgroup memory fits what this device admits.
+///
+/// Split from the device exactly as [`workgroup_fits`] is: the device
+/// contributes two numbers and this contributes the comparison, so every case —
+/// including the ones no machine in this workspace can produce — runs in the
+/// ordinary gate without Metal.
+///
+/// The relation is `declared > capacity`, not `>=`: a function reserving exactly
+/// the device maximum fits, and refusing it would reject a legal route.
+fn local_memory_fits(
+    entry: usize,
+    symbol: &str,
+    declared: u64,
+    capacity: u64,
+) -> Result<(), PreflightRefusal> {
+    if declared > capacity {
+        return Err(PreflightRefusal::ThreadgroupMemoryExceeded {
+            entry,
+            symbol: symbol.to_owned(),
+            declared,
+            capacity,
+        });
+    }
+    Ok(())
+}
+
 /// Whether one binding's accessible range fits in a single buffer here.
 fn binding_fits(
     entry: usize,
@@ -2223,6 +2795,7 @@ fn device_facts(device: &Device) -> DeviceFacts {
     DeviceFacts {
         name: device.name().to_owned(),
         max_threads_per_threadgroup: device.max_threads_per_threadgroup().width,
+        max_threadgroup_memory_length: device.max_threadgroup_memory_length(),
         max_buffer_length: device.max_buffer_length(),
         recommended_working_set: device.recommended_max_working_set_size(),
         apple_family: probe_apple_families(device),
@@ -2321,8 +2894,25 @@ fn probe_device_preflight(
         ))?;
     report_refusal("a workgroup one thread past this pipeline", &refusal);
 
+    // An entry reserving one byte more threadgroup memory than this device
+    // admits, using the capacity the device actually reported. The route's own
+    // entries reserve none, so the quantity is injected rather than found:
+    // what this establishes is that the *device's* reported capacity drives the
+    // refusal, which is the half the device-free case cannot reach.
+    let facts = device_facts(device);
+    let threadgroup = facts.max_threadgroup_memory_length;
+    let refusal = local_memory_fits(0, first.entry_symbol(), threadgroup + 1, threadgroup)
+        .err()
+        .ok_or(ProofError::ProbeAccepted(
+            "an entry past this device's threadgroup memory",
+        ))?;
+    report_refusal(
+        "an entry one byte past this device's threadgroup memory",
+        &refusal,
+    );
+
     // A binding needing one byte more than this device holds in one buffer.
-    let limit = device_facts(device).max_buffer_length;
+    let limit = facts.max_buffer_length;
     let refusal = binding_fits(0, 0, limit + 1, limit)
         .err()
         .ok_or(ProofError::ProbeAccepted("a binding past the buffer limit"))?;
@@ -2625,6 +3215,13 @@ fn run() -> Result<(), ProofError> {
     let emitted = unit.entry_points().first().ok_or(ProofError::Emit)?;
     let direct = dispatch_direct(device, &compiled.metallib, emitted.symbol(), &bits)?;
 
+    // ---- the parallel reduction strategies -------------------------------
+    // Still the direct path — local knowledge, no envelope — and run before the
+    // envelope path so a compiler or emitter defect surfaces as itself rather
+    // than as a delivery failure.
+    println!("the parallel reduction strategies, dispatched and compared against the reference:");
+    prove_parallel_strategies(device, &declaration)?;
+
     // ---- the envelope path -----------------------------------------------
     let (bytes, sidecar) = read_artifact(&envelope_path)?;
     let mut decoded = DecodedProgram::decode(&bytes, SOLE_DELIVERY).map_err(ProofError::Load)?;
@@ -2730,11 +3327,12 @@ fn run() -> Result<(), ProofError> {
         .map_err(|refusal| ProofError::DevicePreflight(Box::new(refusal)))?;
     let facts = &prepared.facts;
     println!(
-        "device preflight: {} ({}), {} thread(s) per threadgroup, buffers to {} byte(s), \
-         working set {} byte(s)",
+        "device preflight: {} ({}), {} thread(s) per threadgroup, {} byte(s) of threadgroup \
+         memory, buffers to {} byte(s), working set {} byte(s)",
         facts.name,
         facts.apple_family,
         facts.max_threads_per_threadgroup,
+        facts.max_threadgroup_memory_length,
         facts.max_buffer_length,
         facts.recommended_working_set,
     );
@@ -2868,6 +3466,33 @@ enum ProofError {
     TargetRequest(TargetRequestError),
     Compile(CompileFailure),
     NoSelection,
+    /// A parallel reduction strategy this profile is meant to retain is absent.
+    ///
+    /// A hard failure rather than a skip. `tiler-build`'s own portfolio fixture
+    /// asserts that a flush-and-reassociate contract retains both strategies on
+    /// this exact profile, so an absence here is a regression in the compiler
+    /// or in this binary's recognition of it — and a run that quietly proved one
+    /// strategy while reporting two would be worse than a red one.
+    StrategyAbsent {
+        strategy: ParallelStrategy,
+        retained: usize,
+    },
+    /// The parallel strategies replaced the serial fold rather than joining it.
+    ///
+    /// Its own class because the repair is the opposite of [`Self::StrategyAbsent`]'s:
+    /// a portfolio that dropped the fold has become *narrower* under a contract
+    /// that only widens permissions, which is a pruning defect rather than a
+    /// missing strategy.
+    SerialFoldReplaced {
+        retained: usize,
+    },
+    /// An ABI launch quantity is not the declared literal this reader requires.
+    NonLiteralLaunch {
+        position: u32,
+        node: String,
+    },
+    /// The alternative's program publishes no named output to read back.
+    NoProgramOutput,
     Emit,
     UnrealizableNumerics,
     Toolchain,
@@ -3012,6 +3637,21 @@ impl fmt::Display for ProofError {
             ),
             Self::Compile(failure) => write!(formatter, "the program did not compile: {failure:?}"),
             Self::NoSelection => formatter.write_str("the portfolio retained no selected plan"),
+            Self::StrategyAbsent { strategy, retained } => write!(
+                formatter,
+                "the portfolio retained {retained} alternative(s) and none of them is the {strategy}"
+            ),
+            Self::SerialFoldReplaced { retained } => write!(
+                formatter,
+                "the portfolio retained {retained} alternative(s) and the serial fold is not among them"
+            ),
+            Self::NonLiteralLaunch { position, node } => write!(
+                formatter,
+                "ABI arena position {position} is not a declared unsigned literal: {node}"
+            ),
+            Self::NoProgramOutput => {
+                formatter.write_str("the alternative's program publishes no named output")
+            }
             Self::Emit => formatter.write_str("the selected kernels have no Metal realization"),
             Self::UnrealizableNumerics => formatter
                 .write_str("the target cannot honour the kernels' declared numerical contract"),
@@ -3638,6 +4278,10 @@ mod tests {
         DeviceFacts {
             name: "tiler.probe.device".to_owned(),
             max_threads_per_threadgroup: 1_024,
+            // The value an Apple M4 Max reports; a synthesized fact, and the
+            // adapter under test decides a family row rather than a capacity,
+            // so nothing here reads it.
+            max_threadgroup_memory_length: 32_768,
             max_buffer_length: 1 << 30,
             recommended_working_set: 1 << 30,
             apple_family: probed,
@@ -4307,6 +4951,16 @@ mod tests {
                 super::PreflightClass::RouteMiss,
             ),
             (
+                super::PreflightRefusal::ThreadgroupMemoryExceeded {
+                    entry: 1,
+                    symbol: "k".to_owned(),
+                    declared: 2,
+                    capacity: 1,
+                },
+                super::PreflightPhase::Resources,
+                super::PreflightClass::RouteMiss,
+            ),
+            (
                 super::PreflightRefusal::BindingExceedsBufferLimit {
                     entry: 1,
                     slot: 0,
@@ -4332,7 +4986,7 @@ mod tests {
                 super::PreflightClass::Systemic,
             ),
         ];
-        assert_eq!(cases.len(), 7, "a refusal was added without a case here");
+        assert_eq!(cases.len(), 8, "a refusal was added without a case here");
         for (refusal, phase, class) in cases {
             assert_eq!(refusal.phase(), phase, "wrong phase for {refusal}");
             assert_eq!(refusal.class(), class, "wrong class for {refusal}");
@@ -4346,7 +5000,7 @@ mod tests {
         }
     }
 
-    /// The three comparisons refuse exactly at their boundary, not near it.
+    /// The four comparisons refuse exactly at their boundary, not near it.
     ///
     /// Each is tested at the largest accepted value and the smallest refused
     /// one, because an off-by-one here either rejects a route the device would
@@ -4361,6 +5015,22 @@ mod tests {
                 entry: 1,
                 declared: 1025,
                 capacity: 1024,
+                ..
+            })
+        ));
+
+        // Zero is the ordinary case rather than an edge one: every non-cooperative
+        // entry reserves no threadgroup memory, so a comparison that refused it
+        // would refuse the serial fold on every device.
+        super::local_memory_fits(1, "k", 0, 0).expect("an entry reserving nothing fits");
+        super::local_memory_fits(1, "k", 32_768, 32_768)
+            .expect("an entry at the device maximum fits");
+        assert!(matches!(
+            super::local_memory_fits(1, "k", 32_769, 32_768),
+            Err(super::PreflightRefusal::ThreadgroupMemoryExceeded {
+                entry: 1,
+                declared: 32_769,
+                capacity: 32_768,
                 ..
             })
         ));
