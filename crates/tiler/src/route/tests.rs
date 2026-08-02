@@ -199,6 +199,14 @@ impl RuntimeAdapter for NoDevice<'_> {
         unreachable!("no context was bound, so no preflight is reachable")
     }
 
+    fn allocate_dispatch(
+        &mut self,
+        _: &LiveExecutionContext,
+        _: &RoutedDispatch<'_>,
+    ) -> Result<(), String> {
+        unreachable!("no context was bound, so no route ever committed")
+    }
+
     fn dispatch(&mut self, _: &LiveExecutionContext, _: &RoutedDispatch<'_>) -> Result<(), String> {
         unreachable!("no context was bound, so no route ever committed")
     }

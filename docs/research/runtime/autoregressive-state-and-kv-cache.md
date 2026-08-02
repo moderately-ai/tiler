@@ -165,8 +165,9 @@ grep -n 'pub struct Extent' -A 6 crates/tiler-ir/src/shape.rs
 | Fact binding (`LiveDevicePreflight`) | `C`, `T`, and `S` are bound as input-axis extents. **Fact —** input extents become observable exactly at this phase, and the binder refuses a fact offered before its phase | `PhaseNotReached`, `DuplicateInputExtent`, or a structural limit; all pre-commit |
 | Loader routing | Identity, variant guard over `S`, profile, backend and representation pair, execution policy, launch geometry, accessible ranges | `LoadRejection`, pre-commit |
 | Payload validation, live-device and prepared-entry questions | Nothing state-specific; the pipeline is reused across steps once a cache exists | Adapter refusal, pre-commit |
-| `plan_dispatch` | The old allocation is bound read-only at the cache slots; a **new** allocation of `[8, S, 128]` is made for each retained output; every binding's required byte range is compared against the storage held | Adapter refusal — this is the last chance, and the capacity and range comparisons belong here |
+| `plan_dispatch` | The step is sized: the old allocation is named at the cache slots, an allocation of `[8, S, 128]` is sized for each retained output, and every required byte range is compared against the limits this device declares. Nothing is acquired | Adapter refusal — the last chance, and the range and declared-capacity comparisons belong here |
 | Routing commit | Consuming and infallible | — |
+| `allocate_dispatch` | The old allocation is bound read-only at the cache slots; the **new** `[8, S, 128]` allocation is taken for each retained output; every allocation is asserted to reach the length the plan sized it for | `Failure`. No fallback. A short allocation is an allocator defect, not a step to retry — the cursor does **not** advance |
 | `dispatch` | Encode in execution order, submit, retain both allocations against the receipt, observe terminal success | `Failure`. No fallback. The cursor does **not** advance |
 | Publication | On observed terminal success only: the state's allocation and cursor are replaced together, and the old allocation becomes releasable | A publication failure poisons the state |
 

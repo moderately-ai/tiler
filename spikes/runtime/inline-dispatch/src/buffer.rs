@@ -45,8 +45,11 @@ use metal::Buffer;
 /// check converts a planning mistake into an immediate, attributable failure
 /// instead of a read past the mapping, and it is unreachable on the route this
 /// spike takes: the allocation is requested at the byte reach the artifact
-/// declares, and `adapter::allocation_holds` already refused an allocator that
-/// returned less — before the routing commit.
+/// declares, and `adapter::allocation_holds` already reported an allocator that
+/// returned less. That report is now a `DispatchFailure` rather than a refusal,
+/// because ADR 0051 puts the allocation itself after the routing commit — so the
+/// route never reaches this read at all, instead of reaching it with a short
+/// buffer.
 #[allow(
     unsafe_code,
     reason = "MTLBuffer storage is reachable only through the raw pointer `Buffer::contents` returns; `metal` 0.33.0 publishes no slice, typed view, or copy-out accessor. The read is bounded by an asserted length check against the buffer's own reported `length()`, copies plain-old-data bytes with no destructor, and copies out rather than retaining a borrow of device memory."

@@ -287,6 +287,17 @@ impl RuntimeAdapter for Executor<'_> {
 
     fn plan_dispatch(&mut self, _: &LiveExecutionContext, _: &Preflight<'_>) -> Result<(), Refused> {
         self.record("plan-dispatch");
+        Err(Refused("this consumer sizes no device storage"))
+    }
+
+    /// Unreachable through this consumer: `plan_dispatch` refuses first, and this
+    /// stage is only reachable from a committed route.
+    fn allocate_dispatch(
+        &mut self,
+        _: &LiveExecutionContext,
+        _: &RoutedDispatch<'_>,
+    ) -> Result<(), Refused> {
+        self.record("allocate-dispatch");
         Err(Refused("this consumer allocates no device storage"))
     }
 

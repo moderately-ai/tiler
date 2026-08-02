@@ -20,9 +20,18 @@
 //! Everything the loader could decide has been decided before a method here
 //! runs. What is left is exactly the adapter half: binding a live context by
 //! measuring this process, validating the carried payload from its own bytes,
-//! reporting device facts the loader compares, preparing each entry, sizing and
-//! allocating storage, and — only after the commit — running and observing the
-//! dispatch to a terminal outcome.
+//! reporting device facts the loader compares, preparing each entry, sizing
+//! storage without acquiring any, and — only after the commit — allocating that
+//! storage and running and observing the dispatch to a terminal outcome.
+//!
+//! # Sizing and allocating are two methods here because they are two stages
+//!
+//! ADR 0051 places program allocation after the routing commit, so
+//! [`RuntimeAdapter::plan_dispatch`] below records a plan and this adapter's
+//! `Vec<u8>` storage is created in [`RuntimeAdapter::allocate_dispatch`]. The
+//! one comparison that stays pre-commit is against the *caller's* operand
+//! storage, which already exists: comparing it costs nothing and refusing on it
+//! is still a route another artifact could satisfy.
 
 use std::fmt;
 
@@ -59,8 +68,10 @@ pub enum Stage {
     PrepareEntries,
     /// One prepared entry's target property was reported.
     ObservePreparedEntry,
-    /// The dispatch was sized, allocated, and bound.
+    /// The dispatch was sized and its capacity checked, acquiring nothing.
     PlanDispatch,
+    /// The committed route's storage was allocated and bound.
+    AllocateDispatch,
     /// The committed route was encoded, run, and observed.
     Dispatch,
 }
@@ -99,6 +110,9 @@ pub enum Perturbation {
     /// No entry can be prepared.
     RefusePreparation,
     /// The caller's input storage is one element short.
+    ///
+    /// Pre-commit, and it stays there under the split seam: the caller supplied
+    /// that storage, so the comparison needs nothing allocated to make it.
     UndersizedInput,
     /// The run halts after one invocation, after the routing commit.
     HaltAfterOneInvocation,
@@ -109,7 +123,12 @@ pub enum Perturbation {
     /// success and whose later one did not, and a single-entry route cannot be
     /// in that state at all.
     HaltSecondEntryAfterOneInvocation,
-    /// One shared allocation is made one element shorter than the route requires.
+    /// One shared allocation comes back one element shorter than the plan sized it.
+    ///
+    /// **Post-commit**, because the allocation is. The pre-commit plan sized the
+    /// pair correctly and the acquisition did not honour it, which is the
+    /// allocator-residue case ADR 0051's placement makes terminal: there is no
+    /// second route to take, so the only useful behaviour is to report it.
     UndersizeSharedAllocation,
     /// The committed entries are dispatched back to front.
     ///
@@ -130,6 +149,48 @@ struct Readback {
     offset: usize,
     /// How many `f32` elements to read from there.
     elements: usize,
+}
+
+/// Which storage one routed slot will be backed by, decided before the commit.
+///
+/// A decision about storage rather than storage: the three cases differ in *who*
+/// supplies the bytes, and only one of them is an acquisition this adapter has
+/// to wait for the commit to make.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Backing {
+    /// The caller's own operand storage, which exists before the route does.
+    CallerInput,
+    /// One end of a pair the route says must share a single allocation.
+    Shared(usize),
+    /// Storage this adapter acquires for itself after the commit.
+    Fresh,
+}
+
+/// One routed slot sized against the route, with nothing acquired for it.
+#[derive(Clone, Copy, Debug)]
+struct SlotPlan {
+    /// First addressed byte of the bound value within its allocation.
+    offset: u64,
+    /// Bytes the route requires be reachable from that offset.
+    bytes: u64,
+    /// The byte the slot must reach, counted from the start of the allocation.
+    ///
+    /// Not the extent alone: a binding may address a window at a nonzero offset,
+    /// and an allocation sized to the extent would be short by exactly it.
+    reach: u64,
+    /// Where the bytes will come from.
+    backing: Backing,
+}
+
+/// One pair of slots the route requires be backed by a single allocation.
+#[derive(Clone, Copy, Debug)]
+struct SharedPlan {
+    /// Entry and ABI slot writing the shared storage.
+    producer: (usize, usize),
+    /// Entry and ABI slot reading it.
+    consumer: (usize, usize),
+    /// Bytes the allocation must hold to satisfy both ends.
+    needed: u64,
 }
 
 /// What one completed dispatch yields.
@@ -178,6 +239,15 @@ pub struct ScalarHostAdapter {
     validated: Vec<ScalarEntry>,
     /// Entries promoted to prepared state, in execution order.
     prepared: Vec<ScalarEntry>,
+    /// Per entry, per ABI slot, what the pre-commit plan decided, acquiring nothing.
+    plan: Vec<Vec<SlotPlan>>,
+    /// The pairs the pre-commit plan sized for one allocation each, in route order.
+    shared_plan: Vec<SharedPlan>,
+    /// The entry and slot whose allocation the completion reads back from.
+    ///
+    /// Decided while planning, because it follows from the binding targets, and
+    /// resolved to an allocation index only once one exists.
+    readback_slot: Option<(usize, usize)>,
     /// Host allocations, indexed by the placements below.
     allocations: Vec<Vec<u8>>,
     /// Per entry, per ABI slot, where the slot's storage lives.
@@ -214,6 +284,9 @@ impl ScalarHostAdapter {
             perturbation: None,
             validated: Vec::new(),
             prepared: Vec::new(),
+            plan: Vec::new(),
+            shared_plan: Vec::new(),
+            readback_slot: None,
             allocations: Vec::new(),
             placements: Vec::new(),
             shared: Vec::new(),
@@ -250,8 +323,8 @@ impl ScalarHostAdapter {
     ///
     /// # Panics
     ///
-    /// Panics when the route never planned that entry and slot. Planning runs
-    /// before the commit, so a caller asking about a slot of a route that
+    /// Panics when the route never allocated that entry and slot. Allocation
+    /// runs after the commit, so a caller asking about a slot of a route that
     /// refused earlier is asking about something that does not exist.
     #[must_use]
     pub fn placement(&self, entry: usize, slot: usize) -> Placement {
@@ -295,6 +368,10 @@ pub enum ScalarRefusal {
         budget: u64,
     },
     /// The caller supplied less storage than the route requires.
+    ///
+    /// The only storage comparison left on this side of the commit, and it is
+    /// here because the caller's bytes exist independently of the route: nothing
+    /// is acquired to make it, so it is a refusal another artifact may satisfy.
     UndersizedStorage {
         /// Position of the entry in the route's execution order.
         entry: usize,
@@ -492,10 +569,6 @@ impl RuntimeAdapter for ScalarHostAdapter {
         preflight: &Preflight<'_>,
     ) -> Result<(), Self::Refusal> {
         self.stages.push(Stage::PlanDispatch);
-        let mut allocations: Vec<Vec<u8>> = Vec::new();
-        let mut placements: Vec<Vec<Placement>> = Vec::new();
-        let mut recorded: Vec<SharedPlacement> = Vec::new();
-        let mut readback = None;
 
         // The byte a slot must reach through, counted from the start of the
         // allocation rather than from the start of the value: a binding may
@@ -507,92 +580,156 @@ impl RuntimeAdapter for ScalarHostAdapter {
         };
 
         // Paired first, because a shared allocation belongs to two entries and
-        // neither owns it. A planner that allocated per binding would hand the
-        // consumer a fresh buffer and it would read uninitialised storage — a
+        // neither owns it. A planner that sized per binding would let the
+        // consumer be handed a fresh buffer and read uninitialised storage — a
         // wrong answer rather than a refusal. Empty for a single-entry route,
         // which is a state rather than an absence.
-        let mut shared: Vec<Option<usize>> = preflight
+        let mut backing: Vec<Vec<Option<usize>>> = preflight
             .entries()
             .iter()
-            .map(|entry| entry.bindings().len())
-            .flat_map(|count| std::iter::repeat_n(None, count))
+            .map(|entry| vec![None; entry.bindings().len()])
             .collect();
-        let slot_index = |entry: usize, slot: usize| {
-            preflight.entries()[..entry]
-                .iter()
-                .map(|routed| routed.bindings().len())
-                .sum::<usize>()
-                + slot
-        };
+        let mut shared_plan: Vec<SharedPlan> = Vec::new();
         for pair in preflight.shared_allocations() {
             let (producer, consumer) = (pair.producer(), pair.consumer());
-            let needed = reach(producer.entry(), producer.slot())
-                .max(reach(consumer.entry(), consumer.slot()));
-            let needed = if self.perturbed_by(Perturbation::UndersizeSharedAllocation) {
-                needed.saturating_sub(4)
-            } else {
-                needed
-            };
-            allocations.push(vec![
-                0_u8;
-                usize::try_from(needed).expect("a small fixture range")
-            ]);
-            let index = allocations.len() - 1;
-            shared[slot_index(producer.entry(), producer.slot())] = Some(index);
-            shared[slot_index(consumer.entry(), consumer.slot())] = Some(index);
-            recorded.push(SharedPlacement {
+            let index = shared_plan.len();
+            backing[producer.entry()][producer.slot()] = Some(index);
+            backing[consumer.entry()][consumer.slot()] = Some(index);
+            shared_plan.push(SharedPlan {
                 producer: (producer.entry(), producer.slot()),
                 consumer: (consumer.entry(), consumer.slot()),
-                allocation: index,
+                needed: reach(producer.entry(), producer.slot())
+                    .max(reach(consumer.entry(), consumer.slot())),
             });
         }
 
+        // The caller's operand storage exists already, so this length is a fact
+        // about the route's inputs rather than about anything acquired for it.
+        let supplied = u64::try_from(self.input.len()).expect("a small fixture buffer");
+        let mut plan: Vec<Vec<SlotPlan>> = Vec::with_capacity(preflight.entries().len());
+        let mut readback_slot = None;
         for (position, entry) in preflight.entries().iter().enumerate() {
             let mut slots = Vec::with_capacity(entry.bindings().len());
             for binding in entry.bindings() {
                 let bytes = binding.accessible_bytes();
                 let offset = binding.accessible_offset();
                 let reach = offset + bytes;
-                let allocation = if let Some(index) = shared[slot_index(position, binding.slot())] {
-                    index
+                let backing = if let Some(index) = backing[position][binding.slot()] {
+                    Backing::Shared(index)
                 } else if addresses_program_input(binding.binding().target()) {
-                    allocations.push(self.input.clone());
-                    allocations.len() - 1
+                    // The one comparison that belongs on this side of the
+                    // commit: it is against storage the caller supplied, so a
+                    // route this host cannot satisfy is refused while another
+                    // artifact may still be tried, and nothing was acquired to
+                    // find that out.
+                    if supplied < reach {
+                        return Err(ScalarRefusal::UndersizedStorage {
+                            entry: position,
+                            slot: binding.slot(),
+                            required: reach,
+                            supplied,
+                        });
+                    }
+                    Backing::CallerInput
                 } else {
-                    allocations.push(vec![
-                        0_u8;
-                        usize::try_from(reach).expect("a small fixture range")
-                    ]);
-                    let index = allocations.len() - 1;
-                    readback = Some(Readback {
-                        allocation: index,
-                        offset: usize::try_from(offset).expect("a small fixture range"),
-                        elements: usize::try_from(bytes / 4)
-                            .expect("a small fixture element count"),
-                    });
-                    index
+                    readback_slot = Some((position, binding.slot()));
+                    Backing::Fresh
                 };
-                // Every slot's storage compared against the route's own
-                // published range, whoever produced it: the caller for a program
-                // input, the pairing above for a shared scratch, this planner
-                // for everything else. Checking only the caller's would trust
-                // this adapter's own arithmetic on the two it makes itself,
-                // and a shared allocation is the one it sizes from two
-                // statements rather than one.
+                slots.push(SlotPlan {
+                    offset,
+                    bytes,
+                    reach,
+                    backing,
+                });
+            }
+            plan.push(slots);
+        }
+
+        self.plan = plan;
+        self.shared_plan = shared_plan;
+        self.readback_slot = readback_slot;
+        Ok(())
+    }
+
+    fn allocate_dispatch(
+        &mut self,
+        _context: &LiveExecutionContext,
+        _routed: &RoutedDispatch<'_>,
+    ) -> Result<(), Self::Failure> {
+        self.stages.push(Stage::AllocateDispatch);
+        let mut allocations: Vec<Vec<u8>> = Vec::new();
+        let mut recorded: Vec<SharedPlacement> = Vec::new();
+
+        // One allocation per pair, taken first so that both ends can name it.
+        let mut shared_index = Vec::with_capacity(self.shared_plan.len());
+        for pair in &self.shared_plan {
+            let needed = if self.perturbation == Some(Perturbation::UndersizeSharedAllocation) {
+                pair.needed.saturating_sub(4)
+            } else {
+                pair.needed
+            };
+            allocations.push(vec![
+                0_u8;
+                usize::try_from(needed).expect("a small fixture range")
+            ]);
+            let index = allocations.len() - 1;
+            shared_index.push(index);
+            recorded.push(SharedPlacement {
+                producer: pair.producer,
+                consumer: pair.consumer,
+                allocation: index,
+            });
+        }
+
+        let mut placements: Vec<Vec<Placement>> = Vec::with_capacity(self.plan.len());
+        let mut readback = None;
+        for position in 0..self.plan.len() {
+            let mut slots = Vec::with_capacity(self.plan[position].len());
+            for slot in 0..self.plan[position].len() {
+                // Copied out rather than borrowed, so this loop can push to the
+                // storage it is deciding about.
+                let planned = self.plan[position][slot];
+                let allocation = match planned.backing {
+                    Backing::Shared(index) => shared_index[index],
+                    Backing::CallerInput => {
+                        allocations.push(self.input.clone());
+                        allocations.len() - 1
+                    }
+                    Backing::Fresh => {
+                        allocations.push(vec![
+                            0_u8;
+                            usize::try_from(planned.reach)
+                                .expect("a small fixture range")
+                        ]);
+                        allocations.len() - 1
+                    }
+                };
+                // Every allocation against the length the plan sized it for, and
+                // this is an assertion rather than a routing input: the route has
+                // committed, so an allocator that returned less than it accepted
+                // is a defect to report and not a reason to try elsewhere.
                 let held =
                     u64::try_from(allocations[allocation].len()).expect("a small fixture buffer");
-                if held < reach {
-                    return Err(ScalarRefusal::UndersizedStorage {
+                if held < planned.reach {
+                    return Err(ExecutionFault::UndersizedStorage {
                         entry: position,
-                        slot: binding.slot(),
-                        required: reach,
-                        supplied: held,
+                        slot,
+                        required: planned.reach,
+                        held,
+                    });
+                }
+                if self.readback_slot == Some((position, slot)) {
+                    readback = Some(Readback {
+                        allocation,
+                        offset: usize::try_from(planned.offset).expect("a small fixture range"),
+                        elements: usize::try_from(planned.bytes / 4)
+                            .expect("a small fixture element count"),
                     });
                 }
                 slots.push(Placement {
                     allocation,
-                    offset,
-                    bytes,
+                    offset: planned.offset,
+                    bytes: planned.bytes,
                 });
             }
             placements.push(slots);
@@ -677,7 +814,9 @@ impl RuntimeAdapter for ScalarHostAdapter {
             allocation,
             offset,
             elements,
-        } = self.readback.expect("the plan named a readback allocation");
+        } = self
+            .readback
+            .expect("the allocating stage resolved the plan's readback slot");
         let result_bits = self.allocations[allocation][offset..]
             .as_chunks::<4>()
             .0

@@ -13,24 +13,35 @@
 //!
 //! Once `apply_op1_no_bwd` is entered, that choice is spent. Everything the
 //! adapter refuses afterwards is a typed error rather than a route change, and
-//! that is deliberately **stricter** than ADR 0051 requires: the seam would
-//! still permit a fallback for every pre-commit refusal, but the adapter
-//! allocates output storage during `plan_dispatch`, and this ticket's criterion
-//! 2 forecloses a fallback once an output has been allocated. Foreclosing at the
-//! custom-op boundary is the only place that rule can be enforced without
-//! inspecting which stage refused.
+//! that is deliberately **stricter** than ADR 0051 requires: the seam permits a
+//! fallback for every pre-commit refusal, and this ticket's criterion 2
+//! forecloses one from the custom-op boundary onward regardless. Foreclosing
+//! there is the only place that rule can be enforced without inspecting which
+//! stage refused.
+//!
+//! The original ground for that strictness — that the adapter allocated output
+//! storage during `plan_dispatch`, so a pre-commit refusal could follow an
+//! allocation — no longer holds:
+//! [`reconcile-the-pre-commit-allocation-seam-with-adr-0051`] moved allocation
+//! into `allocate_dispatch`, past the commit, so nothing is acquired before a
+//! refusal any more. The custom-op boundary stays the foreclosure point anyway,
+//! because Candle's own choice between the two ways of computing the result is
+//! what is spent there, and that is unrelated to what the adapter allocated.
+//!
+//! [`reconcile-the-pre-commit-allocation-seam-with-adr-0051`]: ../../../tickets/reconcile-the-pre-commit-allocation-seam-with-adr-0051.md
 //!
 //! # The friction this design records
 //!
 //! It would be better to run the adapter's device-dependent pre-commit stages —
 //! payload validation, the live-device rows, pipeline preparation, the
-//! prepared-entry properties, and the allocation — *before* `apply_op1_no_bwd`,
-//! and to enter Candle's path holding a prepared selection that only commits and
-//! dispatches. That is exactly what the contract's `PreparedSelection` token
-//! describes, and it is not expressible against the seam as accepted:
+//! prepared-entry properties, and the sizing — *before* `apply_op1_no_bwd`, and
+//! to enter Candle's path holding a prepared selection that only commits,
+//! allocates, and dispatches. That is exactly what the contract's
+//! `PreparedSelection` token describes, and it is not expressible against the
+//! seam as accepted:
 //!
 //! - `route_with_adapter` is the only driver of a [`RuntimeAdapter`], and it runs
-//!   stages 1 through 9 in one call. There is no way to stop it after stage 7.
+//!   stages 1 through 10 in one call. There is no way to stop it after stage 7.
 //! - Driving the trait methods by hand instead is impossible, because every one
 //!   of them takes a `&LiveExecutionContext` and that type has **no public
 //!   constructor** — `route_with_adapter` mints the only value that ever exists.

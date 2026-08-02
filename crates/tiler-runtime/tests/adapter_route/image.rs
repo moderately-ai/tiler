@@ -458,6 +458,23 @@ pub struct Placement {
 /// descriptions of one.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ExecutionFault {
+    /// An allocation came back shorter than the plan sized it for.
+    ///
+    /// Post-commit because ADR 0051 puts program allocation there, and a defect
+    /// report rather than a routing input: the length was requested from the
+    /// plan's own arithmetic, so reaching this means the allocator returned less
+    /// than a request it accepted. There is no correct fallback for that, and
+    /// reporting it is the whole of what a caller can act on.
+    UndersizedStorage {
+        /// Position of the entry in the route's execution order.
+        entry: usize,
+        /// Zero-based ABI slot of the binding.
+        slot: usize,
+        /// Bytes the plan sized the allocation for.
+        required: u64,
+        /// Bytes the allocation came back holding.
+        held: u64,
+    },
     /// An invocation addressed an element outside its placement.
     ///
     /// Unreachable through a sound route — [`ScalarImage::entry_for`] refuses an
@@ -492,6 +509,16 @@ pub enum ExecutionFault {
 impl fmt::Display for ExecutionFault {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::UndersizedStorage {
+                entry,
+                slot,
+                required,
+                held,
+            } => write!(
+                formatter,
+                "scalar-host.allocate: entry {entry}'s slot {slot} was sized for {required} \
+                 byte(s) and the allocation holds {held}, after the route committed",
+            ),
             Self::OutOfRange {
                 entry,
                 role,
@@ -532,9 +559,9 @@ impl std::error::Error for ExecutionFault {}
 /// # Panics
 ///
 /// Panics if a placement names an allocation that was not supplied.
-/// [`crate::adapter::ScalarHostAdapter`] allocates from the route before the
-/// commit, so a missing allocation is a defect in the adapter rather than a
-/// route it should have refused.
+/// [`crate::adapter::ScalarHostAdapter`] allocates from its own pre-commit plan
+/// immediately after the commit, so a missing allocation is a defect in the
+/// adapter rather than a route it should have refused.
 pub fn execute(
     position: usize,
     entry: &ScalarEntry,

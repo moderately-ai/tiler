@@ -160,6 +160,59 @@ struct PlacedSlot {
     buffer: Arc<Buffer>,
 }
 
+/// Which storage one routed slot will be backed by, decided before the commit.
+///
+/// A decision about storage rather than storage. Only the last two are
+/// acquisitions, and ADR 0051 puts those after the routing commit; the first two
+/// name allocations that either already exist or are made once for a pair.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Backing {
+    /// The caller's own Candle tensor, which exists before the route does.
+    CallerInput,
+    /// One end of a pair the route says must share a single allocation.
+    Shared(usize),
+    /// The program output this consumer hands back.
+    Output,
+    /// Entry-internal storage this route allocates and discards.
+    Internal,
+}
+
+/// One routed ABI slot sized against the route, with nothing acquired for it.
+#[derive(Clone, Copy, Debug)]
+struct SlotPlan {
+    /// Zero-based ABI slot, carried so a failure can name it.
+    slot: usize,
+    /// The backend argument-table index this slot occupies.
+    transport: u32,
+    /// The first addressed byte within the allocation this slot will take.
+    offset: u64,
+    /// The access mode the ABI declares for this slot.
+    access: BufferAccess,
+    /// Bytes the allocation must reach for this slot.
+    needed: u64,
+    /// Where the bytes will come from.
+    backing: Backing,
+}
+
+/// One entry sized against the route, with no program storage acquired.
+#[derive(Clone, Debug)]
+struct EntryPlan {
+    pipeline: ComputePipeline,
+    slots: Vec<SlotPlan>,
+    grid_threads: u64,
+    threads_per_workgroup: u64,
+    skipped: bool,
+}
+
+/// One pair of slots the route requires be backed by a single allocation.
+#[derive(Clone, Copy, Debug)]
+struct SharedPlan {
+    /// Entry and ABI slot of the producing end, which names the allocation.
+    producer: (usize, usize),
+    /// Bytes the one allocation must hold to satisfy both ends.
+    needed: u64,
+}
+
 /// One entry of a route with every device object its dispatch needs.
 #[derive(Clone, Debug)]
 struct PreparedEntry {
@@ -229,6 +282,10 @@ pub struct CandleMetalAdapter {
     validated: Vec<Library>,
     /// Entries promoted to prepared pipelines, in execution order.
     prepared: Vec<ComputePipeline>,
+    /// What the pre-commit plan decided, per entry, having acquired nothing.
+    plan: Vec<EntryPlan>,
+    /// The allocations the pre-commit plan sized for shared slot pairs.
+    shared_plan: Vec<SharedPlan>,
     /// Everything the committed dispatch will touch.
     planned: Option<PlannedRoute>,
     /// Slot pairs the loader required be backed by one allocation each.
@@ -270,6 +327,8 @@ impl CandleMetalAdapter {
             output_elements,
             validated: Vec::new(),
             prepared: Vec::new(),
+            plan: Vec::new(),
+            shared_plan: Vec::new(),
             planned: None,
             shared_allocations: 0,
         })
@@ -356,17 +415,21 @@ impl CandleMetalAdapter {
     /// contract says output and temporary storage come from the input device's
     /// allocator — that is what keeps the result a tensor Candle can go on using
     /// and what keeps the allocation inside Candle's residency set.
-    fn allocate(&self, bytes: u64) -> Result<Arc<Buffer>, RouteRefusal> {
+    ///
+    /// Reached only from [`RuntimeAdapter::allocate_dispatch`], which is why it
+    /// returns [`DispatchFailure`]: the route has committed by then, and ADR
+    /// 0051 leaves no fallback for an allocator that refuses.
+    fn allocate(&self, bytes: u64) -> Result<Arc<Buffer>, DispatchFailure> {
         let element_bytes = u64::try_from(DType::F32.size_in_bytes()).unwrap_or(4);
         // Rounded up rather than truncated: a byte range that is not a whole
         // number of elements must still be entirely reachable.
         let elements = bytes.div_ceil(element_bytes).max(1);
-        let elements = usize::try_from(elements).map_err(|_| RouteRefusal::Allocation {
+        let elements = usize::try_from(elements).map_err(|_| DispatchFailure::Allocation {
             detail: format!("{bytes} byte(s) is not an allocation this host can address"),
         })?;
         self.device
             .new_buffer(elements, DType::F32, "tiler.route")
-            .map_err(|cause| RouteRefusal::Allocation {
+            .map_err(|cause| DispatchFailure::Allocation {
                 detail: cause.to_string(),
             })
     }
@@ -815,19 +878,26 @@ impl RuntimeAdapter for CandleMetalAdapter {
             .unwrap_or(u64::MAX)
     }
 
-    /// Sizes, allocates, and binds everything the route will dispatch.
+    /// Sizes what the route will dispatch and checks its capacity, acquiring nothing.
     ///
-    /// The last chance to refuse, so every obligation a device can answer is
-    /// answered here: the threadgroup capacity this route's pipelines admit, the
-    /// single-buffer limit each binding must fit, and the length every
-    /// allocation actually came back with. Encoding and submission are program
-    /// work and belong after the commit.
+    /// The last chance to refuse, so every obligation a device can answer
+    /// *without acquiring storage* is answered here: the threadgroup capacity
+    /// this route's pipelines admit, the single-buffer limit each binding must
+    /// fit, whether each binding's offset and extent form an addressable range,
+    /// and whether every slot addresses something this consumer places. What it
+    /// produces is a plan — which storage each slot will take and how long it
+    /// must be — and no `MTLBuffer`.
+    ///
+    /// **Allocation is not here, and that is ADR 0051.** Program storage is
+    /// acquired only from the committed execution authority, in
+    /// [`RuntimeAdapter::allocate_dispatch`].
     ///
     /// Candle's pending work is brought to a terminal state first. The tensor
     /// this route reads may still be a promise in Candle's uncommitted command
     /// buffer, and this adapter's own command buffer is not ordered against it;
     /// flushing here rather than in `dispatch` keeps the failure on the side of
-    /// the commit where a fallback would still be permitted.
+    /// the commit where a fallback would still be permitted, and it acquires
+    /// nothing of its own.
     fn plan_dispatch(
         &mut self,
         _context: &LiveExecutionContext,
@@ -843,13 +913,14 @@ impl RuntimeAdapter for CandleMetalAdapter {
         self.shared_allocations = preflight.shared_allocations().len();
 
         // Paired first, because a shared allocation belongs to two entries and
-        // neither owns it. A planner that allocated per binding would hand the
-        // consumer a fresh buffer and it would read uninitialised device memory
+        // neither owns it. A planner that sized per binding would let the
+        // consumer be handed a fresh buffer and read uninitialised device memory
         // — a wrong answer rather than a refusal.
-        let mut shared: Vec<Vec<Option<Arc<Buffer>>>> = routed
+        let mut paired: Vec<Vec<Option<usize>>> = routed
             .iter()
             .map(|entry| vec![None; entry.bindings().len()])
             .collect();
+        let mut shared_plan: Vec<SharedPlan> = Vec::new();
         for pair in preflight.shared_allocations() {
             let (producer, consumer) = (pair.producer(), pair.consumer());
             let needed = reach(routed, producer.entry(), producer.slot())?.max(reach(
@@ -858,14 +929,17 @@ impl RuntimeAdapter for CandleMetalAdapter {
                 consumer.slot(),
             )?);
             self.fits_one_buffer(producer.entry(), producer.slot(), needed)?;
-            let buffer = self.allocate(needed)?;
-            Self::holds(producer.entry(), producer.slot(), needed, &buffer)?;
-            shared[producer.entry()][producer.slot()] = Some(Arc::clone(&buffer));
-            shared[consumer.entry()][consumer.slot()] = Some(buffer);
+            let index = shared_plan.len();
+            paired[producer.entry()][producer.slot()] = Some(index);
+            paired[consumer.entry()][consumer.slot()] = Some(index);
+            shared_plan.push(SharedPlan {
+                producer: (producer.entry(), producer.slot()),
+                needed,
+            });
         }
 
-        let mut output: Option<Arc<Buffer>> = None;
-        let mut entries = Vec::with_capacity(routed.len());
+        let mut binds_output = false;
+        let mut plan = Vec::with_capacity(routed.len());
         for (position, entry) in routed.iter().enumerate() {
             let launch = entry.launch();
             if launch.grid_threads() == 0 && !launch.zero_work_skips_dispatch() {
@@ -885,11 +959,11 @@ impl RuntimeAdapter for CandleMetalAdapter {
                 let needed = reach(routed, position, slot)?;
                 self.fits_one_buffer(position, slot, needed)?;
 
-                // An occupied slot was already allocated as one half of a shared
-                // pair, and taking it is what makes the two entries address one
+                // An occupied slot is one half of a shared pair, and naming the
+                // same plan index is what will make the two entries address one
                 // buffer rather than two that merely have the same length.
-                let (buffer, offset) = if let Some(paired) = shared[position][slot].clone() {
-                    (paired, binding.accessible_offset())
+                let (backing, offset) = if let Some(index) = paired[position][slot] {
+                    (Backing::Shared(index), binding.accessible_offset())
                 } else {
                     match binding.binding().target() {
                         BindingTarget::ProgramInput(key) if key.as_str() == INPUT_KEY => {
@@ -907,19 +981,15 @@ impl RuntimeAdapter for CandleMetalAdapter {
                                     offset: self.input.byte_offset,
                                     extent: binding.accessible_offset(),
                                 })?;
-                            (Arc::clone(&self.input.buffer), offset)
+                            (Backing::CallerInput, offset)
                         }
                         BindingTarget::ProgramOutput(keys)
                             if keys.len() == 1 && keys[0].as_str() == OUTPUT_KEY =>
                         {
-                            let buffer = self.allocate(needed)?;
-                            output = Some(Arc::clone(&buffer));
-                            (buffer, binding.accessible_offset())
+                            binds_output = true;
+                            (Backing::Output, binding.accessible_offset())
                         }
-                        BindingTarget::Internal => {
-                            let buffer = self.allocate(needed)?;
-                            (buffer, binding.accessible_offset())
-                        }
+                        BindingTarget::Internal => (Backing::Internal, binding.accessible_offset()),
                         other => {
                             return Err(RouteRefusal::UnboundBindingTarget {
                                 entry: position,
@@ -930,16 +1000,17 @@ impl RuntimeAdapter for CandleMetalAdapter {
                     }
                 };
 
-                Self::holds(position, slot, needed, &buffer)?;
-                slots.push(PlacedSlot {
+                slots.push(SlotPlan {
+                    slot,
                     transport: binding.transport_slot(),
                     offset,
                     access: binding.binding().access(),
-                    buffer,
+                    needed,
+                    backing,
                 });
             }
 
-            entries.push(PreparedEntry {
+            plan.push(EntryPlan {
                 pipeline,
                 slots,
                 grid_threads: launch.grid_threads(),
@@ -952,9 +1023,82 @@ impl RuntimeAdapter for CandleMetalAdapter {
             });
         }
 
+        // Decided from the plan's own targets rather than from whether an
+        // allocation happened, which is the form this check has to take once no
+        // allocation happens on this side of the commit.
+        if !binds_output {
+            return Err(RouteRefusal::NoOutputBinding);
+        }
+        self.plan = plan;
+        self.shared_plan = shared_plan;
+        Ok(())
+    }
+
+    /// Acquires and binds the committed route's program storage, through Candle.
+    ///
+    /// Reached only from a [`RoutedDispatch`], so every allocation here is made
+    /// by the committed execution authority ADR 0051 reserves them to. Nothing
+    /// is decided: the plan already fixed which storage each slot takes and how
+    /// long it must be, and this stage acquires exactly that.
+    ///
+    /// The observed-length assertion is retained and is a defect report rather
+    /// than a routing input — every buffer is requested at the plan's own
+    /// length, so a short one means the allocator did not honour a request it
+    /// accepted.
+    fn allocate_dispatch(
+        &mut self,
+        _context: &LiveExecutionContext,
+        _routed: &RoutedDispatch<'_>,
+    ) -> Result<(), Self::Failure> {
+        // One allocation per pair, taken first so that both ends can name it.
+        let mut shared: Vec<Arc<Buffer>> = Vec::with_capacity(self.shared_plan.len());
+        for pair in &self.shared_plan {
+            let (entry, slot) = pair.producer;
+            let buffer = self.allocate(pair.needed)?;
+            Self::holds(entry, slot, pair.needed, &buffer)?;
+            shared.push(buffer);
+        }
+
+        let mut output: Option<Arc<Buffer>> = None;
+        let mut entries = Vec::with_capacity(self.plan.len());
+        for position in 0..self.plan.len() {
+            let mut slots = Vec::with_capacity(self.plan[position].slots.len());
+            for index in 0..self.plan[position].slots.len() {
+                // Copied out rather than borrowed, so this loop can acquire the
+                // storage the plan it is reading decided on.
+                let planned = self.plan[position].slots[index];
+                let buffer = match planned.backing {
+                    Backing::Shared(pair) => Arc::clone(&shared[pair]),
+                    Backing::CallerInput => Arc::clone(&self.input.buffer),
+                    Backing::Output => {
+                        let buffer = self.allocate(planned.needed)?;
+                        output = Some(Arc::clone(&buffer));
+                        buffer
+                    }
+                    Backing::Internal => self.allocate(planned.needed)?,
+                };
+                Self::holds(position, planned.slot, planned.needed, &buffer)?;
+                slots.push(PlacedSlot {
+                    transport: planned.transport,
+                    offset: planned.offset,
+                    access: planned.access,
+                    buffer,
+                });
+            }
+            entries.push(PreparedEntry {
+                pipeline: self.plan[position].pipeline.clone(),
+                slots,
+                grid_threads: self.plan[position].grid_threads,
+                threads_per_workgroup: self.plan[position].threads_per_workgroup,
+                skipped: self.plan[position].skipped,
+            });
+        }
+
         self.planned = Some(PlannedRoute {
             entries,
-            output: output.ok_or(RouteRefusal::NoOutputBinding)?,
+            // `plan_dispatch` refused a route with no output binding before the
+            // commit, so the plan proves one exists.
+            output: output.expect("the pre-commit plan proved one slot binds the program output"),
             output_elements: self.output_elements,
         });
         Ok(())
@@ -1080,8 +1224,13 @@ impl CandleMetalAdapter {
         binding_fits(entry, slot, needed, self.facts.max_buffer_length)
     }
 
-    /// Refuses storage that does not reach the byte range the route requires.
-    fn holds(entry: usize, slot: usize, needed: u64, buffer: &Buffer) -> Result<(), RouteRefusal> {
+    /// Reports storage that does not reach the byte range the plan sized it for.
+    fn holds(
+        entry: usize,
+        slot: usize,
+        needed: u64,
+        buffer: &Buffer,
+    ) -> Result<(), DispatchFailure> {
         allocation_holds(
             entry,
             slot,
@@ -1125,17 +1274,21 @@ pub fn binding_fits(
 /// states, so reaching this means the allocator did not honour a request it
 /// accepted, or that a caller bound a shorter tensor than the artifact declares.
 ///
+/// Post-commit, because the allocation it inspects is. That is why it yields a
+/// [`DispatchFailure`] rather than a refusal — under ADR 0051 there is no second
+/// route to take once the storage has been acquired.
+///
 /// # Errors
 ///
-/// Returns [`RouteRefusal::UndersizedStorage`].
+/// Returns [`DispatchFailure::UndersizedStorage`].
 pub fn allocation_holds(
     entry: usize,
     slot: usize,
     needed: u64,
     held: u64,
-) -> Result<(), RouteRefusal> {
+) -> Result<(), DispatchFailure> {
     if held < needed {
-        return Err(RouteRefusal::UndersizedStorage {
+        return Err(DispatchFailure::UndersizedStorage {
             entry,
             slot,
             needed,
@@ -1391,10 +1544,12 @@ mod tests {
             }),
         ));
 
+        // Post-commit under the split seam, and kept in this population because
+        // the comparison's boundary is what is being watched, not its stage.
         assert!(allocation_holds(0, 0, 16, 16).is_ok());
         assert!(matches!(
             allocation_holds(1, 2, 16, 15),
-            Err(super::RouteRefusal::UndersizedStorage {
+            Err(super::DispatchFailure::UndersizedStorage {
                 entry: 1,
                 slot: 2,
                 needed: 16,

@@ -165,6 +165,14 @@ impl RuntimeAdapter for NoBackend {
         unreachable!("no context was bound")
     }
 
+    fn allocate_dispatch(
+        &mut self,
+        _: &LiveExecutionContext,
+        _: &RoutedDispatch<'_>,
+    ) -> Result<(), Refused> {
+        unreachable!("no route ever committed")
+    }
+
     fn dispatch(
         &mut self,
         _: &LiveExecutionContext,

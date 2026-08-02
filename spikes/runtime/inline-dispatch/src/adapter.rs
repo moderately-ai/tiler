@@ -261,17 +261,6 @@ pub enum RouteRefusal {
         /// The largest single allocation this device admits.
         limit: u64,
     },
-    /// An allocation came back shorter than the route requires.
-    UndersizedStorage {
-        /// Position of the entry in the route's execution order.
-        entry: usize,
-        /// Zero-based ABI slot.
-        slot: usize,
-        /// Bytes the route requires be reachable.
-        needed: u64,
-        /// Bytes the allocation reported.
-        held: u64,
-    },
     /// A binding's offset plus extent does not fit an addressable range.
     BindingRangeOverflow {
         /// Position of the entry in the route's execution order.
@@ -347,16 +336,6 @@ impl core::fmt::Display for RouteRefusal {
                 "metal.plan: entry {entry} slot {slot} needs {needed} byte(s) and this device \
                  admits {limit} in one buffer"
             ),
-            Self::UndersizedStorage {
-                entry,
-                slot,
-                needed,
-                held,
-            } => write!(
-                formatter,
-                "metal.plan: entry {entry} slot {slot} needs {needed} byte(s) reachable and the \
-                 allocation holds {held}"
-            ),
             Self::BindingRangeOverflow { entry, slot } => write!(
                 formatter,
                 "metal.plan: entry {entry} slot {slot}'s offset and extent do not form an \
@@ -396,6 +375,23 @@ impl std::error::Error for RouteRefusal {}
 /// and reported rather than retried: everything here is past the one-way commit.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DispatchFailure {
+    /// An allocation came back shorter than the plan sized it for.
+    ///
+    /// Post-commit because the allocation is: ADR 0051 reserves program storage
+    /// to the committed execution authority. A defect report rather than a
+    /// routing input — every buffer is requested at the length the pre-commit
+    /// plan derived from the route, so a short one means the allocator did not
+    /// honour a request it accepted.
+    UndersizedStorage {
+        /// Position of the entry in the route's execution order.
+        entry: usize,
+        /// Zero-based ABI slot.
+        slot: usize,
+        /// Bytes the plan sized the allocation for.
+        needed: u64,
+        /// Bytes the allocation reported.
+        held: u64,
+    },
     /// The device reported a terminal execution error for the command buffer.
     ///
     /// `metal` 0.33.0's `CommandBufferRef` publishes no accessor for the
@@ -414,6 +410,16 @@ pub enum DispatchFailure {
 impl core::fmt::Display for DispatchFailure {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::UndersizedStorage {
+                entry,
+                slot,
+                needed,
+                held,
+            } => write!(
+                formatter,
+                "metal.allocate: entry {entry} slot {slot} was sized for {needed} byte(s) and the \
+                 allocation holds {held}, after the route committed"
+            ),
             Self::ExecutionError => formatter.write_str(
                 "metal.dispatch: the device reported a terminal execution error for this command \
                  buffer",
@@ -513,6 +519,8 @@ impl DispatchAdapter for Metal {
             request,
             validated: Vec::new(),
             prepared: Vec::new(),
+            plan: Vec::new(),
+            shared_plan: Vec::new(),
             planned: Vec::new(),
             output: None,
         })
@@ -556,6 +564,57 @@ struct PlannedEntry {
     skipped: bool,
 }
 
+/// Which storage one routed slot will be backed by, decided before the commit.
+///
+/// A decision about storage rather than storage. Naming the four cases here is
+/// what lets the sizing stage refuse a target this consumer does not place
+/// without acquiring an `MTLBuffer` to find out.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Backing {
+    /// The caller's own operand, named by the interface key it was handed under.
+    ProgramInput(String),
+    /// One end of a pair the route says must share a single allocation.
+    Shared(usize),
+    /// The region's result, which is the one allocation the caller reads back.
+    Output,
+    /// Entry-internal storage this route allocates and discards.
+    Internal,
+}
+
+/// One routed ABI slot sized against the route, with nothing acquired for it.
+#[derive(Clone, Debug)]
+struct SlotPlan {
+    /// Zero-based ABI slot, carried so a failure can name it.
+    slot: usize,
+    /// The argument-table index this slot occupies.
+    transport: u32,
+    /// The first addressed byte within the allocation it will take.
+    offset: u64,
+    /// Bytes the allocation must reach for this slot.
+    needed: u64,
+    /// Where the bytes will come from.
+    backing: Backing,
+}
+
+/// One entry sized against the route, with no program storage acquired.
+#[derive(Debug)]
+struct EntryPlan {
+    pipeline: ComputePipelineState,
+    slots: Vec<SlotPlan>,
+    grid_threads: u64,
+    threads_per_workgroup: u64,
+    skipped: bool,
+}
+
+/// One pair of slots the route requires be backed by a single allocation.
+#[derive(Clone, Copy, Debug)]
+struct SharedPlan {
+    /// Entry and ABI slot of the producing end, which names the allocation.
+    producer: (usize, usize),
+    /// Bytes the one allocation must hold to satisfy both ends.
+    needed: u64,
+}
+
 /// This consumer's device authority for one region invocation.
 ///
 /// It holds the region's storage by borrow for exactly the route's duration,
@@ -569,6 +628,10 @@ pub struct MetalExecutor<'region> {
     validated: Vec<Library>,
     /// Entries promoted to prepared pipelines, in execution order.
     prepared: Vec<ComputePipelineState>,
+    /// What the pre-commit plan decided, per entry, having acquired nothing.
+    plan: Vec<EntryPlan>,
+    /// The allocations the pre-commit plan sized for shared slot pairs.
+    shared_plan: Vec<SharedPlan>,
     /// Everything the committed dispatch will touch.
     planned: Vec<PlannedEntry>,
     /// The allocation the region's result lands in.
@@ -745,32 +808,38 @@ impl RuntimeAdapter for MetalExecutor<'_> {
         self.prepared[request.entry()].max_total_threads_per_threadgroup()
     }
 
-    /// Sizes, allocates, and binds everything the route will dispatch.
+    /// Sizes what the route will dispatch and checks its capacity, acquiring nothing.
     ///
-    /// The last chance to refuse, so every obligation a device can answer is
-    /// answered here: the threadgroup capacity this route's pipelines admit, the
-    /// single-buffer limit each binding must fit, and the length every
-    /// allocation actually came back with. Encoding and submission are program
-    /// work and belong after the commit.
+    /// The last chance to refuse, so every obligation a device can answer
+    /// *without acquiring storage* is answered here: the threadgroup capacity
+    /// this route's pipelines admit, the single-buffer limit each binding must
+    /// fit, whether each binding's offset and extent form an addressable range,
+    /// and whether every slot names an operand this region supplied or a target
+    /// this consumer places. What it produces is a plan and no `MTLBuffer`.
+    ///
+    /// **Allocation moved out of this stage under ADR 0051**, which reserves
+    /// program storage to the committed execution authority; it lives in
+    /// [`RuntimeAdapter::allocate_dispatch`] below. Encoding and submission are
+    /// program work too and live in [`RuntimeAdapter::dispatch`].
     fn plan_dispatch(
         &mut self,
         _: &LiveExecutionContext,
         preflight: &Preflight<'_>,
     ) -> Result<(), RouteRefusal> {
         self.session.stage("plan-dispatch");
-        let device = self.session.device.clone();
-        let limit = device.max_buffer_length();
+        let limit = self.session.device.max_buffer_length();
         let routed = preflight.entries();
 
         // Paired first, because a shared allocation belongs to two entries and
-        // neither owns it. A planner that allocated per binding would hand the
-        // consumer a fresh buffer and it would read uninitialised device memory
+        // neither owns it. A planner that sized per binding would let the
+        // consumer be handed a fresh buffer and read uninitialised device memory
         // — a wrong answer rather than a refusal. Empty for a single-entry
         // route, which is a state rather than an absence.
-        let mut shared: Vec<Vec<Option<Buffer>>> = routed
+        let mut paired: Vec<Vec<Option<usize>>> = routed
             .iter()
             .map(|entry| vec![None; entry.bindings().len()])
             .collect();
+        let mut shared_plan: Vec<SharedPlan> = Vec::new();
         for pair in preflight.shared_allocations() {
             let (producer, consumer) = (pair.producer(), pair.consumer());
             let needed = reach(routed, producer.entry(), producer.slot())?.max(reach(
@@ -779,10 +848,13 @@ impl RuntimeAdapter for MetalExecutor<'_> {
                 consumer.slot(),
             )?);
             binding_fits(producer.entry(), producer.slot(), needed, limit)?;
-            let buffer = device.new_buffer(needed.max(1), MTLResourceOptions::StorageModePrivate);
-            allocation_holds(producer.entry(), producer.slot(), needed, &buffer)?;
-            shared[producer.entry()][producer.slot()] = Some(buffer.clone());
-            shared[consumer.entry()][consumer.slot()] = Some(buffer);
+            let index = shared_plan.len();
+            paired[producer.entry()][producer.slot()] = Some(index);
+            paired[consumer.entry()][consumer.slot()] = Some(index);
+            shared_plan.push(SharedPlan {
+                producer: (producer.entry(), producer.slot()),
+                needed,
+            });
         }
         self.session.note(format!(
             "plan: {} entry(ies), {} shared allocation(s)",
@@ -790,8 +862,8 @@ impl RuntimeAdapter for MetalExecutor<'_> {
             preflight.shared_allocations().len(),
         ));
 
-        let mut output = None;
-        let mut planned = Vec::with_capacity(routed.len());
+        let mut binds_result = false;
+        let mut plan = Vec::with_capacity(routed.len());
         for (position, entry) in routed.iter().enumerate() {
             let launch = entry.launch();
             if launch.grid_threads() == 0 && !launch.zero_work_skips_dispatch() {
@@ -813,33 +885,25 @@ impl RuntimeAdapter for MetalExecutor<'_> {
                 let needed = reach(routed, position, slot)?;
                 binding_fits(position, slot, needed, limit)?;
 
-                // An occupied slot was already allocated as one half of a shared
-                // pair, and taking it is what makes the two entries address one
+                // An occupied slot is one half of a shared pair, and naming the
+                // same plan index is what will make the two entries address one
                 // buffer rather than two that merely have the same length.
-                let buffer = if let Some(paired) = shared[position][slot].clone() {
-                    paired
+                let backing = if let Some(index) = paired[position][slot] {
+                    Backing::Shared(index)
                 } else {
-                    let placed = allocate_for(
-                        &device,
-                        &self.request,
-                        position,
-                        slot,
-                        needed,
-                        binding.binding().target(),
-                    )?;
-                    if placed.is_result {
-                        output = Some(placed.buffer.clone());
-                    }
-                    placed.buffer
+                    backing_for(&self.request, position, slot, binding.binding().target())?
                 };
-                slots.push(PlacedSlot {
+                binds_result |= backing == Backing::Output;
+                slots.push(SlotPlan {
+                    slot,
                     transport: binding.transport_slot(),
                     offset: binding.accessible_offset(),
-                    buffer,
+                    needed,
+                    backing,
                 });
             }
 
-            planned.push(PlannedEntry {
+            plan.push(EntryPlan {
                 pipeline,
                 slots,
                 grid_threads: launch.grid_threads(),
@@ -852,7 +916,101 @@ impl RuntimeAdapter for MetalExecutor<'_> {
             });
         }
 
-        self.output = Some(output.ok_or(RouteRefusal::NoOutputBinding)?);
+        // Read off the plan's own targets rather than off whether an allocation
+        // happened, which is the form this check must take once nothing is
+        // allocated on this side of the commit.
+        if !binds_result {
+            return Err(RouteRefusal::NoOutputBinding);
+        }
+        self.plan = plan;
+        self.shared_plan = shared_plan;
+        Ok(())
+    }
+
+    /// Acquires and binds the committed route's device storage.
+    ///
+    /// Reached only from a [`RoutedDispatch`], which [`Preflight::commit`] is the
+    /// only source of, so every `MTLBuffer` here is taken by the committed
+    /// execution authority ADR 0051 reserves them to. Nothing is decided: the
+    /// plan already fixed which storage each slot takes, how long it must be, and
+    /// which storage mode it needs, and this stage acquires exactly that.
+    ///
+    /// The storage mode still follows from the binding target rather than from a
+    /// default. A program input and the region's result are host-visible because
+    /// bytes cross the boundary in both directions; entry-internal storage never
+    /// leaves the device, so it is private.
+    fn allocate_dispatch(
+        &mut self,
+        _: &LiveExecutionContext,
+        _: &RoutedDispatch<'_>,
+    ) -> Result<(), DispatchFailure> {
+        self.session.stage("allocate-dispatch");
+        let device = self.session.device.clone();
+
+        // One allocation per pair, taken first so that both ends can name it.
+        let mut shared: Vec<Buffer> = Vec::with_capacity(self.shared_plan.len());
+        for pair in &self.shared_plan {
+            let (entry, slot) = pair.producer;
+            let buffer =
+                device.new_buffer(pair.needed.max(1), MTLResourceOptions::StorageModePrivate);
+            allocation_holds(entry, slot, pair.needed, &buffer)?;
+            shared.push(buffer);
+        }
+
+        // Taken out rather than borrowed, so this loop can read the operands the
+        // plan it is consuming named.
+        let plan = std::mem::take(&mut self.plan);
+        let mut output = None;
+        let mut planned = Vec::with_capacity(plan.len());
+        for (position, entry) in plan.into_iter().enumerate() {
+            let mut slots = Vec::with_capacity(entry.slots.len());
+            for placed in entry.slots {
+                let buffer = match &placed.backing {
+                    Backing::Shared(index) => shared[*index].clone(),
+                    Backing::ProgramInput(key) => {
+                        // Sized from the operand rather than from `needed`, so a
+                        // binding addressing a window at a nonzero offset still
+                        // has the bytes preceding it to address past.
+                        let bytes = self
+                            .request
+                            .operand(key)
+                            .expect("the plan proved this region supplies this operand");
+                        let length = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+                        device.new_buffer_with_data(
+                            bytes.as_ptr().cast::<std::ffi::c_void>(),
+                            length.max(1),
+                            MTLResourceOptions::StorageModeShared,
+                        )
+                    }
+                    Backing::Output => {
+                        let buffer = device.new_buffer(
+                            placed.needed.max(1),
+                            MTLResourceOptions::StorageModeShared,
+                        );
+                        output = Some(buffer.clone());
+                        buffer
+                    }
+                    Backing::Internal => device
+                        .new_buffer(placed.needed.max(1), MTLResourceOptions::StorageModePrivate),
+                };
+                allocation_holds(position, placed.slot, placed.needed, &buffer)?;
+                slots.push(PlacedSlot {
+                    transport: placed.transport,
+                    offset: placed.offset,
+                    buffer,
+                });
+            }
+            planned.push(PlannedEntry {
+                pipeline: entry.pipeline,
+                slots,
+                grid_threads: entry.grid_threads,
+                threads_per_workgroup: entry.threads_per_workgroup,
+                skipped: entry.skipped,
+            });
+        }
+
+        self.output =
+            Some(output.expect("the pre-commit plan proved one slot binds the region's result"));
         self.planned = planned;
         Ok(())
     }
@@ -914,7 +1072,7 @@ impl RuntimeAdapter for MetalExecutor<'_> {
         let output = self
             .output
             .clone()
-            .expect("plan_dispatch bound the result before the route committed");
+            .expect("allocate_dispatch bound the result from the committed route");
         buffer::read_into(&output, self.request.result_mut());
 
         let completion = Completion {
@@ -965,79 +1123,52 @@ fn encode_entry(command_buffer: &CommandBufferRef, entry: &PlannedEntry) {
     encoder.end_encoding();
 }
 
-/// One allocation this planner made, and whether it is the region's result.
-struct Placed {
-    buffer: Buffer,
-    /// The one allocation the caller reads back out of.
-    is_result: bool,
-}
-
-/// Allocates and fills the storage one binding target needs.
+/// Decides which storage one binding target will take, acquiring none of it.
 ///
-/// The three targets are three different obligations, and the storage mode
-/// follows from which one it is rather than from a default. A program input and
-/// the region's result are host-visible because bytes cross the boundary in both
-/// directions; entry-internal storage never leaves the device, so it is private.
+/// The three placeable targets are three different obligations, and both of the
+/// refusals below are decidable from the target and the region's own handover
+/// alone — which is exactly why they belong on the pre-commit side of the seam
+/// rather than travelling with the allocation that used to make them.
 ///
 /// # Errors
 ///
 /// Returns [`RouteRefusal::UnsuppliedProgramInput`] for a named input this
-/// region did not hand over, [`RouteRefusal::UndersizedStorage`] when the device
-/// returns less than the route requires, and
-/// [`RouteRefusal::UnboundBindingTarget`] for a program output under a key that
-/// is not this region's result.
-fn allocate_for(
-    device: &Device,
+/// region did not hand over, and [`RouteRefusal::UnboundBindingTarget`] for a
+/// program output under a key that is not this region's result.
+fn backing_for(
     request: &RegionRequest<'_>,
     entry: usize,
     slot: usize,
-    needed: u64,
     target: BindingTarget<'_>,
-) -> Result<Placed, RouteRefusal> {
-    let (buffer, is_result) = match target {
-        // The caller's own operand, copied into device storage. Sized from the
-        // operand rather than from `needed`, so a binding addressing a window at
-        // a nonzero offset still has the bytes preceding it to address past.
+) -> Result<Backing, RouteRefusal> {
+    match target {
+        // The caller's own operand. Its presence is asked here so that a region
+        // that did not hand it over is refused while a fallback is permitted.
         BindingTarget::ProgramInput(key) => {
-            let bytes = request.operand(key.as_str()).ok_or_else(|| {
-                RouteRefusal::UnsuppliedProgramInput {
+            if request.operand(key.as_str()).is_none() {
+                return Err(RouteRefusal::UnsuppliedProgramInput {
                     entry,
                     key: key.as_str().to_owned(),
-                }
-            })?;
-            let length = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
-            let buffer = device.new_buffer_with_data(
-                bytes.as_ptr().cast::<std::ffi::c_void>(),
-                length.max(1),
-                MTLResourceOptions::StorageModeShared,
-            );
-            (buffer, false)
+                });
+            }
+            Ok(Backing::ProgramInput(key.as_str().to_owned()))
         }
-        // The region's result. Host-visible, because the bytes it holds are the
-        // ones the caller receives. Matched against the key the region declared
-        // its result under rather than accepted for any output: a plan
-        // publishing a value this region did not ask for is something to refuse,
-        // not something to read back.
+        // The region's result. Matched against the key the region declared its
+        // result under rather than accepted for any output: a plan publishing a
+        // value this region did not ask for is something to refuse, not
+        // something to read back.
         BindingTarget::ProgramOutput(keys)
             if keys.iter().any(|key| key.as_str() == request.result_key()) =>
         {
-            let buffer = device.new_buffer(needed.max(1), MTLResourceOptions::StorageModeShared);
-            (buffer, true)
+            Ok(Backing::Output)
         }
-        BindingTarget::Internal => {
-            let buffer = device.new_buffer(needed.max(1), MTLResourceOptions::StorageModePrivate);
-            (buffer, false)
-        }
-        other @ BindingTarget::ProgramOutput(_) => {
-            return Err(RouteRefusal::UnboundBindingTarget {
-                entry,
-                slot,
-                target: format!("{other:?}"),
-            });
-        }
-    };
-    allocation_holds(entry, slot, needed, &buffer)?;
-    Ok(Placed { buffer, is_result })
+        BindingTarget::Internal => Ok(Backing::Internal),
+        other @ BindingTarget::ProgramOutput(_) => Err(RouteRefusal::UnboundBindingTarget {
+            entry,
+            slot,
+            target: format!("{other:?}"),
+        }),
+    }
 }
 
 /// Returns the last byte one routed binding must be able to reach.
@@ -1062,20 +1193,24 @@ fn binding_fits(entry: usize, slot: usize, needed: u64, limit: u64) -> Result<()
     Ok(())
 }
 
-/// Whether an allocation the device returned reaches the length the route requires.
+/// Whether an allocation the device returned reaches the length the plan sized it for.
 ///
 /// Against the buffer's own report rather than against a number computed twice:
 /// every allocation is requested at the length the route states, so reaching
 /// this means the allocator did not honour a request it accepted.
+///
+/// Post-commit, because the allocation it inspects is — which is why it yields a
+/// [`DispatchFailure`]. There is no second route to take once the storage has
+/// been acquired, so this is a defect report rather than a routing input.
 fn allocation_holds(
     entry: usize,
     slot: usize,
     needed: u64,
     buffer: &Buffer,
-) -> Result<(), RouteRefusal> {
+) -> Result<(), DispatchFailure> {
     let held = buffer.length();
     if held < needed {
-        return Err(RouteRefusal::UndersizedStorage {
+        return Err(DispatchFailure::UndersizedStorage {
             entry,
             slot,
             needed,

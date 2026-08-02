@@ -1,11 +1,11 @@
 ---
 id: reconcile-the-pre-commit-allocation-seam-with-adr-0051
 title: Reconcile the pre-commit allocation seam with ADR 0051
-status: in-progress
+status: review
 priority: p2
 dependencies: []
-related: [re-audit-adr-implementation-status-after-the-runtime-and-metal-landings]
-scopes: [contracts/decisions, implementation/runtime, research/runtime]
+related: [re-audit-adr-implementation-status-after-the-runtime-and-metal-landings, stop-the-identity-join-producer-race]
+scopes: [contracts/decisions, implementation/runtime, research/runtime, implementation/frontend, implementation/candle]
 shared_scopes: [project/tickets]
 paths: []
 tags: [runtime, decisions, correctness]
@@ -52,3 +52,35 @@ Either the seam and the decision agree in code, or an accepted superseding decis
 **Tom chose candidate 1 at the live session on 2026-08-01, relayed here by the coordinator who witnessed it.** The elimination he was shown and endorsed: candidate 2 rests a compile-enforced invariant on a prose guarantee over every future adapter that nothing type-enforces; candidate 3 discards `allocation_holds`' observed-length evidence, and a predicted capacity is not an observed one. What survives: `plan_dispatch` splits into a pre-commit sizing-and-capacity check that allocates nothing, and a post-commit allocation step reached only from `RoutedDispatch`, whose failure is a `Failure` rather than a `Refusal`. The priced cost, accepted explicitly: a device that cannot hold the plan becomes terminal at that stage rather than recoverable, with pre-commit sizing against declared limits catching all but the allocator-rounding residue — and that residue failing loudly is a defect signal, not a routing input.
 
 **What remains Tom's despite the direction being decided:** `RuntimeAdapter` is a public boundary under ADR 0074 §7, so the exact split interface comes back as a concrete draft before acceptance. The Boundaries section above is unchanged — the resolution is a superseding-clause-free execution of the decision as written, so no new ADR is required; ADR 0051's `Implementation boundary` divergence entry is corrected to a directed-work entry when this lands.
+
+## Executed 2026-08-01 — the split seam, and the draft that goes to Tom
+
+**The interface, exactly as landed, is a draft and not an acceptance.** `RuntimeAdapter` gains one method and loses none; `plan_dispatch` keeps its name and signature and its contract narrows to sizing.
+
+```rust
+/// Sizes what the route will dispatch and checks its capacity, acquiring nothing.
+fn plan_dispatch(
+    &mut self,
+    context: &LiveExecutionContext,
+    preflight: &Preflight<'_>,
+) -> Result<(), Self::Refusal>;
+
+/// Acquires and binds the program storage the **committed** route dispatches.
+fn allocate_dispatch(
+    &mut self,
+    context: &LiveExecutionContext,
+    routed: &RoutedDispatch<'_>,
+) -> Result<(), Self::Failure>;
+```
+
+`AdapterRouteFailure` gains `Allocation(F)` between `Plan(R)` and `Dispatch(F)`; `fallback_permitted` answers `false` for `Allocation` and `Dispatch` and `true` for the rest, which makes the split exactly "carries `R`" versus "carries `F`". `route_with_adapter` calls `allocate_dispatch` on the line after `preflight.commit()`. No type in `crate::load` changed: `RoutedDispatch` already published `entries()` and `shared_allocations()`, which is everything an allocating stage needs.
+
+**Two naming decisions worth refusing rather than accepting silently.** `plan_dispatch` was *kept* rather than renamed, because "plan" never implied acquisition and the stage still plans — and because the compiler forces every implementor to add the new method anyway, so no adapter can carry the old contract forward unnoticed. No default body was given to `allocate_dispatch`, deliberately: a defaulted `Ok(())` would let an adapter ported from the old shape leave its allocation in the pre-commit stage silently, which is the exact defect this ticket closes. The cost is that every implementor is a build error until it decides where its allocation goes, which is the intended pressure.
+
+**What the pre-commit stage can still refuse**, enumerated so the priced cost is checkable: a binding whose offset and extent do not form an addressable range; a range larger than one allocation the bound context admits; a launch wider than the prepared pipeline admits; an empty launch the artifact does not permit skipping; a binding naming a program input the caller did not supply, or a target the consumer does not place; a route no slot of which binds the program output; and caller-supplied storage shorter than the route's published range — that last one because the caller's storage exists independently of the route, so comparing against it acquires nothing. What moved past the commit is exactly the allocation and the observed-length assertion over it.
+
+**Three implementors were split the same way and their observed-length assertions moved with the allocations they inspect:** `crates/tiler-runtime/tests/adapter_route`, `spikes/runtime/inline-dispatch`, and `prototypes/candle-metal-adapter`. In the last two, `UndersizedStorage` (and, for Candle, `Allocation`) moved from `RouteRefusal` to `DispatchFailure`.
+
+**Scopes added 2026-08-01, with the reason.** `implementation/frontend` for three `RuntimeAdapter` test doubles in `crates/tiler` that a required trait method necessarily breaks, and `implementation/candle` for `prototypes/candle-metal-adapter`, a workspace member the gate builds. Both edits are consequences of the trait change rather than separate work. `implementation/frontend` was held by the live `state-the-numerical-contract-in-the-region-grammar` at the time; file-level disjointness was verified against that worker's actual branch diff — `git diff --name-only 29a9680..tkt/state-the-numerical-contract-in-the-region-grammar -- crates/tiler/` reported nothing — and the three edits are additive method bodies inside `impl RuntimeAdapter` blocks, which a grammar ticket has no reason to touch. That check is a snapshot; integration should re-run it.
+
+**The sibling defect was fixed in passing** because it fired here and lives in this ticket's own scope: see [`stop-the-identity-join-producer-race`](stop-the-identity-join-producer-race.md), which carries the mechanism, the eliminated candidates, the measurement, and the one closing criterion that stays unmet.

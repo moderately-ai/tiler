@@ -56,8 +56,10 @@ pub enum Stage {
     PrepareEntries,
     /// One prepared entry's target property was reported.
     ObservePreparedEntry,
-    /// The dispatch was sized, allocated, and bound.
+    /// The dispatch was sized and its capacity checked, acquiring nothing.
     PlanDispatch,
+    /// The committed route's storage was allocated and bound.
+    AllocateDispatch,
     /// The committed route was encoded, run, and observed.
     Dispatch,
 }
@@ -68,11 +70,12 @@ pub enum Stage {
 /// prepared-entry property or requires a live-device row, so the loader has
 /// nothing to ask about. Both surrounding stages do appear, which is what ADR
 /// 0090 item 9 makes unskippable once a caller enters `prepare`.
-pub const COMPLETE_ROUTE: [Stage; 5] = [
+pub const COMPLETE_ROUTE: [Stage; 6] = [
     Stage::Bind,
     Stage::ValidatePayload,
     Stage::PrepareEntries,
     Stage::PlanDispatch,
+    Stage::AllocateDispatch,
     Stage::Dispatch,
 ];
 
@@ -82,6 +85,30 @@ struct Readback {
     allocation: usize,
     offset: usize,
     elements: usize,
+}
+
+/// Which storage one routed slot will be backed by, decided before the commit.
+///
+/// This suite's producer packages single-entry routes, so no slot is ever half
+/// of a shared pair here; the two cases are written out anyway, because "the
+/// caller supplied it" and "this adapter will acquire it" is the distinction
+/// that decides which side of the commit each one belongs on.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Backing {
+    /// The caller's own operand storage, which exists before the route does.
+    CallerInput,
+    /// Storage this adapter acquires for itself after the commit.
+    Fresh,
+}
+
+/// One routed slot sized against the route, with nothing acquired for it.
+#[derive(Clone, Copy, Debug)]
+struct SlotPlan {
+    offset: u64,
+    bytes: u64,
+    /// The byte the slot must reach, counted from the start of the allocation.
+    reach: u64,
+    backing: Backing,
 }
 
 /// What one completed dispatch yields.
@@ -164,6 +191,10 @@ pub struct ScalarHostAdapter {
     invocation_budget: u64,
     validated: Vec<ScalarEntry>,
     prepared: Vec<ScalarEntry>,
+    /// Per entry, per ABI slot, what the pre-commit plan decided.
+    plan: Vec<Vec<SlotPlan>>,
+    /// The entry and slot whose allocation the completion reads back from.
+    readback_slot: Option<(usize, usize)>,
     allocations: Vec<Vec<u8>>,
     placements: Vec<Vec<Placement>>,
     readback: Option<Readback>,
@@ -185,6 +216,8 @@ impl ScalarHostAdapter {
             invocation_budget: 64,
             validated: Vec::new(),
             prepared: Vec::new(),
+            plan: Vec::new(),
+            readback_slot: None,
             allocations: Vec::new(),
             placements: Vec::new(),
             readback: None,
@@ -294,9 +327,13 @@ impl RuntimeAdapter for ScalarHostAdapter {
         preflight: &Preflight<'_>,
     ) -> Result<(), Self::Refusal> {
         self.stages.push(Stage::PlanDispatch);
-        let mut allocations: Vec<Vec<u8>> = Vec::new();
-        let mut placements: Vec<Vec<Placement>> = Vec::new();
-        let mut readback = None;
+        // The caller's operand storage exists already, so its length is a fact
+        // about the route's inputs rather than about anything acquired for it —
+        // which is what keeps this comparison on the pre-commit side under ADR
+        // 0051, where refusing still permits another artifact.
+        let supplied = u64::try_from(self.input.len()).expect("a small fixture buffer");
+        let mut plan: Vec<Vec<SlotPlan>> = Vec::with_capacity(preflight.entries().len());
+        let mut readback_slot = None;
 
         for (position, entry) in preflight.entries().iter().enumerate() {
             let mut slots = Vec::with_capacity(entry.bindings().len());
@@ -308,37 +345,88 @@ impl RuntimeAdapter for ScalarHostAdapter {
                 // offset, and storage sized to the extent alone would be short by
                 // exactly that offset.
                 let reach = offset + bytes;
-                let allocation = if addresses_program_input(binding.binding().target()) {
-                    allocations.push(self.input.clone());
-                    allocations.len() - 1
+                let backing = if addresses_program_input(binding.binding().target()) {
+                    if supplied < reach {
+                        return Err(Refusal::UndersizedStorage {
+                            entry: position,
+                            slot: binding.slot(),
+                            required: reach,
+                            supplied,
+                        });
+                    }
+                    Backing::CallerInput
                 } else {
-                    allocations.push(vec![
-                        0_u8;
-                        usize::try_from(reach).expect("a small fixture range")
-                    ]);
-                    let index = allocations.len() - 1;
-                    readback = Some(Readback {
-                        allocation: index,
-                        offset: usize::try_from(offset).expect("a small fixture range"),
-                        elements: usize::try_from(bytes / 4)
-                            .expect("a small fixture element count"),
-                    });
-                    index
+                    readback_slot = Some((position, binding.slot()));
+                    Backing::Fresh
                 };
+                slots.push(SlotPlan {
+                    offset,
+                    bytes,
+                    reach,
+                    backing,
+                });
+            }
+            plan.push(slots);
+        }
+
+        self.plan = plan;
+        self.readback_slot = readback_slot;
+        Ok(())
+    }
+
+    fn allocate_dispatch(
+        &mut self,
+        _context: &LiveExecutionContext,
+        _routed: &RoutedDispatch<'_>,
+    ) -> Result<(), Self::Failure> {
+        self.stages.push(Stage::AllocateDispatch);
+        let mut allocations: Vec<Vec<u8>> = Vec::new();
+        let mut placements: Vec<Vec<Placement>> = Vec::with_capacity(self.plan.len());
+        let mut readback = None;
+
+        for position in 0..self.plan.len() {
+            let mut slots = Vec::with_capacity(self.plan[position].len());
+            for slot in 0..self.plan[position].len() {
+                let planned = self.plan[position][slot];
+                let allocation = match planned.backing {
+                    Backing::CallerInput => {
+                        allocations.push(self.input.clone());
+                        allocations.len() - 1
+                    }
+                    Backing::Fresh => {
+                        allocations.push(vec![
+                            0_u8;
+                            usize::try_from(planned.reach)
+                                .expect("a small fixture range")
+                        ]);
+                        allocations.len() - 1
+                    }
+                };
+                // The route has committed, so an allocation short of the length
+                // the plan sized it for is a defect to report rather than a
+                // reason to route elsewhere.
                 let held =
                     u64::try_from(allocations[allocation].len()).expect("a small fixture buffer");
-                if held < reach {
-                    return Err(Refusal::UndersizedStorage {
+                if held < planned.reach {
+                    return Err(ExecutionFault::UndersizedStorage {
                         entry: position,
-                        slot: binding.slot(),
-                        required: reach,
-                        supplied: held,
+                        slot,
+                        required: planned.reach,
+                        held,
+                    });
+                }
+                if self.readback_slot == Some((position, slot)) {
+                    readback = Some(Readback {
+                        allocation,
+                        offset: usize::try_from(planned.offset).expect("a small fixture range"),
+                        elements: usize::try_from(planned.bytes / 4)
+                            .expect("a small fixture element count"),
                     });
                 }
                 slots.push(Placement {
                     allocation,
-                    offset,
-                    bytes,
+                    offset: planned.offset,
+                    bytes: planned.bytes,
                 });
             }
             placements.push(slots);
