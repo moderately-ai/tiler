@@ -39,7 +39,12 @@ A decode-shaped program binding `C`, `T`, and `S` inconsistently is refused with
 **Fact — the exact draft surface.** `ExtentRelation` gains
 `AdditiveEquality { sum, left, right }` and the
 `ExtentRelation::additive_equality` constructor. The constructor canonicalizes
-the two addends because mathematical addition is commutative. A concrete
+the two addends because mathematical addition is commutative. The struct-like
+variant is `#[non_exhaustive]`, so an external caller may inspect it with a
+forward-compatible pattern but cannot construct it directly and must use the
+canonical helper. A compile-fail boundary test observes `E0639` for direct
+external construction, while its paired compile-pass test inspects all three
+fields with the required `..` pattern. A concrete
 mismatch returns the new typed
 `ConstraintConflict::AdditiveEqualityMismatch { relation, sum, addends }`, whose
 relation renders all three terms and whose numeric fields report both observed
@@ -82,11 +87,14 @@ general `ShapeExpr` work; it must not weaken the one-root-binding invariant.
 
 **Fact — canonical identity is append-only.** The one relation encoder writes a
 fresh exhaustive tag `0x06` followed by the sum and both canonicalized addends.
-Both authoritative storage constructors canonicalize the public enum variant,
-including a caller's direct `AdditiveEquality` construction, before relation
-sorting, deduplication, or encoding; the convenience constructor is not the
-only line of defence. A regression inserts both direct reversed and helper
-spellings, observes one stored constraint, and observes the same identity.
+The accepted public `const fn` constructors for `SemanticInputConstraint` and
+`VariantGuard` remain `const`. Their consumed-wrapper helpers are private, and
+`ShapeEnvBuilder::require` and `ShapeEnvBuilder::guard` invoke them at the
+authoritative ingestion boundary before declaration checking, storage, sorting,
+deduplication, or encoding. Internal regressions insert direct reversed and
+helper spellings for both constraints and guards, observing one stored wrapper
+in each case and the same constraint identity; downstream direct construction
+is structurally unavailable.
 Tags `0x01..=0x05` and every pre-existing relation byte remain unchanged, so
 `tiler.shape-env.v3` does not move: this admits bytes for a previously
 unrepresentable subject and re-encodes no old subject. No other relation encoder

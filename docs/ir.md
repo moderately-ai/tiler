@@ -868,6 +868,16 @@ more free terms it admits the relation only when the canonical lower-bound model
 already exhibits a solution; otherwise it refuses the set as outside the
 implemented fragment rather than reporting an unproved satisfiable result.
 
+**Fact — the implemented draft has one external construction path.** The
+struct-like `AdditiveEquality` variant is `#[non_exhaustive]`: downstream code
+may inspect its public fields with a forward-compatible pattern, but cannot
+construct the variant directly and must use `ExtentRelation::additive_equality`,
+which canonicalizes the two addends. The accepted `const` constructors for
+`SemanticInputConstraint` and `VariantGuard` remain `const`; the private
+`ShapeEnvBuilder::require` and `ShapeEnvBuilder::guard` ingestion boundaries
+canonicalize their consumed wrappers before declaration checking, storage,
+sorting, deduplication, and identity encoding.
+
 `C + T <= capacity` is stated without a second arithmetic form:
 `S == C + T` together with `capacity - S >= 0`. A direct three-addend equality
 is not implemented. Chaining two binary equalities through a fresh intermediate

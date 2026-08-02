@@ -700,6 +700,7 @@ impl ShapeEnvBuilder {
     /// names a symbol this draft has not declared. The check leaves the draft
     /// unchanged.
     pub fn require(&mut self, constraint: SemanticInputConstraint) -> Result<(), ShapeEnvError> {
+        let constraint = constraint.canonicalized();
         self.check_declared(constraint.relation())?;
         self.constraints.push(constraint);
         Ok(())
@@ -717,6 +718,7 @@ impl ShapeEnvBuilder {
     /// names a symbol this draft has not declared. The check leaves the draft
     /// unchanged.
     pub fn guard(&mut self, guard: VariantGuard) -> Result<(), ShapeEnvError> {
+        let guard = guard.canonicalized();
         self.check_declared(guard.relation())?;
         self.guards.push(guard);
         Ok(())
@@ -1071,6 +1073,18 @@ mod tests {
         ShapeEnvBuilder, ShapeEnvError, ShapeSymbol, SymbolScope, VariantGuard,
     };
     use crate::program::abi::{AvailabilityPhase, TargetPropertyKey};
+
+    #[test]
+    fn constraint_and_guard_wrapper_constructors_remain_const() {
+        const RELATION: ExtentRelation =
+            ExtentRelation::equal(ExtentTerm::Constant(1), ExtentTerm::Constant(1));
+        const CONSTRAINT: SemanticInputConstraint =
+            SemanticInputConstraint::new(RELATION, FactProvenance::FrontendRequired);
+        const GUARD: VariantGuard = VariantGuard::new(RELATION, GuardApplicability::Schedule);
+
+        assert_eq!(CONSTRAINT.relation(), &RELATION);
+        assert_eq!(GUARD.relation(), &RELATION);
+    }
 
     fn symbol(scope: &str, name: &str) -> ShapeSymbol {
         ShapeSymbol::new(SymbolScope::new(scope).unwrap(), name).unwrap()
@@ -1977,6 +1991,35 @@ mod tests {
             reversed.constraints().len(),
             1,
             "canonicalization precedes constraint sorting and deduplication",
+        );
+
+        let mut guarded = draft_over(&["n", "left", "right"]);
+        guarded
+            .guard(VariantGuard::new(
+                ExtentRelation::AdditiveEquality {
+                    sum: term("n"),
+                    left: term("right"),
+                    right: term("left"),
+                },
+                GuardApplicability::Schedule,
+            ))
+            .unwrap();
+        guarded
+            .guard(VariantGuard::new(
+                ExtentRelation::additive_equality(term("n"), term("left"), term("right")),
+                GuardApplicability::Schedule,
+            ))
+            .unwrap();
+        let guarded = guarded.build().unwrap();
+        assert_eq!(
+            guarded.guards().len(),
+            1,
+            "guard canonicalization precedes sorting and deduplication",
+        );
+        assert_eq!(
+            guarded.guards().next().unwrap().relation(),
+            &ExtentRelation::additive_equality(term("n"), term("left"), term("right")),
+            "the stored guard uses the same canonical relation as a constraint",
         );
     }
 

@@ -174,6 +174,12 @@ pub enum ExtentRelation {
     /// Fixed at two addends so admitting it does not turn [`ExtentTerm`] into a
     /// recursively nestable expression language. A longer sum needs its own
     /// governed relation rather than an unbound intermediate symbol.
+    ///
+    /// This variant is non-exhaustive so downstream callers can inspect it but
+    /// must construct it through [`Self::additive_equality`], which canonicalizes
+    /// the commutative addends. The private environment ingestion boundary also
+    /// canonicalizes wrappers constructed in this crate before storing them.
+    #[non_exhaustive]
     AdditiveEquality {
         /// The extent equal to the two-addend sum.
         sum: ExtentTerm,
@@ -442,13 +448,21 @@ pub struct SemanticInputConstraint {
 impl SemanticInputConstraint {
     /// Records one semantic input constraint with its provenance.
     ///
-    /// This is the authoritative storage boundary for a semantic relation, so
-    /// it canonicalizes even a directly constructed public enum variant.
+    /// This remains `const`; [`ShapeEnvBuilder::require`](crate::shape::ShapeEnvBuilder::require)
+    /// canonicalizes its relation at the private storage boundary.
     #[must_use]
-    pub fn new(relation: ExtentRelation, provenance: FactProvenance) -> Self {
+    pub const fn new(relation: ExtentRelation, provenance: FactProvenance) -> Self {
         Self {
-            relation: relation.canonicalized(),
+            relation,
             provenance,
+        }
+    }
+
+    /// Canonicalizes the relation as this wrapper enters environment storage.
+    pub(super) fn canonicalized(self) -> Self {
+        Self {
+            relation: self.relation.canonicalized(),
+            provenance: self.provenance,
         }
     }
 
@@ -505,13 +519,21 @@ pub struct VariantGuard {
 impl VariantGuard {
     /// Records one variant guard against the planning decision it qualifies.
     ///
-    /// This is the authoritative storage boundary for a guard relation, so it
-    /// canonicalizes even a directly constructed public enum variant.
+    /// This remains `const`; [`ShapeEnvBuilder::guard`](crate::shape::ShapeEnvBuilder::guard)
+    /// canonicalizes its relation at the private storage boundary.
     #[must_use]
-    pub fn new(relation: ExtentRelation, applicability: GuardApplicability) -> Self {
+    pub const fn new(relation: ExtentRelation, applicability: GuardApplicability) -> Self {
         Self {
-            relation: relation.canonicalized(),
+            relation,
             applicability,
+        }
+    }
+
+    /// Canonicalizes the relation as this wrapper enters environment storage.
+    pub(super) fn canonicalized(self) -> Self {
+        Self {
+            relation: self.relation.canonicalized(),
+            applicability: self.applicability,
         }
     }
 
