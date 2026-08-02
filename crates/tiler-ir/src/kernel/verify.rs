@@ -1117,12 +1117,19 @@ fn verify_reduction(
         // partials in ascending participant order. Both trip counts come from
         // the partition rather than from the access, for the reason a partial
         // pass's does — the access counts the whole sequence.
+        // The participant count is the tile's extent product, which is the same
+        // number of invocations whatever shape the space arranges them in: the
+        // fold this verifies is over staged partials, one per participant, and
+        // it is indifferent to the participant coordinate's rank.
         ReductionTopology::CooperativeWorkgroup {
             partition, tile, ..
         } => verify_cooperative_loops(
             walk,
             *partition,
-            tile.coordinates.participants.count,
+            tile.coordinates
+                .participants
+                .participants()
+                .ok_or(KernelDiagnostic::ElementCountOverflow)?,
             tile.rounds,
         ),
     }

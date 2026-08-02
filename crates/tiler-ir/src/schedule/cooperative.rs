@@ -26,13 +26,24 @@
 //!
 //! # Why the relations are stated per participant
 //!
-//! Every staged access is a [`StagedSpan`]: participant `l` addresses the
-//! contiguous run `stride * l + offset` of length `count`. That form is what
-//! makes disjointness and coverage *decidable by enumeration* rather than by a
-//! modular argument, and it covers both shapes a bounded tile needs — one slot
-//! per participant on the producing side (`stride = 1`, `count = 1`), and the
-//! whole staged set read by every participant on the consuming side
-//! (`stride = 0`, `count = participants`).
+//! The participants occupy a stated [`ParticipantSpace`] — per-dimension
+//! extents, slowest-varying first — and every staged access is a
+//! [`StagedSpan`]: the participant at coordinate `(l_0, .., l_{r-1})` addresses
+//! the contiguous run of `count` slots beginning at
+//! `offset + sum_d strides[d] * l_d`. That form is what makes disjointness and
+//! coverage *decidable by enumeration* rather than by a modular argument: the
+//! enumeration ranges over the Cartesian product of the extents, which is the
+//! same participant set a linear run walks, re-indexed rather than multiplied.
+//!
+//! One stride per dimension is strictly more general than naming one coordinate
+//! component and subsumes it — selecting component `d` is the stride vector that
+//! is zero everywhere but `d`. So the three shapes a bounded tile needs are one
+//! construct: one slot per participant on the producing side (rank one,
+//! `strides = [1]`, `count = 1`), the whole staged set read by every participant
+//! on the consuming side (rank one, `strides = [0]`, `count = participants`),
+//! and a blocked operand tile's transposed staged write (rank two,
+//! `strides = [1, 16]`, `count = 1`), whose profile no single-term relation over
+//! a linear coordinate can express.
 //!
 //! # Rounds, and why the lifetime is not a field
 //!
@@ -73,11 +84,24 @@
 //! reserved, and neither is the rewrite rule that used to be blamed for the
 //! depth: [`workgroup_tree_tile`] is the depth-two tree this profile states, and
 //! it is depth two because of the subset and the varying span, not because a
-//! slot may not be rewritten. Multi-dimensional local coordinates are likewise
-//! absent rather than reserved: [`LocalCoordinateSource`] names the one linear
-//! source the bounded profile can check, and widening it is an appended tag, not
-//! a reinterpretation of what a coordinate already means.
+//! slot may not be rewritten.
+//!
+//! The round ordinal is absent from the staging relation *deliberately*, and the
+//! omission is a decision rather than an oversight (ADR 0097 decision 4). A
+//! participant dimension indexes concurrent invocations — at one instant
+//! different participants hold different values of it — while the round ordinal
+//! indexes sequential iterations, at one instant identical across every
+//! participant. The occupancy map that decides disjointness and coverage spans
+//! the phase sequence once, which is exactly one round, and it is sound
+//! *because* a span is the same on every round; a round-dependent span would
+//! make per-round coverage a shrinking subset rather than a bijection, which is
+//! a different decision procedure and not a wider parameter for this one.
+//!
+//! A *strided* staged span is likewise absent: [`StagedSpan::count`] addresses
+//! contiguous slots, and the blocked tile's transposed write is what keeps its
+//! reads contiguous, so nothing needs the strided form yet.
 
+use super::MAX_COOPERATIVE_PARTICIPANT_RANK;
 use super::handles::{PhaseId, StagingId, SyncPointId};
 use super::synchronization::{
     ConvergenceEvidence, SynchronizationPlacement, SynchronizationPoint, required_subject,
@@ -215,7 +239,20 @@ impl StagedElement {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum LocalCoordinateSource {
     /// The linear index of one invocation within its own workgroup.
+    ///
+    /// Its relation to a multi-dimensional participant space is the row-major
+    /// decomposition against the extents, which is definitionally true: the
+    /// linear index *is* the linearization.
     LocalLinearInvocation,
+    /// The per-dimension position of one invocation within its own workgroup.
+    ///
+    /// The relation to [`Self::LocalLinearInvocation`] is defined and is the
+    /// row-major decomposition against the participant extents, which is what
+    /// separates this source from a subgroup-derived one: two vendor
+    /// specifications decline to fix any relation between a subgroup coordinate
+    /// and the linear index, so a source naming one may not claim this
+    /// decomposition and must be a variant of its own when it lands.
+    LocalWorkgroupPosition,
 }
 
 impl LocalCoordinateSource {
@@ -224,6 +261,7 @@ impl LocalCoordinateSource {
     pub const fn tag(self) -> u8 {
         match self {
             Self::LocalLinearInvocation => 0x01,
+            Self::LocalWorkgroupPosition => 0x02,
         }
     }
 }
@@ -258,29 +296,187 @@ impl ParticipantRange {
     }
 }
 
+/// The shape of one cooperative tile's participant space.
+///
+/// Extents are stated slowest-varying first, so a participant's linear index is
+/// the row-major linearization of its coordinate. The product is the participant
+/// count, and it is what the intrinsic verifier compares against the launched
+/// workgroup width — a first-class fact rather than a divisor embedded in an
+/// address expression, which is the difference between a wrong tile width being
+/// refused and one being admitted to emit a silently wrong broadcast.
+///
+/// # Why the extents are a fixed-rank inline array behind a constructor
+///
+/// [`MAX_COOPERATIVE_PARTICIPANT_RANK`] is a property of the domain rather than
+/// a tuning parameter: a threadgroup is at most three-dimensional on every
+/// target this repository names, and a fourth dimension would be a shape no
+/// launch could declare. An owned `Vec` would model an unbounded sequence the
+/// domain forbids, and would cost `Copy` on this type and on [`StagedSpan`],
+/// [`StagedWrite`], [`StagedRead`], and [`LocalCoordinates`] to express a
+/// generality that cannot exist.
+///
+/// The array and the rank are private because they are one fact stated in two
+/// places, and only [`Self::new`] can make them agree. It also zeroes the unused
+/// tail, which is what makes the derived [`Eq`] and [`Hash`] agree with the
+/// canonical identity encoding: the encoding frames the rank and the *used*
+/// extents only, so two spaces equal in meaning must not differ in a byte no
+/// encoder reads.
+///
+/// Raising the ceiling later is a one-constant edit plus an identity recompute
+/// rather than an API break, precisely because the array size sits behind the
+/// constructor.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ParticipantSpace {
+    /// Per-dimension extents, slowest-varying first, zero past `rank`.
+    extents: [u64; MAX_COOPERATIVE_PARTICIPANT_RANK],
+    /// Dimensions the space has, never above the array's length.
+    rank: usize,
+}
+
+impl ParticipantSpace {
+    /// Builds a participant space over `extents`, slowest-varying first.
+    ///
+    /// Returns `None` when the rank exceeds
+    /// [`MAX_COOPERATIVE_PARTICIPANT_RANK`], which is the one condition the
+    /// inline array makes unrepresentable rather than merely invalid. A zero
+    /// extent, an empty space, and an overflowing extent product are all
+    /// representable and are refused by the intrinsic verifier under
+    /// [`CooperativeTileRule::LocalCoordinates`](super::CooperativeTileRule::LocalCoordinates)
+    /// — a space is a *statement* a schedule makes, and a statement that cannot
+    /// be made cannot be refused with an explanation.
+    #[must_use]
+    pub fn new(extents: &[u64]) -> Option<Self> {
+        if extents.len() > MAX_COOPERATIVE_PARTICIPANT_RANK {
+            return None;
+        }
+        let mut stored = [0_u64; MAX_COOPERATIVE_PARTICIPANT_RANK];
+        stored[..extents.len()].copy_from_slice(extents);
+        Some(Self {
+            extents: stored,
+            rank: extents.len(),
+        })
+    }
+
+    /// Returns the per-dimension extents, slowest-varying first.
+    ///
+    /// The used prefix alone. The array's tail is an implementation detail of
+    /// the fixed-rank storage and is never part of what this space means.
+    #[must_use]
+    pub fn extents(&self) -> &[u64] {
+        &self.extents[..self.rank]
+    }
+
+    /// Returns the number of dimensions.
+    #[must_use]
+    pub const fn rank(&self) -> usize {
+        self.rank
+    }
+
+    /// Returns the number of participants, or `None` when the product overflows.
+    ///
+    /// The empty space's product is `1`, which is the arithmetic identity and
+    /// deliberately not a refusal here: a rank-zero space is a malformed
+    /// *statement*, which the intrinsic verifier names, rather than an
+    /// arithmetic failure this method could explain.
+    #[must_use]
+    pub fn participants(&self) -> Option<u64> {
+        self.extents()
+            .iter()
+            .try_fold(1_u64, |total, extent| total.checked_mul(*extent))
+    }
+}
+
 /// How one cooperative tile derives each participant's local coordinate.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct LocalCoordinates {
     /// Governed execution key the coordinate reads.
     pub source: LocalCoordinateSource,
-    /// Local coordinates the tile's participants occupy.
-    pub participants: ParticipantRange,
+    /// Shape of the space the tile's participants occupy.
+    ///
+    /// A space and not also a [`ParticipantRange`], because the run is what the
+    /// shape determines: its start is zero and its length is the extent
+    /// product, so a range beside this would be a second place to state one
+    /// fact and a place for two producers to disagree. A phase's reachable set,
+    /// a synchronization point's participant set, and the committing
+    /// participant *are* contiguous runs over the linearized space, because
+    /// each is a claim about which invocations reach a program point rather
+    /// than about the shape they are arranged in — which is why those three
+    /// keep [`ParticipantRange`] and this does not.
+    pub participants: ParticipantSpace,
 }
 
 /// The staging slots one participant addresses in one phase.
 ///
-/// Participant `l` addresses the `count` slots beginning at
-/// `stride * l + offset`. A `stride` of `1` with `count` of `1` gives each
-/// participant its own slot; a `stride` of `0` with `count` equal to the
-/// participant count has every participant read the whole staged set.
+/// The participant at coordinate `(l_0, .., l_{r-1})` addresses the `count`
+/// contiguous slots beginning at `offset + sum_d strides[d] * l_d`. One stride
+/// per participant dimension, in the same axis order as the tile's extents: a
+/// stride of `1` on the fastest-varying dimension and `0` elsewhere gives each
+/// participant of a row its own slot, and a stride of `0` on every dimension has
+/// every participant address one shared run.
+///
+/// A span whose stride count differs from the participant rank is refused by
+/// [`CooperativeTileRule::SpanRank`](super::CooperativeTileRule::SpanRank)
+/// rather than padded or truncated, because a well-formed span and a well-formed
+/// space that disagree about how many dimensions there are are not wrong on
+/// their own terms and silently repairing either would reinterpret what the
+/// other denotes.
+///
+/// The strides are private behind [`Self::new`] for the reason
+/// [`ParticipantSpace`]'s extents are, and this type keeps `Copy` for the same
+/// reason.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct StagedSpan {
-    /// Slots between the first slots of consecutive participants.
-    pub stride: u64,
-    /// First slot the participant at local coordinate zero addresses.
+    /// Slots between the first slots of participants adjacent along each
+    /// dimension, in axis order, zero past `rank`.
+    strides: [u64; MAX_COOPERATIVE_PARTICIPANT_RANK],
+    /// Dimensions the stride vector has, never above the array's length.
+    rank: usize,
+    /// First slot the participant at the origin addresses.
     pub offset: u64,
     /// Contiguous slots each participant addresses.
     pub count: u64,
+}
+
+impl StagedSpan {
+    /// Builds a staged span with one stride per participant dimension.
+    ///
+    /// Returns `None` when the stride count exceeds
+    /// [`MAX_COOPERATIVE_PARTICIPANT_RANK`]. A `count` of zero and a stride
+    /// vector whose rank disagrees with the tile's are both representable and
+    /// are refused by the intrinsic verifier, under
+    /// [`CooperativeTileRule::StagingCapacity`](super::CooperativeTileRule::StagingCapacity)
+    /// and
+    /// [`CooperativeTileRule::SpanRank`](super::CooperativeTileRule::SpanRank)
+    /// respectively — neither is a property of a span alone.
+    #[must_use]
+    pub fn new(strides: &[u64], offset: u64, count: u64) -> Option<Self> {
+        if strides.len() > MAX_COOPERATIVE_PARTICIPANT_RANK {
+            return None;
+        }
+        let mut stored = [0_u64; MAX_COOPERATIVE_PARTICIPANT_RANK];
+        stored[..strides.len()].copy_from_slice(strides);
+        Some(Self {
+            strides: stored,
+            rank: strides.len(),
+            offset,
+            count,
+        })
+    }
+
+    /// Returns the per-dimension strides, in the tile's own axis order.
+    ///
+    /// The used prefix alone, for the reason
+    /// [`ParticipantSpace::extents`] returns one.
+    #[must_use]
+    pub fn strides(&self) -> &[u64] {
+        &self.strides[..self.rank]
+    }
+
+    /// Returns the number of dimensions the stride vector states.
+    #[must_use]
+    pub const fn rank(&self) -> usize {
+        self.rank
+    }
 }
 
 /// One workgroup-shared staging allocation of a cooperative tile.
@@ -563,22 +759,47 @@ impl CooperativeTile {
         })
     }
 
-    /// Returns the slots one participant addresses through `span`, in order.
+    /// Returns the slots every participant addresses through `span`, in the
+    /// space's own row-major participant order.
     ///
-    /// `None` when any address exceeds `u64`; the verifier turns that into the
-    /// same capacity refusal an out-of-range slot receives, because both mean
-    /// the span leaves the allocation.
+    /// The walk ranges over the Cartesian product of the extents, which is the
+    /// same participant set a linear run walks — re-indexed, not multiplied — so
+    /// the governed participant and staging-slot bounds continue to bound it
+    /// exactly.
+    ///
+    /// `None` when the ranks disagree, when the participant count overflows, or
+    /// when any address exceeds `u64`. The caller separates the first from the
+    /// rest, because a rank disagreement is
+    /// [`CooperativeTileRule::SpanRank`](super::CooperativeTileRule::SpanRank)
+    /// while an unrepresentable address is the same capacity refusal an
+    /// out-of-range slot receives — both of the latter mean the span leaves the
+    /// allocation.
     pub(super) fn addressed_slots(
-        participants: ParticipantRange,
+        participants: ParticipantSpace,
         span: StagedSpan,
     ) -> Option<Vec<u64>> {
+        if participants.rank() != span.rank() {
+            return None;
+        }
+        let extents = participants.extents();
+        let strides = span.strides();
+        let count = participants.participants()?;
         let mut slots = Vec::new();
-        for local in 0..participants.count {
-            let local = participants.first.checked_add(local)?;
-            let base = span
-                .stride
-                .checked_mul(local)
-                .and_then(|scaled| scaled.checked_add(span.offset))?;
+        // The row-major decomposition of the linear participant index, which is
+        // the relation `LocalCoordinateSource` states: the last extent varies
+        // fastest, so the quotient chain runs from the end of the vector back.
+        for linear in 0..count {
+            let mut remaining = linear;
+            let mut base = span.offset;
+            for (extent, stride) in extents.iter().zip(strides).rev() {
+                // A zero extent makes the product zero, so this loop is not
+                // reached; the verifier refuses the space before the walk.
+                let coordinate = remaining % *extent;
+                remaining /= *extent;
+                base = stride
+                    .checked_mul(coordinate)
+                    .and_then(|scaled| base.checked_add(scaled))?;
+            }
             for step in 0..span.count {
                 slots.push(base.checked_add(step)?);
             }
@@ -615,7 +836,7 @@ impl CooperativeTile {
 /// A logarithmic tree narrows the *writing* lanes at every round and halves the
 /// span each level addresses, and this vocabulary can state neither. A
 /// [`StagedSpan`] is addressed by every participant of the tile — the slot
-/// enumeration runs over the tile's whole participant range, not over a
+/// enumeration runs over the tile's whole participant space, not over a
 /// per-access subset — so every write phase writes exactly `participants *
 /// count` slots however few lanes are meant to be doing useful work, and the
 /// same span is addressed on every round because a span carries no dependence on
@@ -636,7 +857,7 @@ impl CooperativeTile {
 /// values it reads back itself, which the synchronization authority refuses as
 /// the semantically redundant barrier — or above
 /// [`MAX_COOPERATIVE_PARTICIPANTS`](super::MAX_COOPERATIVE_PARTICIPANTS), or
-/// when the participant range does not fit the tile's ordinal space.
+/// when the participant run does not fit the tile's ordinal space.
 #[must_use]
 pub fn workgroup_tree_tile(participants: u64) -> Option<CooperativeTile> {
     if !(2..=super::MAX_COOPERATIVE_PARTICIPANTS).contains(&participants) {
@@ -647,13 +868,18 @@ pub fn workgroup_tree_tile(participants: u64) -> Option<CooperativeTile> {
         count: participants,
     };
     range.end()?;
+    // Rank one, so the tile's participant coordinate *is* its linear index and
+    // the space states nothing the range did not. The tree is a linear
+    // construct; the rank-general relation is what a blocked operand tile needs,
+    // and nothing here pretends this fold has a second dimension.
+    let space = ParticipantSpace::new(&[participants])?;
     let staging = StagingId::FIRST;
     let produce = PhaseId::FIRST;
     let consume = PhaseId::new(1);
     let tile = CooperativeTile {
         coordinates: LocalCoordinates {
             source: LocalCoordinateSource::LocalLinearInvocation,
-            participants: range,
+            participants: space,
         },
         // One pass over the phases. The tree stages each participant's partial
         // once and reads the set back once, so no slot is ever rewritten and the
@@ -673,11 +899,7 @@ pub fn workgroup_tree_tile(participants: u64) -> Option<CooperativeTile> {
                 writes: vec![StagedWrite {
                     staging,
                     // One slot per participant: participant `l` writes slot `l`.
-                    span: StagedSpan {
-                        stride: 1,
-                        offset: 0,
-                        count: 1,
-                    },
+                    span: StagedSpan::new(&[1], 0, 1)?,
                 }],
                 reads: Vec::new(),
             },
@@ -689,11 +911,7 @@ pub fn workgroup_tree_tile(participants: u64) -> Option<CooperativeTile> {
                     staging,
                     // The whole staged set, which is what makes the combining
                     // level's fan-in the participant count.
-                    span: StagedSpan {
-                        stride: 0,
-                        offset: 0,
-                        count: participants,
-                    },
+                    span: StagedSpan::new(&[0], 0, participants)?,
                 }],
             },
         ],

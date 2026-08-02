@@ -97,6 +97,8 @@ inputs were untouched by it and the value moved with work landed between the two
 commits. Re-running this spike is what detects such drift, which is the trade
 [AGENTS.md](../../../AGENTS.md) records for keeping a cited transcript.
 
+**Measurement — 2026-08-02: the entry symbol moved again at the `tiler.schedule.v4` to `v5` step, and it is `tiler_kernel_a0f16709d95528ca`.** Observed by `cargo run --release` from this directory on the host in the table above, under [`implement-the-two-dimensional-staging-relation-and-step-the-schedule-domain-to-v5`](../../../tickets/implement-the-two-dimensional-staging-relation-and-step-the-schedule-domain-to-v5.md); the run exited `0` and its oracle passed. The transcript below is **not** rewritten and is not stale in the sense a pinned identity would be: this region carries no cooperative tile, so nothing about the program changed and only the eighteen domain-separator bytes did, through the fold. Every other line of the transcript — object length `3859`, four bindings, launch `4×1`, and all three handover value tables — reproduced byte for byte. This line exists because lines 90-91 above track the symbol *across commits* by hand and no gate checks that tracking, so the pin would otherwise have gone silently stale at `v5`.
+
 ```
 device: Apple M4 Max
 mode: sound

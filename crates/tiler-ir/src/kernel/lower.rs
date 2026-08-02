@@ -304,13 +304,22 @@ fn cooperative_plan(
     if write.staging != staging.id || read.staging != staging.id {
         return Err(shape);
     }
-    let participants = tile.coordinates.participants.count;
+    let participants = tile.coordinates.participants.participants().ok_or(shape)?;
+    // A rank-one participant space, so the participant coordinate *is* the
+    // linear local index this body reads. A tile arranged in two or three
+    // dimensions is a tile this emission has no body for — it would need to read
+    // a per-dimension position and reconstruct the address sum — and it is
+    // refused here by the destructuring rather than lowered against a coordinate
+    // the emitted kernel never computes.
+    let ([produce_stride], [consume_stride]) = (write.span.strides(), read.span.strides()) else {
+        return Err(shape);
+    };
     // One slot per participant on the producing side, and the whole staged set
     // read by the committing participant on the consuming side. Any other span
     // needs an addressing form this emission does not have.
     if write.span.count != 1
-        || write.span.stride == 0
-        || read.span.stride != 0
+        || *produce_stride == 0
+        || *consume_stride != 0
         || read.span.count != participants
     {
         return Err(shape);
@@ -358,7 +367,7 @@ fn cooperative_plan(
         slots: staging.slots,
         produce_phase: produce.id,
         consume_phase: consume.id,
-        produce_stride: write.span.stride,
+        produce_stride: *produce_stride,
         produce_offset: write.span.offset,
         consume_offset: read.span.offset,
         barrier,

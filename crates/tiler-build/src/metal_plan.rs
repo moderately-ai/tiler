@@ -832,14 +832,19 @@ mod tests {
     /// a cache entry published against a contract vocabulary that no longer
     /// exists must miss rather than match.
     ///
+    /// **Both moved again at `tiler.schedule.v5`, which widened the cooperative
+    /// staging relation to two dimensions.** This program carries no cooperative
+    /// tile either, so its identity moves for the eighteen separator bytes alone
+    /// — the same fold, and the same cost a domain separator has.
+    ///
     /// The values are recorded rather than written in because a sibling branch
     /// may move the same two pins from its own base, and two branch-local
     /// rebaselines cannot compose: a pinned identity is recomputed on the tree
     /// the step lands into, never taken from either side. Observed on this branch:
     /// `ARTIFACT_IDENTITY`
-    /// `4e91bfbe59072c3e501f191b086b838e24f37f3bdbfb5b58af54e8467addaa9a`,
+    /// `3daf11256423c683a75f6aeb6b1e3578b1425d46e0899664ab5df156ca600db6`,
     /// `CACHE_SUBJECT`
-    /// `2a192388f39a85842c08e7759be23abfb06e7bae246662d762dbc3fe7fdfad80`.
+    /// `0d09c0da9db85c70bb2270cbed3a67859b7718b07c605c45ca5d1a9f6adfa905`.
     /// Regenerate on the merged tree with:
     ///
     /// ```text
@@ -855,9 +860,9 @@ mod tests {
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
         const ARTIFACT_IDENTITY: &str =
-            "4e91bfbe59072c3e501f191b086b838e24f37f3bdbfb5b58af54e8467addaa9a";
+            "3daf11256423c683a75f6aeb6b1e3578b1425d46e0899664ab5df156ca600db6";
         const CACHE_SUBJECT: &str =
-            "2a192388f39a85842c08e7759be23abfb06e7bae246662d762dbc3fe7fdfad80";
+            "0d09c0da9db85c70bb2270cbed3a67859b7718b07c605c45ca5d1a9f6adfa905";
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));
