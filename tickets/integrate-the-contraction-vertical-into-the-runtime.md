@@ -1,7 +1,7 @@
 ---
 id: integrate-the-contraction-vertical-into-the-runtime
 title: Run one profile contraction end to end through the AOT and runtime route
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [design-attention-program-vertical, prototype-metal-runtime-proof, prototype-metal-aot-slice, realize-the-tiled-contraction-schedule-and-its-metal-emission]
@@ -9,6 +9,9 @@ scopes: [implementation/runtime, implementation/metal-aot, implementation/artifa
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, runtime, artifacts, contraction, language-model]
+claimed_from: todo
+assignee: agent-contraction-vertical
+lease_expires_at: 1785690538
 ---
 ## User-visible outcome
 
