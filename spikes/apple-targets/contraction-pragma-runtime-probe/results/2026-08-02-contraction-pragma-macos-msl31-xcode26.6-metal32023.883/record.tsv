@@ -1,0 +1,214 @@
+schema	tiler.apple-contraction-pragma-runtime/v1
+probe.question	whether a source-level contraction pragma survives newLibraryWithSource to the Metal runtime compiler, measured against an unperturbed neighbour that must still fuse
+probe.profile	contraction-pragma-macos-msl31
+probe.repository_base_revision	29a968000c9b38838992d67855381cbe11b8222e
+probe.harness_sha256	c125c671f52b05eb8e50a199216ca71ac44c0c3f8496664ec86f5260047b2ae3
+probe.numerical_harness_sha256	e7b831d61024efcad712bce1495c0f2d078ef9ac766308e20d4a424e2d547d04
+probe.host_source_sha256	31a3e02f6cba8628006e5d0f84e51890d2e00d98259f842432278b78f4bc4ee6
+probe.entry_point	tiler_probe
+probe.family	macos
+probe.msl_version	metal3.1
+probe.pragma_text	#pragma METAL fp contract(off)
+probe.pragma_anchor	using namespace metal;
+probe.pragma_insertion	exactly one line, 31 bytes including its newline, inserted immediately after the single anchor line; every other byte of the control source is unchanged
+probe.control_requirement	every control cell must return fused with an executed witness
+probe.offline_companion_flags	-target air64-apple-macos13.0 -std=metal3.1 -O2 -fmetal-math-mode=<mode> -fmetal-math-fp32-functions=precise -ffp-contract=fast -Wall -Werror -S -emit-llvm
+probe.offline_companion_scope	offline evidence that the pragma is live in this spelling and placement; never evidence about the runtime compiler
+probe.runtime_math_modes	relaxed fast
+probe.runtime_optimizations	default size
+probe.runtime_fixed_options	lang=3.1,fpfun=precise
+probe.runtime_guard_layer	execution-witness only; newLibraryWithSource returns an opaque MTLLibrary and no emitted module can be read
+probe.runtime_diagnostic_channel	unobserved on success: the dispatch host reads newLibraryWithSource's error only when the library is nil, so a warning-free runtime acceptance is not established here
+probe.kernels	contraction_pair_bf16 contraction_pair contraction_pair_f16
+probe.operands.bf16	0001 0040 007f 0080 8040 8000 3eab 3f80
+probe.operands.f32	00000001 00400000 007fffff 00800000 80400000 80000000 3eb97ef9 3f800000
+probe.operands.f16	0001 0200 03ff 0400 8200 8000 3555 3c00
+probe.candidate.contraction_pair_bf16.dtype	bf16
+probe.candidate.contraction_pair_bf16.scale	3fbe
+probe.candidate.contraction_pair_bf16.bias	3f80
+probe.candidate.contraction_pair_bf16.discriminating_operand	3eab
+probe.candidate.contraction_pair_bf16.unfused	3fc0
+probe.candidate.contraction_pair_bf16.fused	3fbf
+probe.candidate.contraction_pair_bf16.witness_operand	3f80
+probe.candidate.contraction_pair_bf16.witness_executed	401f
+probe.candidate.contraction_pair_bf16.witness_deleted	3f80
+probe.candidate.contraction_pair.dtype	f32
+probe.candidate.contraction_pair.scale	3fc00000
+probe.candidate.contraction_pair.bias	3f800000
+probe.candidate.contraction_pair.discriminating_operand	3eb97ef9
+probe.candidate.contraction_pair.unfused	3fc58f9e
+probe.candidate.contraction_pair.fused	3fc58f9d
+probe.candidate.contraction_pair.witness_operand	3f800000
+probe.candidate.contraction_pair.witness_executed	40200000
+probe.candidate.contraction_pair.witness_deleted	3f800000
+probe.candidate.contraction_pair_f16.dtype	f16
+probe.candidate.contraction_pair_f16.scale	3e02
+probe.candidate.contraction_pair_f16.bias	3c00
+probe.candidate.contraction_pair_f16.discriminating_operand	3555
+probe.candidate.contraction_pair_f16.unfused	3e00
+probe.candidate.contraction_pair_f16.fused	3e01
+probe.candidate.contraction_pair_f16.witness_operand	3c00
+probe.candidate.contraction_pair_f16.witness_executed	4101
+probe.candidate.contraction_pair_f16.witness_deleted	3c00
+environment.date_utc	2026-08-02T00:54:06Z
+environment.os_version	27.0
+environment.os_build	26A5388g
+environment.machine	arm64
+environment.xcode	Xcode 26.6 Build version 17F113
+environment.metal_platform	MetalPlatform::MacOs
+environment.sdk	macosx
+environment.sdk_version	26.5
+environment.sdk_build	25F70
+environment.requested_target	air64-apple-macos13.0
+environment.metal_version	Apple metal version 32023.883 (metalfe-32023.883)
+environment.metallib_version	AIR-LLD 32023.883 (metalfe-32023.883) (compatible with legacy metallib linker)
+environment.execution	macos-host-gpu
+environment.device	Apple M4 Max
+environment.device_registry_id	4294968452
+environment.device_apple9	supported
+environment.runtime_compiler_build	metalfe-32023.921
+environment.runtime_compiler_image.0	/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/32023/Libraries/libGPUCompilerUtils.dylib
+environment.runtime_compiler_image.1	/System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/32023/Libraries/libllvm-flatbuffers.dylib
+source.contraction_pair_bf16.control.sha256	3a8c9649942ef88ca41367088299248d5a76d0488b9633593d89b90a0eff9728
+source.contraction_pair_bf16.pragma.sha256	d2f8958278c186a448c2dbaa98a8bd139c2839a7f6adb1ce635626e366a9bd8e
+source.contraction_pair.control.sha256	5b4a39ca06bb3e0f5684fd9220d90bf7712fe2f27b1d13c70d028b7706c07dde
+source.contraction_pair.pragma.sha256	7e27cde2cb633b7a44e9bab479f17b05c690d041ed69b03342f2ffd8ca1c8667
+source.contraction_pair_f16.control.sha256	c11b082727e55ed6146aaaab54a3812764048d402825a53d4106de5b2195b039
+source.contraction_pair_f16.pragma.sha256	cd05411c079d72fbf81924fd41dbcdb0e843a9a4c87090ab4c57afa67c2c1b4b
+offline.contraction_pair.fast.control.float_operations	fmul[fast] fadd[fast]
+offline.contraction_pair.fast.control.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+offline.contraction_pair.fast.control.diagnostics	none
+offline.contraction_pair.fast.pragma.float_operations	fmul[reassoc nnan ninf nsz arcp afn] fadd[reassoc nnan ninf nsz arcp afn]
+offline.contraction_pair.fast.pragma.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+offline.contraction_pair.fast.pragma.diagnostics	none
+offline.contraction_pair.relaxed.control.float_operations	fmul[reassoc nsz arcp contract afn] fadd[reassoc nsz arcp contract afn]
+offline.contraction_pair.relaxed.control.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+offline.contraction_pair.relaxed.control.diagnostics	none
+offline.contraction_pair.relaxed.pragma.float_operations	fmul[reassoc nsz arcp afn] fadd[reassoc nsz arcp afn]
+offline.contraction_pair.relaxed.pragma.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+offline.contraction_pair.relaxed.pragma.diagnostics	none
+offline.contraction_pair_bf16.fast.control.float_operations	fmul[fast] fadd[fast]
+offline.contraction_pair_bf16.fast.control.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+offline.contraction_pair_bf16.fast.control.diagnostics	none
+offline.contraction_pair_bf16.fast.pragma.float_operations	fmul[reassoc nnan ninf nsz arcp afn] fadd[reassoc nnan ninf nsz arcp afn]
+offline.contraction_pair_bf16.fast.pragma.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+offline.contraction_pair_bf16.fast.pragma.diagnostics	none
+offline.contraction_pair_bf16.relaxed.control.float_operations	fmul[reassoc nsz arcp contract afn] fadd[reassoc nsz arcp contract afn]
+offline.contraction_pair_bf16.relaxed.control.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+offline.contraction_pair_bf16.relaxed.control.diagnostics	none
+offline.contraction_pair_bf16.relaxed.pragma.float_operations	fmul[reassoc nsz arcp afn] fadd[reassoc nsz arcp afn]
+offline.contraction_pair_bf16.relaxed.pragma.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+offline.contraction_pair_bf16.relaxed.pragma.diagnostics	none
+offline.contraction_pair_f16.fast.control.float_operations	fmul[fast] fadd[fast]
+offline.contraction_pair_f16.fast.control.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+offline.contraction_pair_f16.fast.control.diagnostics	none
+offline.contraction_pair_f16.fast.pragma.float_operations	fmul[reassoc nnan ninf nsz arcp afn] fadd[reassoc nnan ninf nsz arcp afn]
+offline.contraction_pair_f16.fast.pragma.compile_options	air.compile.denorms_disable air.compile.fast_math_enable air.compile.framebuffer_fetch_enable
+offline.contraction_pair_f16.fast.pragma.diagnostics	none
+offline.contraction_pair_f16.relaxed.control.float_operations	fmul[reassoc nsz arcp contract afn] fadd[reassoc nsz arcp contract afn]
+offline.contraction_pair_f16.relaxed.control.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+offline.contraction_pair_f16.relaxed.control.diagnostics	none
+offline.contraction_pair_f16.relaxed.pragma.float_operations	fmul[reassoc nsz arcp afn] fadd[reassoc nsz arcp afn]
+offline.contraction_pair_f16.relaxed.pragma.compile_options	air.compile.denorms_disable air.compile.fast_math_disable air.compile.framebuffer_fetch_enable
+offline.contraction_pair_f16.relaxed.pragma.diagnostics	none
+case.contraction_pair_bf16.relaxed.opt-default.control.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.contraction_pair_bf16.relaxed.opt-default.control.results	3f80 3f80 3f80 3f80 3f80 3f80 3fbf 401f
+case.contraction_pair_bf16.relaxed.opt-default.control.witness	executed
+case.contraction_pair_bf16.relaxed.opt-default.control.verdict	fused
+case.contraction_pair_bf16.relaxed.opt-default.pragma.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.contraction_pair_bf16.relaxed.opt-default.pragma.results	3f80 3f80 3f80 3f80 3f80 3f80 3fc0 401f
+case.contraction_pair_bf16.relaxed.opt-default.pragma.witness	executed
+case.contraction_pair_bf16.relaxed.opt-default.pragma.verdict	unfused
+case.contraction_pair_bf16.relaxed.opt-size.control.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.contraction_pair_bf16.relaxed.opt-size.control.results	3f80 3f80 3f80 3f80 3f80 3f80 3fbf 401f
+case.contraction_pair_bf16.relaxed.opt-size.control.witness	executed
+case.contraction_pair_bf16.relaxed.opt-size.control.verdict	fused
+case.contraction_pair_bf16.relaxed.opt-size.pragma.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.contraction_pair_bf16.relaxed.opt-size.pragma.results	3f80 3f80 3f80 3f80 3f80 3f80 3fc0 401f
+case.contraction_pair_bf16.relaxed.opt-size.pragma.witness	executed
+case.contraction_pair_bf16.relaxed.opt-size.pragma.verdict	unfused
+case.contraction_pair_bf16.fast.opt-default.control.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.contraction_pair_bf16.fast.opt-default.control.results	3f80 3f80 3f80 3f80 3f80 3f80 3fbf 401f
+case.contraction_pair_bf16.fast.opt-default.control.witness	executed
+case.contraction_pair_bf16.fast.opt-default.control.verdict	fused
+case.contraction_pair_bf16.fast.opt-default.pragma.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.contraction_pair_bf16.fast.opt-default.pragma.results	3f80 3f80 3f80 3f80 3f80 3f80 3fc0 401f
+case.contraction_pair_bf16.fast.opt-default.pragma.witness	executed
+case.contraction_pair_bf16.fast.opt-default.pragma.verdict	unfused
+case.contraction_pair_bf16.fast.opt-size.control.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.contraction_pair_bf16.fast.opt-size.control.results	3f80 3f80 3f80 3f80 3f80 3f80 3fbf 401f
+case.contraction_pair_bf16.fast.opt-size.control.witness	executed
+case.contraction_pair_bf16.fast.opt-size.control.verdict	fused
+case.contraction_pair_bf16.fast.opt-size.pragma.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.contraction_pair_bf16.fast.opt-size.pragma.results	3f80 3f80 3f80 3f80 3f80 3f80 3fc0 401f
+case.contraction_pair_bf16.fast.opt-size.pragma.witness	executed
+case.contraction_pair_bf16.fast.opt-size.pragma.verdict	unfused
+case.contraction_pair.relaxed.opt-default.control.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.contraction_pair.relaxed.opt-default.control.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9d 40200000
+case.contraction_pair.relaxed.opt-default.control.witness	executed
+case.contraction_pair.relaxed.opt-default.control.verdict	fused
+case.contraction_pair.relaxed.opt-default.pragma.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.contraction_pair.relaxed.opt-default.pragma.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
+case.contraction_pair.relaxed.opt-default.pragma.witness	executed
+case.contraction_pair.relaxed.opt-default.pragma.verdict	unfused
+case.contraction_pair.relaxed.opt-size.control.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.contraction_pair.relaxed.opt-size.control.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9d 40200000
+case.contraction_pair.relaxed.opt-size.control.witness	executed
+case.contraction_pair.relaxed.opt-size.control.verdict	fused
+case.contraction_pair.relaxed.opt-size.pragma.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.contraction_pair.relaxed.opt-size.pragma.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
+case.contraction_pair.relaxed.opt-size.pragma.witness	executed
+case.contraction_pair.relaxed.opt-size.pragma.verdict	unfused
+case.contraction_pair.fast.opt-default.control.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.contraction_pair.fast.opt-default.control.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9d 40200000
+case.contraction_pair.fast.opt-default.control.witness	executed
+case.contraction_pair.fast.opt-default.control.verdict	fused
+case.contraction_pair.fast.opt-default.pragma.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.contraction_pair.fast.opt-default.pragma.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
+case.contraction_pair.fast.opt-default.pragma.witness	executed
+case.contraction_pair.fast.opt-default.pragma.verdict	unfused
+case.contraction_pair.fast.opt-size.control.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.contraction_pair.fast.opt-size.control.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9d 40200000
+case.contraction_pair.fast.opt-size.control.witness	executed
+case.contraction_pair.fast.opt-size.control.verdict	fused
+case.contraction_pair.fast.opt-size.pragma.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.contraction_pair.fast.opt-size.pragma.results	3f800000 3f800000 3f800000 3f800000 3f800000 3f800000 3fc58f9e 40200000
+case.contraction_pair.fast.opt-size.pragma.witness	executed
+case.contraction_pair.fast.opt-size.pragma.verdict	unfused
+case.contraction_pair_f16.relaxed.opt-default.control.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.contraction_pair_f16.relaxed.opt-default.control.results	3c00 3c00 3c00 3c00 3c00 3c00 3e01 4101
+case.contraction_pair_f16.relaxed.opt-default.control.witness	executed
+case.contraction_pair_f16.relaxed.opt-default.control.verdict	fused
+case.contraction_pair_f16.relaxed.opt-default.pragma.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=default
+case.contraction_pair_f16.relaxed.opt-default.pragma.results	3c00 3c00 3c00 3c00 3c00 3c00 3e00 4101
+case.contraction_pair_f16.relaxed.opt-default.pragma.witness	executed
+case.contraction_pair_f16.relaxed.opt-default.pragma.verdict	unfused
+case.contraction_pair_f16.relaxed.opt-size.control.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.contraction_pair_f16.relaxed.opt-size.control.results	3c00 3c00 3c00 3c00 3c00 3c00 3e01 4101
+case.contraction_pair_f16.relaxed.opt-size.control.witness	executed
+case.contraction_pair_f16.relaxed.opt-size.control.verdict	fused
+case.contraction_pair_f16.relaxed.opt-size.pragma.applied_options	math=relaxed,fpfun=precise,lang=3.1,opt=size
+case.contraction_pair_f16.relaxed.opt-size.pragma.results	3c00 3c00 3c00 3c00 3c00 3c00 3e00 4101
+case.contraction_pair_f16.relaxed.opt-size.pragma.witness	executed
+case.contraction_pair_f16.relaxed.opt-size.pragma.verdict	unfused
+case.contraction_pair_f16.fast.opt-default.control.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.contraction_pair_f16.fast.opt-default.control.results	3c00 3c00 3c00 3c00 3c00 3c00 3e01 4101
+case.contraction_pair_f16.fast.opt-default.control.witness	executed
+case.contraction_pair_f16.fast.opt-default.control.verdict	fused
+case.contraction_pair_f16.fast.opt-default.pragma.applied_options	math=fast,fpfun=precise,lang=3.1,opt=default
+case.contraction_pair_f16.fast.opt-default.pragma.results	3c00 3c00 3c00 3c00 3c00 3c00 3e00 4101
+case.contraction_pair_f16.fast.opt-default.pragma.witness	executed
+case.contraction_pair_f16.fast.opt-default.pragma.verdict	unfused
+case.contraction_pair_f16.fast.opt-size.control.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.contraction_pair_f16.fast.opt-size.control.results	3c00 3c00 3c00 3c00 3c00 3c00 3e01 4101
+case.contraction_pair_f16.fast.opt-size.control.witness	executed
+case.contraction_pair_f16.fast.opt-size.control.verdict	fused
+case.contraction_pair_f16.fast.opt-size.pragma.applied_options	math=fast,fpfun=precise,lang=3.1,opt=size
+case.contraction_pair_f16.fast.opt-size.pragma.results	3c00 3c00 3c00 3c00 3c00 3c00 3e00 4101
+case.contraction_pair_f16.fast.opt-size.pragma.witness	executed
+case.contraction_pair_f16.fast.opt-size.pragma.verdict	unfused
+summary.cells	12
+summary.control_fused	12
+summary.pragma_unfused	12
+summary.pragma_fused	0
+summary.pragma_other	0

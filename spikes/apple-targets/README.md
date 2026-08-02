@@ -8,14 +8,14 @@ experiment_status: "reproducible"
 implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement"]
 supports: ["tiler.research.apple-targets.compatibility", "tiler.research.apple-targets.numerical-behaviour"]
-entrypoints: ["spikes/apple-targets/compatibility_probe.sh", "spikes/apple-targets/runtime_failure_probe.swift", "spikes/apple-targets/validate_compatibility_record.py", "spikes/apple-targets/replay_retained_compatibility_record.sh", "spikes/apple-targets/validate_numerical_record.py", "spikes/apple-targets/test_probes.py", "spikes/apple-targets/numerical_probe.py", "spikes/apple-targets/numerical_probe_host.m", "spikes/apple-targets/test_numerical_probe.py", "spikes/apple-targets/bfloat_dispatch_probe.py", "spikes/apple-targets/aot-runtime-compiler-observer/run.sh", "spikes/apple-targets/code-domain-integer-decode/decode_probe.py", "spikes/apple-targets/code-domain-integer-decode/decode_probe_host.m", "spikes/apple-targets/code-domain-integer-decode/validate_decode_record.py", "spikes/apple-targets/code-domain-integer-decode/test_decode_probe.py"]
-last_verified: "2026-07-31"
+entrypoints: ["spikes/apple-targets/compatibility_probe.sh", "spikes/apple-targets/runtime_failure_probe.swift", "spikes/apple-targets/validate_compatibility_record.py", "spikes/apple-targets/replay_retained_compatibility_record.sh", "spikes/apple-targets/validate_numerical_record.py", "spikes/apple-targets/test_probes.py", "spikes/apple-targets/numerical_probe.py", "spikes/apple-targets/numerical_probe_host.m", "spikes/apple-targets/test_numerical_probe.py", "spikes/apple-targets/bfloat_dispatch_probe.py", "spikes/apple-targets/aot-runtime-compiler-observer/run.sh", "spikes/apple-targets/code-domain-integer-decode/decode_probe.py", "spikes/apple-targets/code-domain-integer-decode/decode_probe_host.m", "spikes/apple-targets/code-domain-integer-decode/validate_decode_record.py", "spikes/apple-targets/code-domain-integer-decode/test_decode_probe.py", "spikes/apple-targets/contraction-pragma-runtime-probe/pragma_probe.py"]
+last_verified: "2026-08-02"
 ticket: "apple-artifact-compatibility"
 ---
 
 # Apple Metal target compatibility and numerical spikes
 
-Four independent probes share this directory because they share a host row. The
+Five independent probes share this directory because they share a host row. The
 compatibility probe answers which artifact families and deployment minima
 produce which bytes. The numerical probe answers what Apple GPU scalar
 arithmetic actually does to subnormals, signed zero, and contraction — and, since
@@ -24,7 +24,39 @@ The AOT runtime-compiler observer asks whether native metallib and pipeline
 preparation exposes an attributable compiler build without source JIT. The
 code-domain integer decode probe asks whether the emitted MSL for the registered
 strict-affine `u8` decode computes the contract's value over its complete finite
-code domain. None downloads or installs a toolchain component.
+code domain. The contraction-pragma runtime probe asks whether a source-level
+contraction pragma survives to the runtime compiler — the one question the
+numerical probe's byte-identical pairing structurally forbids it from asking.
+None downloads or installs a toolchain component.
+
+## Contraction-pragma runtime probe
+
+The [sibling harness](contraction-pragma-runtime-probe/README.md) takes the very
+`contraction_pair`, `contraction_pair_f16`, and `contraction_pair_bf16` sources
+this directory's numerical probe generates, inserts one 31-byte
+`#pragma METAL fp contract(off)` line at file scope and changes nothing else, and
+puts both sources through `newLibraryWithSource:options:` in one host invocation
+per cell. Its 2026-08-02 retained record finds the pragma unfusing the pair in
+**all twelve** cells of three widths × `{Relaxed, Fast}` × `{Default, Size}` on
+runtime compiler `metalfe-32023.921`, with the unperturbed neighbour still
+returning finding 30's fused value in every one and every case carrying an
+executed witness. So an unfused contract is honourable on this row by *emitting
+different source* — ADR 0076's `SupportedWithExactEmulation` shape — and not by
+any `MTLCompileOptions` setting, which still has none.
+
+**It is a sibling rather than a variant kernel here for a structural reason, not
+a cost one.** The contraction comparison above *is* byte-identical source through
+two compilers; a pragma variant is by construction the one perturbation that
+comparison forbids. It reuses this directory's kernel definitions, candidate
+derivation, and dispatch host **unmodified** — modifying the host would move
+`probe.host_source_sha256` in all four retained numerical records — and shares
+nothing else.
+
+**Its control is its failure proof.** A run in which the unperturbed neighbour
+does not fuse establishes nothing about the pragma, so the harness refuses the
+whole run and publishes nothing unless all twelve controls fuse; `--perturb-control`
+applies the pragma to the control too and was watched producing exactly that
+refusal.
 
 ## Code-domain integer decode probe
 
@@ -369,7 +401,10 @@ in `OFFLINE_FLAGS_WITHOUT_RUNTIME_COUNTERPART` and in the record, and each
 runtime case is compared against *every* offline contraction setting for its
 kernel and mode rather than against one chosen row, so a kernel on which
 contraction is observable reports which offline setting the runtime path behaves
-like instead of reading as a divergence.
+like instead of reading as a divergence. The contraction gap is the one of the
+three that has a measured source-level substitute, and measuring it is what the
+sibling probe above exists for; `-target` and `-O0` have none and none was
+attempted.
 
 **Self-skip, and per-family self-skip.** The whole probe resolves the toolchain
 and every family's SDK first and skips when any is absent, following
