@@ -3,7 +3,7 @@ id: qualify-the-simdgroup-matrix-contraction-realization
 title: Qualify or refuse the simdgroup-matrix contraction realization
 status: todo
 priority: p2
-dependencies: [realize-the-strict-contraction-on-metal]
+dependencies: [realize-the-tiled-contraction-schedule-and-its-metal-emission]
 related: [carry-the-dtype-on-the-metal-subnormal-flush-fact, declare-metal-numerical-honourability, exercise-opaque-admissions-downstream-of-the-frontier]
 scopes: [implementation/metal, contracts/artifacts, research/apple-targets]
 shared_scopes: [project/tickets]

@@ -3,8 +3,8 @@ id: integrate-the-contraction-vertical-into-the-runtime
 title: Run one profile contraction end to end through the AOT and runtime route
 status: todo
 priority: p1
-dependencies: [realize-the-strict-contraction-on-metal]
-related: [design-attention-program-vertical, prototype-metal-runtime-proof, prototype-metal-aot-slice]
+dependencies: []
+related: [design-attention-program-vertical, prototype-metal-runtime-proof, prototype-metal-aot-slice, realize-the-tiled-contraction-schedule-and-its-metal-emission]
 scopes: [implementation/runtime, implementation/metal-aot, implementation/artifact, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
@@ -35,3 +35,7 @@ A transformer block, an attention program, the KV cache, batching, or more than 
 ## Closes when
 
 One contraction of the L3 profile executes through the accepted route with a terminal-success check before readback, its result is bit-identical to the reference, and a deliberately corrupted artifact is refused rather than executed.
+
+## Dependency corrected at the third tiled stop (2026-08-01)
+
+The supersede recipe re-pointed this ticket from `realize-the-strict-contraction-on-metal` onto the deferred tiled chain, and the coordinator reversed that edge on reading this ticket's own outcome: "one contraction runs end to end on Metal" is a claim about the accepted AOT and runtime route, not about which realization rides it, and the `direct` realization — compiled through the ordinary entry point, bit-compared at the profile cells — is a complete vehicle for it. The tiled realization arrives later as the performance-selected alternative behind `realize-the-tiled-contraction-schedule-and-its-metal-emission` (kept as related), and integrating on `direct` first is exactly the multi-kernel-may-be-correct-and-faster posture the architectural contract states.

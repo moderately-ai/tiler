@@ -1,17 +1,16 @@
 ---
 id: realize-the-strict-contraction-on-metal
 title: Realize the strict contraction as a tiled Metal scheduled kernel
-status: review
+status: closed
 priority: p1
 dependencies: [admit-the-contraction-normative-reference, admit-the-first-typed-synchronization-point-and-atomic-target-authority, realize-the-contraction-through-the-appendable-direct-path, lower-a-loop-carried-cooperative-body]
-related: [prototype-optimizer-conformance-gate, prototype-metal-runtime-proof, broaden-governed-physical-support-for-reassociated-programs, scope-einsum-contraction-support]
+related: [prototype-optimizer-conformance-gate, prototype-metal-runtime-proof, broaden-governed-physical-support-for-reassociated-programs, scope-einsum-contraction-support, realize-the-tiled-contraction-schedule-and-its-metal-emission]
 scopes: [implementation/compiler, implementation/ir, implementation/metal, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, physical-planning, metal, contraction, language-model]
-claimed_from: todo
-assignee: coordinator
-lease_expires_at: 1785634941
+closed_reason: superseded
+closed_note: superseded by realize-the-tiled-contraction-schedule-and-its-metal-emission
 ---
 ## User-visible outcome
 

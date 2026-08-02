@@ -3,7 +3,7 @@ id: admit-reassociated-contraction-schedule-alternatives
 title: Admit reassociated and permuted contraction schedule alternatives
 status: todo
 priority: p2
-dependencies: [realize-the-strict-contraction-on-metal, implement-parallel-reduction-strategies]
+dependencies: [implement-parallel-reduction-strategies, realize-the-tiled-contraction-schedule-and-its-metal-emission]
 related: [reduction-semantics-contract, implement-analytical-component-cost-model]
 scopes: [implementation/compiler, implementation/ir, implementation/metal]
 shared_scopes: [project/tickets]
