@@ -44,6 +44,12 @@ Correct all four, in one change, to what is true: the resolver is called on the 
 - Do not raise ADR 0089's `implementation_status` as a side effect. Whether the wiring's existence supports a bump is a full read against the decision's clauses, and it belongs to [`re-audit-adr-implementation-status-after-the-runtime-and-metal-landings`](re-audit-adr-implementation-status-after-the-runtime-and-metal-landings.md) if it holds anywhere.
 - Q-ART-004 stays open on its collection half. Correcting a sentence in the closed half is not closing the question.
 
+## Correction — 2026-08-02, this ticket's own line numbers had drifted
+
+**Fact.** The body cites `crates/tiler-macros/src/aot.rs:386` for the `open_cache` call and `:534`/`:535` for the definition and its `resolve`. On the tree this landed against the call is at `:501` and the definition at `:649`, with `resolve` at `:650`. The claim itself held in every particular — the call chain, the `AotRefusal::CacheRoot` mapping, and the disabled-cache branch are all as described — only the coordinates moved. The corrected sites therefore cite `:501` and `:649`, and each pairs the citation with a `grep` that survives further drift rather than resting on a line number.
+
+**Fact — the residual is unchanged and was re-verified rather than copied.** `grep -rln '\.preflight()' crates --include='*.rs'` reports only `crates/tiler-cache/src/expansion/tests.rs`, so `ExpansionCache::preflight` is still called by nothing outside its own tests and by no expansion. That is what each corrected site now names as the narrower remaining gap.
+
 ## Closes when
 
 `grep -rn "nothing calls the resolver" docs/` returns no match, or returns only sentences that are true of the current tree; each corrected site names what is genuinely still unexercised; and every reproduction command a corrected site offers was run and observed to support the sentence it accompanies.
