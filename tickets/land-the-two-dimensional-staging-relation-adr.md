@@ -1,7 +1,7 @@
 ---
 id: land-the-two-dimensional-staging-relation-adr
 title: Land the two-dimensional staging relation ADR
-status: todo
+status: in-progress
 priority: p2
 dependencies: [admit-a-two-dimensional-cooperative-staging-relation]
 related: [admit-a-two-dimensional-cooperative-staging-relation]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions, contracts/navigation, research/scheduling]
 shared_scopes: [project/tickets]
 paths: []
 tags: [contracts, adr, scheduling, ir, identity]
+claimed_from: todo
+assignee: agent-adr-carrier
+lease_expires_at: 1785688837
 ---
 ## User-visible outcome
 

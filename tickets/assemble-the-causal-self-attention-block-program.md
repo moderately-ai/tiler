@@ -1,7 +1,7 @@
 ---
 id: assemble-the-causal-self-attention-block-program
 title: Assemble the causal self-attention block as one verified semantic program
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-the-attention-contraction-structures, compose-rotary-position-embedding-from-reindex-and-broadcast, admit-the-grouped-query-head-layout-reindex-profile, admit-the-softmax-family]
 related: [design-attention-program-vertical, admit-the-rms-normalization-family, plan-the-materialized-attention-decomposition, design-autoregressive-state-and-kv-cache, promote-the-symbolic-index-profile-to-a-public-boundary]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, semantics, attention, transformer, vertical-slice, language-model]
+claimed_from: todo
+assignee: agent-attention-block
+lease_expires_at: 1785688837
 ---
 ## User-visible outcome
 

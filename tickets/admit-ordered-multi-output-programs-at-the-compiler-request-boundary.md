@@ -1,7 +1,7 @@
 ---
 id: admit-ordered-multi-output-programs-at-the-compiler-request-boundary
 title: Admit ordered multi-output programs at the compiler request boundary
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-a-general-program-shape-recognizer-at-the-compiler-request-boundary]
 related: [admit-multi-input-elementwise-programs-at-the-compiler-boundary, accept-the-public-compiler-facade-boundary]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, contracts/numerics]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler-api, conformance]
+claimed_from: todo
+assignee: agent-multi-output
+lease_expires_at: 1785688837
 ---
 ## User-visible outcome
 
