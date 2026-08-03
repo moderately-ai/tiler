@@ -33,8 +33,8 @@ Use the [glossary](glossary.md) whenever a typed compiler term is unfamiliar. It
   [fusion and scheduling](compiler/fusion-and-scheduling.md), and
   [cost model](compiler/cost-model.md).
 - **Understand artifacts and execution:** [artifact ABI](artifact-abi.md),
-  [Metal](backends/metal.md), [frontends](integration/frontends.md), and
-  [Candle](integration/candle.md).
+  [Metal](backends/metal.md), [runtime state](integration/runtime-state.md),
+  [frontends](integration/frontends.md), and [Candle](integration/candle.md).
 - **Inspect accepted choices:** use the [thematic ADR index](decisions/README.md).
 - **Audit evidence or reproduce a claim:** use the
   [research catalog](research/README.md) and
@@ -59,9 +59,10 @@ for locating one fact:
 10. [Frontend integration](integration/frontends.md)
 11. [Metal AOT backend](backends/metal.md)
 12. [Artifact and kernel ABI](artifact-abi.md)
-13. [Candle integration](integration/candle.md)
-14. [Correctness and testing](correctness-and-testing.md)
-15. [Roadmap](roadmap.md)
+13. [Runtime state boundary](integration/runtime-state.md)
+14. [Candle integration](integration/candle.md)
+15. [Correctness and testing](correctness-and-testing.md)
+16. [Roadmap](roadmap.md)
 
 ## Authority model
 

@@ -5,8 +5,8 @@ status: in-progress
 priority: p1
 dependencies: [admit-the-sequence-extension-concatenate-family]
 related: [design-autoregressive-state-and-kv-cache, prototype-candle-metal-adapter, transfer-synchronization-and-resource-lifetime-contract, bind-the-kv-cache-through-the-artifact-and-runtime-interface, name-a-host-process-availability-phase]
-scopes: [contracts/integrations, contracts/foundation]
-shared_scopes: [project/tickets]
+scopes: [contracts/integrations, contracts/foundation, research/runtime]
+shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [design, runtime, kv-cache, lifetime, identity, language-model]
 claimed_from: todo
@@ -28,10 +28,22 @@ Draft the boundary [rung L5's state contract](../docs/research/runtime/autoregre
 - **Typed refusals:** `C + T > capacity` before any program work; a bind whose live device and context differ from the adapter's; a bind of a poisoned state, naming the execution that poisoned it.
 - **The poisoned status.** A post-commit failure retires the state rather than leaving a plausible one behind. Under the out-of-place update the bytes are intact, so the reason to refuse is not corruption — it is that the failed step's token was never produced, and a later step binding the pre-failure state would decode a sequence the consumer does not believe it has.
 
-## The one genuine question, stated for Tom
+## Device-scope disposition
 
-Whether device scoping belongs to a governed runtime type or stays entirely inside each adapter. `tiler-runtime` forbids every platform device API and `LiveExecutionContext` deliberately carries no device handle, which argues adapter; but then every adapter re-implements one refusal, and [the runtime execution contract](../docs/research/runtime/runtime-execution-contract.md)'s `LiveDeviceKey` is already a governed shape for a device identity that is not a device object. This is L5's D-15.
+Research eliminated both a platform handle in the consumer-neutral runtime and wholly adapter-private ad hoc scoping. The sole surviving design is a governed opaque `LiveStateScope` minted by the adapter from its private live device/context and compared by the generic state boundary. This preserves the dependency direction, makes the refusal uniform, and costs only fixed-size identity comparison. Because the constraints leave one survivor, D-15 is not a product-priority question; the exact consequential public surface remains Tom's to accept.
+
+## Outcome — concrete draft, 2026-08-03
+
+The proposed [runtime state boundary](../docs/integration/runtime-state.md) defines the exact public inventory, ownership transitions, exhaustive refusal set, fixed-capacity representation, out-of-place publication, adapter-minted scope, generation and cursor authority, poisoning, retention, and explicit destruction contract. It distinguishes semantic-program, physical-plan, artifact, runtime-instance, adapter, and consumer facts and includes deliberate negative examples for stale state, capacity exhaustion and arithmetic overflow, cross-device/context reuse, poisoned reuse, and every non-success cursor transition.
+
+`research/runtime` was added because completing this outcome replaces L5's superseded D-15 language and adds the new contract as an informed destination. Shared `contracts/navigation` was added because the hand-maintained documentation and research catalogs must link the new governed document. These are mapped scope declarations for work required by the ticket, not expansion of the product outcome.
+
+No Rust implementation exists and no boundary is self-accepted. Batched/ragged state, prefix sharing, speculative rollback, growing capacity, windowed/in-place append, partial publication, cross-device transfer, multi-stream use, recurrent/convolutional state, and per-layer cursor drift remain explicitly unsupported.
+
+## Public-boundary acceptance packet
+
+Accept both the meaning and concrete spelling inventoried in `docs/integration/runtime-state.md`: adapter-authenticated runtime-instance device/context scope with no platform object in core, spelled opaque `LiveStateScope` and adapter-only `RuntimeAdapter::live_state_scope`; validated-artifact input identity, spelled `StateInterfaceKey::from_artifact_input`; layer/generation/cursor/capacity and execution identities; `KvStateStatus`; private-field `KvState<Storage, Retention>` with its exact constructor/readers/preflight/destruction inventory; non-Clone prepared and bound step tokens, with an unfinished committed token poisoning on drop; opaque exact-success and typed post-commit failure carriers; the exhaustive build-error, refusal, and failure-stage sets; fixed-capacity out-of-place publication that atomically replaces allocation, cursor, and generation only on the exact terminal-success receipt; poisoned state after every post-commit non-success; runtime-instance ownership with adapter-private storage/device objects and consumer-owned handle lifetime; and no compatibility path for adapter-only ad hoc device scoping. Acceptance authorizes later implementation of this boundary; it does not claim implementation or authorize the unsupported cases above. Rejection before implementation rolls back only this proposed document and its navigation/research links and leaves the dependent ticket blocked; no Rust, identity domain, artifact schema, or cache key has moved.
 
 ## Closes when
 
-The boundary is drafted with every property and refusal above, the device-scoping question is put to Tom with both options' consequences, and nothing is accepted as public without his answer.
+The boundary is drafted with every property and refusal above, the eliminated device-scoping candidates and sole survivor are recorded, the exact complete public surface is put to Tom, and nothing is accepted as public without his answer.
