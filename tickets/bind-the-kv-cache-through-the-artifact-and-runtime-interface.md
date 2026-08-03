@@ -4,7 +4,7 @@ title: Bind the KV cache through the artifact and runtime interface
 status: todo
 priority: p1
 dependencies: [admit-the-sequence-extension-concatenate-family, define-the-runtime-kv-state-boundary]
-related: [design-autoregressive-state-and-kv-cache, assemble-the-causal-self-attention-block-program, expose-the-dispatch-record-on-a-decoded-artifact]
+related: [design-autoregressive-state-and-kv-cache, assemble-the-causal-self-attention-block-program, expose-the-dispatch-record-on-a-decoded-artifact, evaluate-retained-shape-relations-before-routing-commit]
 scopes: [implementation/artifact, implementation/runtime, implementation/build]
 shared_scopes: [project/tickets]
 paths: []

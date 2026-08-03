@@ -4,7 +4,7 @@ title: Admit an additive extent relation so a concatenated extent is checkable
 status: done
 priority: p1
 dependencies: [admit-the-sequence-extension-concatenate-family]
-related: [design-autoregressive-state-and-kv-cache, scope-the-sequence-extending-tensor-family, promote-the-symbolic-index-profile-to-a-public-boundary]
+related: [design-autoregressive-state-and-kv-cache, scope-the-sequence-extending-tensor-family, promote-the-symbolic-index-profile-to-a-public-boundary, evaluate-retained-shape-relations-before-routing-commit]
 scopes: [implementation/ir, implementation/compiler, contracts/foundation, contracts/navigation, research/shapes, research/runtime]
 shared_scopes: [project/tickets]
 paths: []
@@ -15,7 +15,7 @@ lease_expires_at: 1785704070
 ---
 ## User-visible outcome
 
-`S == C + T` becomes statable, so a decode step that binds a cache extent inconsistent with its context length **refuses** instead of verifying and returning a plausible tensor.
+`S == C + T` becomes statable and inconsistent static/root-bound values refuse with a typed diagnostic. Runtime-bound relations remain available for a launch-preflight consumer rather than being silently discarded.
 
 ## Why this is not deferrable any longer
 
@@ -140,11 +140,15 @@ from a worker branch.
 
 ## Accepted — 2026-08-03
 
-Tom accepted the exact merged public spelling in the T3 Code orchestration
-conversation: `ExtentRelation::AdditiveEquality { sum, left, right }`, its
-canonical `ExtentRelation::additive_equality(sum, left, right)` constructor, and
-the typed conflict/fragment variants documented above. The acceptance does not
-claim that invocation-time bindings are checked at launch preflight; that
-consumer remains separate work. Rollback remains the removal of this one
-append-only relation family and its documentation, with no schema version or
-pre-existing encoded subject moved.
+Tom accepted the exact merged relation spelling in the T3 Code orchestration
+conversation: `ExtentRelation::AdditiveEquality { sum, left, right }` and its
+canonical `ExtentRelation::additive_equality(sum, left, right)` constructor. In
+a second atomic question in the same conversation, Tom accepted the exact three
+diagnostic variants: `ConstraintConflict::AdditiveEqualityMismatch`,
+`ConstraintConflict::AddendExceedsSum`, and
+`FragmentViolation::UnderdeterminedAdditiveEquality`, with the fields documented
+above. The accepted boundary does not claim
+that invocation-time bindings are checked at launch preflight; that consumer
+remains separate work. Rollback remains the removal of this one append-only
+relation family and its documentation, with no schema version or pre-existing
+encoded subject moved.

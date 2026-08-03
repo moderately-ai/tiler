@@ -44,7 +44,7 @@ Claims are labelled **Fact** when traced to inspected source or to a merged reco
 | Purity or effect declaration | `Pure`, unchanged. | Not pure. `OperationEffect` has exactly one variant and is deliberately not `#[non_exhaustive]`, so a second effect class is a compile error at three encoders — the mechanism that makes mutation unrepresentable rather than merely unimplemented. Widening it is necessary and, per the support matrix's own effectful row, not sufficient. |
 | Access relation | Either one write root over the whole output with a **piecewise read** selecting per coordinate which operand supplies it — [Q-SHAPE-006](../../open-questions.md#q-shape-006--finite-piecewise-access-maps), plus a predicated selection the registry cannot type because it admits no boolean dtype — or **two write roots partitioning one output**, which [IR](../../ir.md) defers by name: "In-place/read-modify-write relations, output partitions, atomics, and other reduction organizations require later specialized contracts rather than implicit relaxation." | A partial write root over an output boundary the region does not initialize, which is the same output-partition relaxation, plus the in-place relation named in the same sentence, plus [Q-PLAN-015](../../open-questions.md#q-plan-015--advanced-buffer-reuse-and-in-place-execution), plus the alias contract's rule that an output must alias no input. |
 | Write-ownership proof | Both implemented forms — `WriteOwnershipProof::{CoordinatePermutation, Exhaustive}` — prove that one access is total and injective over its own declared boundary. Neither expresses "total over a partition and disjoint from a sibling partition", so the partitioned form owes a third proof kind and a joint-coverage obligation across roots. | The same third proof kind, and then a second obligation the first does not have: the untouched range's contents were written by a *previous execution*, so its validity is not a region-local property at all and no verifier in the stack has the subject. |
-| Extent symbol of a growing axis | `C` and `T` bind to input dimensions; `S` is their sum. **That sum has no representation.** `ExtentRelation` admits `Equal`, `Divisible`, `NonNegativeDifference`, `Interval`, and `Factorization` over an `ExtentTerm` that is a symbol or a constant and, in its own words, "deliberately not an arbitrary expression tree" — so `S == C + T` cannot be stated, and `S` cannot be a derived extent because `SourcedExtent` is static-or-symbol and every symbol needs exactly one root binding. | The same gap in a different spelling: the capacity invariant is `C + T <= capacity`, a three-term additive relation the same fragment cannot state. It gains nothing on the availability axis either, because growth here is host-driven — `S` is known at or before `LiveDevicePreflight` under both mechanisms. |
+| Extent symbol of a growing axis | `C` and `T` bind to input dimensions; `S` is their sum. **Updated 2026-08-03:** the accepted fixed two-addend `ExtentRelation::AdditiveEquality` states `S == C + T` while `SourcedExtent` remains static-or-one-symbol and every symbol retains one root binding. Static/root-bound contradictions refuse; runtime-bound evaluation remains a launch-preflight obligation. | The capacity invariant is now expressible as `S == C + T` plus the existing `capacity - S >= 0`. This changes no availability fact: growth is host-driven and `S` is known at or before `LiveDevicePreflight` under both mechanisms, where the retained relation still needs a consumer. |
 
 **Inference — the two rows that matter are purity and access relation, and they point opposite ways.** On access relation and write ownership the two mechanisms owe *the same* new contract, because both write part of something and neither can prove the rest. On purity, extent representation, and resource identity, B owes strictly more. There is no obligation A owes that B does not, which is what makes the elimination below a derivation rather than a preference.
 
@@ -62,12 +62,13 @@ rg -n 'register_operation\(' crates/tiler-ir/src/semantic/registry.rs crates/til
 #    enumeration is not empty and a missing key would be visible as an absence
 #    from a list that has members.
 
-# 2. The constraint fragment admits no additive relation between two terms.
-grep -n 'pub enum ExtentRelation' -A 45 crates/tiler-ir/src/shape/env/constraint.rs
+# 2. The bounded constraint fragment admits the fixed two-addend relation and
+#    no recursive extent-expression variant.
+grep -n 'pub enum ExtentRelation' -A 70 crates/tiler-ir/src/shape/env/constraint.rs
 grep -n 'pub enum ExtentTerm' -A 8 crates/tiler-ir/src/shape/env/constraint.rs
-#    Positive control: the same read finds NonNegativeDifference, the nearest
-#    additive-looking relation, which constrains a difference's sign rather than
-#    defining a sum — so the search does reach the relations it would have to
+#    Positive control: the same read finds AdditiveEquality and its three
+#    ExtentTerm leaves; no leaf nests another relation, so the check reaches the
+#    admitted additive form without mistaking it for a general expression tree.
 #    miss for the claim to be wrong.
 
 # 3. No coordinate expression carries an extent symbol. IndexNode has five

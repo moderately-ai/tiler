@@ -6,9 +6,10 @@
 //! The accepted subset is re-exported flat from [`crate::shape`]; this module
 //! itself is `pub(crate)`, so the decision procedure, its disjoint-set forest,
 //! and its per-class domains stay inside it. The fixed two-addend relation and
-//! its corresponding conflict and fragment variants are part of the accepted
-//! public subset. A frontend constructs an environment through
-//! [`ShapeEnvBuilder`] and reads it through [`ShapeEnv`]'s queries.
+//! canonical constructor, together with their typed conflict and fragment
+//! variants, are part of the accepted public subset. A frontend constructs an
+//! environment through [`ShapeEnvBuilder`] and reads it through [`ShapeEnv`]'s
+//! queries.
 //!
 //! # What this module owns
 //!
