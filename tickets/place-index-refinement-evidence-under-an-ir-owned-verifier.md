@@ -327,7 +327,10 @@ one ignored example. `git diff --check` and `tkt lint` passed. No identity-domai
 version or pinned identity moved: the canonical bytes of every previously valid
 numerical key and realization-law sidecar are unchanged; these corrections
 reject malformed spellings, account already-encoded provider bytes, and change
-only proof execution and completion validation.
+only proof execution and completion validation. Guard over the 30-file
+population from the true claim base reported no under-declared scope and warned
+about declared-area overlap with live work; the coordinator must recheck those
+actual branch diffs before integration.
 
 ## Graph maintenance
 
