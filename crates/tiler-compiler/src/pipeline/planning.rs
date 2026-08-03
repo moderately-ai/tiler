@@ -65,7 +65,7 @@ pub(super) fn enumerate_complete_plans(
     // about how recognized occurrences are grouped, and grouping occurrences the
     // installed authority cannot lower at all would be enumerating plans nothing
     // could realize.
-    let lowering = match resolve_lowering(semantic, verified, formation) {
+    let lowering = match resolve_lowering(semantic, verified) {
         Ok(lowering) => lowering,
         Err(source) => {
             let cause = record_lowering_failure(explain, &source, root)?;

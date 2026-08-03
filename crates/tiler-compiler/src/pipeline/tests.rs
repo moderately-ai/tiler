@@ -2589,8 +2589,7 @@ fn relaxed_reassociation_reaches_verified_global_physical_selection() {
     let rewritten_request = rewritten_request
         .for_target(rewritten_request.target_profiles()[0])
         .unwrap();
-    let formation = plan_formation(rewritten, &rewritten_request);
-    let lowering = resolve_lowering(rewritten, &rewritten_request, &formation).unwrap();
+    let lowering = resolve_lowering(rewritten, &rewritten_request).unwrap();
     assert_eq!(
         lowering
             .occurrences()

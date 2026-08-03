@@ -25,6 +25,8 @@ use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
+use tiler_ir::index::{IndexRefinementSubject, NumericalContractIdentity};
+use tiler_ir::program::SemanticOccurrence;
 use tiler_ir::semantic::{OpKey, SemanticProgram};
 
 use crate::capability::{LoweringResolveError, LoweringSignature, ResolvedLoweringCapability};
@@ -33,11 +35,9 @@ use crate::index_discharge::{
     discharge_pending_index_refinement,
 };
 use crate::legality::{
-    IndexRefinement, IndexRefinementOutcome, NumericalContractIdentity, OccurrenceOperand,
-    OccurrenceResult, OccurrenceValueId, RefinementError, SemanticOccurrence,
-    SemanticOccurrenceIdentity, refine_index_region,
+    IndexRefinement, IndexRefinementOutcome, RefinementError, refine_index_region,
 };
-use crate::region::{RegionFormationOutcome, SemanticMemberId};
+use crate::region::SemanticMemberId;
 use crate::request::{LoweringProviderIdentity, VerifiedTargetRequest};
 
 /// The evidence one recognized occurrence's lowering rests on.
@@ -302,14 +302,12 @@ impl Eq for LoweringError {}
 pub(crate) fn resolve_lowering(
     semantic: &SemanticProgram,
     request: &VerifiedTargetRequest,
-    formation: &RegionFormationOutcome,
 ) -> Result<ResolvedLowering, LoweringError> {
     let capabilities = request.capabilities();
     let contract = NumericalContractIdentity::from_key(request.numerical_contract().key);
     let mut occurrences = Vec::new();
     for member in request.normalized().all_members() {
-        let identity = singleton_occurrence_identity(formation, member)?;
-        let occurrence = project_occurrence(semantic, member, &contract, identity)?;
+        let occurrence = project_occurrence(semantic, member, &contract)?;
         let resolved = resolve_occurrence(capabilities, &occurrence, member)?;
         let provider = LoweringProviderIdentity::new(
             resolved.provider().clone(),
@@ -352,15 +350,7 @@ pub(crate) fn resolve_capabilities(
     let contract = NumericalContractIdentity::from_key(request.numerical_contract().key);
     let mut providers = Vec::new();
     for member in request.normalized().all_members() {
-        // Resolution never reads the semantic-source identity, so re-deriving it
-        // here would be an unused cost; the empty source keeps this path
-        // independent of region formation.
-        let occurrence = project_occurrence(
-            semantic,
-            member,
-            &contract,
-            SemanticOccurrenceIdentity::from_bytes(Vec::new()),
-        )?;
+        let occurrence = project_occurrence(semantic, member, &contract)?;
         let resolved = resolve_occurrence(capabilities, &occurrence, member)?;
         providers.push(LoweringProviderIdentity::new(
             resolved.provider().clone(),
@@ -376,7 +366,7 @@ pub(crate) fn resolve_capabilities(
 /// Resolves the exact index-access capability one occurrence requires.
 fn resolve_occurrence(
     capabilities: &crate::request::CompilerCapabilitySnapshot,
-    occurrence: &SemanticOccurrence,
+    occurrence: &IndexRefinementSubject,
     member: SemanticMemberId,
 ) -> Result<ResolvedLoweringCapability, LoweringError> {
     let signature = occurrence_signature(occurrence, member)?;
@@ -389,31 +379,10 @@ fn resolve_occurrence(
         })
 }
 
-/// Returns the semantic-source identity region formation gave one member.
-fn singleton_occurrence_identity(
-    formation: &RegionFormationOutcome,
-    member: SemanticMemberId,
-) -> Result<SemanticOccurrenceIdentity, LoweringError> {
-    // The singleton region candidate for this member is the semantic source
-    // identity the whole compilation already agreed on; refinement never invents
-    // its own naming for the same occurrence.
-    formation
-        .candidates()
-        .iter()
-        .find(|candidate| candidate.members() == [member])
-        .map(|candidate| {
-            SemanticOccurrenceIdentity::from_bytes(candidate.occurrence().as_bytes().to_vec())
-        })
-        .ok_or(LoweringError::Occurrence {
-            rule: "singleton-candidate",
-            member,
-        })
-}
-
 /// Refines one resolved capability.
 fn refine(
     resolved: &ResolvedLoweringCapability,
-    occurrence: &SemanticOccurrence,
+    occurrence: &IndexRefinementSubject,
     scalars: &tiler_ir::index::FrozenScalarRegistry,
     member: SemanticMemberId,
     provider: LoweringProviderIdentity,
@@ -441,75 +410,26 @@ fn project_occurrence(
     semantic: &SemanticProgram,
     member: SemanticMemberId,
     contract: &NumericalContractIdentity,
-    identity: SemanticOccurrenceIdentity,
-) -> Result<SemanticOccurrence, LoweringError> {
-    let malformed = |rule: &'static str| LoweringError::Occurrence { rule, member };
-    let ordinal = usize::try_from(member.0).map_err(|_| malformed("member-ordinal"))?;
-    let operation = semantic
-        .operations()
-        .nth(ordinal)
-        .ok_or_else(|| malformed("member-ordinal"))?;
-    let definition = semantic
-        .semantic_registry()
-        .operation_definition(operation.key())
-        .ok_or_else(|| malformed("operation-definition"))?;
-    // The occurrence-local value names only have to distinguish aliases, so they
-    // are first-occurrence positions rather than graph ordinals. Two operands
-    // carrying one graph value therefore lower to one input boundary without the
-    // refinement authority ever seeing a graph-local identifier.
-    let mut seen: Vec<tiler_ir::semantic::ValueId> = Vec::new();
-    let mut operands = Vec::new();
-    for value in operation.operands() {
-        let reference = semantic.value(value).map_err(|_| malformed("operand"))?;
-        let shape = semantic.shape(value).map_err(|_| malformed("operand"))?;
-        let local = seen
-            .iter()
-            .position(|seen| *seen == value)
-            .unwrap_or_else(|| {
-                seen.push(value);
-                seen.len() - 1
-            });
-        let local = u32::try_from(local).map_err(|_| malformed("operand-alias"))?;
-        operands.push(OccurrenceOperand::new(
-            OccurrenceValueId(local),
-            reference.resolved_type().clone(),
-            shape.clone(),
-        ));
-    }
-    let mut results = Vec::new();
-    for value in operation.results() {
-        let reference = semantic.value(value).map_err(|_| malformed("result"))?;
-        let shape = semantic.shape(value).map_err(|_| malformed("result"))?;
-        results.push(OccurrenceResult::new(
-            reference.resolved_type().clone(),
-            shape.clone(),
-        ));
-    }
-    Ok(SemanticOccurrence::new(
-        operation.key().clone(),
-        operands,
-        results,
-        operation.attributes().clone(),
-        definition.effect(),
+) -> Result<IndexRefinementSubject, LoweringError> {
+    IndexRefinementSubject::derive(
+        semantic,
+        SemanticOccurrence::new(member.0),
         contract.clone(),
-        identity,
-    ))
+    )
+    .map_err(|_| LoweringError::Occurrence {
+        rule: "refinement-subject",
+        member,
+    })
 }
 
 /// Derives the exact resolution signature of one occurrence.
 fn occurrence_signature(
-    occurrence: &SemanticOccurrence,
+    occurrence: &IndexRefinementSubject,
     member: SemanticMemberId,
 ) -> Result<LoweringSignature, LoweringError> {
     LoweringSignature::new(
-        occurrence
-            .operands()
-            .iter()
-            .map(|operand| operand.value_type().clone()),
-        occurrence
-            .results()
-            .iter()
-            .map(|result| result.value_type().clone()),
+        occurrence.signature().operands().iter().cloned(),
+        occurrence.signature().results().iter().cloned(),
     )
     .map_err(|_| LoweringError::Occurrence {
         rule: "signature-bound",

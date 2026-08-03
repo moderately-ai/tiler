@@ -1,11 +1,10 @@
-//! Draft index-region refinement authority (compiler-owned legality evidence).
+//! Compiler integration for IR-owned index-region refinement evidence.
 //!
-//! This module implements the checked authority that `docs/ir.md` Layer 2 calls
-//! *compiler-owned legality evidence* and that `docs/compiler/optimizer.md` names
-//! the `LowerIndexRegions` boundary: it binds a lowered
-//! [`VerifiedIndexRegion`] to the exact
-//! semantic occurrence it realizes and records the reached scalar-definition and
-//! lowering-provider provenance that compilation and artifact identity require.
+//! [`tiler_ir::index::IndexRefinementVerifier`] owns the dependency-neutral
+//! semantic-subject/verified-region check and mints its opaque receipt. This
+//! module owns the compiler envelope around that receipt: provider provenance,
+//! reusable content identity, occurrence identity, and integration with the
+//! compiler's domain-discharge authority.
 //!
 //! It composes two sibling authorities without collapsing either:
 //!
@@ -36,7 +35,7 @@
 //! Refinement does not re-derive per-point arithmetic. Its structural and
 //! authority binding is exactly what makes the region *checkable* against the
 //! independent `tiler-reference` index-region oracle: the oracle can execute the
-//! refined region on concrete inputs bound through [`IndexRefinement::operand_bindings`]
+//! refined region on concrete inputs bound through [`RefinementContent::operand_bindings`]
 //! and its outputs are the occurrence's ordered results.
 //!
 //! Scope boundary: this authority proves refinement of one occurrence to one
@@ -55,8 +54,10 @@ use std::sync::Arc;
 
 use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::index::{
-    CanonicalIndexRegionIdentity, FrozenScalarRegistry, IndexRegionBuildError,
-    IndexRegionDiagnostic, ScalarAuthorityEvidence, ScalarRegistryError, TensorRole,
+    CanonicalIndexRegionIdentity, FrozenScalarRegistry, IndexRefinementReceipt,
+    IndexRefinementSubject, IndexRefinementVerificationError, IndexRefinementVerificationOutcome,
+    IndexRefinementVerifier, IndexRegionBuildError, IndexRegionDiagnostic,
+    NumericalContractIdentity, ScalarAuthorityEvidence, ScalarRegistryError, TensorRole,
     UnknownIndexDomainPredicate, VerifiedIndexHandleError, VerifiedIndexRegion,
     VerifiedScalarValueId, VerifiedTensorAccessId, VerifiedTensorId,
 };
@@ -66,16 +67,15 @@ use tiler_ir::semantic::{
 use tiler_ir::shape::Shape;
 
 use crate::capability::{
-    IndexAccessLoweringContext, LoweredOccurrence, LoweringCapabilityAuthority,
-    LoweringCapabilityRevision, LoweringEmitError, LoweringFamily, LoweringRegistryError,
-    OccurrenceBoundary, ResolvedLoweringCapability,
+    IndexAccessLoweringContext, LoweringCapabilityAuthority, LoweringCapabilityRevision,
+    LoweringEmitError, LoweringFamily, LoweringRegistryError, ResolvedLoweringCapability,
 };
 use crate::index_discharge::AuthorizedIndexDomainProof;
 
 /// Canonical domain-separation tag for reusable refinement content.
 const CONTENT_IDENTITY_TAG: &[u8] = b"tiler.compiler.index-refinement-content.v2\0";
 /// Canonical domain-separation tag for one refinement occurrence binding.
-const OCCURRENCE_IDENTITY_TAG: &[u8] = b"tiler.compiler.index-refinement-occurrence.v1\0";
+const OCCURRENCE_IDENTITY_TAG: &[u8] = b"tiler.compiler.index-refinement-occurrence.v2\0";
 
 /// Occurrence-local identity of one semantic value the occurrence references.
 ///
@@ -84,16 +84,19 @@ const OCCURRENCE_IDENTITY_TAG: &[u8] = b"tiler.compiler.index-refinement-occurre
 /// occurrence-local name; reusable content canonicalizes it to a first-occurrence
 /// position so aliasing structure is content while the naming is not.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct OccurrenceValueId(pub u32);
+#[cfg(test)]
+pub(crate) struct OccurrenceValueId(pub u32);
 
 /// One ordered operand of a semantic occurrence.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OccurrenceOperand {
+#[cfg(test)]
+pub(crate) struct OccurrenceOperand {
     value: OccurrenceValueId,
     value_type: ResolvedValueType,
     shape: Shape,
 }
 
+#[cfg(test)]
 impl OccurrenceOperand {
     /// Binds one ordered operand value, its element type, and its boundary shape.
     #[must_use]
@@ -130,11 +133,13 @@ impl OccurrenceOperand {
 
 /// One ordered result of a semantic occurrence.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OccurrenceResult {
+#[cfg(test)]
+pub(crate) struct OccurrenceResult {
     value_type: ResolvedValueType,
     shape: Shape,
 }
 
+#[cfg(test)]
 impl OccurrenceResult {
     /// Binds one ordered result element type and boundary shape.
     #[must_use]
@@ -155,177 +160,6 @@ impl OccurrenceResult {
     }
 }
 
-/// Opaque collision-free identity of the exact semantic source being lowered.
-///
-/// The caller supplies the semantic occurrence identity produced by region
-/// formation (or any collision-free semantic-source identity). Refinement treats
-/// it as opaque bytes: it is the *selected semantic source* the region is bound
-/// to, never re-derived here.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct SemanticOccurrenceIdentity(Vec<u8>);
-
-impl SemanticOccurrenceIdentity {
-    /// Wraps opaque collision-free semantic-source identity bytes.
-    #[must_use]
-    pub fn from_bytes(bytes: Vec<u8>) -> Self {
-        Self(bytes)
-    }
-
-    /// Returns the opaque semantic-source identity bytes.
-    #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-/// Canonical identity of the numerical contract an occurrence is lowered under.
-///
-/// Refinement binds the contract as evidence; it does not itself re-check
-/// numerical policy. The exact per-scalar numerical behaviour is pinned by the
-/// bound [`ScalarAuthorityEvidence`], which names the exact scalar definitions
-/// and their admission providers.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct NumericalContractIdentity(Vec<u8>);
-
-impl NumericalContractIdentity {
-    /// Identifies the numerical contract by its canonical key.
-    #[must_use]
-    pub fn from_key(key: &str) -> Self {
-        Self(key.as_bytes().to_vec())
-    }
-
-    /// Returns the canonical numerical-contract identity bytes.
-    #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-/// The exact semantic occurrence one index region is refined against.
-///
-/// It describes the occurrence independently of the region: the operation, the
-/// ordered operand values with element type and shape (operands may alias), the
-/// ordered result element types and shapes, the host-canonical attributes, the
-/// observable effect, the numerical contract, and the opaque semantic-source
-/// identity. Refinement then proves an emitted region realizes it rather than
-/// trusting that a provider ran.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SemanticOccurrence {
-    operation: OpKey,
-    operands: Vec<OccurrenceOperand>,
-    results: Vec<OccurrenceResult>,
-    attributes: OperationAttributes,
-    effect: OperationEffect,
-    numerical_contract: NumericalContractIdentity,
-    identity: SemanticOccurrenceIdentity,
-}
-
-impl SemanticOccurrence {
-    /// Describes one semantic occurrence to refine an index region against.
-    #[must_use]
-    pub fn new(
-        operation: OpKey,
-        operands: Vec<OccurrenceOperand>,
-        results: Vec<OccurrenceResult>,
-        attributes: OperationAttributes,
-        effect: OperationEffect,
-        numerical_contract: NumericalContractIdentity,
-        identity: SemanticOccurrenceIdentity,
-    ) -> Self {
-        Self {
-            operation,
-            operands,
-            results,
-            attributes,
-            effect,
-            numerical_contract,
-            identity,
-        }
-    }
-
-    /// Returns the lowered semantic operation family key.
-    #[must_use]
-    pub const fn operation(&self) -> &OpKey {
-        &self.operation
-    }
-
-    /// Returns the occurrence's host-canonical attributes.
-    #[must_use]
-    pub const fn attributes(&self) -> &OperationAttributes {
-        &self.attributes
-    }
-
-    /// Returns the ordered operands, including aliased repetitions.
-    #[must_use]
-    pub fn operands(&self) -> &[OccurrenceOperand] {
-        &self.operands
-    }
-
-    /// Returns the ordered results.
-    #[must_use]
-    pub fn results(&self) -> &[OccurrenceResult] {
-        &self.results
-    }
-
-    /// Returns the observable effect class.
-    #[must_use]
-    pub const fn effect(&self) -> OperationEffect {
-        self.effect
-    }
-
-    /// Returns the bound numerical-contract identity.
-    #[must_use]
-    pub const fn numerical_contract(&self) -> &NumericalContractIdentity {
-        &self.numerical_contract
-    }
-
-    /// Returns the opaque semantic-source identity.
-    #[must_use]
-    pub const fn identity(&self) -> &SemanticOccurrenceIdentity {
-        &self.identity
-    }
-
-    /// Returns the ordered operand element types.
-    fn operand_types(&self) -> Vec<ResolvedValueType> {
-        self.operands
-            .iter()
-            .map(|operand| operand.value_type.clone())
-            .collect()
-    }
-
-    /// Returns the ordered result element types.
-    fn result_types(&self) -> Vec<ResolvedValueType> {
-        self.results
-            .iter()
-            .map(|result| result.value_type.clone())
-            .collect()
-    }
-
-    /// Returns the distinct operand values in first-occurrence order.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RefinementError::AliasedOperandInconsistent`] when two operands
-    /// share a value identity but disagree on element type or shape, which is an
-    /// internally inconsistent occurrence.
-    fn distinct_operands(&self) -> Result<Vec<&OccurrenceOperand>, RefinementError> {
-        let mut distinct: Vec<&OccurrenceOperand> = Vec::new();
-        for (position, operand) in self.operands.iter().enumerate() {
-            if let Some(seen) = distinct
-                .iter()
-                .find(|candidate| candidate.value == operand.value)
-            {
-                if seen.value_type != operand.value_type || seen.shape != operand.shape {
-                    return Err(RefinementError::AliasedOperandInconsistent { operand: position });
-                }
-            } else {
-                distinct.push(operand);
-            }
-        }
-        Ok(distinct)
-    }
-}
-
 /// One ordered operand value bound to the region input boundary that carries it.
 ///
 /// Aliased operands share one `input_tensor`. The binding is a runtime handle
@@ -335,7 +169,7 @@ impl SemanticOccurrence {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OperandBinding {
     operand: usize,
-    value: OccurrenceValueId,
+    input: usize,
     input_tensor: VerifiedTensorId,
 }
 
@@ -348,8 +182,8 @@ impl OperandBinding {
 
     /// Returns the semantic value this operand references.
     #[must_use]
-    pub const fn value(&self) -> OccurrenceValueId {
-        self.value
+    pub const fn input(&self) -> usize {
+        self.input
     }
 
     /// Returns the region input boundary that realizes this operand.
@@ -515,7 +349,7 @@ impl RefinementContent {
 #[derive(Clone, Debug)]
 pub struct IndexRefinement {
     content: RefinementContent,
-    occurrence: SemanticOccurrenceIdentity,
+    receipt: IndexRefinementReceipt,
     provider: ProviderIdentity,
     revision: LoweringCapabilityRevision,
     operand_bindings: Vec<OperandBinding>,
@@ -539,8 +373,8 @@ impl IndexRefinement {
 
     /// Returns the opaque identity of the realized semantic source.
     #[must_use]
-    pub const fn occurrence(&self) -> &SemanticOccurrenceIdentity {
-        &self.occurrence
+    pub const fn receipt(&self) -> &IndexRefinementReceipt {
+        &self.receipt
     }
 
     /// Returns the selected lowering provider.
@@ -596,7 +430,8 @@ impl IndexRefinement {
 /// receive named semantic evidence.
 #[derive(Clone, Debug)]
 pub struct PendingIndexRefinement {
-    occurrence: SemanticOccurrence,
+    subject: IndexRefinementSubject,
+    receipt: Box<tiler_ir::index::PendingIndexRefinementReceipt>,
     provider: ProviderIdentity,
     revision: LoweringCapabilityRevision,
     capability_authority: LoweringCapabilityAuthority,
@@ -610,8 +445,8 @@ pub struct PendingIndexRefinement {
 impl PendingIndexRefinement {
     /// Returns the exact semantic occurrence this realization is checked against.
     #[must_use]
-    pub const fn occurrence(&self) -> &SemanticOccurrence {
-        &self.occurrence
+    pub const fn subject(&self) -> &IndexRefinementSubject {
+        &self.subject
     }
 
     /// Returns the selected lowering provider.
@@ -671,7 +506,7 @@ impl PendingIndexRefinement {
 
 impl PartialEq for PendingIndexRefinement {
     fn eq(&self, other: &Self) -> bool {
-        self.occurrence == other.occurrence
+        self.subject == other.subject
             && self.provider == other.provider
             && self.revision == other.revision
             && self.capability_authority == other.capability_authority
@@ -817,6 +652,8 @@ pub enum RefinementError {
         /// Ordered result position.
         position: usize,
     },
+    /// The IR-owned authority refused the semantic subject or emitted region.
+    IrVerifier(Arc<IndexRefinementVerificationError>),
 }
 
 impl fmt::Display for RefinementError {
@@ -906,6 +743,9 @@ impl fmt::Display for RefinementError {
                 formatter,
                 "region output {position} lacks complete unique-write evidence"
             ),
+            Self::IrVerifier(source) => {
+                write!(formatter, "IR refinement authority refused: {source}")
+            }
         }
     }
 }
@@ -916,6 +756,7 @@ impl Error for RefinementError {
             Self::Emit(source) => Some(source),
             Self::ScalarAuthority(source) => Some(source.as_ref()),
             Self::Handle(source) => Some(source),
+            Self::IrVerifier(source) => Some(source.as_ref()),
             Self::OccurrenceFacts(source) => Some(source),
             _ => None,
         }
@@ -951,37 +792,38 @@ impl From<VerifiedIndexHandleError> for RefinementError {
 /// realize the occurrence's ordered value interface.
 pub fn refine_index_region(
     capability: &ResolvedLoweringCapability,
-    occurrence: &SemanticOccurrence,
+    subject: &IndexRefinementSubject,
     scalars: &FrozenScalarRegistry,
 ) -> Result<IndexRefinementOutcome, RefinementError> {
-    bind_capability_to_occurrence(capability, occurrence)?;
-
-    if occurrence.effect != OperationEffect::Pure {
-        return Err(RefinementError::EffectNotIndexable {
-            effect: occurrence.effect,
+    if capability.family() != LoweringFamily::IndexAccess {
+        return Err(RefinementError::WrongFamily {
+            actual: capability.family(),
         });
     }
-
-    let region = emit_region(capability, occurrence, scalars)?;
+    let resolution = capability
+        .authority()
+        .refinement()
+        .resolve(subject)
+        .map_err(|source| map_ir_verifier_error(source, capability, subject))?;
+    let region = emit_region(capability, subject, scalars)?;
     // Registration and a successful build are not refinement evidence. Everything
     // below independently proves the emitted region realizes the occurrence.
-    let scalar_authority = scalars
-        .revalidate_region(&region)
-        .map_err(|source| RefinementError::ScalarAuthority(Arc::new(source)))?;
-    check_authority_conformance(capability, &scalar_authority)?;
-
-    let operand_bindings = bind_operands(occurrence, &region)?;
-    let result_bindings = bind_results(occurrence, &region)?;
+    let verified = IndexRefinementVerifier::verify(subject, &resolution, &region, scalars)
+        .map_err(|source| map_ir_verifier_error(source, capability, subject))?;
+    let operand_bindings = bind_operands(subject, &region)?;
+    let result_bindings = bind_results(subject, &region)?;
 
     // A residual domain obligation is not permission to skip independent
     // authority and interface checks. Report those harder provider defects
     // first, then retain the otherwise-conforming region as pending checked
     // state rather than misclassifying it as refinement evidence or a provider
     // defect.
-    if region.unknown_index_domain_predicates().len() != 0 {
+    if let IndexRefinementVerificationOutcome::Pending(receipt) = verified {
+        let scalar_authority = receipt.scalar_authority().clone();
         return Ok(IndexRefinementOutcome::Pending(Box::new(
             PendingIndexRefinement {
-                occurrence: occurrence.clone(),
+                subject: subject.clone(),
+                receipt,
                 provider: capability.provider().clone(),
                 revision: capability.revision(),
                 capability_authority: capability.authority().clone(),
@@ -994,17 +836,22 @@ pub fn refine_index_region(
         )));
     }
 
-    let content = assemble_content(occurrence, &region, scalar_authority, Vec::new());
+    let IndexRefinementVerificationOutcome::Verified(receipt) = verified else {
+        unreachable!()
+    };
+    let scalar_authority = receipt.scalar_authority().clone();
+    let content = assemble_content(subject, &region, scalar_authority, Vec::new());
     let identity = encode_occurrence_identity(
         &content,
         capability.provider(),
         capability.revision(),
         capability.authority(),
-        occurrence,
+        subject,
+        &receipt,
     );
     Ok(IndexRefinementOutcome::Refined(Box::new(IndexRefinement {
         content,
-        occurrence: occurrence.identity.clone(),
+        receipt: *receipt,
         provider: capability.provider().clone(),
         revision: capability.revision(),
         operand_bindings,
@@ -1014,45 +861,76 @@ pub fn refine_index_region(
     })))
 }
 
-/// Proves the resolved capability was resolved for exactly this occurrence.
-fn bind_capability_to_occurrence(
+fn map_ir_verifier_error(
+    source: IndexRefinementVerificationError,
     capability: &ResolvedLoweringCapability,
-    occurrence: &SemanticOccurrence,
-) -> Result<(), RefinementError> {
-    if capability.family() != LoweringFamily::IndexAccess {
-        return Err(RefinementError::WrongFamily {
-            actual: capability.family(),
-        });
-    }
-    if capability.operation() != &occurrence.operation {
-        return Err(RefinementError::OperationMismatch {
+    subject: &IndexRefinementSubject,
+) -> RefinementError {
+    match source {
+        IndexRefinementVerificationError::OperationMismatch => RefinementError::OperationMismatch {
             capability: Box::new(capability.operation().clone()),
-            occurrence: Box::new(occurrence.operation.clone()),
-        });
+            occurrence: Box::new(subject.operation().clone()),
+        },
+        IndexRefinementVerificationError::CapabilitySignatureMismatch => {
+            RefinementError::CapabilitySignatureMismatch
+        }
+        IndexRefinementVerificationError::EffectNotIndexable { effect } => {
+            RefinementError::EffectNotIndexable { effect }
+        }
+        IndexRefinementVerificationError::ScalarAuthority(source) => {
+            RefinementError::ScalarAuthority(source)
+        }
+        IndexRefinementVerificationError::SemanticAuthorityMismatch => {
+            RefinementError::SemanticAuthorityMismatch
+        }
+        IndexRefinementVerificationError::ScalarAuthorityConformance => {
+            RefinementError::ScalarAuthorityConformance
+        }
+        IndexRefinementVerificationError::Handle(source) => RefinementError::Handle(source),
+        IndexRefinementVerificationError::SymbolicBoundary => RefinementError::SymbolicBoundary,
+        IndexRefinementVerificationError::OperandArity {
+            region_inputs,
+            distinct_operands,
+        } => RefinementError::OperandArity {
+            region_inputs,
+            distinct_operands,
+        },
+        IndexRefinementVerificationError::OperandInterface { position } => {
+            RefinementError::OperandInterface { position }
+        }
+        IndexRefinementVerificationError::ResultArity {
+            region_outputs,
+            results,
+        } => RefinementError::ResultArity {
+            region_outputs,
+            results,
+        },
+        IndexRefinementVerificationError::ResultInterface { position } => {
+            RefinementError::ResultInterface { position }
+        }
+        IndexRefinementVerificationError::ResultValueType { position } => {
+            RefinementError::ResultValueType { position }
+        }
+        IndexRefinementVerificationError::IncompleteWrite { position } => {
+            RefinementError::IncompleteWrite { position }
+        }
+        other => RefinementError::IrVerifier(Arc::new(other)),
     }
-    let signature = capability.signature();
-    if signature.operands() != occurrence.operand_types().as_slice()
-        || signature.results() != occurrence.result_types().as_slice()
-    {
-        return Err(RefinementError::CapabilitySignatureMismatch);
-    }
-    Ok(())
 }
 
 /// Drives the resolved provider through the canonical builder and verifies it.
 fn emit_region(
     capability: &ResolvedLoweringCapability,
-    occurrence: &SemanticOccurrence,
+    occurrence: &IndexRefinementSubject,
     scalars: &FrozenScalarRegistry,
 ) -> Result<VerifiedIndexRegion, RefinementError> {
     let provider = capability
         .index_access_provider()
         .ok_or(RefinementError::MissingIndexProvider)?;
-    let facts = lowered_occurrence(occurrence)?;
     let mut builder = tiler_ir::index::IndexRegionBuilder::new(scalars.clone())
         .map_err(LoweringEmitError::from)?;
     {
-        let mut context = IndexAccessLoweringContext::new(&mut builder, &facts);
+        let mut context = IndexAccessLoweringContext::new(&mut builder, occurrence);
         provider.lower(&mut context)?;
     }
     builder
@@ -1062,107 +940,43 @@ fn emit_region(
         })
 }
 
-/// Projects the occurrence into the read-only facts a provider may see.
-///
-/// The distinct-operand order is the same one [`bind_operands`] later binds the
-/// region's input boundaries in, so a provider that declares its inputs in the
-/// order it was handed cannot be rejected for an ordering the host never stated.
-fn lowered_occurrence(
-    occurrence: &SemanticOccurrence,
-) -> Result<LoweredOccurrence, RefinementError> {
-    let distinct = occurrence.distinct_operands()?;
-    let inputs = distinct
-        .iter()
-        .map(|operand| OccurrenceBoundary::new(operand.value_type.clone(), operand.shape.clone()))
-        .collect();
-    let mut operands = Vec::with_capacity(occurrence.operands.len());
-    for (position, operand) in occurrence.operands.iter().enumerate() {
-        let index = distinct
-            .iter()
-            .position(|candidate| candidate.value == operand.value)
-            .ok_or(RefinementError::OperandInterface { position })?;
-        operands.push(index);
-    }
-    let results = occurrence
-        .results
-        .iter()
-        .map(|result| OccurrenceBoundary::new(result.value_type.clone(), result.shape.clone()))
-        .collect();
-    LoweredOccurrence::new(inputs, operands, results, occurrence.attributes.clone())
-        .map_err(RefinementError::OccurrenceFacts)
-}
-
 impl From<LoweringEmitError> for RefinementError {
     fn from(source: LoweringEmitError) -> Self {
         Self::Emit(source)
     }
 }
 
-/// Proves the region reached nothing beyond the authority the capability may emit.
-///
-/// Containment rather than equality is the exact property: one capability lowers
-/// every occurrence of its family and signature, and which declared scalar
-/// operations a given occurrence needs depends on that occurrence's shapes and
-/// attributes. A single-contributor reduction reaches no scalar operation at all
-/// and an empty one reaches only the identity constant, yet both are lowered by
-/// the same capability. Requiring equality would force a provider to be
-/// registered per shape; requiring containment still refuses every region that
-/// reached an authority the capability was never admitted to emit.
-fn check_authority_conformance(
-    capability: &ResolvedLoweringCapability,
-    scalar_authority: &ScalarAuthorityEvidence,
-) -> Result<(), RefinementError> {
-    let authority = capability.authority();
-    if scalar_authority.semantic_snapshot() != authority.operation_authority().registry_snapshot() {
-        return Err(RefinementError::SemanticAuthorityMismatch);
-    }
-    let declared = authority.emitted_scalar_operations();
-    if scalar_authority
-        .reached_operations()
-        .iter()
-        .any(|reached| !declared.contains(reached))
-    {
-        return Err(RefinementError::ScalarAuthorityConformance);
-    }
-    Ok(())
-}
-
 /// Binds the occurrence's ordered operands to the region's input boundaries.
 fn bind_operands(
-    occurrence: &SemanticOccurrence,
+    occurrence: &IndexRefinementSubject,
     region: &VerifiedIndexRegion,
 ) -> Result<Vec<OperandBinding>, RefinementError> {
     let inputs: Vec<_> = region
         .tensors()
         .filter(|tensor| tensor.role() == TensorRole::Input)
         .collect();
-    let distinct = occurrence.distinct_operands()?;
-    if inputs.len() != distinct.len() {
+    if inputs.len() != occurrence.inputs().len() {
         return Err(RefinementError::OperandArity {
             region_inputs: inputs.len(),
-            distinct_operands: distinct.len(),
+            distinct_operands: occurrence.inputs().len(),
         });
     }
-    for (position, (operand, input)) in distinct.iter().zip(&inputs).enumerate() {
+    for (position, (operand, input)) in occurrence.inputs().iter().zip(&inputs).enumerate() {
         let shape = input
             .shape()
             .as_static()
             .ok_or(RefinementError::SymbolicBoundary)?;
-        if input.value_type() != &operand.value_type || shape != &operand.shape {
+        if input.value_type() != operand.value_type() || shape != operand.shape() {
             return Err(RefinementError::OperandInterface { position });
         }
     }
     // The distinct-operand order fixes the input boundary of every value, so each
     // ordered operand (aliases included) resolves to its value's input tensor.
-    let mut bindings = Vec::with_capacity(occurrence.operands.len());
-    for (position, operand) in occurrence.operands.iter().enumerate() {
-        let distinct_index = distinct
-            .iter()
-            .position(|candidate| candidate.value == operand.value)
-            .ok_or(RefinementError::OperandInterface { position })?;
+    let mut bindings = Vec::with_capacity(occurrence.operands().len());
+    for (position, distinct_index) in occurrence.operands().iter().copied().enumerate() {
         bindings.push(OperandBinding {
             operand: position,
-            value: operand.value,
+            input: distinct_index,
             input_tensor: inputs[distinct_index].id(),
         });
     }
@@ -1171,18 +985,18 @@ fn bind_operands(
 
 /// Binds the occurrence's ordered results to the region's output roots.
 fn bind_results(
-    occurrence: &SemanticOccurrence,
+    occurrence: &IndexRefinementSubject,
     region: &VerifiedIndexRegion,
 ) -> Result<Vec<ResultBinding>, RefinementError> {
     let roots: Vec<_> = region.outputs().collect();
-    if roots.len() != occurrence.results.len() {
+    if roots.len() != occurrence.results().len() {
         return Err(RefinementError::ResultArity {
             region_outputs: roots.len(),
-            results: occurrence.results.len(),
+            results: occurrence.results().len(),
         });
     }
     let mut bindings = Vec::with_capacity(roots.len());
-    for (position, (root, result)) in roots.iter().zip(&occurrence.results).enumerate() {
+    for (position, (root, result)) in roots.iter().zip(occurrence.results()).enumerate() {
         let access = region.access(root.access())?;
         // A refined result must be a complete unique ordinary write. Any retained
         // ownership proof witnesses that; its absence is an incomplete write.
@@ -1195,13 +1009,13 @@ fn bind_results(
             .as_static()
             .ok_or(RefinementError::SymbolicBoundary)?;
         if output.role() != TensorRole::Output
-            || output.value_type() != &result.value_type
-            || shape != &result.shape
+            || output.value_type() != result.value_type()
+            || shape != result.shape()
         {
             return Err(RefinementError::ResultInterface { position });
         }
         let written = region.scalar_value(root.value())?;
-        if written.value_type() != &result.value_type {
+        if written.value_type() != result.value_type() {
             return Err(RefinementError::ResultValueType { position });
         }
         bindings.push(ResultBinding {
@@ -1216,16 +1030,16 @@ fn bind_results(
 
 /// Assembles reusable content and its canonical identity.
 fn assemble_content(
-    occurrence: &SemanticOccurrence,
+    occurrence: &IndexRefinementSubject,
     region: &VerifiedIndexRegion,
     scalar_authority: ScalarAuthorityEvidence,
     index_domain_proofs: Vec<AuthorizedIndexDomainProof>,
 ) -> RefinementContent {
     let operand_interface = canonical_operand_interface(occurrence);
     let result_interface = occurrence
-        .results
+        .results()
         .iter()
-        .map(|result| (result.value_type.clone(), result.shape.clone()))
+        .map(|result| (result.value_type().clone(), result.shape().clone()))
         .collect();
     let region_identity = region.canonical_identity().clone();
     let identity = encode_content_identity(
@@ -1237,12 +1051,12 @@ fn assemble_content(
     );
     RefinementContent {
         region_identity,
-        operation: occurrence.operation.clone(),
+        operation: occurrence.operation().clone(),
         operand_interface,
         result_interface,
-        attributes: occurrence.attributes.clone(),
-        effect: occurrence.effect,
-        numerical_contract: occurrence.numerical_contract.clone(),
+        attributes: occurrence.attributes().clone(),
+        effect: occurrence.effect(),
+        numerical_contract: occurrence.numerical_contract().clone(),
         scalar_authority,
         index_domain_proofs,
         identity,
@@ -1271,7 +1085,8 @@ pub(crate) fn complete_pending_index_refinement(
         "semantic-discharge proofs must preserve canonical obligation order"
     );
     let PendingIndexRefinement {
-        occurrence,
+        subject,
+        receipt,
         provider,
         revision,
         capability_authority,
@@ -1281,17 +1096,20 @@ pub(crate) fn complete_pending_index_refinement(
         scalar_authority,
         region,
     } = pending;
-    let content = assemble_content(&occurrence, &region, scalar_authority, index_domain_proofs);
+    let receipt = IndexRefinementVerifier::complete(*receipt)
+        .expect("the production compiler and IR exact-finite discharge authorities agree");
+    let content = assemble_content(&subject, &region, scalar_authority, index_domain_proofs);
     let identity = encode_occurrence_identity(
         &content,
         &provider,
         revision,
         &capability_authority,
-        &occurrence,
+        &subject,
+        &receipt,
     );
     IndexRefinement {
         content,
-        occurrence: occurrence.identity,
+        receipt,
         provider,
         revision,
         operand_bindings,
@@ -1307,56 +1125,53 @@ pub(crate) fn complete_pending_index_refinement(
 /// value identifiers are not, mirroring how region content renumbers members to
 /// region-local positions.
 fn canonical_operand_interface(
-    occurrence: &SemanticOccurrence,
+    occurrence: &IndexRefinementSubject,
 ) -> Vec<(u32, ResolvedValueType, Shape)> {
-    let mut order: Vec<OccurrenceValueId> = Vec::new();
-    let mut interface = Vec::with_capacity(occurrence.operands.len());
-    for operand in &occurrence.operands {
-        let local = if let Some(index) = order.iter().position(|value| *value == operand.value) {
-            u32::try_from(index).unwrap_or(u32::MAX)
-        } else {
-            let index = u32::try_from(order.len()).unwrap_or(u32::MAX);
-            order.push(operand.value);
-            index
-        };
-        interface.push((local, operand.value_type.clone(), operand.shape.clone()));
+    let mut interface = Vec::with_capacity(occurrence.operands().len());
+    for input in occurrence.operands() {
+        let boundary = &occurrence.inputs()[*input];
+        interface.push((
+            u32::try_from(*input).unwrap_or(u32::MAX),
+            boundary.value_type().clone(),
+            boundary.shape().clone(),
+        ));
     }
     interface
 }
 
 fn encode_content_identity(
     region_identity: &CanonicalIndexRegionIdentity,
-    occurrence: &SemanticOccurrence,
+    occurrence: &IndexRefinementSubject,
     operand_interface: &[(u32, ResolvedValueType, Shape)],
     scalar_authority: &ScalarAuthorityEvidence,
     index_domain_proofs: &[AuthorizedIndexDomainProof],
 ) -> RefinementContentIdentity {
     let mut bytes = CONTENT_IDENTITY_TAG.to_vec();
     push_slice(&mut bytes, region_identity.as_bytes());
-    encode_op_key(&mut bytes, &occurrence.operation);
+    encode_op_key(&mut bytes, occurrence.operation());
     push_len(&mut bytes, operand_interface.len());
     for (local, value_type, shape) in operand_interface {
         bytes.extend_from_slice(&local.to_be_bytes());
         push_slice(&mut bytes, value_type.canonical_encoding().as_bytes());
         encode_shape(&mut bytes, shape);
     }
-    push_len(&mut bytes, occurrence.results.len());
-    for result in &occurrence.results {
+    push_len(&mut bytes, occurrence.results().len());
+    for result in occurrence.results() {
         push_slice(
             &mut bytes,
-            result.value_type.canonical_encoding().as_bytes(),
+            result.value_type().canonical_encoding().as_bytes(),
         );
-        encode_shape(&mut bytes, &result.shape);
+        encode_shape(&mut bytes, result.shape());
     }
-    bytes.push(effect_tag(occurrence.effect));
+    bytes.push(effect_tag(occurrence.effect()));
     // Attributes are content: two occurrences of one family that differ only in
     // an attribute are different reusable facts even when their emitted regions
     // happen to coincide.
     push_slice(
         &mut bytes,
-        occurrence.attributes.canonical_encoding().as_bytes(),
+        occurrence.attributes().canonical_encoding().as_bytes(),
     );
-    push_slice(&mut bytes, occurrence.numerical_contract.as_bytes());
+    push_slice(&mut bytes, occurrence.numerical_contract().as_bytes());
     // Provider-independent reached authority is content; provider-attributed
     // admission provenance is deliberately withheld for the occurrence binding.
     push_slice(&mut bytes, scalar_authority.definitions().as_bytes());
@@ -1375,11 +1190,14 @@ fn encode_occurrence_identity(
     provider: &ProviderIdentity,
     revision: LoweringCapabilityRevision,
     authority: &LoweringCapabilityAuthority,
-    occurrence: &SemanticOccurrence,
+    occurrence: &IndexRefinementSubject,
+    receipt: &IndexRefinementReceipt,
 ) -> IndexRefinementIdentity {
     let mut bytes = OCCURRENCE_IDENTITY_TAG.to_vec();
     push_slice(&mut bytes, content.identity.as_bytes());
-    push_slice(&mut bytes, occurrence.identity.as_bytes());
+    push_slice(&mut bytes, occurrence.graph().as_bytes());
+    bytes.extend_from_slice(&occurrence.occurrence().get().to_be_bytes());
+    push_slice(&mut bytes, receipt.identity().as_bytes());
     encode_provider(&mut bytes, provider);
     bytes.extend_from_slice(&revision.get().to_be_bytes());
     push_slice(
@@ -1432,19 +1250,22 @@ fn encode_shape(output: &mut Vec<u8>, shape: &Shape) {
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
+    use std::fmt::Write as _;
     use std::sync::Arc;
 
     use tiler_ir::index::{
-        DomainRole, FrozenScalarRegistry, IndexDomainSoundProof, ScalarArity,
-        ScalarAttributeSchema, ScalarAttributes, ScalarEffect, ScalarInferenceError,
+        DomainRole, FrozenScalarRegistry, IndexDomainSoundProof, IndexRefinementSubject,
+        IndexRefinementVerificationError, IndexRefinementVerifier, NumericalContractIdentity,
+        ScalarArity, ScalarAttributeSchema, ScalarAttributes, ScalarEffect, ScalarInferenceError,
         ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract,
         ScalarOperationDefinition, ScalarOperationInferencer, ScalarRegistryBuilder, SourcedExtent,
         UnknownIndexDomainPredicate, VerifiedIndexRegion,
     };
+    use tiler_ir::program::SemanticOccurrence;
     use tiler_ir::semantic::{
         CanonicalValue, F32, FrozenSemanticRegistry, InputKey, NormativeDefinitionRef, OutputKey,
         ProviderDiagnosticCode, ProviderIdentity, ResolvedValueType, SemanticProgram,
-        SemanticProgramBuilder, multiply_f32_op,
+        SemanticProgramBuilder, constant_f32_op, multiply_f32_op,
     };
     use tiler_ir::shape::{Extent, Shape};
 
@@ -1455,10 +1276,7 @@ mod tests {
         ScalarReferenceRegistryBuilder, ScalarReferenceRequest, Tensor, TensorPayloadView,
     };
 
-    use super::{
-        NumericalContractIdentity, OccurrenceOperand, OccurrenceResult, OccurrenceValueId,
-        RefinementError, SemanticOccurrence, SemanticOccurrenceIdentity, refine_index_region,
-    };
+    use super::{RefinementError, emit_region, refine_index_region};
     use crate::capability::{
         FrozenLoweringCapabilityRegistry, IndexAccessLoweringContext, IndexAccessLoweringProvider,
         LoweringCapabilityRegistryBuilder, LoweringCapabilityRevision, LoweringEmitError,
@@ -1796,25 +1614,109 @@ mod tests {
         )
     }
 
-    fn square_occurrence(site: &[u8]) -> SemanticOccurrence {
+    fn square_occurrence(site: &[u8]) -> IndexRefinementSubject {
         square_occurrence_with_length(site, LENGTH)
     }
 
-    fn square_occurrence_with_length(site: &[u8], length: u64) -> SemanticOccurrence {
-        let shape = Shape::from_dims([length]);
-        let v = OccurrenceValueId(0);
-        SemanticOccurrence::new(
-            multiply_f32_op(),
-            vec![
-                OccurrenceOperand::new(v, f32_type(), shape.clone()),
-                OccurrenceOperand::new(v, f32_type(), shape.clone()),
-            ],
-            vec![OccurrenceResult::new(f32_type(), shape)],
-            tiler_ir::semantic::OperationAttributes::empty(),
-            tiler_ir::semantic::OperationEffect::Pure,
-            contract(),
-            SemanticOccurrenceIdentity::from_bytes(site.to_vec()),
+    fn square_occurrence_with_length(site: &[u8], length: u64) -> IndexRefinementSubject {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let mut suffix = String::with_capacity(site.len() * 2);
+        for byte in site {
+            write!(&mut suffix, "{byte:02x}").expect("writing to a String cannot fail");
+        }
+        let input = builder
+            .input::<F32>(
+                InputKey::new(format!("input-{suffix}")).unwrap(),
+                Shape::from_dims([length]),
+            )
+            .unwrap();
+        let result = tiler_ir::semantic::F32Multiply::apply(&mut builder, input, input).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), result)
+            .unwrap();
+        let program = builder.build().unwrap();
+        IndexRefinementSubject::derive(&program, SemanticOccurrence::new(0), contract()).unwrap()
+    }
+
+    fn constant_subject(bits: u32, contract_key: &str) -> IndexRefinementSubject {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let result = tiler_ir::semantic::F32Constant::apply(&mut builder, bits).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), result)
+            .unwrap();
+        let program = builder.build().unwrap();
+        IndexRefinementSubject::derive(
+            &program,
+            SemanticOccurrence::new(0),
+            NumericalContractIdentity::from_key(contract_key),
         )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_resolution_for_other_attributes_mints_no_receipt() {
+        let scalars = crate::governed::governed_scalars().unwrap();
+        let registry = crate::governed::governed_lowering_capabilities(&scalars).unwrap();
+        let signature = LoweringSignature::new([], [f32_type()]).unwrap();
+        let resolved = registry
+            .resolve_index_access(&constant_f32_op(), &signature)
+            .unwrap();
+        let admitted = constant_subject(1.0_f32.to_bits(), "tiler.strict-f32.v1");
+        let changed = constant_subject(2.0_f32.to_bits(), "tiler.strict-f32.v1");
+        let resolution = resolved
+            .authority()
+            .refinement()
+            .resolve(&admitted)
+            .unwrap();
+        let region = emit_region(&resolved, &changed, &scalars).unwrap();
+
+        let error =
+            IndexRefinementVerifier::verify(&changed, &resolution, &region, &scalars).unwrap_err();
+        assert_eq!(error, IndexRefinementVerificationError::AttributeMismatch);
+    }
+
+    #[test]
+    fn a_resolution_for_another_numerical_contract_mints_no_receipt() {
+        let scalars = scalar_registry();
+        let registry = square_registry();
+        let resolved = registry
+            .resolve_index_access(&multiply_f32_op(), &binary_signature())
+            .unwrap();
+        let admitted = square_occurrence(b"same-graph");
+        let changed_program = {
+            let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+            let input = builder
+                .input::<F32>(
+                    InputKey::new("input-73616d652d6772617068").unwrap(),
+                    Shape::from_dims([LENGTH]),
+                )
+                .unwrap();
+            let result =
+                tiler_ir::semantic::F32Multiply::apply(&mut builder, input, input).unwrap();
+            builder
+                .output(OutputKey::new("result").unwrap(), result)
+                .unwrap();
+            builder.build().unwrap()
+        };
+        let changed = IndexRefinementSubject::derive(
+            &changed_program,
+            SemanticOccurrence::new(0),
+            NumericalContractIdentity::from_key("tiler.permitted-regrouping-f32.v1"),
+        )
+        .unwrap();
+        assert_eq!(admitted.graph(), changed.graph());
+        let resolution = resolved
+            .authority()
+            .refinement()
+            .resolve(&admitted)
+            .unwrap();
+        let region = emit_region(&resolved, &changed, &scalars).unwrap();
+        let error =
+            IndexRefinementVerifier::verify(&changed, &resolution, &region, &scalars).unwrap_err();
+        assert_eq!(
+            error,
+            IndexRefinementVerificationError::NumericalContractMismatch
+        );
     }
 
     #[test]
@@ -1853,12 +1755,36 @@ mod tests {
         let resolved = frozen
             .resolve_index_access(&multiply_f32_op(), &binary_signature())
             .unwrap();
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(
+                InputKey::new("shared-input").unwrap(),
+                Shape::from_dims([LENGTH]),
+            )
+            .unwrap();
+        let first_result =
+            tiler_ir::semantic::F32Multiply::apply(&mut builder, input, input).unwrap();
+        let second_result =
+            tiler_ir::semantic::F32Multiply::apply(&mut builder, input, input).unwrap();
+        builder
+            .output(OutputKey::new("first").unwrap(), first_result)
+            .unwrap();
+        builder
+            .output(OutputKey::new("second").unwrap(), second_result)
+            .unwrap();
+        let program = builder.build().unwrap();
+        let first_subject =
+            IndexRefinementSubject::derive(&program, SemanticOccurrence::new(0), contract())
+                .unwrap();
+        let second_subject =
+            IndexRefinementSubject::derive(&program, SemanticOccurrence::new(1), contract())
+                .unwrap();
 
-        let first = refine_index_region(&resolved, &square_occurrence(b"site-1"), &scalars)
+        let first = refine_index_region(&resolved, &first_subject, &scalars)
             .unwrap()
             .into_refined()
             .expect("the fixture discharges every index-domain predicate");
-        let second = refine_index_region(&resolved, &square_occurrence(b"site-2"), &scalars)
+        let second = refine_index_region(&resolved, &second_subject, &scalars)
             .unwrap()
             .into_refined()
             .expect("the fixture discharges every index-domain predicate");
@@ -1871,7 +1797,38 @@ mod tests {
         );
         // Different semantic source: distinct occurrence bindings.
         assert_ne!(first.identity(), second.identity());
-        assert_ne!(first.occurrence(), second.occurrence());
+        assert_eq!(first.receipt().graph(), second.receipt().graph());
+        assert_ne!(first.receipt().occurrence(), second.receipt().occurrence());
+        assert_ne!(first.receipt().identity(), second.receipt().identity());
+    }
+
+    #[test]
+    fn changed_verified_region_content_moves_receipt_identity() {
+        let scalars = scalar_registry();
+        let emitted = [scalar_key("multiply"), scalar_key("add")];
+        let square = index_registry(Arc::new(PointwiseSquare { length: LENGTH }), &emitted)
+            .resolve_index_access(&multiply_f32_op(), &binary_signature())
+            .unwrap();
+        let add = index_registry(Arc::new(PointwiseAdd { length: LENGTH }), &emitted)
+            .resolve_index_access(&multiply_f32_op(), &binary_signature())
+            .unwrap();
+        let occurrence = square_occurrence(b"same-occurrence");
+
+        let square = refine_index_region(&square, &occurrence, &scalars)
+            .unwrap()
+            .into_refined()
+            .expect("the square fixture discharges every predicate");
+        let add = refine_index_region(&add, &occurrence, &scalars)
+            .unwrap()
+            .into_refined()
+            .expect("the add fixture discharges every predicate");
+
+        assert_ne!(
+            square.region().canonical_identity(),
+            add.region().canonical_identity()
+        );
+        assert_ne!(square.receipt().identity(), add.receipt().identity());
+        assert_ne!(square.identity(), add.identity());
     }
 
     #[test]
@@ -1921,21 +1878,28 @@ mod tests {
             StrictF32NumericalContract::governed(),
         )
         .unwrap();
-        let candidate = outcome
+        let _candidate = outcome
             .whole_program_candidate()
             .expect("the single multiply is its own whole-program region");
-        let site = candidate.occurrence().as_bytes().to_vec();
-
         let scalars = scalar_registry();
         let resolved = square_registry()
             .resolve_index_access(&multiply_f32_op(), &binary_signature())
             .unwrap();
-        let occurrence = square_occurrence(&site);
+        let occurrence =
+            IndexRefinementSubject::derive(&program, SemanticOccurrence::new(0), contract())
+                .unwrap();
         let refinement = refine_index_region(&resolved, &occurrence, &scalars)
             .unwrap()
             .into_refined()
             .expect("the fixture discharges every index-domain predicate");
-        assert_eq!(refinement.occurrence().as_bytes(), site.as_slice());
+        assert_eq!(
+            refinement.receipt().graph(),
+            program.semantic_identity().graph()
+        );
+        assert_eq!(
+            refinement.receipt().occurrence(),
+            SemanticOccurrence::new(0)
+        );
     }
 
     #[test]
@@ -1995,7 +1959,7 @@ mod tests {
         let pending = outcome
             .pending()
             .expect("the conservative read exceeds the governed proof budget");
-        assert_eq!(pending.occurrence(), &occurrence);
+        assert_eq!(pending.subject(), &occurrence);
         assert_eq!(pending.provider(), resolved.provider());
         assert_eq!(pending.revision(), resolved.revision());
         assert_eq!(pending.capability_authority(), resolved.authority());
@@ -2158,20 +2122,18 @@ mod tests {
         let resolved = square_registry()
             .resolve_index_access(&multiply_f32_op(), &binary_signature())
             .unwrap();
-        let shape = Shape::from_dims([LENGTH]);
-        let v = OccurrenceValueId(0);
-        let occurrence = SemanticOccurrence::new(
-            tiler_ir::semantic::add_f32_op(),
-            vec![
-                OccurrenceOperand::new(v, f32_type(), shape.clone()),
-                OccurrenceOperand::new(v, f32_type(), shape.clone()),
-            ],
-            vec![OccurrenceResult::new(f32_type(), shape)],
-            tiler_ir::semantic::OperationAttributes::empty(),
-            tiler_ir::semantic::OperationEffect::Pure,
-            contract(),
-            SemanticOccurrenceIdentity::from_bytes(b"site".to_vec()),
-        );
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([LENGTH]))
+            .unwrap();
+        let result = tiler_ir::semantic::F32Add::apply(&mut builder, input, input).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), result)
+            .unwrap();
+        let program = builder.build().unwrap();
+        let occurrence =
+            IndexRefinementSubject::derive(&program, SemanticOccurrence::new(0), contract())
+                .unwrap();
         let error = refine_index_region(&resolved, &occurrence, &scalars).unwrap_err();
         assert!(matches!(error, RefinementError::OperationMismatch { .. }));
     }

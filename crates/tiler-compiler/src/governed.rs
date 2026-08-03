@@ -5,7 +5,8 @@
 //! [`IndexAccessLoweringProvider`] registered against
 //! [`FrozenScalarRegistry::standard`]. The providers are shape- and
 //! attribute-driven: every extent, every broadcast, and every constant bit
-//! pattern is read from the [`LoweredOccurrence`] facts the host hands them.
+//! pattern is read from the [`tiler_ir::index::IndexRefinementSubject`] facts
+//! the host hands them.
 //! That is what lets one registered capability cover a family instead of one per
 //! program shape, and it is why two `tiler.constant-f32` occurrences with
 //! different bits are two lowerings rather than an unresolvable registry
@@ -38,8 +39,8 @@ use tiler_ir::shape::{Axis, Extent, Shape};
 
 use crate::capability::{
     FrozenLoweringCapabilityRegistry, IndexAccessLoweringContext, IndexAccessLoweringProvider,
-    LoweredOccurrence, LoweringCapabilityRegistryBuilder, LoweringCapabilityRevision,
-    LoweringEmitError, LoweringRegistryError, LoweringSignature,
+    LoweringCapabilityRegistryBuilder, LoweringCapabilityRevision, LoweringEmitError,
+    LoweringRegistryError, LoweringSignature,
 };
 
 /// Output-affecting revision of every governed lowering capability.
@@ -588,7 +589,9 @@ struct SumPlan {
 }
 
 impl SumPlan {
-    fn derive(occurrence: &LoweredOccurrence) -> Result<Self, LoweringEmitError> {
+    fn derive(
+        occurrence: &tiler_ir::index::IndexRefinementSubject,
+    ) -> Result<Self, LoweringEmitError> {
         let ([input], [result]) = (occurrence.inputs(), occurrence.results()) else {
             return Err(occurrence_error("sum-arity"));
         };
@@ -891,7 +894,9 @@ enum AxisSource {
 }
 
 impl ContractionPlan {
-    fn derive(occurrence: &LoweredOccurrence) -> Result<Self, LoweringEmitError> {
+    fn derive(
+        occurrence: &tiler_ir::index::IndexRefinementSubject,
+    ) -> Result<Self, LoweringEmitError> {
         let ([left, right], [result]) = (occurrence.inputs(), occurrence.results()) else {
             return Err(occurrence_error("contraction-arity"));
         };
@@ -1574,17 +1579,20 @@ mod tests {
     use super::{governed_lowering_capabilities, governed_scalars};
     use crate::capability::LoweringSignature;
     use crate::legality::{
-        IndexRefinement, NumericalContractIdentity, OccurrenceOperand, OccurrenceResult,
-        OccurrenceValueId, SemanticOccurrence, SemanticOccurrenceIdentity, refine_index_region,
+        IndexRefinement, OccurrenceOperand, OccurrenceResult, OccurrenceValueId,
+        refine_index_region,
     };
+    use tiler_ir::index::{IndexRefinementSubject, NumericalContractIdentity};
+    use tiler_ir::program::SemanticOccurrence;
     use tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS;
     use tiler_ir::semantic::{
         BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, BroadcastAxisSource,
         CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField, CanonicalValue, ContractionIndex,
-        ContractionIndexStructure, F32, F32_CONSTANT_BITS_ATTRIBUTE, OpKey, OperationAttributes,
-        OperationEffect, REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, ReindexForm,
-        ResolvedValueType, TypeKey, add_f32_op, broadcast_f32_op, constant_f32_op, multiply_f32_op,
-        reindex_f32_op, strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
+        ContractionIndexStructure, F32, F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey,
+        OperationAttributes, OutputKey, REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE,
+        ReindexForm, ResolvedValueType, SemanticProgramBuilder, TypeKey, add_f32_op,
+        broadcast_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op,
+        strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
     };
     use tiler_ir::shape::{Axis, Extent, Shape};
     use tiler_reference::{
@@ -1631,24 +1639,49 @@ mod tests {
     ) -> IndexRefinement {
         let scalars = governed_scalars().unwrap();
         let registry = governed_lowering_capabilities(&scalars).unwrap();
-        let occurrence = SemanticOccurrence::new(
-            operation,
-            operands,
-            results,
-            attributes,
-            OperationEffect::Pure,
-            contract(),
-            SemanticOccurrenceIdentity::from_bytes(b"governed-fixture".to_vec()),
-        );
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let mut inputs = Vec::new();
+        for operand in &operands {
+            if inputs.iter().any(|(value, _)| *value == operand.value()) {
+                continue;
+            }
+            let input = builder
+                .input_resolved(
+                    InputKey::new(format!("input-{}", operand.value().0)).unwrap(),
+                    operand.shape().clone(),
+                    operand.value_type().clone(),
+                )
+                .unwrap();
+            inputs.push((operand.value(), input));
+        }
+        let ordered = operands
+            .into_iter()
+            .map(|operand| {
+                inputs
+                    .iter()
+                    .find(|(value, _)| *value == operand.value())
+                    .unwrap()
+                    .1
+            })
+            .collect::<Vec<_>>();
+        let produced = builder.apply(operation, attributes, &ordered).unwrap();
+        assert_eq!(produced.len(), results.len());
+        for (position, value) in produced.into_iter().enumerate() {
+            builder
+                .output_resolved(OutputKey::new(format!("result-{position}")).unwrap(), value)
+                .unwrap();
+        }
+        let program = builder.build().unwrap();
+        let occurrence =
+            IndexRefinementSubject::derive(&program, SemanticOccurrence::new(0), contract())
+                .unwrap();
+        for (actual, expected) in occurrence.results().iter().zip(results) {
+            assert_eq!(actual.value_type(), expected.value_type());
+            assert_eq!(actual.shape(), expected.shape());
+        }
         let signature = LoweringSignature::new(
-            occurrence
-                .operands()
-                .iter()
-                .map(|operand| operand.value_type().clone()),
-            occurrence
-                .results()
-                .iter()
-                .map(|result| result.value_type().clone()),
+            occurrence.signature().operands().iter().cloned(),
+            occurrence.signature().results().iter().cloned(),
         )
         .unwrap();
         let resolved = registry
@@ -2189,42 +2222,34 @@ mod tests {
         );
     }
 
-    /// A lowering emits a region for the occurrence it was handed, or refuses.
-    ///
-    /// The occurrence's declared result shape is the host's, and the form's is
-    /// derived. A lowering that emitted its own derivation regardless would
-    /// produce a region that realizes a different occurrence than the one
-    /// requested, and refinement's interface check is not what catches it —
-    /// the region would be internally consistent and simply wrong.
+    /// A refinement subject cannot independently declare a result shape that
+    /// disagrees with the semantic operation's inference.
     #[test]
-    fn a_structural_lowering_refuses_an_occurrence_its_mapping_does_not_describe() {
-        let scalars = governed_scalars().unwrap();
-        let registry = governed_lowering_capabilities(&scalars).unwrap();
-        let signature = LoweringSignature::new([f32_type()], [f32_type()]).unwrap();
-
-        let mismatched = SemanticOccurrence::new(
-            reindex_f32_op(),
-            vec![OccurrenceOperand::new(
-                OccurrenceValueId(0),
-                f32_type(),
-                Shape::from_dims([6]),
-            )],
-            // The form derives `[3, 2]`; the occurrence declares `[2, 3]`.
-            vec![OccurrenceResult::new(f32_type(), Shape::from_dims([2, 3]))],
-            reindex_attributes(
-                &ReindexForm::split_axis(Axis::new(0), [Extent::new(3), Extent::new(2)]).unwrap(),
-            ),
-            OperationEffect::Pure,
-            contract(),
-            SemanticOccurrenceIdentity::from_bytes(b"mismatched-fixture".to_vec()),
-        );
-        let resolved = registry
-            .resolve_index_access(mismatched.operation(), &signature)
+    fn a_structural_subject_uses_the_semantically_derived_result_shape() {
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let input = builder
+            .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([6]))
             .unwrap();
-        assert!(
-            refine_index_region(&resolved, &mismatched, &scalars).is_err(),
-            "a reindex whose declared result the form does not derive is refused",
-        );
+        let [result] = builder
+            .apply(
+                reindex_f32_op(),
+                reindex_attributes(
+                    &ReindexForm::split_axis(Axis::new(0), [Extent::new(3), Extent::new(2)])
+                        .unwrap(),
+                ),
+                &[input.erase()],
+            )
+            .unwrap()
+            .try_into()
+            .unwrap();
+        builder
+            .output_resolved(OutputKey::new("result").unwrap(), result)
+            .unwrap();
+        let program = builder.build().unwrap();
+        let subject =
+            IndexRefinementSubject::derive(&program, SemanticOccurrence::new(0), contract())
+                .unwrap();
+        assert_eq!(subject.results()[0].shape(), &Shape::from_dims([3, 2]));
     }
 
     /// Builds the attribute record carrying one contraction index structure.

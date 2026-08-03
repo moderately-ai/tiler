@@ -87,6 +87,8 @@
 
 use std::fmt::Write as _;
 
+use tiler_ir::index::{IndexRefinementSubject, NumericalContractIdentity};
+use tiler_ir::program::SemanticOccurrence;
 use tiler_ir::semantic::{
     ContractionIndex, ContractionIndexStructure, F32, F32TensorContraction, InputKey, OutputKey,
     SemanticProgram, SemanticProgramBuilder,
@@ -101,10 +103,7 @@ use tiler_reference::{
 
 use super::{governed_lowering_capabilities, governed_scalars};
 use crate::capability::LoweringSignature;
-use crate::legality::{
-    NumericalContractIdentity, OccurrenceOperand, OccurrenceResult, OccurrenceValueId,
-    SemanticOccurrence, SemanticOccurrenceIdentity, refine_index_region,
-};
+use crate::legality::refine_index_region;
 
 /// The probe's workload seed, `contraction_probe.py`'s `WORKLOAD_SEED`.
 const WORKLOAD_SEED: u64 = 0x5445_524D;
@@ -341,43 +340,16 @@ fn emitted_region_evaluation(
     let scalars = governed_scalars().expect("the governed scalar authority composes");
     let registry =
         governed_lowering_capabilities(&scalars).expect("the governed capabilities compose");
-    let structure = projection_structure();
-    let occurrence = SemanticOccurrence::new(
-        tiler_ir::semantic::strict_tensor_contraction_f32_op(),
-        vec![
-            OccurrenceOperand::new(
-                OccurrenceValueId(0),
-                F32::resolved_type(),
-                Shape::from_dims([m, k]),
-            ),
-            OccurrenceOperand::new(
-                OccurrenceValueId(1),
-                F32::resolved_type(),
-                Shape::from_dims([n, k]),
-            ),
-        ],
-        vec![OccurrenceResult::new(
-            F32::resolved_type(),
-            Shape::from_dims([m, n]),
-        )],
-        tiler_ir::semantic::OperationAttributes::new([tiler_ir::semantic::CanonicalField::new(
-            tiler_ir::semantic::CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE,
-            structure.canonical_value().clone(),
-        )])
-        .expect("the structure attribute is canonical"),
-        tiler_ir::semantic::OperationEffect::Pure,
+    let program = projection_program(m, n, k);
+    let occurrence = IndexRefinementSubject::derive(
+        &program,
+        SemanticOccurrence::new(0),
         NumericalContractIdentity::from_key("tiler.strict-f32.v1"),
-        SemanticOccurrenceIdentity::from_bytes(b"contraction-conformance".to_vec()),
-    );
+    )
+    .expect("the verified contraction yields a refinement subject");
     let signature = LoweringSignature::new(
-        occurrence
-            .operands()
-            .iter()
-            .map(|operand| operand.value_type().clone()),
-        occurrence
-            .results()
-            .iter()
-            .map(|result| result.value_type().clone()),
+        occurrence.signature().operands().iter().cloned(),
+        occurrence.signature().results().iter().cloned(),
     )
     .expect("the occurrence's signature is bounded");
     let resolved = registry
