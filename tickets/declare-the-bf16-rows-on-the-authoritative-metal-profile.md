@@ -1,7 +1,7 @@
 ---
 id: declare-the-bf16-rows-on-the-authoritative-metal-profile
 title: Declare the measured BF16 dispatchability and subnormal rows on the Metal profile
-status: review
+status: done
 priority: p1
 dependencies: [admit-a-bf16-scalar-arithmetic-subject, measure-macos-apple9-bf16-under-unified-msl4-profile]
 related: [spike-bf16-through-the-second-dtype-seams, construct-and-bind-the-first-authoritative-metal-compile-profile, measure-the-apple-subnormal-flush-for-the-remaining-mature-dtypes, decide-per-dtype-dispatchability-as-a-target-capability, measure-apple-numerics-on-physical-ios-device, record-the-compilation-selection-in-target-measurement-provenance]
@@ -159,3 +159,15 @@ contract.
 `research/target-profiles`; the dispatch brief's `contracts/navigation` claim
 was stale. That exclusive scope was added after the coordinator verified no
 live collision and before continuing ledger edits.
+
+## Integration review — 2026-08-03
+
+Independent correctness/identity review found no code, measurement,
+BF16/F32-independence, identity, or negative-path defect. Its documentation
+sweep corrected the superseded profile key in ADR 0086, the retained-record
+lineage, the exact `probe.dtypes` value and materialization witness exception,
+and the distinction between normative validity scopes and measured numerical
+boundaries. A focused re-review found the corrected endpoint clean at
+`8de97b044c574c0c906d0aae68c35df505798d5b`; merge commit
+`df07409659111561614a13b25ab4db091836fea8` contains both the implementation
+commit `5f1b7b1c155661ee5aa0f028c458da5acf3e2dd6` and every review correction.

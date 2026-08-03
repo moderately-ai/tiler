@@ -5,7 +5,7 @@ status: review
 priority: p1
 dependencies: [admit-the-sequence-extension-concatenate-family]
 related: [design-autoregressive-state-and-kv-cache, scope-the-sequence-extending-tensor-family, promote-the-symbolic-index-profile-to-a-public-boundary]
-scopes: [implementation/ir, contracts/foundation]
+scopes: [implementation/ir, contracts/foundation, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, shapes, extents, kv-cache, language-model]
@@ -113,10 +113,22 @@ fixture was restored. Targeted `tiler-ir` nextest and doc-tests cover this host
 and implementation only; they do not prove a future runtime binder performs the
 required preflight evaluation.
 
-**Remaining serialized correction — not edited under this claim.** The
-`Sequence extension: Concatenate along one axis` row in `docs/roadmap.md` still
-says that `ExtentRelation` admits no additive relation and that `S == C + T`
-remains inexpressible. That sentence must be corrected after this draft is
-accepted and integrated. Its `contracts/navigation` scope is held by the BF16
-worker, so this branch deliberately records the exact stale claim here rather
-than colliding with that live work.
+**Serialized navigation correction — completed at integration.** The BF16
+profile ticket was integrated first, releasing its exclusive
+`contracts/navigation` claim. This ticket then added that scope and corrected
+the `Sequence extension: Concatenate along one axis` roadmap row: it now records
+the additive implementation as an independently reviewed public draft awaiting
+Tom, and also corrects the concatenate compiler seating that had already landed.
+
+## Integration review — 2026-08-03
+
+Independent correctness/API review found no blocker at implementation commit
+`86bcfac48d813c5c089887bdf63eb1bbbf267cbf`. It verified canonical ingestion
+before storage and identity, preservation of the accepted `const` constructors,
+typed fail-closed diagnostics, append-only tag `0x06`, externally enforced
+canonical construction, and the explicit public-draft disclosure. Its one
+low-severity glossary finding was corrected and re-reviewed clean at
+`479d0325bc157d5068c93350c9c7cf861982c6e1`; merge commit
+`7e19a616fa995fc070d7ad55b73c5799709e5e12` contains both. The ticket remains
+`review` because accepting the consequential public variant and constructor is
+Tom's boundary; integration of the tested draft is not acceptance.
