@@ -226,7 +226,7 @@ The table indexes which layer a name belongs to. Where two senses also differ se
 | `Compare` | Shape predicate primitive of the typed `ShapePredicate` language | None | Adopted, unimplemented |
 | `Compare` | Structured kernel operation producing a predicate | `OperationView::Compare` over `CompareOp::IndexLessThan` | Implemented, public |
 | `Constant` | Semantic tensor bit-preserving constant family | `tiler::constant-f32@1`, facade `F32Constant` | Registered and implemented |
-| `Constant` | Shape constraint literal extent term | `ExtentTerm::Constant` | Implemented, crate-private |
+| `Constant` | Shape constraint literal extent term | `ExtentTerm::Constant` | Implemented, public |
 | `Constant` | Index-expression exact integer constant | `IndexExprView::Constant` | Implemented, public |
 | `Constant` | Scalar operation a tensor constant lowers into | `tiler.scalar::constant-f32@1` | Implemented |
 | `Constant` | Structured kernel operation defining a typed immediate | `OperationView::Constant` over `KernelConstant` | Implemented, public |
