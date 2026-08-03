@@ -74,13 +74,13 @@ A separate shared proof crate is not recommended: it adds a crate and another de
 
 Tom explicitly approved adding `implementation/metal-aot`,
 `contracts/optimizer`, `contracts/numerics`, and `research/extensions` in the T3
-Code orchestration conversation. The public installation boundary now requires
-the exact `(lowering, realization, scalars)` authority triple. That replacement
-cannot land coherently without updating the out-of-crate install conformance in
-`prototypes/serial-sum-compile/src/main.rs` and the three contract/research
-sentences that describe the old pair. No legacy overload is retained: accepting
-only lowering plus scalars would let a request omit the independent semantic
-realization authority whose identity and validation this ticket establishes.
+Code orchestration conversation. The correction changes the public installation
+boundary back to the exact `(lowering, scalars)` pair: the realization-law
+authority is derived from the semantic snapshot retained by `scalars`, so a
+lowering installer cannot supply or replace it. That replacement updates the
+out-of-crate install conformance in `prototypes/serial-sum-compile/src/main.rs`
+and the contract/research sentences that described the rejected triple. No
+legacy overload is retained.
 
 ## Corrected authority shape and public draft inventory
 
@@ -90,57 +90,88 @@ positively demonstrated the counterexample by minting a multiply receipt from a
 same-interface add region.
 
 **Inference:** the semantic proof must be independent of the selected lowering
-provider, admitted against the exact frozen semantic operation/signature and
-scalar registry, and invoked over the program-derived sealed subject plus actual
-verified region. A compiler-closed matcher would break the external-provider
-seam; the reference evaluator supplies bounded execution evidence rather than a
-universal semantic proof; embedding verifier callbacks in semantic operation
-definitions would couple Layer 1 meanings to optional Layer 2 index realization.
-Those candidates fail correctness or dependency direction, leaving a separate
-IR-owned frozen verifier registry as the narrow surviving shape.
+provider and must not be an arbitrary callback that can inspect and approve the
+candidate it is meant to check. The surviving shape is an immutable typed law
+sidecar registered in the semantic provider's same atomic transaction as its
+operation. The sidecar is excluded from semantic graph/snapshot identity because
+it does not change Layer 1 meaning, but has a separate bounded, versioned law
+snapshot identity. IR interprets the law without access to the candidate, builds
+the structurally verified expected canonical region, then compares its canonical
+identity with the selected lowering's region. The current exact-canonical rule
+deliberately rejects semantically equivalent alternate logical index forms;
+physical alternatives remain a later planning concern.
 
 **Proposal — tested public draft, not accepted here:** `tiler-ir::index` adds
-`NumericalContractIdentity`, `IndexRefinementBoundary`,
-`IndexRefinementSignature`, `IndexRealizationAuthority`,
-`IndexRefinementSubject`, `IndexSemanticRealizationRequest`,
-`IndexSemanticRealizationRefusal`, `IndexSemanticRealizationVerifier`,
-`IndexSemanticRealizationRegistryBuilder`,
-`FrozenIndexSemanticRealizationRegistry`, `ResolvedIndexRealization`, ordered
-`OperandBinding`/`ResultBinding`, pending and completed refinement receipts, and
-typed verification errors/outcomes. Residual proof completion adds the coherent
-object-safe protocol `IndexDomainProofAuthority`, `IndexDomainProofEvidence`,
+`IndexRealizationLaw`, `IndexRealizationLawError`,
+`FrozenIndexRealizationLawRegistry`, `NumericalContractIdentity`,
+`IndexRefinementBoundary`, `IndexRefinementSignature`,
+`IndexRealizationAuthority`, `IndexRefinementSubject`,
+`ResolvedIndexRealization`, ordered `OperandBinding`/`ResultBinding`, pending and
+completed refinement receipts, and typed verification errors/outcomes.
+`SemanticRegistryRegistrar::register_index_realization_law` is the only public
+law-registration path and requires the operation in that same transaction,
+nonzero revision, unique ownership, and bounded count/bytes. Residual proof
+completion adds `IndexDomainProofAuthority`, `IndexDomainProofEvidence`,
 `IndexDomainDisproof`, `IndexDomainProofClaim`, `IndexDomainProofVerifier`,
-`IndexDomainProofAssessment`, and typed atomic refusal. IR invokes that proof
-callback exactly once and alone seals the opaque receipt; the superseded second
-exact-finite evaluator and its future-`SoundProof` `expect` panic are removed.
+`IndexDomainProofAssessment`, `IndexRefinementDomainProof`, and typed atomic
+refusal. IR invokes that proof callback exactly once and alone seals the opaque
+receipt. Compiler content retains those IR-sealed proof objects directly; the
+superseded compiler `AuthorizedIndexDomainProof` and its duplicate identity
+encoder are removed, and IR disproof conversion preserves the counterexample.
 
-**Proposal — compiler public draft, not accepted here:**
-`capability::install_governed_index_realizations` composes governed verifier
-families; the provider context exposes only the narrow operation interface;
-`session::InstalledCapabilities::installed` requires the replacement triple
-`(lowering, realization, scalars)`. Compiler registry search, selected-provider
-provenance, explain, proof-policy implementation, and planning remain compiler
-owned. The old two-argument installation spelling is removed.
+**Proposal — compiler public draft, not accepted here:** the provider context
+exposes only the narrow `IndexAccessOccurrence`; `session::InstalledCapabilities::installed`
+accepts `(lowering, scalars)` and derives the immutable law snapshot. Compiler
+registry search, selected-provider provenance, explain, proof-policy
+implementation, and planning remain compiler owned. The rejected three-argument
+installation spelling and arbitrary verifier install hook are removed.
 
 ## Identity step and blast radius
 
 The new IR identity domains are append-only, independently tagged v1 domains:
-semantic subject, admitted realization authority, verifier capability and
-frozen verifier registry, sealed resolution, residual proof, and final receipt.
+semantic subject, admitted realization authority, frozen realization-law
+registry, sealed resolution, residual proof, and final receipt.
 Compiler refinement content and occurrence bindings use their corrected v2
 domains; their encoders bind the IR receipt and proof identities rather than
 copying semantic claims.
 
-The installed verifier registry is request authority, so omission from request
-identity would permit replay under another verifier set. The capability snapshot
+The derived law registry is request authority, so omission from request identity
+would permit replay under another law set. The capability snapshot
 schema therefore steps 1 → 2 and the request-subject domain steps
 `tiler.compiler.request-subject.v3` → `v4`, appending the length-framed frozen
-verifier-registry identity after lowering authority. On this complete branch the
-only pinned value moved is the deterministic explain qualifier
-`7e413a7d10b92e3b` → `299a129ee0b8aab8`; it was recomputed from the current tree.
+law-registry identity after lowering authority. On this corrected tree the only
+pinned value moved is the deterministic explain qualifier to
+`3a2bda87fc26f899`; it was recomputed from the current tree rather than copied
+from either rejected fixed point.
 No program, artifact, schedule, kernel, or cache identity changes here: the
 dependent `bind-stage-coverage-to-index-refinement-identity` still owns receipt
 consumption and program/artifact identity.
+
+## Correction evidence
+
+**Measurement — 2026-08-03:** the deliberate multiply-to-add lowering
+perturbation reaches a typed `SemanticRealizationMismatch`; the ordinary compile
+path refuses it before candidate planning. The eight governed realization laws
+independently reconstruct the same canonical regions as their current lowering
+providers. `tiler-ir` nextest passed 670/670; `tiler-compiler` passed 593/593;
+combined IR/compiler/out-of-crate prototype nextest passed 1,282/1,282 with one
+configured skip under Xcode 26.6 (17F113), selected per command with
+`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`. The host's global
+Xcode beta 27.0 (27A5228h) lacks `metallib`; the first broad run therefore had
+exactly ten prototype toolchain-discovery failures while all 1,272 other tests
+passed. No global toolchain setting was mutated.
+
+**Fact:** affected-crate Clippy with warnings denied, both crates' doctests,
+formatting, `git diff --check`, and `tkt lint` pass. The request qualifier pin was
+recomputed on this corrected tree as `3a2bda87fc26f899`. Scope guard is run after
+the correction commit so it inspects the branch diff rather than the integration
+checkout's ticket body.
+
+**Unsupported case:** the law vocabulary is closed to the currently implemented
+f32 realization templates. An operation without a same-transaction law, an
+unrecognized numerical-contract domain, or a semantically equivalent but
+noncanonical logical index form refuses explicitly. Broadening any of those is a
+new reviewed law/template boundary, not a lowering-provider escape hatch.
 
 ## Graph maintenance
 

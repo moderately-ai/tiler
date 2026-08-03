@@ -40,9 +40,9 @@ use tiler_ir::index::{
     CanonicalScalarDefinitionProjection, CanonicalScalarRegistrySnapshotIdentity, DimensionId,
     DomainRole, FrozenScalarRegistry, IndexBuildError, IndexExprId, IndexInteger,
     IndexRealizationAuthority, IndexRefinementBoundary, IndexRefinementSignature,
-    IndexRefinementSubject, IndexRefinementVerificationError, IndexRegionBuilder, ScalarAttributes,
-    ScalarOpKey, ScalarReducerBodyBuilder, ScalarRegistryError, ScalarResults, ScalarValueId,
-    SourcedExtent, SymbolicExtentError, TensorAccessId, TensorId, TensorRole,
+    IndexRefinementSubject, IndexRegionBuilder, ScalarAttributes, ScalarOpKey,
+    ScalarReducerBodyBuilder, ScalarRegistryError, ScalarResults, ScalarValueId, SourcedExtent,
+    SymbolicExtentError, TensorAccessId, TensorId, TensorRole,
 };
 use tiler_ir::semantic::{
     FrozenSemanticRegistry, OpKey, OperationAttributes, ProviderIdentity, RegistryError,
@@ -1617,23 +1617,6 @@ pub fn install_governed_index_access(
     substituted: &[OpKey],
 ) -> Result<(), LoweringRegistryError> {
     crate::governed::install_governed_index_access(builder, substituted)
-}
-
-/// Installs the shipped semantic-realization verifiers except substituted families.
-///
-/// A caller composing a lowering registry must install the independent verifier
-/// authority beside it. A substituted family must supply its own verifier;
-/// omitting it fails closed during refinement.
-///
-/// # Errors
-///
-/// Returns a typed refusal when the caller's verifier builder is not frozen over
-/// the governed semantic and scalar authorities or a registration conflicts.
-pub fn install_governed_index_realizations(
-    builder: &mut tiler_ir::index::IndexSemanticRealizationRegistryBuilder,
-    substituted: &[OpKey],
-) -> Result<(), IndexRefinementVerificationError> {
-    crate::governed::install_governed_realization_verifiers(builder, substituted)
 }
 
 #[cfg(test)]

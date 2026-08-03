@@ -4,6 +4,7 @@ mod builder;
 mod error;
 mod handles;
 mod integer;
+mod law;
 mod model;
 mod predicate;
 mod refinement;
@@ -26,6 +27,7 @@ pub use handles::{
 };
 pub use integer::IndexInteger;
 pub use integer::{IndexIntegerDecodeError, IndexIntegerSign};
+pub use law::{IndexRealizationLaw, IndexRealizationLawError};
 pub use model::{
     AccessMode, BoundsProofView, CanonicalIndexRegionIdentity, DomainDimensionRef, DomainRole,
     IndexExprClass, IndexExprRef, IndexExprView, LinearTermRef, LinearTerms, OutputRef,
@@ -40,15 +42,14 @@ pub use predicate::{
     UnknownIndexDomainPredicate,
 };
 pub use refinement::{
-    FrozenIndexSemanticRealizationRegistry, IndexDomainDisproof, IndexDomainProofAssessment,
+    FrozenIndexRealizationLawRegistry, IndexDomainDisproof, IndexDomainProofAssessment,
     IndexDomainProofAuthority, IndexDomainProofClaim, IndexDomainProofEvidence,
     IndexDomainProofRefusal, IndexDomainProofRefusalKind, IndexDomainProofVerifier,
     IndexRealizationAuthority, IndexRefinementBoundary, IndexRefinementDomainProof,
     IndexRefinementReceipt, IndexRefinementReceiptIdentity, IndexRefinementSignature,
     IndexRefinementSubject, IndexRefinementVerificationError, IndexRefinementVerificationOutcome,
-    IndexSemanticRealizationRefusal, IndexSemanticRealizationRegistryBuilder,
-    IndexSemanticRealizationRequest, IndexSemanticRealizationVerifier, NumericalContractIdentity,
-    OperandBinding, PendingIndexRefinementReceipt, ResolvedIndexRealization, ResultBinding,
+    NumericalContractIdentity, OperandBinding, PendingIndexRefinementReceipt,
+    ResolvedIndexRealization, ResultBinding,
 };
 // The symbolic index profile is re-exported flat here rather than published as
 // a `tiler_ir::index::sourced` module, matching the re-export precedent this

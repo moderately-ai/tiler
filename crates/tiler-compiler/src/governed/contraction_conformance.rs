@@ -340,8 +340,7 @@ fn emitted_region_evaluation(
     let scalars = governed_scalars().expect("the governed scalar authority composes");
     let registry =
         governed_lowering_capabilities(&scalars).expect("the governed capabilities compose");
-    let realizations = super::governed_realization_verifiers(&scalars)
-        .expect("the governed realization verifiers compose");
+    let realizations = super::governed_realization_laws(&scalars);
     let program = projection_program(m, n, k);
     let occurrence = IndexRefinementSubject::derive(
         &program,

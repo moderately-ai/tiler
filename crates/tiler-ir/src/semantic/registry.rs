@@ -6,6 +6,7 @@ use std::fmt;
 use std::sync::{Arc, OnceLock};
 
 use crate::identity::{push_len, push_slice};
+use crate::index::IndexRealizationLaw;
 use crate::shape::Axis;
 
 use super::bf16::register_standard_bf16;
@@ -44,6 +45,8 @@ const MAX_REGISTRY_DEFINITIONS: usize = 4_096;
 const MAX_REGISTRY_OPERATIONS: usize = 4_096;
 const MAX_REGISTRY_MARKERS: usize = 4_096;
 const MAX_REGISTRY_CANONICAL_BYTES: usize = 16 * 1024 * 1024;
+const MAX_INDEX_REALIZATION_LAWS: usize = 4_096;
+const MAX_INDEX_REALIZATION_LAW_BYTES: usize = 4 * 1024 * 1024;
 
 /// Bounded resource counted while closing semantic authority transitively.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -67,6 +70,10 @@ pub enum SemanticRegistryResource {
     MarkerBindings,
     /// Aggregate canonical definition and local-binding bytes.
     CanonicalBytes,
+    /// Semantic-provider-bound logical index-realization laws.
+    IndexRealizationLaws,
+    /// Aggregate canonical bytes retained by realization-law sidecars.
+    IndexRealizationLawBytes,
 }
 
 impl fmt::Display for SemanticRegistryResource {
@@ -76,6 +83,8 @@ impl fmt::Display for SemanticRegistryResource {
             Self::Operations => formatter.write_str("operations"),
             Self::MarkerBindings => formatter.write_str("marker bindings"),
             Self::CanonicalBytes => formatter.write_str("canonical bytes"),
+            Self::IndexRealizationLaws => formatter.write_str("index-realization laws"),
+            Self::IndexRealizationLawBytes => formatter.write_str("index-realization law bytes"),
         }
     }
 }
@@ -546,6 +555,13 @@ struct RegisteredOperation {
     static_evidence_authority: StaticEvidenceAuthority,
 }
 
+#[derive(Clone)]
+pub(crate) struct RegisteredIndexRealizationLaw {
+    pub(crate) law: IndexRealizationLaw,
+    pub(crate) provider: ProviderIdentity,
+    pub(crate) revision: u32,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum StaticEvidenceAuthority {
     None,
@@ -583,7 +599,9 @@ pub struct SemanticRegistryBuilder {
     definitions: BTreeMap<ValueTypeDefinitionKey, RegisteredValueType>,
     operations: BTreeMap<OpKey, RegisteredOperation>,
     marker_bindings: HashMap<TypeId, MarkerBinding>,
+    index_realization_laws: BTreeMap<OpKey, RegisteredIndexRealizationLaw>,
     canonical_bytes: usize,
+    index_realization_law_bytes: usize,
 }
 
 impl fmt::Debug for SemanticRegistryBuilder {
@@ -593,7 +611,15 @@ impl fmt::Debug for SemanticRegistryBuilder {
             .field("definition_count", &self.definitions.len())
             .field("operation_count", &self.operations.len())
             .field("marker_count", &self.marker_bindings.len())
+            .field(
+                "index_realization_law_count",
+                &self.index_realization_laws.len(),
+            )
             .field("canonical_bytes", &self.canonical_bytes)
+            .field(
+                "index_realization_law_bytes",
+                &self.index_realization_law_bytes,
+            )
             .finish()
     }
 }
@@ -609,7 +635,9 @@ struct RegistrationBatch {
     definitions: BTreeMap<ValueTypeDefinitionKey, ValueTypeDefinition>,
     operations: BTreeMap<OpKey, OperationDefinition>,
     marker_bindings: HashMap<TypeId, MarkerBinding>,
+    index_realization_laws: BTreeMap<OpKey, (u32, IndexRealizationLaw)>,
     canonical_bytes: usize,
+    index_realization_law_bytes: usize,
     failure: Option<RegistryError>,
 }
 
@@ -661,6 +689,7 @@ impl SemanticRegistryBuilder {
             existing_definitions: self.definitions.len(),
             existing_operations: self.operations.len(),
             existing_markers: self.marker_bindings.len(),
+            existing_index_realization_laws: self.index_realization_laws.len(),
         });
         if let Some(error) = batch.failure.clone() {
             return Err(error);
@@ -669,6 +698,7 @@ impl SemanticRegistryBuilder {
         if batch.definitions.is_empty()
             && batch.operations.is_empty()
             && batch.marker_bindings.is_empty()
+            && batch.index_realization_laws.is_empty()
         {
             return Err(RegistryError::ProviderRegisteredNothing { provider: identity });
         }
@@ -688,6 +718,22 @@ impl SemanticRegistryBuilder {
             batch.definitions.len(),
             MAX_REGISTRY_DEFINITIONS,
         )?;
+        check_registry_count(
+            SemanticRegistryResource::IndexRealizationLaws,
+            self.index_realization_laws.len(),
+            batch.index_realization_laws.len(),
+            MAX_INDEX_REALIZATION_LAWS,
+        )?;
+        let law_bytes = self
+            .index_realization_law_bytes
+            .saturating_add(batch.index_realization_law_bytes);
+        if law_bytes > MAX_INDEX_REALIZATION_LAW_BYTES {
+            return Err(RegistryError::RegistryResourceExceeded {
+                resource: SemanticRegistryResource::IndexRealizationLawBytes,
+                limit: MAX_INDEX_REALIZATION_LAW_BYTES,
+                actual: law_bytes,
+            });
+        }
         check_registry_count(
             SemanticRegistryResource::Operations,
             self.operations.len(),
@@ -737,7 +783,21 @@ impl SemanticRegistryBuilder {
                 )
             }));
         self.marker_bindings.extend(batch.marker_bindings);
+        self.index_realization_laws
+            .extend(batch.index_realization_laws.into_iter().map(
+                |(operation, (revision, law))| {
+                    (
+                        operation,
+                        RegisteredIndexRealizationLaw {
+                            law,
+                            provider: identity.clone(),
+                            revision,
+                        },
+                    )
+                },
+            ));
         self.canonical_bytes = total_bytes;
+        self.index_realization_law_bytes = law_bytes;
         Ok(())
     }
 
@@ -803,6 +863,7 @@ impl SemanticRegistryBuilder {
             definitions: self.definitions,
             operations: self.operations,
             marker_bindings: self.marker_bindings,
+            index_realization_laws: self.index_realization_laws,
         }));
         let mut marker_roots: Vec<_> = registry
             .0
@@ -829,6 +890,7 @@ pub struct SemanticRegistryRegistrar<'a> {
     existing_definitions: usize,
     existing_operations: usize,
     existing_markers: usize,
+    existing_index_realization_laws: usize,
 }
 
 impl SemanticRegistryRegistrar<'_> {
@@ -985,6 +1047,70 @@ impl SemanticRegistryRegistrar<'_> {
         Ok(())
     }
 
+    /// Registers one typed logical index-realization law in this operation
+    /// provider's same atomic transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error when the operation was not defined by this batch,
+    /// the revision is zero, a second law names the operation, or the bounded
+    /// law-sidecar resources are exceeded.
+    pub fn register_index_realization_law(
+        &mut self,
+        operation: OpKey,
+        revision: u32,
+        law: IndexRealizationLaw,
+    ) -> Result<(), RegistryError> {
+        if let Some(error) = self.prior_failure() {
+            return Err(error);
+        }
+        if !self.batch.operations.contains_key(&operation) {
+            let error = RegistryError::IndexRealizationLawWithoutOperation {
+                operation: Arc::new(operation),
+            };
+            return Err(self.fail(&error));
+        }
+        if revision == 0 {
+            let error = RegistryError::ZeroIndexRealizationLawRevision {
+                operation: Arc::new(operation),
+            };
+            return Err(self.fail(&error));
+        }
+        if self.batch.index_realization_laws.contains_key(&operation) {
+            let error = RegistryError::DuplicateIndexRealizationLaw {
+                operation: Arc::new(operation),
+            };
+            return Err(self.fail(&error));
+        }
+        self.reserve_count(
+            SemanticRegistryResource::IndexRealizationLaws,
+            self.existing_index_realization_laws,
+            self.batch.index_realization_laws.len(),
+            MAX_INDEX_REALIZATION_LAWS,
+        )?;
+        let mut canonical = Vec::new();
+        operation.encode(&mut canonical);
+        canonical.extend_from_slice(&revision.to_be_bytes());
+        law.encode(&mut canonical);
+        let actual = self
+            .batch
+            .index_realization_law_bytes
+            .saturating_add(canonical.len());
+        if actual > MAX_INDEX_REALIZATION_LAW_BYTES {
+            let error = RegistryError::RegistryResourceExceeded {
+                resource: SemanticRegistryResource::IndexRealizationLawBytes,
+                limit: MAX_INDEX_REALIZATION_LAW_BYTES,
+                actual,
+            };
+            return Err(self.fail(&error));
+        }
+        self.batch.index_realization_law_bytes = actual;
+        self.batch
+            .index_realization_laws
+            .insert(operation, (revision, law));
+        Ok(())
+    }
+
     /// Binds one local Rust marker to a complete resolved semantic type.
     ///
     /// # Errors
@@ -1071,6 +1197,7 @@ struct FrozenRegistryData {
     definitions: BTreeMap<ValueTypeDefinitionKey, RegisteredValueType>,
     operations: BTreeMap<OpKey, RegisteredOperation>,
     marker_bindings: HashMap<TypeId, MarkerBinding>,
+    pub(crate) index_realization_laws: BTreeMap<OpKey, RegisteredIndexRealizationLaw>,
     identity: OnceLock<SemanticRegistrySnapshotIdentity>,
 }
 
@@ -1082,6 +1209,19 @@ struct SemanticAuthorityClosure {
 }
 
 impl FrozenSemanticRegistry {
+    pub(crate) fn index_realization_law(
+        &self,
+        operation: &OpKey,
+    ) -> Option<&RegisteredIndexRealizationLaw> {
+        self.0.index_realization_laws.get(operation)
+    }
+
+    pub(crate) fn index_realization_laws(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (&OpKey, &RegisteredIndexRealizationLaw)> {
+        self.0.index_realization_laws.iter()
+    }
+
     /// Projects the complete semantic authority for one exact resolved value type.
     ///
     /// # Errors
@@ -1833,6 +1973,21 @@ pub enum RegistryError {
         /// Duplicated operation key.
         key: Arc<OpKey>,
     },
+    /// A law was registered without defining its operation in the same provider batch.
+    IndexRealizationLawWithoutOperation {
+        /// Operation the law attempted to govern.
+        operation: Arc<OpKey>,
+    },
+    /// A semantic provider registered two logical realization laws for one operation.
+    DuplicateIndexRealizationLaw {
+        /// Operation with contended law authority.
+        operation: Arc<OpKey>,
+    },
+    /// A logical realization law used reserved revision zero.
+    ZeroIndexRealizationLawRevision {
+        /// Operation carrying the invalid law revision.
+        operation: Arc<OpKey>,
+    },
     /// One Rust marker was bound more than once.
     DuplicateMarker {
         /// Diagnostic-only Rust marker name.
@@ -1908,6 +2063,17 @@ impl fmt::Display for RegistryError {
             Self::DuplicateOperationAuthority { key } => {
                 write!(formatter, "duplicate operation authority for {key}")
             }
+            Self::IndexRealizationLawWithoutOperation { operation } => write!(
+                formatter,
+                "index-realization law for {operation} is not paired with an operation from the same semantic-provider transaction"
+            ),
+            Self::DuplicateIndexRealizationLaw { operation } => {
+                write!(formatter, "duplicate index-realization law for {operation}")
+            }
+            Self::ZeroIndexRealizationLawRevision { operation } => write!(
+                formatter,
+                "index-realization law for {operation} uses reserved revision zero"
+            ),
             Self::DuplicateMarker { marker_name } => {
                 write!(formatter, "Rust marker {marker_name} is already bound")
             }
@@ -2143,7 +2309,39 @@ impl SemanticRegistryProvider for StandardSemantics {
         // one that *joins* values rather than remapping one; registration order
         // fixes nothing about semantics.
         register_standard_concatenate(registrar)?;
-        register_standard_quantization(registrar)
+        register_standard_quantization(registrar)?;
+
+        // Logical realization support is a sidecar of this same provider
+        // transaction. It is deliberately absent for semantic families whose
+        // canonical index law is not implemented; absence fails closed later.
+        for (operation, law) in [
+            (constant_f32_op(), IndexRealizationLaw::constant_f32()),
+            (multiply_f32_op(), IndexRealizationLaw::multiply_f32()),
+            (add_f32_op(), IndexRealizationLaw::add_f32()),
+            (
+                strict_serial_sum_f32_op(),
+                IndexRealizationLaw::strict_serial_sum_f32(),
+            ),
+            (
+                super::silu::silu_f32_op(),
+                IndexRealizationLaw::PreciseSiluF32,
+            ),
+            (
+                super::reindex::reindex_f32_op(),
+                IndexRealizationLaw::reindex_f32(),
+            ),
+            (
+                super::broadcast::broadcast_f32_op(),
+                IndexRealizationLaw::broadcast_f32(),
+            ),
+            (
+                super::contraction::strict_tensor_contraction_f32_op(),
+                IndexRealizationLaw::strict_tensor_contraction_f32(),
+            ),
+        ] {
+            registrar.register_index_realization_law(operation, 1, law)?;
+        }
+        Ok(())
     }
 }
 
@@ -2602,6 +2800,82 @@ mod tests {
 
     struct AlgebraicProvider {
         ordered_associativity: bool,
+    }
+
+    struct LawProvider {
+        law: IndexRealizationLaw,
+    }
+
+    impl SemanticRegistryProvider for LawProvider {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("test", "law-owned-operation", 1).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), RegistryError> {
+            let operation = OpKey::new("test", "law-owned-operation", 1).unwrap();
+            registrar.register_operation(OperationDefinition::new(
+                operation.clone(),
+                exact_schema(2, 1, []),
+                NormativeDefinitionRef::new("test law-owned operation v1")?,
+                OperationDefinitionFacts::new(CanonicalValue::boolean(true)),
+                OperationConformance::new(CanonicalValue::boolean(true)),
+                OperationEffect::Pure,
+                Arc::new(BinaryF32),
+            ))?;
+            registrar.register_index_realization_law(operation, 1, self.law.clone())
+        }
+    }
+
+    struct DetachedLawProvider;
+
+    impl SemanticRegistryProvider for DetachedLawProvider {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("test", "detached-law", 1).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), RegistryError> {
+            registrar.register_index_realization_law(
+                multiply_f32_op(),
+                1,
+                IndexRealizationLaw::multiply_f32(),
+            )
+        }
+    }
+
+    #[test]
+    fn realization_law_is_transaction_bound_but_has_separate_identity() {
+        let build = |law| {
+            let mut builder = SemanticRegistryBuilder::new();
+            builder.register_provider(&LawProvider { law }).unwrap();
+            builder.freeze().unwrap()
+        };
+        let multiply = build(IndexRealizationLaw::multiply_f32());
+        let add = build(IndexRealizationLaw::add_f32());
+        assert_eq!(multiply.snapshot_identity(), add.snapshot_identity());
+
+        let scalars = crate::index::FrozenScalarRegistry::standard().unwrap();
+        let multiply_laws = crate::index::FrozenIndexRealizationLawRegistry::from_semantic(
+            multiply,
+            scalars.clone(),
+        );
+        let add_laws = crate::index::FrozenIndexRealizationLawRegistry::from_semantic(add, scalars);
+        assert_ne!(multiply_laws.identity(), add_laws.identity());
+    }
+
+    #[test]
+    fn realization_law_cannot_be_registered_outside_its_operation_transaction() {
+        let mut builder = SemanticRegistryBuilder::new();
+        let error = builder.register_provider(&DetachedLawProvider).unwrap_err();
+        assert!(matches!(
+            error,
+            RegistryError::IndexRealizationLawWithoutOperation { .. }
+        ));
     }
 
     impl SemanticRegistryProvider for AlgebraicProvider {

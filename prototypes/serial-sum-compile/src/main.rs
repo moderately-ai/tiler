@@ -703,14 +703,13 @@ mod tests {
     use tiler_cache::expansion::{ExpansionCache, Resolution};
     use tiler_compiler::capability::{
         LoweringCapabilityRegistryBuilder, install_governed_index_access,
-        install_governed_index_realizations,
     };
     use tiler_compiler::session::NumericalContract;
     use tiler_compiler::session::{
         CompileFailureClass, CompileRequest, InstalledCapabilities, compile,
     };
     use tiler_compiler::target::TargetRequest;
-    use tiler_ir::index::{FrozenScalarRegistry, IndexSemanticRealizationRegistryBuilder};
+    use tiler_ir::index::FrozenScalarRegistry;
     use tiler_ir::semantic::multiply_f32_op;
     use tiler_metal::emit::emit_translation_unit;
     use tiler_metal::target::{MetalDeploymentMinimum, MslLanguageVersion};
@@ -1150,14 +1149,7 @@ mod tests {
         );
         install_governed_index_access(&mut builder, &[])
             .expect("the governed capabilities install onto a caller's builder");
-        let mut realizations = IndexSemanticRealizationRegistryBuilder::new(
-            scalars.semantic_authority().clone(),
-            scalars.clone(),
-        );
-        install_governed_index_realizations(&mut realizations, &[])
-            .expect("the governed realization verifiers install");
-        let installed =
-            InstalledCapabilities::installed(builder.freeze(), realizations.freeze(), scalars);
+        let installed = InstalledCapabilities::installed(builder.freeze(), scalars);
 
         let batch = compile(
             CompileRequest::new(
@@ -1198,14 +1190,7 @@ mod tests {
         // Everything except the multiply family this program needs.
         install_governed_index_access(&mut builder, &[multiply_f32_op()])
             .expect("the remaining governed capabilities install");
-        let mut realizations = IndexSemanticRealizationRegistryBuilder::new(
-            scalars.semantic_authority().clone(),
-            scalars.clone(),
-        );
-        install_governed_index_realizations(&mut realizations, &[multiply_f32_op()])
-            .expect("the remaining governed realization verifiers install");
-        let installed =
-            InstalledCapabilities::installed(builder.freeze(), realizations.freeze(), scalars);
+        let installed = InstalledCapabilities::installed(builder.freeze(), scalars);
 
         // Matched rather than `expect_err`: the success value is a whole
         // compilation, and unwrapping it on failure renders megabytes of plan

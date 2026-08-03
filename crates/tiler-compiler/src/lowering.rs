@@ -386,7 +386,7 @@ fn resolve_occurrence(
 fn refine(
     resolved: &ResolvedLoweringCapability,
     occurrence: &IndexRefinementSubject,
-    realizations: &tiler_ir::index::FrozenIndexSemanticRealizationRegistry,
+    realizations: &tiler_ir::index::FrozenIndexRealizationLawRegistry,
     scalars: &tiler_ir::index::FrozenScalarRegistry,
     member: SemanticMemberId,
     provider: LoweringProviderIdentity,

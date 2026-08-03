@@ -351,7 +351,7 @@ impl VerifiedEvidenceRef {
 
     pub(crate) fn from_index_domain(
         subject: &SubjectRef,
-        proof: &crate::index_discharge::AuthorizedIndexDomainProof,
+        proof: &tiler_ir::index::IndexRefinementDomainProof,
     ) -> Self {
         Self {
             kind: EvidenceReceiptKind::IndexDomain,
@@ -4019,13 +4019,15 @@ mod tests {
                 // the concatenate key itself stayed fixed. Recomputed from this
                 // merged tree after the full gate exposed the exact blast radius.
                 // Moved from `7e413a7d10b92e3b` when the request subject began
-                // binding the independently frozen semantic-realization verifier
-                // registry and stepped from `request-subject.v3` to `v4`.
+                // binding the independently frozen semantic-realization
+                // authority and stepped from `request-subject.v3` to `v4`.
                 // Lowering resolution alone cannot distinguish two installed
-                // verifier authorities, so retaining the old digest would permit
-                // a request authenticated under one verifier set to replay under
-                // another. Recomputed from this complete branch tree.
-                "tiler-explain-v7 request=299a129ee0b8aab8\n",
+                // realization authorities, so retaining the old digest would permit
+                // a request authenticated under one law set to replay under
+                // another. Recomputed from this complete branch tree. Moved
+                // again when the authority became an operation-bound immutable
+                // law snapshot that lowering installers cannot replace.
+                "tiler-explain-v7 request=3a2bda87fc26f899\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

@@ -36,8 +36,6 @@ use tiler_ir::semantic::ProviderIdentity;
 
 use crate::legality::{IndexRefinement, PendingIndexRefinement, complete_pending_index_refinement};
 
-/// Canonical identity tag for one sealed semantic-discharge receipt.
-const RECEIPT_IDENTITY_TAG: &[u8] = b"tiler.compiler.index-domain-discharge-receipt.v1\0";
 const EXHAUSTIVE_DERIVATION: &[u8] = b"tiler.compiler.exact-index-domain-enumeration.v1\0";
 const COUNTEREXAMPLE_TAG: &[u8] = b"tiler.compiler.index-domain-counterexample.v1\0";
 const MAX_DISCHARGE_CELLS: u64 = 16 * 1024 * 1024;
@@ -242,48 +240,6 @@ impl IrIndexDomainProofVerifier for IrDischargeAdapter<'_> {
             }
             IndexDomainDischargeClaim::Unknown(reason) => IrIndexDomainProofClaim::Unknown(reason),
         }
-    }
-}
-
-/// One sealed proof receipt bound to an exact region and local obligation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct AuthorizedIndexDomainProof {
-    obligation: UnknownIndexDomainPredicate,
-    authority: IndexDomainDischargeAuthority,
-    proof: IndexDomainDischargeProof,
-    identity: Box<[u8]>,
-}
-
-impl AuthorizedIndexDomainProof {
-    fn seal(
-        region: &VerifiedIndexRegion,
-        obligation: UnknownIndexDomainPredicate,
-        authority: &IndexDomainDischargeAuthority,
-        proof: IndexDomainDischargeProof,
-    ) -> Self {
-        let identity = encode_receipt(region, obligation, authority, &proof).into_boxed_slice();
-        Self {
-            obligation,
-            authority: authority.clone(),
-            proof,
-            identity,
-        }
-    }
-
-    pub(crate) const fn obligation(&self) -> UnknownIndexDomainPredicate {
-        self.obligation
-    }
-
-    pub(crate) const fn authority(&self) -> &IndexDomainDischargeAuthority {
-        &self.authority
-    }
-
-    pub(crate) const fn proof(&self) -> &IndexDomainDischargeProof {
-        &self.proof
-    }
-
-    pub(crate) fn identity(&self) -> &[u8] {
-        &self.identity
     }
 }
 
@@ -649,27 +605,12 @@ pub(crate) fn discharge_with(
             });
         }
     };
-    let assessments = ir_assessments
-        .iter()
-        .map(|assessment| convert_ir_assessment(provider.authority(), assessment))
-        .collect::<Vec<_>>();
-    let receipts = assessments
-        .into_iter()
-        .map(|assessment| {
-            let IndexDomainDischargeClaim::Proved(proof) = assessment.claim else {
-                unreachable!("the refusal scan removed every non-proved assessment")
-            };
-            AuthorizedIndexDomainProof::seal(
-                pending.region(),
-                assessment.obligation,
-                &assessment.authority,
-                proof,
-            )
-        })
-        .collect();
-    Ok(complete_pending_index_refinement(
-        pending, receipts, ir_receipt,
-    ))
+    debug_assert!(
+        ir_assessments
+            .iter()
+            .all(|assessment| matches!(assessment.claim(), IrIndexDomainProofClaim::Proved(_)))
+    );
+    Ok(complete_pending_index_refinement(pending, ir_receipt))
 }
 
 fn convert_ir_assessment(
@@ -694,7 +635,8 @@ fn convert_ir_assessment(
             derivation: derivation.clone(),
         }),
         IrIndexDomainProofClaim::Disproved(disproof) => {
-            let mut converted = IndexDomainDisproof::new(disproof.reason(), Box::<[u8]>::default());
+            let mut converted =
+                IndexDomainDisproof::new(disproof.reason(), disproof.counterexample());
             if let Some(point) = disproof.point_ordinal() {
                 converted = converted.with_point_ordinal(point);
             }
@@ -707,45 +649,6 @@ fn convert_ir_assessment(
         authority: authority.clone(),
         claim,
     }
-}
-
-fn encode_receipt(
-    region: &VerifiedIndexRegion,
-    obligation: UnknownIndexDomainPredicate,
-    authority: &IndexDomainDischargeAuthority,
-    proof: &IndexDomainDischargeProof,
-) -> Vec<u8> {
-    let mut output = RECEIPT_IDENTITY_TAG.to_vec();
-    push_slice(&mut output, region.canonical_identity().as_bytes());
-    push_slice(&mut output, obligation.canonical_local_key().as_bytes());
-    encode_provider(&mut output, authority.provider());
-    encode_provider(&mut output, authority.rule().identity());
-    output.extend_from_slice(&authority.revision().get().to_be_bytes());
-    match proof {
-        IndexDomainDischargeProof::Sound { proof, derivation } => {
-            output.push(1);
-            output.push(match proof {
-                IndexDomainSoundProof::VacuousEmptyDomain => 1,
-                IndexDomainSoundProof::Interval => 2,
-                IndexDomainSoundProof::ProvedExtentEquality => 3,
-            });
-            push_slice(&mut output, derivation);
-        }
-        IndexDomainDischargeProof::ExhaustiveFinite { points, derivation } => {
-            output.push(2);
-            output.extend_from_slice(&points.to_be_bytes());
-            push_slice(&mut output, derivation);
-        }
-    }
-    output
-}
-
-fn encode_provider(output: &mut Vec<u8>, provider: &ProviderIdentity) {
-    push_len(output, provider.namespace().len());
-    output.extend_from_slice(provider.namespace().as_bytes());
-    push_len(output, provider.name().len());
-    output.extend_from_slice(provider.name().as_bytes());
-    output.extend_from_slice(&provider.revision().to_be_bytes());
 }
 
 #[cfg(test)]

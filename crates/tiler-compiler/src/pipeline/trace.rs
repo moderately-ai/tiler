@@ -251,14 +251,16 @@ fn record_semantic_discharge_proofs(
                     write!(obligation_key, "{byte:02x}").expect("writing to a String cannot fail");
                 }
                 let (basis, proof_kind, points) = match proof.proof() {
-                    IndexDomainDischargeProof::Sound { .. } => (
+                    tiler_ir::index::IndexDomainProofEvidence::Sound { .. } => (
                         EvidenceBasis::SoundProof(VerifiedEvidenceRef::from_index_domain(
                             &subject, proof,
                         )),
                         "sound-proof",
                         None,
                     ),
-                    IndexDomainDischargeProof::ExhaustiveFinite { points, .. } => (
+                    tiler_ir::index::IndexDomainProofEvidence::ExhaustiveFinite {
+                        points, ..
+                    } => (
                         EvidenceBasis::ExhaustiveFinite,
                         "exhaustive-finite",
                         Some(*points),
@@ -304,13 +306,13 @@ fn record_semantic_discharge_proofs(
                     "discharge-rule",
                     FactValue::Identity(crate::explain::SubjectKey::new(format!(
                         "{}.{}",
-                        proof.authority().rule().identity().namespace(),
-                        proof.authority().rule().identity().name(),
+                        proof.authority().rule().namespace(),
+                        proof.authority().rule().name(),
                     ))?),
                 )?)?
                 .with_fact(ExplainFact::new(
                     "discharge-revision",
-                    FactValue::Count(u64::from(proof.authority().revision().get())),
+                    FactValue::Count(u64::from(proof.authority().revision())),
                 )?)?;
                 if let Some(points) = points {
                     assessment = assessment.with_fact(ExplainFact::new(

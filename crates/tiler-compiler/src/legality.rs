@@ -1,7 +1,7 @@
 //! Compiler integration for IR-owned index-region refinement evidence.
 //!
-//! [`tiler_ir::index::FrozenIndexSemanticRealizationRegistry`] resolves an
-//! independent verifier, and [`tiler_ir::index::ResolvedIndexRealization`] owns
+//! [`tiler_ir::index::FrozenIndexRealizationLawRegistry`] resolves the semantic
+//! provider's candidate-blind law, and [`tiler_ir::index::ResolvedIndexRealization`] owns
 //! the dependency-neutral semantic-subject/verified-region check and mints its
 //! opaque receipt. This
 //! module owns the compiler envelope around that receipt: provider provenance,
@@ -56,12 +56,12 @@ use std::sync::Arc;
 
 use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::index::{
-    CanonicalIndexRegionIdentity, FrozenIndexSemanticRealizationRegistry, FrozenScalarRegistry,
-    IndexRefinementReceipt, IndexRefinementSubject, IndexRefinementVerificationError,
-    IndexRefinementVerificationOutcome, IndexRegionBuildError, IndexRegionDiagnostic,
-    NumericalContractIdentity, OperandBinding, ResultBinding, ScalarAuthorityEvidence,
-    ScalarRegistryError, UnknownIndexDomainPredicate, VerifiedIndexHandleError,
-    VerifiedIndexRegion,
+    CanonicalIndexRegionIdentity, FrozenIndexRealizationLawRegistry, FrozenScalarRegistry,
+    IndexRefinementDomainProof, IndexRefinementReceipt, IndexRefinementSubject,
+    IndexRefinementVerificationError, IndexRefinementVerificationOutcome, IndexRegionBuildError,
+    IndexRegionDiagnostic, NumericalContractIdentity, OperandBinding, ResultBinding,
+    ScalarAuthorityEvidence, ScalarRegistryError, UnknownIndexDomainPredicate,
+    VerifiedIndexHandleError, VerifiedIndexRegion,
 };
 use tiler_ir::semantic::{
     OpKey, OperationAttributes, OperationEffect, ProviderIdentity, ResolvedValueType,
@@ -72,7 +72,6 @@ use crate::capability::{
     IndexAccessLoweringContext, LoweringCapabilityAuthority, LoweringCapabilityRevision,
     LoweringEmitError, LoweringFamily, ResolvedLoweringCapability,
 };
-use crate::index_discharge::AuthorizedIndexDomainProof;
 
 /// Canonical domain-separation tag for reusable refinement content.
 const CONTENT_IDENTITY_TAG: &[u8] = b"tiler.compiler.index-refinement-content.v2\0";
@@ -128,7 +127,7 @@ pub struct RefinementContent {
     effect: OperationEffect,
     numerical_contract: NumericalContractIdentity,
     scalar_authority: ScalarAuthorityEvidence,
-    index_domain_proofs: Vec<AuthorizedIndexDomainProof>,
+    index_domain_proofs: Vec<IndexRefinementDomainProof>,
     identity: RefinementContentIdentity,
 }
 
@@ -179,8 +178,8 @@ impl RefinementContent {
         self.index_domain_proofs.len()
     }
 
-    /// Returns the compiler-sealed proofs over residual index-domain predicates.
-    pub(crate) fn index_domain_proofs(&self) -> &[AuthorizedIndexDomainProof] {
+    /// Returns the IR-sealed proofs over residual index-domain predicates.
+    pub(crate) fn index_domain_proofs(&self) -> &[IndexRefinementDomainProof] {
         &self.index_domain_proofs
     }
 
@@ -614,7 +613,7 @@ impl From<VerifiedIndexHandleError> for RefinementError {
 pub fn refine_index_region(
     capability: &ResolvedLoweringCapability,
     subject: &IndexRefinementSubject,
-    realizations: &FrozenIndexSemanticRealizationRegistry,
+    realizations: &FrozenIndexRealizationLawRegistry,
     scalars: &FrozenScalarRegistry,
 ) -> Result<IndexRefinementOutcome, RefinementError> {
     if capability.family() != LoweringFamily::IndexAccess {
@@ -767,7 +766,7 @@ fn assemble_content(
     occurrence: &IndexRefinementSubject,
     region: &VerifiedIndexRegion,
     scalar_authority: ScalarAuthorityEvidence,
-    index_domain_proofs: Vec<AuthorizedIndexDomainProof>,
+    index_domain_proofs: Vec<IndexRefinementDomainProof>,
 ) -> RefinementContent {
     let operand_interface = canonical_operand_interface(occurrence);
     let result_interface = occurrence
@@ -804,9 +803,9 @@ fn assemble_content(
 /// violating that invariant is a compiler defect rather than an input refusal.
 pub(crate) fn complete_pending_index_refinement(
     pending: PendingIndexRefinement,
-    index_domain_proofs: Vec<AuthorizedIndexDomainProof>,
     receipt: tiler_ir::index::IndexRefinementReceipt,
 ) -> IndexRefinement {
+    let index_domain_proofs = receipt.index_domain_proofs().to_vec();
     assert_eq!(
         pending.obligations().len(),
         index_domain_proofs.len(),
@@ -872,7 +871,7 @@ fn encode_content_identity(
     occurrence: &IndexRefinementSubject,
     operand_interface: &[(u32, ResolvedValueType, Shape)],
     scalar_authority: &ScalarAuthorityEvidence,
-    index_domain_proofs: &[AuthorizedIndexDomainProof],
+    index_domain_proofs: &[IndexRefinementDomainProof],
 ) -> RefinementContentIdentity {
     let mut bytes = CONTENT_IDENTITY_TAG.to_vec();
     push_slice(&mut bytes, region_identity.as_bytes());
@@ -979,17 +978,13 @@ fn encode_shape(output: &mut Vec<u8>, shape: &Shape) {
 mod tests {
     use std::fmt::Write as _;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use tiler_ir::index::{
-        DomainRole, FrozenScalarRegistry, IndexDomainSoundProof, IndexRefinementSignature,
-        IndexRefinementSubject, IndexRefinementVerificationError, IndexSemanticRealizationRefusal,
-        IndexSemanticRealizationRegistryBuilder, IndexSemanticRealizationRequest,
-        IndexSemanticRealizationVerifier, NumericalContractIdentity, ScalarArity,
-        ScalarAttributeSchema, ScalarAttributes, ScalarEffect, ScalarInferenceError,
+        DomainRole, FrozenIndexRealizationLawRegistry, FrozenScalarRegistry,
+        IndexRefinementSubject, IndexRefinementVerificationError, NumericalContractIdentity,
+        ScalarArity, ScalarAttributeSchema, ScalarAttributes, ScalarEffect, ScalarInferenceError,
         ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract,
         ScalarOperationDefinition, ScalarOperationInferencer, ScalarRegistryBuilder, SourcedExtent,
-        UnknownIndexDomainPredicate, VerifiedIndexRegion,
     };
     use tiler_ir::program::SemanticOccurrence;
     use tiler_ir::semantic::{
@@ -1015,11 +1010,6 @@ mod tests {
         LoweringFamily, LoweringSignature, ResolvedLoweringCapability, ScalarLoweringContext,
         ScalarLoweringProvider, ScalarLoweringResults,
     };
-    use crate::index_discharge::{
-        IndexDomainDischargeAuthority, IndexDomainDischargeClaim, IndexDomainDischargeProof,
-        IndexDomainDischargeProvider, IndexDomainDischargeRefusalKind, IndexDomainDisproof,
-        discharge_with,
-    };
     use crate::region::form_region_candidates;
     use crate::request::{DeterministicBudgets, StrictF32NumericalContract};
 
@@ -1030,45 +1020,9 @@ mod tests {
         subject: &IndexRefinementSubject,
         scalars: &FrozenScalarRegistry,
     ) -> Result<super::IndexRefinementOutcome, RefinementError> {
-        let mut builder = IndexSemanticRealizationRegistryBuilder::new(semantic(), scalars.clone());
-        builder
-            .register(
-                provider("square-verifier"),
-                &multiply_f32_op(),
-                &IndexRefinementSignature::new(
-                    binary_signature().operands().iter().cloned(),
-                    binary_signature().results().iter().cloned(),
-                )
-                .unwrap(),
-                1,
-                Arc::new(TestSquareVerifier),
-            )
-            .unwrap();
-        let realizations = builder.freeze();
+        let realizations =
+            FrozenIndexRealizationLawRegistry::from_semantic(semantic(), scalars.clone());
         refine_index_region_with_registry(capability, subject, &realizations, scalars)
-    }
-
-    struct TestSquareVerifier;
-
-    impl IndexSemanticRealizationVerifier for TestSquareVerifier {
-        fn verify(
-            &self,
-            request: IndexSemanticRealizationRequest<'_>,
-        ) -> Result<(), IndexSemanticRealizationRefusal> {
-            let authority = request
-                .scalars()
-                .revalidate_region(request.region())
-                .map_err(|_| IndexSemanticRealizationRefusal::new("scalar-authority").unwrap())?;
-            if authority.reached_operations().is_empty()
-                || authority
-                    .reached_operations()
-                    .iter()
-                    .any(|operation| operation != &scalar_key("multiply"))
-            {
-                return Err(IndexSemanticRealizationRefusal::new("multiply-realization").unwrap());
-            }
-            Ok(())
-        }
     }
 
     fn f32_type() -> ResolvedValueType {
@@ -1076,7 +1030,11 @@ mod tests {
     }
 
     fn scalar_key(name: &str) -> ScalarOpKey {
-        ScalarOpKey::new("example", name, 1).unwrap()
+        match name {
+            "multiply" => tiler_ir::index::multiply_f32_scalar_op(),
+            "add" => tiler_ir::index::add_f32_scalar_op(),
+            _ => ScalarOpKey::new("example", name, 1).unwrap(),
+        }
     }
 
     fn provider(name: &str) -> ProviderIdentity {
@@ -1089,83 +1047,6 @@ mod tests {
 
     fn binary_signature() -> LoweringSignature {
         LoweringSignature::new([f32_type(), f32_type()], [f32_type()]).unwrap()
-    }
-
-    fn pending_refinement() -> super::PendingIndexRefinement {
-        let scalars = scalar_registry();
-        let length = 65_535;
-        let resolved = index_registry(
-            Arc::new(ConservativeReadSquare { length, rounds: 8 }),
-            &[scalar_key("multiply")],
-        )
-        .resolve_index_access(&multiply_f32_op(), &binary_signature())
-        .unwrap();
-        let occurrence = square_occurrence_with_length(b"pending-site", length);
-        let outcome = refine_index_region(&resolved, &occurrence, &scalars).unwrap();
-        outcome
-            .pending()
-            .expect("the conservative read exceeds the governed proof budget")
-            .clone()
-    }
-
-    #[derive(Clone, Copy)]
-    enum DischargeMode {
-        Sound,
-        Exhaustive,
-        Disproved,
-        Unknown,
-    }
-
-    struct TestDischarge {
-        authority: IndexDomainDischargeAuthority,
-        mode: DischargeMode,
-        calls: AtomicUsize,
-    }
-
-    impl TestDischarge {
-        fn new(mode: DischargeMode, revision: u32) -> Self {
-            Self {
-                authority: IndexDomainDischargeAuthority::builtin(
-                    "test.index-domain-discharge",
-                    "test-index-domain-rule",
-                    revision,
-                ),
-                mode,
-                calls: AtomicUsize::new(0),
-            }
-        }
-    }
-
-    impl IndexDomainDischargeProvider for TestDischarge {
-        fn authority(&self) -> &IndexDomainDischargeAuthority {
-            &self.authority
-        }
-
-        fn assess(
-            &self,
-            _region: &VerifiedIndexRegion,
-            obligation: UnknownIndexDomainPredicate,
-        ) -> IndexDomainDischargeClaim {
-            self.calls.fetch_add(1, Ordering::Relaxed);
-            match self.mode {
-                DischargeMode::Sound => {
-                    IndexDomainDischargeClaim::Proved(IndexDomainDischargeProof::Sound {
-                        proof: IndexDomainSoundProof::Interval,
-                        derivation: b"test-sound-derivation".as_slice().into(),
-                    })
-                }
-                DischargeMode::Exhaustive => {
-                    IndexDomainDischargeClaim::Proved(IndexDomainDischargeProof::ExhaustiveFinite {
-                        points: 65_535,
-                        derivation: b"test-exhaustive-derivation".as_slice().into(),
-                    })
-                }
-                DischargeMode::Disproved => IndexDomainDischargeClaim::Disproved(
-                    IndexDomainDisproof::new("test-counterexample", b"counterexample".as_slice()),
-                ),
-                DischargeMode::Unknown => IndexDomainDischargeClaim::Unknown(obligation.reason()),
-            }
-        }
     }
 
     fn semantic() -> FrozenSemanticRegistry {
@@ -1453,7 +1334,7 @@ mod tests {
         let numerical_contract = contract();
         let admitted = constant_subject(1.0_f32.to_bits(), numerical_contract.as_str());
         let changed = constant_subject(2.0_f32.to_bits(), numerical_contract.as_str());
-        let realizations = crate::governed::governed_realization_verifiers(&scalars).unwrap();
+        let realizations = crate::governed::governed_realization_laws(&scalars);
         let resolution = realizations.resolve(&admitted).unwrap();
         let region = emit_region(&resolved, &changed, &scalars).unwrap();
 
@@ -1462,7 +1343,7 @@ mod tests {
             .unwrap_err();
         assert!(matches!(
             error,
-            IndexRefinementVerificationError::SemanticRealizationRefused(_)
+            IndexRefinementVerificationError::SemanticRealizationMismatch { .. }
         ));
     }
 
@@ -1478,8 +1359,7 @@ mod tests {
                 &LoweringSignature::new([], [f32_type()]).unwrap(),
             )
             .unwrap();
-        let realizations =
-            crate::governed::governed_realization_verifiers(&governed_scalars).unwrap();
+        let realizations = crate::governed::governed_realization_laws(&governed_scalars);
         let resolution = realizations.resolve(&changed).unwrap();
         let region = emit_region(&governed, &changed, &governed_scalars).unwrap();
         let error = resolution
@@ -1487,7 +1367,7 @@ mod tests {
             .unwrap_err();
         assert!(matches!(
             error,
-            IndexRefinementVerificationError::SemanticRealizationRefused(_)
+            IndexRefinementVerificationError::NumericalContractNotGoverned
         ));
     }
 
@@ -1587,22 +1467,9 @@ mod tests {
             .unwrap();
         let subject = square_occurrence(b"scalar-snapshot-mismatch");
         let region = emit_region(&resolved, &subject, &lowering_scalars).unwrap();
-        let mut builder =
-            IndexSemanticRealizationRegistryBuilder::new(semantic(), verifier_scalars);
-        builder
-            .register(
-                provider("square-verifier"),
-                &multiply_f32_op(),
-                &IndexRefinementSignature::new(
-                    binary_signature().operands().iter().cloned(),
-                    binary_signature().results().iter().cloned(),
-                )
-                .unwrap(),
-                1,
-                Arc::new(TestSquareVerifier),
-            )
-            .unwrap();
-        let resolution = builder.freeze().resolve(&subject).unwrap();
+        let realizations =
+            FrozenIndexRealizationLawRegistry::from_semantic(semantic(), verifier_scalars);
+        let resolution = realizations.resolve(&subject).unwrap();
 
         assert_eq!(
             resolution
@@ -1744,116 +1611,6 @@ mod tests {
             error,
             RefinementError::OperandInterface { position: 0 }
         ));
-    }
-
-    #[test]
-    fn a_residual_outcome_retains_the_exact_checked_region_and_bindings() {
-        let scalars = scalar_registry();
-        let length = 65_535;
-        let resolved = index_registry(
-            Arc::new(ConservativeReadSquare { length, rounds: 8 }),
-            &[scalar_key("multiply")],
-        )
-        .resolve_index_access(&multiply_f32_op(), &binary_signature())
-        .unwrap();
-        let occurrence = square_occurrence_with_length(b"pending-site", length);
-
-        let outcome = refine_index_region(&resolved, &occurrence, &scalars).unwrap();
-        let pending = outcome
-            .pending()
-            .expect("the conservative read exceeds the governed proof budget");
-        assert_eq!(pending.subject(), &occurrence);
-        assert_eq!(pending.provider(), resolved.provider());
-        assert_eq!(pending.revision(), resolved.revision());
-        assert_eq!(pending.capability_authority(), resolved.authority());
-        assert_eq!(
-            pending.scalar_authority().scalar_snapshot(),
-            scalars.snapshot_identity()
-        );
-        assert_eq!(pending.operand_bindings().len(), 2);
-        assert_eq!(pending.result_bindings().len(), 1);
-        assert_eq!(
-            pending.scalar_authority().region(),
-            pending.region().canonical_identity()
-        );
-        let obligations = pending.obligations().collect::<Vec<_>>();
-        assert!(!obligations.is_empty());
-        for obligation in obligations {
-            assert_eq!(
-                pending
-                    .region()
-                    .index_domain_unknown(obligation.subject(), obligation.predicate())
-                    .unwrap(),
-                Some(obligation)
-            );
-        }
-    }
-
-    #[test]
-    fn semantic_discharge_assesses_every_exact_obligation_once() {
-        let pending = pending_refinement();
-        let obligations = pending.obligations().len();
-        assert_ne!(
-            obligations, 0,
-            "the fixture must retain an exact obligation"
-        );
-        let provider = TestDischarge::new(DischargeMode::Sound, 1);
-
-        let refinement = discharge_with(&provider, pending).unwrap();
-
-        assert_eq!(provider.calls.load(Ordering::Relaxed), obligations);
-        assert_eq!(
-            refinement.content().index_domain_discharge_count(),
-            obligations
-        );
-    }
-
-    #[test]
-    fn semantic_discharge_keeps_disproved_and_unknown_distinct_and_atomic() {
-        let disproved = discharge_with(
-            &TestDischarge::new(DischargeMode::Disproved, 1),
-            pending_refinement(),
-        )
-        .unwrap_err();
-        assert_eq!(disproved.kind(), IndexDomainDischargeRefusalKind::Disproved);
-
-        let unknown = discharge_with(
-            &TestDischarge::new(DischargeMode::Unknown, 1),
-            pending_refinement(),
-        )
-        .unwrap_err();
-        assert_eq!(unknown.kind(), IndexDomainDischargeRefusalKind::Unknown);
-
-        assert_eq!(
-            unknown.pending().obligations().len(),
-            unknown.assessments().len(),
-            "a refusal retains the complete pending state and every assessment"
-        );
-    }
-
-    #[test]
-    fn semantic_discharge_authority_and_proof_basis_move_content_identity() {
-        let sound_v1 = discharge_with(
-            &TestDischarge::new(DischargeMode::Sound, 1),
-            pending_refinement(),
-        )
-        .unwrap();
-        let sound_v2 = discharge_with(
-            &TestDischarge::new(DischargeMode::Sound, 2),
-            pending_refinement(),
-        )
-        .unwrap();
-        let exhaustive = discharge_with(
-            &TestDischarge::new(DischargeMode::Exhaustive, 1),
-            pending_refinement(),
-        )
-        .unwrap();
-
-        assert_ne!(sound_v1.content().identity(), sound_v2.content().identity());
-        assert_ne!(
-            sound_v1.content().identity(),
-            exhaustive.content().identity()
-        );
     }
 
     #[test]

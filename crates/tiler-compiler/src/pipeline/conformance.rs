@@ -10,26 +10,19 @@ use std::sync::Arc;
 
 use super::tests::{interpret_fused, reduction_loop};
 use super::{
-    CompilationProduct, CompileError, CompilerOutputError, ProgramAlternative,
-    ProgramAlternativeKind, compile,
+    CompilationProduct, CompileError, ProgramAlternative, ProgramAlternativeKind, compile,
 };
 use crate::capability::{
     IndexAccessLoweringContext, IndexAccessLoweringProvider, LoweringCapabilityRegistryBuilder,
     LoweringCapabilityRevision, LoweringEmitError, LoweringSignature,
 };
 use crate::cover::RegionCover;
-use crate::explain::{
-    EvidenceBasis, ExplainDisposition, ExplainEvent, ExplainStage, FactValue, ProviderRef,
-};
+use crate::explain::{ExplainDisposition, ExplainStage, ProviderRef};
 use crate::region::form_region_candidates;
 use crate::request::{
     CompilationRequest, CompilerCapabilitySnapshot, RequestError, verify_request,
 };
-use tiler_ir::index::{
-    DomainRole, FrozenScalarRegistry, IndexRefinementSignature, IndexSemanticRealizationRefusal,
-    IndexSemanticRealizationRegistryBuilder, IndexSemanticRealizationRequest,
-    IndexSemanticRealizationVerifier, ScalarAttributes, SourcedExtent,
-};
+use tiler_ir::index::{DomainRole, FrozenScalarRegistry, ScalarAttributes, SourcedExtent};
 use tiler_ir::semantic::{
     CanonicalIntegerWidth, CanonicalValue, CanonicalValueKind, CanonicalValueView, F32,
     F32_CONSTANT_BITS_ATTRIBUTE, InputKey, NormativeDefinitionRef, OpKey, OperationArity,
@@ -247,7 +240,7 @@ fn external_program_with_bias(
 /// Builds the same graph under the governed semantic authority.
 ///
 /// Compilation conformance fixtures use this authority because the governed
-/// realization verifiers are admitted against its exact frozen definitions.
+/// realization laws are admitted against its exact frozen definitions.
 fn governed_program(shape: Shape, axes: &[Axis], share_constant: bool) -> SemanticProgram {
     governed_program_with_bias(shape, axes, share_constant, 1.0_f32.to_bits())
 }
@@ -666,14 +659,6 @@ fn registry_with_external_multiply(
     substitute: bool,
     implementation: Arc<dyn IndexAccessLoweringProvider>,
 ) -> CompilerCapabilitySnapshot {
-    registry_with_external_multiply_and_verifier(substitute, implementation, None)
-}
-
-fn registry_with_external_multiply_and_verifier(
-    substitute: bool,
-    implementation: Arc<dyn IndexAccessLoweringProvider>,
-    verifier: Option<Arc<dyn IndexSemanticRealizationVerifier>>,
-) -> CompilerCapabilitySnapshot {
     let scalars = FrozenScalarRegistry::standard().unwrap();
     let mut builder = LoweringCapabilityRegistryBuilder::new(
         scalars.semantic_authority().clone(),
@@ -699,31 +684,7 @@ fn registry_with_external_multiply_and_verifier(
             implementation,
         )
         .unwrap();
-    let realization = if let Some(verifier) = verifier {
-        let mut builder = IndexSemanticRealizationRegistryBuilder::new(
-            scalars.semantic_authority().clone(),
-            scalars.clone(),
-        );
-        crate::governed::install_governed_realization_verifiers(&mut builder, &[multiply_f32_op()])
-            .unwrap();
-        builder
-            .register(
-                ProviderIdentity::new("acme", "external-multiply-realization", 1).unwrap(),
-                &multiply_f32_op(),
-                &IndexRefinementSignature::new(
-                    [F32::resolved_type(), F32::resolved_type()],
-                    [F32::resolved_type()],
-                )
-                .unwrap(),
-                1,
-                verifier,
-            )
-            .unwrap();
-        builder.freeze()
-    } else {
-        crate::governed::governed_realization_verifiers(&scalars).unwrap()
-    };
-    CompilerCapabilitySnapshot::new(builder.freeze(), realization, scalars)
+    CompilerCapabilitySnapshot::new(builder.freeze(), scalars)
 }
 
 /// The lowering half of the gate: an out-of-crate provider lowers a
@@ -804,41 +765,8 @@ struct ConservativeReadMultiplyLowering {
     offset: i128,
 }
 
-/// Independent authority for the conservative external lowering test family.
-struct ConservativeReadMultiplyVerifier {
-    rounds: usize,
-    offset: i128,
-}
-
-impl IndexSemanticRealizationVerifier for ConservativeReadMultiplyVerifier {
-    fn verify(
-        &self,
-        request: IndexSemanticRealizationRequest<'_>,
-    ) -> Result<(), IndexSemanticRealizationRefusal> {
-        if !crate::request::is_f32_contract_key(request.subject().numerical_contract().as_str()) {
-            return Err(IndexSemanticRealizationRefusal::new("unsupported-contract").unwrap());
-        }
-        let mut builder = tiler_ir::index::IndexRegionBuilder::new(request.scalars().clone())
-            .map_err(|_| IndexSemanticRealizationRefusal::new("builder-refused").unwrap())?;
-        {
-            let mut context = IndexAccessLoweringContext::new(&mut builder, request.subject());
-            ConservativeReadMultiplyLowering {
-                rounds: self.rounds,
-                offset: self.offset,
-            }
-            .lower(&mut context)
-            .map_err(|_| IndexSemanticRealizationRefusal::new("emission-refused").unwrap())?;
-        }
-        let expected = builder
-            .build()
-            .map_err(|_| IndexSemanticRealizationRefusal::new("region-refused").unwrap())?;
-        if expected.canonical_identity() != request.region().canonical_identity() {
-            return Err(IndexSemanticRealizationRefusal::new("region-mismatch").unwrap());
-        }
-        Ok(())
-    }
-}
-
+/// An alternate multiply-shaped region used to prove exact-canonical law
+/// refusal; a lowering installer has no semantic-authority callback to replace.
 impl IndexAccessLoweringProvider for ConservativeReadMultiplyLowering {
     fn lower(&self, context: &mut IndexAccessLoweringContext<'_>) -> Result<(), LoweringEmitError> {
         let shape = context.occurrence().results()[0].shape().clone();
@@ -908,223 +836,33 @@ fn governed_lowerings_never_charge_the_exhaustive_proof_budget() {
     }));
 }
 
-/// A finite residual read obligation is proved before executable planning.
-///
-/// The index region itself remains structurally verified and retains the exact
-/// verifier-budget `Unknown` reason. The separately governed compiler authority
-/// evaluates its whole finite domain, seals the proof, and only then permits
-/// cover enumeration.
+/// An alternate logical realization cannot certify itself as multiply.
 #[test]
-fn a_finite_residual_index_obligation_is_proved_before_plan_construction() {
+fn a_lowering_cannot_replace_the_semantic_providers_realization_law() {
     let program = governed_program(Shape::from_dims([65_535, 1]), &[Axis::new(0)], false);
     let mut request = CompilationRequest::governed(&program);
-    request.capabilities = registry_with_external_multiply_and_verifier(
+    request.capabilities = registry_with_external_multiply(
         true,
         Arc::new(ConservativeReadMultiplyLowering {
             rounds: 5,
             offset: 0,
         }),
-        Some(Arc::new(ConservativeReadMultiplyVerifier {
-            rounds: 5,
-            offset: 0,
-        })),
-    );
-    let product = compile(request).expect("the exact finite authority proves the residual");
-    let explain = &product.targets[0].explain;
-    let residuals = explain
-        .records()
-        .iter()
-        .filter(|record| {
-            record.event().stage() == ExplainStage::SemanticDischarge
-                && record.event().disposition() == ExplainDisposition::Admitted
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(residuals.len(), 1);
-    let residual = residuals[0];
-    assert_eq!(
-        residual.rule().key().as_str(),
-        "index-domain.semantic-discharge.v1"
-    );
-    assert_eq!(residual.rule().provider(), &ProviderRef::builtin());
-    let ExplainEvent::Check { assessment, .. } = residual.event() else {
-        panic!("the residual is a predicate assessment");
-    };
-    assert_eq!(assessment.basis(), &EvidenceBasis::ExhaustiveFinite);
-    let fact = |key| {
-        assessment
-            .facts()
-            .iter()
-            .find(|fact| fact.key().as_str() == key)
-            .map_or_else(
-                || panic!("residual assessment carries {key}"),
-                crate::explain::ExplainFact::value,
-            )
-    };
-    assert_eq!(fact("obligation-ordinal"), &FactValue::Count(0));
-    assert_eq!(
-        fact("predicate-kind"),
-        &FactValue::Identity(
-            crate::explain::SubjectKey::new("index-domain.less-than-extent").unwrap()
-        )
-    );
-    assert_eq!(
-        fact("evidence-basis"),
-        &FactValue::Identity(crate::explain::SubjectKey::new("exhaustive-finite").unwrap())
-    );
-    assert_eq!(fact("exhaustive-points"), &FactValue::Count(65_535));
-    assert!(matches!(fact("obligation-key"), FactValue::Identity(_)));
-    assert_eq!(
-        fact("discharge-provider"),
-        &FactValue::Identity(
-            crate::explain::SubjectKey::new("tiler.compiler.index-domain-discharge").unwrap()
-        )
-    );
-    assert_eq!(
-        fact("discharge-rule"),
-        &FactValue::Identity(
-            crate::explain::SubjectKey::new("tiler.exact-finite-index-domain-enumeration").unwrap()
-        )
-    );
-    let discharge_position = explain
-        .records()
-        .iter()
-        .position(|record| record.event().stage() == ExplainStage::SemanticDischarge)
-        .expect("semantic discharge is explained");
-    let cover_position = explain
-        .records()
-        .iter()
-        .position(|record| record.event().stage() == ExplainStage::CandidateEnumeration)
-        .expect("cover enumeration follows a proof");
-    assert!(discharge_position < cover_position);
-}
-
-/// An exact counterexample is an invalid lowering, never invalid user input.
-#[test]
-fn a_disproved_residual_index_obligation_is_invalid_compiler_output() {
-    let program = governed_program(Shape::from_dims([65_535, 1]), &[Axis::new(1)], false);
-    let mut request = CompilationRequest::governed(&program);
-    request.capabilities = registry_with_external_multiply_and_verifier(
-        true,
-        Arc::new(ConservativeReadMultiplyLowering {
-            rounds: 5,
-            offset: 1,
-        }),
-        Some(Arc::new(ConservativeReadMultiplyVerifier {
-            rounds: 5,
-            offset: 1,
-        })),
     );
     let CompileError::Explained { source, explain } = compile(request).unwrap_err() else {
-        panic!("target compilation failures retain their explain trace");
-    };
-    assert!(matches!(
-        *source,
-        CompileError::InvalidCompilerOutput(CompilerOutputError::Lowering(_))
-    ));
-    let record = explain
-        .records()
-        .iter()
-        .find(|record| record.event().stage() == ExplainStage::SemanticDischarge)
-        .expect("the counterexample is explained at semantic discharge");
-    assert_eq!(
-        record.event().disposition(),
-        ExplainDisposition::RejectedIntrinsic
-    );
-    let ExplainEvent::Check { assessment, .. } = record.event() else {
-        panic!("the disproof is a predicate assessment");
-    };
-    assert_eq!(
-        assessment.reason().map(crate::explain::ReasonCode::as_str),
-        Some("logical-index-not-less-than-extent")
-    );
-    assert!(assessment.facts().iter().any(|fact| {
-        fact.key().as_str() == "discharge-provider"
-            && fact.value()
-                == &FactValue::Identity(
-                    crate::explain::SubjectKey::new("tiler.compiler.index-domain-discharge")
-                        .unwrap(),
-                )
-    }));
-    assert_eq!(
-        assessment
-            .facts()
-            .iter()
-            .find(|fact| fact.key().as_str() == "counterexample-point-ordinal")
-            .map(crate::explain::ExplainFact::value),
-        Some(&FactValue::Count(65_534))
-    );
-    assert!(
-        !explain
-            .records()
-            .iter()
-            .any(|record| record.event().stage() == ExplainStage::CandidateEnumeration),
-        "a disproved lowering never reaches cover enumeration"
-    );
-}
-
-/// A second proof-budget stop remains unsupported without execution permission.
-#[test]
-fn an_over_discharge_budget_obligation_remains_unknown_before_planning() {
-    let program = governed_program(Shape::from_dims([65_535, 64]), &[Axis::new(1)], false);
-    let mut request = CompilationRequest::governed(&program);
-    request.capabilities = registry_with_external_multiply_and_verifier(
-        true,
-        Arc::new(ConservativeReadMultiplyLowering {
-            rounds: 5,
-            offset: 0,
-        }),
-        Some(Arc::new(ConservativeReadMultiplyVerifier {
-            rounds: 5,
-            offset: 0,
-        })),
-    );
-    let CompileError::Explained { source, explain } = compile(request).unwrap_err() else {
-        panic!("target compilation failures retain their explain trace");
+        panic!("the noncanonical realization is rejected with its explain trace");
     };
     assert_eq!(
         *source,
         CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
-            phase: "semantic-discharge",
-            rule: "index-domain-discharge-unsupported",
+            phase: "lowering",
+            rule: "refinement-refused",
         })
     );
-    let record = explain
-        .records()
-        .iter()
-        .find(|record| record.event().stage() == ExplainStage::SemanticDischarge)
-        .expect("the resource stop is explained at semantic discharge");
-    assert_eq!(
-        record.event().disposition(),
-        ExplainDisposition::DeferredUnsupported
-    );
-    let ExplainEvent::Check { assessment, .. } = record.event() else {
-        panic!("the unknown result is a predicate assessment");
-    };
-    assert_eq!(assessment.basis(), &EvidenceBasis::Unknown);
-    assert_eq!(
-        assessment.reason().map(crate::explain::ReasonCode::as_str),
-        Some("index-domain-proof-resource-limit")
-    );
-    let fact = |key| {
-        assessment
-            .facts()
-            .iter()
-            .find(|fact| fact.key().as_str() == key)
-            .map_or_else(
-                || panic!("resource assessment carries {key}"),
-                crate::explain::ExplainFact::value,
-            )
-    };
-    assert_eq!(fact("proof-limit"), &FactValue::Count(16 * 1024 * 1024));
-    assert_eq!(
-        fact("verifier-proof-limit"),
-        &FactValue::Count(tiler_ir::index::MAX_EXHAUSTIVE_PROOF_CELLS)
-    );
     assert!(
-        !explain
-            .records()
-            .iter()
-            .any(|record| record.event().stage() == ExplainStage::CandidateEnumeration),
-        "a second resource stop never reaches cover enumeration"
+        explain.records().iter().any(|record| {
+            record.event().stage() == ExplainStage::KernelRefinement
+                && record.event().disposition() != ExplainDisposition::Admitted
+        }),
+        "the semantic-law mismatch is explained before planning"
     );
 }

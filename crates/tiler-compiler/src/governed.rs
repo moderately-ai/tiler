@@ -21,11 +21,8 @@
 use std::sync::Arc;
 
 use tiler_ir::index::{
-    DomainRole, FrozenIndexSemanticRealizationRegistry, FrozenScalarRegistry, IndexExprId,
-    IndexInteger, IndexRefinementSignature, IndexRefinementVerificationError, IndexRegionBuilder,
-    IndexSemanticRealizationRefusal, IndexSemanticRealizationRegistryBuilder,
-    IndexSemanticRealizationRequest, IndexSemanticRealizationVerifier, ScalarAttributes,
-    ScalarOpKey, ScalarRegistryError, ScalarValueId, SourcedExtent, add_f32_scalar_op,
+    DomainRole, FrozenScalarRegistry, IndexExprId, IndexInteger, ScalarAttributes, ScalarOpKey,
+    ScalarRegistryError, ScalarValueId, SourcedExtent, add_f32_scalar_op,
     canonicalize_nan_f32_scalar_op, constant_f32_scalar_op, divide_f32_scalar_op,
     exp_f32_scalar_op, multiply_f32_scalar_op,
 };
@@ -59,8 +56,6 @@ pub(crate) enum GovernedRegistryError {
     Scalar(Arc<ScalarRegistryError>),
     /// The governed lowering registry rejected its own registration.
     Registry(LoweringRegistryError),
-    /// The independent semantic-realization registry rejected its profile.
-    Realization(Arc<IndexRefinementVerificationError>),
 }
 
 impl std::fmt::Display for GovernedRegistryError {
@@ -72,12 +67,6 @@ impl std::fmt::Display for GovernedRegistryError {
             Self::Registry(source) => {
                 write!(formatter, "governed lowering registration failed: {source}")
             }
-            Self::Realization(source) => {
-                write!(
-                    formatter,
-                    "governed realization registration failed: {source}"
-                )
-            }
         }
     }
 }
@@ -87,7 +76,6 @@ impl std::error::Error for GovernedRegistryError {
         match self {
             Self::Scalar(source) => Some(source.as_ref()),
             Self::Registry(source) => Some(source),
-            Self::Realization(source) => Some(source.as_ref()),
         }
     }
 }
@@ -133,86 +121,14 @@ pub(crate) fn governed_lowering_capabilities(
 }
 
 /// Builds the independent semantic-realization authority for governed families.
-pub(crate) fn governed_realization_verifiers(
+#[cfg(test)]
+pub(crate) fn governed_realization_laws(
     scalars: &FrozenScalarRegistry,
-) -> Result<FrozenIndexSemanticRealizationRegistry, GovernedRegistryError> {
-    let mut builder = IndexSemanticRealizationRegistryBuilder::new(
+) -> tiler_ir::index::FrozenIndexRealizationLawRegistry {
+    tiler_ir::index::FrozenIndexRealizationLawRegistry::from_semantic(
         scalars.semantic_authority().clone(),
         scalars.clone(),
-    );
-    install_governed_realization_verifiers(&mut builder, &[])
-        .map_err(|source| GovernedRegistryError::Realization(Arc::new(source)))?;
-    Ok(builder.freeze())
-}
-
-/// Installs governed realization verifiers except explicitly substituted families.
-pub(crate) fn install_governed_realization_verifiers(
-    builder: &mut IndexSemanticRealizationRegistryBuilder,
-    substituted: &[OpKey],
-) -> Result<(), IndexRefinementVerificationError> {
-    let capabilities = governed_index_access_capabilities()
-        .expect("the governed realization signatures are well formed");
-    for capability in capabilities {
-        if substituted.contains(&capability.operation) {
-            continue;
-        }
-        let signature = IndexRefinementSignature::new(
-            capability.signature.operands().iter().cloned(),
-            capability.signature.results().iter().cloned(),
-        )?;
-        let verifier_provider = ProviderIdentity::new(
-            "tiler",
-            format!("governed-index-realization.{}", capability.operation.name()),
-            1,
-        )
-        .expect("governed verifier identity is valid");
-        builder.register(
-            verifier_provider,
-            &capability.operation,
-            &signature,
-            GOVERNED_CAPABILITY_REVISION,
-            Arc::new(GovernedIndexSemanticVerifier {
-                canonical: capability.implementation,
-            }),
-        )?;
-    }
-    Ok(())
-}
-
-/// Independently reconstructs the canonical governed region and compares it.
-struct GovernedIndexSemanticVerifier {
-    canonical: Arc<dyn IndexAccessLoweringProvider>,
-}
-
-impl IndexSemanticRealizationVerifier for GovernedIndexSemanticVerifier {
-    fn verify(
-        &self,
-        request: IndexSemanticRealizationRequest<'_>,
-    ) -> Result<(), IndexSemanticRealizationRefusal> {
-        if !crate::request::is_f32_contract_key(request.subject().numerical_contract().as_str()) {
-            return Err(realization_refusal("unsupported-numerical-contract"));
-        }
-        let mut builder = IndexRegionBuilder::new(request.scalars().clone())
-            .map_err(|_| realization_refusal("canonical-builder"))?;
-        {
-            let mut context = IndexAccessLoweringContext::new(&mut builder, request.subject());
-            self.canonical
-                .lower(&mut context)
-                .map_err(|_| realization_refusal("canonical-emission"))?;
-        }
-        let expected = builder
-            .build()
-            .map_err(|_| realization_refusal("canonical-region"))?;
-        if expected.canonical_identity() != request.region().canonical_identity() {
-            return Err(realization_refusal("canonical-region-mismatch"));
-        }
-        Ok(())
-    }
-}
-
-fn realization_refusal(reason: &str) -> IndexSemanticRealizationRefusal {
-    IndexSemanticRealizationRefusal::new(reason)
-        .expect("governed realization refusal is bounded and nonempty")
+    )
 }
 
 /// Registers the shipped index-access capabilities onto a caller's builder,
@@ -1671,19 +1587,25 @@ mod contraction_conformance;
 
 #[cfg(test)]
 mod tests {
-    use super::{governed_lowering_capabilities, governed_realization_verifiers, governed_scalars};
-    use crate::capability::LoweringSignature;
-    use crate::legality::{IndexRefinement, refine_index_region};
-    use tiler_ir::index::{IndexRefinementSubject, NumericalContractIdentity};
+    use super::{
+        GovernedPointwiseF32, PointwiseScalar, governed_lowering_capabilities,
+        governed_realization_laws, governed_scalars,
+    };
+    use crate::capability::{
+        LoweringCapabilityRegistryBuilder, LoweringCapabilityRevision, LoweringSignature,
+    };
+    use crate::legality::{IndexRefinement, RefinementError, refine_index_region};
+    use std::sync::Arc;
+    use tiler_ir::index::{IndexRefinementSubject, NumericalContractIdentity, add_f32_scalar_op};
     use tiler_ir::program::SemanticOccurrence;
     use tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS;
     use tiler_ir::semantic::{
         BROADCAST_AXIS_MAPPING_ATTRIBUTE, BroadcastAxisMapping, BroadcastAxisSource,
         CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField, CanonicalValue, ContractionIndex,
         ContractionIndexStructure, F32, F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey,
-        OperationAttributes, OutputKey, REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE,
-        ReindexForm, ResolvedValueType, SemanticProgramBuilder, TypeKey, add_f32_op,
-        broadcast_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op,
+        OperationAttributes, OutputKey, ProviderIdentity, REDUCTION_AXES_ATTRIBUTE,
+        REINDEX_MAPPING_ATTRIBUTE, ReindexForm, ResolvedValueType, SemanticProgramBuilder, TypeKey,
+        add_f32_op, broadcast_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op,
         strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
     };
 
@@ -1785,7 +1707,7 @@ mod tests {
     ) -> IndexRefinement {
         let scalars = governed_scalars().unwrap();
         let registry = governed_lowering_capabilities(&scalars).unwrap();
-        let realizations = governed_realization_verifiers(&scalars).unwrap();
+        let realizations = governed_realization_laws(&scalars);
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let mut inputs = Vec::new();
         for operand in &operands {
@@ -1888,6 +1810,68 @@ mod tests {
                 refinement.operand_bindings()[1].input_tensor()
             );
         }
+    }
+
+    /// Deliberate ADR 0078 perturbation: the selected multiply capability emits
+    /// add while every structural/interface fact remains valid. The semantic
+    /// provider's multiply law is unchanged, so no receipt may mint.
+    #[test]
+    fn a_multiply_descriptor_that_emits_add_is_refused_by_semantic_law() {
+        let scalars = governed_scalars().unwrap();
+        let mut lowerings = LoweringCapabilityRegistryBuilder::new(
+            scalars.semantic_authority().clone(),
+            scalars.clone(),
+        );
+        lowerings
+            .register_index_access(
+                ProviderIdentity::new("test", "multiply-emits-add", 1).unwrap(),
+                multiply_f32_op(),
+                LoweringSignature::new(
+                    [F32::resolved_type(), F32::resolved_type()],
+                    [F32::resolved_type()],
+                )
+                .unwrap(),
+                &[add_f32_scalar_op()],
+                LoweringCapabilityRevision::new(1).unwrap(),
+                Arc::new(GovernedPointwiseF32 {
+                    scalar: PointwiseScalar::Add,
+                }),
+            )
+            .unwrap();
+        let lowerings = lowerings.freeze();
+        let shape = Shape::from_dims([2]);
+        let mut program = SemanticProgramBuilder::try_standard().unwrap();
+        let left = program
+            .input::<F32>(InputKey::new("left").unwrap(), shape.clone())
+            .unwrap();
+        let right = program
+            .input::<F32>(InputKey::new("right").unwrap(), shape)
+            .unwrap();
+        let product = tiler_ir::semantic::F32Multiply::apply(&mut program, left, right).unwrap();
+        program
+            .output(OutputKey::new("product").unwrap(), product)
+            .unwrap();
+        let program = program.build().unwrap();
+        let subject =
+            IndexRefinementSubject::derive(&program, SemanticOccurrence::new(0), contract())
+                .unwrap();
+        let signature = LoweringSignature::new(
+            subject.signature().operands().iter().cloned(),
+            subject.signature().results().iter().cloned(),
+        )
+        .unwrap();
+        let resolved = lowerings
+            .resolve_index_access(&multiply_f32_op(), &signature)
+            .unwrap();
+        let laws = governed_realization_laws(&scalars);
+        let error = refine_index_region(&resolved, &subject, &laws, &scalars).unwrap_err();
+        let RefinementError::IrVerifier(source) = error else {
+            panic!("semantic-law mismatch must remain typed: {error:?}");
+        };
+        assert!(matches!(
+            source.as_ref(),
+            tiler_ir::index::IndexRefinementVerificationError::SemanticRealizationMismatch { .. }
+        ));
     }
 
     #[test]

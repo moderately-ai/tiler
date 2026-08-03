@@ -4,7 +4,7 @@ use std::fmt;
 use std::sync::{Mutex, OnceLock, PoisonError};
 
 use tiler_ir::identity::{push_len, push_slice};
-use tiler_ir::index::{FrozenIndexSemanticRealizationRegistry, FrozenScalarRegistry};
+use tiler_ir::index::{FrozenIndexRealizationLawRegistry, FrozenScalarRegistry};
 use tiler_ir::program::abi::AvailabilityPhase;
 use tiler_ir::schedule::{
     InputOrdinal, PointwiseF32Expression, PointwiseF32ExpressionBuilder, PointwiseF32Node,
@@ -29,9 +29,7 @@ pub(crate) use tiler_ir::schedule::{
 use crate::capability::{
     CanonicalLoweringRegistryIdentity, FrozenLoweringCapabilityRegistry, LoweringCapabilityRevision,
 };
-use crate::governed::{
-    governed_lowering_capabilities, governed_realization_verifiers, governed_scalars,
-};
+use crate::governed::{governed_lowering_capabilities, governed_scalars};
 use crate::policy::UnrepresentableDimension;
 use crate::region::SemanticMemberId;
 use crate::target::DTypeDispatchabilityResolution;
@@ -840,18 +838,21 @@ impl LoweringProviderIdentity {
 pub(crate) struct CompilerCapabilitySnapshot {
     schema_version: u32,
     lowering: FrozenLoweringCapabilityRegistry,
-    realization: FrozenIndexSemanticRealizationRegistry,
+    realization: FrozenIndexRealizationLawRegistry,
     scalars: FrozenScalarRegistry,
 }
 
 impl CompilerCapabilitySnapshot {
     /// Binds one installed lowering registry and the scalar authority it was
     /// registered against.
-    pub(crate) const fn new(
+    pub(crate) fn new(
         lowering: FrozenLoweringCapabilityRegistry,
-        realization: FrozenIndexSemanticRealizationRegistry,
         scalars: FrozenScalarRegistry,
     ) -> Self {
+        let realization = FrozenIndexRealizationLawRegistry::from_semantic(
+            scalars.semantic_authority().clone(),
+            scalars.clone(),
+        );
         Self {
             schema_version: REQUEST_SCHEMA_VERSION,
             lowering,
@@ -877,9 +878,7 @@ impl CompilerCapabilitySnapshot {
                     governed_scalars().expect("the governed scalar authority is well formed");
                 let lowering = governed_lowering_capabilities(&scalars)
                     .expect("the governed lowering capabilities are well formed");
-                let realization = governed_realization_verifiers(&scalars)
-                    .expect("the governed realization verifiers are well formed");
-                Self::new(lowering, realization, scalars)
+                Self::new(lowering, scalars)
             })
             .clone()
     }
@@ -890,7 +889,7 @@ impl CompilerCapabilitySnapshot {
     }
 
     /// Returns the independent semantic-realization authority.
-    pub(crate) const fn realization(&self) -> &FrozenIndexSemanticRealizationRegistry {
+    pub(crate) const fn realization(&self) -> &FrozenIndexRealizationLawRegistry {
         &self.realization
     }
 
@@ -917,9 +916,7 @@ impl CompilerCapabilitySnapshot {
             scalars.clone(),
         )
         .freeze();
-        let realization = governed_realization_verifiers(&scalars)
-            .expect("the governed realization verifiers are well formed");
-        Self::new(lowering, realization, scalars)
+        Self::new(lowering, scalars)
     }
 }
 
@@ -2188,6 +2185,19 @@ pub(crate) fn verify_request(
         != request.capabilities.scalars.snapshot_identity()
     {
         return unsupported("capability", "scalar-authority-pairing");
+    }
+    if request.capabilities.lowering.semantic_snapshot()
+        != request
+            .capabilities
+            .scalars
+            .semantic_authority()
+            .snapshot_identity()
+        || request.capabilities.realization.semantic_snapshot()
+            != request.capabilities.lowering.semantic_snapshot()
+        || request.capabilities.realization.scalar_snapshot()
+            != request.capabilities.lowering.scalar_snapshot()
+    {
+        return unsupported("capability", "semantic-authority-pairing");
     }
     if request.target_profiles.is_empty() {
         return Err(RequestError::EmptyTargetSet);
@@ -4650,23 +4660,6 @@ mod tests {
         let mut forged = target.clone();
         forged.capabilities = CompilerCapabilitySnapshot::without_capabilities();
         assert!(!forged.reconstructs_its_authority());
-
-        let mut forged = target.clone();
-        let scalars = forged.capabilities.scalars().clone();
-        let realization = tiler_ir::index::IndexSemanticRealizationRegistryBuilder::new(
-            scalars.semantic_authority().clone(),
-            scalars.clone(),
-        )
-        .freeze();
-        forged.capabilities = CompilerCapabilitySnapshot::new(
-            forged.capabilities.lowering().clone(),
-            realization,
-            scalars,
-        );
-        assert!(
-            !forged.reconstructs_its_authority(),
-            "the request subject binds the verifier registry independently of lowering"
-        );
 
         let mut forged = target.clone();
         forged.budgets.regions += 1;

@@ -14,7 +14,6 @@
 //! mints a receipt.
 
 use core::fmt;
-use std::collections::BTreeMap;
 use std::error::Error;
 use std::sync::Arc;
 
@@ -23,15 +22,16 @@ use crate::program::SemanticOccurrence;
 use crate::semantic::{
     FrozenSemanticRegistry, OpKey, OperationAttributes, OperationEffect, ProviderIdentity,
     RegistryError, ResolvedValueType, SemanticCapabilityAuthority, SemanticGraphIdentity,
-    SemanticProgram,
+    SemanticProgram, SemanticRegistrySnapshotIdentity,
 };
 use crate::shape::Shape;
 
 use super::{
-    CanonicalIndexRegionIdentity, CanonicalScalarDefinitionProjection, FrozenScalarRegistry,
-    IndexDomainSoundProof, IndexDomainUnknownReason, ScalarAuthorityEvidence, ScalarOpKey,
-    ScalarRegistryError, TensorRole, UnknownIndexDomainPredicate, VerifiedIndexHandleError,
-    VerifiedIndexRegion, VerifiedScalarValueId, VerifiedTensorAccessId, VerifiedTensorId,
+    CanonicalIndexRegionIdentity, CanonicalScalarDefinitionProjection,
+    CanonicalScalarRegistrySnapshotIdentity, FrozenScalarRegistry, IndexDomainSoundProof,
+    IndexDomainUnknownReason, ScalarAuthorityEvidence, ScalarOpKey, ScalarRegistryError,
+    TensorRole, UnknownIndexDomainPredicate, VerifiedIndexHandleError, VerifiedIndexRegion,
+    VerifiedScalarValueId, VerifiedTensorAccessId, VerifiedTensorId,
 };
 
 const RECEIPT_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-receipt.v1\0";
@@ -39,11 +39,8 @@ const SUBJECT_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-subject.v1\0";
 const AUTHORITY_IDENTITY_TAG: &[u8] = b"tiler.ir.index-realization-authority.v1\0";
 const RESOLUTION_IDENTITY_TAG: &[u8] = b"tiler.ir.index-realization-resolution.v1\0";
 const PROOF_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-domain-proof.v1\0";
-const VERIFIER_REGISTRY_IDENTITY_TAG: &[u8] = b"tiler.ir.index-realization-verifier-registry.v1\0";
-const VERIFIER_CAPABILITY_IDENTITY_TAG: &[u8] =
-    b"tiler.ir.index-realization-verifier-capability.v1\0";
+const LAW_REGISTRY_IDENTITY_TAG: &[u8] = b"tiler.ir.index-realization-law-registry.v1\0";
 const MAX_NUMERICAL_CONTRACT_IDENTITY_BYTES: usize = 256;
-const MAX_REALIZATION_REFUSAL_BYTES: usize = 1_024;
 const MAX_DOMAIN_EVIDENCE_BYTES: usize = 4_096;
 
 /// One semantic value boundary derived from a verified program.
@@ -425,226 +422,66 @@ impl IndexRefinementSubject {
     }
 }
 
-/// Borrowed input to an independently registered semantic-realization verifier.
-#[derive(Clone, Copy)]
-pub struct IndexSemanticRealizationRequest<'a> {
-    subject: &'a IndexRefinementSubject,
-    region: &'a VerifiedIndexRegion,
-    scalars: &'a FrozenScalarRegistry,
-}
-
-impl fmt::Debug for IndexSemanticRealizationRequest<'_> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("IndexSemanticRealizationRequest")
-            .field("operation", &self.subject.operation)
-            .field("occurrence", &self.subject.occurrence)
-            .field("region", self.region.canonical_identity())
-            .finish_non_exhaustive()
-    }
-}
-
-impl<'a> IndexSemanticRealizationRequest<'a> {
-    /// Returns the exact program-derived semantic subject.
-    #[must_use]
-    pub const fn subject(self) -> &'a IndexRefinementSubject {
-        self.subject
-    }
-    /// Returns the actual structurally verified region under review.
-    #[must_use]
-    pub const fn region(self) -> &'a VerifiedIndexRegion {
-        self.region
-    }
-    /// Returns the exact admitted scalar registry.
-    #[must_use]
-    pub const fn scalars(self) -> &'a FrozenScalarRegistry {
-        self.scalars
-    }
-}
-
-/// Stable refusal from a semantic-realization verifier callback.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct IndexSemanticRealizationRefusal(Box<str>);
-
-impl IndexSemanticRealizationRefusal {
-    /// Creates one bounded nonempty refusal.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed error when the diagnostic is empty or exceeds its bound.
-    pub fn new(reason: impl Into<String>) -> Result<Self, IndexRefinementVerificationError> {
-        let reason = reason.into();
-        if reason.is_empty() || reason.len() > MAX_REALIZATION_REFUSAL_BYTES {
-            return Err(
-                IndexRefinementVerificationError::InvalidRealizationRefusal {
-                    actual: reason.len(),
-                    limit: MAX_REALIZATION_REFUSAL_BYTES,
-                },
-            );
-        }
-        Ok(Self(reason.into_boxed_str()))
-    }
-    /// Returns the stable refusal text.
-    #[must_use]
-    pub fn reason(&self) -> &str {
-        &self.0
-    }
-}
-
-/// Independent semantic authority for checking one emitted index region.
-pub trait IndexSemanticRealizationVerifier: Send + Sync + 'static {
-    /// Checks whether the actual region realizes the exact semantic subject.
-    ///
-    /// # Errors
-    ///
-    /// Returns a stable refusal when semantic realization is not proved.
-    fn verify(
-        &self,
-        request: IndexSemanticRealizationRequest<'_>,
-    ) -> Result<(), IndexSemanticRealizationRefusal>;
-}
-
-#[derive(Clone)]
-struct RegisteredIndexSemanticRealization {
-    provider: ProviderIdentity,
-    revision: u32,
-    semantic: SemanticCapabilityAuthority,
-    verifier: Arc<dyn IndexSemanticRealizationVerifier>,
+struct FrozenIndexRealizationLawRegistryData {
+    semantic: FrozenSemanticRegistry,
+    scalars: FrozenScalarRegistry,
     identity: Box<[u8]>,
 }
 
-/// Mutable constructor for an independent semantic-realization registry.
-pub struct IndexSemanticRealizationRegistryBuilder {
-    semantic: FrozenSemanticRegistry,
-    scalars: FrozenScalarRegistry,
-    capabilities: BTreeMap<Vec<u8>, Arc<RegisteredIndexSemanticRealization>>,
-}
-
-impl fmt::Debug for IndexSemanticRealizationRegistryBuilder {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("IndexSemanticRealizationRegistryBuilder")
-            .field("capability_count", &self.capabilities.len())
-            .finish_non_exhaustive()
-    }
-}
-
-impl IndexSemanticRealizationRegistryBuilder {
-    /// Creates an empty registry bound to exact semantic and scalar snapshots.
-    #[must_use]
-    pub fn new(semantic: FrozenSemanticRegistry, scalars: FrozenScalarRegistry) -> Self {
-        Self {
-            semantic,
-            scalars,
-            capabilities: BTreeMap::new(),
-        }
-    }
-
-    /// Registers one independent verifier for an exact operation/signature.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed refusal when revision is zero, semantic projection fails,
-    /// or an exact capability already exists. The callback itself governs the
-    /// numerical-contract identities it accepts.
-    pub fn register(
-        &mut self,
-        provider: ProviderIdentity,
-        operation: &OpKey,
-        signature: &IndexRefinementSignature,
-        revision: u32,
-        verifier: Arc<dyn IndexSemanticRealizationVerifier>,
-    ) -> Result<(), IndexRefinementVerificationError> {
-        if revision == 0 {
-            return Err(IndexRefinementVerificationError::ZeroRealizationVerifierRevision);
-        }
-        let semantic = self
-            .semantic
-            .project_operation_authority(
-                operation,
-                signature.operands.iter(),
-                signature.results.iter(),
-            )
-            .map_err(|source| {
-                IndexRefinementVerificationError::SemanticAuthority(Arc::new(source))
-            })?;
-        let key = encode_verifier_key(operation, signature);
-        if self.capabilities.contains_key(&key) {
-            return Err(IndexRefinementVerificationError::DuplicateRealizationVerifier);
-        }
-        let identity = encode_verifier_capability_identity(
-            &key,
-            &provider,
-            revision,
-            &semantic,
-            self.scalars.snapshot_identity().as_bytes(),
-        )
-        .into_boxed_slice();
-        self.capabilities.insert(
-            key,
-            Arc::new(RegisteredIndexSemanticRealization {
-                provider,
-                revision,
-                semantic,
-                verifier,
-                identity,
-            }),
-        );
-        Ok(())
-    }
-
-    /// Freezes the exact registry snapshot.
-    #[must_use]
-    pub fn freeze(self) -> FrozenIndexSemanticRealizationRegistry {
-        let mut identity = Vec::new();
-        identity.extend_from_slice(VERIFIER_REGISTRY_IDENTITY_TAG);
-        push_slice(&mut identity, self.semantic.snapshot_identity().as_bytes());
-        push_slice(&mut identity, self.scalars.snapshot_identity().as_bytes());
-        push_len(&mut identity, self.capabilities.len());
-        for (key, capability) in &self.capabilities {
-            push_slice(&mut identity, key);
-            push_slice(&mut identity, &capability.identity);
-        }
-        FrozenIndexSemanticRealizationRegistry(Arc::new(
-            FrozenIndexSemanticRealizationRegistryData {
-                semantic: self.semantic,
-                scalars: self.scalars,
-                capabilities: self.capabilities,
-                identity: identity.into_boxed_slice(),
-            },
-        ))
-    }
-}
-
-struct FrozenIndexSemanticRealizationRegistryData {
-    semantic: FrozenSemanticRegistry,
-    scalars: FrozenScalarRegistry,
-    capabilities: BTreeMap<Vec<u8>, Arc<RegisteredIndexSemanticRealization>>,
-    identity: Box<[u8]>,
-}
-
-/// Immutable independently registered semantic-realization authority.
+/// Immutable semantic-provider-bound logical realization-law authority.
 #[derive(Clone)]
-pub struct FrozenIndexSemanticRealizationRegistry(Arc<FrozenIndexSemanticRealizationRegistryData>);
+pub struct FrozenIndexRealizationLawRegistry(Arc<FrozenIndexRealizationLawRegistryData>);
 
-impl fmt::Debug for FrozenIndexSemanticRealizationRegistry {
+impl fmt::Debug for FrozenIndexRealizationLawRegistry {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("FrozenIndexSemanticRealizationRegistry")
-            .field("capability_count", &self.0.capabilities.len())
+            .debug_struct("FrozenIndexRealizationLawRegistry")
             .field("identity", &self.0.identity)
             .finish_non_exhaustive()
     }
 }
 
-impl FrozenIndexSemanticRealizationRegistry {
+impl FrozenIndexRealizationLawRegistry {
+    /// Derives the law snapshot inseparably retained by one semantic registry.
+    #[must_use]
+    pub fn from_semantic(semantic: FrozenSemanticRegistry, scalars: FrozenScalarRegistry) -> Self {
+        let mut identity = Vec::new();
+        identity.extend_from_slice(LAW_REGISTRY_IDENTITY_TAG);
+        push_slice(&mut identity, semantic.snapshot_identity().as_bytes());
+        push_slice(&mut identity, scalars.snapshot_identity().as_bytes());
+        push_len(&mut identity, semantic.index_realization_laws().len());
+        for (operation, registered) in semantic.index_realization_laws() {
+            encode_op_key(&mut identity, operation);
+            encode_provider(&mut identity, &registered.provider);
+            identity.extend_from_slice(&registered.revision.to_be_bytes());
+            registered.law.encode(&mut identity);
+        }
+        Self(Arc::new(FrozenIndexRealizationLawRegistryData {
+            semantic,
+            scalars,
+            identity: identity.into_boxed_slice(),
+        }))
+    }
+
     /// Returns the exact canonical registry identity.
     #[must_use]
     pub fn identity(&self) -> &[u8] {
         &self.0.identity
     }
 
-    /// Resolves one verifier from an exact program-derived subject.
+    /// Returns the semantic snapshot that owns every realization law.
+    #[must_use]
+    pub fn semantic_snapshot(&self) -> &SemanticRegistrySnapshotIdentity {
+        self.0.semantic.snapshot_identity()
+    }
+
+    /// Returns the scalar snapshot under which every law is interpreted.
+    #[must_use]
+    pub fn scalar_snapshot(&self) -> &CanonicalScalarRegistrySnapshotIdentity {
+        self.0.scalars.snapshot_identity()
+    }
+
+    /// Resolves one semantic-provider-bound law from an exact subject.
     ///
     /// # Errors
     ///
@@ -654,12 +491,11 @@ impl FrozenIndexSemanticRealizationRegistry {
         &self,
         subject: &IndexRefinementSubject,
     ) -> Result<ResolvedIndexRealization, IndexRefinementVerificationError> {
-        let key = encode_verifier_key(&subject.operation, &subject.signature);
-        let capability = self
+        let registered = self
             .0
-            .capabilities
-            .get(&key)
-            .ok_or(IndexRefinementVerificationError::MissingRealizationVerifier)?;
+            .semantic
+            .index_realization_law(&subject.operation)
+            .ok_or(IndexRefinementVerificationError::MissingRealizationLaw)?;
         let actual = self
             .0
             .semantic
@@ -675,15 +511,21 @@ impl FrozenIndexSemanticRealizationRegistry {
         if actual != subject.semantic_authority {
             return Err(IndexRefinementVerificationError::SubjectSemanticAuthorityMismatch);
         }
-        if capability.semantic.registry_snapshot() != subject.semantic_authority.registry_snapshot()
-        {
+        if actual.registry_snapshot() != subject.semantic_authority.registry_snapshot() {
             return Err(IndexRefinementVerificationError::SubjectSemanticAuthorityMismatch);
         }
+        let mut law_identity = Vec::new();
+        encode_op_key(&mut law_identity, &subject.operation);
+        encode_provider(&mut law_identity, &registered.provider);
+        law_identity.extend_from_slice(&registered.revision.to_be_bytes());
+        registered.law.encode(&mut law_identity);
         let identity =
-            encode_resolution_identity(&capability.identity, &subject.identity).into_boxed_slice();
+            encode_resolution_identity(&law_identity, &subject.identity).into_boxed_slice();
         Ok(ResolvedIndexRealization {
             registry: self.clone(),
-            capability: Arc::clone(capability),
+            law: registered.law.clone(),
+            provider: registered.provider.clone(),
+            revision: registered.revision,
             subject: subject.clone(),
             identity,
         })
@@ -693,8 +535,10 @@ impl FrozenIndexSemanticRealizationRegistry {
 /// One sealed independent-verifier resolution for an exact semantic subject.
 #[derive(Clone)]
 pub struct ResolvedIndexRealization {
-    registry: FrozenIndexSemanticRealizationRegistry,
-    capability: Arc<RegisteredIndexSemanticRealization>,
+    registry: FrozenIndexRealizationLawRegistry,
+    law: super::IndexRealizationLaw,
+    provider: ProviderIdentity,
+    revision: u32,
     subject: IndexRefinementSubject,
     identity: Box<[u8]>,
 }
@@ -704,8 +548,9 @@ impl fmt::Debug for ResolvedIndexRealization {
         formatter
             .debug_struct("ResolvedIndexRealization")
             .field("registry", &self.registry)
-            .field("provider", &self.capability.provider)
-            .field("revision", &self.capability.revision)
+            .field("law", &self.law)
+            .field("provider", &self.provider)
+            .field("revision", &self.revision)
             .field("subject", &self.subject)
             .field("identity", &self.identity)
             .finish()
@@ -729,12 +574,12 @@ impl ResolvedIndexRealization {
     /// Returns the independent verifier provider.
     #[must_use]
     pub fn provider(&self) -> &ProviderIdentity {
-        &self.capability.provider
+        &self.provider
     }
     /// Returns the independent verifier revision.
     #[must_use]
     pub fn revision(&self) -> u32 {
-        self.capability.revision
+        self.revision
     }
 }
 
@@ -961,6 +806,12 @@ impl IndexDomainDisproof {
     #[must_use]
     pub const fn point_ordinal(&self) -> Option<u64> {
         self.point_ordinal
+    }
+
+    /// Returns the authority-owned canonical counterexample bytes.
+    #[must_use]
+    pub fn counterexample(&self) -> &[u8] {
+        &self.counterexample
     }
 }
 
@@ -1206,14 +1057,28 @@ impl ResolvedIndexRealization {
         }
         let operand_bindings = bind_operands(subject, region)?;
         let result_bindings = bind_results(subject, region)?;
-        self.capability
-            .verifier
-            .verify(IndexSemanticRealizationRequest {
-                subject,
-                region,
-                scalars: &self.registry.0.scalars,
-            })
-            .map_err(IndexRefinementVerificationError::SemanticRealizationRefused)?;
+        if !super::IndexRealizationLaw::accepts_numerical_contract(
+            subject.numerical_contract().as_str(),
+        ) {
+            return Err(IndexRefinementVerificationError::NumericalContractNotGoverned);
+        }
+        let expected = self
+            .law
+            .realize(subject, &self.registry.0.scalars)
+            .map_err(
+                |source| IndexRefinementVerificationError::SemanticRealizationLawRefused {
+                    operation: Box::new(subject.operation().clone()),
+                    rule: source.rule(),
+                },
+            )?;
+        if expected.canonical_identity() != region.canonical_identity() {
+            return Err(
+                IndexRefinementVerificationError::SemanticRealizationMismatch {
+                    expected: expected.canonical_identity().clone(),
+                    actual: region.canonical_identity().clone(),
+                },
+            );
+        }
         if region.unknown_index_domain_predicates().len() != 0 {
             return Ok(IndexRefinementVerificationOutcome::Pending(Box::new(
                 PendingIndexRefinementReceipt {
@@ -1350,13 +1215,6 @@ pub enum IndexRefinementVerificationError {
         /// Maximum admitted byte length.
         limit: usize,
     },
-    /// A realization-verifier refusal was empty or exceeded its byte bound.
-    InvalidRealizationRefusal {
-        /// Supplied byte length.
-        actual: usize,
-        /// Maximum admitted byte length.
-        limit: usize,
-    },
     /// A residual-domain proof authority used revision zero.
     ZeroDomainProofRevision,
     /// A residual-domain reason, derivation, or counterexample was invalid.
@@ -1391,13 +1249,23 @@ pub enum IndexRefinementVerificationError {
     /// The lowering or region came from another scalar-registry snapshot.
     ScalarSnapshotMismatch,
     /// No independent verifier governs the operation/signature/contract subject.
-    MissingRealizationVerifier,
-    /// Two independent verifiers contended for one exact subject key.
-    DuplicateRealizationVerifier,
-    /// A realization-verifier revision must be nonzero.
-    ZeroRealizationVerifierRevision,
-    /// Independent semantic realization was refused.
-    SemanticRealizationRefused(IndexSemanticRealizationRefusal),
+    MissingRealizationLaw,
+    /// The semantic law does not govern this numerical-contract domain.
+    NumericalContractNotGoverned,
+    /// The semantic law could not construct its expected canonical region.
+    SemanticRealizationLawRefused {
+        /// Operation whose registered law refused.
+        operation: Box<OpKey>,
+        /// Stable failing law rule.
+        rule: &'static str,
+    },
+    /// The candidate differs from the semantic law's expected canonical region.
+    SemanticRealizationMismatch {
+        /// Canonical region required by semantic authority.
+        expected: CanonicalIndexRegionIdentity,
+        /// Canonical region emitted by the selected lowering.
+        actual: CanonicalIndexRegionIdentity,
+    },
     /// The region reached scalar operations outside admission.
     ScalarAuthorityConformance,
     /// The occurrence effect is not realizable by this pure index profile.
@@ -1454,10 +1322,6 @@ impl fmt::Display for IndexRefinementVerificationError {
                 formatter,
                 "numerical-contract identity has {actual} bytes; expected 1..={limit}"
             ),
-            Self::InvalidRealizationRefusal { actual, limit } => write!(
-                formatter,
-                "realization refusal has {actual} bytes; expected 1..={limit}"
-            ),
             Self::ZeroDomainProofRevision => {
                 formatter.write_str("domain-proof authority revision must be nonzero")
             }
@@ -1503,19 +1367,22 @@ impl fmt::Display for IndexRefinementVerificationError {
             Self::ScalarSnapshotMismatch => {
                 formatter.write_str("scalar-registry snapshot disagrees with admission")
             }
-            Self::MissingRealizationVerifier => {
-                formatter.write_str("no independent semantic-realization verifier is registered")
+            Self::MissingRealizationLaw => {
+                formatter.write_str("no semantic-realization law is registered")
             }
-            Self::DuplicateRealizationVerifier => {
-                formatter.write_str("two semantic-realization verifiers govern one exact subject")
+            Self::NumericalContractNotGoverned => formatter
+                .write_str("the semantic realization law does not govern this numerical contract"),
+            Self::SemanticRealizationLawRefused { operation, rule } => {
+                write!(
+                    formatter,
+                    "semantic realization law for {operation} refused at {rule}"
+                )
             }
-            Self::ZeroRealizationVerifierRevision => {
-                formatter.write_str("semantic-realization verifier revision is zero")
-            }
-            Self::SemanticRealizationRefused(source) => write!(
+            Self::SemanticRealizationMismatch { expected, actual } => write!(
                 formatter,
-                "independent semantic-realization verifier refused: {}",
-                source.reason()
+                "candidate region {:?} differs from semantic law region {:?}",
+                actual.as_bytes(),
+                expected.as_bytes()
             ),
             Self::ScalarAuthorityConformance => {
                 formatter.write_str("region reached scalar authority outside admission")
@@ -1829,33 +1696,6 @@ fn encode_authority_identity(
     push_slice(&mut bytes, semantic.admission_provenance().as_bytes());
     push_slice(&mut bytes, semantic.registry_snapshot().as_bytes());
     push_slice(&mut bytes, scalar.as_bytes());
-    push_slice(&mut bytes, scalar_snapshot);
-    bytes
-}
-
-fn encode_verifier_key(operation: &OpKey, signature: &IndexRefinementSignature) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    encode_op_key(&mut bytes, operation);
-    encode_signature(&mut bytes, signature);
-    bytes
-}
-
-fn encode_verifier_capability_identity(
-    key: &[u8],
-    provider: &ProviderIdentity,
-    revision: u32,
-    semantic: &SemanticCapabilityAuthority,
-    scalar_snapshot: &[u8],
-) -> Vec<u8> {
-    let mut bytes = VERIFIER_CAPABILITY_IDENTITY_TAG.to_vec();
-    push_slice(&mut bytes, key);
-    push_slice(&mut bytes, provider.namespace().as_bytes());
-    push_slice(&mut bytes, provider.name().as_bytes());
-    bytes.extend_from_slice(&provider.revision().to_be_bytes());
-    bytes.extend_from_slice(&revision.to_be_bytes());
-    push_slice(&mut bytes, semantic.reached_definitions().as_bytes());
-    push_slice(&mut bytes, semantic.admission_provenance().as_bytes());
-    push_slice(&mut bytes, semantic.registry_snapshot().as_bytes());
     push_slice(&mut bytes, scalar_snapshot);
     bytes
 }
