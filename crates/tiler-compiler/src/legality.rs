@@ -1,12 +1,11 @@
-//! Draft compiler envelope over IR-owned index-refinement evidence.
+//! Draft index-region refinement authority (compiler-owned legality evidence).
 //!
-//! This module implements the provider-attributed half of the authority that
-//! `docs/compiler/optimizer.md` names the `LowerIndexRegions` boundary. The
-//! dependency-neutral occurrence-to-region association is independently checked
-//! by [`IndexRefinementVerifier`] and retained as an opaque
-//! [`IndexRefinementReceipt`]; this compiler envelope adds selected-provider and
-//! capability-revision provenance without making `tiler-ir` depend on the
-//! compiler.
+//! This module implements the checked authority that `docs/ir.md` Layer 2 calls
+//! *compiler-owned legality evidence* and that `docs/compiler/optimizer.md` names
+//! the `LowerIndexRegions` boundary: it binds a lowered
+//! [`VerifiedIndexRegion`] to the exact
+//! semantic occurrence it realizes and records the reached scalar-definition and
+//! lowering-provider provenance that compilation and artifact identity require.
 //!
 //! It composes two sibling authorities without collapsing either:
 //!
@@ -15,19 +14,17 @@
 //! - the crate-internal `region` formation stage separates reusable region
 //!   *content* identity from a graph *occurrence* identity.
 //!
-//! The compiler envelope mirrors that same discipline. It keeps reusable
+//! Refinement mirrors that same discipline. It keeps reusable
 //! [`RefinementContent`] — the structural region identity, the ordered value
 //! interface, the numerical/effect evidence, and the provider-independent reached
 //! definitions — distinct from the occurrence binding that pins the exact
-//! semantic source and selected-provider provenance. The ordered value/access
-//! association is also present on the IR-owned receipt and is rechecked there,
-//! rather than trusted as a same-shaped compiler record.
+//! semantic source, the selected-provider provenance, and the ordered
+//! value/access bindings.
 //!
 //! The load-bearing invariant is that *registration or a successful builder
 //! construction alone is not refinement evidence*. The structural index verifier
 //! proves a region is internally well formed; it does not establish that the
-//! region implements any semantic operation. The IR verifier and this provider
-//! envelope independently prove the
+//! region implements any semantic operation. Refinement independently proves the
 //! emitted region *realizes the occurrence*: the ordered operand and result
 //! interface (type, shape, arity, aliasing) agrees, the reached scalar authority
 //! stays inside the authority the capability was admitted to emit, the semantic
@@ -48,9 +45,9 @@
 //! [`LoweringFamily::IndexAccess`] family, because only that family emits a
 //! standalone region; a scalar-lowering capability is rejected explicitly.
 //!
-//! Every public item here and in `tiler_ir::index`'s receipt surface is a tested
-//! *draft* boundary. It is not an accepted public API until Tom reviews the exact
-//! verifier, receipt, identity, readers, and error surface.
+//! Every public item here is a reviewed *draft* boundary. It is not a stable
+//! compiler API and must not be treated as one until Tom accepts the exact
+//! interface.
 
 use std::error::Error;
 use std::fmt;
@@ -58,10 +55,9 @@ use std::sync::Arc;
 
 use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::index::{
-    CanonicalIndexRegionIdentity, FrozenScalarRegistry, IndexRefinementReceipt,
-    IndexRefinementVerificationError, IndexRefinementVerificationOutcome, IndexRefinementVerifier,
-    IndexRegionBuildError, IndexRegionDiagnostic, ScalarAuthorityEvidence, ScalarRegistryError,
-    TensorRole, UnknownIndexDomainPredicate, VerifiedIndexHandleError, VerifiedIndexRegion,
+    CanonicalIndexRegionIdentity, FrozenScalarRegistry, IndexRegionBuildError,
+    IndexRegionDiagnostic, ScalarAuthorityEvidence, ScalarRegistryError, TensorRole,
+    UnknownIndexDomainPredicate, VerifiedIndexHandleError, VerifiedIndexRegion,
     VerifiedScalarValueId, VerifiedTensorAccessId, VerifiedTensorId,
 };
 use tiler_ir::semantic::{
@@ -79,7 +75,7 @@ use crate::index_discharge::AuthorizedIndexDomainProof;
 /// Canonical domain-separation tag for reusable refinement content.
 const CONTENT_IDENTITY_TAG: &[u8] = b"tiler.compiler.index-refinement-content.v2\0";
 /// Canonical domain-separation tag for one refinement occurrence binding.
-const OCCURRENCE_IDENTITY_TAG: &[u8] = b"tiler.compiler.index-refinement-occurrence.v2\0";
+const OCCURRENCE_IDENTITY_TAG: &[u8] = b"tiler.compiler.index-refinement-occurrence.v1\0";
 
 /// Occurrence-local identity of one semantic value the occurrence references.
 ///
@@ -525,7 +521,6 @@ pub struct IndexRefinement {
     operand_bindings: Vec<OperandBinding>,
     result_bindings: Vec<ResultBinding>,
     region: VerifiedIndexRegion,
-    receipt: IndexRefinementReceipt,
     identity: IndexRefinementIdentity,
 }
 
@@ -540,16 +535,6 @@ impl IndexRefinement {
     #[must_use]
     pub const fn identity(&self) -> &IndexRefinementIdentity {
         &self.identity
-    }
-
-    /// Returns the IR-owned checked occurrence-to-region receipt.
-    ///
-    /// Provider selection and capability provenance remain on this compiler
-    /// envelope; the receipt is the dependency-neutral evidence retained by a
-    /// verified executable program.
-    #[must_use]
-    pub const fn receipt(&self) -> &IndexRefinementReceipt {
-        &self.receipt
     }
 
     /// Returns the opaque identity of the realized semantic source.
@@ -832,8 +817,6 @@ pub enum RefinementError {
         /// Ordered result position.
         position: usize,
     },
-    /// The IR-owned occurrence/region verifier refused to mint a receipt.
-    IrVerifier(Arc<IndexRefinementVerificationError>),
 }
 
 impl fmt::Display for RefinementError {
@@ -923,12 +906,6 @@ impl fmt::Display for RefinementError {
                 formatter,
                 "region output {position} lacks complete unique-write evidence"
             ),
-            Self::IrVerifier(source) => {
-                write!(
-                    formatter,
-                    "IR refinement verifier refused the receipt: {source}"
-                )
-            }
         }
     }
 }
@@ -940,7 +917,6 @@ impl Error for RefinementError {
             Self::ScalarAuthority(source) => Some(source.as_ref()),
             Self::Handle(source) => Some(source),
             Self::OccurrenceFacts(source) => Some(source),
-            Self::IrVerifier(source) => Some(source.as_ref()),
             _ => None,
         }
     }
@@ -1019,9 +995,7 @@ pub fn refine_index_region(
     }
 
     let content = assemble_content(occurrence, &region, scalar_authority, Vec::new());
-    let receipt = mint_ir_receipt(occurrence, &region, scalars)?;
     let identity = encode_occurrence_identity(
-        &receipt,
         &content,
         capability.provider(),
         capability.revision(),
@@ -1036,7 +1010,6 @@ pub fn refine_index_region(
         operand_bindings,
         result_bindings,
         region,
-        receipt,
         identity,
     })))
 }
@@ -1117,62 +1090,6 @@ fn lowered_occurrence(
         .collect();
     LoweredOccurrence::new(inputs, operands, results, occurrence.attributes.clone())
         .map_err(RefinementError::OccurrenceFacts)
-}
-
-/// Projects the compiler envelope's dependency-neutral subject into the IR
-/// verifier and returns only a checked receipt.
-///
-/// The two records are deliberately not interchangeable: this conversion drops
-/// provider and capability attribution, which stays on [`IndexRefinement`], and
-/// the IR verifier independently checks the occurrence against the actual region
-/// before constructing its opaque receipt.
-fn mint_ir_receipt(
-    occurrence: &SemanticOccurrence,
-    region: &VerifiedIndexRegion,
-    scalars: &FrozenScalarRegistry,
-) -> Result<IndexRefinementReceipt, RefinementError> {
-    let ir_occurrence = tiler_ir::index::SemanticOccurrence::new(
-        occurrence.operation.clone(),
-        occurrence
-            .operands
-            .iter()
-            .map(|operand| {
-                tiler_ir::index::OccurrenceOperand::new(
-                    tiler_ir::index::OccurrenceValueId(operand.value.0),
-                    operand.value_type.clone(),
-                    operand.shape.clone(),
-                )
-            })
-            .collect(),
-        occurrence
-            .results
-            .iter()
-            .map(|result| {
-                tiler_ir::index::OccurrenceResult::new(
-                    result.value_type.clone(),
-                    result.shape.clone(),
-                )
-            })
-            .collect(),
-        occurrence.attributes.clone(),
-        occurrence.effect,
-        tiler_ir::index::NumericalContractIdentity::from_key(
-            std::str::from_utf8(occurrence.numerical_contract.as_bytes())
-                .expect("numerical-contract identities are constructed from UTF-8 keys"),
-        ),
-        tiler_ir::index::SemanticOccurrenceIdentity::from_bytes(
-            occurrence.identity.as_bytes().to_vec(),
-        ),
-    );
-    match IndexRefinementVerifier::verify(&ir_occurrence, region, scalars)
-        .map_err(|source| RefinementError::IrVerifier(Arc::new(source)))?
-    {
-        IndexRefinementVerificationOutcome::Verified(receipt) => Ok(receipt),
-        IndexRefinementVerificationOutcome::Pending(pending) => {
-            IndexRefinementVerifier::complete(pending)
-                .map_err(|source| RefinementError::IrVerifier(Arc::new(source)))
-        }
-    }
 }
 
 impl From<LoweringEmitError> for RefinementError {
@@ -1358,17 +1275,14 @@ pub(crate) fn complete_pending_index_refinement(
         provider,
         revision,
         capability_authority,
-        scalars,
+        scalars: _,
         operand_bindings,
         result_bindings,
         scalar_authority,
         region,
     } = pending;
     let content = assemble_content(&occurrence, &region, scalar_authority, index_domain_proofs);
-    let receipt = mint_ir_receipt(&occurrence, &region, &scalars)
-        .expect("compiler discharge and the IR receipt verifier must agree");
     let identity = encode_occurrence_identity(
-        &receipt,
         &content,
         &provider,
         revision,
@@ -1383,7 +1297,6 @@ pub(crate) fn complete_pending_index_refinement(
         operand_bindings,
         result_bindings,
         region,
-        receipt,
         identity,
     }
 }
@@ -1458,7 +1371,6 @@ fn encode_content_identity(
 }
 
 fn encode_occurrence_identity(
-    receipt: &IndexRefinementReceipt,
     content: &RefinementContent,
     provider: &ProviderIdentity,
     revision: LoweringCapabilityRevision,
@@ -1466,7 +1378,6 @@ fn encode_occurrence_identity(
     occurrence: &SemanticOccurrence,
 ) -> IndexRefinementIdentity {
     let mut bytes = OCCURRENCE_IDENTITY_TAG.to_vec();
-    push_slice(&mut bytes, receipt.identity().as_bytes());
     push_slice(&mut bytes, content.identity.as_bytes());
     push_slice(&mut bytes, occurrence.identity.as_bytes());
     encode_provider(&mut bytes, provider);
@@ -1546,8 +1457,7 @@ mod tests {
 
     use super::{
         NumericalContractIdentity, OccurrenceOperand, OccurrenceResult, OccurrenceValueId,
-        RefinementError, SemanticOccurrence, SemanticOccurrenceIdentity, emit_region,
-        mint_ir_receipt, refine_index_region,
+        RefinementError, SemanticOccurrence, SemanticOccurrenceIdentity, refine_index_region,
     };
     use crate::capability::{
         FrozenLoweringCapabilityRegistry, IndexAccessLoweringContext, IndexAccessLoweringProvider,
@@ -1962,46 +1872,6 @@ mod tests {
         // Different semantic source: distinct occurrence bindings.
         assert_ne!(first.identity(), second.identity());
         assert_ne!(first.occurrence(), second.occurrence());
-        assert_ne!(first.receipt().identity(), second.receipt().identity());
-        assert_eq!(
-            first.receipt().region(),
-            first.region().canonical_identity()
-        );
-        assert_eq!(first.receipt().occurrence().as_bytes(), b"site-1");
-    }
-
-    #[test]
-    fn changed_verified_region_moves_the_ir_owned_receipt() {
-        let scalars = scalar_registry();
-        let occurrence = square_occurrence(b"same-site");
-        let direct = square_registry()
-            .resolve_index_access(&multiply_f32_op(), &binary_signature())
-            .unwrap();
-        let regrouped = index_registry(
-            Arc::new(ConservativeReadSquare {
-                length: LENGTH,
-                rounds: 1,
-            }),
-            &[scalar_key("multiply")],
-        )
-        .resolve_index_access(&multiply_f32_op(), &binary_signature())
-        .unwrap();
-
-        let direct = refine_index_region(&direct, &occurrence, &scalars)
-            .unwrap()
-            .into_refined()
-            .expect("the direct region has no residual");
-        let regrouped = refine_index_region(&regrouped, &occurrence, &scalars)
-            .unwrap()
-            .into_refined()
-            .expect("the equivalent regrouped coordinate is proved in the verifier budget");
-
-        assert_eq!(
-            direct.receipt().occurrence(),
-            regrouped.receipt().occurrence()
-        );
-        assert_ne!(direct.receipt().region(), regrouped.receipt().region());
-        assert_ne!(direct.receipt().identity(), regrouped.receipt().identity());
     }
 
     #[test]
@@ -2087,23 +1957,6 @@ mod tests {
     }
 
     #[test]
-    fn unrelated_occurrence_and_region_cannot_mint_an_ir_receipt() {
-        let scalars = scalar_registry();
-        let resolved = index_registry(
-            Arc::new(PointwiseSquare { length: 8 }),
-            &[scalar_key("multiply")],
-        )
-        .resolve_index_access(&multiply_f32_op(), &binary_signature())
-        .unwrap();
-        let occurrence = square_occurrence(b"length-four-site");
-        let region = emit_region(&resolved, &occurrence, &scalars).unwrap();
-
-        let error = mint_ir_receipt(&occurrence, &region, &scalars).unwrap_err();
-        assert!(matches!(error, RefinementError::IrVerifier(source)
-            if matches!(source.as_ref(), tiler_ir::index::IndexRefinementVerificationError::OperandInterface { position: 0 })));
-    }
-
-    #[test]
     fn a_residual_bound_does_not_mask_a_wrong_provider_interface() {
         // The conservative read exceeds the proof-cell budget, but the emitted
         // length-65_535 interface is independently wrong for the length-4
@@ -2139,10 +1992,6 @@ mod tests {
         let occurrence = square_occurrence_with_length(b"pending-site", length);
 
         let outcome = refine_index_region(&resolved, &occurrence, &scalars).unwrap();
-        assert!(
-            outcome.refined().is_none(),
-            "a proof gap must mint no receipt"
-        );
         let pending = outcome
             .pending()
             .expect("the conservative read exceeds the governed proof budget");
