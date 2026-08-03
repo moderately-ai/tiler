@@ -1,7 +1,7 @@
 ---
 id: place-index-refinement-evidence-under-an-ir-owned-verifier
 title: Place index-refinement evidence under an IR-owned verifier
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [bind-stage-coverage-to-index-refinement-identity]
@@ -19,9 +19,6 @@ scopes:
   - implementation/workspace
 shared_scopes:
   - project/tickets
-claimed_from: todo
-assignee: agent-index-receipt
-lease_expires_at: 1785786159
 ---
 
 ## User-visible outcome
@@ -419,9 +416,10 @@ rows refuse both resolution and lowering coherence. That successor set passed
 Successor IR doctests again passed 8 ordinary and 1 compile-fail case with one
 ignored example; IR Clippy with warnings denied, formatting, `git diff --check`,
 and `tkt lint` passed. Guard over the exact 31-file branch population from the
-true claim base reported no under-declared scope and warned about live
-declared-area collisions; the coordinator must compare those branches' actual
-diffs before integration.
+true claim base reported no under-declared scope and warned about declared-area
+collisions. Board and harness inspection found this ticket was the
+only active work; the warnings name preserved open-ticket branch tips rather
+than concurrent sibling claims.
 
 **Fifth fixed-point correction — 2026-08-03:** impossible numerical-contract
 key lengths now refuse before scanning or decoded-byte allocation. The complete
@@ -453,8 +451,27 @@ restoring that recomputed value made the test pass.
 records now distinguish the compiler-owned semantic-discharge policy from the
 IR-owned verifier and sealed proof evidence it invokes and consumes. No runtime
 mechanism or implementation-status claim changes. The final branch population
-is 35 files from the true claim base; scope guard, `tkt lint`, and
-`git diff --check` are rerun on the documentation commit before acceptance.
+is 35 files from the true claim base. Scope guard on documentation commit
+`504556f0da1e841cb268c090811270b2ffa55202` reported no under-declaration;
+`tkt lint` and `git diff --check` passed.
+
+## Public boundary accepted by Tom — 2026-08-03
+
+Tom accepted the complete tested public-boundary replacement in the T3 Code
+orchestration conversation after receiving its exact inventory, review result,
+verification population, and unsupported cases. The acceptance covers the
+IR-owned program-derived subjects, closed typed semantic realization laws,
+admitted lowering authority, exact-canonical resolution, sealed pending and
+completed receipts, IR-owned exact-finite residual proof,
+`F32NumericalContractKey` and its bounded v2 grammar, the five governed hard
+bounds, the three opaque byte-identity types, and the enumerated removals with
+no compatibility path.
+
+Semantically equivalent noncanonical logical forms, operations outside the
+closed F32 law vocabulary, and residual `SoundProof` certificates remain
+explicitly unsupported. The dependent
+`bind-stage-coverage-to-index-refinement-identity` continues to own later
+stage/program/artifact receipt binding.
 
 ## Graph maintenance
 
