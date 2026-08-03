@@ -91,14 +91,14 @@ KvState<Storage, Retention>  // private fields, no unchecked constructor
   status()
   retire(self)                  // consumer ends the handle lifetime; the
                                 // runtime instance retains pending device uses
-  preflight(&mut self, expected_interface, layer, live_scope,
+  preflight(&self, expected_interface, layer, live_scope,
             expected_cursor, T)
-    -> Result<PreparedKvStep<'_, Storage, Retention>, KvStateRefusal>
+    -> Result<PreparedKvStep, KvStateRefusal>
 
 PreparedKvStep               // non-Clone; carries C, T, checked S, expected
-                             // generation, read-only old storage, and scope
-  bind_execution(KvExecutionIdentity)
-    -> Result<BoundKvStep, KvStateRefusal>
+                             // generation, storage fingerprint, and scope
+  bind_execution(&mut KvState, KvExecutionIdentity)
+    -> Result<BoundKvStep<'_>, KvStateRefusal>
 
 BoundKvStep                  // non-Clone; owns the exclusive state borrow after
                              // RoutingCommit and poisons it if dropped unfinished
@@ -159,8 +159,9 @@ The artifact carries formulas over bound `C`, `T`, and `S`, never their invocati
 4. the adapter-presented `LiveStateScope` equals the state's scope;
 5. caller-stated `expected_cursor` equals the state's cursor;
 6. checked addition computes `S = C + T` without overflow;
-7. `S <= capacity`; and
-8. the logical state view and artifact-bound extent relation both agree on `C`, `T`, and `S`.
+7. the generation can advance without overflow;
+8. `S <= capacity`; and
+9. the logical state view and artifact-bound extent relation both agree on `C`, `T`, and `S`.
 
 The public refusal inventory is exhaustive and has no catch-all variant:
 
@@ -219,7 +220,7 @@ Every non-success transition after commit instead performs:
 
 The cursor therefore advances by exactly `T` once, on exact terminal success, and by zero on every refusal, device error, nonterminal observation, cancellation, retention error, or publication failure. Publication itself cannot partially expose `(new allocation, old cursor)` or `(old allocation, new cursor)`.
 
-`BoundKvStep` holds an exclusive borrow of the state after `RoutingCommit`. Its success and failure methods consume it. Dropping it through an early return or panic poisons the state with its bound `KvExecutionIdentity`; there is no path that abandons a committed step while restoring `Ready`.
+`PreparedKvStep` carries the complete preflighted state identity and storage fingerprint but no mutable borrow. `bind_execution` atomically revalidates the current identity, generation, cursor, scope, status, and storage fingerprint before producing the exclusive committed capability; a publication between preparation and binding therefore reaches `StaleGeneration` rather than using an old view. `BoundKvStep` then holds an exclusive borrow of the state after `RoutingCommit`. Its success and failure methods consume it. Dropping it through an early return or panic poisons the state with its bound `KvExecutionIdentity`; there is no path that abandons a committed step while restoring `Ready`.
 
 ## Placement, aliasing, retention, and destruction
 
