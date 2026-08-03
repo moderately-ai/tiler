@@ -527,6 +527,12 @@ pub enum MaterializationRounding {
 /// Versioned domain of the canonical coherent `f32` numerical-contract key.
 pub const F32_NUMERICAL_CONTRACT_KEY_DOMAIN: &str = "tiler.contract.f32.v2";
 
+// The two exceptional-value rows are each either three bytes (no assumption)
+// or four bytes (caller-declared absence). All other rows have fixed width, so
+// these are the complete legal rendered lengths. Checking this before scanning
+// or decoding bounds caller-controlled work and allocation.
+const F32_NUMERICAL_CONTRACT_KEY_LENGTHS: [usize; 3] = [98, 100, 102];
+
 /// A validated canonical key for one coherent `f32` numerical contract.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct F32NumericalContractKey(Box<str>);
@@ -548,11 +554,11 @@ impl F32NumericalContractKey {
     ///
     /// # Errors
     ///
-    /// Returns a typed refusal for noncanonical arithmetic or an assumption
-    /// whose provenance cannot be stated by a caller.
+    /// Returns a typed refusal for an assumption whose provenance cannot be
+    /// stated by a caller. The arithmetic type and canonical arithmetic NaN
+    /// payload are invariants of this `f32`-specific constructor.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        canonical_arithmetic_nan_bits: u32,
         input_subnormals: SubnormalMode,
         result_subnormals: SubnormalMode,
         contraction: NumericalPermission,
@@ -565,11 +571,8 @@ impl F32NumericalContractKey {
         infinity_assumptions: ExceptionalValueAssumption,
         materialization_rounding: MaterializationRounding,
     ) -> Result<Self, NumericalContractKeyError> {
-        if canonical_arithmetic_nan_bits != 0x7fc0_0000 {
-            return Err(NumericalContractKeyError::InvalidArithmetic);
-        }
         let mut bytes = vec![ArithmeticType::F32.tag()];
-        bytes.extend_from_slice(&canonical_arithmetic_nan_bits.to_be_bytes());
+        bytes.extend_from_slice(&crate::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS.to_be_bytes());
         push_dimension(&mut bytes, 0x01, |bytes| {
             encode_subnormal(bytes, input_subnormals);
             Ok(())
@@ -624,6 +627,16 @@ impl F32NumericalContractKey {
     /// Returns a typed refusal unless `key` is the exact lowercase canonical
     /// spelling of one coherent caller-statable `f32` contract.
     pub fn try_from_str(key: &str) -> Result<Self, NumericalContractKeyError> {
+        Self::try_from_str_with_decoder(key, decode_hex_pair)
+    }
+
+    fn try_from_str_with_decoder(
+        key: &str,
+        mut decode: impl FnMut(u8, u8) -> Option<u8>,
+    ) -> Result<Self, NumericalContractKeyError> {
+        if !F32_NUMERICAL_CONTRACT_KEY_LENGTHS.contains(&key.len()) {
+            return Err(NumericalContractKeyError::InvalidCanonicalKey);
+        }
         let Some(hex) = key.strip_prefix(F32_NUMERICAL_CONTRACT_KEY_DOMAIN) else {
             return Err(NumericalContractKeyError::InvalidCanonicalKey);
         };
@@ -643,7 +656,7 @@ impl F32NumericalContractKey {
             .as_chunks::<2>()
             .0
             .iter()
-            .map(|pair| decode_hex_pair(pair[0], pair[1]))
+            .map(|pair| decode(pair[0], pair[1]))
             .collect::<Option<Vec<_>>>()
             .ok_or(NumericalContractKeyError::InvalidCanonicalKey)?;
         validate_contract_preimage(&bytes)?;
@@ -867,7 +880,6 @@ mod tests {
 
     fn strict_f32_key() -> F32NumericalContractKey {
         F32NumericalContractKey::new(
-            0x7fc0_0000,
             SubnormalMode::Preserve,
             SubnormalMode::Preserve,
             NumericalPermission::Forbidden,
@@ -919,10 +931,42 @@ mod tests {
     }
 
     #[test]
+    fn f32_contract_key_parser_bounds_input_before_scanning_or_decoding() {
+        let over_bound = format!(
+            "{}.{}",
+            super::F32_NUMERICAL_CONTRACT_KEY_DOMAIN,
+            "0".repeat(82),
+        );
+        assert_eq!(over_bound.len(), 104, "the fixture is maximum plus two");
+
+        let huge = format!(
+            "{}.{}",
+            super::F32_NUMERICAL_CONTRACT_KEY_DOMAIN,
+            "00".repeat(1024 * 1024),
+        );
+        for candidate in [&over_bound, &huge] {
+            let hex = candidate
+                .strip_prefix(super::F32_NUMERICAL_CONTRACT_KEY_DOMAIN)
+                .and_then(|suffix| suffix.strip_prefix('.'))
+                .expect("the fixture retains the exact governed domain");
+            assert!(hex.len().is_multiple_of(2));
+            assert!(
+                hex.bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            );
+            assert_eq!(
+                F32NumericalContractKey::try_from_str_with_decoder(candidate, |_, _| {
+                    panic!("an invalid total length reached the hex decoder")
+                }),
+                Err(NumericalContractKeyError::InvalidCanonicalKey),
+            );
+        }
+    }
+
+    #[test]
     fn f32_contract_key_rejects_ineligible_assumption_provenance() {
         assert_eq!(
             F32NumericalContractKey::new(
-                0x7fc0_0000,
                 SubnormalMode::FlushToZero {
                     zero_sign: FlushedZeroSign::PreservesSign,
                 },

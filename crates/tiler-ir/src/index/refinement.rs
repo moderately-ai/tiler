@@ -108,7 +108,7 @@ impl NumericalContractIdentity {
             );
         }
         F32NumericalContractKey::try_from_str(key)
-            .map(Self)
+            .map(Self::from)
             .map_err(
                 |source| IndexRefinementVerificationError::InvalidNumericalContractIdentity {
                     source,
@@ -132,6 +132,13 @@ impl NumericalContractIdentity {
     #[must_use]
     pub const fn arithmetic(&self) -> ArithmeticType {
         self.0.arithmetic()
+    }
+}
+
+impl From<F32NumericalContractKey> for NumericalContractIdentity {
+    /// Retains an already-validated canonical `f32` contract key as refinement identity.
+    fn from(key: F32NumericalContractKey) -> Self {
+        Self(key)
     }
 }
 
@@ -320,11 +327,6 @@ impl IndexRealizationAuthority {
     pub const fn emitted_scalar_definitions(&self) -> &CanonicalScalarDefinitionProjection {
         &self.emitted_scalar_definitions
     }
-    /// Returns the canonical admitted-authority identity.
-    #[must_use]
-    pub fn identity(&self) -> &[u8] {
-        &self.identity
-    }
 }
 
 /// Exact semantic subject derived from a verified program and typed ordinal.
@@ -503,10 +505,22 @@ impl IndexRefinementSubject {
     }
 }
 
+/// Canonical identity of one frozen semantic realization-law registry.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct IndexRealizationLawRegistryIdentity(Box<[u8]>);
+
+impl IndexRealizationLawRegistryIdentity {
+    /// Returns the canonical registry identity bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 struct FrozenIndexRealizationLawRegistryData {
     semantic: FrozenSemanticRegistry,
     scalars: FrozenScalarRegistry,
-    identity: Box<[u8]>,
+    identity: IndexRealizationLawRegistryIdentity,
 }
 
 /// Immutable semantic-provider-bound logical realization-law authority.
@@ -562,13 +576,13 @@ impl FrozenIndexRealizationLawRegistry {
         Ok(Self(Arc::new(FrozenIndexRealizationLawRegistryData {
             semantic,
             scalars,
-            identity: identity.into_boxed_slice(),
+            identity: IndexRealizationLawRegistryIdentity(identity.into_boxed_slice()),
         })))
     }
 
     /// Returns the exact canonical registry identity.
     #[must_use]
-    pub fn identity(&self) -> &[u8] {
+    pub fn identity(&self) -> &IndexRealizationLawRegistryIdentity {
         &self.0.identity
     }
 
@@ -966,12 +980,24 @@ impl IndexDomainProofAssessment {
 }
 
 /// One IR-sealed residual-domain proof retained by a refinement receipt.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct IndexRefinementDomainProofIdentity(Box<[u8]>);
+
+impl IndexRefinementDomainProofIdentity {
+    /// Returns the canonical proof identity bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+/// One IR-sealed residual-domain proof retained by a refinement receipt.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IndexRefinementDomainProof {
     obligation: UnknownIndexDomainPredicate,
     authority: Arc<IndexDomainProofAuthority>,
     proof: IndexDomainProofEvidence,
-    identity: Box<[u8]>,
+    identity: IndexRefinementDomainProofIdentity,
 }
 
 impl IndexRefinementDomainProof {
@@ -992,7 +1018,7 @@ impl IndexRefinementDomainProof {
     }
     /// Returns the canonical proof identity.
     #[must_use]
-    pub fn identity(&self) -> &[u8] {
+    pub const fn identity(&self) -> &IndexRefinementDomainProofIdentity {
         &self.identity
     }
 }
@@ -1313,13 +1339,15 @@ impl ResolvedIndexRealization {
                 obligation: assessment.obligation,
                 authority: assessment.authority.clone(),
                 proof: proof.clone(),
-                identity: encode_proof_identity(
-                    &pending.region,
-                    assessment.obligation,
-                    &assessment.authority,
-                    proof,
-                )
-                .into_boxed_slice(),
+                identity: IndexRefinementDomainProofIdentity(
+                    encode_proof_identity(
+                        &pending.region,
+                        assessment.obligation,
+                        &assessment.authority,
+                        proof,
+                    )
+                    .into_boxed_slice(),
+                ),
             });
         }
         Ok((
@@ -2603,7 +2631,7 @@ fn encode_receipt_identity(
     push_slice(&mut bytes, scalar_authority.scalar_snapshot().as_bytes());
     push_len(&mut bytes, proofs.len());
     for proof in proofs {
-        push_slice(&mut bytes, proof.identity());
+        push_slice(&mut bytes, proof.identity().as_bytes());
     }
     bytes
 }
@@ -2792,7 +2820,6 @@ mod tests {
 
     fn test_contract() -> NumericalContractIdentity {
         let key = F32NumericalContractKey::new(
-            0x7fc0_0000,
             crate::schedule::SubnormalMode::Preserve,
             crate::schedule::SubnormalMode::Preserve,
             crate::schedule::NumericalPermission::Forbidden,
@@ -2806,7 +2833,28 @@ mod tests {
             crate::schedule::MaterializationRounding::NearestTiesToEven,
         )
         .unwrap();
-        NumericalContractIdentity::try_from_key(key.as_str()).unwrap()
+        key.into()
+    }
+
+    #[test]
+    fn a_validated_contract_key_converts_without_reparsing() {
+        let key = F32NumericalContractKey::new(
+            crate::schedule::SubnormalMode::Preserve,
+            crate::schedule::SubnormalMode::Preserve,
+            crate::schedule::NumericalPermission::Forbidden,
+            crate::schedule::NumericalPermission::Forbidden,
+            crate::schedule::NumericalPermission::Forbidden,
+            crate::schedule::NumericalPermission::Forbidden,
+            crate::schedule::NumericalPermission::Forbidden,
+            crate::schedule::ApproximationEnvelope::Forbidden,
+            crate::schedule::ExceptionalValueAssumption::MakeNoAssumption,
+            crate::schedule::ExceptionalValueAssumption::MakeNoAssumption,
+            crate::schedule::MaterializationRounding::NearestTiesToEven,
+        )
+        .unwrap();
+        let spelling = key.as_str().to_owned();
+        let identity = NumericalContractIdentity::from(key);
+        assert_eq!(identity.as_str(), spelling);
     }
 
     #[test]

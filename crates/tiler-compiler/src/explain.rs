@@ -359,7 +359,7 @@ impl VerifiedEvidenceRef {
             subject_kind: subject.kind,
             subject: subject.key.clone(),
             provider: ProviderRef::builtin(),
-            proof: proof.identity().into(),
+            proof: proof.identity().as_bytes().into(),
         }
     }
 }

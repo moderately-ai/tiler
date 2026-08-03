@@ -140,11 +140,13 @@ fn intern_contract_key(key: String) -> &'static str {
 fn canonical_contract_key(
     contract: &StrictF32NumericalContract,
 ) -> Result<String, NumericalContractKeyError> {
-    if contract.arithmetic != ArithmeticType::F32 {
+    if contract.arithmetic != ArithmeticType::F32
+        || contract.canonical_arithmetic_nan_bits
+            != tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS
+    {
         return Err(NumericalContractKeyError::InvalidArithmetic);
     }
     F32NumericalContractKey::new(
-        contract.canonical_arithmetic_nan_bits,
         contract.input_subnormals,
         contract.result_subnormals,
         contract.contraction,
@@ -1924,6 +1926,7 @@ fn request_subject(
         realization_registry: authorities
             .realization_laws
             .identity()
+            .as_bytes()
             .to_vec()
             .into_boxed_slice(),
     }
@@ -3403,6 +3406,14 @@ mod tests {
             "the enumeration does not cover the space it names",
         );
         let mut keys: Vec<&str> = contracts.iter().map(|contract| contract.key).collect();
+        let mut lengths: Vec<usize> = keys.iter().map(|key| key.len()).collect();
+        lengths.sort_unstable();
+        lengths.dedup();
+        assert_eq!(
+            lengths,
+            [98, 100, 102],
+            "the statable grammar reached an unexpected rendered length",
+        );
         for contract in &contracts {
             let parsed = F32NumericalContractKey::try_from_str(contract.key)
                 .expect("every statable compiler key is admitted by IR");

@@ -104,7 +104,8 @@ physical alternatives remain a later planning concern.
 
 **Proposal — tested public draft, not accepted here:** `tiler-ir::index` adds
 `IndexRealizationLaw`,
-`FrozenIndexRealizationLawRegistry`, `NumericalContractIdentity`,
+`FrozenIndexRealizationLawRegistry`, `IndexRealizationLawRegistryIdentity`,
+`NumericalContractIdentity`,
 `IndexRefinementBoundary`, `IndexRefinementSignature`,
 `IndexRefinementSignatureSide`, `MAX_INDEX_REFINEMENT_SIGNATURE_VALUES`,
 `MAX_REFINEMENT_EMITTED_SCALAR_OPERATIONS`,
@@ -121,7 +122,8 @@ law-registration path and requires the operation in that same transaction,
 nonzero revision, unique ownership, and bounded count/bytes. Residual proof
 completion adds read-only `IndexDomainProofAuthority`,
 `IndexDomainProofEvidence`, `IndexDomainDisproof`, `IndexDomainProofClaim`,
-`IndexDomainProofAssessment`, `IndexRefinementDomainProof`, a bounded
+`IndexDomainProofAssessment`, `IndexRefinementDomainProof`,
+`IndexRefinementDomainProofIdentity`, a bounded
 `IndexDomainProofBudget`, the public hard ceilings
 `MAX_FINITE_DOMAIN_PROOF_CELLS` and
 `MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES`, the structural pending-state ceiling
@@ -176,12 +178,20 @@ The verification error inventory additionally includes
 typed refusal at their respective allocation and authority boundaries.
 The shared schedule vocabulary adds `F32NumericalContractKey`,
 `NumericalContractKeyError`, and `F32_NUMERICAL_CONTRACT_KEY_DOMAIN`; the
+`F32NumericalContractKey::new` draft accepts only the behavioural dimensions
+because governed `f32` arithmetic and its canonical NaN payload are invariants,
+and `NumericalContractIdentity` implements infallible
+`From<F32NumericalContractKey>` for an already-validated key. The
 compiler removes `RefinementError::{AliasedOperandInconsistent,
 OccurrenceFacts}` and `LoweringRegistryError::UnboundOperand`, and adds
 `RefinementError::IrVerifier`.
 Only the `IndexDomainProofEvidence::ExhaustiveFinite` variant is
 `#[non_exhaustive]`; the evidence, claim, outcome, and refusal-kind enums remain
 exhaustive as stated above.
+`IndexRealizationAuthority` retains a crate-owned canonical identity for
+equality and sealed resolution, but exposes no unused byte accessor. Every
+public derived byte identity in this draft is instead an opaque named type with
+an `as_bytes` reader, following ADR 0074.
 
 ## Identity step and blast radius
 
@@ -305,6 +315,18 @@ declarations refuse before deduplication. Realization-law sidecar accounting now
 uses the exact shared row encoder—including provider identity and the count
 framing—and freeze asserts the tracked total equals the canonical sidecar.
 
+The corrected codec admits only the three exact rendered lengths reached by
+that exhaustive vector population (98, 100, and 102 bytes), rejecting any other
+length before scanning or allocating decoded bytes; maximum-plus-two and a
+two-megabyte even lowercase-hex payload prove the decoder is never entered.
+`F32NumericalContractKey::new` no longer asks callers to repeat the invariant
+canonical `f32` arithmetic NaN payload, while the compiler still refuses an
+internally incoherent contract before minting a key. A validated key converts
+infallibly into `NumericalContractIdentity`. ADR 0074's typed-identity rule is
+applied to the frozen law registry and sealed domain proof, with unchanged
+canonical bytes; the unused public raw-byte accessor on
+`IndexRealizationAuthority` is removed.
+
 Completion now owns one cumulative ledger and groups obligations by exact
 ordered static domain. The earlier dense shared-DAG byte counts measured
 retained integer width, not a conservative bound on arbitrary-precision work,
@@ -388,6 +410,32 @@ and `tkt lint` passed. Guard over the exact 31-file branch population from the
 true claim base reported no under-declared scope and warned about live
 declared-area collisions; the coordinator must compare those branches' actual
 diffs before integration.
+
+**Fifth fixed-point correction — 2026-08-03:** impossible numerical-contract
+key lengths now refuse before scanning or decoded-byte allocation. The complete
+2,304-contract population reaches exactly 98, 100, and 102 bytes; a 104-byte
+maximum-plus-two key and a two-megabyte even lowercase-hex payload invoke a
+decoder that panics if reached and both refuse without entering it. The
+`F32NumericalContractKey::new` draft no longer accepts the invariant canonical
+`f32` NaN payload as a caller argument, while compiler key minting independently
+refuses an incoherent internal arithmetic/NaN pair. An already-validated key
+converts infallibly to `NumericalContractIdentity`.
+
+ADR 0074's named-identity convention now covers the frozen law registry and
+each sealed residual proof through opaque `IndexRealizationLawRegistryIdentity`
+and `IndexRefinementDomainProofIdentity` values with `as_bytes` readers. Their
+encoders and bytes did not move; compiler request, refinement-content, and
+explain consumers now cross the typed accessor explicitly. The unused public
+raw-byte accessor on `IndexRealizationAuthority` is removed rather than
+publishing a third identity type with no consumer.
+
+**Measurement — fifth fixed point:** combined `tiler-ir` and `tiler-compiler`
+nextest passed 1,289/1,289 with one configured skip. Compiler doctests passed 2
+ordinary and 7 compile-fail cases; IR doctests passed 8 ordinary and 1
+compile-fail case with one ignored example. Affected-crate Clippy with warnings
+denied passed. Deliberately replacing the request qualifier pin with zero made
+the exact deterministic-trace test report `3a2bda87fc26f899` from this tree;
+restoring that recomputed value made the test pass.
 
 ## Graph maintenance
 

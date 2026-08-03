@@ -899,7 +899,7 @@ fn encode_content_identity(
     push_slice(&mut bytes, scalar_authority.scalar_snapshot().as_bytes());
     push_len(&mut bytes, index_domain_proofs.len());
     for proof in index_domain_proofs {
-        push_slice(&mut bytes, proof.identity());
+        push_slice(&mut bytes, proof.identity().as_bytes());
     }
     RefinementContentIdentity(bytes)
 }
