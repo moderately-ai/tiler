@@ -288,7 +288,8 @@ pub enum IndexRegionDiagnostic {
 /// Exhaustive-proof resource governed by a limit diagnostic.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ProofResource {
-    /// Evaluated expression cells across enumerated points.
+    /// Cumulative planning and evaluation cells: domain and extent resolution,
+    /// expression nodes and edges, predicates, coordinates, and memo work.
     Cells,
     /// Conservative arbitrary-precision integer work and transient bytes.
     IntegerBytes,

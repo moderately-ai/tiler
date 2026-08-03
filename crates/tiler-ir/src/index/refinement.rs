@@ -1661,6 +1661,13 @@ fn assess_domain_group(
             Err(exhausted @ ProofPlanningFailure::Exhausted(_)) => return Err(exhausted),
         }
     }
+    if supported.iter().all(|supported| !supported) {
+        return Ok(group
+            .obligations
+            .iter()
+            .map(|_| unsupported_proof_claim())
+            .collect());
+    }
     let predicate_bytes = group
         .obligations
         .iter()
@@ -2742,9 +2749,18 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::index::{DomainRole, EXTENT_PHASE_CEILING, IndexRegionBuilder, SourcedExtent};
+    use crate::index::{
+        DomainRole, EXTENT_PHASE_CEILING, IndexRegionBuilder, ScalarRegistryBuilder, SourcedExtent,
+    };
     use crate::program::abi::AvailabilityPhase;
-    use crate::semantic::{F32, F32Multiply, InputKey, OutputKey, SemanticProgramBuilder, TypeKey};
+    use crate::semantic::{
+        CanonicalValue, F32, F32Multiply, InputKey, NormativeDefinitionRef, OpKey, OperationArity,
+        OperationConformance, OperationDefinition, OperationDefinitionFacts,
+        OperationInferenceError, OperationInferenceOutputs, OperationInferenceRequest,
+        OperationInferencer, OperationSchema, OutputKey, ProviderDiagnosticCode,
+        SemanticProgramBuilder, SemanticRegistryBuilder, SemanticRegistryProvider,
+        SemanticRegistryRegistrar, TypeKey,
+    };
     use crate::shape::{
         BindingSource, Extent, ExtentRelation, ExtentTerm, FactProvenance, InterfaceParameterKey,
         RootBinding, SemanticInputConstraint, ShapeEnvBuilder, ShapeSymbol, SymbolScope,
@@ -2847,38 +2863,137 @@ mod tests {
         ));
     }
 
+    struct BinaryIdentity;
+
+    impl OperationInferencer for BinaryIdentity {
+        fn infer(
+            &self,
+            request: OperationInferenceRequest<'_>,
+            outputs: &mut OperationInferenceOutputs<'_>,
+        ) -> Result<(), OperationInferenceError> {
+            if request.operands().len() == 2 && request.attributes().fields().is_empty() {
+                outputs.try_push(request.operands()[0].clone())
+            } else {
+                Err(OperationInferenceError::new(
+                    ProviderDiagnosticCode::new("test.refinement-law.signature").unwrap(),
+                    "test operation requires two operands and no attributes",
+                )
+                .unwrap())
+            }
+        }
+    }
+
+    struct RefinementLawProvider(Option<super::super::IndexRealizationLaw>);
+
+    fn test_law_operation() -> OpKey {
+        OpKey::new("test", "refinement-law-row", 1).unwrap()
+    }
+
+    impl SemanticRegistryProvider for RefinementLawProvider {
+        fn identity(&self) -> ProviderIdentity {
+            ProviderIdentity::new("test", "refinement-law-provider", 1).unwrap()
+        }
+
+        fn register(
+            &self,
+            registrar: &mut SemanticRegistryRegistrar<'_>,
+        ) -> Result<(), RegistryError> {
+            let operation = test_law_operation();
+            registrar.register_operation(OperationDefinition::new(
+                operation.clone(),
+                OperationSchema::new(OperationArity::exact(2), OperationArity::exact(1), [])
+                    .unwrap(),
+                NormativeDefinitionRef::new("test refinement-law-row v1")?,
+                OperationDefinitionFacts::new(CanonicalValue::boolean(true)),
+                OperationConformance::new(CanonicalValue::boolean(true)),
+                OperationEffect::Pure,
+                Arc::new(BinaryIdentity),
+            ))?;
+            if let Some(law) = &self.0 {
+                registrar.register_index_realization_law(operation, 1, law.clone())?;
+            }
+            Ok(())
+        }
+    }
+
+    fn semantic_with_test_law(
+        law: Option<super::super::IndexRealizationLaw>,
+    ) -> FrozenSemanticRegistry {
+        let mut builder = SemanticRegistryBuilder::standard().unwrap();
+        builder
+            .register_provider(&RefinementLawProvider(law))
+            .unwrap();
+        builder.freeze().unwrap()
+    }
+
     #[test]
-    fn operation_specific_law_absence_is_subject_identity_and_resolution_authority() {
-        let mut program = SemanticProgramBuilder::try_standard().unwrap();
+    fn operation_specific_law_rows_are_checked_across_public_registry_boundaries() {
+        let semantic_a =
+            semantic_with_test_law(Some(super::super::IndexRealizationLaw::multiply_f32()));
+        let semantic_b = semantic_with_test_law(Some(super::super::IndexRealizationLaw::add_f32()));
+        let semantic_absent = semantic_with_test_law(None);
+        assert_eq!(
+            semantic_a.snapshot_identity(),
+            semantic_b.snapshot_identity()
+        );
+        assert_eq!(
+            semantic_a.snapshot_identity(),
+            semantic_absent.snapshot_identity()
+        );
+        let scalars_a = ScalarRegistryBuilder::new(semantic_a.clone()).freeze();
+        let scalars_b = ScalarRegistryBuilder::new(semantic_b.clone()).freeze();
+        let scalars_absent = ScalarRegistryBuilder::new(semantic_absent.clone()).freeze();
+        assert_eq!(scalars_a.snapshot_identity(), scalars_b.snapshot_identity());
+        assert_eq!(
+            scalars_a.snapshot_identity(),
+            scalars_absent.snapshot_identity()
+        );
+        let mut program = SemanticProgramBuilder::try_new(semantic_a.clone()).unwrap();
         let input = program
             .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([1]))
             .unwrap();
-        let value = F32Multiply::apply(&mut program, input, input).unwrap();
+        let value = program
+            .apply(
+                test_law_operation(),
+                OperationAttributes::empty(),
+                &[input.erase(), input.erase()],
+            )
+            .unwrap()
+            .pop()
+            .unwrap();
         program
-            .output(OutputKey::new("output").unwrap(), value)
+            .output_resolved(OutputKey::new("output").unwrap(), value)
             .unwrap();
         let program = program.build().unwrap();
         let subject =
             IndexRefinementSubject::derive(&program, SemanticOccurrence::new(0), test_contract())
                 .unwrap();
-        let original_identity = subject.identity.clone();
-        let mut without_law = subject.clone();
-        without_law.realization_law_row = None;
-        without_law.identity = encode_subject_identity(&without_law).into_boxed_slice();
-        assert_eq!(
-            without_law.semantic_authority, subject.semantic_authority,
-            "the perturbation preserves the exact semantic snapshot"
-        );
-        assert_ne!(without_law.identity, original_identity);
-        let laws = FrozenIndexRealizationLawRegistry::from_semantic(
-            FrozenSemanticRegistry::standard().unwrap(),
-            FrozenScalarRegistry::standard().unwrap(),
+        let laws_a =
+            FrozenIndexRealizationLawRegistry::from_semantic(semantic_a, scalars_a).unwrap();
+        for (semantic, scalars) in [
+            (semantic_b.clone(), scalars_b.clone()),
+            (semantic_absent, scalars_absent),
+        ] {
+            let laws = FrozenIndexRealizationLawRegistry::from_semantic(semantic, scalars).unwrap();
+            assert!(matches!(
+                laws.resolve(&subject),
+                Err(IndexRefinementVerificationError::SubjectRealizationLawMismatch)
+            ));
+        }
+        let resolution = laws_a.resolve(&subject).unwrap();
+        let signature = subject.signature().clone();
+        let lowering = IndexRealizationAuthority::admit(
+            &semantic_b,
+            &scalars_b,
+            test_law_operation(),
+            signature,
+            &[],
         )
         .unwrap();
-        assert!(matches!(
-            laws.resolve(&without_law),
+        assert_eq!(
+            check_lowering_authority(&subject, &resolution, &lowering),
             Err(IndexRefinementVerificationError::SubjectRealizationLawMismatch)
-        ));
+        );
     }
 
     fn residual_region(second_extent: u64, rounds: usize, offset: i128) -> VerifiedIndexRegion {
@@ -3204,6 +3319,32 @@ mod tests {
                 IndexDomainProofClaim::Disproved(_),
             ]
         ));
+    }
+
+    #[test]
+    fn all_unsupported_group_skips_large_domain_evaluation_reservation() {
+        let region = two_domain_residual_region();
+        let obligation = region.unknown_index_domain_predicates().next().unwrap();
+        let group = IndexDomainGroup {
+            domain: IndexDomainKey(Vec::new()),
+            points: u64::MAX,
+            obligations: vec![PlannedDomainObligation {
+                slot: 0,
+                obligation,
+                upper_bound: Some(LENGTH),
+            }],
+        };
+        let mut ledger =
+            IndexDomainProofLedger::new(IndexDomainProofBudget::try_new(128, 1).unwrap());
+        let claims = assess_domain_group(&region, &group, &mut ledger).unwrap();
+        assert!(matches!(
+            claims.as_slice(),
+            [IndexDomainProofClaim::Unknown(
+                IndexDomainUnknownReason::UnsupportedFragment
+            )]
+        ));
+        assert_eq!(ledger.used_integer_bytes, 0);
+        assert!(ledger.exhaustion.is_none());
     }
 
     #[test]

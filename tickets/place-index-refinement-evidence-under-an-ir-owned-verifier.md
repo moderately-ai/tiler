@@ -124,7 +124,8 @@ completion adds read-only `IndexDomainProofAuthority`,
 `IndexDomainProofAssessment`, `IndexRefinementDomainProof`, a bounded
 `IndexDomainProofBudget`, the public hard ceilings
 `MAX_FINITE_DOMAIN_PROOF_CELLS` and
-`MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES`, and typed atomic
+`MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES`, the structural pending-state ceiling
+`MAX_INDEX_REFINEMENT_RESIDUAL_OBLIGATIONS`, and typed atomic
 `IndexDomainProofRefusal`/`IndexDomainProofRefusalKind`; the refusal implements
 `Display` and `Error`. There is no proof callback
 and no public proof, disproof, or authority constructor: IR runs its closed
@@ -170,6 +171,9 @@ registration failures: exactly `IndexRealizationLawWithoutOperation`,
 `DuplicateIndexRealizationLaw`, and `ZeroIndexRealizationLawRevision`.
 `LoweringCapabilityAuthority::refinement()` is an
 addition distinct from the removed compiler-owned occurrence/refinement types.
+The verification error inventory additionally includes
+`ResidualObligationsTooLarge` and `SubjectRealizationLawMismatch` with exact
+typed refusal at their respective allocation and authority boundaries.
 The shared schedule vocabulary adds `F32NumericalContractKey`,
 `NumericalContractKeyError`, and `F32_NUMERICAL_CONTRACT_KEY_DOMAIN`; the
 compiler removes `RefinementError::{AliasedOperandInconsistent,
@@ -335,8 +339,6 @@ population from the true claim base reported no under-declared scope and warned
 about declared-area overlap with live work; the coordinator must recheck those
 actual branch diffs before integration.
 
-## Graph maintenance
-
 **Fourth fixed-point correction — 2026-08-03:** the operation-specific
 canonical realization-law row is now bound privately into both subject and
 admitted-authority v1 identities with an explicit absence tag. Resolution and
@@ -369,11 +371,24 @@ proved or disproved in canonical order. Resolved `u64` predicate extents are
 carried into the plan and no longer re-resolved or allocated as `BigInt` per
 point.
 
-**Measurement — fourth fixed point:** `tiler-ir` nextest passed 697/697;
+**Measurement — fourth fixed point:** `tiler-ir` nextest passed 698/698;
 `tiler-compiler` passed 589/589 with one configured skip. IR doctests passed 8
 ordinary and 1 compile-fail case with one ignored example; compiler doctests
 passed 2 ordinary and 7 compile-fail cases. Affected-crate Clippy with warnings
 denied and formatting passed. The targeted mixed-claim, shared-DAG,
-negative-div/mod, and overflow set passed 4/4.
+negative-div/mod, and overflow set passed 4/4. Successor review added a
+large-domain/tiny-budget all-unsupported regression and replaced the private
+law-row mutation with public provider/registrar construction: registries with
+equal semantic and scalar snapshots but different or absent operation-specific
+rows refuse both resolution and lowering coherence. That successor set passed
+3/3.
+Successor IR doctests again passed 8 ordinary and 1 compile-fail case with one
+ignored example; IR Clippy with warnings denied, formatting, `git diff --check`,
+and `tkt lint` passed. Guard over the exact 31-file branch population from the
+true claim base reported no under-declared scope and warned about live
+declared-area collisions; the coordinator must compare those branches' actual
+diffs before integration.
+
+## Graph maintenance
 
 `bind-stage-coverage-to-index-refinement-identity` already depends on this ticket and remains blocked. That dependent owns `CoveredOccurrence`, program-builder receipt-domain/staleness validation, and program/artifact identity domains. Do not claim that evidence here or change those identities before this authority is accepted. Update ADR 0071 and artifact contracts only after the exact authority move is accepted.
