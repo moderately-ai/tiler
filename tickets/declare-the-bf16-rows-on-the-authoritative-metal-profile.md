@@ -1,11 +1,11 @@
 ---
 id: declare-the-bf16-rows-on-the-authoritative-metal-profile
 title: Declare the measured BF16 dispatchability and subnormal rows on the Metal profile
-status: in-progress
+status: review
 priority: p1
 dependencies: [admit-a-bf16-scalar-arithmetic-subject, measure-macos-apple9-bf16-under-unified-msl4-profile]
 related: [spike-bf16-through-the-second-dtype-seams, construct-and-bind-the-first-authoritative-metal-compile-profile, measure-the-apple-subnormal-flush-for-the-remaining-mature-dtypes, decide-per-dtype-dispatchability-as-a-target-capability, measure-apple-numerics-on-physical-ios-device, record-the-compilation-selection-in-target-measurement-provenance]
-scopes: [implementation/build, implementation/metal, contracts/navigation]
+scopes: [implementation/build, implementation/metal, contracts/navigation, contracts/decisions, research/target-profiles]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, dtype, bf16, target-profiles, metal, apple-targets]
@@ -15,11 +15,20 @@ lease_expires_at: 1785705719
 ---
 ## User-visible outcome
 
-The authoritative Metal compile profile carries the measured BF16 facts: dispatchable on the macOS row, explicitly unsupported on the iOS Simulator, and `Unknown` on the unmeasured iOS device. A BF16 program routed at a family that cannot run it is refused **before** the routing commit rather than failing at pipeline creation after it.
+The authoritative macOS Metal compile profile carries the exact measured BF16
+facts: `Dispatchable` plus complete sign-preserving-flush input/result tables.
+F32 remains independently `Dispatchable` and F16 remains `Unknown`. The iOS
+answers and caller-visible BF16 numerical-contract check are split to their own
+prerequisite-bearing tickets rather than inferred here.
 
 ## Why both rows land together
 
-**Fact.** `BoundMetalCompileDeclaration` (`crates/tiler-build/src/metal_declaration.rs`) declares `f32` alone: one measured dispatchability row and six honourability rows, all over `ScalarArithmetic::f32()`. Its own ticket states "Do not infer F16 or BF16 from F32, do not claim BF16 on either iOS family" and names this spike's successor as the first non-F32 use of the mechanism.
+**Fact, before this implementation.** `BoundMetalCompileDeclaration`
+(`crates/tiler-build/src/metal_declaration.rs`) declared `f32` alone: one
+measured dispatchability row and six honourability rows, all over
+`ScalarArithmetic::f32()`. Its own ticket states "Do not infer F16 or BF16 from
+F32, do not claim BF16 on either iOS family" and names this spike's successor as
+the first non-F32 use of the mechanism.
 
 **Fact.** The profile descriptor is one identity. A dispatchability row and a numerical row both change its bytes, and the golden that pins them is one fixture. Landing them separately would rebaseline the same golden twice and leave an intermediate commit whose profile claims BF16 is dispatchable while saying nothing about its arithmetic — a profile that is worse than either endpoint. They are merged for that reason and no other.
 
@@ -107,3 +116,46 @@ matrix and the end-to-end BF16 contract refusal remain with their split tickets.
 - `state-and-check-a-bf16-numerical-contract` depends on this ticket and owns the
   first caller-visible consumption of the BF16 subnormal tables. Do not widen
   this ticket into the compiler's F32-only numerical-contract boundary.
+
+## Implementation outcome — 2026-08-02
+
+**Fact.** `BoundMetalCompileDeclaration` now declares BF16 `Dispatchable` from
+the exact unified MSL 4.0/macOS 26 measured source while retaining F32
+`Dispatchable` and F16 `Unknown`. Its declaration-owned BF16 projection reads
+the BF16 slot from `MetalSubnormalArithmeticFacts` and installs complete,
+exclusive input/result tables for the governed BF16 arithmetic subject. The
+ratified public F32 adapter did not change and no parallel constructor or dtype
+list was added.
+
+**Negative evidence.** Tests delete the BF16 dispatchability row and observe
+`Unknown`, substitute `Unsupported` and observe that exact answer, delete the
+Metal BF16 subnormal row and observe the typed construction refusal, substitute
+preservation and observe descriptor movement, and separately collide with both
+the complete input and result tables. The descriptor also contains the exact
+BF16 subject plus the measured producer, compiler build, and execution build.
+
+**Identity step.** The F32-only endpoint was
+`tiler.metal.macos-apple9.msl4-0.f32.v1`, 1,963 bytes. The new content receives
+the truthful new key `tiler.metal.macos-apple9.msl4-0.f32-bf16.v1` rather than a
+revision whose `.f32` component would be false; its descriptor is 2,149 bytes.
+The standard Metal artifact test digest moved
+`3daf11256423c683a75f6aeb6b1e3578b1425d46e0899664ab5df156ca600db6` →
+`949841c610fef13473e4a4d14ee57a62b39ba09c5ed27a9c7ff16679853827d1`,
+and the cache-subject test digest moved
+`0d09c0da9db85c70bb2270cbed3a67859b7718b07c605c45ca5d1a9f6adfa905` →
+`3bc5f57f3b3e2e07849a3830ec56a89e4332245685fa23c9db4da8a4f71c34d0`.
+Those were the complete observed targeted-test blast radius after the descriptor
+pin moved; all three pins were recomputed on this branch.
+
+**Measurement boundary.** The ledger now cites the retained 2026-08-02
+covering/exhaustive `apple9-f32-bf16-unified-msl4-macos26` records: Apple M4
+Max, macOS 27.0 build 26A5388g, Xcode 26.6 build 17F113, macOS SDK 26.5 build
+25F70, offline Metal/AIR-LLD 32023.883, MSL 4.0, requested target
+`air64-apple-macos26.0`. The row does not generalize to F16, either iOS family,
+another Apple GPU family, another toolchain, or a caller-visible BF16 numerical
+contract.
+
+**Scope correction.** The required authority ledger maps to
+`research/target-profiles`; the dispatch brief's `contracts/navigation` claim
+was stale. That exclusive scope was added after the coordinator verified no
+live collision and before continuing ledger edits.

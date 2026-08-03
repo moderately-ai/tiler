@@ -33,10 +33,9 @@
 //!   `replace-or-justify-the-barrier-count-axis` and is not what returned. Any
 //!   subject differing in even one of its five dimensions still resolves as
 //!   `NoPath`, so this row admits the single-workgroup tree and nothing else.
-//! - **F16 and BF16** get no dispatchability and no numerical row. The measured
-//!   Apple row *disagrees* across dtypes — `f32` arithmetic flushes where `f16`
-//!   preserves on the same hardware in the same math modes — so inheritance is
-//!   not merely unproven here, it is known to be unsound in one direction.
+//! - **F16** gets no dispatchability and no numerical row. F32 and BF16 each
+//!   carry their own measured dispatchability and subnormal rows; neither is
+//!   inherited by the omitted neighbour.
 //!
 //! # Which authority class each row carries
 //!
@@ -87,10 +86,10 @@ use tiler_ir::program::abi::{
     AvailabilityPhase, TargetPropertyKey, TargetPropertyProviderIdentity, TargetPropertyQuery,
 };
 use tiler_ir::schedule::{
-    ExceptionalValueAssumption, FencedSpaces, MemoryOrdering, NumericalPermission,
+    ArithmeticType, ExceptionalValueAssumption, FencedSpaces, MemoryOrdering, NumericalPermission,
     SynchronizationKind, SynchronizationScope, SynchronizationSubject,
 };
-use tiler_ir::semantic::F32;
+use tiler_ir::semantic::{Bf16, F32};
 use tiler_metal::target::{
     LaunchIndexRealization, MetalDeploymentMinimum, MetalEmissionRealization,
     MetalFloatArithmeticType, MetalFlushedZeroSign, MetalPlatform, MetalSubnormalArithmetic,
@@ -141,6 +140,7 @@ struct ExecutionRow {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct LedgerRows {
     profile_key: &'static str,
+    bf16_dispatchability: Option<DTypeDispatchability>,
     grid_axis_threads: u64,
     workgroup_property_key: &'static str,
     buffer_bindings: u32,
@@ -179,9 +179,14 @@ struct LedgerRows {
 const FIRST_MACOS_APPLE9: LedgerRows = LedgerRows {
     // The profile is keyed by what bounds every row in it: the macOS artifact
     // family, the Apple9 GPU family whose feature-table column supplies the
-    // quantitative limits, the MSL 4.0 standard, and `f32` as the one dtype with
-    // dispatchability and numerical evidence.
-    profile_key: "tiler.metal.macos-apple9.msl4-0.f32.v1",
+    // quantitative limits, the MSL 4.0 standard, and the two dtypes with
+    // dispatchability and numerical evidence. This is a new content key rather
+    // than a revision of the old F32-only family: keeping `.f32` in a key for a
+    // profile that also states BF16 would make the key's own description false.
+    profile_key: "tiler.metal.macos-apple9.msl4-0.f32-bf16.v1",
+    // The unified MSL 4.0/macOS 26 record reports Apple9 bfloat support and
+    // executes the BF16 kernels on this exact host/toolchain row.
+    bf16_dispatchability: Some(DTypeDispatchability::Dispatchable),
     // "Grid-axis threads — 4": the macOS 26.5 SDK's `dispatchThreads:` contract
     // proves extent 4 is representable and establishes no upper bound at all, so
     // 4 is a deliberately conservative compile guarantee rather than a maximum.
@@ -237,18 +242,25 @@ const FIRST_MACOS_APPLE9: LedgerRows = LedgerRows {
     // 26.0 and the standard MSL 4.0 because `probe.fixed_flags -std=metal4.0`
     // and `requested_target air64-apple-macos26.0` are the inputs the retained
     // measurement used; the older MSL 3.1 / macOS 14.0 record would attribute
-    // these measurements to a compilation that did not produce them. Only `f32`
-    // is stated: `f16` and `bf16` were not measured under MSL 4.0.
+    // these measurements to a compilation that did not produce them. F32 and
+    // BF16 are stated independently; F16 was not measured under MSL 4.0.
     facts: MetalTargetFacts::new(
         MslLanguageVersion::Metal4_0,
         MetalPlatform::MacOs,
         MetalDeploymentMinimum::new(26, 0),
-        MetalSubnormalArithmeticFacts::unmeasured().stating(
-            MetalFloatArithmeticType::F32,
-            MetalSubnormalArithmetic::FlushesToZero {
-                zero_sign: MetalFlushedZeroSign::PreservesSign,
-            },
-        ),
+        MetalSubnormalArithmeticFacts::unmeasured()
+            .stating(
+                MetalFloatArithmeticType::F32,
+                MetalSubnormalArithmetic::FlushesToZero {
+                    zero_sign: MetalFlushedZeroSign::PreservesSign,
+                },
+            )
+            .stating(
+                MetalFloatArithmeticType::Bf16,
+                MetalSubnormalArithmetic::FlushesToZero {
+                    zero_sign: MetalFlushedZeroSign::PreservesSign,
+                },
+            ),
         31,
     ),
     // "Selected, not a capability": MSL 4.0 Table 5.8 permits `ushort` or `uint`
@@ -375,14 +387,14 @@ pub struct BoundMetalCompileDeclaration {
 }
 
 impl BoundMetalCompileDeclaration {
-    /// Assembles the first authoritative macOS Apple9 MSL 4.0 `f32` declaration.
+    /// Assembles the first authoritative macOS Apple9 MSL 4.0 declaration.
     ///
     /// # Errors
     ///
     /// Returns the exact refusing authority: an invalid profile key, a rejected
     /// provenance identity, a compiler-profile construction refusal, the
-    /// buffer-capacity overlap check, the `f32` subnormal projection, or the AOT
-    /// driver's own target validation.
+    /// buffer-capacity overlap check, either dtype's subnormal projection, or
+    /// the AOT driver's own target validation.
     pub fn first_macos_apple9() -> Result<Self, BoundMetalDeclarationError> {
         Self::declare(&FIRST_MACOS_APPLE9)
     }
@@ -428,10 +440,10 @@ impl BoundMetalCompileDeclaration {
 
     /// Returns the exact Metal target facts emission runs against.
     ///
-    /// Only the buffer capacity and the `f32` subnormal entry of this record
-    /// project into [`Self::profile`]. The language standard, artifact family,
-    /// and deployment minimum have no compiler counterpart and must never be
-    /// described as compiler-assessed.
+    /// Only the buffer capacity and the F32/BF16 subnormal entries of this
+    /// record project into [`Self::profile`]. The language standard, artifact
+    /// family, and deployment minimum have no compiler counterpart and must
+    /// never be described as compiler-assessed.
     #[must_use]
     pub const fn metal_facts(&self) -> &MetalTargetFacts {
         &self.facts
@@ -566,21 +578,29 @@ impl BoundMetalCompileDeclaration {
 
         // ---- dispatchability, measured and exact ----------------------------
         // The retained run dispatched `f32` compute kernels on the execution
-        // environment above and read results back, with an execution witness on
-        // a non-subnormal operand separating "the arithmetic ran" from "the
-        // kernel was optimized away". `f16` and `bf16` are deliberately absent.
+        // environment above and read results back, with execution witnesses on
+        // non-subnormal operands separating "the arithmetic ran" from "the
+        // kernel was optimized away". F32 and BF16 are independent rows; F16
+        // is deliberately absent.
         builder.declare_measured_dtype_dispatchability(
             F32::resolved_type(),
             DTypeDispatchability::Dispatchable,
             measured.clone(),
         )?;
+        if let Some(dispatchability) = rows.bf16_dispatchability {
+            builder.declare_measured_dtype_dispatchability(
+                Bf16::resolved_type(),
+                dispatchability,
+                measured.clone(),
+            )?;
+        }
 
-        // ---- the one projected overlap: `f32` subnormal behaviour -----------
-        // Declared through the ratified low-level seam, exactly once, and by
-        // reading the Metal record rather than by restating the mode. Declaring
-        // it twice would put two rows at one phase and is refused by the
-        // complete-table conflict check inside that seam.
+        // ---- projected numerical overlaps: exact dtype subnormal rows -------
+        // F32 uses the ratified low-level seam; BF16 stays private to this bound
+        // declaration. Both read the Metal record rather than restating its mode
+        // and both install complete exclusive input/result tables.
         declare_metal_f32_subnormal_behaviour(&mut builder, &rows.facts, measured.clone())?;
+        declare_metal_bf16_subnormal_behaviour(&mut builder, &rows.facts, measured.clone())?;
 
         // ---- the remaining measured numerical rows --------------------------
         // Each is what the *selected* realization delivered through the *exact*
@@ -701,6 +721,37 @@ impl BoundMetalCompileDeclaration {
             aot_target,
         })
     }
+}
+
+/// Projects the declaration-owned BF16 measurement without widening the
+/// ratified public F32 adapter.
+///
+/// Both dimensions are transactional, matching the public F32 seam: a conflict
+/// in the result table cannot leave the input table partially installed.
+fn declare_metal_bf16_subnormal_behaviour(
+    builder: &mut TargetProfileBuilder,
+    facts: &MetalTargetFacts,
+    source: TargetCompileProfileMeasurementSource,
+) -> Result<(), BoundMetalDeclarationError> {
+    let behaviour = facts
+        .subnormal_arithmetic
+        .behaviour(MetalFloatArithmeticType::Bf16)
+        .map_err(|_| BoundMetalDeclarationError::UnstatedBf16SubnormalBehaviour)?;
+    let subject = ScalarArithmetic::new(ArithmeticType::Bf16, Bf16::resolved_type())
+        .map_err(BoundMetalDeclarationError::Bf16SubnormalProjection)?;
+    let mut staged = builder.clone();
+    staged
+        .declare_measured_input_subnormal_behaviour(
+            subject.clone(),
+            behaviour.subnormal_mode(),
+            source.clone(),
+        )
+        .map_err(BoundMetalDeclarationError::Bf16SubnormalProjection)?;
+    staged
+        .declare_measured_result_subnormal_behaviour(subject, behaviour.subnormal_mode(), source)
+        .map_err(BoundMetalDeclarationError::Bf16SubnormalProjection)?;
+    *builder = staged;
+    Ok(())
 }
 
 /// The three normative references the quantitative rows are attributed to.
@@ -879,6 +930,10 @@ pub enum BoundMetalDeclarationError {
     Profile(TargetProfileBuildError),
     /// The `f32` subnormal projection was refused.
     SubnormalProjection(MetalF32TargetProfileError),
+    /// The Metal record omitted the BF16 behaviour this declaration requires.
+    UnstatedBf16SubnormalBehaviour,
+    /// The compiler profile refused the declaration-owned BF16 projection.
+    Bf16SubnormalProjection(TargetProfileBuildError),
     /// The compiler's offered buffer capacity exceeds the emission limit.
     ///
     /// A compiler admitting more bindings than the emitter can address would
@@ -936,7 +991,13 @@ impl fmt::Display for BoundMetalDeclarationError {
             Self::Provenance(error) => ("fact source", error),
             Self::Profile(error) => ("compiler profile row", error),
             Self::SubnormalProjection(error) => ("f32 subnormal projection", error),
+            Self::Bf16SubnormalProjection(error) => ("BF16 subnormal projection", error),
             Self::AotTarget(error) => ("AOT target", error),
+            Self::UnstatedBf16SubnormalBehaviour => {
+                return formatter.write_str(
+                    "BF16 subnormal projection: Metal target facts do not state BF16 behaviour",
+                );
+            }
             Self::PreparedEntryQuery => {
                 return formatter
                     .write_str("prepared-entry query: not statable at PreparedKernelPreflight");
@@ -957,10 +1018,12 @@ impl Error for BoundMetalDeclarationError {
         match self {
             Self::ProfileKey(error) => Some(error),
             Self::Provenance(error) => Some(error),
-            Self::Profile(error) => Some(error),
+            Self::Profile(error) | Self::Bf16SubnormalProjection(error) => Some(error),
             Self::SubnormalProjection(error) => Some(error),
             Self::AotTarget(error) => Some(error),
-            Self::PreparedEntryQuery | Self::BufferCapacityExceedsEmissionLimit { .. } => None,
+            Self::PreparedEntryQuery
+            | Self::UnstatedBf16SubnormalBehaviour
+            | Self::BufferCapacityExceedsEmissionLimit { .. } => None,
         }
     }
 }
@@ -973,10 +1036,10 @@ mod tests {
     };
     use tiler_compiler::session::{CompileRequest, NumericalContract, compile};
     use tiler_compiler::target::{
-        DTypeDispatchabilityResolution, IndexArithmeticSupport, ScalarArithmetic, ScalarSupport,
-        SynchronizationSupport, TargetFactProducerIdentity, TargetFactSource,
-        TargetNormativeReferenceIdentity, TargetProfileBuildError, TargetProfileBuilder,
-        TargetProfileKey, TargetRequest,
+        DTypeDispatchability, DTypeDispatchabilityResolution, IndexArithmeticSupport,
+        ScalarArithmetic, ScalarSupport, SynchronizationSupport, TargetFactProducerIdentity,
+        TargetFactSource, TargetNormativeReferenceIdentity, TargetProfileBuildError,
+        TargetProfileBuilder, TargetProfileKey, TargetRequest,
     };
     use tiler_ir::program::abi::{
         AvailabilityPhase, TargetPropertyKey, TargetPropertyProviderIdentity, TargetPropertyQuery,
@@ -985,7 +1048,7 @@ mod tests {
         FlushedZeroSign, MemoryOrdering, SubnormalMode, SynchronizationKind, SynchronizationScope,
     };
     use tiler_ir::semantic::{
-        F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, ResolvedValueType,
+        Bf16, F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, ResolvedValueType,
         SemanticProgram, SemanticProgramBuilder, StrictSerialF32Sum, TypeKey,
     };
     use tiler_ir::shape::{Axis, Shape};
@@ -1045,7 +1108,7 @@ mod tests {
         let declaration = declared();
         assert_eq!(
             declaration.profile().profile_key().as_str(),
-            "tiler.metal.macos-apple9.msl4-0.f32.v1",
+            "tiler.metal.macos-apple9.msl4-0.f32-bf16.v1",
         );
         let facts = declaration.metal_facts();
         assert_eq!(facts.language, MslLanguageVersion::Metal4_0);
@@ -1056,6 +1119,14 @@ mod tests {
             facts
                 .subnormal_arithmetic
                 .behaviour(MetalFloatArithmeticType::F32),
+            Ok(MetalSubnormalArithmetic::FlushesToZero {
+                zero_sign: MetalFlushedZeroSign::PreservesSign,
+            }),
+        );
+        assert_eq!(
+            facts
+                .subnormal_arithmetic
+                .behaviour(MetalFloatArithmeticType::Bf16),
             Ok(MetalSubnormalArithmetic::FlushesToZero {
                 zero_sign: MetalFlushedZeroSign::PreservesSign,
             }),
@@ -1106,6 +1177,12 @@ mod tests {
                 .dtype_dispatchability(&F32::resolved_type(), AvailabilityPhase::CompileProfile,),
             DTypeDispatchabilityResolution::Dispatchable,
         );
+        assert_eq!(
+            declaration
+                .profile()
+                .dtype_dispatchability(&Bf16::resolved_type(), AvailabilityPhase::CompileProfile,),
+            DTypeDispatchabilityResolution::Dispatchable,
+        );
         // The descriptor spells each quantitative axis by its governed key, so
         // an absent axis is absent from the bytes and a deferred one is present
         // only in the query table. Read from the encoding rather than asserted
@@ -1125,6 +1202,71 @@ mod tests {
         assert!(text.contains("index-arithmetic-u64"));
         assert!(text.contains("local-memory-bytes"));
         assert!(text.contains("device-memory"));
+    }
+
+    /// Deleting or substituting the BF16 dispatch row changes both the answer
+    /// and identity without affecting F32.
+    #[test]
+    fn bf16_dispatchability_is_an_exact_independent_row() {
+        let baseline = declared();
+        let mut absent = FIRST_MACOS_APPLE9;
+        absent.bf16_dispatchability = None;
+        let absent = BoundMetalCompileDeclaration::declare(&absent)
+            .expect("an omitted BF16 row remains a valid conservative profile");
+        assert_eq!(
+            absent
+                .profile()
+                .dtype_dispatchability(&Bf16::resolved_type(), AvailabilityPhase::CompileProfile,),
+            DTypeDispatchabilityResolution::Unknown,
+        );
+        assert_eq!(
+            absent
+                .profile()
+                .dtype_dispatchability(&F32::resolved_type(), AvailabilityPhase::CompileProfile,),
+            DTypeDispatchabilityResolution::Dispatchable,
+        );
+        assert_ne!(
+            absent.profile().canonical_descriptor(),
+            baseline.profile().canonical_descriptor(),
+        );
+
+        let mut unsupported = FIRST_MACOS_APPLE9;
+        unsupported.bf16_dispatchability = Some(DTypeDispatchability::Unsupported);
+        let unsupported = BoundMetalCompileDeclaration::declare(&unsupported)
+            .expect("the substituted refusal remains a coherent profile");
+        assert_eq!(
+            unsupported
+                .profile()
+                .dtype_dispatchability(&Bf16::resolved_type(), AvailabilityPhase::CompileProfile,),
+            DTypeDispatchabilityResolution::Unsupported,
+        );
+        assert_ne!(
+            unsupported.profile().canonical_descriptor(),
+            baseline.profile().canonical_descriptor(),
+        );
+    }
+
+    /// The BF16 table encodes its exact subject and the unified measurement
+    /// source; neither can be supplied by the neighbouring F32 declaration.
+    #[test]
+    fn bf16_subnormal_rows_carry_the_exact_subject_and_source() {
+        let declaration = declared();
+        let descriptor = declaration.profile().canonical_descriptor();
+        let subject = Bf16::resolved_type().canonical_encoding();
+        let subject = subject.as_bytes();
+        assert!(
+            descriptor
+                .windows(subject.len())
+                .any(|window| window == subject),
+            "the exact BF16 subject is absent",
+        );
+        let text = String::from_utf8_lossy(descriptor);
+        assert!(
+            text.contains(super::MEASURED_PRODUCER),
+            "the measured producer is absent",
+        );
+        assert!(text.contains("32023.883"), "the compiler row is absent");
+        assert!(text.contains("26A5388g"), "the execution row is absent");
     }
 
     /// The workgroup row is a prepared-kernel query and cannot become a fact.
@@ -1223,6 +1365,70 @@ mod tests {
         );
     }
 
+    /// The BF16 projection owns complete exclusive input and result tables.
+    ///
+    /// Reapplying the exact measured row must conflict, rather than silently
+    /// adding another answer or replacing the first source.
+    #[test]
+    fn a_duplicated_bf16_projection_is_refused() {
+        let declaration = declared();
+        let mut builder = TargetProfileBuilder::new(
+            TargetProfileKey::new("test.duplicate-bf16-subnormal.v1".to_owned()).unwrap(),
+        );
+        let source = super::measured_source(&FIRST_MACOS_APPLE9).expect("the measured source");
+        super::declare_metal_bf16_subnormal_behaviour(
+            &mut builder,
+            declaration.metal_facts(),
+            source.clone(),
+        )
+        .expect("the first complete BF16 projection lands");
+        let subject = ScalarArithmetic::new(
+            tiler_ir::schedule::ArithmeticType::Bf16,
+            Bf16::resolved_type(),
+        )
+        .expect("the governed BF16 arithmetic subject");
+        let mut input_probe = builder.clone();
+        assert!(matches!(
+            input_probe.declare_measured_input_subnormal_behaviour(
+                subject.clone(),
+                SubnormalMode::Preserve,
+                source.clone(),
+            ),
+            Err(TargetProfileBuildError::ConflictingSubnormalDeclaration { .. })
+        ));
+        let mut result_probe = builder;
+        assert!(matches!(
+            result_probe.declare_measured_result_subnormal_behaviour(
+                subject,
+                SubnormalMode::Preserve,
+                source,
+            ),
+            Err(TargetProfileBuildError::ConflictingSubnormalDeclaration { .. })
+        ));
+    }
+
+    /// A missing BF16 Metal row refuses the declaration before profile build.
+    #[test]
+    fn an_unstated_bf16_subnormal_row_is_refused() {
+        let mut rows = FIRST_MACOS_APPLE9;
+        rows.facts = MetalTargetFacts::new(
+            rows.facts.language,
+            rows.facts.platform,
+            rows.facts.deployment_minimum,
+            MetalSubnormalArithmeticFacts::unmeasured().stating(
+                MetalFloatArithmeticType::F32,
+                MetalSubnormalArithmetic::FlushesToZero {
+                    zero_sign: MetalFlushedZeroSign::PreservesSign,
+                },
+            ),
+            rows.facts.buffer_binding_limit,
+        );
+        assert_eq!(
+            BoundMetalCompileDeclaration::declare(&rows).unwrap_err(),
+            BoundMetalDeclarationError::UnstatedBf16SubnormalBehaviour,
+        );
+    }
+
     /// A contradictory pre-existing subnormal row is refused before emission.
     #[test]
     fn a_contradictory_subnormal_row_is_refused_before_emission() {
@@ -1313,7 +1519,7 @@ mod tests {
     #[test]
     fn every_projected_row_moves_the_profile_descriptor() {
         let baseline = descriptor(&FIRST_MACOS_APPLE9);
-        let perturbations: [RowPerturbation; 6] = [
+        let perturbations: [RowPerturbation; 8] = [
             ("grid-axis threads", |rows| rows.grid_axis_threads = 8),
             ("buffer bindings", |rows| rows.buffer_bindings = 16),
             ("local memory bytes", |rows| {
@@ -1325,15 +1531,44 @@ mod tests {
             ("device address space", |rows| {
                 rows.device_address_space = false;
             }),
+            ("the BF16 dispatchability row", |rows| {
+                rows.bf16_dispatchability = None;
+            }),
             ("the projected f32 subnormal behaviour", |rows| {
                 rows.facts = MetalTargetFacts::new(
                     rows.facts.language,
                     rows.facts.platform,
                     rows.facts.deployment_minimum,
-                    MetalSubnormalArithmeticFacts::unmeasured().stating(
-                        MetalFloatArithmeticType::F32,
-                        MetalSubnormalArithmetic::PreservesSubnormals,
-                    ),
+                    MetalSubnormalArithmeticFacts::unmeasured()
+                        .stating(
+                            MetalFloatArithmeticType::F32,
+                            MetalSubnormalArithmetic::PreservesSubnormals,
+                        )
+                        .stating(
+                            MetalFloatArithmeticType::Bf16,
+                            MetalSubnormalArithmetic::FlushesToZero {
+                                zero_sign: MetalFlushedZeroSign::PreservesSign,
+                            },
+                        ),
+                    rows.facts.buffer_binding_limit,
+                );
+            }),
+            ("the projected BF16 subnormal behaviour", |rows| {
+                rows.facts = MetalTargetFacts::new(
+                    rows.facts.language,
+                    rows.facts.platform,
+                    rows.facts.deployment_minimum,
+                    MetalSubnormalArithmeticFacts::unmeasured()
+                        .stating(
+                            MetalFloatArithmeticType::F32,
+                            MetalSubnormalArithmetic::FlushesToZero {
+                                zero_sign: MetalFlushedZeroSign::PreservesSign,
+                            },
+                        )
+                        .stating(
+                            MetalFloatArithmeticType::Bf16,
+                            MetalSubnormalArithmetic::PreservesSubnormals,
+                        ),
                     rows.facts.buffer_binding_limit,
                 );
             }),
@@ -1483,11 +1718,12 @@ mod tests {
         );
         // Pinned because the authority ledger quotes this number, and a
         // document citing a byte count nothing checks drifts silently. It moved
-        // from 1,741 when the barrier row and the permitted resolution of
-        // reassociation were added.
+        // from 1,963 when the independent BF16 dispatchability and input/result
+        // subnormal tables were added (and from 1,741 before the barrier and
+        // permitted-reassociation rows).
         assert_eq!(
             descriptor.len(),
-            1_963,
+            2_149,
             "the canonical descriptor length moved; update the authority ledger with it",
         );
     }
@@ -1504,7 +1740,7 @@ mod tests {
             declaration.profile().profile_key().as_str(),
         );
         let mut rows = FIRST_MACOS_APPLE9;
-        rows.profile_key = "tiler.metal.macos-apple9.msl4-0.f32.v2";
+        rows.profile_key = "tiler.metal.macos-apple9.msl4-0.f32-bf16.v2";
         let other = BoundMetalCompileDeclaration::declare(&rows)
             .expect("a rekeyed declaration assembles")
             .target_profile_ref()
