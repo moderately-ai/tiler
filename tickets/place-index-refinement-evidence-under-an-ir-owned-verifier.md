@@ -1,7 +1,7 @@
 ---
 id: place-index-refinement-evidence-under-an-ir-owned-verifier
 title: Place index-refinement evidence under an IR-owned verifier
-status: awaiting-decision
+status: todo
 priority: p1
 dependencies: []
 related: [bind-stage-coverage-to-index-refinement-identity]
@@ -12,7 +12,6 @@ scopes:
   - contracts/artifacts
 shared_scopes:
   - project/tickets
-assignee: agent-index-receipt
 ---
 
 ## User-visible outcome
@@ -38,12 +37,20 @@ A dependency-neutral authority can eventually mint one opaque checked receipt th
 3. **Keep the receipt compiler-owned and store it directly in `tiler-ir::program` — eliminated by dependency direction.** It introduces an `tiler-ir -> tiler-compiler` cycle.
 4. **Treat provider emission or registration alone as proof — eliminated by the accepted refinement contract.** Resolution says which authority was selected; successful construction alone proves neither semantic association nor realization.
 
-## Decision required from Tom
+## Decision accepted by Tom — 2026-08-03
 
-**Question:** may the dependency-neutral portion of lowering/refinement authority move into `tiler-ir`, so an IR-owned verifier can bind a checked semantic-program occurrence and the resolved lowering authority to the emitted region?
+Tom approved the recommended authority move in the T3 Code orchestration
+conversation: the dependency-neutral portion of lowering/refinement authority
+may move into `tiler-ir`, so an IR-owned verifier can bind a checked
+semantic-program occurrence and the resolved lowering authority to the emitted
+region.
 
-- **Yes — move the minimal authority (recommended).** `tiler-ir` would own the sealed subject and receipt: exact `SemanticGraphIdentity`, typed `program::SemanticOccurrence`, operation/attributes, a dependency-neutral numerical-contract identity, resolved signature, admitted scalar/type authority, and the checked region. The compiler would continue to own registry search, provider selection, frontier policy, and explain attribution, but its registered capability would carry an IR-owned admitted realization authority that the verifier can consume. This preserves dependency direction and makes downstream receipt consumption non-forgeable, at the cost of a larger public IR boundary than the withdrawn draft.
-- **No — keep all lowering authority compiler-owned.** Then executable-program coverage cannot retain a proof-derived per-occurrence receipt in the current crate graph. A separate lower proof crate or a relocation of executable-program assembly becomes a new architecture task and public boundary before this path can proceed.
+The approval covers the ownership split below, not the eventual concrete public
+API. The exact verifier, receipt, subject, identity, and error boundary remains
+a tested draft that returns to Tom under ADR 0075 before acceptance.
+
+- **Accepted — move the minimal authority.** `tiler-ir` owns the sealed subject and receipt: exact `SemanticGraphIdentity`, typed `program::SemanticOccurrence`, operation/attributes, a dependency-neutral numerical-contract identity, resolved signature, admitted scalar/type authority, and the checked region. The compiler continues to own registry search, provider selection, frontier policy, and explain attribution, but its registered capability carries an IR-owned admitted realization authority that the verifier can consume. This preserves dependency direction and makes downstream receipt consumption non-forgeable, at the cost of a larger public IR boundary than the withdrawn draft.
+- **Rejected — keep all lowering authority compiler-owned.** Executable-program coverage could not retain a proof-derived per-occurrence receipt in the current crate graph. A separate lower proof crate or a relocation of executable-program assembly would become a new architecture task and public boundary before this path could proceed.
 
 A separate shared proof crate is not recommended: it adds a crate and another dependency seam while the governed subjects—semantic graph identity, program occurrence, scalar/index region, and program builder—already belong to `tiler-ir`.
 
