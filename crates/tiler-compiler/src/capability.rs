@@ -1846,7 +1846,10 @@ mod tests {
         IndexRefinementSubject::derive(
             &program,
             SemanticOccurrence::new(0),
-            NumericalContractIdentity::try_from_key("test.strict-f32.v1").unwrap(),
+            NumericalContractIdentity::try_from_key(
+                crate::request::StrictF32NumericalContract::governed().key,
+            )
+            .unwrap(),
         )
         .unwrap()
     }

@@ -93,6 +93,16 @@ impl IndexInteger {
         (sign, magnitude)
     }
 
+    pub(super) fn magnitude_byte_len(&self) -> usize {
+        usize::try_from(self.0.bits().div_ceil(8))
+            .unwrap_or(usize::MAX)
+            .max(1)
+    }
+
+    pub(super) fn to_bigint(&self) -> BigInt {
+        self.0.clone()
+    }
+
     pub(super) fn encode(&self, output: &mut Vec<u8>) {
         let (sign, magnitude) = self.to_sign_magnitude();
         output.push(match sign {

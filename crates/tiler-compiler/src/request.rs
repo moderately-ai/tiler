@@ -25,6 +25,7 @@ pub(crate) use tiler_ir::schedule::{
     ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign,
     MaterializationRounding, NumericalPermission, SubnormalMode, ValueDomainProvenance,
 };
+use tiler_ir::schedule::{F32NumericalContractKey, NumericalContractKeyError};
 
 use crate::capability::{
     CanonicalLoweringRegistryIdentity, FrozenLoweringCapabilityRegistry, LoweringCapabilityRevision,
@@ -57,8 +58,6 @@ const REQUEST_SCHEMA_VERSION: u32 = 2;
 /// `v1` key is reachable any more. The domain moves whenever the rendering
 /// moves, which is what keeps a key minted by one build comparable to a key
 /// minted by another — the whole reason a contract has a key at all.
-pub(crate) const CONTRACT_KEY_DOMAIN: &str = "tiler.contract.f32.v2";
-
 /// Maximum distinct numerical contracts admitted in one preference.
 ///
 /// **Four, and now retained rather than derived.** It used to be
@@ -80,16 +79,14 @@ pub(crate) const MAX_NUMERICAL_CONTRACT_PREFERENCES: usize = 4;
 /// Returns whether one key was minted by the current `f32` contract scheme.
 ///
 /// **A prefix test that includes the separator, deliberately.** Matching
-/// [`CONTRACT_KEY_DOMAIN`] alone would also match a hypothetical
+/// The IR-owned domain alone would also match a hypothetical
 /// `tiler.contract.f32.v20`, so the `.` that always follows the domain is part
 /// of the test. The direction that matters is the failing one: a key minted
 /// under a different domain — a widened dtype vocabulary, a later scheme — does
 /// not match, and every caller of this predicate declines to answer rather than
 /// carrying the `f32` assumption into a contract that never stated it.
 pub(crate) fn is_f32_contract_key(key: &str) -> bool {
-    key.len() > CONTRACT_KEY_DOMAIN.len()
-        && key.starts_with(CONTRACT_KEY_DOMAIN)
-        && key.as_bytes()[CONTRACT_KEY_DOMAIN.len()] == b'.'
+    F32NumericalContractKey::try_from_str(key).is_ok()
 }
 
 /// Every distinct contract key this process has minted.
@@ -144,25 +141,27 @@ fn intern_contract_key(key: String) -> &'static str {
 /// [`StrictF32NumericalContract::behaviour`] deliberately does not project,
 /// because two contracts resolving the same dimensions for different dtypes or
 /// producing different NaN patterns are different contracts (ADR 0076 item 6).
-fn canonical_contract_key(contract: &StrictF32NumericalContract) -> String {
-    let mut preimage = Vec::new();
-    preimage.push(contract.arithmetic.tag());
-    preimage.extend_from_slice(&contract.canonical_arithmetic_nan_bits.to_be_bytes());
-    for dimension in crate::target::honourability::CANONICAL_DIMENSIONS {
-        preimage.push(dimension.tag());
-        contract.behaviour(dimension).encode(&mut preimage);
+fn canonical_contract_key(
+    contract: &StrictF32NumericalContract,
+) -> Result<String, NumericalContractKeyError> {
+    if contract.arithmetic != ArithmeticType::F32 {
+        return Err(NumericalContractKeyError::InvalidArithmetic);
     }
-    let mut key = String::with_capacity(CONTRACT_KEY_DOMAIN.len() + 1 + preimage.len() * 2);
-    key.push_str(CONTRACT_KEY_DOMAIN);
-    key.push('.');
-    for byte in preimage {
-        // Lowercase hex, two digits per byte, so the rendering is fixed-width
-        // per byte and the whole key stays inside the ASCII lowercase, digit,
-        // and `.` alphabet every governed key in this workspace is spelled in.
-        key.push(char::from_digit((byte >> 4).into(), 16).unwrap_or('0'));
-        key.push(char::from_digit((byte & 0x0f).into(), 16).unwrap_or('0'));
-    }
-    key
+    F32NumericalContractKey::new(
+        contract.canonical_arithmetic_nan_bits,
+        contract.input_subnormals,
+        contract.result_subnormals,
+        contract.contraction,
+        contract.reassociation,
+        contract.permutation,
+        contract.signed_zero,
+        contract.reciprocal_transform,
+        contract.approximate_intrinsics,
+        contract.nan_assumptions,
+        contract.infinity_assumptions,
+        contract.materialization_rounding,
+    )
+    .map(|key| key.as_str().to_owned())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -226,7 +225,8 @@ impl StrictF32NumericalContract {
     /// [`Self::is_governed`] can now check a contract against its own key
     /// instead of against a table of four.
     pub(crate) fn keyed(mut self) -> Self {
-        self.key = intern_contract_key(canonical_contract_key(&self));
+        self.key = canonical_contract_key(&self)
+            .map_or(crate::policy::UNKEYED_CONTRACT, intern_contract_key);
         self
     }
 
@@ -399,7 +399,7 @@ impl StrictF32NumericalContract {
     /// Membership in a table of four is deliberately *not* among them: that test
     /// is what made an unnamed corner unreachable.
     pub(crate) fn is_governed(&self) -> bool {
-        self.key == canonical_contract_key(self)
+        canonical_contract_key(self).is_ok_and(|key| self.key == key)
             && coherence(self).is_ok()
             && crate::policy::unrepresentable_dimension(self).is_none()
     }
@@ -3328,12 +3328,6 @@ mod tests {
         let assumptions = [
             ExceptionalValueAssumption::MakeNoAssumption,
             ExceptionalValueAssumption::AssumeAbsent {
-                provenance: ValueDomainProvenance::CompilerProven,
-            },
-            ExceptionalValueAssumption::AssumeAbsent {
-                provenance: ValueDomainProvenance::RuntimeValidated,
-            },
-            ExceptionalValueAssumption::AssumeAbsent {
                 provenance: ValueDomainProvenance::CallerDeclaredUnvalidated,
             },
         ];
@@ -3383,15 +3377,18 @@ mod tests {
 
     /// The size of the statable space, spelled as its factors.
     ///
-    /// Written as the product rather than as `9216` so a widened behaviour space
+    /// Written as the product rather than as `2304` so a widened behaviour space
     /// changes the expected count at the factor that moved, and a reader can
     /// check the arithmetic against the vocabulary instead of trusting a
     /// literal. The factors, in canonical dimension order: three subnormal
     /// resolutions twice, two transform permissions five times, two
-    /// approximation envelopes, and four exceptional-value assumptions twice.
+    /// approximation envelopes, and two caller-statable exceptional-value
+    /// assumptions twice. Compiler-proven and runtime-validated provenance are
+    /// derived evidence, not caller-statements, and therefore are not keys in
+    /// this population.
     /// Materialization rounding contributes no factor because it has exactly one
     /// resolution, so its absence here is the note rather than a `* 1` term.
-    const STATABLE_CONTRACTS: usize = 3 * 3 * 2 * 2 * 2 * 2 * 2 * 2 * 4 * 4;
+    const STATABLE_CONTRACTS: usize = 3 * 3 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2;
 
     /// The canonical key separates every statable contract from every other.
     ///
@@ -3410,6 +3407,15 @@ mod tests {
             "the enumeration does not cover the space it names",
         );
         let mut keys: Vec<&str> = contracts.iter().map(|contract| contract.key).collect();
+        for contract in &contracts {
+            let parsed = F32NumericalContractKey::try_from_str(contract.key)
+                .expect("every statable compiler key is admitted by IR");
+            assert_eq!(
+                canonical_contract_key(contract).unwrap(),
+                parsed.as_str(),
+                "compiler and IR canonical encoders disagree"
+            );
+        }
         keys.sort_unstable();
         keys.dedup();
         assert_eq!(
@@ -3460,7 +3466,7 @@ mod tests {
         ));
         for refused in [
             "",
-            CONTRACT_KEY_DOMAIN,
+            tiler_ir::schedule::F32_NUMERICAL_CONTRACT_KEY_DOMAIN,
             "tiler.contract.f32.v20.0011",
             "tiler.contract.f16.v2.0011",
             "tiler.strict-f32.v1",

@@ -1,0 +1,9 @@
+error[E0639]: cannot create non-exhaustive variant using struct expression
+ --> tests/index-region/fail/forge_exhaustive_refinement_proof.rs:4:19
+  |
+4 |       let _forged = IndexDomainProofEvidence::ExhaustiveFinite {
+  |  ___________________^
+5 | |         points: 1,
+6 | |         derivation: Box::from(&b"caller-authored"[..]),
+7 | |     };
+  | |_____^

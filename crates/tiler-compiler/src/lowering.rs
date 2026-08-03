@@ -31,7 +31,7 @@ use tiler_ir::semantic::{OpKey, SemanticProgram};
 
 use crate::capability::{LoweringResolveError, LoweringSignature, ResolvedLoweringCapability};
 use crate::index_discharge::{
-    IndexDomainDischargeRefusal, IndexDomainDischargeRefusalKind,
+    IndexDomainDischargeError, IndexDomainDischargeRefusal, IndexDomainDischargeRefusalKind,
     discharge_pending_index_refinement,
 };
 use crate::legality::{
@@ -399,13 +399,23 @@ fn refine(
         }
     })? {
         IndexRefinementOutcome::Refined(refinement) => Ok(OccurrenceEvidence::Refined(refinement)),
-        IndexRefinementOutcome::Pending(pending) => discharge_pending_index_refinement(*pending)
-            .map(|refinement| OccurrenceEvidence::Refined(Box::new(refinement)))
-            .map_err(|refusal| LoweringError::SemanticDischarge {
-                member,
-                provider,
-                refusal: Box::new(refusal),
-            }),
+        IndexRefinementOutcome::Pending(pending) => {
+            match discharge_pending_index_refinement(*pending) {
+                Ok(refinement) => Ok(OccurrenceEvidence::Refined(Box::new(refinement))),
+                Err(IndexDomainDischargeError::Domain(refusal)) => {
+                    Err(LoweringError::SemanticDischarge {
+                        member,
+                        provider,
+                        refusal: Box::new(refusal),
+                    })
+                }
+                Err(IndexDomainDischargeError::Refinement(source)) => Err(LoweringError::Refine {
+                    member,
+                    provider,
+                    source: Arc::new(source),
+                }),
+            }
+        }
     }
 }
 

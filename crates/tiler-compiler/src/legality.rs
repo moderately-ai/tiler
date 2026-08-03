@@ -798,26 +798,18 @@ fn assemble_content(
 
 /// Completes one pending refinement from sealed proofs over every exact residual.
 ///
-/// The proof vector is compiler-owned and unforgeable outside this crate. Its
-/// canonical order must match the retained region's canonical obligation order;
-/// violating that invariant is a compiler defect rather than an input refusal.
+/// IR seals the proof vector and revalidates that the completed receipt belongs
+/// to this exact pending occurrence before compiler content is assembled. A
+/// crossed receipt is a typed IR-verifier refusal, never a compiler assertion.
 pub(crate) fn complete_pending_index_refinement(
     pending: PendingIndexRefinement,
     receipt: tiler_ir::index::IndexRefinementReceipt,
-) -> IndexRefinement {
+) -> Result<IndexRefinement, RefinementError> {
+    pending
+        .receipt
+        .verify_completion(&receipt)
+        .map_err(|source| RefinementError::IrVerifier(Arc::new(source)))?;
     let index_domain_proofs = receipt.index_domain_proofs().to_vec();
-    assert_eq!(
-        pending.obligations().len(),
-        index_domain_proofs.len(),
-        "semantic discharge must prove every retained index-domain obligation"
-    );
-    assert!(
-        pending
-            .obligations()
-            .zip(&index_domain_proofs)
-            .all(|(obligation, proof)| obligation == proof.obligation()),
-        "semantic-discharge proofs must preserve canonical obligation order"
-    );
     let subject = pending.subject().clone();
     let region = pending.region().clone();
     let scalar_authority = pending.scalar_authority().clone();
@@ -836,14 +828,14 @@ pub(crate) fn complete_pending_index_refinement(
         &subject,
         &receipt,
     );
-    IndexRefinement {
+    Ok(IndexRefinement {
         content,
         receipt,
         provider,
         revision,
         region,
         identity,
-    }
+    })
 }
 
 /// Canonicalizes operands to first-occurrence local names plus type and shape.
@@ -1345,30 +1337,6 @@ mod tests {
         assert!(matches!(
             error,
             IndexRefinementVerificationError::SemanticRealizationMismatch { .. }
-        ));
-    }
-
-    #[test]
-    fn a_resolution_for_another_numerical_contract_mints_no_receipt() {
-        let changed = constant_subject(1.0_f32.to_bits(), "invented.contract.v1");
-        let governed_scalars = crate::governed::governed_scalars().unwrap();
-        let governed_registry =
-            crate::governed::governed_lowering_capabilities(&governed_scalars).unwrap();
-        let governed = governed_registry
-            .resolve_index_access(
-                &constant_f32_op(),
-                &LoweringSignature::new([], [f32_type()]).unwrap(),
-            )
-            .unwrap();
-        let realizations = crate::governed::governed_realization_laws(&governed_scalars);
-        let resolution = realizations.resolve(&changed).unwrap();
-        let region = emit_region(&governed, &changed, &governed_scalars).unwrap();
-        let error = resolution
-            .verify(governed.authority().refinement(), &region)
-            .unwrap_err();
-        assert!(matches!(
-            error,
-            IndexRefinementVerificationError::NumericalContractNotGoverned
         ));
     }
 

@@ -27,7 +27,7 @@ pub use handles::{
 };
 pub use integer::IndexInteger;
 pub use integer::{IndexIntegerDecodeError, IndexIntegerSign};
-pub use law::{IndexRealizationLaw, IndexRealizationLawError};
+pub use law::IndexRealizationLaw;
 pub use model::{
     AccessMode, BoundsProofView, CanonicalIndexRegionIdentity, DomainDimensionRef, DomainRole,
     IndexExprClass, IndexExprRef, IndexExprView, LinearTermRef, LinearTerms, OutputRef,
@@ -47,10 +47,11 @@ pub use refinement::{
     IndexDomainProofEvidence, IndexDomainProofRefusal, IndexDomainProofRefusalKind,
     IndexRealizationAuthority, IndexRefinementBoundary, IndexRefinementDomainProof,
     IndexRefinementReceipt, IndexRefinementReceiptIdentity, IndexRefinementSignature,
-    IndexRefinementSubject, IndexRefinementVerificationError, IndexRefinementVerificationOutcome,
-    MAX_FINITE_DOMAIN_PROOF_CELLS, MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES,
-    NumericalContractIdentity, OperandBinding, PendingIndexRefinementReceipt,
-    ResolvedIndexRealization, ResultBinding,
+    IndexRefinementSignatureSide, IndexRefinementSubject, IndexRefinementVerificationError,
+    IndexRefinementVerificationOutcome, MAX_FINITE_DOMAIN_PROOF_CELLS,
+    MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES, MAX_INDEX_REFINEMENT_SIGNATURE_VALUES,
+    MAX_REFINEMENT_EMITTED_SCALAR_OPERATIONS, NumericalContractIdentity, OperandBinding,
+    PendingIndexRefinementReceipt, ResolvedIndexRealization, ResultBinding,
 };
 // The symbolic index profile is re-exported flat here rather than published as
 // a `tiler_ir::index::sourced` module, matching the re-export precedent this

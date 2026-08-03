@@ -103,12 +103,19 @@ deliberately rejects semantically equivalent alternate logical index forms;
 physical alternatives remain a later planning concern.
 
 **Proposal — tested public draft, not accepted here:** `tiler-ir::index` adds
-`IndexRealizationLaw`, `IndexRealizationLawError`,
+`IndexRealizationLaw`,
 `FrozenIndexRealizationLawRegistry`, `NumericalContractIdentity`,
 `IndexRefinementBoundary`, `IndexRefinementSignature`,
+`IndexRefinementSignatureSide`, `MAX_INDEX_REFINEMENT_SIGNATURE_VALUES`,
+`MAX_REFINEMENT_EMITTED_SCALAR_OPERATIONS`,
 `IndexRealizationAuthority`, `IndexRefinementSubject`,
 `ResolvedIndexRealization`, ordered `OperandBinding`/`ResultBinding`, pending and
-completed refinement receipts, and typed verification errors/outcomes.
+completed `PendingIndexRefinementReceipt`, `IndexRefinementReceipt`,
+`IndexRefinementReceiptIdentity`, and `IndexRefinementVerificationOutcome`, plus
+typed verification errors. `IndexRealizationLawError` is deliberately
+crate-private in the corrected draft: it describes failure inside the sealed
+law interpreter and is projected through the public verification error rather
+than becoming a second public refusal vocabulary.
 `SemanticRegistryRegistrar::register_index_realization_law` is the only public
 law-registration path and requires the operation in that same transaction,
 nonzero revision, unique ownership, and bounded count/bytes. Residual proof
@@ -159,8 +166,15 @@ to Tom; the ticket does not accept it.
 The semantic-registry public inventory also adds
 `SemanticRegistryResource::{IndexRealizationLaws,
 IndexRealizationLawBytes}` and the corresponding `RegistryError` law
-registration failures. `LoweringCapabilityAuthority::refinement()` is an
+registration failures: exactly `IndexRealizationLawWithoutOperation`,
+`DuplicateIndexRealizationLaw`, and `ZeroIndexRealizationLawRevision`.
+`LoweringCapabilityAuthority::refinement()` is an
 addition distinct from the removed compiler-owned occurrence/refinement types.
+The shared schedule vocabulary adds `F32NumericalContractKey`,
+`NumericalContractKeyError`, and `F32_NUMERICAL_CONTRACT_KEY_DOMAIN`; the
+compiler removes `RefinementError::{AliasedOperandInconsistent,
+OccurrenceFacts}` and `LoweringRegistryError::UnboundOperand`, and adds
+`RefinementError::IrVerifier`.
 Only the `IndexDomainProofEvidence::ExhaustiveFinite` variant is
 `#[non_exhaustive]`; the evidence, claim, outcome, and refusal-kind enums remain
 exhaustive as stated above.
@@ -252,21 +266,68 @@ cannot be constructed incoherently through their checked constructors.
 The evaluator now encodes an exact counterexample by its region-bound point
 ordinal, returns symbolic tensor-axis extents and unrepresentable work counts as
 `UnsupportedFragment`, proves empty domains before multiplication, and governs
-both cells and cumulative integer-byte work. Cell cost is exactly points times
-plan nodes plus twice the domain rank plus one predicate; integer cost uses the
+both cells and cumulative integer-byte work across the whole completion call.
+Obligations sharing an exact ordered static domain are evaluated together over
+one union DAG, with access domains and predicate extents cached once. Cell cost
+includes semantic planning and, per point, coordinate set/advance, DAG-node and
+edge traversal, memo clearing, and every predicate; integer cost uses the
 documented conservative byte-width formula and is multiplied by exact point
-count. Checked arithmetic prevents a saturated value from being reported as an
-exact requirement. Regression tests cover wide-rank cell refusal, a 4,097-byte
-false integer value with bounded disproof evidence, static-domain/symbolic-axis
-refusal, zero-domain point counting, and both budgets' must-stop cases.
+count. A group reserves both resources atomically, and exhaustion is propagated
+in canonical obligation order with the cumulative requirement and the original
+whole-call limit. The hard-structure-bounded assessment vector is mandatory
+output overhead rather than caller-budgeted semantic work. This grouping and
+cost model do not change the mathematical v1 proof identity. Checked arithmetic
+prevents a saturated value from being reported as an exact requirement.
+Regression tests cover wide-rank cell refusal, a real region whose evaluator
+reaches a 4,097-byte exact intermediate while returning bounded disproof
+evidence, static-domain/symbolic-axis refusal, zero-domain point counting, and
+both budgets' must-stop cases.
 
 **Measurement — second fixed point:** combined `tiler-ir` and
 `tiler-compiler` nextest passed 1,271/1,271 with one configured skip. Compiler
 doctests passed 2 ordinary and 7 compile-fail cases; IR doctests passed 8
 ordinary and 1 compile-fail case with one ignored example. Affected-crate
 Clippy with warnings denied, formatting, `git diff --check`, and `tkt lint`
-passed. Guard over the 24-file population from the true claim base reported no
+passed. Guard over the 25-file population from the true claim base reported no
 under-declared scope and warned about live declared-area collisions.
+
+**Third fixed-point correction — 2026-08-03:** fixed-point review found four
+remaining fail-closed gaps. Numerical-contract identities now use one exact
+IR-owned v2 codec rather than compiler prefix recognition; all 2,304 coherent
+caller-statable vectors round-trip injectively through compiler and IR, while a
+12-case malformed matrix and ineligible derived provenance refuse. Signature
+iterators stop after the first over-limit value, and 4,097 raw scalar-operation
+declarations refuse before deduplication. Realization-law sidecar accounting now
+uses the exact shared row encoder—including provider identity and the count
+framing—and freeze asserts the tracked total equals the canonical sidecar.
+
+Completion now owns one cumulative ledger and groups obligations by exact
+ordered static domain. The dense shared-DAG fixture charges exactly 45,275,176
+integer bytes together versus 90,547,782 for two separate walks; the exact
+grouped charge succeeds and charge minus one propagates the same cumulative
+requirement and original limit in canonical order. A separate two-domain fixture
+proves the first group remains proved when the second atomically exhausts the
+whole-call budget. The real counterexample fixture evaluates a 4,097-byte exact
+intermediate while retaining only the bounded canonical point ordinal.
+
+`PendingIndexRefinementReceipt::verify_completion` now revalidates occurrence,
+region, scalar authority, interfaces, canonical proof order, and the recomputed
+receipt identity before compiler assembly. Crossing a completed receipt between
+two distinct real semantic occurrences returns typed
+`CompletionReceiptMismatch`; compiler completion maps that refusal through
+`RefinementError::IrVerifier` without an assertion or panic. The sealed proof
+constructors remain inaccessible to downstream crates, pinned by the new
+compile-fail test.
+
+**Measurement — third fixed point:** combined `tiler-ir` and `tiler-compiler`
+nextest passed 1,278/1,278 with one configured skip. Affected-crate Clippy with
+warnings denied and formatting passed. Compiler doctests passed 2 ordinary and
+7 compile-fail cases; IR doctests passed 8 ordinary and 1 compile-fail case with
+one ignored example. `git diff --check` and `tkt lint` passed. No identity-domain
+version or pinned identity moved: the canonical bytes of every previously valid
+numerical key and realization-law sidecar are unchanged; these corrections
+reject malformed spellings, account already-encoded provider bytes, and change
+only proof execution and completion validation.
 
 ## Graph maintenance
 

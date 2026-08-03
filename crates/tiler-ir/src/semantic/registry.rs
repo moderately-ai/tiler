@@ -594,7 +594,6 @@ pub trait SemanticRegistryProvider: Send + Sync + 'static {
 }
 
 /// Mutable, single-use constructor for a frozen semantic registry.
-#[derive(Default)]
 pub struct SemanticRegistryBuilder {
     definitions: BTreeMap<ValueTypeDefinitionKey, RegisteredValueType>,
     operations: BTreeMap<OpKey, RegisteredOperation>,
@@ -602,6 +601,20 @@ pub struct SemanticRegistryBuilder {
     index_realization_laws: BTreeMap<OpKey, RegisteredIndexRealizationLaw>,
     canonical_bytes: usize,
     index_realization_law_bytes: usize,
+}
+
+impl Default for SemanticRegistryBuilder {
+    fn default() -> Self {
+        Self {
+            definitions: BTreeMap::new(),
+            operations: BTreeMap::new(),
+            marker_bindings: HashMap::new(),
+            index_realization_laws: BTreeMap::new(),
+            canonical_bytes: 0,
+            // The exact sidecar begins with its canonical row-count framing.
+            index_realization_law_bytes: 8,
+        }
+    }
 }
 
 impl fmt::Debug for SemanticRegistryBuilder {
@@ -854,10 +867,16 @@ impl SemanticRegistryBuilder {
     /// authority; or when root ingestion or the unique authority closure
     /// exceeds its governed resource bound. Finite definition cycles are
     /// admitted and traversed without recursion.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if internal incremental realization-law byte accounting
+    /// disagrees with the exact canonical sidecar it freezes.
     pub fn freeze(self) -> Result<FrozenSemanticRegistry, RegistryError> {
         if self.definitions.is_empty() && self.operations.is_empty() {
             return Err(RegistryError::EmptyRegistry);
         }
+        let tracked_law_bytes = self.index_realization_law_bytes;
         let registry = FrozenSemanticRegistry(Arc::new(FrozenRegistryData {
             identity: OnceLock::new(),
             definitions: self.definitions,
@@ -865,6 +884,12 @@ impl SemanticRegistryBuilder {
             marker_bindings: self.marker_bindings,
             index_realization_laws: self.index_realization_laws,
         }));
+        let encoded_law_bytes = registry.encode_index_realization_law_sidecar().len();
+        assert_eq!(
+            tracked_law_bytes, encoded_law_bytes,
+            "realization-law accounting must equal its frozen canonical sidecar"
+        );
+        assert!(encoded_law_bytes <= MAX_INDEX_REALIZATION_LAW_BYTES);
         let mut marker_roots: Vec<_> = registry
             .0
             .marker_bindings
@@ -1089,9 +1114,7 @@ impl SemanticRegistryRegistrar<'_> {
             MAX_INDEX_REALIZATION_LAWS,
         )?;
         let mut canonical = Vec::new();
-        operation.encode(&mut canonical);
-        canonical.extend_from_slice(&revision.to_be_bytes());
-        law.encode(&mut canonical);
+        encode_index_realization_law_row(&mut canonical, &operation, self.provider, revision, &law);
         let actual = self
             .batch
             .index_realization_law_bytes
@@ -1220,6 +1243,21 @@ impl FrozenSemanticRegistry {
         &self,
     ) -> impl ExactSizeIterator<Item = (&OpKey, &RegisteredIndexRealizationLaw)> {
         self.0.index_realization_laws.iter()
+    }
+
+    pub(crate) fn encode_index_realization_law_sidecar(&self) -> Vec<u8> {
+        let mut output = Vec::new();
+        push_len(&mut output, self.index_realization_laws().len());
+        for (operation, registered) in self.index_realization_laws() {
+            encode_index_realization_law_row(
+                &mut output,
+                operation,
+                &registered.provider,
+                registered.revision,
+                &registered.law,
+            );
+        }
+        output
     }
 
     /// Projects the complete semantic authority for one exact resolved value type.
@@ -1775,6 +1813,19 @@ impl FrozenSemanticRegistry {
         }
         SemanticAdmissionProvenanceIdentity(bytes)
     }
+}
+
+fn encode_index_realization_law_row(
+    output: &mut Vec<u8>,
+    operation: &OpKey,
+    provider: &ProviderIdentity,
+    revision: u32,
+    law: &IndexRealizationLaw,
+) {
+    operation.encode(output);
+    provider.encode(output);
+    output.extend_from_slice(&revision.to_be_bytes());
+    law.encode(output);
 }
 
 fn operation_rejection(
@@ -2803,12 +2854,13 @@ mod tests {
     }
 
     struct LawProvider {
+        name: &'static str,
         law: IndexRealizationLaw,
     }
 
     impl SemanticRegistryProvider for LawProvider {
         fn identity(&self) -> ProviderIdentity {
-            ProviderIdentity::new("test", "law-owned-operation", 1).unwrap()
+            ProviderIdentity::new("test", self.name, 1).unwrap()
         }
 
         fn register(
@@ -2852,7 +2904,12 @@ mod tests {
     fn realization_law_is_transaction_bound_but_has_separate_identity() {
         let build = |law| {
             let mut builder = SemanticRegistryBuilder::new();
-            builder.register_provider(&LawProvider { law }).unwrap();
+            builder
+                .register_provider(&LawProvider {
+                    name: "law-owned-operation",
+                    law,
+                })
+                .unwrap();
             builder.freeze().unwrap()
         };
         let multiply = build(IndexRealizationLaw::multiply_f32());
@@ -2870,6 +2927,27 @@ mod tests {
             crate::index::FrozenIndexRealizationLawRegistry::from_semantic(add, add_scalars)
                 .unwrap();
         assert_ne!(multiply_laws.identity(), add_laws.identity());
+    }
+
+    #[test]
+    fn realization_law_sidecar_accounts_for_provider_identity() {
+        let build = |name| {
+            let mut builder = SemanticRegistryBuilder::new();
+            builder
+                .register_provider(&LawProvider {
+                    name,
+                    law: IndexRealizationLaw::multiply_f32(),
+                })
+                .unwrap();
+            builder.freeze().unwrap()
+        };
+        let first = build("law-provider-a");
+        let second = build("law-provider-b");
+        let first_sidecar = first.encode_index_realization_law_sidecar();
+        let second_sidecar = second.encode_index_realization_law_sidecar();
+        assert_ne!(first_sidecar, second_sidecar);
+        assert_eq!(first_sidecar.len(), second_sidecar.len());
+        assert!(first_sidecar.len() <= MAX_INDEX_REALIZATION_LAW_BYTES);
     }
 
     #[test]

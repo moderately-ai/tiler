@@ -24,7 +24,9 @@ use tiler_ir::index::{
 };
 use tiler_ir::semantic::ProviderIdentity;
 
-use crate::legality::{IndexRefinement, PendingIndexRefinement, complete_pending_index_refinement};
+use crate::legality::{
+    IndexRefinement, PendingIndexRefinement, RefinementError, complete_pending_index_refinement,
+};
 
 const MAX_DISCHARGE_CELLS: u64 = tiler_ir::index::MAX_FINITE_DOMAIN_PROOF_CELLS;
 const MAX_DISCHARGE_INTEGER_BYTES: u64 = tiler_ir::index::MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES;
@@ -192,10 +194,15 @@ impl fmt::Display for IndexDomainDischargeRefusal {
     }
 }
 
+pub(crate) enum IndexDomainDischargeError {
+    Domain(IndexDomainDischargeRefusal),
+    Refinement(RefinementError),
+}
+
 /// Runs the production discharge rule before executable planning.
 pub(crate) fn discharge_pending_index_refinement(
     pending: PendingIndexRefinement,
-) -> Result<IndexRefinement, IndexDomainDischargeRefusal> {
+) -> Result<IndexRefinement, IndexDomainDischargeError> {
     let budget = tiler_ir::index::IndexDomainProofBudget::try_new(
         MAX_DISCHARGE_CELLS,
         MAX_DISCHARGE_INTEGER_BYTES,
@@ -212,15 +219,17 @@ pub(crate) fn discharge_pending_index_refinement(
                 }
                 IrIndexDomainProofRefusalKind::Unknown => IndexDomainDischargeRefusalKind::Unknown,
             };
-            return Err(IndexDomainDischargeRefusal {
-                pending: Box::new(pending),
-                assessments: refusal
-                    .assessments()
-                    .iter()
-                    .map(convert_ir_assessment)
-                    .collect(),
-                kind,
-            });
+            return Err(IndexDomainDischargeError::Domain(
+                IndexDomainDischargeRefusal {
+                    pending: Box::new(pending),
+                    assessments: refusal
+                        .assessments()
+                        .iter()
+                        .map(convert_ir_assessment)
+                        .collect(),
+                    kind,
+                },
+            ));
         }
     };
     debug_assert!(
@@ -228,7 +237,8 @@ pub(crate) fn discharge_pending_index_refinement(
             .iter()
             .all(|assessment| matches!(assessment.claim(), IrIndexDomainProofClaim::Proved(_)))
     );
-    Ok(complete_pending_index_refinement(pending, ir_receipt))
+    complete_pending_index_refinement(pending, ir_receipt)
+        .map_err(IndexDomainDischargeError::Refinement)
 }
 
 fn convert_ir_assessment(

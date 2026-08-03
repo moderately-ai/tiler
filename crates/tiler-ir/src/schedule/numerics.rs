@@ -524,9 +524,276 @@ pub enum MaterializationRounding {
     NearestTiesToEven,
 }
 
+/// Versioned domain of the canonical coherent `f32` numerical-contract key.
+pub const F32_NUMERICAL_CONTRACT_KEY_DOMAIN: &str = "tiler.contract.f32.v2";
+
+/// A validated canonical key for one coherent `f32` numerical contract.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct F32NumericalContractKey(Box<str>);
+
+/// Why a numerical-contract key is not a canonical coherent v2 `f32` key.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum NumericalContractKeyError {
+    /// The domain, separator, lowercase-hex rendering, or exact vector grammar is invalid.
+    InvalidCanonicalKey,
+    /// The vector names an arithmetic type or canonical NaN payload other than governed `f32`.
+    InvalidArithmetic,
+    /// The vector contains an assumption provenance that a caller-stated contract cannot use.
+    IncoherentAssumption,
+}
+
+impl F32NumericalContractKey {
+    /// Mints the canonical key from the complete coherent contract vector.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed refusal for noncanonical arithmetic or an assumption
+    /// whose provenance cannot be stated by a caller.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        canonical_arithmetic_nan_bits: u32,
+        input_subnormals: SubnormalMode,
+        result_subnormals: SubnormalMode,
+        contraction: NumericalPermission,
+        reassociation: NumericalPermission,
+        permutation: NumericalPermission,
+        signed_zero: NumericalPermission,
+        reciprocal_transform: NumericalPermission,
+        approximate_intrinsics: ApproximationEnvelope,
+        nan_assumptions: ExceptionalValueAssumption,
+        infinity_assumptions: ExceptionalValueAssumption,
+        materialization_rounding: MaterializationRounding,
+    ) -> Result<Self, NumericalContractKeyError> {
+        if canonical_arithmetic_nan_bits != 0x7fc0_0000 {
+            return Err(NumericalContractKeyError::InvalidArithmetic);
+        }
+        let mut bytes = vec![ArithmeticType::F32.tag()];
+        bytes.extend_from_slice(&canonical_arithmetic_nan_bits.to_be_bytes());
+        push_dimension(&mut bytes, 0x01, |bytes| {
+            encode_subnormal(bytes, input_subnormals);
+            Ok(())
+        })?;
+        push_dimension(&mut bytes, 0x02, |bytes| {
+            encode_subnormal(bytes, result_subnormals);
+            Ok(())
+        })?;
+        for (tag, permission) in [
+            (0x03, contraction),
+            (0x04, reassociation),
+            (0x05, permutation),
+            (0x06, signed_zero),
+            (0x07, reciprocal_transform),
+        ] {
+            push_dimension(&mut bytes, tag, |bytes| {
+                encode_permission(bytes, permission);
+                Ok(())
+            })?;
+        }
+        push_dimension(&mut bytes, 0x08, |bytes| {
+            bytes.extend_from_slice(&[0x03, approximate_intrinsics.tag()]);
+            Ok(())
+        })?;
+        push_dimension(&mut bytes, 0x09, |bytes| {
+            encode_assumption(bytes, nan_assumptions)
+        })?;
+        push_dimension(&mut bytes, 0x0a, |bytes| {
+            encode_assumption(bytes, infinity_assumptions)
+        })?;
+        push_dimension(&mut bytes, 0x0b, |bytes| match materialization_rounding {
+            MaterializationRounding::NearestTiesToEven => {
+                bytes.extend_from_slice(&[0x05, 0x01]);
+                Ok(())
+            }
+        })?;
+        let mut key =
+            String::with_capacity(F32_NUMERICAL_CONTRACT_KEY_DOMAIN.len() + 1 + bytes.len() * 2);
+        key.push_str(F32_NUMERICAL_CONTRACT_KEY_DOMAIN);
+        key.push('.');
+        for byte in bytes {
+            use core::fmt::Write as _;
+            write!(key, "{byte:02x}").expect("writing to a String cannot fail");
+        }
+        Ok(Self(key.into_boxed_str()))
+    }
+
+    /// Validates and retains one already-rendered canonical key.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed refusal unless `key` is the exact lowercase canonical
+    /// spelling of one coherent caller-statable `f32` contract.
+    pub fn try_from_str(key: &str) -> Result<Self, NumericalContractKeyError> {
+        let Some(hex) = key.strip_prefix(F32_NUMERICAL_CONTRACT_KEY_DOMAIN) else {
+            return Err(NumericalContractKeyError::InvalidCanonicalKey);
+        };
+        let Some(hex) = hex.strip_prefix('.') else {
+            return Err(NumericalContractKeyError::InvalidCanonicalKey);
+        };
+        if hex.is_empty()
+            || !hex.len().is_multiple_of(2)
+            || !hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(NumericalContractKeyError::InvalidCanonicalKey);
+        }
+        let bytes = hex
+            .as_bytes()
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| decode_hex_pair(pair[0], pair[1]))
+            .collect::<Option<Vec<_>>>()
+            .ok_or(NumericalContractKeyError::InvalidCanonicalKey)?;
+        validate_contract_preimage(&bytes)?;
+        Ok(Self(key.into()))
+    }
+
+    /// Returns the canonical key spelling.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Returns the arithmetic type established by the validated grammar.
+    #[must_use]
+    pub const fn arithmetic(&self) -> ArithmeticType {
+        ArithmeticType::F32
+    }
+}
+
+fn push_dimension(
+    bytes: &mut Vec<u8>,
+    tag: u8,
+    encode: impl FnOnce(&mut Vec<u8>) -> Result<(), NumericalContractKeyError>,
+) -> Result<(), NumericalContractKeyError> {
+    bytes.push(tag);
+    encode(bytes)
+}
+
+fn encode_subnormal(bytes: &mut Vec<u8>, mode: SubnormalMode) {
+    bytes.extend_from_slice(&[
+        0x01,
+        match mode {
+            SubnormalMode::Preserve => 0x01,
+            SubnormalMode::FlushToZero {
+                zero_sign: FlushedZeroSign::PreservesSign,
+            } => 0x02,
+            SubnormalMode::FlushToZero {
+                zero_sign: FlushedZeroSign::AlwaysPositive,
+            } => 0x03,
+        },
+    ]);
+}
+
+fn encode_permission(bytes: &mut Vec<u8>, permission: NumericalPermission) {
+    bytes.extend_from_slice(&[
+        0x02,
+        match permission {
+            NumericalPermission::Forbidden => 0x01,
+            NumericalPermission::Permitted => 0x02,
+        },
+    ]);
+}
+
+fn encode_assumption(
+    bytes: &mut Vec<u8>,
+    assumption: ExceptionalValueAssumption,
+) -> Result<(), NumericalContractKeyError> {
+    bytes.push(0x04);
+    match assumption {
+        ExceptionalValueAssumption::MakeNoAssumption => bytes.push(0x01),
+        ExceptionalValueAssumption::AssumeAbsent {
+            provenance: ValueDomainProvenance::CallerDeclaredUnvalidated,
+        } => bytes.extend_from_slice(&[0x02, 0x03]),
+        ExceptionalValueAssumption::AssumeAbsent { .. } => {
+            return Err(NumericalContractKeyError::IncoherentAssumption);
+        }
+    }
+    Ok(())
+}
+
+fn decode_hex_pair(high: u8, low: u8) -> Option<u8> {
+    fn nibble(byte: u8) -> Option<u8> {
+        match byte {
+            b'0'..=b'9' => Some(byte - b'0'),
+            b'a'..=b'f' => Some(byte - b'a' + 10),
+            _ => None,
+        }
+    }
+    Some(nibble(high)? << 4 | nibble(low)?)
+}
+
+fn validate_contract_preimage(bytes: &[u8]) -> Result<(), NumericalContractKeyError> {
+    if bytes.first() != Some(&ArithmeticType::F32.tag())
+        || bytes.get(1..5) != Some(&0x7fc0_0000_u32.to_be_bytes())
+    {
+        return Err(NumericalContractKeyError::InvalidArithmetic);
+    }
+    let mut cursor = 5;
+    for (tag, space, values) in [
+        (0x01, 0x01, &[0x01, 0x02, 0x03][..]),
+        (0x02, 0x01, &[0x01, 0x02, 0x03][..]),
+        (0x03, 0x02, &[0x01, 0x02][..]),
+        (0x04, 0x02, &[0x01, 0x02][..]),
+        (0x05, 0x02, &[0x01, 0x02][..]),
+        (0x06, 0x02, &[0x01, 0x02][..]),
+        (0x07, 0x02, &[0x01, 0x02][..]),
+        (0x08, 0x03, &[0x01, 0x02][..]),
+    ] {
+        if bytes
+            .get(cursor..cursor + 3)
+            .is_none_or(|row| row[0] != tag || row[1] != space || !values.contains(&row[2]))
+        {
+            return Err(NumericalContractKeyError::InvalidCanonicalKey);
+        }
+        cursor += 3;
+    }
+    for tag in [0x09, 0x0a] {
+        if bytes
+            .get(cursor..cursor + 3)
+            .is_none_or(|row| row[0] != tag || row[1] != 0x04 || !matches!(row[2], 0x01 | 0x02))
+        {
+            return Err(NumericalContractKeyError::InvalidCanonicalKey);
+        }
+        if bytes[cursor + 2] == 0x02 {
+            if bytes.get(cursor + 3) != Some(&0x03) {
+                return Err(NumericalContractKeyError::IncoherentAssumption);
+            }
+            cursor += 1;
+        }
+        cursor += 3;
+    }
+    if bytes.get(cursor..) != Some(&[0x0b, 0x05, 0x01][..]) {
+        return Err(NumericalContractKeyError::InvalidCanonicalKey);
+    }
+    Ok(())
+}
+
+impl core::fmt::Display for NumericalContractKeyError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str(match self {
+            Self::InvalidCanonicalKey => "numerical-contract key is not canonical v2",
+            Self::InvalidArithmetic => {
+                "numerical-contract key does not name governed f32 arithmetic"
+            }
+            Self::IncoherentAssumption => {
+                "caller-stated contract uses ineligible assumption provenance"
+            }
+        })
+    }
+}
+
+impl std::error::Error for NumericalContractKeyError {}
+
 #[cfg(test)]
 mod tests {
-    use super::ArithmeticType;
+    use super::{
+        ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, F32NumericalContractKey,
+        FlushedZeroSign, MaterializationRounding, NumericalContractKeyError, NumericalPermission,
+        SubnormalMode, ValueDomainProvenance,
+    };
     use crate::semantic::{F32, FrozenSemanticRegistry, TypeKey, builtin_scalar_value_types};
 
     /// The canonical spelling is one identity with `TypeKey`, not a second.
@@ -596,5 +863,83 @@ mod tests {
         tags.sort_unstable();
         tags.dedup();
         assert_eq!(tags.len(), ArithmeticType::ALL.len());
+    }
+
+    fn strict_f32_key() -> F32NumericalContractKey {
+        F32NumericalContractKey::new(
+            0x7fc0_0000,
+            SubnormalMode::Preserve,
+            SubnormalMode::Preserve,
+            NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            NumericalPermission::Forbidden,
+            ApproximationEnvelope::Forbidden,
+            ExceptionalValueAssumption::MakeNoAssumption,
+            ExceptionalValueAssumption::AssumeAbsent {
+                provenance: ValueDomainProvenance::CallerDeclaredUnvalidated,
+            },
+            MaterializationRounding::NearestTiesToEven,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn f32_contract_key_round_trips_the_exact_canonical_spelling() {
+        let key = strict_f32_key();
+        assert_eq!(F32NumericalContractKey::try_from_str(key.as_str()), Ok(key));
+    }
+
+    #[test]
+    fn f32_contract_key_parser_refuses_malformed_and_noncanonical_rows() {
+        let key = strict_f32_key();
+        let mut malformed = vec![
+            String::new(),
+            super::F32_NUMERICAL_CONTRACT_KEY_DOMAIN.to_owned(),
+            format!("{}.", super::F32_NUMERICAL_CONTRACT_KEY_DOMAIN),
+            key.as_str().to_ascii_uppercase(),
+            format!("{}0", key.as_str()),
+            format!("{}00", key.as_str()),
+        ];
+        let prefix = super::F32_NUMERICAL_CONTRACT_KEY_DOMAIN.len() + 1;
+        for byte_offset in [0, 1, 5, 6, 7, 35] {
+            let mut changed = key.as_str().as_bytes().to_vec();
+            let hex = prefix + byte_offset * 2;
+            changed[hex] = if changed[hex] == b'f' { b'e' } else { b'f' };
+            malformed.push(String::from_utf8(changed).unwrap());
+        }
+        assert_eq!(malformed.len(), 12, "the malformed matrix changed");
+        for candidate in malformed {
+            assert!(
+                F32NumericalContractKey::try_from_str(&candidate).is_err(),
+                "malformed key was admitted: {candidate}"
+            );
+        }
+    }
+
+    #[test]
+    fn f32_contract_key_rejects_ineligible_assumption_provenance() {
+        assert_eq!(
+            F32NumericalContractKey::new(
+                0x7fc0_0000,
+                SubnormalMode::FlushToZero {
+                    zero_sign: FlushedZeroSign::PreservesSign,
+                },
+                SubnormalMode::Preserve,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                NumericalPermission::Forbidden,
+                ApproximationEnvelope::Forbidden,
+                ExceptionalValueAssumption::AssumeAbsent {
+                    provenance: ValueDomainProvenance::CompilerProven,
+                },
+                ExceptionalValueAssumption::MakeNoAssumption,
+                MaterializationRounding::NearestTiesToEven,
+            ),
+            Err(NumericalContractKeyError::IncoherentAssumption)
+        );
     }
 }

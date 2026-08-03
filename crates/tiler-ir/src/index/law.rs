@@ -74,11 +74,10 @@ pub enum IndexRealizationLaw {
 }
 
 impl IndexRealizationLaw {
-    pub(crate) fn accepts_numerical_contract(key: &str) -> bool {
-        const F32_CONTRACT_DOMAIN: &str = "tiler.contract.f32.v2";
-        key.len() > F32_CONTRACT_DOMAIN.len()
-            && key.starts_with(F32_CONTRACT_DOMAIN)
-            && key.as_bytes()[F32_CONTRACT_DOMAIN.len()] == b'.'
+    pub(crate) const fn accepts_numerical_contract(
+        contract: &super::NumericalContractIdentity,
+    ) -> bool {
+        matches!(contract.arithmetic(), crate::schedule::ArithmeticType::F32)
     }
 
     /// Standard constant-f32 law.
@@ -223,7 +222,7 @@ fn encode_scalar(output: &mut Vec<u8>, scalar: &ScalarOpKey) {
 /// Failure to interpret a registered logical realization law.
 #[derive(Debug)]
 #[non_exhaustive]
-pub enum IndexRealizationLawError {
+pub(crate) enum IndexRealizationLawError {
     /// The controlled canonical builder rejected an emission.
     Emit(IndexBuildError),
     /// A sourced extent was unavailable in this static law profile.
