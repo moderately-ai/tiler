@@ -55,7 +55,7 @@ Use these terms consistently in documentation, diagnostics, and code.
 | Guard | Checked predicate with provenance: semantic input, storage, schedule, target, or dispatch safety. |
 | Implementation frontier | Bounded non-dominated region implementations returned for one candidate and target profile. |
 | Index-domain predicate | Constraint restricting the mathematical points of an index region; it is part of map truth rather than a physical fallback guard. |
-| Index-region refinement | Compiler-owned checked evidence that one emitted `IndexRegion` realizes one semantic occurrence: agreeing ordered value interface, reached scalar authority contained in what the capability declared it may emit, agreeing semantic type authority, and complete unique-write ownership. A successful structural build is not this evidence. |
+| Index-region refinement | IR-owned checked evidence that one emitted `IndexRegion` realizes one program-derived semantic occurrence under its exact operation-specific realization law and numerical contract: agreeing ordered value interface, reached scalar authority contained in what the admitted lowering declared it may emit, agreeing semantic type authority, complete unique-write ownership, and sealed residual-domain proof where required. The compiler owns provider selection and semantic-discharge policy and consumes the resulting receipt; a successful structural build is not this evidence. |
 | Iteration domain | Cartesian coordinate space over which outputs are computed. |
 | Kernel ABI | Ordered buffer and scalar parameters with types, roles, access modes, and binding locations. |
 | Launch geometry | Grid and threadgroup dimensions derived from a schedule. |

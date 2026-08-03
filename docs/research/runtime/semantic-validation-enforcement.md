@@ -108,9 +108,11 @@ every device-produced witness.
 
 ## Enforcement mechanisms
 
-**Proof-elided.** Only compiler-owned proof evidence discharges the obligation.
-A caller assertion is not a proof under strict semantics. Runtime validation,
-error storage, and synchronization cost are zero.
+**Proof-elided.** Only proof evidence sealed by the IR-owned verifier discharges
+the obligation. The compiler owns the semantic-discharge policy that invokes
+that verifier and consumes its receipt; a caller assertion is not a proof under
+strict semantics. Runtime validation, error storage, and synchronization cost
+are zero.
 
 **Host scan.** The host may validate only when it can observe the authoritative
 logical value after all producer/coherence dependencies. It walks canonical

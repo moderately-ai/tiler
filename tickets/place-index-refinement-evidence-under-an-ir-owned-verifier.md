@@ -14,6 +14,9 @@ scopes:
   - contracts/optimizer
   - contracts/numerics
   - research/extensions
+  - contracts/navigation
+  - research/runtime
+  - implementation/workspace
 shared_scopes:
   - project/tickets
 claimed_from: todo
@@ -70,11 +73,11 @@ A separate shared proof crate is not recommended: it adds a crate and another de
 - The exact public verifier/type/error boundary returns to Tom as a tested draft; this ticket does not self-accept it.
 - Targeted `tiler-ir` and `tiler-compiler` nextest, doctests, Clippy, formatting, ticket lint, diff checks, and scope guard pass.
 
-## Scope expansion authorized by Tom — 2026-08-03
+## Ticket-scope declarations — 2026-08-03
 
-Tom explicitly approved adding `implementation/metal-aot`,
-`contracts/optimizer`, `contracts/numerics`, and `research/extensions` in the T3
-Code orchestration conversation. The correction changes the public installation
+`implementation/metal-aot`, `contracts/optimizer`, `contracts/numerics`, and
+`research/extensions` declare the areas required by this ticket's correction.
+The correction changes the public installation
 boundary back to the exact `(lowering, scalars)` pair: request verification
 derives realization-law authority from the exact program semantic registry and
 requires full lowering/scalar/program semantic and law-sidecar coherence, so a
@@ -82,6 +85,15 @@ lowering installer cannot supply or replace it. That replacement updates the
 out-of-crate install conformance in `prototypes/serial-sum-compile/src/main.rs`
 and the contract/research sentences that described the rejected triple. No
 legacy overload is retained.
+
+`contracts/navigation` and `research/runtime` declare the three durable
+ownership sentences made stale by this ticket's IR-owned verification and proof
+boundary. `implementation/workspace` declares the canonical process correction
+in `AGENTS.md` prompted by this ticket's orchestration. Per Tom's clarification
+in the T3 Code conversation on 2026-08-03, adding ticket scopes for work already
+required by the assigned outcome is autonomous bookkeeping and needs no
+authorization. Scope metadata does not authorize a new product or architectural
+outcome; such a change still returns to Tom at the applicable decision boundary.
 
 ## Corrected authority shape and public draft inventory
 
@@ -436,6 +448,13 @@ compile-fail case with one ignored example. Affected-crate Clippy with warnings
 denied passed. Deliberately replacing the request qualifier pin with zero made
 the exact deterministic-trace test report `3a2bda87fc26f899` from this tree;
 restoring that recomputed value made the test pass.
+
+**Ownership truth sweep — 2026-08-03:** the glossary and two runtime research
+records now distinguish the compiler-owned semantic-discharge policy from the
+IR-owned verifier and sealed proof evidence it invokes and consumes. No runtime
+mechanism or implementation-status claim changes. The final branch population
+is 35 files from the true claim base; scope guard, `tkt lint`, and
+`git diff --check` are rerun on the documentation commit before acceptance.
 
 ## Graph maintenance
 
