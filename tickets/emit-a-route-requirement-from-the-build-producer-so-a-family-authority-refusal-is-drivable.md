@@ -1,10 +1,10 @@
 ---
 id: emit-a-route-requirement-from-the-build-producer-so-a-family-authority-refusal-is-drivable
 title: Emit a route requirement from the build producer so a family-authority refusal is drivable
-status: in-progress
+status: deferred
 priority: p2
 dependencies: []
-related: [realize-parallel-reduction-strategies-on-metal, declare-a-required-gpu-family-in-the-artifact, select-executable-variants-across-registered-backend-families, design-the-adapter-owned-route-requirement-answer-channel]
+related: [realize-parallel-reduction-strategies-on-metal, declare-a-required-gpu-family-in-the-artifact, select-executable-variants-across-registered-backend-families, design-the-adapter-owned-route-requirement-answer-channel, accept-the-public-route-requirement-answer-boundary, admit-the-bf16-type-and-carrier-into-every-total-map, lower-bf16-to-metal, carry-and-check-the-derived-index-arithmetic-requirement-before-routing-commit]
 scopes: [implementation/build, implementation/artifact, contracts/artifacts]
 shared_scopes: [project/tickets]
 tags: [implementation, artifacts, build, route-requirements, evidence-gap]
@@ -58,3 +58,17 @@ A produced artifact carries a derived route requirement, a family-authority refu
 ## Graph maintenance
 
 Filed 2026-08-02 at integration of `realize-parallel-reduction-strategies-on-metal`, which found the absence and recorded it rather than absorbing it.
+
+## Dispatch outcome and two review corrections — 2026-08-03
+
+**This ticket is deferred on its original trigger: the first emitted capability requirement that is additional to, and not derivable from, the verified program. No such requirement is reachable today.** The first review correctly found a current family-scoped live-device obligation that the initial audit missed; the second review correctly showed why it is not this ticket's row.
+
+**Fact — the missed obligation is real.** Every region proposal requires complete unsigned-64 index arithmetic (`crates/tiler-compiler/src/physical.rs:2060-2082`, exact type-to-axis map at `:2119`), every Metal translation unit declares the structured index type as `uint64_t` (`crates/tiler-metal/src/emit.rs:261-266,811-818`), and all six current Metal goldens carry the widening. The authority ledger at `docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md:90-97` sources that operation family at `Metal3 | Apple3 | —`: Apple3-or-newer, with no Mac-family guarantee.
+
+**Fact — copying that obligation into `RouteRequirement::BackendFeature` is forbidden by the accepted derivability rule.** [`declare-a-required-gpu-family-in-the-artifact`](declare-a-required-gpu-family-in-the-artifact.md):23-25 says structural requirements already derivable from the verified route remain direct checks and the artifact records only *additional* requirements not already stated by the verified program. [`docs/artifact-abi.md`](../docs/artifact-abi.md):280 gives the reason: copying a derived requirement into a route row mints a second producer authority that can contradict the first. `IndexArithmeticU64` is derived from `KernelType::Index` before target feasibility and is therefore an eliminated non-example, however useful its Apple3 authority is.
+
+**Elimination, corrected.** Relying on compile-profile feasibility alone still fails because a producer declaration is not a live-device observation. Inferring Apple9 from the target-profile key still overstates the Apple3 requirement. But a backend feature row also fails: it duplicates a verified-program fact under an independently editable key/version/payload. The surviving architecture is a direct live-device check over the verified-program-derived requirement, alongside the existing direct accessible-window and local-memory checks.
+
+**The direct-check defect has a separate owner.** [`carry-and-check-the-derived-index-arithmetic-requirement-before-routing-commit`](carry-and-check-the-derived-index-arithmetic-requirement-before-routing-commit.md) records the missing neutral carrier and the backend comparison. `ResourceRequirements` is what an encoded artifact preserves for direct checks, but its complete field population omits index arithmetic; a decoded consumer does not receive KIR operations from which to re-derive it. That ticket owns carrying the nominal requirement through the artifact schema and checking it against live Metal device authority before commitment. [`check-synchronization-realization-before-the-routing-commit`](check-synchronization-realization-before-the-routing-commit.md) is related rather than reused: synchronization already has a carried field and needs a different whole-subject comparison.
+
+**Reconsideration trigger for this producer-row ticket.** Resume only when Metal emission first consumes a device capability that is not already derivable from the verified program or its direct dispatch/resource record. BF16 carrier/lowering remain the nearest named candidate, but BF16 support alone does not fire the trigger; its own authority must establish an additional payload feature. At that point the reserved ADR 0092 mint/decode boundary becomes concrete and goes to Tom before implementation. Until then, zero route rows is the accepted canonical statement rather than a missing producer feature.
