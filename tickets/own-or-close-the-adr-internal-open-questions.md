@@ -1,10 +1,10 @@
 ---
 id: own-or-close-the-adr-internal-open-questions
 title: Own or close the ADR-internal open questions that assign nobody
-status: review
+status: done
 priority: p3
 dependencies: []
-related: [re-own-or-close-the-open-questions-whose-owner-tickets-are-terminal, resolve-or-retire-the-scalar-lowering-provider-seam, accept-the-public-backend-provider-composition-boundary, derive-the-multi-round-two-level-reduction-composition]
+related: [re-own-or-close-the-open-questions-whose-owner-tickets-are-terminal, resolve-or-retire-the-scalar-lowering-provider-seam, accept-the-public-backend-provider-composition-boundary, derive-the-multi-round-two-level-reduction-composition, reconsider-registered-quantitative-capability-axis-schemas]
 scopes: [contracts/decisions]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
@@ -65,3 +65,25 @@ An open question living inside an accepted ADR has an owner, a stated trigger, o
 **Recommendation.** Keep the quantitative axis set closed for the initial profile and add only a measured quantitative row as a compiler-owned typed variant when a workload actually requires it. Reopen at the first independently authored target profile blocked by a quantitative fact the compiler does not name, or when a second backend's row demonstrates a schema shared with the CPU row. This follows the repository rule that a type-system reservation, an architectural seam, and implemented support are separate maturity claims, while leaving the accepted physical-provider seam fully usable for schedule choices today.
 
 **Question.** Should quantitative capability axes remain compiler-owned and exhaustive for the initial profile, as recommended, or should the first CPU rows establish a registered host-validated axis-schema extension boundary now?
+
+## Integration review — 2026-08-03
+
+Independent fixed-commit review verified the 95-ADR population, all eleven
+explicit open-question sections, every sampled owner and trigger, the new
+multi-round ticket, and the atomic quantitative-axis packet. It found and the
+worker corrected stale current-tense summaries in ADRs 0078 and 0096; a
+Decision-span comparison then confirmed that no accepted Decision clause moved.
+The corrected endpoint `d6a7657c0557ef4c2401bd73a835517953f77ea0`
+passed ticket lint, diff, link, and true-base scope checks before merge commit
+`bfe16195c234fd2cc56f4fa60ca01f35af18e2b9` integrated it.
+
+## Tom's quantitative-axis decision — 2026-08-03
+
+Tom accepted the recommendation in the T3 Code orchestration conversation:
+quantitative capability axes remain compiler-owned and exhaustive for the
+initial profile. ADR 0090 now records the durable answer. The rejected
+registered-schema alternative is retained by the explicitly deferred
+[`reconsider-registered-quantitative-capability-axis-schemas`](reconsider-registered-quantitative-capability-axis-schemas.md)
+ticket with the two evidence triggers from this decision packet. It is related
+rather than a dependency, so an un-fired reconsideration cannot park current
+target-profile work.
