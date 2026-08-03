@@ -21,9 +21,16 @@ use num_integer::Integer;
 use num_traits::Zero;
 use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::index::{
-    IndexDomainPredicate, IndexDomainSoundProof, IndexDomainUnknownReason, IndexExprView,
-    IndexExtentRef, IndexInteger, IndexIntegerSign, ProofResource, UnknownIndexDomainPredicate,
-    VerifiedDimensionId, VerifiedIndexExprId, VerifiedIndexRegion,
+    IndexDomainDisproof as IrIndexDomainDisproof, IndexDomainPredicate,
+    IndexDomainProofAssessment as IrIndexDomainProofAssessment,
+    IndexDomainProofAuthority as IrIndexDomainProofAuthority,
+    IndexDomainProofClaim as IrIndexDomainProofClaim,
+    IndexDomainProofEvidence as IrIndexDomainProofEvidence,
+    IndexDomainProofRefusalKind as IrIndexDomainProofRefusalKind,
+    IndexDomainProofVerifier as IrIndexDomainProofVerifier, IndexDomainSoundProof,
+    IndexDomainUnknownReason, IndexExprView, IndexExtentRef, IndexInteger, IndexIntegerSign,
+    ProofResource, UnknownIndexDomainPredicate, VerifiedDimensionId, VerifiedIndexExprId,
+    VerifiedIndexRegion,
 };
 use tiler_ir::semantic::ProviderIdentity;
 
@@ -123,15 +130,15 @@ pub(crate) enum IndexDomainDischargeProof {
 /// A typed semantic disproof claim.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct IndexDomainDisproof {
-    reason: &'static str,
+    reason: Box<str>,
     point_ordinal: Option<u64>,
     counterexample: Box<[u8]>,
 }
 
 impl IndexDomainDisproof {
-    pub(crate) fn new(reason: &'static str, counterexample: impl Into<Box<[u8]>>) -> Self {
+    pub(crate) fn new(reason: impl Into<Box<str>>, counterexample: impl Into<Box<[u8]>>) -> Self {
         Self {
-            reason,
+            reason: reason.into(),
             point_ordinal: None,
             counterexample: counterexample.into(),
         }
@@ -142,8 +149,8 @@ impl IndexDomainDisproof {
         self
     }
 
-    pub(crate) const fn reason(&self) -> &'static str {
-        self.reason
+    pub(crate) fn reason(&self) -> &str {
+        &self.reason
     }
 
     pub(crate) const fn point_ordinal(&self) -> Option<u64> {
@@ -164,7 +171,7 @@ pub(crate) enum IndexDomainDischargeClaim {
 /// It is deliberately not a public extension seam. The production compiler has
 /// one exact finite authority; a public registry belongs with the first
 /// independently installable authority and its reviewed resolution contract.
-pub(crate) trait IndexDomainDischargeProvider {
+pub(crate) trait IndexDomainDischargeProvider: Send + Sync {
     fn authority(&self) -> &IndexDomainDischargeAuthority;
 
     fn assess(
@@ -172,6 +179,70 @@ pub(crate) trait IndexDomainDischargeProvider {
         region: &VerifiedIndexRegion,
         obligation: UnknownIndexDomainPredicate,
     ) -> IndexDomainDischargeClaim;
+}
+
+/// Presents a compiler proof rule through the IR-owned one-pass sealing boundary.
+struct IrDischargeAdapter<'a> {
+    provider: &'a dyn IndexDomainDischargeProvider,
+    authority: IrIndexDomainProofAuthority,
+}
+
+impl<'a> IrDischargeAdapter<'a> {
+    fn new(provider: &'a dyn IndexDomainDischargeProvider) -> Self {
+        let authority = provider.authority();
+        Self {
+            provider,
+            authority: IrIndexDomainProofAuthority::new(
+                authority.provider().clone(),
+                authority.rule().identity().clone(),
+                authority.revision().get(),
+            )
+            .expect("compiler discharge authorities have nonzero revisions"),
+        }
+    }
+}
+
+impl IrIndexDomainProofVerifier for IrDischargeAdapter<'_> {
+    fn authority(&self) -> &IrIndexDomainProofAuthority {
+        &self.authority
+    }
+
+    fn assess(
+        &self,
+        region: &VerifiedIndexRegion,
+        obligation: UnknownIndexDomainPredicate,
+    ) -> IrIndexDomainProofClaim {
+        match self.provider.assess(region, obligation) {
+            IndexDomainDischargeClaim::Proved(IndexDomainDischargeProof::Sound {
+                proof,
+                derivation,
+            }) => IrIndexDomainProofEvidence::sound(proof, derivation).map_or_else(
+                |_| IrIndexDomainProofClaim::Unknown(IndexDomainUnknownReason::UnsupportedFragment),
+                IrIndexDomainProofClaim::Proved,
+            ),
+            IndexDomainDischargeClaim::Proved(IndexDomainDischargeProof::ExhaustiveFinite {
+                points,
+                derivation,
+            }) => IrIndexDomainProofEvidence::exhaustive_finite(points, derivation).map_or_else(
+                |_| IrIndexDomainProofClaim::Unknown(IndexDomainUnknownReason::UnsupportedFragment),
+                IrIndexDomainProofClaim::Proved,
+            ),
+            IndexDomainDischargeClaim::Disproved(disproof) => {
+                let Ok(mut converted) =
+                    IrIndexDomainDisproof::new(disproof.reason(), disproof.counterexample.clone())
+                else {
+                    return IrIndexDomainProofClaim::Unknown(
+                        IndexDomainUnknownReason::UnsupportedFragment,
+                    );
+                };
+                if let Some(point) = disproof.point_ordinal() {
+                    converted = converted.with_point_ordinal(point);
+                }
+                IrIndexDomainProofClaim::Disproved(converted)
+            }
+            IndexDomainDischargeClaim::Unknown(reason) => IrIndexDomainProofClaim::Unknown(reason),
+        }
+    }
 }
 
 /// One sealed proof receipt bound to an exact region and local obligation.
@@ -555,34 +626,33 @@ pub(crate) fn discharge_with(
     provider: &dyn IndexDomainDischargeProvider,
     pending: PendingIndexRefinement,
 ) -> Result<IndexRefinement, IndexDomainDischargeRefusal> {
-    let assessments = pending
-        .obligations()
-        .map(|obligation| IndexDomainDischargeAssessment {
-            obligation,
-            authority: provider.authority().clone(),
-            claim: provider.assess(pending.region(), obligation),
-        })
-        .collect::<Vec<_>>();
-    let kind = if assessments
-        .iter()
-        .any(|assessment| matches!(assessment.claim, IndexDomainDischargeClaim::Disproved(_)))
-    {
-        Some(IndexDomainDischargeRefusalKind::Disproved)
-    } else if assessments
-        .iter()
-        .any(|assessment| matches!(assessment.claim, IndexDomainDischargeClaim::Unknown(_)))
-    {
-        Some(IndexDomainDischargeRefusalKind::Unknown)
-    } else {
-        None
+    let adapter = IrDischargeAdapter::new(provider);
+    let completed =
+        tiler_ir::index::ResolvedIndexRealization::complete(pending.ir_receipt(), &adapter);
+    let (ir_receipt, ir_assessments) = match completed {
+        Ok(completed) => completed,
+        Err(refusal) => {
+            let kind = match refusal.kind() {
+                IrIndexDomainProofRefusalKind::Disproved => {
+                    IndexDomainDischargeRefusalKind::Disproved
+                }
+                IrIndexDomainProofRefusalKind::Unknown => IndexDomainDischargeRefusalKind::Unknown,
+            };
+            return Err(IndexDomainDischargeRefusal {
+                pending: Box::new(pending),
+                assessments: refusal
+                    .assessments()
+                    .iter()
+                    .map(|assessment| convert_ir_assessment(provider.authority(), assessment))
+                    .collect(),
+                kind,
+            });
+        }
     };
-    if let Some(kind) = kind {
-        return Err(IndexDomainDischargeRefusal {
-            pending: Box::new(pending),
-            assessments,
-            kind,
-        });
-    }
+    let assessments = ir_assessments
+        .iter()
+        .map(|assessment| convert_ir_assessment(provider.authority(), assessment))
+        .collect::<Vec<_>>();
     let receipts = assessments
         .into_iter()
         .map(|assessment| {
@@ -597,7 +667,46 @@ pub(crate) fn discharge_with(
             )
         })
         .collect();
-    Ok(complete_pending_index_refinement(pending, receipts))
+    Ok(complete_pending_index_refinement(
+        pending, receipts, ir_receipt,
+    ))
+}
+
+fn convert_ir_assessment(
+    authority: &IndexDomainDischargeAuthority,
+    assessment: &IrIndexDomainProofAssessment,
+) -> IndexDomainDischargeAssessment {
+    let claim = match assessment.claim() {
+        IrIndexDomainProofClaim::Proved(IrIndexDomainProofEvidence::Sound {
+            proof,
+            derivation,
+            ..
+        }) => IndexDomainDischargeClaim::Proved(IndexDomainDischargeProof::Sound {
+            proof: *proof,
+            derivation: derivation.clone(),
+        }),
+        IrIndexDomainProofClaim::Proved(IrIndexDomainProofEvidence::ExhaustiveFinite {
+            points,
+            derivation,
+            ..
+        }) => IndexDomainDischargeClaim::Proved(IndexDomainDischargeProof::ExhaustiveFinite {
+            points: *points,
+            derivation: derivation.clone(),
+        }),
+        IrIndexDomainProofClaim::Disproved(disproof) => {
+            let mut converted = IndexDomainDisproof::new(disproof.reason(), Box::<[u8]>::default());
+            if let Some(point) = disproof.point_ordinal() {
+                converted = converted.with_point_ordinal(point);
+            }
+            IndexDomainDischargeClaim::Disproved(converted)
+        }
+        IrIndexDomainProofClaim::Unknown(reason) => IndexDomainDischargeClaim::Unknown(*reason),
+    };
+    IndexDomainDischargeAssessment {
+        obligation: assessment.obligation(),
+        authority: authority.clone(),
+        claim,
+    }
 }
 
 fn encode_receipt(

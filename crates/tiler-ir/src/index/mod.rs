@@ -40,11 +40,15 @@ pub use predicate::{
     UnknownIndexDomainPredicate,
 };
 pub use refinement::{
+    FrozenIndexSemanticRealizationRegistry, IndexDomainDisproof, IndexDomainProofAssessment,
+    IndexDomainProofAuthority, IndexDomainProofClaim, IndexDomainProofEvidence,
+    IndexDomainProofRefusal, IndexDomainProofRefusalKind, IndexDomainProofVerifier,
     IndexRealizationAuthority, IndexRefinementBoundary, IndexRefinementDomainProof,
     IndexRefinementReceipt, IndexRefinementReceiptIdentity, IndexRefinementSignature,
     IndexRefinementSubject, IndexRefinementVerificationError, IndexRefinementVerificationOutcome,
-    IndexRefinementVerifier, MAX_REFINEMENT_PROOF_CELLS, NumericalContractIdentity, OperandBinding,
-    PendingIndexRefinementReceipt, ResolvedIndexRealization, ResultBinding,
+    IndexSemanticRealizationRefusal, IndexSemanticRealizationRegistryBuilder,
+    IndexSemanticRealizationRequest, IndexSemanticRealizationVerifier, NumericalContractIdentity,
+    OperandBinding, PendingIndexRefinementReceipt, ResolvedIndexRealization, ResultBinding,
 };
 // The symbolic index profile is re-exported flat here rather than published as
 // a `tiler_ir::index::sourced` module, matching the re-export precedent this

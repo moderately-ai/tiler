@@ -25,7 +25,11 @@ use crate::region::form_region_candidates;
 use crate::request::{
     CompilationRequest, CompilerCapabilitySnapshot, RequestError, verify_request,
 };
-use tiler_ir::index::{DomainRole, FrozenScalarRegistry, ScalarAttributes, SourcedExtent};
+use tiler_ir::index::{
+    DomainRole, FrozenScalarRegistry, IndexRefinementSignature, IndexSemanticRealizationRefusal,
+    IndexSemanticRealizationRegistryBuilder, IndexSemanticRealizationRequest,
+    IndexSemanticRealizationVerifier, ScalarAttributes, SourcedExtent,
+};
 use tiler_ir::semantic::{
     CanonicalIntegerWidth, CanonicalValue, CanonicalValueKind, CanonicalValueView, F32,
     F32_CONSTANT_BITS_ATTRIBUTE, InputKey, NormativeDefinitionRef, OpKey, OperationArity,
@@ -240,6 +244,40 @@ fn external_program_with_bias(
     builder.build().unwrap()
 }
 
+/// Builds the same graph under the governed semantic authority.
+///
+/// Compilation conformance fixtures use this authority because the governed
+/// realization verifiers are admitted against its exact frozen definitions.
+fn governed_program(shape: Shape, axes: &[Axis], share_constant: bool) -> SemanticProgram {
+    governed_program_with_bias(shape, axes, share_constant, 1.0_f32.to_bits())
+}
+
+fn governed_program_with_bias(
+    shape: Shape,
+    axes: &[Axis],
+    share_constant: bool,
+    bias_bits: u32,
+) -> SemanticProgram {
+    let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+    let input = builder
+        .input::<F32>(InputKey::new("input").unwrap(), shape)
+        .unwrap();
+    let scale = tiler_ir::semantic::F32Constant::apply(&mut builder, 2.0_f32.to_bits()).unwrap();
+    let bias = if share_constant {
+        scale
+    } else {
+        tiler_ir::semantic::F32Constant::apply(&mut builder, bias_bits).unwrap()
+    };
+    let product = tiler_ir::semantic::F32Multiply::apply(&mut builder, input, scale).unwrap();
+    let mapped = tiler_ir::semantic::F32Add::apply(&mut builder, product, bias).unwrap();
+    let sum =
+        tiler_ir::semantic::StrictSerialF32Sum::apply(&mut builder, mapped, axes.to_vec()).unwrap();
+    builder
+        .output(OutputKey::new("result").unwrap(), sum)
+        .unwrap();
+    builder.build().unwrap()
+}
+
 fn alternative(product: &CompilationProduct, kind: ProgramAlternativeKind) -> &ProgramAlternative {
     product.targets[0]
         .portfolio
@@ -273,11 +311,30 @@ fn assert_complete_partition(cover: &RegionCover, operation_count: u32) {
     );
 }
 
-/// The gate's core claim: an externally defined operation set compiles end to
-/// end through the ordinary path, and every implemented layer is present.
+/// A foreign semantic authority cannot borrow governed realization evidence.
 #[test]
-fn externally_registered_operations_compile_through_the_ordinary_path() {
+fn externally_registered_operations_require_their_own_realization_authority() {
     let program = external_program(1, Shape::from_dims([2, 2]), &[Axis::new(1)], false);
+    let CompileError::Explained { source, explain } =
+        compile(CompilationRequest::governed(&program)).unwrap_err()
+    else {
+        panic!("target compilation failures retain their explain trace");
+    };
+    assert!(matches!(
+        *source,
+        CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
+            phase: "lowering",
+            rule: "refinement-refused",
+        })
+    ));
+    assert!(!explain.records().is_empty());
+}
+
+/// The gate's core claim: the governed operation set compiles end to end
+/// through the ordinary path, and every implemented layer is present.
+#[test]
+fn governed_operations_compile_through_the_ordinary_path() {
+    let program = governed_program(Shape::from_dims([2, 2]), &[Axis::new(1)], false);
     let product = compile(CompilationRequest::governed(&program)).unwrap();
     let target = &product.targets[0];
     assert_eq!(
@@ -342,8 +399,8 @@ fn externally_registered_operations_compile_through_the_ordinary_path() {
 /// interior reduction — both compile, and neither borrows the other's plan.
 #[test]
 fn non_isomorphic_graph_shapes_produce_distinct_verified_plans() {
-    let rank_two = external_program(1, Shape::from_dims([2, 2]), &[Axis::new(1)], false);
-    let rank_three = external_program(1, Shape::from_dims([1, 2, 2]), &[Axis::new(1)], false);
+    let rank_two = governed_program(Shape::from_dims([2, 2]), &[Axis::new(1)], false);
+    let rank_three = governed_program(Shape::from_dims([1, 2, 2]), &[Axis::new(1)], false);
     assert_ne!(
         rank_two.semantic_identity().graph(),
         rank_three.semantic_identity().graph(),
@@ -371,7 +428,7 @@ fn non_isomorphic_graph_shapes_produce_distinct_verified_plans() {
 /// Graph fan-out: one constant read by two operations is materialized once.
 #[test]
 fn shared_producer_fan_out_compiles_without_duplicating_the_producer() {
-    let shared = external_program(1, Shape::from_dims([2, 2]), &[Axis::new(1)], true);
+    let shared = governed_program(Shape::from_dims([2, 2]), &[Axis::new(1)], true);
     assert_eq!(shared.operation_count(), 4);
     let product = compile(CompilationRequest::governed(&shared)).unwrap();
     for alternative in &product.targets[0].portfolio.alternatives {
@@ -446,44 +503,20 @@ fn provider_only_revision_changes_provenance_and_not_structure() {
         second.semantic_identity().registry_snapshot()
     );
 
-    let first = compile(CompilationRequest::governed(&first)).unwrap();
-    let second = compile(CompilationRequest::governed(&second)).unwrap();
-    for kind in [
-        ProgramAlternativeKind::Materialized,
-        ProgramAlternativeKind::Fused,
-    ] {
-        let left = alternative(&first, kind);
-        let right = alternative(&second, kind);
-        // Pure structural content is identical: index/schedule identity, KIR,
-        // the complete-plan receipt, and the plan's aggregate cost.
-        assert_eq!(
-            left.scheduled_regions[0].canonical_identity().as_bytes(),
-            right.scheduled_regions[0].canonical_identity().as_bytes()
-        );
-        assert_eq!(left.kernels, right.kernels);
-        assert_eq!(left.plan.identity(), right.plan.identity());
-        assert_ne!(
-            left.stable_id, right.stable_id,
-            "the complete semantic provenance participates in alternative identity"
-        );
-        assert_eq!(left.structural_cost, right.structural_cost);
-        // Selected-provider provenance is retained and unchanged: a semantic
-        // provider revision is not a lowering-provider revision.
-        assert_eq!(
-            left.artifact_plan.lowering_providers(),
-            right.artifact_plan.lowering_providers()
-        );
-        // The artifact construction plan retains the four-subject semantic
-        // identity bundle atomically, so a changed admission subject is
-        // visible there rather than being silently discarded.
-        assert_ne!(left.artifact_plan, right.artifact_plan);
+    for program in [&first, &second] {
+        let CompileError::Explained { source, .. } =
+            compile(CompilationRequest::governed(program)).unwrap_err()
+        else {
+            panic!("target compilation failures retain their explain trace");
+        };
+        assert!(matches!(
+            *source,
+            CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
+                phase: "lowering",
+                rule: "refinement-refused",
+            })
+        ));
     }
-    // The explain trace is bound to the exact compilation subject, so the two
-    // request digests differ while the record sequence does not.
-    assert_ne!(
-        first.targets[0].explain.render(),
-        second.targets[0].explain.render()
-    );
 }
 
 /// Equal region *content* is reused across distinct graph *occurrences*.
@@ -537,7 +570,7 @@ fn complete_plan_coverage_is_exact_at_every_retained_plan() {
         (Shape::from_dims([2, 2]), vec![Axis::new(0)]),
         (Shape::from_dims([1, 2, 2]), vec![Axis::new(1)]),
     ] {
-        let program = external_program(1, shape, &axes, false);
+        let program = governed_program(shape, &axes, false);
         let product = compile(CompilationRequest::governed(&program)).unwrap();
         for alternative in &product.targets[0].portfolio.alternatives {
             assert_complete_partition(
@@ -633,6 +666,14 @@ fn registry_with_external_multiply(
     substitute: bool,
     implementation: Arc<dyn IndexAccessLoweringProvider>,
 ) -> CompilerCapabilitySnapshot {
+    registry_with_external_multiply_and_verifier(substitute, implementation, None)
+}
+
+fn registry_with_external_multiply_and_verifier(
+    substitute: bool,
+    implementation: Arc<dyn IndexAccessLoweringProvider>,
+    verifier: Option<Arc<dyn IndexSemanticRealizationVerifier>>,
+) -> CompilerCapabilitySnapshot {
     let scalars = FrozenScalarRegistry::standard().unwrap();
     let mut builder = LoweringCapabilityRegistryBuilder::new(
         scalars.semantic_authority().clone(),
@@ -658,14 +699,38 @@ fn registry_with_external_multiply(
             implementation,
         )
         .unwrap();
-    CompilerCapabilitySnapshot::new(builder.freeze(), scalars)
+    let realization = if let Some(verifier) = verifier {
+        let mut builder = IndexSemanticRealizationRegistryBuilder::new(
+            scalars.semantic_authority().clone(),
+            scalars.clone(),
+        );
+        crate::governed::install_governed_realization_verifiers(&mut builder, &[multiply_f32_op()])
+            .unwrap();
+        builder
+            .register(
+                ProviderIdentity::new("acme", "external-multiply-realization", 1).unwrap(),
+                &multiply_f32_op(),
+                &IndexRefinementSignature::new(
+                    [F32::resolved_type(), F32::resolved_type()],
+                    [F32::resolved_type()],
+                )
+                .unwrap(),
+                1,
+                verifier,
+            )
+            .unwrap();
+        builder.freeze()
+    } else {
+        crate::governed::governed_realization_verifiers(&scalars).unwrap()
+    };
+    CompilerCapabilitySnapshot::new(builder.freeze(), realization, scalars)
 }
 
 /// The lowering half of the gate: an out-of-crate provider lowers a
 /// recognized occurrence end to end, and the artifact plan names it.
 #[test]
 fn an_externally_registered_lowering_provider_drives_the_compile_path() {
-    let program = external_program(1, Shape::from_dims([2, 2]), &[Axis::new(1)], false);
+    let program = governed_program(Shape::from_dims([2, 2]), &[Axis::new(1)], false);
     let mut request = CompilationRequest::governed(&program);
     request.capabilities =
         registry_with_external_multiply(true, Arc::new(ExternalMultiplyLowering));
@@ -699,7 +764,7 @@ fn an_externally_registered_lowering_provider_drives_the_compile_path() {
 /// Two providers claiming one occurrence is a contradiction, not a choice.
 #[test]
 fn contended_lowering_capabilities_fail_closed_with_a_distinct_error() {
-    let program = external_program(1, Shape::from_dims([2, 2]), &[Axis::new(1)], false);
+    let program = governed_program(Shape::from_dims([2, 2]), &[Axis::new(1)], false);
     let mut request = CompilationRequest::governed(&program);
     request.capabilities =
         registry_with_external_multiply(false, Arc::new(ExternalMultiplyLowering));
@@ -737,6 +802,41 @@ fn contended_lowering_capabilities_fail_closed_with_a_distinct_error() {
 struct ConservativeReadMultiplyLowering {
     rounds: usize,
     offset: i128,
+}
+
+/// Independent authority for the conservative external lowering test family.
+struct ConservativeReadMultiplyVerifier {
+    rounds: usize,
+    offset: i128,
+}
+
+impl IndexSemanticRealizationVerifier for ConservativeReadMultiplyVerifier {
+    fn verify(
+        &self,
+        request: IndexSemanticRealizationRequest<'_>,
+    ) -> Result<(), IndexSemanticRealizationRefusal> {
+        if !crate::request::is_f32_contract_key(request.subject().numerical_contract().as_str()) {
+            return Err(IndexSemanticRealizationRefusal::new("unsupported-contract").unwrap());
+        }
+        let mut builder = tiler_ir::index::IndexRegionBuilder::new(request.scalars().clone())
+            .map_err(|_| IndexSemanticRealizationRefusal::new("builder-refused").unwrap())?;
+        {
+            let mut context = IndexAccessLoweringContext::new(&mut builder, request.subject());
+            ConservativeReadMultiplyLowering {
+                rounds: self.rounds,
+                offset: self.offset,
+            }
+            .lower(&mut context)
+            .map_err(|_| IndexSemanticRealizationRefusal::new("emission-refused").unwrap())?;
+        }
+        let expected = builder
+            .build()
+            .map_err(|_| IndexSemanticRealizationRefusal::new("region-refused").unwrap())?;
+        if expected.canonical_identity() != request.region().canonical_identity() {
+            return Err(IndexSemanticRealizationRefusal::new("region-mismatch").unwrap());
+        }
+        Ok(())
+    }
 }
 
 impl IndexAccessLoweringProvider for ConservativeReadMultiplyLowering {
@@ -800,7 +900,7 @@ impl IndexAccessLoweringProvider for ConservativeReadMultiplyLowering {
 /// refinement be attempted for every occurrence rather than gated on size.
 #[test]
 fn governed_lowerings_never_charge_the_exhaustive_proof_budget() {
-    let program = external_program(1, Shape::from_dims([70_000, 2]), &[Axis::new(0)], false);
+    let program = governed_program(Shape::from_dims([70_000, 2]), &[Axis::new(0)], false);
     let product = compile(CompilationRequest::governed(&program)).unwrap();
     assert!(!product.targets[0].explain.records().iter().any(|record| {
         record.rule().key().as_str() == "kernel.index-region-refinement.v1"
@@ -816,14 +916,18 @@ fn governed_lowerings_never_charge_the_exhaustive_proof_budget() {
 /// cover enumeration.
 #[test]
 fn a_finite_residual_index_obligation_is_proved_before_plan_construction() {
-    let program = external_program(1, Shape::from_dims([65_535, 1]), &[Axis::new(0)], false);
+    let program = governed_program(Shape::from_dims([65_535, 1]), &[Axis::new(0)], false);
     let mut request = CompilationRequest::governed(&program);
-    request.capabilities = registry_with_external_multiply(
+    request.capabilities = registry_with_external_multiply_and_verifier(
         true,
         Arc::new(ConservativeReadMultiplyLowering {
             rounds: 5,
             offset: 0,
         }),
+        Some(Arc::new(ConservativeReadMultiplyVerifier {
+            rounds: 5,
+            offset: 0,
+        })),
     );
     let product = compile(request).expect("the exact finite authority proves the residual");
     let explain = &product.targets[0].explain;
@@ -897,14 +1001,18 @@ fn a_finite_residual_index_obligation_is_proved_before_plan_construction() {
 /// An exact counterexample is an invalid lowering, never invalid user input.
 #[test]
 fn a_disproved_residual_index_obligation_is_invalid_compiler_output() {
-    let program = external_program(1, Shape::from_dims([65_535, 1]), &[Axis::new(1)], false);
+    let program = governed_program(Shape::from_dims([65_535, 1]), &[Axis::new(1)], false);
     let mut request = CompilationRequest::governed(&program);
-    request.capabilities = registry_with_external_multiply(
+    request.capabilities = registry_with_external_multiply_and_verifier(
         true,
         Arc::new(ConservativeReadMultiplyLowering {
             rounds: 5,
             offset: 1,
         }),
+        Some(Arc::new(ConservativeReadMultiplyVerifier {
+            rounds: 5,
+            offset: 1,
+        })),
     );
     let CompileError::Explained { source, explain } = compile(request).unwrap_err() else {
         panic!("target compilation failures retain their explain trace");
@@ -957,14 +1065,18 @@ fn a_disproved_residual_index_obligation_is_invalid_compiler_output() {
 /// A second proof-budget stop remains unsupported without execution permission.
 #[test]
 fn an_over_discharge_budget_obligation_remains_unknown_before_planning() {
-    let program = external_program(1, Shape::from_dims([65_535, 64]), &[Axis::new(1)], false);
+    let program = governed_program(Shape::from_dims([65_535, 64]), &[Axis::new(1)], false);
     let mut request = CompilationRequest::governed(&program);
-    request.capabilities = registry_with_external_multiply(
+    request.capabilities = registry_with_external_multiply_and_verifier(
         true,
         Arc::new(ConservativeReadMultiplyLowering {
             rounds: 5,
             offset: 0,
         }),
+        Some(Arc::new(ConservativeReadMultiplyVerifier {
+            rounds: 5,
+            offset: 0,
+        })),
     );
     let CompileError::Explained { source, explain } = compile(request).unwrap_err() else {
         panic!("target compilation failures retain their explain trace");

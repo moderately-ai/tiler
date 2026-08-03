@@ -21,8 +21,11 @@
 use std::sync::Arc;
 
 use tiler_ir::index::{
-    DomainRole, FrozenScalarRegistry, IndexExprId, IndexInteger, ScalarAttributes, ScalarOpKey,
-    ScalarRegistryError, ScalarValueId, SourcedExtent, add_f32_scalar_op,
+    DomainRole, FrozenIndexSemanticRealizationRegistry, FrozenScalarRegistry, IndexExprId,
+    IndexInteger, IndexRefinementSignature, IndexRefinementVerificationError, IndexRegionBuilder,
+    IndexSemanticRealizationRefusal, IndexSemanticRealizationRegistryBuilder,
+    IndexSemanticRealizationRequest, IndexSemanticRealizationVerifier, ScalarAttributes,
+    ScalarOpKey, ScalarRegistryError, ScalarValueId, SourcedExtent, add_f32_scalar_op,
     canonicalize_nan_f32_scalar_op, constant_f32_scalar_op, divide_f32_scalar_op,
     exp_f32_scalar_op, multiply_f32_scalar_op,
 };
@@ -56,6 +59,8 @@ pub(crate) enum GovernedRegistryError {
     Scalar(Arc<ScalarRegistryError>),
     /// The governed lowering registry rejected its own registration.
     Registry(LoweringRegistryError),
+    /// The independent semantic-realization registry rejected its profile.
+    Realization(Arc<IndexRefinementVerificationError>),
 }
 
 impl std::fmt::Display for GovernedRegistryError {
@@ -67,6 +72,12 @@ impl std::fmt::Display for GovernedRegistryError {
             Self::Registry(source) => {
                 write!(formatter, "governed lowering registration failed: {source}")
             }
+            Self::Realization(source) => {
+                write!(
+                    formatter,
+                    "governed realization registration failed: {source}"
+                )
+            }
         }
     }
 }
@@ -76,6 +87,7 @@ impl std::error::Error for GovernedRegistryError {
         match self {
             Self::Scalar(source) => Some(source.as_ref()),
             Self::Registry(source) => Some(source),
+            Self::Realization(source) => Some(source.as_ref()),
         }
     }
 }
@@ -118,6 +130,89 @@ pub(crate) fn governed_lowering_capabilities(
         capability.register(&mut builder)?;
     }
     Ok(builder.freeze())
+}
+
+/// Builds the independent semantic-realization authority for governed families.
+pub(crate) fn governed_realization_verifiers(
+    scalars: &FrozenScalarRegistry,
+) -> Result<FrozenIndexSemanticRealizationRegistry, GovernedRegistryError> {
+    let mut builder = IndexSemanticRealizationRegistryBuilder::new(
+        scalars.semantic_authority().clone(),
+        scalars.clone(),
+    );
+    install_governed_realization_verifiers(&mut builder, &[])
+        .map_err(|source| GovernedRegistryError::Realization(Arc::new(source)))?;
+    Ok(builder.freeze())
+}
+
+/// Installs governed realization verifiers except explicitly substituted families.
+pub(crate) fn install_governed_realization_verifiers(
+    builder: &mut IndexSemanticRealizationRegistryBuilder,
+    substituted: &[OpKey],
+) -> Result<(), IndexRefinementVerificationError> {
+    let capabilities = governed_index_access_capabilities()
+        .expect("the governed realization signatures are well formed");
+    for capability in capabilities {
+        if substituted.contains(&capability.operation) {
+            continue;
+        }
+        let signature = IndexRefinementSignature::new(
+            capability.signature.operands().iter().cloned(),
+            capability.signature.results().iter().cloned(),
+        )?;
+        let verifier_provider = ProviderIdentity::new(
+            "tiler",
+            format!("governed-index-realization.{}", capability.operation.name()),
+            1,
+        )
+        .expect("governed verifier identity is valid");
+        builder.register(
+            verifier_provider,
+            &capability.operation,
+            &signature,
+            GOVERNED_CAPABILITY_REVISION,
+            Arc::new(GovernedIndexSemanticVerifier {
+                canonical: capability.implementation,
+            }),
+        )?;
+    }
+    Ok(())
+}
+
+/// Independently reconstructs the canonical governed region and compares it.
+struct GovernedIndexSemanticVerifier {
+    canonical: Arc<dyn IndexAccessLoweringProvider>,
+}
+
+impl IndexSemanticRealizationVerifier for GovernedIndexSemanticVerifier {
+    fn verify(
+        &self,
+        request: IndexSemanticRealizationRequest<'_>,
+    ) -> Result<(), IndexSemanticRealizationRefusal> {
+        if !crate::request::is_f32_contract_key(request.subject().numerical_contract().as_str()) {
+            return Err(realization_refusal("unsupported-numerical-contract"));
+        }
+        let mut builder = IndexRegionBuilder::new(request.scalars().clone())
+            .map_err(|_| realization_refusal("canonical-builder"))?;
+        {
+            let mut context = IndexAccessLoweringContext::new(&mut builder, request.subject());
+            self.canonical
+                .lower(&mut context)
+                .map_err(|_| realization_refusal("canonical-emission"))?;
+        }
+        let expected = builder
+            .build()
+            .map_err(|_| realization_refusal("canonical-region"))?;
+        if expected.canonical_identity() != request.region().canonical_identity() {
+            return Err(realization_refusal("canonical-region-mismatch"));
+        }
+        Ok(())
+    }
+}
+
+fn realization_refusal(reason: &str) -> IndexSemanticRealizationRefusal {
+    IndexSemanticRealizationRefusal::new(reason)
+        .expect("governed realization refusal is bounded and nonempty")
 }
 
 /// Registers the shipped index-access capabilities onto a caller's builder,
@@ -590,7 +685,7 @@ struct SumPlan {
 
 impl SumPlan {
     fn derive(
-        occurrence: &tiler_ir::index::IndexRefinementSubject,
+        occurrence: crate::capability::IndexAccessOccurrence<'_>,
     ) -> Result<Self, LoweringEmitError> {
         let ([input], [result]) = (occurrence.inputs(), occurrence.results()) else {
             return Err(occurrence_error("sum-arity"));
@@ -895,7 +990,7 @@ enum AxisSource {
 
 impl ContractionPlan {
     fn derive(
-        occurrence: &tiler_ir::index::IndexRefinementSubject,
+        occurrence: crate::capability::IndexAccessOccurrence<'_>,
     ) -> Result<Self, LoweringEmitError> {
         let ([left, right], [result]) = (occurrence.inputs(), occurrence.results()) else {
             return Err(occurrence_error("contraction-arity"));
@@ -1576,12 +1671,9 @@ mod contraction_conformance;
 
 #[cfg(test)]
 mod tests {
-    use super::{governed_lowering_capabilities, governed_scalars};
+    use super::{governed_lowering_capabilities, governed_realization_verifiers, governed_scalars};
     use crate::capability::LoweringSignature;
-    use crate::legality::{
-        IndexRefinement, OccurrenceOperand, OccurrenceResult, OccurrenceValueId,
-        refine_index_region,
-    };
+    use crate::legality::{IndexRefinement, refine_index_region};
     use tiler_ir::index::{IndexRefinementSubject, NumericalContractIdentity};
     use tiler_ir::program::SemanticOccurrence;
     use tiler_ir::semantic::CANONICAL_F32_ARITHMETIC_NAN_BITS;
@@ -1594,6 +1686,57 @@ mod tests {
         broadcast_f32_op, constant_f32_op, multiply_f32_op, reindex_f32_op,
         strict_serial_sum_f32_op, strict_tensor_contraction_f32_op,
     };
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    struct OccurrenceValueId(u32);
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    struct OccurrenceOperand {
+        value: OccurrenceValueId,
+        value_type: ResolvedValueType,
+        shape: Shape,
+    }
+
+    impl OccurrenceOperand {
+        const fn new(
+            value: OccurrenceValueId,
+            value_type: ResolvedValueType,
+            shape: Shape,
+        ) -> Self {
+            Self {
+                value,
+                value_type,
+                shape,
+            }
+        }
+        const fn value(&self) -> OccurrenceValueId {
+            self.value
+        }
+        const fn value_type(&self) -> &ResolvedValueType {
+            &self.value_type
+        }
+        const fn shape(&self) -> &Shape {
+            &self.shape
+        }
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    struct OccurrenceResult {
+        value_type: ResolvedValueType,
+        shape: Shape,
+    }
+
+    impl OccurrenceResult {
+        const fn new(value_type: ResolvedValueType, shape: Shape) -> Self {
+            Self { value_type, shape }
+        }
+        const fn value_type(&self) -> &ResolvedValueType {
+            &self.value_type
+        }
+        const fn shape(&self) -> &Shape {
+            &self.shape
+        }
+    }
     use tiler_ir::shape::{Axis, Extent, Shape};
     use tiler_reference::{
         FloatBitOrder, FrozenReferenceRegistry, FrozenScalarReferenceRegistry,
@@ -1606,7 +1749,10 @@ mod tests {
     }
 
     fn contract() -> NumericalContractIdentity {
-        NumericalContractIdentity::from_key("tiler.strict-f32.v1")
+        NumericalContractIdentity::try_from_key(
+            crate::request::StrictF32NumericalContract::governed().key,
+        )
+        .unwrap()
     }
 
     fn constant_attributes(bits: u32) -> OperationAttributes {
@@ -1639,6 +1785,7 @@ mod tests {
     ) -> IndexRefinement {
         let scalars = governed_scalars().unwrap();
         let registry = governed_lowering_capabilities(&scalars).unwrap();
+        let realizations = governed_realization_verifiers(&scalars).unwrap();
         let mut builder = SemanticProgramBuilder::try_standard().unwrap();
         let mut inputs = Vec::new();
         for operand in &operands {
@@ -1687,7 +1834,7 @@ mod tests {
         let resolved = registry
             .resolve_index_access(occurrence.operation(), &signature)
             .unwrap();
-        refine_index_region(&resolved, &occurrence, &scalars)
+        refine_index_region(&resolved, &occurrence, &realizations, &scalars)
             .unwrap_or_else(|error| panic!("governed lowering must refine: {error:?}"))
             .into_refined()
             .expect("governed lowering discharges every index-domain predicate")

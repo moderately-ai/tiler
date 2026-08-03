@@ -1818,10 +1818,9 @@ impl std::error::Error for IncoherentNumericalContract {}
 ///
 /// An opaque wrapper rather than the internal snapshot, so the request model
 /// behind it stays private and the caller's obligation is the one that matters:
-/// pairing a registry with the scalar authority its capabilities were registered
-/// against. The request boundary re-checks that pairing and refuses a mismatched
-/// pair rather than resolving through an authority the capabilities were never
-/// admitted under.
+/// pairing both installed registries with the scalar authority they were
+/// registered against. The request boundary re-checks that triple and refuses a
+/// mismatch rather than resolving or verifying through foreign authority.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InstalledCapabilities(CompilerCapabilitySnapshot);
 
@@ -1832,19 +1831,22 @@ impl InstalledCapabilities {
         Self(CompilerCapabilitySnapshot::governed())
     }
 
-    /// A caller's own registry, with the scalar authority it was frozen against.
+    /// A caller's lowering and realization registries with their scalar authority.
     ///
-    /// The two are taken together rather than separately because they are only
-    /// meaningful as a pair: every resolved provider emits against, and is
-    /// revalidated under, that scalar snapshot. Supplying a registry frozen over
-    /// one authority and a different authority beside it is refused at the
-    /// request boundary, not silently reconciled.
+    /// The three are taken together because each resolved provider emits against,
+    /// and each realization verifier revalidates under, that exact scalar
+    /// snapshot. A mismatched triple is refused rather than silently reconciled.
     #[must_use]
     pub fn installed(
         lowering: FrozenLoweringCapabilityRegistry,
+        realization: tiler_ir::index::FrozenIndexSemanticRealizationRegistry,
         scalars: FrozenScalarRegistry,
     ) -> Self {
-        Self(CompilerCapabilitySnapshot::new(lowering, scalars))
+        Self(CompilerCapabilitySnapshot::new(
+            lowering,
+            realization,
+            scalars,
+        ))
     }
 }
 

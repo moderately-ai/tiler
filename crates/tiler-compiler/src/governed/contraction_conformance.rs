@@ -340,11 +340,16 @@ fn emitted_region_evaluation(
     let scalars = governed_scalars().expect("the governed scalar authority composes");
     let registry =
         governed_lowering_capabilities(&scalars).expect("the governed capabilities compose");
+    let realizations = super::governed_realization_verifiers(&scalars)
+        .expect("the governed realization verifiers compose");
     let program = projection_program(m, n, k);
     let occurrence = IndexRefinementSubject::derive(
         &program,
         SemanticOccurrence::new(0),
-        NumericalContractIdentity::from_key("tiler.strict-f32.v1"),
+        NumericalContractIdentity::try_from_key(
+            crate::request::StrictF32NumericalContract::governed().key,
+        )
+        .unwrap(),
     )
     .expect("the verified contraction yields a refinement subject");
     let signature = LoweringSignature::new(
@@ -355,7 +360,7 @@ fn emitted_region_evaluation(
     let resolved = registry
         .resolve_index_access(occurrence.operation(), &signature)
         .expect("the governed registry covers the contraction");
-    let refinement = refine_index_region(&resolved, &occurrence, &scalars)
+    let refinement = refine_index_region(&resolved, &occurrence, &realizations, &scalars)
         .expect("the governed contraction lowering refines")
         .into_refined()
         .expect("the lowering discharges every index-domain predicate");

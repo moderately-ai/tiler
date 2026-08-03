@@ -10,6 +10,10 @@ scopes:
   - implementation/compiler
   - contracts/foundation
   - contracts/artifacts
+  - implementation/metal-aot
+  - contracts/optimizer
+  - contracts/numerics
+  - research/extensions
 shared_scopes:
   - project/tickets
 claimed_from: todo
@@ -65,6 +69,78 @@ A separate shared proof crate is not recommended: it adds a crate and another de
 - A proof gap mints no receipt.
 - The exact public verifier/type/error boundary returns to Tom as a tested draft; this ticket does not self-accept it.
 - Targeted `tiler-ir` and `tiler-compiler` nextest, doctests, Clippy, formatting, ticket lint, diff checks, and scope guard pass.
+
+## Scope expansion authorized by Tom — 2026-08-03
+
+Tom explicitly approved adding `implementation/metal-aot`,
+`contracts/optimizer`, `contracts/numerics`, and `research/extensions` in the T3
+Code orchestration conversation. The public installation boundary now requires
+the exact `(lowering, realization, scalars)` authority triple. That replacement
+cannot land coherently without updating the out-of-crate install conformance in
+`prototypes/serial-sum-compile/src/main.rs` and the three contract/research
+sentences that describe the old pair. No legacy overload is retained: accepting
+only lowering plus scalars would let a request omit the independent semantic
+realization authority whose identity and validation this ticket establishes.
+
+## Corrected authority shape and public draft inventory
+
+**Fact:** generic region structure, scalar-registry containment, and lowering
+registration cannot prove semantic realization. The rejected fixed point
+positively demonstrated the counterexample by minting a multiply receipt from a
+same-interface add region.
+
+**Inference:** the semantic proof must be independent of the selected lowering
+provider, admitted against the exact frozen semantic operation/signature and
+scalar registry, and invoked over the program-derived sealed subject plus actual
+verified region. A compiler-closed matcher would break the external-provider
+seam; the reference evaluator supplies bounded execution evidence rather than a
+universal semantic proof; embedding verifier callbacks in semantic operation
+definitions would couple Layer 1 meanings to optional Layer 2 index realization.
+Those candidates fail correctness or dependency direction, leaving a separate
+IR-owned frozen verifier registry as the narrow surviving shape.
+
+**Proposal — tested public draft, not accepted here:** `tiler-ir::index` adds
+`NumericalContractIdentity`, `IndexRefinementBoundary`,
+`IndexRefinementSignature`, `IndexRealizationAuthority`,
+`IndexRefinementSubject`, `IndexSemanticRealizationRequest`,
+`IndexSemanticRealizationRefusal`, `IndexSemanticRealizationVerifier`,
+`IndexSemanticRealizationRegistryBuilder`,
+`FrozenIndexSemanticRealizationRegistry`, `ResolvedIndexRealization`, ordered
+`OperandBinding`/`ResultBinding`, pending and completed refinement receipts, and
+typed verification errors/outcomes. Residual proof completion adds the coherent
+object-safe protocol `IndexDomainProofAuthority`, `IndexDomainProofEvidence`,
+`IndexDomainDisproof`, `IndexDomainProofClaim`, `IndexDomainProofVerifier`,
+`IndexDomainProofAssessment`, and typed atomic refusal. IR invokes that proof
+callback exactly once and alone seals the opaque receipt; the superseded second
+exact-finite evaluator and its future-`SoundProof` `expect` panic are removed.
+
+**Proposal — compiler public draft, not accepted here:**
+`capability::install_governed_index_realizations` composes governed verifier
+families; the provider context exposes only the narrow operation interface;
+`session::InstalledCapabilities::installed` requires the replacement triple
+`(lowering, realization, scalars)`. Compiler registry search, selected-provider
+provenance, explain, proof-policy implementation, and planning remain compiler
+owned. The old two-argument installation spelling is removed.
+
+## Identity step and blast radius
+
+The new IR identity domains are append-only, independently tagged v1 domains:
+semantic subject, admitted realization authority, verifier capability and
+frozen verifier registry, sealed resolution, residual proof, and final receipt.
+Compiler refinement content and occurrence bindings use their corrected v2
+domains; their encoders bind the IR receipt and proof identities rather than
+copying semantic claims.
+
+The installed verifier registry is request authority, so omission from request
+identity would permit replay under another verifier set. The capability snapshot
+schema therefore steps 1 → 2 and the request-subject domain steps
+`tiler.compiler.request-subject.v3` → `v4`, appending the length-framed frozen
+verifier-registry identity after lowering authority. On this complete branch the
+only pinned value moved is the deterministic explain qualifier
+`7e413a7d10b92e3b` → `299a129ee0b8aab8`; it was recomputed from the current tree.
+No program, artifact, schedule, kernel, or cache identity changes here: the
+dependent `bind-stage-coverage-to-index-refinement-identity` still owns receipt
+consumption and program/artifact identity.
 
 ## Graph maintenance
 

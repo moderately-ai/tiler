@@ -4018,7 +4018,14 @@ mod tests {
                 // so that definition change must move the qualifier even though
                 // the concatenate key itself stayed fixed. Recomputed from this
                 // merged tree after the full gate exposed the exact blast radius.
-                "tiler-explain-v7 request=7e413a7d10b92e3b\n",
+                // Moved from `7e413a7d10b92e3b` when the request subject began
+                // binding the independently frozen semantic-realization verifier
+                // registry and stepped from `request-subject.v3` to `v4`.
+                // Lowering resolution alone cannot distinguish two installed
+                // verifier authorities, so retaining the old digest would permit
+                // a request authenticated under one verifier set to replay under
+                // another. Recomputed from this complete branch tree.
+                "tiler-explain-v7 request=299a129ee0b8aab8\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )

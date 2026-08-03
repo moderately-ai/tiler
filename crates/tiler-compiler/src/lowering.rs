@@ -304,7 +304,8 @@ pub(crate) fn resolve_lowering(
     request: &VerifiedTargetRequest,
 ) -> Result<ResolvedLowering, LoweringError> {
     let capabilities = request.capabilities();
-    let contract = NumericalContractIdentity::from_key(request.numerical_contract().key);
+    let contract = NumericalContractIdentity::try_from_key(request.numerical_contract().key)
+        .expect("verified compiler contract keys satisfy the IR bound");
     let mut occurrences = Vec::new();
     for member in request.normalized().all_members() {
         let occurrence = project_occurrence(semantic, member, &contract)?;
@@ -317,6 +318,7 @@ pub(crate) fn resolve_lowering(
         let evidence = refine(
             &resolved,
             &occurrence,
+            capabilities.realization(),
             capabilities.scalars(),
             member,
             provider.clone(),
@@ -347,7 +349,8 @@ pub(crate) fn resolve_capabilities(
     request: &VerifiedTargetRequest,
 ) -> Result<Vec<LoweringProviderIdentity>, LoweringError> {
     let capabilities = request.capabilities();
-    let contract = NumericalContractIdentity::from_key(request.numerical_contract().key);
+    let contract = NumericalContractIdentity::try_from_key(request.numerical_contract().key)
+        .expect("verified compiler contract keys satisfy the IR bound");
     let mut providers = Vec::new();
     for member in request.normalized().all_members() {
         let occurrence = project_occurrence(semantic, member, &contract)?;
@@ -383,11 +386,12 @@ fn resolve_occurrence(
 fn refine(
     resolved: &ResolvedLoweringCapability,
     occurrence: &IndexRefinementSubject,
+    realizations: &tiler_ir::index::FrozenIndexSemanticRealizationRegistry,
     scalars: &tiler_ir::index::FrozenScalarRegistry,
     member: SemanticMemberId,
     provider: LoweringProviderIdentity,
 ) -> Result<OccurrenceEvidence, LoweringError> {
-    match refine_index_region(resolved, occurrence, scalars).map_err(|source| {
+    match refine_index_region(resolved, occurrence, realizations, scalars).map_err(|source| {
         LoweringError::Refine {
             member,
             provider: provider.clone(),

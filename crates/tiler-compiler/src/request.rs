@@ -4,7 +4,7 @@ use std::fmt;
 use std::sync::{Mutex, OnceLock, PoisonError};
 
 use tiler_ir::identity::{push_len, push_slice};
-use tiler_ir::index::FrozenScalarRegistry;
+use tiler_ir::index::{FrozenIndexSemanticRealizationRegistry, FrozenScalarRegistry};
 use tiler_ir::program::abi::AvailabilityPhase;
 use tiler_ir::schedule::{
     InputOrdinal, PointwiseF32Expression, PointwiseF32ExpressionBuilder, PointwiseF32Node,
@@ -29,7 +29,9 @@ pub(crate) use tiler_ir::schedule::{
 use crate::capability::{
     CanonicalLoweringRegistryIdentity, FrozenLoweringCapabilityRegistry, LoweringCapabilityRevision,
 };
-use crate::governed::{governed_lowering_capabilities, governed_scalars};
+use crate::governed::{
+    governed_lowering_capabilities, governed_realization_verifiers, governed_scalars,
+};
 use crate::policy::UnrepresentableDimension;
 use crate::region::SemanticMemberId;
 use crate::target::DTypeDispatchabilityResolution;
@@ -39,7 +41,7 @@ use crate::target::honourability::{
 };
 pub(crate) use crate::target::{TargetProfile, TargetProfileKey};
 
-const REQUEST_SCHEMA_VERSION: u32 = 1;
+const REQUEST_SCHEMA_VERSION: u32 = 2;
 
 /// The versioned domain of the canonical numerical-contract key scheme.
 ///
@@ -838,6 +840,7 @@ impl LoweringProviderIdentity {
 pub(crate) struct CompilerCapabilitySnapshot {
     schema_version: u32,
     lowering: FrozenLoweringCapabilityRegistry,
+    realization: FrozenIndexSemanticRealizationRegistry,
     scalars: FrozenScalarRegistry,
 }
 
@@ -846,11 +849,13 @@ impl CompilerCapabilitySnapshot {
     /// registered against.
     pub(crate) const fn new(
         lowering: FrozenLoweringCapabilityRegistry,
+        realization: FrozenIndexSemanticRealizationRegistry,
         scalars: FrozenScalarRegistry,
     ) -> Self {
         Self {
             schema_version: REQUEST_SCHEMA_VERSION,
             lowering,
+            realization,
             scalars,
         }
     }
@@ -872,7 +877,9 @@ impl CompilerCapabilitySnapshot {
                     governed_scalars().expect("the governed scalar authority is well formed");
                 let lowering = governed_lowering_capabilities(&scalars)
                     .expect("the governed lowering capabilities are well formed");
-                Self::new(lowering, scalars)
+                let realization = governed_realization_verifiers(&scalars)
+                    .expect("the governed realization verifiers are well formed");
+                Self::new(lowering, realization, scalars)
             })
             .clone()
     }
@@ -880,6 +887,11 @@ impl CompilerCapabilitySnapshot {
     /// Returns the installed lowering-capability registry.
     pub(crate) const fn lowering(&self) -> &FrozenLoweringCapabilityRegistry {
         &self.lowering
+    }
+
+    /// Returns the independent semantic-realization authority.
+    pub(crate) const fn realization(&self) -> &FrozenIndexSemanticRealizationRegistry {
+        &self.realization
     }
 
     /// Returns the scalar authority every resolved provider emits against.
@@ -905,7 +917,9 @@ impl CompilerCapabilitySnapshot {
             scalars.clone(),
         )
         .freeze();
-        Self::new(lowering, scalars)
+        let realization = governed_realization_verifiers(&scalars)
+            .expect("the governed realization verifiers are well formed");
+        Self::new(lowering, realization, scalars)
     }
 }
 
@@ -920,6 +934,7 @@ impl PartialEq for CompilerCapabilitySnapshot {
     fn eq(&self, other: &Self) -> bool {
         self.schema_version == other.schema_version
             && self.registry_identity() == other.registry_identity()
+            && self.realization.identity() == other.realization.identity()
             && self.scalars.snapshot_identity() == other.scalars.snapshot_identity()
     }
 }
@@ -1314,6 +1329,7 @@ pub(crate) struct VerifiedRequestSubject {
     target_profile: TargetProfile,
     capability_schema_version: u32,
     lowering_registry: CanonicalLoweringRegistryIdentity,
+    realization_registry: Box<[u8]>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1442,7 +1458,11 @@ impl VerifiedRequestSubject {
 
     pub(crate) fn canonical_explain_subject_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
-        // The enclosing domain steps to `v3` rather than only the per-arm
+        // The enclosing domain steps to `v4` because the installed independent
+        // semantic-realization authority now participates after lowering
+        // authority. A v3 subject did not encode that field at all.
+        //
+        // The earlier step to `v3` rather than only the per-arm
         // sub-tags, because this recognizer moved two of the three arms' shapes
         // at once *and* gave the serial-sum arm its first sub-tag. A same-domain
         // re-tag would have to argue that a newly tagged arm cannot be read as
@@ -1450,7 +1470,7 @@ impl VerifiedRequestSubject {
         // input key, and a caller may name an input whatever it likes — and that
         // argument does not close. Stepping the domain makes the separation
         // structural instead.
-        bytes.extend_from_slice(b"tiler.compiler.request-subject.v3\0");
+        bytes.extend_from_slice(b"tiler.compiler.request-subject.v4\0");
         push_slice(&mut bytes, self.semantic_identity.graph().as_bytes());
         push_slice(
             &mut bytes,
@@ -1581,6 +1601,7 @@ impl VerifiedRequestSubject {
         bytes.extend_from_slice(self.target_profile.request_subject_bytes());
         bytes.extend_from_slice(&self.capability_schema_version.to_be_bytes());
         push_slice(&mut bytes, self.lowering_registry.as_bytes());
+        push_slice(&mut bytes, &self.realization_registry);
         bytes
     }
 }
@@ -1884,6 +1905,11 @@ fn request_subject(
         target_profile: target_profile.clone(),
         capability_schema_version: capabilities.schema_version,
         lowering_registry: capabilities.registry_identity().clone(),
+        realization_registry: capabilities
+            .realization()
+            .identity()
+            .to_vec()
+            .into_boxed_slice(),
     }
 }
 
@@ -3335,7 +3361,7 @@ mod tests {
     /// The canonical key separates every statable contract from every other.
     ///
     /// **Exhaustive finite evidence, not a sample.** The key is the contract's
-    /// standing identity: `legality::NumericalContractIdentity`, the fusion
+    /// standing identity: [`tiler_ir::index::NumericalContractIdentity`], the fusion
     /// legality content identity, and the scheduled region's `profile_key` each
     /// carry it *alone*, with no dimension beside it, so two contracts sharing a
     /// key would give two stated meanings one artifact and one cache entry. The
@@ -4624,6 +4650,23 @@ mod tests {
         let mut forged = target.clone();
         forged.capabilities = CompilerCapabilitySnapshot::without_capabilities();
         assert!(!forged.reconstructs_its_authority());
+
+        let mut forged = target.clone();
+        let scalars = forged.capabilities.scalars().clone();
+        let realization = tiler_ir::index::IndexSemanticRealizationRegistryBuilder::new(
+            scalars.semantic_authority().clone(),
+            scalars.clone(),
+        )
+        .freeze();
+        forged.capabilities = CompilerCapabilitySnapshot::new(
+            forged.capabilities.lowering().clone(),
+            realization,
+            scalars,
+        );
+        assert!(
+            !forged.reconstructs_its_authority(),
+            "the request subject binds the verifier registry independently of lowering"
+        );
 
         let mut forged = target.clone();
         forged.budgets.regions += 1;

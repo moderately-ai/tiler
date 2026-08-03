@@ -39,14 +39,14 @@ use tiler_ir::identity::{push_len, push_slice};
 use tiler_ir::index::{
     CanonicalScalarDefinitionProjection, CanonicalScalarRegistrySnapshotIdentity, DimensionId,
     DomainRole, FrozenScalarRegistry, IndexBuildError, IndexExprId, IndexInteger,
-    IndexRealizationAuthority, IndexRefinementSignature, IndexRefinementSubject,
-    IndexRegionBuilder, ScalarAttributes, ScalarOpKey, ScalarReducerBodyBuilder,
-    ScalarRegistryError, ScalarResults, ScalarValueId, SourcedExtent, SymbolicExtentError,
-    TensorAccessId, TensorId, TensorRole,
+    IndexRealizationAuthority, IndexRefinementBoundary, IndexRefinementSignature,
+    IndexRefinementSubject, IndexRefinementVerificationError, IndexRegionBuilder, ScalarAttributes,
+    ScalarOpKey, ScalarReducerBodyBuilder, ScalarRegistryError, ScalarResults, ScalarValueId,
+    SourcedExtent, SymbolicExtentError, TensorAccessId, TensorId, TensorRole,
 };
 use tiler_ir::semantic::{
-    FrozenSemanticRegistry, OpKey, ProviderIdentity, RegistryError, ResolvedValueType,
-    SemanticCapabilityAuthority, SemanticRegistrySnapshotIdentity,
+    FrozenSemanticRegistry, OpKey, OperationAttributes, ProviderIdentity, RegistryError,
+    ResolvedValueType, SemanticCapabilityAuthority, SemanticRegistrySnapshotIdentity,
 };
 use tiler_ir::shape::{Extent, Shape};
 
@@ -500,12 +500,39 @@ impl<'a> ScalarLoweringContext<'a> {
     }
 }
 
+/// Narrow provider-visible facts for one lowering occurrence.
+#[derive(Clone, Copy, Debug)]
+pub struct IndexAccessOccurrence<'a>(&'a IndexRefinementSubject);
+
+impl<'a> IndexAccessOccurrence<'a> {
+    /// Returns distinct ordered input boundaries.
+    #[must_use]
+    pub fn inputs(self) -> &'a [IndexRefinementBoundary] {
+        self.0.inputs()
+    }
+    /// Returns the input position for every ordered operand.
+    #[must_use]
+    pub fn operands(self) -> &'a [usize] {
+        self.0.operands()
+    }
+    /// Returns ordered result boundaries.
+    #[must_use]
+    pub fn results(self) -> &'a [IndexRefinementBoundary] {
+        self.0.results()
+    }
+    /// Returns host-canonical attributes.
+    #[must_use]
+    pub const fn attributes(self) -> &'a OperationAttributes {
+        self.0.attributes()
+    }
+}
+
 /// A narrow checked context for one index/access-lowering provider.
 ///
 /// The context delegates to the canonical [`IndexRegionBuilder`] and exposes its
 /// constructive surface — dimensions, tensor boundaries, index expressions,
 /// accesses, scalar applications, reductions, and output roots — plus the
-/// checked [`IndexRefinementSubject`] facts, but never the raw builder or region
+/// checked [`IndexAccessOccurrence`] facts, but never the raw builder or region
 /// finalization. The host verifies the region afterwards.
 pub struct IndexAccessLoweringContext<'a> {
     builder: &'a mut IndexRegionBuilder,
@@ -515,7 +542,7 @@ pub struct IndexAccessLoweringContext<'a> {
 impl<'a> IndexAccessLoweringContext<'a> {
     /// Binds a host-owned index/access-lowering context over a canonical builder.
     #[must_use]
-    pub fn new(
+    pub(crate) fn new(
         builder: &'a mut IndexRegionBuilder,
         occurrence: &'a IndexRefinementSubject,
     ) -> Self {
@@ -527,8 +554,8 @@ impl<'a> IndexAccessLoweringContext<'a> {
 
     /// Returns the checked facts about the occurrence being lowered.
     #[must_use]
-    pub const fn occurrence(&self) -> &IndexRefinementSubject {
-        self.occurrence
+    pub const fn occurrence(&self) -> IndexAccessOccurrence<'_> {
+        IndexAccessOccurrence(self.occurrence)
     }
 
     /// Adds one static half-open iteration dimension.
@@ -1240,11 +1267,6 @@ pub enum LoweringRegistryError {
         /// Declared emitted-operation count.
         actual: usize,
     },
-    /// An ordered operand named an input boundary the occurrence does not have.
-    UnboundOperand {
-        /// Ordered operand position.
-        operand: usize,
-    },
     /// The same provider already registered this exact family/operation/signature.
     DuplicateCapability {
         /// Duplicated family.
@@ -1323,10 +1345,6 @@ impl fmt::Display for LoweringRegistryError {
             Self::TooManyEmittedOperations { actual } => write!(
                 formatter,
                 "lowering capability declared {actual} emitted scalar operations, exceeding the bound"
-            ),
-            Self::UnboundOperand { operand } => write!(
-                formatter,
-                "operand {operand} names an input boundary the occurrence does not have"
             ),
             Self::DuplicateCapability {
                 family, operation, ..
@@ -1601,6 +1619,23 @@ pub fn install_governed_index_access(
     crate::governed::install_governed_index_access(builder, substituted)
 }
 
+/// Installs the shipped semantic-realization verifiers except substituted families.
+///
+/// A caller composing a lowering registry must install the independent verifier
+/// authority beside it. A substituted family must supply its own verifier;
+/// omitting it fails closed during refinement.
+///
+/// # Errors
+///
+/// Returns a typed refusal when the caller's verifier builder is not frozen over
+/// the governed semantic and scalar authorities or a registration conflicts.
+pub fn install_governed_index_realizations(
+    builder: &mut tiler_ir::index::IndexSemanticRealizationRegistryBuilder,
+    substituted: &[OpKey],
+) -> Result<(), IndexRefinementVerificationError> {
+    crate::governed::install_governed_realization_verifiers(builder, substituted)
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -1813,7 +1848,7 @@ mod tests {
         IndexRefinementSubject::derive(
             &program,
             SemanticOccurrence::new(0),
-            NumericalContractIdentity::from_key("test.strict-f32.v1"),
+            NumericalContractIdentity::try_from_key("test.strict-f32.v1").unwrap(),
         )
         .unwrap()
     }
