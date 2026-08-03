@@ -1,13 +1,16 @@
 ---
 id: emit-a-route-requirement-from-the-build-producer-so-a-family-authority-refusal-is-drivable
 title: Emit a route requirement from the build producer so a family-authority refusal is drivable
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [realize-parallel-reduction-strategies-on-metal, declare-a-required-gpu-family-in-the-artifact, select-executable-variants-across-registered-backend-families, design-the-adapter-owned-route-requirement-answer-channel]
-scopes: [implementation/build, implementation/artifact]
+scopes: [implementation/build, implementation/artifact, contracts/artifacts]
 shared_scopes: [project/tickets]
 tags: [implementation, artifacts, build, route-requirements, evidence-gap]
+claimed_from: todo
+assignee: agent-route-requirement
+lease_expires_at: 1785786692
 ---
 ## User-visible outcome
 

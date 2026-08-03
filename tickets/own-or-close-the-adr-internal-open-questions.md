@@ -1,7 +1,7 @@
 ---
 id: own-or-close-the-adr-internal-open-questions
 title: Own or close the ADR-internal open questions that assign nobody
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [re-own-or-close-the-open-questions-whose-owner-tickets-are-terminal, resolve-or-retire-the-scalar-lowering-provider-seam, accept-the-public-backend-provider-composition-boundary]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions]
 shared_scopes: [contracts/navigation, project/tickets]
 paths: []
 tags: [documentation, decisions, graph-repair]
+claimed_from: todo
+assignee: agent-adr-questions
+lease_expires_at: 1785786696
 ---
 ## User-visible outcome
 

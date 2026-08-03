@@ -1,7 +1,7 @@
 ---
 id: place-index-refinement-evidence-under-an-ir-owned-verifier
 title: Place index-refinement evidence under an IR-owned verifier
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [bind-stage-coverage-to-index-refinement-identity]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler, contracts/foundation, contr
 shared_scopes: [project/tickets]
 paths: []
 tags: []
+claimed_from: todo
+assignee: agent-index-receipt
+lease_expires_at: 1785786688
 ---
 ## User-visible outcome
 
