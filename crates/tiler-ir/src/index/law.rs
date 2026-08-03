@@ -30,7 +30,10 @@ use super::{
 ///
 /// This is deliberately not a universal IR. Each variant is an atomic template
 /// whose complete interpretation is owned here; semantics outside this set are
-/// unsupported and therefore cannot mint refinement evidence.
+/// unsupported and therefore cannot mint refinement evidence. Verification
+/// requires the candidate region's exact canonical identity to equal the region
+/// this law constructs. A semantically equivalent alternate logical index form
+/// is deliberately refused; physical alternatives belong to later planning.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum IndexRealizationLaw {

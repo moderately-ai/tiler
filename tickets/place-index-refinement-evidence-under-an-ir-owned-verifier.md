@@ -111,13 +111,17 @@ completed refinement receipts, and typed verification errors/outcomes.
 `SemanticRegistryRegistrar::register_index_realization_law` is the only public
 law-registration path and requires the operation in that same transaction,
 nonzero revision, unique ownership, and bounded count/bytes. Residual proof
-completion adds `IndexDomainProofAuthority`, `IndexDomainProofEvidence`,
-`IndexDomainDisproof`, `IndexDomainProofClaim`, `IndexDomainProofVerifier`,
-`IndexDomainProofAssessment`, `IndexRefinementDomainProof`, and typed atomic
-refusal. IR invokes that proof callback exactly once and alone seals the opaque
-receipt. Compiler content retains those IR-sealed proof objects directly; the
-superseded compiler `AuthorizedIndexDomainProof` and its duplicate identity
-encoder are removed, and IR disproof conversion preserves the counterexample.
+completion adds read-only `IndexDomainProofAuthority`,
+`IndexDomainProofEvidence`, `IndexDomainDisproof`, `IndexDomainProofClaim`,
+`IndexDomainProofAssessment`, `IndexRefinementDomainProof`, a bounded
+`IndexDomainProofBudget`, and typed atomic refusal. There is no proof callback
+and no public proof, disproof, or authority constructor: IR runs its closed
+exact-finite evaluator and alone seals the opaque receipt. The compiler chooses
+only a bounded work budget and projects IR's assessments into explain output;
+the superseded compiler evaluator, `AuthorizedIndexDomainProof`, and duplicate
+identity encoder are removed. IR disproof conversion preserves the exact
+counterexample and enumerated point ordinal. The `SoundProof` lane remains
+unsupported until a closed, validated certificate language exists.
 
 **Proposal — compiler public draft, not accepted here:** the provider context
 exposes only the narrow `IndexAccessOccurrence`; `session::InstalledCapabilities::installed`
@@ -125,6 +129,22 @@ accepts `(lowering, scalars)` and derives the immutable law snapshot. Compiler
 registry search, selected-provider provenance, explain, proof-policy
 implementation, and planning remain compiler owned. The rejected three-argument
 installation spelling and arbitrary verifier install hook are removed.
+
+The public draft removes the previous occurrence façade types
+`OccurrenceBoundary`, `LoweredOccurrence`, `OccurrenceValueId`,
+`OccurrenceOperand`, and `OccurrenceResult`, plus the compiler-owned
+`SemanticOccurrenceIdentity`, `NumericalContractIdentity`,
+`SemanticOccurrence`, `OperandBinding`, and `ResultBinding`. It changes
+`LoweringCapabilityAuthority::refinement`, makes the provider-facing
+`IndexAccessOccurrence` the narrow context, keeps
+`IndexAccessLoweringContext::new` crate-private, adds the exact subject and law
+registry to `refine_index_region`, and replaces `IndexRefinement::occurrence`
+with the sealed receipt. The pending receipt retains its subject rather than a
+caller-supplied scalar registry. Proof evidence, claims, verification outcomes,
+and refusal kinds remain exhaustive enums in this draft: adding a semantic case
+must break internal consumers at compile time rather than let wildcard arms
+silently misclassify new proof meaning. This exact public boundary still returns
+to Tom; the ticket does not accept it.
 
 ## Identity step and blast radius
 
@@ -149,17 +169,42 @@ consumption and program/artifact identity.
 
 ## Correction evidence
 
-**Measurement — 2026-08-03:** the deliberate multiply-to-add lowering
-perturbation reaches a typed `SemanticRealizationMismatch`; the ordinary compile
-path refuses it before candidate planning. The eight governed realization laws
-independently reconstruct the same canonical regions as their current lowering
-providers. `tiler-ir` nextest passed 670/670; `tiler-compiler` passed 593/593;
-combined IR/compiler/out-of-crate prototype nextest passed 1,282/1,282 with one
+**Review correction — 2026-08-03:** exact fixed-point review found two
+fail-closed defects in the first corrected draft. First, the compiler derived
+the realization-law registry from the installed scalar registry rather than the
+exact `SemanticProgram` registry. Two registries can have equal semantic
+snapshot identities while carrying different law sidecars, so registry B's add
+law and add-emitting lowering could be substituted for program A's multiply
+law. Verified requests now derive and retain the law registry from the exact
+program registry, bind its separate identity into each request subject, and
+preflight the installed lowering/scalar authorities against the program's
+semantic snapshot. The deliberate A/B fixture has equal semantic snapshots,
+makes both scalar operations evaluable, and reaches the exact
+`SemanticRealizationMismatch` under A's retained multiply law.
+
+Second, public `ResolvedIndexRealization::complete(pending, verifier)` let an
+arbitrary callback return a purported sound proof with arbitrary bytes. The
+callback, public authority/evidence/disproof constructors, `Sound` evidence
+variant, and duplicate compiler evaluator are removed. Completion now accepts
+only `IndexDomainProofBudget` and invokes IR's fixed exact-finite algorithm.
+Tests prove a valid residual exhaustively, return a deterministic exact
+counterexample for a false predicate, retain `Unknown` for symbolic input and
+for budget exhaustion, and reject zero or over-hard-limit budgets. A repository
+search over `crates/`, `docs/`, and this ticket finds no remaining verifier
+trait, sound-proof constructor/variant, or public proof-authority constructor.
+
+**Measurement — 2026-08-03, post-review fixed point:** the deliberate
+multiply-to-add lowering perturbation reaches a typed
+`SemanticRealizationMismatch`; the ordinary compile path refuses it before
+candidate planning. The separate equal-snapshot A/B regression reaches the
+same mismatch through verified request and lowering resolution. The eight
+governed realization laws independently reconstruct the same canonical regions
+as their current lowering providers. `tiler-ir` nextest passed 675/675;
+`tiler-compiler` passed 590/590 with one configured skip; combined
+IR/compiler/out-of-crate prototype nextest passed 1,284/1,284 with that same one
 configured skip under Xcode 26.6 (17F113), selected per command with
-`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`. The host's global
-Xcode beta 27.0 (27A5228h) lacks `metallib`; the first broad run therefore had
-exactly ten prototype toolchain-discovery failures while all 1,272 other tests
-passed. No global toolchain setting was mutated.
+`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`. No global toolchain
+setting was mutated.
 
 **Fact:** affected-crate Clippy with warnings denied, both crates' doctests,
 formatting, `git diff --check`, and `tkt lint` pass. The request qualifier pin was

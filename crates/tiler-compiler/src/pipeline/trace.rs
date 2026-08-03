@@ -251,13 +251,6 @@ fn record_semantic_discharge_proofs(
                     write!(obligation_key, "{byte:02x}").expect("writing to a String cannot fail");
                 }
                 let (basis, proof_kind, points) = match proof.proof() {
-                    tiler_ir::index::IndexDomainProofEvidence::Sound { .. } => (
-                        EvidenceBasis::SoundProof(VerifiedEvidenceRef::from_index_domain(
-                            &subject, proof,
-                        )),
-                        "sound-proof",
-                        None,
-                    ),
                     tiler_ir::index::IndexDomainProofEvidence::ExhaustiveFinite {
                         points, ..
                     } => (

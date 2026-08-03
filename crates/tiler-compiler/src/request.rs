@@ -838,7 +838,6 @@ impl LoweringProviderIdentity {
 pub(crate) struct CompilerCapabilitySnapshot {
     schema_version: u32,
     lowering: FrozenLoweringCapabilityRegistry,
-    realization: FrozenIndexRealizationLawRegistry,
     scalars: FrozenScalarRegistry,
 }
 
@@ -849,14 +848,9 @@ impl CompilerCapabilitySnapshot {
         lowering: FrozenLoweringCapabilityRegistry,
         scalars: FrozenScalarRegistry,
     ) -> Self {
-        let realization = FrozenIndexRealizationLawRegistry::from_semantic(
-            scalars.semantic_authority().clone(),
-            scalars.clone(),
-        );
         Self {
             schema_version: REQUEST_SCHEMA_VERSION,
             lowering,
-            realization,
             scalars,
         }
     }
@@ -886,11 +880,6 @@ impl CompilerCapabilitySnapshot {
     /// Returns the installed lowering-capability registry.
     pub(crate) const fn lowering(&self) -> &FrozenLoweringCapabilityRegistry {
         &self.lowering
-    }
-
-    /// Returns the independent semantic-realization authority.
-    pub(crate) const fn realization(&self) -> &FrozenIndexRealizationLawRegistry {
-        &self.realization
     }
 
     /// Returns the scalar authority every resolved provider emits against.
@@ -931,7 +920,6 @@ impl PartialEq for CompilerCapabilitySnapshot {
     fn eq(&self, other: &Self) -> bool {
         self.schema_version == other.schema_version
             && self.registry_identity() == other.registry_identity()
-            && self.realization.identity() == other.realization.identity()
             && self.scalars.snapshot_identity() == other.scalars.snapshot_identity()
     }
 }
@@ -1269,6 +1257,7 @@ pub(crate) struct VerifiedCompilationRequest {
     /// by indexing several parallel vectors.
     target_slots: Vec<VerifiedTargetSlot>,
     capabilities: CompilerCapabilitySnapshot,
+    realization_laws: FrozenIndexRealizationLawRegistry,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1301,6 +1290,7 @@ pub(crate) struct VerifiedTargetRequest {
     budgets: DeterministicBudgets,
     target_profile: TargetProfile,
     capabilities: CompilerCapabilitySnapshot,
+    realization_laws: FrozenIndexRealizationLawRegistry,
     authority: VerifiedRequestSubject,
 }
 
@@ -1401,7 +1391,10 @@ impl VerifiedTargetRequest {
             self.numerical_contract,
             self.budgets,
             &self.target_profile,
-            &self.capabilities,
+            VerifiedRequestAuthorities {
+                installed: &self.capabilities,
+                realization_laws: &self.realization_laws,
+            },
         ) == self.authority
     }
 
@@ -1430,6 +1423,10 @@ impl VerifiedTargetRequest {
 
     pub(crate) const fn capabilities(&self) -> &CompilerCapabilitySnapshot {
         &self.capabilities
+    }
+
+    pub(crate) const fn realization_laws(&self) -> &FrozenIndexRealizationLawRegistry {
+        &self.realization_laws
     }
 
     pub(crate) const fn semantic_identity(&self) -> &SemanticIdentity {
@@ -1773,6 +1770,15 @@ impl VerifiedCompilationRequest {
         target_indexes: &[usize],
     ) -> Result<Self, RequestError> {
         let (normalized, semantic_identity) = verify_program(program, self.budgets)?;
+        if self.capabilities.lowering.semantic_snapshot()
+            != program.semantic_registry().snapshot_identity()
+        {
+            return unsupported("capability", "semantic-authority-pairing");
+        }
+        let realization_laws = FrozenIndexRealizationLawRegistry::from_semantic(
+            program.semantic_registry().clone(),
+            self.capabilities.scalars.clone(),
+        );
         let mut target_slots = Vec::with_capacity(target_indexes.len());
         for target_index in target_indexes {
             let slot = self
@@ -1792,7 +1798,10 @@ impl VerifiedCompilationRequest {
                 *numerical_contract,
                 self.budgets,
                 &slot.target_profile,
-                &self.capabilities,
+                VerifiedRequestAuthorities {
+                    installed: &self.capabilities,
+                    realization_laws: &realization_laws,
+                },
             );
             target_slots.push(VerifiedTargetSlot {
                 target_profile: slot.target_profile.clone(),
@@ -1809,6 +1818,7 @@ impl VerifiedCompilationRequest {
             budgets: self.budgets,
             target_slots,
             capabilities: self.capabilities.clone(),
+            realization_laws,
         })
     }
 
@@ -1833,7 +1843,10 @@ impl VerifiedCompilationRequest {
             *numerical_contract,
             self.budgets,
             &slot.target_profile,
-            &self.capabilities,
+            VerifiedRequestAuthorities {
+                installed: &self.capabilities,
+                realization_laws: &self.realization_laws,
+            },
         );
         if !numerical_contract.is_governed() || authority.as_ref() != &current_authority {
             return Err(RequestError::UnverifiedTargetSelection);
@@ -1846,6 +1859,7 @@ impl VerifiedCompilationRequest {
             budgets: self.budgets,
             target_profile: slot.target_profile.clone(),
             capabilities: self.capabilities.clone(),
+            realization_laws: self.realization_laws.clone(),
             authority: current_authority,
         })
     }
@@ -1861,6 +1875,12 @@ impl VerifiedTargetSlot {
     }
 }
 
+#[derive(Clone, Copy)]
+struct VerifiedRequestAuthorities<'a> {
+    installed: &'a CompilerCapabilitySnapshot,
+    realization_laws: &'a FrozenIndexRealizationLawRegistry,
+}
+
 fn request_subject(
     normalized: &NormalizedProgram,
     semantic_identity: &SemanticIdentity,
@@ -1868,7 +1888,7 @@ fn request_subject(
     numerical_contract: StrictF32NumericalContract,
     budgets: DeterministicBudgets,
     target_profile: &TargetProfile,
-    capabilities: &CompilerCapabilitySnapshot,
+    authorities: VerifiedRequestAuthorities<'_>,
 ) -> VerifiedRequestSubject {
     #[cfg(test)]
     crate::workcount::REQUEST_SUBJECT_REBUILDS.record();
@@ -1900,10 +1920,10 @@ fn request_subject(
         numerical_contract,
         budgets,
         target_profile: target_profile.clone(),
-        capability_schema_version: capabilities.schema_version,
-        lowering_registry: capabilities.registry_identity().clone(),
-        realization_registry: capabilities
-            .realization()
+        capability_schema_version: authorities.installed.schema_version,
+        lowering_registry: authorities.installed.registry_identity().clone(),
+        realization_registry: authorities
+            .realization_laws
             .identity()
             .to_vec()
             .into_boxed_slice(),
@@ -2186,19 +2206,6 @@ pub(crate) fn verify_request(
     {
         return unsupported("capability", "scalar-authority-pairing");
     }
-    if request.capabilities.lowering.semantic_snapshot()
-        != request
-            .capabilities
-            .scalars
-            .semantic_authority()
-            .snapshot_identity()
-        || request.capabilities.realization.semantic_snapshot()
-            != request.capabilities.lowering.semantic_snapshot()
-        || request.capabilities.realization.scalar_snapshot()
-            != request.capabilities.lowering.scalar_snapshot()
-    {
-        return unsupported("capability", "semantic-authority-pairing");
-    }
     if request.target_profiles.is_empty() {
         return Err(RequestError::EmptyTargetSet);
     }
@@ -2241,6 +2248,15 @@ pub(crate) fn verify_request(
         return Err(RequestError::DuplicateTargetProfile);
     }
     let (normalized, semantic_identity) = verify_program(request.program, request.budgets)?;
+    if request.capabilities.lowering.semantic_snapshot()
+        != request.program.semantic_registry().snapshot_identity()
+    {
+        return unsupported("capability", "semantic-authority-pairing");
+    }
+    let realization_laws = FrozenIndexRealizationLawRegistry::from_semantic(
+        request.program.semantic_registry().clone(),
+        request.capabilities.scalars.clone(),
+    );
     let dispatch_types = canonical_program_value_types(request.program);
 
     // Resolve every structurally admitted target independently. A profile that
@@ -2262,7 +2278,10 @@ pub(crate) fn verify_request(
                             numerical_contract,
                             request.budgets,
                             target,
-                            &request.capabilities,
+                            VerifiedRequestAuthorities {
+                                installed: &request.capabilities,
+                                realization_laws: &realization_laws,
+                            },
                         );
                         VerifiedTargetResolution::Resolved {
                             numerical_contract,
@@ -2292,6 +2311,7 @@ pub(crate) fn verify_request(
         budgets: request.budgets,
         target_slots,
         capabilities: request.capabilities,
+        realization_laws,
     })
 }
 
@@ -3872,6 +3892,22 @@ mod tests {
         program_with_builder(SemanticProgramBuilder::try_new(registry.freeze().unwrap()).unwrap())
     }
 
+    fn request_with_matching_empty_capabilities(
+        program: &SemanticProgram,
+    ) -> CompilationRequest<'_> {
+        let scalars =
+            tiler_ir::index::ScalarRegistryBuilder::new(program.semantic_registry().clone())
+                .freeze();
+        let lowering = crate::capability::LoweringCapabilityRegistryBuilder::new(
+            program.semantic_registry().clone(),
+            scalars.clone(),
+        )
+        .freeze();
+        let mut request = CompilationRequest::governed(program);
+        request.capabilities = CompilerCapabilitySnapshot::new(lowering, scalars);
+        request
+    }
+
     #[test]
     fn governed_request_selects_the_supported_serial_sum_strategy() {
         let program = program();
@@ -4686,8 +4722,8 @@ mod tests {
     fn used_provider_revision_changes_admission_and_snapshot_subjects() {
         let first = governed_test_program(1);
         let second = governed_test_program(2);
-        let first = verify_request(CompilationRequest::governed(&first)).unwrap();
-        let second = verify_request(CompilationRequest::governed(&second)).unwrap();
+        let first = verify_request(request_with_matching_empty_capabilities(&first)).unwrap();
+        let second = verify_request(request_with_matching_empty_capabilities(&second)).unwrap();
 
         assert_eq!(
             first.semantic_identity.graph(),
@@ -4711,8 +4747,8 @@ mod tests {
     fn unused_provider_revision_changes_only_the_snapshot_subject() {
         let first = program_with_unused_provider(1);
         let second = program_with_unused_provider(2);
-        let first = verify_request(CompilationRequest::governed(&first)).unwrap();
-        let second = verify_request(CompilationRequest::governed(&second)).unwrap();
+        let first = verify_request(request_with_matching_empty_capabilities(&first)).unwrap();
+        let second = verify_request(request_with_matching_empty_capabilities(&second)).unwrap();
 
         assert_eq!(
             first.semantic_identity.graph(),

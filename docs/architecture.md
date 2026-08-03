@@ -134,7 +134,7 @@ graph-specific compiler entry points or public support-profile namespaces.
 Fixed region, stage, entry, and buffer cardinalities in a slice are not
 `CompilationRequest` or compiler-product invariants. See ADR 0069.
 
-Lowering-capability resolution is an implemented stage of that entry point rather than a description of one. It runs unconditionally, resolves exactly one index/access capability per recognized occurrence, and fails closed on an absent or a contended capability with a typed, occurrence-attributed cause. An out-of-crate caller can compose a lowering registry through the public capability surface, bind it to the exact frozen scalar authority through `session::InstalledCapabilities::installed`, install it with `session::CompileRequest::with_capabilities`, and compile through `session::compile`. The semantic provider transaction owns each operation's immutable typed realization law; the session derives that law snapshot from the scalar registry's semantic authority, so a lowering installer cannot substitute its own semantic oracle. `session::compile_governed` is a single-target convenience wrapper over that same path rather than a second pipeline. The session module remains a reviewed experimental draft as a complete facade; shape-environment choice and deterministic budgets remain governed because each still has only one admitted public value. Separately, Tom accepted the experimental caller-authored `TargetProfileBuilder`/immutable `TargetProfile` boundary and bounded `TargetRequest`, so target selection is no longer confined to the governed profile. [The optimizer contract](compiler/optimizer.md#lowering-capability-resolution-and-index-region-refinement) owns the stage's behaviour and maturity boundary.
+Lowering-capability resolution is an implemented stage of that entry point rather than a description of one. It runs unconditionally, resolves exactly one index/access capability per recognized occurrence, and fails closed on an absent or a contended capability with a typed, occurrence-attributed cause. An out-of-crate caller can compose a lowering registry through the public capability surface, bind it to the exact frozen scalar authority through `session::InstalledCapabilities::installed`, install it with `session::CompileRequest::with_capabilities`, and compile through `session::compile`. The semantic provider transaction owns each operation's immutable typed realization law; request verification derives and retains that law snapshot from the exact semantic registry carried by the program, independently binds its identity into the request subject, and checks the installed lowering/scalar pair against the program's semantic snapshot. Equal semantic snapshot bytes therefore cannot let an installer's different law sidecar replace the program's law. `session::compile_governed` is a single-target convenience wrapper over that same path rather than a second pipeline. The session module remains a reviewed experimental draft as a complete facade; shape-environment choice and deterministic budgets remain governed because each still has only one admitted public value. Separately, Tom accepted the experimental caller-authored `TargetProfileBuilder`/immutable `TargetProfile` boundary and bounded `TargetRequest`, so target selection is no longer confined to the governed profile. [The optimizer contract](compiler/optimizer.md#lowering-capability-resolution-and-index-region-refinement) owns the stage's behaviour and maturity boundary.
 
 ## Hierarchical planning with feedback
 
@@ -203,9 +203,10 @@ machine-checkable guarantee, and scoped evidence identity. These must refine
 the region's effective operation contracts before costing.
 
 Index, schedule, and structured-kernel identities describe canonical
-structural content. A compiler-owned checked refinement binds index structure
-to a particular region occurrence, exact boundary/access mappings, reached
-semantic definitions, selected provider provenance, and evidence. Complete
+structural content. An IR-owned sealed receipt binds index structure to a
+particular semantic-program occurrence, exact boundary/access mappings, reached
+semantic definitions, and proof evidence; the compiler layers selected-provider
+provenance around that receipt. Complete
 program identity—not a nested whole-graph digest inside every structural
 object—proves occurrence coverage, executable composition, and the executable
 contract a program commits to: its buffers, its entry ABI, its applicability

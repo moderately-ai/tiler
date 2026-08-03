@@ -43,13 +43,13 @@ pub use predicate::{
 };
 pub use refinement::{
     FrozenIndexRealizationLawRegistry, IndexDomainDisproof, IndexDomainProofAssessment,
-    IndexDomainProofAuthority, IndexDomainProofClaim, IndexDomainProofEvidence,
-    IndexDomainProofRefusal, IndexDomainProofRefusalKind, IndexDomainProofVerifier,
+    IndexDomainProofAuthority, IndexDomainProofBudget, IndexDomainProofClaim,
+    IndexDomainProofEvidence, IndexDomainProofRefusal, IndexDomainProofRefusalKind,
     IndexRealizationAuthority, IndexRefinementBoundary, IndexRefinementDomainProof,
     IndexRefinementReceipt, IndexRefinementReceiptIdentity, IndexRefinementSignature,
     IndexRefinementSubject, IndexRefinementVerificationError, IndexRefinementVerificationOutcome,
-    NumericalContractIdentity, OperandBinding, PendingIndexRefinementReceipt,
-    ResolvedIndexRealization, ResultBinding,
+    MAX_FINITE_DOMAIN_PROOF_CELLS, NumericalContractIdentity, OperandBinding,
+    PendingIndexRefinementReceipt, ResolvedIndexRealization, ResultBinding,
 };
 // The symbolic index profile is re-exported flat here rather than published as
 // a `tiler_ir::index::sourced` module, matching the re-export precedent this

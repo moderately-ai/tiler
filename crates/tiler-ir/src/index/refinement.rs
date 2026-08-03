@@ -14,8 +14,13 @@
 //! mints a receipt.
 
 use core::fmt;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::sync::Arc;
+
+use num_bigint::{BigInt, Sign};
+use num_integer::Integer;
+use num_traits::Zero;
 
 use crate::identity::{push_len, push_slice};
 use crate::program::SemanticOccurrence;
@@ -28,10 +33,12 @@ use crate::shape::Shape;
 
 use super::{
     CanonicalIndexRegionIdentity, CanonicalScalarDefinitionProjection,
-    CanonicalScalarRegistrySnapshotIdentity, FrozenScalarRegistry, IndexDomainSoundProof,
-    IndexDomainUnknownReason, ScalarAuthorityEvidence, ScalarOpKey, ScalarRegistryError,
-    TensorRole, UnknownIndexDomainPredicate, VerifiedIndexHandleError, VerifiedIndexRegion,
-    VerifiedScalarValueId, VerifiedTensorAccessId, VerifiedTensorId,
+    CanonicalScalarRegistrySnapshotIdentity, FrozenScalarRegistry, IndexDomainPredicate,
+    IndexDomainUnknownReason, IndexExprView, IndexExtentRef, IndexInteger, IndexIntegerSign,
+    ScalarAuthorityEvidence, ScalarOpKey, ScalarRegistryError, TensorRole,
+    UnknownIndexDomainPredicate, VerifiedDimensionId, VerifiedIndexExprId,
+    VerifiedIndexHandleError, VerifiedIndexRegion, VerifiedScalarValueId, VerifiedTensorAccessId,
+    VerifiedTensorId,
 };
 
 const RECEIPT_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-receipt.v1\0";
@@ -42,6 +49,10 @@ const PROOF_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-domain-proof.v1\0"
 const LAW_REGISTRY_IDENTITY_TAG: &[u8] = b"tiler.ir.index-realization-law-registry.v1\0";
 const MAX_NUMERICAL_CONTRACT_IDENTITY_BYTES: usize = 256;
 const MAX_DOMAIN_EVIDENCE_BYTES: usize = 4_096;
+/// Maximum cells the closed exact-finite residual proof algorithm may evaluate.
+pub const MAX_FINITE_DOMAIN_PROOF_CELLS: u64 = 16 * 1024 * 1024;
+const EXHAUSTIVE_DERIVATION: &[u8] = b"tiler.ir.exact-index-domain-enumeration.v1\0";
+const COUNTEREXAMPLE_TAG: &[u8] = b"tiler.ir.index-domain-counterexample.v1\0";
 
 /// One semantic value boundary derived from a verified program.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -441,6 +452,14 @@ impl fmt::Debug for FrozenIndexRealizationLawRegistry {
     }
 }
 
+impl PartialEq for FrozenIndexRealizationLawRegistry {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity() == other.identity()
+    }
+}
+
+impl Eq for FrozenIndexRealizationLawRegistry {}
+
 impl FrozenIndexRealizationLawRegistry {
     /// Derives the law snapshot inseparably retained by one semantic registry.
     #[must_use]
@@ -662,24 +681,14 @@ pub struct IndexDomainProofAuthority {
 }
 
 impl IndexDomainProofAuthority {
-    /// Creates a proof authority with a nonzero output-affecting revision.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed refusal when `revision` is zero.
-    pub fn new(
-        provider: ProviderIdentity,
-        rule: ProviderIdentity,
-        revision: u32,
-    ) -> Result<Self, IndexRefinementVerificationError> {
-        if revision == 0 {
-            return Err(IndexRefinementVerificationError::ZeroDomainProofRevision);
+    fn exact_finite() -> Self {
+        Self {
+            provider: ProviderIdentity::new("tiler", "ir-index-domain-proof", 1)
+                .expect("the IR proof provider identity is canonical"),
+            rule: ProviderIdentity::new("tiler", "exact-finite-index-domain-enumeration", 1)
+                .expect("the IR proof rule identity is canonical"),
+            revision: 1,
         }
-        Ok(Self {
-            provider,
-            rule,
-            revision,
-        })
     }
 
     /// Returns the proof provider identity.
@@ -699,17 +708,9 @@ impl IndexDomainProofAuthority {
     }
 }
 
-/// A proving basis a trusted domain verifier may claim.
+/// Proof evidence produced by IR's closed residual-domain algorithm.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IndexDomainProofEvidence {
-    /// A sound named derivation over the complete predicate domain.
-    #[non_exhaustive]
-    Sound {
-        /// Sound proof class.
-        proof: IndexDomainSoundProof,
-        /// Authority-owned canonical derivation bytes.
-        derivation: Box<[u8]>,
-    },
     /// Exact evaluation of every point in a bounded finite domain.
     #[non_exhaustive]
     ExhaustiveFinite {
@@ -720,41 +721,32 @@ pub enum IndexDomainProofEvidence {
     },
 }
 
-impl IndexDomainProofEvidence {
-    /// Creates bounded sound-proof evidence.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed refusal when the derivation is empty or oversized.
-    pub fn sound(
-        proof: IndexDomainSoundProof,
-        derivation: impl Into<Box<[u8]>>,
-    ) -> Result<Self, IndexRefinementVerificationError> {
-        let derivation = derivation.into();
-        validate_domain_evidence(&derivation)?;
-        Ok(Self::Sound { proof, derivation })
-    }
-
-    /// Creates bounded exhaustive-finite evidence.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed refusal when the derivation is empty or oversized.
-    pub fn exhaustive_finite(
-        points: u64,
-        derivation: impl Into<Box<[u8]>>,
-    ) -> Result<Self, IndexRefinementVerificationError> {
-        let derivation = derivation.into();
-        validate_domain_evidence(&derivation)?;
-        Ok(Self::ExhaustiveFinite { points, derivation })
-    }
+/// Bounded policy input to IR's closed exact-finite proof algorithm.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IndexDomainProofBudget {
+    max_cells: u64,
 }
 
-fn validate_domain_evidence(bytes: &[u8]) -> Result<(), IndexRefinementVerificationError> {
-    if bytes.is_empty() || bytes.len() > MAX_DOMAIN_EVIDENCE_BYTES {
-        return Err(IndexRefinementVerificationError::InvalidDomainProofEvidence);
+impl IndexDomainProofBudget {
+    /// Creates a nonzero budget no larger than IR's hard proof bound.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexRefinementVerificationError::InvalidDomainProofBudget`]
+    /// when `max_cells` is zero or exceeds
+    /// [`MAX_FINITE_DOMAIN_PROOF_CELLS`].
+    pub fn try_new(max_cells: u64) -> Result<Self, IndexRefinementVerificationError> {
+        if max_cells == 0 || max_cells > MAX_FINITE_DOMAIN_PROOF_CELLS {
+            return Err(IndexRefinementVerificationError::InvalidDomainProofBudget);
+        }
+        Ok(Self { max_cells })
     }
-    Ok(())
+
+    /// Returns the maximum expression cells the proof may evaluate.
+    #[must_use]
+    pub const fn max_cells(self) -> u64 {
+        self.max_cells
+    }
 }
 
 /// A typed exact counterexample from a trusted domain verifier.
@@ -771,7 +763,7 @@ impl IndexDomainDisproof {
     /// # Errors
     ///
     /// Returns a typed refusal for empty or oversized evidence.
-    pub fn new(
+    fn new(
         reason: impl Into<Box<str>>,
         counterexample: impl Into<Box<[u8]>>,
     ) -> Result<Self, IndexRefinementVerificationError> {
@@ -793,7 +785,7 @@ impl IndexDomainDisproof {
 
     /// Attaches the exact enumerated point ordinal of the counterexample.
     #[must_use]
-    pub fn with_point_ordinal(mut self, point_ordinal: u64) -> Self {
+    fn with_point_ordinal(mut self, point_ordinal: u64) -> Self {
         self.point_ordinal = Some(point_ordinal);
         self
     }
@@ -824,18 +816,6 @@ pub enum IndexDomainProofClaim {
     Disproved(IndexDomainDisproof),
     /// The verifier cannot prove or disprove the obligation.
     Unknown(IndexDomainUnknownReason),
-}
-
-/// Trusted callback assessed exactly once by IR receipt completion.
-pub trait IndexDomainProofVerifier: Send + Sync {
-    /// Returns the authority governing every claim from this verifier.
-    fn authority(&self) -> &IndexDomainProofAuthority;
-    /// Assesses one exact obligation from `region`.
-    fn assess(
-        &self,
-        region: &VerifiedIndexRegion,
-        obligation: UnknownIndexDomainPredicate,
-    ) -> IndexDomainProofClaim;
 }
 
 /// One exact assessment retained for success identity or refusal explanation.
@@ -1021,6 +1001,11 @@ impl ResolvedIndexRealization {
     /// Checks the occurrence and region together, minting no receipt while a
     /// residual index-domain obligation remains.
     ///
+    /// The candidate must be the exact canonical region constructed by the
+    /// registered semantic law. Semantic equivalence is not approximated here:
+    /// an alternate logical spelling is refused and may become a physical
+    /// alternative only after this semantic association is established.
+    ///
     /// # Errors
     ///
     /// Returns a typed refusal when scalar authority, effect, or ordered tensor
@@ -1113,15 +1098,16 @@ impl ResolvedIndexRealization {
     /// Returns the first canonical disproved or unsupported obligation.
     pub fn complete(
         pending: &PendingIndexRefinementReceipt,
-        verifier: &dyn IndexDomainProofVerifier,
+        budget: IndexDomainProofBudget,
     ) -> Result<(IndexRefinementReceipt, Vec<IndexDomainProofAssessment>), IndexDomainProofRefusal>
     {
+        let authority = IndexDomainProofAuthority::exact_finite();
         let assessments = pending
             .obligations()
             .map(|obligation| IndexDomainProofAssessment {
                 obligation,
-                authority: verifier.authority().clone(),
-                claim: verifier.assess(&pending.region, obligation),
+                authority: authority.clone(),
+                claim: assess_finite_domain(&pending.region, obligation, budget),
             })
             .collect::<Vec<_>>();
         if assessments
@@ -1175,6 +1161,221 @@ impl ResolvedIndexRealization {
     }
 }
 
+fn assess_finite_domain(
+    region: &VerifiedIndexRegion,
+    obligation: UnknownIndexDomainPredicate,
+    budget: IndexDomainProofBudget,
+) -> IndexDomainProofClaim {
+    let access = region
+        .access(obligation.subject())
+        .expect("a verified residual names an access in its own region");
+    let dimensions = access
+        .domain()
+        .map(|dimension| {
+            region
+                .dimension(dimension)
+                .expect("a verified access domain names its own dimensions")
+                .extent()
+                .as_static()
+                .map(|extent| (dimension, extent.get()))
+        })
+        .collect::<Option<Vec<_>>>();
+    let Some(dimensions) = dimensions else {
+        return IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::UnsupportedFragment);
+    };
+    let Some(points) = dimensions.iter().try_fold(1_u128, |product, (_, extent)| {
+        product.checked_mul(u128::from(*extent))
+    }) else {
+        return proof_resource_limit(u128::MAX, budget);
+    };
+    let expression = predicate_expression(obligation.predicate());
+    let mut plan = HashSet::new();
+    if !collect_expression_plan(region, expression, &mut plan) {
+        return IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::UnsupportedFragment);
+    }
+    let required = points.saturating_mul(plan.len() as u128);
+    if required > u128::from(budget.max_cells()) {
+        return proof_resource_limit(required, budget);
+    }
+    let Ok(points) = u64::try_from(points) else {
+        return proof_resource_limit(required, budget);
+    };
+    let mut coordinates = vec![0_u64; dimensions.len()];
+    let mut environment = HashMap::with_capacity(dimensions.len());
+    let mut values = HashMap::with_capacity(plan.len());
+    for point_ordinal in 0..points {
+        environment.clear();
+        environment.extend(
+            dimensions
+                .iter()
+                .zip(&coordinates)
+                .map(|((dimension, _), coordinate)| (*dimension, *coordinate)),
+        );
+        values.clear();
+        let Some(value) = evaluate_expression(region, expression, &environment, &mut values) else {
+            return IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::UnsupportedFragment);
+        };
+        if !predicate_holds(region, obligation.predicate(), &value) {
+            let reason = match obligation.predicate() {
+                IndexDomainPredicate::NonNegative { .. } => "logical-index-negative",
+                IndexDomainPredicate::LessThanExtent { .. } => "logical-index-not-less-than-extent",
+            };
+            return IndexDomainProofClaim::Disproved(
+                IndexDomainDisproof::new(reason, encode_counterexample(&coordinates, &value))
+                    .expect("IR-owned counterexamples satisfy their own evidence bound")
+                    .with_point_ordinal(point_ordinal),
+            );
+        }
+        increment_coordinates(&mut coordinates, &dimensions);
+    }
+    IndexDomainProofClaim::Proved(IndexDomainProofEvidence::ExhaustiveFinite {
+        points,
+        derivation: EXHAUSTIVE_DERIVATION.into(),
+    })
+}
+
+fn proof_resource_limit(required: u128, budget: IndexDomainProofBudget) -> IndexDomainProofClaim {
+    IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::ResourceLimit {
+        resource: super::ProofResource::Cells,
+        required,
+        limit: budget.max_cells(),
+    })
+}
+
+const fn predicate_expression(predicate: IndexDomainPredicate) -> VerifiedIndexExprId {
+    match predicate {
+        IndexDomainPredicate::NonNegative { expression }
+        | IndexDomainPredicate::LessThanExtent { expression, .. } => expression,
+    }
+}
+
+fn collect_expression_plan(
+    region: &VerifiedIndexRegion,
+    expression: VerifiedIndexExprId,
+    reached: &mut HashSet<VerifiedIndexExprId>,
+) -> bool {
+    if !reached.insert(expression) {
+        return true;
+    }
+    let expression = region
+        .index_expression(expression)
+        .expect("a verified predicate names an expression in its own region");
+    match expression.view() {
+        IndexExprView::Constant(_) | IndexExprView::Dimension(_) => true,
+        IndexExprView::LinearCombination { terms, .. } => terms
+            .map(super::LinearTermRef::value)
+            .all(|child| collect_expression_plan(region, child, reached)),
+        IndexExprView::FloorDiv { dividend, divisor }
+        | IndexExprView::Modulo { dividend, divisor } => {
+            divisor.as_static().is_some() && collect_expression_plan(region, dividend, reached)
+        }
+    }
+}
+
+fn evaluate_expression(
+    region: &VerifiedIndexRegion,
+    expression: VerifiedIndexExprId,
+    environment: &HashMap<VerifiedDimensionId, u64>,
+    values: &mut HashMap<VerifiedIndexExprId, BigInt>,
+) -> Option<BigInt> {
+    if let Some(value) = values.get(&expression) {
+        return Some(value.clone());
+    }
+    let view = region
+        .index_expression(expression)
+        .expect("a verified predicate names an expression in its own region")
+        .view();
+    let value = match view {
+        IndexExprView::Constant(value) => decode_integer(value),
+        IndexExprView::Dimension(dimension) => BigInt::from(*environment.get(&dimension)?),
+        IndexExprView::LinearCombination { constant, terms } => {
+            let mut total = decode_integer(constant);
+            for term in terms {
+                total += decode_integer(term.coefficient())
+                    * evaluate_expression(region, term.value(), environment, values)?;
+            }
+            total
+        }
+        IndexExprView::FloorDiv { dividend, divisor } => {
+            evaluate_expression(region, dividend, environment, values)?
+                .div_floor(&BigInt::from(divisor.as_static()?.get()))
+        }
+        IndexExprView::Modulo { dividend, divisor } => {
+            evaluate_expression(region, dividend, environment, values)?
+                .mod_floor(&BigInt::from(divisor.as_static()?.get()))
+        }
+    };
+    values.insert(expression, value.clone());
+    Some(value)
+}
+
+fn decode_integer(value: &IndexInteger) -> BigInt {
+    let (sign, magnitude) = value.to_sign_magnitude();
+    BigInt::from_bytes_be(
+        match sign {
+            IndexIntegerSign::Positive => Sign::Plus,
+            IndexIntegerSign::Negative => Sign::Minus,
+            IndexIntegerSign::Zero => Sign::NoSign,
+        },
+        &magnitude,
+    )
+}
+
+fn predicate_holds(
+    region: &VerifiedIndexRegion,
+    predicate: IndexDomainPredicate,
+    value: &BigInt,
+) -> bool {
+    match predicate {
+        IndexDomainPredicate::NonNegative { .. } => value >= &BigInt::zero(),
+        IndexDomainPredicate::LessThanExtent { extent, .. } => {
+            value < &BigInt::from(resolve_extent(region, extent))
+        }
+    }
+}
+
+fn resolve_extent(region: &VerifiedIndexRegion, extent: IndexExtentRef) -> u64 {
+    match extent {
+        IndexExtentRef::Dimension(dimension) => region
+            .dimension(dimension)
+            .expect("a verified predicate names its own dimension")
+            .extent()
+            .as_static()
+            .expect("finite proof rejected symbolic dimensions")
+            .get(),
+        IndexExtentRef::TensorAxis { tensor, axis } => region
+            .tensor(tensor)
+            .expect("a verified predicate names its own tensor")
+            .shape()
+            .as_static()
+            .expect("finite proof rejected symbolic boundaries")
+            .extents()[usize::try_from(axis).expect("a verified tensor axis fits usize")]
+        .get(),
+    }
+}
+
+fn increment_coordinates(coordinates: &mut [u64], dimensions: &[(VerifiedDimensionId, u64)]) {
+    for (coordinate, (_, extent)) in coordinates.iter_mut().zip(dimensions).rev() {
+        *coordinate += 1;
+        if *coordinate < *extent {
+            return;
+        }
+        *coordinate = 0;
+    }
+}
+
+fn encode_counterexample(coordinates: &[u64], value: &BigInt) -> Box<[u8]> {
+    let mut output = COUNTEREXAMPLE_TAG.to_vec();
+    push_len(&mut output, coordinates.len());
+    for coordinate in coordinates {
+        output.extend_from_slice(&coordinate.to_be_bytes());
+    }
+    let (sign, magnitude) = value.to_bytes_be();
+    output.push(u8::from(matches!(sign, Sign::Minus)));
+    push_slice(&mut output, &magnitude);
+    output.into_boxed_slice()
+}
+
 /// Whether one atomic completion pass found a disproof or an unknown.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IndexDomainProofRefusalKind {
@@ -1215,10 +1416,10 @@ pub enum IndexRefinementVerificationError {
         /// Maximum admitted byte length.
         limit: usize,
     },
-    /// A residual-domain proof authority used revision zero.
-    ZeroDomainProofRevision,
     /// A residual-domain reason, derivation, or counterexample was invalid.
     InvalidDomainProofEvidence,
+    /// Exact-finite proof budget is zero or exceeds IR's hard bound.
+    InvalidDomainProofBudget,
     /// An admitted signature exceeded the governed bound.
     SignatureTooLarge,
     /// The typed graph-local occurrence is outside the verified program.
@@ -1259,7 +1460,8 @@ pub enum IndexRefinementVerificationError {
         /// Stable failing law rule.
         rule: &'static str,
     },
-    /// The candidate differs from the semantic law's expected canonical region.
+    /// The candidate's exact canonical identity differs from the semantic law's
+    /// expected canonical region; semantic equivalence alone is insufficient.
     SemanticRealizationMismatch {
         /// Canonical region required by semantic authority.
         expected: CanonicalIndexRegionIdentity,
@@ -1322,11 +1524,11 @@ impl fmt::Display for IndexRefinementVerificationError {
                 formatter,
                 "numerical-contract identity has {actual} bytes; expected 1..={limit}"
             ),
-            Self::ZeroDomainProofRevision => {
-                formatter.write_str("domain-proof authority revision must be nonzero")
-            }
             Self::InvalidDomainProofEvidence => {
                 formatter.write_str("domain-proof evidence is empty or exceeds its byte bound")
+            }
+            Self::InvalidDomainProofBudget => {
+                formatter.write_str("domain-proof budget is zero or exceeds the IR hard bound")
             }
             Self::SignatureTooLarge => {
                 formatter.write_str("refinement signature exceeds its bound")
@@ -1731,15 +1933,6 @@ fn encode_proof_identity(
     encode_provider(&mut bytes, authority.rule());
     bytes.extend_from_slice(&authority.revision().to_be_bytes());
     match proof {
-        IndexDomainProofEvidence::Sound { proof, derivation } => {
-            bytes.push(1);
-            bytes.push(match proof {
-                IndexDomainSoundProof::VacuousEmptyDomain => 1,
-                IndexDomainSoundProof::Interval => 2,
-                IndexDomainSoundProof::ProvedExtentEquality => 3,
-            });
-            push_slice(&mut bytes, derivation);
-        }
         IndexDomainProofEvidence::ExhaustiveFinite { points, derivation } => {
             bytes.push(2);
             bytes.extend_from_slice(&points.to_be_bytes());
@@ -1765,5 +1958,193 @@ fn encode_shape(output: &mut Vec<u8>, shape: &Shape) {
     push_len(output, shape.rank());
     for extent in shape.extents() {
         output.extend_from_slice(&extent.get().to_be_bytes());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::index::{DomainRole, EXTENT_PHASE_CEILING, IndexRegionBuilder, SourcedExtent};
+    use crate::program::abi::AvailabilityPhase;
+    use crate::semantic::TypeKey;
+    use crate::shape::{
+        BindingSource, Extent, ExtentRelation, ExtentTerm, FactProvenance, InterfaceParameterKey,
+        RootBinding, SemanticInputConstraint, ShapeEnvBuilder, ShapeSymbol, SymbolScope,
+    };
+
+    const LENGTH: u64 = 65_535;
+
+    fn residual_region(second_extent: u64, rounds: usize, offset: i128) -> VerifiedIndexRegion {
+        let mut builder = IndexRegionBuilder::new(FrozenScalarRegistry::standard().unwrap())
+            .expect("the fixture receives a fresh builder identity");
+        let first = builder
+            .dimension(DomainRole::Parallel, Extent::new(LENGTH))
+            .unwrap();
+        let second = builder
+            .dimension(DomainRole::Parallel, Extent::new(second_extent))
+            .unwrap();
+        let shape = Shape::from_dims([LENGTH, second_extent]);
+        let value_type = ResolvedValueType::nominal(TypeKey::new("tiler", "f32", 1).unwrap());
+        let input = builder
+            .tensor(TensorRole::Input, value_type.clone(), shape.clone())
+            .unwrap();
+        let output = builder
+            .tensor(TensorRole::Output, value_type, shape)
+            .unwrap();
+        let first_coordinate = builder.dimension_expr(first).unwrap();
+        let second_coordinate = builder.dimension_expr(second).unwrap();
+        let mut conservative = first_coordinate;
+        for _ in 0..rounds {
+            let two = SourcedExtent::Static(Extent::new(2));
+            let modulo = builder.modulo(conservative, two.clone()).unwrap();
+            let quotient = builder.floor_div(conservative, two).unwrap();
+            conservative = builder
+                .linear_combination(
+                    0_i128.into(),
+                    &[(2_i128.into(), quotient), (1_i128.into(), modulo)],
+                )
+                .unwrap();
+        }
+        if offset != 0 {
+            conservative = builder
+                .linear_combination(offset.into(), &[(1_i128.into(), conservative)])
+                .unwrap();
+        }
+        let value = builder
+            .read(input, &[first, second], &[conservative, second_coordinate])
+            .unwrap();
+        let write = builder
+            .write(
+                output,
+                &[first, second],
+                &[first_coordinate, second_coordinate],
+            )
+            .unwrap();
+        builder.output(write, value).unwrap();
+        let region = builder.build().unwrap();
+        assert_eq!(region.unknown_index_domain_predicates().len(), 1);
+        region
+    }
+
+    fn assess(region: &VerifiedIndexRegion, budget: u64) -> IndexDomainProofClaim {
+        let obligation = region
+            .unknown_index_domain_predicates()
+            .next()
+            .expect("the fixture retains one residual");
+        assess_finite_domain(
+            region,
+            obligation,
+            IndexDomainProofBudget::try_new(budget).unwrap(),
+        )
+    }
+
+    #[test]
+    fn exact_finite_evaluation_proves_every_point() {
+        let claim = assess(&residual_region(1, 5, 0), MAX_FINITE_DOMAIN_PROOF_CELLS);
+        assert!(matches!(
+            claim,
+            IndexDomainProofClaim::Proved(IndexDomainProofEvidence::ExhaustiveFinite {
+                points: LENGTH,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn exact_finite_evaluation_returns_the_first_counterexample() {
+        let region = residual_region(1, 5, 1);
+        let first = assess(&region, MAX_FINITE_DOMAIN_PROOF_CELLS);
+        let second = assess(&region, MAX_FINITE_DOMAIN_PROOF_CELLS);
+        assert_eq!(first, second);
+        assert!(matches!(
+            first,
+            IndexDomainProofClaim::Disproved(disproof)
+                if disproof.reason() == "logical-index-not-less-than-extent"
+                    && disproof.point_ordinal() == Some(LENGTH - 1)
+                    && !disproof.counterexample().is_empty()
+        ));
+    }
+
+    #[test]
+    fn exact_finite_evaluation_fails_closed_at_the_callers_budget() {
+        let claim = assess(&residual_region(1, 5, 0), 1);
+        assert!(matches!(
+            claim,
+            IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::ResourceLimit {
+                resource: super::super::ProofResource::Cells,
+                required,
+                limit: 1,
+            }) if required > 1
+        ));
+    }
+
+    #[test]
+    fn invalid_budgets_are_rejected_before_evaluation() {
+        assert_eq!(
+            IndexDomainProofBudget::try_new(0),
+            Err(IndexRefinementVerificationError::InvalidDomainProofBudget)
+        );
+        assert_eq!(
+            IndexDomainProofBudget::try_new(MAX_FINITE_DOMAIN_PROOF_CELLS + 1),
+            Err(IndexRefinementVerificationError::InvalidDomainProofBudget)
+        );
+    }
+
+    #[test]
+    fn a_symbolic_domain_is_unsupported_and_mints_no_proof() {
+        let symbol = ShapeSymbol::new(SymbolScope::new("proof/0").unwrap(), "n").unwrap();
+        let mut environment = ShapeEnvBuilder::new();
+        environment.declare(symbol.clone()).unwrap();
+        environment
+            .bind(
+                &symbol,
+                RootBinding::new(
+                    BindingSource::InterfaceParameter {
+                        key: InterfaceParameterKey::new("n").unwrap(),
+                    },
+                    AvailabilityPhase::LiveDevicePreflight,
+                    FactProvenance::RuntimeValidated,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        environment
+            .require(SemanticInputConstraint::new(
+                ExtentRelation::interval(ExtentTerm::Symbol(symbol.clone()), 1, 16).unwrap(),
+                FactProvenance::FrontendRequired,
+            ))
+            .unwrap();
+        let environment = Arc::new(environment.build().unwrap());
+        let mut builder = IndexRegionBuilder::new_with_shape_environment(
+            FrozenScalarRegistry::standard().unwrap(),
+            environment,
+        )
+        .unwrap();
+        let value_type = ResolvedValueType::nominal(TypeKey::new("tiler", "f32", 1).unwrap());
+        let input = builder
+            .tensor(TensorRole::Input, value_type.clone(), Shape::from_dims([8]))
+            .unwrap();
+        let output = builder
+            .sourced_tensor(
+                TensorRole::Output,
+                value_type,
+                vec![SourcedExtent::Symbol(symbol.clone())],
+            )
+            .unwrap();
+        let dimension = builder
+            .symbolic_dimension(DomainRole::Parallel, symbol)
+            .unwrap();
+        let coordinate = builder.dimension_expr(dimension).unwrap();
+        let value = builder.read(input, &[dimension], &[coordinate]).unwrap();
+        let write = builder.write(output, &[dimension], &[coordinate]).unwrap();
+        builder.output(write, value).unwrap();
+        let region = builder.build().unwrap();
+        assert_eq!(EXTENT_PHASE_CEILING, AvailabilityPhase::LiveDevicePreflight);
+        assert!(matches!(
+            assess(&region, MAX_FINITE_DOMAIN_PROOF_CELLS),
+            IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::UnsupportedFragment)
+        ));
     }
 }

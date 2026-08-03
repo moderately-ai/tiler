@@ -18,11 +18,16 @@ use crate::capability::{
 };
 use crate::cover::RegionCover;
 use crate::explain::{ExplainDisposition, ExplainStage, ProviderRef};
+use crate::legality::RefinementError;
+use crate::lowering::{LoweringError, resolve_lowering};
 use crate::region::form_region_candidates;
 use crate::request::{
     CompilationRequest, CompilerCapabilitySnapshot, RequestError, verify_request,
 };
-use tiler_ir::index::{DomainRole, FrozenScalarRegistry, ScalarAttributes, SourcedExtent};
+use tiler_ir::index::{
+    DomainRole, FrozenScalarRegistry, IndexRealizationLaw, IndexRefinementVerificationError,
+    ScalarAttributes, ScalarRegistryBuilder, SourcedExtent, add_f32_scalar_op,
+};
 use tiler_ir::semantic::{
     CanonicalIntegerWidth, CanonicalValue, CanonicalValueKind, CanonicalValueView, F32,
     F32_CONSTANT_BITS_ATTRIBUTE, InputKey, NormativeDefinitionRef, OpKey, OperationArity,
@@ -118,6 +123,35 @@ impl OperationInferencer for ExternalOperation {
 /// is the exact identity-conformance subject this gate asserts.
 struct ExternalSemantics {
     revision: u32,
+}
+
+struct LawSubstitutionSemantics {
+    law: IndexRealizationLaw,
+}
+
+impl SemanticRegistryProvider for LawSubstitutionSemantics {
+    fn identity(&self) -> ProviderIdentity {
+        ProviderIdentity::new("acme", "law-substitution-semantics", 1).unwrap()
+    }
+
+    fn register(&self, registrar: &mut SemanticRegistryRegistrar<'_>) -> Result<(), RegistryError> {
+        registrar.register_marked_value_type::<F32>(
+            ValueTypeDefinition::structurally_valid(
+                ValueTypeDefinitionKey::Nominal(TypeKey::new("tiler", "f32", 1).unwrap()),
+                NormativeDefinitionRef::new("law substitution binary32 semantics")?,
+                TypeDefinitionFacts::new(CanonicalValue::boolean(true)),
+            ),
+            F32::resolved_type(),
+        )?;
+        register(
+            registrar,
+            multiply_f32_op(),
+            2,
+            &[],
+            ExternalOperation::Binary,
+        )?;
+        registrar.register_index_realization_law(multiply_f32_op(), 1, self.law.clone())
+    }
 }
 
 impl SemanticRegistryProvider for ExternalSemantics {
@@ -308,19 +342,13 @@ fn assert_complete_partition(cover: &RegionCover, operation_count: u32) {
 #[test]
 fn externally_registered_operations_require_their_own_realization_authority() {
     let program = external_program(1, Shape::from_dims([2, 2]), &[Axis::new(1)], false);
-    let CompileError::Explained { source, explain } =
-        compile(CompilationRequest::governed(&program)).unwrap_err()
-    else {
-        panic!("target compilation failures retain their explain trace");
-    };
     assert!(matches!(
-        *source,
+        compile(CompilationRequest::governed(&program)).unwrap_err(),
         CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
-            phase: "lowering",
-            rule: "refinement-refused",
+            phase: "capability",
+            rule: "semantic-authority-pairing",
         })
     ));
-    assert!(!explain.records().is_empty());
 }
 
 /// The gate's core claim: the governed operation set compiles end to end
@@ -497,16 +525,11 @@ fn provider_only_revision_changes_provenance_and_not_structure() {
     );
 
     for program in [&first, &second] {
-        let CompileError::Explained { source, .. } =
-            compile(CompilationRequest::governed(program)).unwrap_err()
-        else {
-            panic!("target compilation failures retain their explain trace");
-        };
         assert!(matches!(
-            *source,
+            compile(CompilationRequest::governed(program)).unwrap_err(),
             CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
-                phase: "lowering",
-                rule: "refinement-refused",
+                phase: "capability",
+                rule: "semantic-authority-pairing",
             })
         ));
     }
@@ -526,10 +549,12 @@ fn identical_region_content_keeps_distinct_occurrence_identities() {
         false,
         2.0_f32.to_bits(),
     );
-    let request = verify_request(CompilationRequest::governed(&program)).unwrap();
-    let target = request.for_target(request.target_profiles()[0]).unwrap();
-    let formation =
-        form_region_candidates(&program, target.budgets(), target.numerical_contract()).unwrap();
+    let formation = form_region_candidates(
+        &program,
+        crate::request::DeterministicBudgets::governed(),
+        crate::request::StrictF32NumericalContract::governed(),
+    )
+    .unwrap();
     let constants: Vec<_> = formation
         .candidates()
         .iter()
@@ -644,6 +669,120 @@ impl IndexAccessLoweringProvider for ExternalMultiplyLowering {
         let write = context.write(output, &dimensions, &coordinates)?;
         context.output(write, product)
     }
+}
+
+struct ExternalAddLowering;
+
+impl IndexAccessLoweringProvider for ExternalAddLowering {
+    fn lower(&self, context: &mut IndexAccessLoweringContext<'_>) -> Result<(), LoweringEmitError> {
+        let shape = context.occurrence().results()[0].shape().clone();
+        let value_type = context.occurrence().results()[0].value_type().clone();
+        let inputs = context.occurrence().inputs().to_vec();
+        let operands = context.occurrence().operands().to_vec();
+        let dimensions = shape
+            .extents()
+            .iter()
+            .map(|extent| context.dimension(DomainRole::Parallel, *extent))
+            .collect::<Result<Vec<_>, _>>()?;
+        let coordinates = dimensions
+            .iter()
+            .map(|dimension| context.dimension_expr(*dimension))
+            .collect::<Result<Vec<_>, _>>()?;
+        let tensors = inputs
+            .iter()
+            .map(|input| context.input_tensor(input.value_type().clone(), input.shape().clone()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let values = operands
+            .iter()
+            .map(|position| context.read(tensors[*position], &dimensions, &coordinates))
+            .collect::<Result<Vec<_>, _>>()?;
+        let sum = context.apply(add_f32_scalar_op(), ScalarAttributes::empty(), &values)?;
+        let output = context.output_tensor(value_type, shape)?;
+        let write = context.write(output, &dimensions, &coordinates)?;
+        context.output(write, sum.get(0).expect("add yields one result"))
+    }
+}
+
+#[test]
+fn equal_semantic_snapshots_cannot_substitute_the_programs_law() {
+    let build_semantic = |law| {
+        let mut builder = SemanticRegistryBuilder::new();
+        builder
+            .register_provider(&LawSubstitutionSemantics { law })
+            .unwrap();
+        builder.freeze().unwrap()
+    };
+    let program_semantic = build_semantic(IndexRealizationLaw::multiply_f32());
+    let capability_semantic = build_semantic(IndexRealizationLaw::add_f32());
+    assert_eq!(
+        program_semantic.snapshot_identity(),
+        capability_semantic.snapshot_identity()
+    );
+
+    let mut program = SemanticProgramBuilder::try_new(program_semantic).unwrap();
+    let shape = Shape::from_dims([2]);
+    let left = program
+        .input::<F32>(InputKey::new("left").unwrap(), shape.clone())
+        .unwrap();
+    let right = program
+        .input::<F32>(InputKey::new("right").unwrap(), shape)
+        .unwrap();
+    let product = tiler_ir::semantic::F32Multiply::apply(&mut program, left, right).unwrap();
+    program
+        .output(OutputKey::new("product").unwrap(), product)
+        .unwrap();
+    let program = program.build().unwrap();
+
+    let standard = FrozenScalarRegistry::standard().unwrap();
+    let mut scalar_builder = ScalarRegistryBuilder::new(capability_semantic.clone());
+    for operation in [
+        tiler_ir::index::multiply_f32_scalar_op(),
+        add_f32_scalar_op(),
+    ] {
+        scalar_builder
+            .register(
+                ProviderIdentity::new("tiler", "standard-scalars", 1).unwrap(),
+                standard.definition(&operation).unwrap().clone(),
+            )
+            .unwrap();
+    }
+    let scalars = scalar_builder.freeze();
+    let mut lowerings =
+        LoweringCapabilityRegistryBuilder::new(capability_semantic, scalars.clone());
+    lowerings
+        .register_index_access(
+            external_lowering_provider(),
+            multiply_f32_op(),
+            LoweringSignature::new(
+                [F32::resolved_type(), F32::resolved_type()],
+                [F32::resolved_type()],
+            )
+            .unwrap(),
+            &[add_f32_scalar_op()],
+            LoweringCapabilityRevision::new(1).unwrap(),
+            Arc::new(ExternalAddLowering),
+        )
+        .unwrap();
+    let mut request = CompilationRequest::governed(&program);
+    request.capabilities = CompilerCapabilitySnapshot::new(lowerings.freeze(), scalars);
+    let verified = verify_request(request).unwrap();
+    let target = verified.for_target(0).unwrap();
+    let error = resolve_lowering(&program, &target).unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            LoweringError::Refine { source, .. }
+                if matches!(
+                &**source,
+                    RefinementError::IrVerifier(inner)
+                        if matches!(
+                            &**inner,
+                            IndexRefinementVerificationError::SemanticRealizationMismatch { .. }
+                        )
+                )
+        ),
+        "unexpected substitution refusal: {error:?}"
+    );
 }
 
 fn external_lowering_provider() -> ProviderIdentity {

@@ -318,7 +318,7 @@ pub(crate) fn resolve_lowering(
         let evidence = refine(
             &resolved,
             &occurrence,
-            capabilities.realization(),
+            request.realization_laws(),
             capabilities.scalars(),
             member,
             provider.clone(),

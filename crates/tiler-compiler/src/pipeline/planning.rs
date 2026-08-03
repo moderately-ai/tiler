@@ -399,16 +399,6 @@ fn record_semantic_discharge_refusal(
             (|| -> Result<_, CompileError> {
                 let subject = explain.subject(SubjectKind::Kernel, &key)?;
                 let (mut assessment, proof_basis, discharge_resource) = match discharge.claim() {
-                    IndexDomainDischargeClaim::Proved(IndexDomainDischargeProof::Sound {
-                        ..
-                    }) => (
-                        PredicateAssessment::proven(
-                            format!("kernel.index-domain-obligation.{ordinal}"),
-                            EvidenceBasis::CheckedInvariant,
-                        )?,
-                        Some("sound-proof"),
-                        None,
-                    ),
                     IndexDomainDischargeClaim::Proved(
                         IndexDomainDischargeProof::ExhaustiveFinite { .. },
                     ) => (
