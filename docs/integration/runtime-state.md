@@ -89,6 +89,8 @@ KvState<Storage, Retention>  // private fields, no unchecked constructor
   capacity()
   cursor()
   status()
+  retire(self)                  // consumer ends the handle lifetime; the
+                                // runtime instance retains pending device uses
   preflight(&mut self, expected_interface, layer, live_scope,
             expected_cursor, T)
     -> Result<PreparedKvStep<'_, Storage, Retention>, KvStateRefusal>
@@ -127,7 +129,7 @@ KvFailureStage = Allocation | AbiBinding | Encoding | Submission
 
 The boundary's **meaning** is that one adapter-authenticated runtime-instance scope covers one live device and execution context; equality of that scope is required at every state bind, and a reset or context replacement invalidates it. The runtime interprets no component and exposes no platform object. `StateInterfaceKey` similarly means the exact stable input-interface key of one validated artifact, not caller text that happens to match it. These validation obligations survive any later Rust renaming.
 
-The **concrete spelling proposed for acceptance** is the type and method inventory above: `LiveStateScope`, `StateInterfaceKey::from_artifact_input`, adapter-only `RuntimeAdapter::live_state_scope`, `KvState::new`, the listed readers, `preflight`, non-Clone `PreparedKvStep`/`BoundKvStep`, `ExactTerminalSuccess`, `KvPostCommitFailure`, and `KvFailureStage`. No public raw-parts constructor, mutating cursor setter, generation setter, scope setter, status setter, or unchecked state constructor exists.
+The **concrete spelling proposed for acceptance** is the type and method inventory above: `LiveStateScope`, `StateInterfaceKey::from_artifact_input`, adapter-only `RuntimeAdapter::live_state_scope`, `KvState::new`, the listed readers, `retire`, `preflight`, non-Clone `PreparedKvStep`/`BoundKvStep`, `ExactTerminalSuccess`, `KvPostCommitFailure`, and `KvFailureStage`. No public raw-parts constructor, mutating cursor setter, generation setter, scope setter, status setter, or unchecked state constructor exists.
 
 ## Construction and representation invariants
 
@@ -273,7 +275,7 @@ Tom's acceptance is required for this exact consequential public draft:
 - `LiveStateScope`, an opaque adapter-minted runtime-scoped device/context identity with no platform handle;
 - opaque validated-artifact-derived `StateInterfaceKey`, plus `LayerOrdinal`, `StateGeneration`, `StateCursor`, `StateCapacity`, `KvStateIdentity`, and opaque `KvExecutionIdentity` in the state surface;
 - `KvStateStatus::{Ready, Poisoned { failed_execution }}`;
-- private-field `KvState<Storage, Retention>`; `KvState::new`; readers for identity, interface key, layer, live scope, generation, capacity, cursor, and status; checked preflight; and explicit destruction;
+- private-field `KvState<Storage, Retention>`; `KvState::new`; readers for identity, interface key, layer, live scope, generation, capacity, cursor, and status; checked preflight; and consuming `retire`;
 - non-Clone `PreparedKvStep` and `BoundKvStep` ownership transitions;
 - opaque `ExactTerminalSuccess`, generic `KvPostCommitFailure`, and exhaustive `KvFailureStage`;
 - exact `KvStateBuildError` and `KvStateRefusal` inventories above, without wildcard classes;
