@@ -5,7 +5,7 @@ status: review
 priority: p1
 dependencies: [admit-the-sequence-extension-concatenate-family]
 related: [design-autoregressive-state-and-kv-cache, scope-the-sequence-extending-tensor-family, promote-the-symbolic-index-profile-to-a-public-boundary]
-scopes: [implementation/ir, contracts/foundation, contracts/navigation]
+scopes: [implementation/ir, implementation/compiler, contracts/foundation, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, shapes, extents, kv-cache, language-model]
@@ -132,3 +132,11 @@ low-severity glossary finding was corrected and re-reviewed clean at
 `7e19a616fa995fc070d7ad55b73c5799709e5e12` contains both. The ticket remains
 `review` because accepting the consequential public variant and constructor is
 Tom's boundary; integration of the tested draft is not acceptance.
+
+**Merged-tree identity correction.** The first full gate proved that changing
+Concatenate's registered normative definition moved the sealed explain request
+qualifier from `a7e2965962778aef` to `7e413a7d10b92e3b`. That is the expected
+registry-snapshot dependency, but it was missing from the worker's enumerated
+blast radius. `implementation/compiler` was added before editing the pin, and
+the new value was taken from the observed merged-tree failure rather than copied
+from a worker branch.

@@ -4012,7 +4012,13 @@ mod tests {
                 // and this is that sentence being kept rather than a surprise.
                 // Recomputed from an observed run on the merged tree, not copied
                 // from the branch that added the family.
-                "tiler-explain-v7 request=a7e2965962778aef\n",
+                // Moved again on 2026-08-03 when the additive relation replaced
+                // concatenate's interim normative wording. The request subject
+                // folds the complete registered definition, not only its key,
+                // so that definition change must move the qualifier even though
+                // the concatenate key itself stayed fixed. Recomputed from this
+                // merged tree after the full gate exposed the exact blast radius.
+                "tiler-explain-v7 request=7e413a7d10b92e3b\n",
                 "0 candidate-enumeration admitted rule=test.rule@1 provider=tiler.compiler@1 subject=candidate:candidate:a event=check:candidate.legal:proven:checked-invariant causes=-\n",
                 "1 selection selected rule=tiler.selection.structural-pareto.v1@1 provider=tiler.compiler@1 subject=alternative:alternative:test event=selection:tiler.selection.structural-pareto.v1:selected causes=-\n",
             )
