@@ -1,7 +1,7 @@
 ---
 id: place-index-refinement-evidence-under-an-ir-owned-verifier
 title: Place index-refinement evidence under an IR-owned verifier
-status: in-progress
+status: review
 priority: p1
 dependencies: []
 related: [bind-stage-coverage-to-index-refinement-identity]
@@ -44,3 +44,19 @@ The receipt authority sits below both compiler planning and executable-program s
 ## Graph maintenance
 
 Make `bind-stage-coverage-to-index-refinement-identity` depend on this ticket. Update ADR 0071 and artifact identity contracts only after the exact authority move is accepted; do not describe a compiler-owned identity as directly storable in `tiler-ir`.
+
+## Draft outcome
+
+**Fact — the retained receipt authority is now dependency-neutral.** `tiler_ir::index::IndexRefinementVerifier` checks the complete semantic occurrence against the actual `VerifiedIndexRegion`, revalidates scalar authority, binds ordered operand aliases and result roots, and returns either an opaque `IndexRefinementReceipt` or a `PendingIndexRefinementReceipt`. The pending type carries the exact region and exposes its canonical obligations, but no receipt or receipt identity. `complete` independently evaluates every residual under `MAX_REFINEMENT_PROOF_CELLS` and mints nothing on a disproof, unsupported fragment, symbolic extent, or resource stop.
+
+**Fact — compiler attribution remains above the receipt.** `tiler_compiler::legality::IndexRefinement` retains the IR receipt and separately retains selected provider, capability revision, admission provenance, compiler proof records, reference-oracle bindings, and explain identity. No compiler search, provider, frontier, or explain type moved into `tiler-ir`, and the crate dependency remains `tiler-compiler -> tiler-ir` only. The compiler-to-IR projection is explicit rather than a same-shaped type alias; the IR verifier rechecks it before minting.
+
+**Fact — association and failure evidence.** Tests prove two sites over reusable content have different receipt identities; the same site over two verified but structurally different equivalent regions has a different receipt; the receipt names the exact occurrence and canonical region; an occurrence paired with a region exposing the wrong interface is refused; a retained proof gap exposes no receipt; and an IR exact-proof resource stop refuses completion. A `trybuild` fixture proves neither the receipt nor its identity can be forged from public fields or bytes.
+
+**Identity analysis.** New dependency-neutral domains are `tiler.ir.index-refinement-receipt.v1` and `tiler.ir.index-refinement-domain-proof.v1`. The compiler envelope advances `tiler.compiler.index-refinement-occurrence.v1` to `v2` because it now folds the IR receipt identity before compiler-owned content and attribution. The reproducible sweep `rg -n 'tiler\.compiler\.index-refinement-occurrence\.v1|index-refinement-occurrence' . --glob '!target/**'` found only the new `v2` encoder; no golden, artifact schema, version pin, or cached digest names this internal compiler identity. Program and artifact identities do not move in this ticket because stage coverage does not consume the draft receipt until the dependent ticket.
+
+**Public draft requiring Tom.** The exact new surface is `IndexRefinementVerifier::{verify, complete}`, `IndexRefinementVerificationOutcome`, `PendingIndexRefinementReceipt`, `IndexRefinementReceipt`, `IndexRefinementReceiptIdentity`, `IndexRefinementDomainProof`, `IndexRefinementVerificationError`, the occurrence/value/binding records re-exported beside them, and `IndexRefinement::receipt`. This implementation and its documentation are a tested draft, not acceptance. ADR 0071 and artifact contracts remain unchanged as the graph maintenance requires; the dependent coverage ticket remains blocked until Tom accepts or reshapes this boundary.
+
+**Unsupported draft case.** IR completion currently accepts only its own bounded exhaustive-finite derivation. The compiler's dormant sealed `Sound` proof lane is not an accepted input to the IR verifier; that lane must not be activated until its proof authority can be checked below the compiler boundary rather than trusted through independent bytes. The production compiler authority uses the same exact-finite limit as this draft, so no currently reachable successful discharge exceeds the IR verifier's support.
+
+**Checks.** On the unmodified draft, `cargo check -p tiler-ir -p tiler-compiler`, `cargo nextest run -p tiler-ir -p tiler-compiler` (1,264 passed, 1 skipped), `cargo test -p tiler-ir -p tiler-compiler --doc`, `cargo clippy -p tiler-ir -p tiler-compiler --all-targets -- -D warnings`, `cargo test -p tiler-ir --test index_region_ui`, `cargo fmt --all -- --check`, `tkt lint`, and `git diff --check` pass. Four deliberate perturbations proved the new guards can say no: removing the occurrence or canonical-region components from receipt identity made their identity tests fail; bypassing the pending barrier made `proof_budget_gap_mints_no_receipt` fail by minting a receipt; and removing operand/result shape checks made `unrelated_occurrence_and_region_cannot_mint_an_ir_receipt` fail by accepting the mismatched pairing. Each perturbation was restored before the passing commands above.

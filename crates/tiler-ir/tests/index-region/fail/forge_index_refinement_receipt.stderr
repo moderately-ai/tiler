@@ -1,0 +1,17 @@
+error[E0423]: cannot initialize a tuple struct which contains private fields
+ --> tests/index-region/fail/forge_index_refinement_receipt.rs:4:28
+  |
+4 |     let _forged_identity = IndexRefinementReceiptIdentity(Vec::new().into_boxed_slice());
+  |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+note: constructor is not visible here due to private fields
+ --> src/index/refinement.rs
+  |
+  | pub struct IndexRefinementReceiptIdentity(Box<[u8]>);
+  |                                           ^^^^^^^^^ private field
+
+error: cannot construct `IndexRefinementReceipt` with struct literal syntax due to private fields
+ --> tests/index-region/fail/forge_index_refinement_receipt.rs:5:27
+  |
+5 |     let _forged_receipt = IndexRefinementReceipt {};
+  |                           ^^^^^^^^^^^^^^^^^^^^^^

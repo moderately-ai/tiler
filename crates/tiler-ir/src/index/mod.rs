@@ -6,6 +6,7 @@ mod handles;
 mod integer;
 mod model;
 mod predicate;
+mod refinement;
 mod scalar;
 mod sourced;
 
@@ -37,6 +38,13 @@ pub use predicate::{
     CanonicalIndexDomainObligationKey, DischargedIndexDomainPredicate, IndexDomainEvidence,
     IndexDomainPredicate, IndexDomainSoundProof, IndexDomainUnknownReason, IndexExtentRef,
     UnknownIndexDomainPredicate,
+};
+pub use refinement::{
+    IndexRefinementDomainProof, IndexRefinementReceipt, IndexRefinementReceiptIdentity,
+    IndexRefinementVerificationError, IndexRefinementVerificationOutcome, IndexRefinementVerifier,
+    MAX_REFINEMENT_PROOF_CELLS, NumericalContractIdentity, OccurrenceOperand, OccurrenceResult,
+    OccurrenceValueId, OperandBinding, PendingIndexRefinementReceipt, ResultBinding,
+    SemanticOccurrence, SemanticOccurrenceIdentity,
 };
 // The symbolic index profile is re-exported flat here rather than published as
 // a `tiler_ir::index::sourced` module, matching the re-export precedent this
