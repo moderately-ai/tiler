@@ -302,13 +302,16 @@ uses the exact shared row encoder—including provider identity and the count
 framing—and freeze asserts the tracked total equals the canonical sidecar.
 
 Completion now owns one cumulative ledger and groups obligations by exact
-ordered static domain. The dense shared-DAG fixture charges exactly 45,275,176
-integer bytes together versus 90,547,782 for two separate walks; the exact
-grouped charge succeeds and charge minus one propagates the same cumulative
-requirement and original limit in canonical order. A separate two-domain fixture
-proves the first group remains proved when the second atomically exhausts the
-whole-call budget. The real counterexample fixture evaluates a 4,097-byte exact
-intermediate while retaining only the bounded canonical point ordinal.
+ordered static domain. The earlier dense shared-DAG byte counts measured
+retained integer width, not a conservative bound on arbitrary-precision work,
+and are withdrawn. The corrected num-bigint-0.4.8-specific limb-work formula
+makes that pathological fixture refuse above the 64 MiB hard limit before
+evaluation. A manageable real shared DAG still proves that one grouped walk
+costs less than two separate walks, that the exact grouped charge succeeds, and
+that charge minus one refuses with the same requirement. A separate two-domain
+fixture proves exhaustion propagates atomically in canonical order. The real
+large-intermediate fixture now refuses before evaluation under the work bound;
+bounded counterexample identity remains covered by manageable evaluations.
 
 `PendingIndexRefinementReceipt::verify_completion` now revalidates occurrence,
 region, scalar authority, interfaces, canonical proof order, and the recomputed
@@ -333,5 +336,44 @@ about declared-area overlap with live work; the coordinator must recheck those
 actual branch diffs before integration.
 
 ## Graph maintenance
+
+**Fourth fixed-point correction — 2026-08-03:** the operation-specific
+canonical realization-law row is now bound privately into both subject and
+admitted-authority v1 identities with an explicit absence tag. Resolution and
+lowering coherence require exact row equality, so equal semantic/scalar
+snapshots cannot substitute a different law or the absence of one. The public
+perturbation preserves semantic occurrence authority while removing the law
+row; subject identity moves and resolution returns the typed
+`SubjectRealizationLawMismatch`. No v2 step is taken because these v1 domains
+remain unlanded. The compiler explain qualifier is the only literal derived pin
+in the affected request path; it was recomputed by the full compiler suite and
+remains `3a2bda87fc26f899`.
+
+Pending receipt construction now refuses more than 6,144 residual obligations
+immediately after exact canonical-law equality and before collection/allocation;
+the limit is the closed vocabulary's conservative `3 accesses * 1,024 rank * 2
+predicates`. Assessments and proofs share one `Arc`-backed authority instead of
+cloning its owned provider strings per obligation. A bound-plus-one perturbation
+returns the typed actual/limit error.
+
+The exact-finite evaluator now preflights conservative 8-byte-limb work for the
+locked num-bigint 0.4.8 implementation, including operands, prior accumulator,
+results, multiplication work, and floor-div/mod quotient/remainder work. Every
+calculation is checked `u128`; overflow is unsupported before evaluation, and a
+num-bigint revision requires re-auditing the source-specific formula. The
+1 MiB-by-1 MiB multiplication fixture exceeds the 64 MiB hard limit; negative
+floor-div/mod fixtures establish semantic results and exact/charge-minus-one
+boundaries. Unsupported roots roll back only their union-plan state while
+retaining planning-ledger work, so same-domain siblings remain independently
+proved or disproved in canonical order. Resolved `u64` predicate extents are
+carried into the plan and no longer re-resolved or allocated as `BigInt` per
+point.
+
+**Measurement — fourth fixed point:** `tiler-ir` nextest passed 697/697;
+`tiler-compiler` passed 589/589 with one configured skip. IR doctests passed 8
+ordinary and 1 compile-fail case with one ignored example; compiler doctests
+passed 2 ordinary and 7 compile-fail cases. Affected-crate Clippy with warnings
+denied and formatting passed. The targeted mixed-claim, shared-DAG,
+negative-div/mod, and overflow set passed 4/4.
 
 `bind-stage-coverage-to-index-refinement-identity` already depends on this ticket and remains blocked. That dependent owns `CoveredOccurrence`, program-builder receipt-domain/staleness validation, and program/artifact identity domains. Do not claim that evidence here or change those identities before this authority is accepted. Update ADR 0071 and artifact contracts only after the exact authority move is accepted.

@@ -49,9 +49,10 @@ pub use refinement::{
     IndexRefinementReceipt, IndexRefinementReceiptIdentity, IndexRefinementSignature,
     IndexRefinementSignatureSide, IndexRefinementSubject, IndexRefinementVerificationError,
     IndexRefinementVerificationOutcome, MAX_FINITE_DOMAIN_PROOF_CELLS,
-    MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES, MAX_INDEX_REFINEMENT_SIGNATURE_VALUES,
-    MAX_REFINEMENT_EMITTED_SCALAR_OPERATIONS, NumericalContractIdentity, OperandBinding,
-    PendingIndexRefinementReceipt, ResolvedIndexRealization, ResultBinding,
+    MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES, MAX_INDEX_REFINEMENT_RESIDUAL_OBLIGATIONS,
+    MAX_INDEX_REFINEMENT_SIGNATURE_VALUES, MAX_REFINEMENT_EMITTED_SCALAR_OPERATIONS,
+    NumericalContractIdentity, OperandBinding, PendingIndexRefinementReceipt,
+    ResolvedIndexRealization, ResultBinding,
 };
 // The symbolic index profile is re-exported flat here rather than published as
 // a `tiler_ir::index::sourced` module, matching the re-export precedent this

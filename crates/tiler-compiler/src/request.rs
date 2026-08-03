@@ -78,13 +78,9 @@ pub(crate) const MAX_NUMERICAL_CONTRACT_PREFERENCES: usize = 4;
 
 /// Returns whether one key was minted by the current `f32` contract scheme.
 ///
-/// **A prefix test that includes the separator, deliberately.** Matching
-/// The IR-owned domain alone would also match a hypothetical
-/// `tiler.contract.f32.v20`, so the `.` that always follows the domain is part
-/// of the test. The direction that matters is the failing one: a key minted
-/// under a different domain — a widened dtype vocabulary, a later scheme — does
-/// not match, and every caller of this predicate declines to answer rather than
-/// carrying the `f32` assumption into a contract that never stated it.
+/// This performs the complete IR-owned parse and canonicality check. A key
+/// under another domain, a malformed vector, or a noncanonical spelling is
+/// rejected rather than inferred from a textual prefix.
 pub(crate) fn is_f32_contract_key(key: &str) -> bool {
     F32NumericalContractKey::try_from_str(key).is_ok()
 }

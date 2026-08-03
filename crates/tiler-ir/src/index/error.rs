@@ -290,7 +290,7 @@ pub enum IndexRegionDiagnostic {
 pub enum ProofResource {
     /// Evaluated expression cells across enumerated points.
     Cells,
-    /// Conservative integer storage and dense ownership-bitset bytes.
+    /// Conservative arbitrary-precision integer work and transient bytes.
     IntegerBytes,
 }
 

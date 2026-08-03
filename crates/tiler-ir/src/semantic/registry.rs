@@ -1239,6 +1239,22 @@ impl FrozenSemanticRegistry {
         self.0.index_realization_laws.get(operation)
     }
 
+    pub(crate) fn encode_index_realization_law_row_for(
+        &self,
+        operation: &OpKey,
+    ) -> Option<Box<[u8]>> {
+        let registered = self.index_realization_law(operation)?;
+        let mut output = Vec::new();
+        encode_index_realization_law_row(
+            &mut output,
+            operation,
+            &registered.provider,
+            registered.revision,
+            &registered.law,
+        );
+        Some(output.into_boxed_slice())
+    }
+
     pub(crate) fn index_realization_laws(
         &self,
     ) -> impl ExactSizeIterator<Item = (&OpKey, &RegisteredIndexRealizationLaw)> {
