@@ -868,7 +868,7 @@ more free terms it admits the relation only when the canonical lower-bound model
 already exhibits a solution; otherwise it refuses the set as outside the
 implemented fragment rather than reporting an unproved satisfiable result.
 
-**Fact — the implemented draft has one external construction path.** The
+**Fact — the accepted relation has one external construction path.** The
 struct-like `AdditiveEquality` variant is `#[non_exhaustive]`: downstream code
 may inspect its public fields with a forward-compatible pattern, but cannot
 construct the variant directly and must use `ExtentRelation::additive_equality`,

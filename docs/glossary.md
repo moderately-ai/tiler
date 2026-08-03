@@ -232,7 +232,7 @@ The table indexes which layer a name belongs to. Where two senses also differ se
 | `Constant` | Structured kernel operation defining a typed immediate | `OperationView::Constant` over `KernelConstant` | Implemented, public |
 | `Constant` | Structured kernel *address space* — read-only memory constant for the whole dispatch, not an operation | `AddressSpace::Constant` | Implemented, public |
 | `Equal` | Shape constraint asserting equality of two extent terms | `ExtentRelation::Equal` | Implemented, public |
-| `AdditiveEquality` | Shape constraint asserting one extent term equals the mathematical sum of two terms; addends are canonicalized commutatively and cannot nest | `ExtentRelation::AdditiveEquality` | Implemented, public draft awaiting review |
+| `AdditiveEquality` | Shape constraint asserting one extent term equals the mathematical sum of two terms; addends are canonicalized commutatively and cannot nest | `ExtentRelation::AdditiveEquality` | Implemented, accepted public boundary |
 | `Equal` | ABI expression unsigned equality | `AbiBinaryOp::Equal` | Implemented, public |
 | `FloorDiv` | Shape-expression floor division, rounding toward negative infinity including for negative operands | None | Adopted, unimplemented |
 | `FloorDiv` | Index-expression Euclidean floor division by a positive constant | `IndexExprView::FloorDiv` | Implemented, public |

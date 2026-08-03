@@ -1,11 +1,11 @@
 ---
 id: admit-an-additive-extent-relation
 title: Admit an additive extent relation so a concatenated extent is checkable
-status: review
+status: done
 priority: p1
 dependencies: [admit-the-sequence-extension-concatenate-family]
 related: [design-autoregressive-state-and-kv-cache, scope-the-sequence-extending-tensor-family, promote-the-symbolic-index-profile-to-a-public-boundary]
-scopes: [implementation/ir, implementation/compiler, contracts/foundation, contracts/navigation]
+scopes: [implementation/ir, implementation/compiler, contracts/foundation, contracts/navigation, research/shapes, research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, shapes, extents, kv-cache, language-model]
@@ -34,9 +34,9 @@ lease_expires_at: 1785704070
 
 A decode-shaped program binding `C`, `T`, and `S` inconsistently is refused with a typed diagnostic naming all three, that refusal has a test which fails without the change, and the consistent binding still verifies.
 
-## Implementation outcome — public draft for Tom
+## Implementation outcome — accepted public boundary
 
-**Fact — the exact draft surface.** `ExtentRelation` gains
+**Fact — the exact accepted surface.** `ExtentRelation` gains
 `AdditiveEquality { sum, left, right }` and the
 `ExtentRelation::additive_equality` constructor. The constructor canonicalizes
 the two addends because mathematical addition is commutative. The struct-like
@@ -53,8 +53,7 @@ instead returns `ConstraintConflict::AddendExceedsSum { relation, sum, addend,
 remaining }`, because the remaining term would have to be negative; it does not
 mislabel those two observed values as a fully observed mismatch.
 `FragmentViolation::UnderdeterminedAdditiveEquality` is the fail-closed boundary
-for a symbolic set whose canonical model does not exhibit a solution. These new
-public variants and constructor are a tested draft, not self-accepted.
+for a symbolic set whose canonical model does not exhibit a solution.
 
 **Inference — the representation elimination has one survivor.** Changing
 `SourcedExtent` is eliminated because it would make a sourced extent both a root
@@ -117,8 +116,8 @@ required preflight evaluation.
 profile ticket was integrated first, releasing its exclusive
 `contracts/navigation` claim. This ticket then added that scope and corrected
 the `Sequence extension: Concatenate along one axis` roadmap row: it now records
-the additive implementation as an independently reviewed public draft awaiting
-Tom, and also corrects the concatenate compiler seating that had already landed.
+the additive implementation as an independently reviewed public boundary, and
+also corrects the concatenate compiler seating that had already landed.
 
 ## Integration review — 2026-08-03
 
@@ -129,9 +128,7 @@ typed fail-closed diagnostics, append-only tag `0x06`, externally enforced
 canonical construction, and the explicit public-draft disclosure. Its one
 low-severity glossary finding was corrected and re-reviewed clean at
 `479d0325bc157d5068c93350c9c7cf861982c6e1`; merge commit
-`7e19a616fa995fc070d7ad55b73c5799709e5e12` contains both. The ticket remains
-`review` because accepting the consequential public variant and constructor is
-Tom's boundary; integration of the tested draft is not acceptance.
+`7e19a616fa995fc070d7ad55b73c5799709e5e12` contains both.
 
 **Merged-tree identity correction.** The first full gate proved that changing
 Concatenate's registered normative definition moved the sealed explain request
@@ -140,3 +137,14 @@ registry-snapshot dependency, but it was missing from the worker's enumerated
 blast radius. `implementation/compiler` was added before editing the pin, and
 the new value was taken from the observed merged-tree failure rather than copied
 from a worker branch.
+
+## Accepted — 2026-08-03
+
+Tom accepted the exact merged public spelling in the T3 Code orchestration
+conversation: `ExtentRelation::AdditiveEquality { sum, left, right }`, its
+canonical `ExtentRelation::additive_equality(sum, left, right)` constructor, and
+the typed conflict/fragment variants documented above. The acceptance does not
+claim that invocation-time bindings are checked at launch preflight; that
+consumer remains separate work. Rollback remains the removal of this one
+append-only relation family and its documentation, with no schema version or
+pre-existing encoded subject moved.

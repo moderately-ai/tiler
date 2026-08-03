@@ -204,7 +204,7 @@ grep -rn "carry-symbolic-extents-into-the-semantic-program" crates/
 - **Whether the environment's identity is later split into graph-meaning and interface halves.** Deferred above with its trigger; it reopens an accepted identity domain and needs a consumer that must make the comparison.
 - **Any physical portfolio over a symbolic extent.** Which variants are packaged, which guards are worth their cost, and how the portfolio is bounded remain the specialization boundary's own open experiments; this record takes no measurement and packages nothing.
 - **Rank polymorphism.** Fixed rank is accepted and unchanged. A symbolic *extent* is not an unknown rank, and nothing here weakens the decision that `Unranked` is outside the initial semantic tensor type.
-- **The additive extent relation.** `S == C + T` is [`admit-an-additive-extent-relation`](../../../tickets/admit-an-additive-extent-relation.md)'s, already filed from L5. This record's tickets depend on nothing it owns and it depends on nothing here.
+- **The additive extent relation — settled outside this record.** [`admit-an-additive-extent-relation`](../../../tickets/admit-an-additive-extent-relation.md) delivered the accepted fixed two-addend spelling for `S == C + T`; this record neither owns nor broadens it, and the relation does not turn `SourcedExtent` into an expression tree.
 
 ## Delivery tickets filed from this record
 
