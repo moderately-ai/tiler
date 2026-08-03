@@ -5,19 +5,22 @@
 //!
 //! The accepted subset is re-exported flat from [`crate::shape`]; this module
 //! itself is `pub(crate)`, so the decision procedure, its disjoint-set forest,
-//! and its per-class domains stay inside it. A frontend constructs an
-//! environment through [`ShapeEnvBuilder`] and reads it through [`ShapeEnv`]'s
-//! queries.
+//! and its per-class domains stay inside it. The additive relation and its
+//! corresponding conflict and fragment variants are a public draft pending
+//! Tom's acceptance, not part of that accepted subset. A frontend constructs
+//! an environment through [`ShapeEnvBuilder`] and reads it through
+//! [`ShapeEnv`]'s queries.
 //!
 //! # What this module owns
 //!
 //! `docs/ir.md`'s constraint-and-proof-context section specifies a `ShapeEnv`
 //! as scoped symbol declarations, source bindings, *and* a constraint
-//! environment over extent equalities, divisibility, nonnegativity, intervals,
-//! and factorization. This file owns the first two and the storage, identity,
-//! and lifecycle of the third; [`constraint`] owns the constraint vocabulary
-//! and the decision procedure, and its module documentation states the exact
-//! arithmetic fragment that procedure decides.
+//! environment over extent equalities (including a fixed two-addend equality),
+//! divisibility, nonnegativity, intervals, and factorization. This file owns the
+//! first two and the storage, identity, and lifecycle of the third;
+//! [`constraint`] owns the constraint vocabulary and the decision procedure,
+//! and its module documentation states the exact arithmetic fragment that
+//! procedure decides.
 //!
 //! # The invariants this module establishes
 //!
@@ -697,6 +700,7 @@ impl ShapeEnvBuilder {
     /// names a symbol this draft has not declared. The check leaves the draft
     /// unchanged.
     pub fn require(&mut self, constraint: SemanticInputConstraint) -> Result<(), ShapeEnvError> {
+        let constraint = constraint.canonicalized();
         self.check_declared(constraint.relation())?;
         self.constraints.push(constraint);
         Ok(())
@@ -714,6 +718,7 @@ impl ShapeEnvBuilder {
     /// names a symbol this draft has not declared. The check leaves the draft
     /// unchanged.
     pub fn guard(&mut self, guard: VariantGuard) -> Result<(), ShapeEnvError> {
+        let guard = guard.canonicalized();
         self.check_declared(guard.relation())?;
         self.guards.push(guard);
         Ok(())
@@ -1068,6 +1073,18 @@ mod tests {
         ShapeEnvBuilder, ShapeEnvError, ShapeSymbol, SymbolScope, VariantGuard,
     };
     use crate::program::abi::{AvailabilityPhase, TargetPropertyKey};
+
+    #[test]
+    fn constraint_and_guard_wrapper_constructors_remain_const() {
+        const RELATION: ExtentRelation =
+            ExtentRelation::equal(ExtentTerm::Constant(1), ExtentTerm::Constant(1));
+        const CONSTRAINT: SemanticInputConstraint =
+            SemanticInputConstraint::new(RELATION, FactProvenance::FrontendRequired);
+        const GUARD: VariantGuard = VariantGuard::new(RELATION, GuardApplicability::Schedule);
+
+        assert_eq!(CONSTRAINT.relation(), &RELATION);
+        assert_eq!(GUARD.relation(), &RELATION);
+    }
 
     fn symbol(scope: &str, name: &str) -> ShapeSymbol {
         ShapeSymbol::new(SymbolScope::new(scope).unwrap(), name).unwrap()
@@ -1457,6 +1474,131 @@ mod tests {
         consistent.build().unwrap();
     }
 
+    /// One decode step must not accept stale state whose observed result extent
+    /// disagrees with its context and token extents.
+    #[test]
+    fn a_decode_shaped_additive_mismatch_refuses_and_names_all_three_terms() {
+        let build = |sum: u64| {
+            let mut draft = ShapeEnvBuilder::new();
+            for (name, value) in [("S", sum), ("C", 14), ("T", 1)] {
+                let declared = symbol("decode/layer-0", name);
+                draft.declare(declared.clone()).unwrap();
+                draft.bind(&declared, static_binding(value)).unwrap();
+            }
+            draft
+                .require(required(ExtentRelation::additive_equality(
+                    ExtentTerm::Symbol(symbol("decode/layer-0", "S")),
+                    ExtentTerm::Symbol(symbol("decode/layer-0", "C")),
+                    ExtentTerm::Symbol(symbol("decode/layer-0", "T")),
+                )))
+                .unwrap();
+            draft.build()
+        };
+
+        let error =
+            build(13).expect_err("state valid over [0, 13) cannot verify when C = 14 and T = 1");
+        let ShapeEnvError::ContradictoryConstraints { conflict } = &error else {
+            panic!("the mismatch is a typed contradictory constraint, not {error}");
+        };
+        assert_eq!(
+            **conflict,
+            ConstraintConflict::AdditiveEqualityMismatch {
+                relation: ExtentRelation::additive_equality(
+                    ExtentTerm::Symbol(symbol("decode/layer-0", "S")),
+                    ExtentTerm::Symbol(symbol("decode/layer-0", "C")),
+                    ExtentTerm::Symbol(symbol("decode/layer-0", "T")),
+                ),
+                sum: 13,
+                addends: 15,
+            }
+        );
+        let diagnostic = error.to_string();
+        for term in ["S", "C", "T"] {
+            assert!(
+                diagnostic.contains(term),
+                "the three-term diagnostic must name {term}: {diagnostic}"
+            );
+        }
+
+        build(15).expect("S = 15 is consistent with C = 14 and T = 1");
+    }
+
+    /// A partially observed equality reports why the remaining extent cannot
+    /// inhabit the nonnegative extent domain; it is not a fully observed mismatch.
+    #[test]
+    fn an_observed_addend_exceeding_the_sum_names_the_negative_remainder() {
+        let build = |sum: u64| {
+            let mut draft = ShapeEnvBuilder::new();
+            for (name, binding) in [
+                ("S", static_binding(sum)),
+                ("known", static_binding(3)),
+                ("remaining", dynamic_binding("remaining")),
+            ] {
+                let declared = symbol("partial", name);
+                draft.declare(declared.clone()).unwrap();
+                draft.bind(&declared, binding).unwrap();
+            }
+            draft
+                .require(required(ExtentRelation::additive_equality(
+                    ExtentTerm::Symbol(symbol("partial", "S")),
+                    ExtentTerm::Symbol(symbol("partial", "remaining")),
+                    ExtentTerm::Symbol(symbol("partial", "known")),
+                )))
+                .unwrap();
+            draft.build()
+        };
+
+        let error = build(2).expect_err("2 == remaining + 3 needs a negative extent");
+        let ShapeEnvError::ContradictoryConstraints { conflict } = &error else {
+            panic!("the impossible remainder is a typed contradiction, not {error}");
+        };
+        assert_eq!(
+            **conflict,
+            ConstraintConflict::AddendExceedsSum {
+                relation: ExtentRelation::additive_equality(
+                    ExtentTerm::Symbol(symbol("partial", "S")),
+                    ExtentTerm::Symbol(symbol("partial", "remaining")),
+                    ExtentTerm::Symbol(symbol("partial", "known")),
+                ),
+                sum: 2,
+                addend: 3,
+                remaining: ExtentTerm::Symbol(symbol("partial", "remaining")),
+            }
+        );
+        let diagnostic = error.to_string();
+        for fact in ["sum 2", "addend 3", "remaining", "negative"] {
+            assert!(
+                diagnostic.contains(fact),
+                "the partial-observation diagnostic must contain {fact:?}: {diagnostic}"
+            );
+        }
+
+        build(3).expect("3 == remaining + 3 has the nonnegative solution remaining = 0");
+    }
+
+    /// Runtime-bound extents retain an additive requirement for preflight.
+    #[test]
+    fn a_runtime_bound_additive_relation_has_an_exhibited_model() {
+        let mut draft = draft_over(&["S", "C", "T", "capacity"]);
+        draft
+            .require(required(ExtentRelation::additive_equality(
+                term("S"),
+                term("C"),
+                term("T"),
+            )))
+            .unwrap();
+        draft
+            .require(required(ExtentRelation::non_negative_difference(
+                term("capacity"),
+                term("S"),
+            )))
+            .unwrap();
+        let environment = draft
+            .build()
+            .expect("the all-zero model proves the runtime-bound set satisfiable");
+        assert_eq!(environment.constraints().len(), 2);
+    }
+
     /// A relation outside the supported fragment is refused, never under-decided.
     ///
     /// "The solver algorithm and exact supported arithmetic fragment remain
@@ -1495,6 +1637,31 @@ mod tests {
         assert!(matches!(
             guarded.build(),
             Err(ShapeEnvError::UnsupportedRelation { .. })
+        ));
+
+        // An underdetermined additive equality is admitted only when the
+        // canonical lower-bound model exhibits a solution. `C >= 1` makes that
+        // model `(S, C, T) = (0, 1, 0)`, so this relation is conservatively
+        // refused rather than being admitted on "no contradiction found".
+        let mut additive = draft_over(&["S", "C", "T"]);
+        additive
+            .require(required(ExtentRelation::additive_equality(
+                term("S"),
+                term("C"),
+                term("T"),
+            )))
+            .unwrap();
+        additive
+            .require(required(
+                ExtentRelation::interval(term("C"), 1, 64).unwrap(),
+            ))
+            .unwrap();
+        assert!(matches!(
+            additive.build(),
+            Err(ShapeEnvError::UnsupportedRelation {
+                violation: FragmentViolation::UnderdeterminedAdditiveEquality { undetermined: 3 },
+                ..
+            })
         ));
 
         // In-fragment, a factorization with one undetermined term is solved
@@ -1782,6 +1949,77 @@ mod tests {
             reasoned_differently.build().unwrap().identity(),
             base.identity(),
             "provenance is part of identity, per the contract",
+        );
+
+        let mut additive = draft_over(&["n", "left", "right"]);
+        additive
+            .require(required(ExtentRelation::additive_equality(
+                term("n"),
+                term("left"),
+                term("right"),
+            )))
+            .unwrap();
+        let additive = additive.build().unwrap();
+        let mut reversed = draft_over(&["n", "left", "right"]);
+        reversed
+            .require(required(ExtentRelation::AdditiveEquality {
+                sum: term("n"),
+                left: term("right"),
+                right: term("left"),
+            }))
+            .unwrap();
+        reversed
+            .require(required(ExtentRelation::additive_equality(
+                term("n"),
+                term("left"),
+                term("right"),
+            )))
+            .unwrap();
+        let reversed = reversed.build().unwrap();
+        let empty = draft_over(&["n", "left", "right"]).build().unwrap();
+        assert_ne!(
+            additive.identity(),
+            empty.identity(),
+            "the fresh relation tag and all three terms enter identity",
+        );
+        assert_eq!(
+            additive.identity(),
+            reversed.identity(),
+            "direct and helper addend spellings are canonicalized before identity",
+        );
+        assert_eq!(
+            reversed.constraints().len(),
+            1,
+            "canonicalization precedes constraint sorting and deduplication",
+        );
+
+        let mut guarded = draft_over(&["n", "left", "right"]);
+        guarded
+            .guard(VariantGuard::new(
+                ExtentRelation::AdditiveEquality {
+                    sum: term("n"),
+                    left: term("right"),
+                    right: term("left"),
+                },
+                GuardApplicability::Schedule,
+            ))
+            .unwrap();
+        guarded
+            .guard(VariantGuard::new(
+                ExtentRelation::additive_equality(term("n"), term("left"), term("right")),
+                GuardApplicability::Schedule,
+            ))
+            .unwrap();
+        let guarded = guarded.build().unwrap();
+        assert_eq!(
+            guarded.guards().len(),
+            1,
+            "guard canonicalization precedes sorting and deduplication",
+        );
+        assert_eq!(
+            guarded.guards().next().unwrap().relation(),
+            &ExtentRelation::additive_equality(term("n"), term("left"), term("right")),
+            "the stored guard uses the same canonical relation as a constraint",
         );
     }
 

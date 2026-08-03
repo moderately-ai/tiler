@@ -1,0 +1,10 @@
+error[E0639]: cannot create non-exhaustive variant using struct expression
+ --> tests/shape-evidence/fail/construct_additive_relation_variant.rs:4:13
+  |
+4 |       let _ = ExtentRelation::AdditiveEquality {
+  |  _____________^
+5 | |         sum: ExtentTerm::Constant(3),
+6 | |         left: ExtentTerm::Constant(1),
+7 | |         right: ExtentTerm::Constant(2),
+8 | |     };
+  | |_____^

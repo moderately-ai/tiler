@@ -151,18 +151,13 @@ fn an_operand_empty_on_another_axis_makes_the_result_empty_rather_than_refused()
     assert_eq!(joined.element_count(), Some(0));
 }
 
-// --- The interim extent refusal ---------------------------------------------
+// --- The extent-domain refusal ----------------------------------------------
 
 /// The exact sum leaving the extent domain is a refusal, not a saturation.
 ///
-/// This is the whole of the family's interim extent handling, and it is written
-/// rather than assumed. Nothing in this profile can *state* `S == C + T`:
-/// `ExtentRelation` admits `Equal`, `Divisible`, `NonNegativeDifference`,
-/// `Interval`, and `Factorization` over a symbol-or-constant term, and
-/// `NonNegativeDifference` constrains a difference's sign rather than defining a
-/// sum. So computing the sum exactly is the only thing that relates the result to
-/// its operands, and when the sum is not computable there is no extent this
-/// family could bind that the operands determine.
+/// `ExtentRelation::AdditiveEquality` can state `S == C + T`, but it does not
+/// widen the `u64` extent domain. When the sum is not representable there is no
+/// extent this family could bind that the operands determine.
 ///
 /// The admitted neighbour is the load-bearing half of this test. `u64::MAX - 1`
 /// plus one is representable and is admitted with the exact sum; adding one more
@@ -170,7 +165,7 @@ fn an_operand_empty_on_another_axis_makes_the_result_empty_rather_than_refused()
 /// would answer the second with `u64::MAX` — a plausible extent unrelated to its
 /// operands — so the refusal is what separates the two.
 #[test]
-fn the_interim_extent_refusal_fires_when_the_exact_sum_leaves_the_extent_domain() {
+fn the_extent_refusal_fires_when_the_exact_sum_leaves_the_extent_domain() {
     // Admitted neighbour: the exact sum is the largest representable extent.
     assert_eq!(
         result_shape(&[&[u64::MAX - 1], &[1]], axis(0)),
@@ -183,8 +178,8 @@ fn the_interim_extent_refusal_fires_when_the_exact_sum_leaves_the_extent_domain(
     );
     let message = refusal_message(&[f32_operand(&[u64::MAX]), f32_operand(&[1])], axis(0));
     assert!(
-        message.contains("no additive extent relation"),
-        "the refusal states why it is a refusal rather than a saturation: {message}"
+        message.contains("does not widen that domain"),
+        "the refusal distinguishes stateability from representability: {message}"
     );
     assert!(
         message.contains(&u64::MAX.to_string()),
@@ -489,11 +484,11 @@ fn the_normative_reference_states_the_zero_extent_rule_and_the_extent_refusal() 
     );
     assert!(
         reference.contains("refused rather than saturated or wrapped"),
-        "the interim extent refusal is part of the normative definition: {reference}"
+        "the extent-domain refusal is part of the normative definition: {reference}"
     );
     assert!(
-        reference.contains("no additive extent relation"),
-        "and states the reason it is a refusal: {reference}"
+        reference.contains("does not widen that domain"),
+        "and states why an additive relation does not remove the refusal: {reference}"
     );
     assert!(
         reference.contains("makes no claim that storage was copied"),

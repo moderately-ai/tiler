@@ -1,7 +1,7 @@
 ---
 id: admit-an-additive-extent-relation
 title: Admit an additive extent relation so a concatenated extent is checkable
-status: in-progress
+status: review
 priority: p1
 dependencies: [admit-the-sequence-extension-concatenate-family]
 related: [design-autoregressive-state-and-kv-cache, scope-the-sequence-extending-tensor-family, promote-the-symbolic-index-profile-to-a-public-boundary]
@@ -33,3 +33,90 @@ lease_expires_at: 1785704070
 ## Closes when
 
 A decode-shaped program binding `C`, `T`, and `S` inconsistently is refused with a typed diagnostic naming all three, that refusal has a test which fails without the change, and the consistent binding still verifies.
+
+## Implementation outcome — public draft for Tom
+
+**Fact — the exact draft surface.** `ExtentRelation` gains
+`AdditiveEquality { sum, left, right }` and the
+`ExtentRelation::additive_equality` constructor. The constructor canonicalizes
+the two addends because mathematical addition is commutative. The struct-like
+variant is `#[non_exhaustive]`, so an external caller may inspect it with a
+forward-compatible pattern but cannot construct it directly and must use the
+canonical helper. A compile-fail boundary test observes `E0639` for direct
+external construction, while its paired compile-pass test inspects all three
+fields with the required `..` pattern. A concrete
+mismatch returns the new typed
+`ConstraintConflict::AdditiveEqualityMismatch { relation, sum, addends }`, whose
+relation renders all three terms and whose numeric fields report both observed
+sides. A partially observed relation whose known addend exceeds its known sum
+instead returns `ConstraintConflict::AddendExceedsSum { relation, sum, addend,
+remaining }`, because the remaining term would have to be negative; it does not
+mislabel those two observed values as a fully observed mismatch.
+`FragmentViolation::UnderdeterminedAdditiveEquality` is the fail-closed boundary
+for a symbolic set whose canonical model does not exhibit a solution. These new
+public variants and constructor are a tested draft, not self-accepted.
+
+**Inference — the representation elimination has one survivor.** Changing
+`SourcedExtent` is eliminated because it would make a sourced extent both a root
+and a derived expression, violating its accepted static-or-one-symbol totality
+and the rule that every symbol has exactly one root binding. A third discharge
+outside `ShapeEnv` is eliminated because it would duplicate constraint identity,
+validation, and diagnostics at whichever consumer happened to check it. A new
+fixed-arity `ExtentRelation` variant preserves those authorities, keeps all
+leaves as `ExtentTerm`, and is the smallest form that states the required
+relationship without introducing a general expression prover.
+
+**Fact — the bounded solver rule.** With zero or one undetermined term the
+relation is checked or solved exactly in mathematical `u128` working arithmetic,
+then narrowed against the `u64` extent domain through the existing domain
+checks. With two or three free term positions, the existing
+interval/congruence/comparison solver first constructs its canonical
+lower-bound model. The additive relation is admitted only when that exact model
+satisfies it; otherwise the set returns `UnsupportedRelation`. Thus every
+accepted set still has an exhibited model, while unconstrained runtime-bound
+`S == C + T` is retained by its all-zero model instead of being under-decided.
+Evaluating that retained relation against invocation bindings remains work for
+the later runtime-preflight consumer; this ticket adds no runtime API.
+
+**Fact — capacity and longer sums.** `C + T <= capacity` is expressible as
+`S == C + T` plus the already implemented `capacity - S >= 0`. A direct
+three-addend equality is deliberately unsupported. Chaining through a fresh
+intermediate symbol would give that symbol no legitimate root source, so a
+future windowed three-term append needs its own bounded relation or the accepted
+general `ShapeExpr` work; it must not weaken the one-root-binding invariant.
+
+**Fact — canonical identity is append-only.** The one relation encoder writes a
+fresh exhaustive tag `0x06` followed by the sum and both canonicalized addends.
+The accepted public `const fn` constructors for `SemanticInputConstraint` and
+`VariantGuard` remain `const`. Their consumed-wrapper helpers are private, and
+`ShapeEnvBuilder::require` and `ShapeEnvBuilder::guard` invoke them at the
+authoritative ingestion boundary before declaration checking, storage, sorting,
+deduplication, or encoding. Internal regressions insert direct reversed and
+helper spellings for both constraints and guards, observing one stored wrapper
+in each case and the same constraint identity; downstream direct construction
+is structurally unavailable.
+Tags `0x01..=0x05` and every pre-existing relation byte remain unchanged, so
+`tiler.shape-env.v3` does not move: this admits bytes for a previously
+unrepresentable subject and re-encodes no old subject. No other relation encoder
+exists under `crates/`; the exhaustive `match` in `constraint.rs` is the complete
+population. The identity test proves the additive constraint differs from an
+otherwise identical unconstrained environment and that reversing its addends
+does not mint a second identity. No pinned shape-environment digest exists.
+
+**Measurement — bounded test evidence on the dispatched macOS checkout.** The
+decode fixture binds an allocation-valid extent `S = 13` beside `C = 14` and
+`T = 1`; construction returns `AdditiveEqualityMismatch` with observed sides
+`13` and `15`, and its rendered diagnostic contains `S`, `C`, and `T`. The
+neighbor `S = 15` verifies. Deliberately perturbing that neighbor to `S = 13`
+made the exact targeted test fail with the structured mismatch before the
+fixture was restored. Targeted `tiler-ir` nextest and doc-tests cover this host
+and implementation only; they do not prove a future runtime binder performs the
+required preflight evaluation.
+
+**Remaining serialized correction — not edited under this claim.** The
+`Sequence extension: Concatenate along one axis` row in `docs/roadmap.md` still
+says that `ExtentRelation` admits no additive relation and that `S == C + T`
+remains inexpressible. That sentence must be corrected after this draft is
+accepted and integrated. Its `contracts/navigation` scope is held by the BF16
+worker, so this branch deliberately records the exact stale claim here rather
+than colliding with that live work.
