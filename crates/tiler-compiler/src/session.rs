@@ -1819,9 +1819,9 @@ impl std::error::Error for IncoherentNumericalContract {}
 /// An opaque wrapper rather than the internal snapshot, so the request model
 /// behind it stays private and the caller's obligation is the one that matters:
 /// pairing the installed lowering registry with the scalar authority it was
-/// registered against. The realization-law authority is derived from that
-/// scalar registry's semantic snapshot; request preflight re-checks the pair and
-/// refuses a mismatch rather than resolving through foreign authority.
+/// registered against. Request preflight derives realization-law authority from
+/// the exact program semantic registry and refuses unless the lowering/scalar
+/// pair has full semantic and law-sidecar coherence with that program.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InstalledCapabilities(CompilerCapabilitySnapshot);
 
@@ -1834,10 +1834,10 @@ impl InstalledCapabilities {
 
     /// A caller's lowering registry with its scalar and semantic authority.
     ///
-    /// The realization-law authority is derived from the semantic snapshot held
-    /// by `scalars`; callers cannot replace the law that defines an operation
-    /// while installing its lowering. A mismatched pair is refused by request
-    /// preflight rather than silently reconciled.
+    /// Request preflight derives realization-law authority from the program's
+    /// exact semantic registry; callers cannot replace the law that defines an
+    /// operation while installing its lowering. A mismatched pair is refused
+    /// rather than silently reconciled.
     #[must_use]
     pub fn installed(
         lowering: FrozenLoweringCapabilityRegistry,

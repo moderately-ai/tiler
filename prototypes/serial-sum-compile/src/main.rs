@@ -1146,7 +1146,7 @@ mod tests {
         let mut builder = LoweringCapabilityRegistryBuilder::new(
             scalars.semantic_authority().clone(),
             scalars.clone(),
-        );
+        )?;
         install_governed_index_access(&mut builder, &[])
             .expect("the governed capabilities install onto a caller's builder");
         let installed = InstalledCapabilities::installed(builder.freeze(), scalars);
@@ -1186,7 +1186,7 @@ mod tests {
         let mut builder = LoweringCapabilityRegistryBuilder::new(
             scalars.semantic_authority().clone(),
             scalars.clone(),
-        );
+        )?;
         // Everything except the multiply family this program needs.
         install_governed_index_access(&mut builder, &[multiply_f32_op()])
             .expect("the remaining governed capabilities install");

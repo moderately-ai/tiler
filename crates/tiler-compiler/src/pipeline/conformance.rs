@@ -18,15 +18,13 @@ use crate::capability::{
 };
 use crate::cover::RegionCover;
 use crate::explain::{ExplainDisposition, ExplainStage, ProviderRef};
-use crate::legality::RefinementError;
-use crate::lowering::{LoweringError, resolve_lowering};
 use crate::region::form_region_candidates;
 use crate::request::{
     CompilationRequest, CompilerCapabilitySnapshot, RequestError, verify_request,
 };
 use tiler_ir::index::{
-    DomainRole, FrozenScalarRegistry, IndexRealizationLaw, IndexRefinementVerificationError,
-    ScalarAttributes, ScalarRegistryBuilder, SourcedExtent, add_f32_scalar_op,
+    DomainRole, FrozenScalarRegistry, IndexRealizationLaw, ScalarAttributes, ScalarRegistryBuilder,
+    SourcedExtent, add_f32_scalar_op,
 };
 use tiler_ir::semantic::{
     CanonicalIntegerWidth, CanonicalValue, CanonicalValueKind, CanonicalValueView, F32,
@@ -719,7 +717,7 @@ fn equal_semantic_snapshots_cannot_substitute_the_programs_law() {
         capability_semantic.snapshot_identity()
     );
 
-    let mut program = SemanticProgramBuilder::try_new(program_semantic).unwrap();
+    let mut program = SemanticProgramBuilder::try_new(program_semantic.clone()).unwrap();
     let shape = Shape::from_dims([2]);
     let left = program
         .input::<F32>(InputKey::new("left").unwrap(), shape.clone())
@@ -747,8 +745,33 @@ fn equal_semantic_snapshots_cannot_substitute_the_programs_law() {
             .unwrap();
     }
     let scalars = scalar_builder.freeze();
+    assert!(matches!(
+        tiler_ir::index::FrozenIndexRealizationLawRegistry::from_semantic(
+            program_semantic.clone(),
+            scalars.clone(),
+        ),
+        Err(tiler_ir::index::IndexRefinementVerificationError::ScalarSemanticAuthorityMismatch)
+    ));
+    assert!(matches!(
+        tiler_ir::index::IndexRealizationAuthority::admit(
+            &program_semantic,
+            &scalars,
+            multiply_f32_op(),
+            tiler_ir::index::IndexRefinementSignature::new(
+                [F32::resolved_type(), F32::resolved_type()],
+                [F32::resolved_type()],
+            )
+            .unwrap(),
+            &[add_f32_scalar_op()],
+        ),
+        Err(tiler_ir::index::IndexRefinementVerificationError::ScalarSemanticAuthorityMismatch)
+    ));
+    assert!(matches!(
+        LoweringCapabilityRegistryBuilder::new(program_semantic, scalars.clone()),
+        Err(crate::capability::LoweringRegistryError::RefinementAuthority { .. })
+    ));
     let mut lowerings =
-        LoweringCapabilityRegistryBuilder::new(capability_semantic, scalars.clone());
+        LoweringCapabilityRegistryBuilder::new(capability_semantic, scalars.clone()).unwrap();
     lowerings
         .register_index_access(
             external_lowering_provider(),
@@ -765,23 +788,12 @@ fn equal_semantic_snapshots_cannot_substitute_the_programs_law() {
         .unwrap();
     let mut request = CompilationRequest::governed(&program);
     request.capabilities = CompilerCapabilitySnapshot::new(lowerings.freeze(), scalars);
-    let verified = verify_request(request).unwrap();
-    let target = verified.for_target(0).unwrap();
-    let error = resolve_lowering(&program, &target).unwrap_err();
-    assert!(
-        matches!(
-            &error,
-            LoweringError::Refine { source, .. }
-                if matches!(
-                &**source,
-                    RefinementError::IrVerifier(inner)
-                        if matches!(
-                            &**inner,
-                            IndexRefinementVerificationError::SemanticRealizationMismatch { .. }
-                        )
-                )
-        ),
-        "unexpected substitution refusal: {error:?}"
+    assert_eq!(
+        verify_request(request),
+        Err(RequestError::UnsupportedCapability {
+            phase: "capability",
+            rule: "semantic-authority-pairing",
+        })
     );
 }
 
@@ -802,7 +814,8 @@ fn registry_with_external_multiply(
     let mut builder = LoweringCapabilityRegistryBuilder::new(
         scalars.semantic_authority().clone(),
         scalars.clone(),
-    );
+    )
+    .unwrap();
     for capability in crate::governed::governed_index_access_capabilities().unwrap() {
         if substitute && capability.operation() == &multiply_f32_op() {
             continue;

@@ -27,6 +27,7 @@ use tiler_ir::semantic::ProviderIdentity;
 use crate::legality::{IndexRefinement, PendingIndexRefinement, complete_pending_index_refinement};
 
 const MAX_DISCHARGE_CELLS: u64 = tiler_ir::index::MAX_FINITE_DOMAIN_PROOF_CELLS;
+const MAX_DISCHARGE_INTEGER_BYTES: u64 = tiler_ir::index::MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES;
 
 /// Versioned semantic identity of one proof or disproof rule.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -195,8 +196,11 @@ impl fmt::Display for IndexDomainDischargeRefusal {
 pub(crate) fn discharge_pending_index_refinement(
     pending: PendingIndexRefinement,
 ) -> Result<IndexRefinement, IndexDomainDischargeRefusal> {
-    let budget = tiler_ir::index::IndexDomainProofBudget::try_new(MAX_DISCHARGE_CELLS)
-        .expect("the governed compiler proof budget is within IR's hard bound");
+    let budget = tiler_ir::index::IndexDomainProofBudget::try_new(
+        MAX_DISCHARGE_CELLS,
+        MAX_DISCHARGE_INTEGER_BYTES,
+    )
+    .expect("the governed compiler proof budgets are within IR's hard bounds");
     let completed =
         tiler_ir::index::ResolvedIndexRealization::complete(pending.ir_receipt(), budget);
     let (ir_receipt, ir_assessments) = match completed {

@@ -51,6 +51,9 @@ const MAX_NUMERICAL_CONTRACT_IDENTITY_BYTES: usize = 256;
 const MAX_DOMAIN_EVIDENCE_BYTES: usize = 4_096;
 /// Maximum cells the closed exact-finite residual proof algorithm may evaluate.
 pub const MAX_FINITE_DOMAIN_PROOF_CELLS: u64 = 16 * 1024 * 1024;
+/// Maximum cumulative arbitrary-precision integer bytes the closed residual
+/// proof algorithm may process.
+pub const MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES: u64 = 64 * 1024 * 1024;
 const EXHAUSTIVE_DERIVATION: &[u8] = b"tiler.ir.exact-index-domain-enumeration.v1\0";
 const COUNTEREXAMPLE_TAG: &[u8] = b"tiler.ir.index-domain-counterexample.v1\0";
 
@@ -194,6 +197,9 @@ impl IndexRealizationAuthority {
         signature: IndexRefinementSignature,
         emitted: &[ScalarOpKey],
     ) -> Result<Self, IndexRefinementVerificationError> {
+        if !semantic_authorities_cohere(semantic, scalars.semantic_authority()) {
+            return Err(IndexRefinementVerificationError::ScalarSemanticAuthorityMismatch);
+        }
         let operation_authority = semantic
             .project_operation_authority(
                 &operation,
@@ -460,26 +466,52 @@ impl PartialEq for FrozenIndexRealizationLawRegistry {
 
 impl Eq for FrozenIndexRealizationLawRegistry {}
 
+fn semantic_authorities_cohere(
+    semantic: &FrozenSemanticRegistry,
+    scalar_semantic: &FrozenSemanticRegistry,
+) -> bool {
+    semantic.snapshot_identity() == scalar_semantic.snapshot_identity()
+        && encode_realization_law_sidecar(semantic)
+            == encode_realization_law_sidecar(scalar_semantic)
+}
+
+fn encode_realization_law_sidecar(semantic: &FrozenSemanticRegistry) -> Vec<u8> {
+    let mut identity = Vec::new();
+    push_len(&mut identity, semantic.index_realization_laws().len());
+    for (operation, registered) in semantic.index_realization_laws() {
+        encode_op_key(&mut identity, operation);
+        encode_provider(&mut identity, &registered.provider);
+        identity.extend_from_slice(&registered.revision.to_be_bytes());
+        registered.law.encode(&mut identity);
+    }
+    identity
+}
+
 impl FrozenIndexRealizationLawRegistry {
     /// Derives the law snapshot inseparably retained by one semantic registry.
-    #[must_use]
-    pub fn from_semantic(semantic: FrozenSemanticRegistry, scalars: FrozenScalarRegistry) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexRefinementVerificationError::ScalarSemanticAuthorityMismatch`]
+    /// when `scalars` was built over a different semantic authority, including
+    /// one with equal semantic snapshot bytes but different realization laws.
+    pub fn from_semantic(
+        semantic: FrozenSemanticRegistry,
+        scalars: FrozenScalarRegistry,
+    ) -> Result<Self, IndexRefinementVerificationError> {
+        if !semantic_authorities_cohere(&semantic, scalars.semantic_authority()) {
+            return Err(IndexRefinementVerificationError::ScalarSemanticAuthorityMismatch);
+        }
         let mut identity = Vec::new();
         identity.extend_from_slice(LAW_REGISTRY_IDENTITY_TAG);
         push_slice(&mut identity, semantic.snapshot_identity().as_bytes());
         push_slice(&mut identity, scalars.snapshot_identity().as_bytes());
-        push_len(&mut identity, semantic.index_realization_laws().len());
-        for (operation, registered) in semantic.index_realization_laws() {
-            encode_op_key(&mut identity, operation);
-            encode_provider(&mut identity, &registered.provider);
-            identity.extend_from_slice(&registered.revision.to_be_bytes());
-            registered.law.encode(&mut identity);
-        }
-        Self(Arc::new(FrozenIndexRealizationLawRegistryData {
+        identity.extend_from_slice(&encode_realization_law_sidecar(&semantic));
+        Ok(Self(Arc::new(FrozenIndexRealizationLawRegistryData {
             semantic,
             scalars,
             identity: identity.into_boxed_slice(),
-        }))
+        })))
     }
 
     /// Returns the exact canonical registry identity.
@@ -725,6 +757,7 @@ pub enum IndexDomainProofEvidence {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct IndexDomainProofBudget {
     max_cells: u64,
+    max_integer_bytes: u64,
 }
 
 impl IndexDomainProofBudget {
@@ -733,13 +766,24 @@ impl IndexDomainProofBudget {
     /// # Errors
     ///
     /// Returns [`IndexRefinementVerificationError::InvalidDomainProofBudget`]
-    /// when `max_cells` is zero or exceeds
-    /// [`MAX_FINITE_DOMAIN_PROOF_CELLS`].
-    pub fn try_new(max_cells: u64) -> Result<Self, IndexRefinementVerificationError> {
-        if max_cells == 0 || max_cells > MAX_FINITE_DOMAIN_PROOF_CELLS {
+    /// when either limit is zero or exceeds its corresponding
+    /// [`MAX_FINITE_DOMAIN_PROOF_CELLS`] or
+    /// [`MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES`] hard bound.
+    pub fn try_new(
+        max_cells: u64,
+        max_integer_bytes: u64,
+    ) -> Result<Self, IndexRefinementVerificationError> {
+        if max_cells == 0
+            || max_cells > MAX_FINITE_DOMAIN_PROOF_CELLS
+            || max_integer_bytes == 0
+            || max_integer_bytes > MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES
+        {
             return Err(IndexRefinementVerificationError::InvalidDomainProofBudget);
         }
-        Ok(Self { max_cells })
+        Ok(Self {
+            max_cells,
+            max_integer_bytes,
+        })
     }
 
     /// Returns the maximum expression cells the proof may evaluate.
@@ -747,9 +791,15 @@ impl IndexDomainProofBudget {
     pub const fn max_cells(self) -> u64 {
         self.max_cells
     }
+
+    /// Returns the maximum cumulative integer-byte work the proof may perform.
+    #[must_use]
+    pub const fn max_integer_bytes(self) -> u64 {
+        self.max_integer_bytes
+    }
 }
 
-/// A typed exact counterexample from a trusted domain verifier.
+/// A typed exact counterexample from IR's closed domain evaluator.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IndexDomainDisproof {
     reason: Box<str>,
@@ -807,7 +857,7 @@ impl IndexDomainDisproof {
     }
 }
 
-/// One trusted verifier's total claim about an exact residual obligation.
+/// IR's total claim about one exact residual obligation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IndexDomainProofClaim {
     /// The obligation is proved.
@@ -1095,7 +1145,8 @@ impl ResolvedIndexRealization {
     ///
     /// # Errors
     ///
-    /// Returns the first canonical disproved or unsupported obligation.
+    /// Returns an atomic refusal retaining every canonical assessment when any
+    /// obligation is disproved or unsupported.
     pub fn complete(
         pending: &PendingIndexRefinementReceipt,
         budget: IndexDomainProofBudget,
@@ -1166,39 +1217,84 @@ fn assess_finite_domain(
     obligation: UnknownIndexDomainPredicate,
     budget: IndexDomainProofBudget,
 ) -> IndexDomainProofClaim {
-    let access = region
-        .access(obligation.subject())
-        .expect("a verified residual names an access in its own region");
+    let Ok(access) = region.access(obligation.subject()) else {
+        return IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::UnsupportedFragment);
+    };
     let dimensions = access
         .domain()
         .map(|dimension| {
             region
                 .dimension(dimension)
-                .expect("a verified access domain names its own dimensions")
-                .extent()
-                .as_static()
+                .ok()
+                .and_then(|dimension| dimension.extent().as_static())
                 .map(|extent| (dimension, extent.get()))
         })
         .collect::<Option<Vec<_>>>();
     let Some(dimensions) = dimensions else {
         return IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::UnsupportedFragment);
     };
-    let Some(points) = dimensions.iter().try_fold(1_u128, |product, (_, extent)| {
-        product.checked_mul(u128::from(*extent))
-    }) else {
-        return proof_resource_limit(u128::MAX, budget);
+    let extents = dimensions
+        .iter()
+        .map(|(_, extent)| *extent)
+        .collect::<Vec<_>>();
+    let Some(points) = finite_point_count(&extents) else {
+        return IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::UnsupportedFragment);
     };
+    if points == 0 {
+        return IndexDomainProofClaim::Proved(IndexDomainProofEvidence::ExhaustiveFinite {
+            points: 0,
+            derivation: EXHAUSTIVE_DERIVATION.into(),
+        });
+    }
     let expression = predicate_expression(obligation.predicate());
     let mut plan = HashSet::new();
     if !collect_expression_plan(region, expression, &mut plan) {
         return IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::UnsupportedFragment);
     }
-    let required = points.saturating_mul(plan.len() as u128);
-    if required > u128::from(budget.max_cells()) {
-        return proof_resource_limit(required, budget);
+    if let IndexDomainPredicate::LessThanExtent { extent, .. } = obligation.predicate()
+        && resolve_extent(region, extent).is_none()
+    {
+        return IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::UnsupportedFragment);
+    }
+    // Per point, charge every expression-plan node, one environment binding
+    // and one coordinate increment per dimension, and the predicate check.
+    // DAG-edge arithmetic is charged cumulatively by the integer-byte model.
+    let Some(dimension_cells) = (dimensions.len() as u128).checked_mul(2) else {
+        return IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::UnsupportedFragment);
+    };
+    let Some(cells_per_point) = (plan.len() as u128)
+        .checked_add(dimension_cells)
+        .and_then(|cells| cells.checked_add(1))
+    else {
+        return IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::UnsupportedFragment);
+    };
+    let Some(required_cells) = points.checked_mul(cells_per_point) else {
+        return IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::UnsupportedFragment);
+    };
+    if required_cells > u128::from(budget.max_cells()) {
+        return proof_resource_limit(
+            super::ProofResource::Cells,
+            required_cells,
+            budget.max_cells(),
+        );
+    }
+    let Ok(Some(integer_bytes_per_point)) =
+        integer_bytes_per_point(region, expression, obligation.predicate(), &dimensions)
+    else {
+        return IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::UnsupportedFragment);
+    };
+    let Some(required_integer_bytes) = points.checked_mul(integer_bytes_per_point) else {
+        return IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::UnsupportedFragment);
+    };
+    if required_integer_bytes > u128::from(budget.max_integer_bytes()) {
+        return proof_resource_limit(
+            super::ProofResource::IntegerBytes,
+            required_integer_bytes,
+            budget.max_integer_bytes(),
+        );
     }
     let Ok(points) = u64::try_from(points) else {
-        return proof_resource_limit(required, budget);
+        return IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::UnsupportedFragment);
     };
     let mut coordinates = vec![0_u64; dimensions.len()];
     let mut environment = HashMap::with_capacity(dimensions.len());
@@ -1220,11 +1316,14 @@ fn assess_finite_domain(
                 IndexDomainPredicate::NonNegative { .. } => "logical-index-negative",
                 IndexDomainPredicate::LessThanExtent { .. } => "logical-index-not-less-than-extent",
             };
-            return IndexDomainProofClaim::Disproved(
-                IndexDomainDisproof::new(reason, encode_counterexample(&coordinates, &value))
-                    .expect("IR-owned counterexamples satisfy their own evidence bound")
-                    .with_point_ordinal(point_ordinal),
-            );
+            let Ok(disproof) =
+                IndexDomainDisproof::new(reason, encode_counterexample(point_ordinal))
+            else {
+                return IndexDomainProofClaim::Unknown(
+                    IndexDomainUnknownReason::UnsupportedFragment,
+                );
+            };
+            return IndexDomainProofClaim::Disproved(disproof.with_point_ordinal(point_ordinal));
         }
         increment_coordinates(&mut coordinates, &dimensions);
     }
@@ -1234,12 +1333,134 @@ fn assess_finite_domain(
     })
 }
 
-fn proof_resource_limit(required: u128, budget: IndexDomainProofBudget) -> IndexDomainProofClaim {
+fn proof_resource_limit(
+    resource: super::ProofResource,
+    required: u128,
+    limit: u64,
+) -> IndexDomainProofClaim {
     IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::ResourceLimit {
-        resource: super::ProofResource::Cells,
+        resource,
         required,
-        limit: budget.max_cells(),
+        limit,
     })
+}
+
+fn finite_point_count(extents: &[u64]) -> Option<u128> {
+    if extents.contains(&0) {
+        return Some(0);
+    }
+    extents.iter().try_fold(1_u128, |product, extent| {
+        product.checked_mul(u128::from(*extent))
+    })
+}
+
+fn integer_bytes_per_point(
+    region: &VerifiedIndexRegion,
+    expression: VerifiedIndexExprId,
+    predicate: IndexDomainPredicate,
+    dimensions: &[(VerifiedDimensionId, u64)],
+) -> Result<Option<u128>, ()> {
+    let dimensions = dimensions.iter().copied().collect::<HashMap<_, _>>();
+    let mut bounds = HashMap::new();
+    let mut bytes = 0_u128;
+    if expression_byte_bound(region, expression, &dimensions, &mut bounds, &mut bytes)?.is_none() {
+        return Ok(None);
+    }
+    if let IndexDomainPredicate::LessThanExtent { extent, .. } = predicate {
+        if resolve_extent(region, extent).is_none() {
+            return Ok(None);
+        }
+        add_bytes(&mut bytes, 8)?;
+    }
+    add_bytes(&mut bytes, 1)?;
+    Ok(Some(bytes))
+}
+
+/// Returns a conservative byte width for one expression value while adding
+/// the exact cumulative work prescribed by this verifier's byte-cost model.
+/// The model uses encoded literal width, eight bytes for domain/extent values,
+/// summed operand widths for multiplication, and one carry byte for addition.
+fn expression_byte_bound(
+    region: &VerifiedIndexRegion,
+    expression: VerifiedIndexExprId,
+    dimensions: &HashMap<VerifiedDimensionId, u64>,
+    bounds: &mut HashMap<VerifiedIndexExprId, u128>,
+    bytes: &mut u128,
+) -> Result<Option<u128>, ()> {
+    if let Some(bound) = bounds.get(&expression) {
+        add_bytes(bytes, *bound)?;
+        return Ok(Some(*bound));
+    }
+    let Ok(expression_view) = region.index_expression(expression) else {
+        return Ok(None);
+    };
+    let bound = match expression_view.view() {
+        IndexExprView::Constant(value) => {
+            let width = integer_width(value);
+            add_bytes(bytes, width)?;
+            width
+        }
+        IndexExprView::Dimension(dimension) => {
+            if !dimensions.contains_key(&dimension) {
+                return Ok(None);
+            }
+            add_bytes(bytes, 8)?;
+            8
+        }
+        IndexExprView::LinearCombination { constant, terms } => {
+            let mut accumulator = integer_width(constant);
+            add_bytes(bytes, accumulator)?;
+            for term in terms {
+                let coefficient = integer_width(term.coefficient());
+                add_bytes(bytes, coefficient)?;
+                let Some(child) =
+                    expression_byte_bound(region, term.value(), dimensions, bounds, bytes)?
+                else {
+                    return Ok(None);
+                };
+                let product = coefficient.checked_add(child).ok_or(())?;
+                add_bytes(bytes, product)?;
+                accumulator = accumulator.max(product).checked_add(1).ok_or(())?;
+                add_bytes(bytes, accumulator)?;
+            }
+            accumulator
+        }
+        IndexExprView::FloorDiv { dividend, divisor } => {
+            if divisor.as_static().is_none() {
+                return Ok(None);
+            }
+            add_bytes(bytes, 8)?;
+            let Some(dividend) =
+                expression_byte_bound(region, dividend, dimensions, bounds, bytes)?
+            else {
+                return Ok(None);
+            };
+            add_bytes(bytes, dividend)?;
+            dividend
+        }
+        IndexExprView::Modulo { dividend, divisor } => {
+            if divisor.as_static().is_none() {
+                return Ok(None);
+            }
+            add_bytes(bytes, 8)?;
+            if expression_byte_bound(region, dividend, dimensions, bounds, bytes)?.is_none() {
+                return Ok(None);
+            }
+            add_bytes(bytes, 8)?;
+            8
+        }
+    };
+    bounds.insert(expression, bound);
+    Ok(Some(bound))
+}
+
+fn integer_width(value: &IndexInteger) -> u128 {
+    value.to_sign_magnitude().1.len().max(1) as u128
+}
+
+fn add_bytes(bytes: &mut u128, amount: u128) -> Result<(), ()> {
+    *bytes = bytes.checked_add(amount).ok_or(())?;
+    Ok(())
 }
 
 const fn predicate_expression(predicate: IndexDomainPredicate) -> VerifiedIndexExprId {
@@ -1257,9 +1478,9 @@ fn collect_expression_plan(
     if !reached.insert(expression) {
         return true;
     }
-    let expression = region
-        .index_expression(expression)
-        .expect("a verified predicate names an expression in its own region");
+    let Ok(expression) = region.index_expression(expression) else {
+        return false;
+    };
     match expression.view() {
         IndexExprView::Constant(_) | IndexExprView::Dimension(_) => true,
         IndexExprView::LinearCombination { terms, .. } => terms
@@ -1281,10 +1502,7 @@ fn evaluate_expression(
     if let Some(value) = values.get(&expression) {
         return Some(value.clone());
     }
-    let view = region
-        .index_expression(expression)
-        .expect("a verified predicate names an expression in its own region")
-        .view();
+    let view = region.index_expression(expression).ok()?.view();
     let value = match view {
         IndexExprView::Constant(value) => decode_integer(value),
         IndexExprView::Dimension(dimension) => BigInt::from(*environment.get(&dimension)?),
@@ -1329,28 +1547,31 @@ fn predicate_holds(
     match predicate {
         IndexDomainPredicate::NonNegative { .. } => value >= &BigInt::zero(),
         IndexDomainPredicate::LessThanExtent { extent, .. } => {
-            value < &BigInt::from(resolve_extent(region, extent))
+            resolve_extent(region, extent).is_some_and(|extent| value < &BigInt::from(extent))
         }
     }
 }
 
-fn resolve_extent(region: &VerifiedIndexRegion, extent: IndexExtentRef) -> u64 {
+fn resolve_extent(region: &VerifiedIndexRegion, extent: IndexExtentRef) -> Option<u64> {
     match extent {
         IndexExtentRef::Dimension(dimension) => region
             .dimension(dimension)
-            .expect("a verified predicate names its own dimension")
+            .ok()?
             .extent()
             .as_static()
-            .expect("finite proof rejected symbolic dimensions")
-            .get(),
-        IndexExtentRef::TensorAxis { tensor, axis } => region
-            .tensor(tensor)
-            .expect("a verified predicate names its own tensor")
-            .shape()
-            .as_static()
-            .expect("finite proof rejected symbolic boundaries")
-            .extents()[usize::try_from(axis).expect("a verified tensor axis fits usize")]
-        .get(),
+            .map(crate::shape::Extent::get),
+        IndexExtentRef::TensorAxis { tensor, axis } => {
+            let axis = usize::try_from(axis).ok()?;
+            region
+                .tensor(tensor)
+                .ok()?
+                .shape()
+                .as_static()?
+                .extents()
+                .get(axis)
+                .copied()
+                .map(crate::shape::Extent::get)
+        }
     }
 }
 
@@ -1364,15 +1585,9 @@ fn increment_coordinates(coordinates: &mut [u64], dimensions: &[(VerifiedDimensi
     }
 }
 
-fn encode_counterexample(coordinates: &[u64], value: &BigInt) -> Box<[u8]> {
+fn encode_counterexample(point_ordinal: u64) -> Box<[u8]> {
     let mut output = COUNTEREXAMPLE_TAG.to_vec();
-    push_len(&mut output, coordinates.len());
-    for coordinate in coordinates {
-        output.extend_from_slice(&coordinate.to_be_bytes());
-    }
-    let (sign, magnitude) = value.to_bytes_be();
-    output.push(u8::from(matches!(sign, Sign::Minus)));
-    push_slice(&mut output, &magnitude);
+    output.extend_from_slice(&point_ordinal.to_be_bytes());
     output.into_boxed_slice()
 }
 
@@ -1404,6 +1619,19 @@ impl IndexDomainProofRefusal {
         self.kind
     }
 }
+
+impl fmt::Display for IndexDomainProofRefusal {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{} index-domain obligation(s) reached IR proof completion as {:?}",
+            self.assessments.len(),
+            self.kind
+        )
+    }
+}
+
+impl Error for IndexDomainProofRefusal {}
 
 /// Why IR-owned refinement verification refused to mint a receipt.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1445,6 +1673,8 @@ pub enum IndexRefinementVerificationError {
     CapabilitySignatureMismatch,
     /// Semantic registry authority disagrees.
     SemanticAuthorityMismatch,
+    /// The scalar registry was built over another semantic authority.
+    ScalarSemanticAuthorityMismatch,
     /// The program-derived subject came from another semantic authority.
     SubjectSemanticAuthorityMismatch,
     /// The lowering or region came from another scalar-registry snapshot.
@@ -1562,6 +1792,9 @@ impl fmt::Display for IndexRefinementVerificationError {
             }
             Self::SemanticAuthorityMismatch => {
                 formatter.write_str("semantic registry authority disagrees")
+            }
+            Self::ScalarSemanticAuthorityMismatch => {
+                formatter.write_str("scalar registry was built over another semantic authority")
             }
             Self::SubjectSemanticAuthorityMismatch => {
                 formatter.write_str("program subject came from another semantic authority")
@@ -1977,15 +2210,26 @@ mod tests {
     const LENGTH: u64 = 65_535;
 
     fn residual_region(second_extent: u64, rounds: usize, offset: i128) -> VerifiedIndexRegion {
+        residual_region_with_extents(&[LENGTH, second_extent], 0, rounds, offset.into())
+    }
+
+    fn residual_region_with_extents(
+        extents: &[u64],
+        target_axis: usize,
+        rounds: usize,
+        offset: IndexInteger,
+    ) -> VerifiedIndexRegion {
         let mut builder = IndexRegionBuilder::new(FrozenScalarRegistry::standard().unwrap())
             .expect("the fixture receives a fresh builder identity");
-        let first = builder
-            .dimension(DomainRole::Parallel, Extent::new(LENGTH))
-            .unwrap();
-        let second = builder
-            .dimension(DomainRole::Parallel, Extent::new(second_extent))
-            .unwrap();
-        let shape = Shape::from_dims([LENGTH, second_extent]);
+        let dimensions = extents
+            .iter()
+            .map(|extent| {
+                builder
+                    .dimension(DomainRole::Parallel, Extent::new(*extent))
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let shape = Shape::try_from_dims(extents.iter().copied()).unwrap();
         let value_type = ResolvedValueType::nominal(TypeKey::new("tiler", "f32", 1).unwrap());
         let input = builder
             .tensor(TensorRole::Input, value_type.clone(), shape.clone())
@@ -1993,9 +2237,11 @@ mod tests {
         let output = builder
             .tensor(TensorRole::Output, value_type, shape)
             .unwrap();
-        let first_coordinate = builder.dimension_expr(first).unwrap();
-        let second_coordinate = builder.dimension_expr(second).unwrap();
-        let mut conservative = first_coordinate;
+        let coordinates = dimensions
+            .iter()
+            .map(|dimension| builder.dimension_expr(*dimension).unwrap())
+            .collect::<Vec<_>>();
+        let mut conservative = coordinates[target_axis];
         for _ in 0..rounds {
             let two = SourcedExtent::Static(Extent::new(2));
             let modulo = builder.modulo(conservative, two.clone()).unwrap();
@@ -2007,28 +2253,26 @@ mod tests {
                 )
                 .unwrap();
         }
-        if offset != 0 {
+        if offset != 0_i128.into() {
             conservative = builder
-                .linear_combination(offset.into(), &[(1_i128.into(), conservative)])
+                .linear_combination(offset, &[(1_i128.into(), conservative)])
                 .unwrap();
         }
-        let value = builder
-            .read(input, &[first, second], &[conservative, second_coordinate])
-            .unwrap();
-        let write = builder
-            .write(
-                output,
-                &[first, second],
-                &[first_coordinate, second_coordinate],
-            )
-            .unwrap();
+        let mut read_coordinates = coordinates.clone();
+        read_coordinates[target_axis] = conservative;
+        let value = builder.read(input, &dimensions, &read_coordinates).unwrap();
+        let write = builder.write(output, &dimensions, &coordinates).unwrap();
         builder.output(write, value).unwrap();
         let region = builder.build().unwrap();
         assert_eq!(region.unknown_index_domain_predicates().len(), 1);
         region
     }
 
-    fn assess(region: &VerifiedIndexRegion, budget: u64) -> IndexDomainProofClaim {
+    fn assess(
+        region: &VerifiedIndexRegion,
+        cells: u64,
+        integer_bytes: u64,
+    ) -> IndexDomainProofClaim {
         let obligation = region
             .unknown_index_domain_predicates()
             .next()
@@ -2036,13 +2280,17 @@ mod tests {
         assess_finite_domain(
             region,
             obligation,
-            IndexDomainProofBudget::try_new(budget).unwrap(),
+            IndexDomainProofBudget::try_new(cells, integer_bytes).unwrap(),
         )
     }
 
     #[test]
     fn exact_finite_evaluation_proves_every_point() {
-        let claim = assess(&residual_region(1, 5, 0), MAX_FINITE_DOMAIN_PROOF_CELLS);
+        let claim = assess(
+            &residual_region(1, 5, 0),
+            MAX_FINITE_DOMAIN_PROOF_CELLS,
+            MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES,
+        );
         assert!(matches!(
             claim,
             IndexDomainProofClaim::Proved(IndexDomainProofEvidence::ExhaustiveFinite {
@@ -2055,8 +2303,16 @@ mod tests {
     #[test]
     fn exact_finite_evaluation_returns_the_first_counterexample() {
         let region = residual_region(1, 5, 1);
-        let first = assess(&region, MAX_FINITE_DOMAIN_PROOF_CELLS);
-        let second = assess(&region, MAX_FINITE_DOMAIN_PROOF_CELLS);
+        let first = assess(
+            &region,
+            MAX_FINITE_DOMAIN_PROOF_CELLS,
+            MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES,
+        );
+        let second = assess(
+            &region,
+            MAX_FINITE_DOMAIN_PROOF_CELLS,
+            MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES,
+        );
         assert_eq!(first, second);
         assert!(matches!(
             first,
@@ -2068,8 +2324,24 @@ mod tests {
     }
 
     #[test]
+    fn wide_counterexample_is_encoded_by_exact_point_ordinal() {
+        let encoded = encode_counterexample(0);
+        assert!(encoded.len() <= MAX_DOMAIN_EVIDENCE_BYTES);
+        assert_eq!(&encoded[..COUNTEREXAMPLE_TAG.len()], COUNTEREXAMPLE_TAG);
+    }
+
+    #[test]
+    fn an_empty_domain_is_vacuously_proved_before_overflowing_prefixes() {
+        assert_eq!(finite_point_count(&[u64::MAX, u64::MAX, 0]), Some(0));
+    }
+
+    #[test]
     fn exact_finite_evaluation_fails_closed_at_the_callers_budget() {
-        let claim = assess(&residual_region(1, 5, 0), 1);
+        let claim = assess(
+            &residual_region(1, 5, 0),
+            1,
+            MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES,
+        );
         assert!(matches!(
             claim,
             IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::ResourceLimit {
@@ -2081,13 +2353,88 @@ mod tests {
     }
 
     #[test]
+    fn exact_finite_evaluation_charges_integer_byte_work() {
+        let claim = assess(&residual_region(1, 5, 0), MAX_FINITE_DOMAIN_PROOF_CELLS, 1);
+        assert!(matches!(
+            claim,
+            IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::ResourceLimit {
+                resource: super::super::ProofResource::IntegerBytes,
+                required,
+                limit: 1,
+            }) if required > 1
+        ));
+    }
+
+    #[test]
+    fn wide_domain_environment_work_reaches_the_cell_hard_limit() {
+        let mut extents = vec![1; 256];
+        extents[0] = LENGTH;
+        let region = residual_region_with_extents(&extents, 0, 5, 0_i128.into());
+        assert!(matches!(
+            assess(
+                &region,
+                MAX_FINITE_DOMAIN_PROOF_CELLS,
+                MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES,
+            ),
+            IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::ResourceLimit {
+                resource: super::super::ProofResource::Cells,
+                required,
+                limit: MAX_FINITE_DOMAIN_PROOF_CELLS,
+            }) if required > u128::from(MAX_FINITE_DOMAIN_PROOF_CELLS)
+        ));
+    }
+
+    #[test]
+    fn large_exact_counterexample_stays_bounded_and_disproved() {
+        let region = residual_region(1, 5, 0);
+        let obligation = region.unknown_index_domain_predicates().next().unwrap();
+        let mut magnitude = vec![0; MAX_DOMAIN_EVIDENCE_BYTES + 1];
+        magnitude[0] = 1;
+        let exact_value = decode_integer(
+            &IndexInteger::from_sign_magnitude(IndexIntegerSign::Positive, &magnitude).unwrap(),
+        );
+        assert!(!predicate_holds(
+            &region,
+            obligation.predicate(),
+            &exact_value,
+        ));
+        let disproof = IndexDomainDisproof::new(
+            "logical-index-not-less-than-extent",
+            encode_counterexample(0),
+        )
+        .unwrap()
+        .with_point_ordinal(0);
+        let claim = IndexDomainProofClaim::Disproved(disproof);
+        assert!(matches!(
+            claim,
+            IndexDomainProofClaim::Disproved(disproof)
+                if disproof.point_ordinal() == Some(0)
+                    && disproof.counterexample().len() <= MAX_DOMAIN_EVIDENCE_BYTES
+        ));
+    }
+
+    #[test]
     fn invalid_budgets_are_rejected_before_evaluation() {
         assert_eq!(
-            IndexDomainProofBudget::try_new(0),
+            IndexDomainProofBudget::try_new(0, MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES),
             Err(IndexRefinementVerificationError::InvalidDomainProofBudget)
         );
         assert_eq!(
-            IndexDomainProofBudget::try_new(MAX_FINITE_DOMAIN_PROOF_CELLS + 1),
+            IndexDomainProofBudget::try_new(
+                MAX_FINITE_DOMAIN_PROOF_CELLS + 1,
+                MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES,
+            ),
+            Err(IndexRefinementVerificationError::InvalidDomainProofBudget)
+        );
+        assert_eq!(
+            IndexDomainProofBudget::try_new(MAX_FINITE_DOMAIN_PROOF_CELLS, 0),
+            Err(IndexRefinementVerificationError::InvalidDomainProofBudget)
+        );
+        assert_eq!(
+            IndexDomainProofBudget::try_new(
+                MAX_FINITE_DOMAIN_PROOF_CELLS,
+                MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES + 1,
+            ),
             Err(IndexRefinementVerificationError::InvalidDomainProofBudget)
         );
     }
@@ -2143,7 +2490,70 @@ mod tests {
         let region = builder.build().unwrap();
         assert_eq!(EXTENT_PHASE_CEILING, AvailabilityPhase::LiveDevicePreflight);
         assert!(matches!(
-            assess(&region, MAX_FINITE_DOMAIN_PROOF_CELLS),
+            assess(
+                &region,
+                MAX_FINITE_DOMAIN_PROOF_CELLS,
+                MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES,
+            ),
+            IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::UnsupportedFragment)
+        ));
+    }
+
+    #[test]
+    fn a_static_domain_with_symbolic_tensor_extent_is_unsupported() {
+        let symbol = ShapeSymbol::new(SymbolScope::new("proof/axis").unwrap(), "n").unwrap();
+        let mut environment = ShapeEnvBuilder::new();
+        environment.declare(symbol.clone()).unwrap();
+        environment
+            .bind(
+                &symbol,
+                RootBinding::new(
+                    BindingSource::InterfaceParameter {
+                        key: InterfaceParameterKey::new("n").unwrap(),
+                    },
+                    AvailabilityPhase::LiveDevicePreflight,
+                    FactProvenance::RuntimeValidated,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        environment
+            .require(SemanticInputConstraint::new(
+                ExtentRelation::interval(ExtentTerm::Symbol(symbol.clone()), 1, 16).unwrap(),
+                FactProvenance::FrontendRequired,
+            ))
+            .unwrap();
+        let mut builder = IndexRegionBuilder::new_with_shape_environment(
+            FrozenScalarRegistry::standard().unwrap(),
+            Arc::new(environment.build().unwrap()),
+        )
+        .unwrap();
+        let value_type = ResolvedValueType::nominal(TypeKey::new("tiler", "f32", 1).unwrap());
+        let input = builder
+            .sourced_tensor(
+                TensorRole::Input,
+                value_type.clone(),
+                vec![SourcedExtent::Symbol(symbol)],
+            )
+            .unwrap();
+        let output = builder
+            .tensor(TensorRole::Output, value_type, Shape::from_dims([8]))
+            .unwrap();
+        let dimension = builder
+            .dimension(DomainRole::Parallel, Extent::new(8))
+            .unwrap();
+        let coordinate = builder.dimension_expr(dimension).unwrap();
+        let value = builder.read(input, &[dimension], &[coordinate]).unwrap();
+        let write = builder.write(output, &[dimension], &[coordinate]).unwrap();
+        builder.output(write, value).unwrap();
+        let region = builder.build().unwrap();
+        assert_eq!(region.unknown_index_domain_predicates().len(), 1);
+        assert!(matches!(
+            assess(
+                &region,
+                MAX_FINITE_DOMAIN_PROOF_CELLS,
+                MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES,
+            ),
             IndexDomainProofClaim::Unknown(IndexDomainUnknownReason::UnsupportedFragment)
         ));
     }

@@ -75,8 +75,9 @@ A separate shared proof crate is not recommended: it adds a crate and another de
 Tom explicitly approved adding `implementation/metal-aot`,
 `contracts/optimizer`, `contracts/numerics`, and `research/extensions` in the T3
 Code orchestration conversation. The correction changes the public installation
-boundary back to the exact `(lowering, scalars)` pair: the realization-law
-authority is derived from the semantic snapshot retained by `scalars`, so a
+boundary back to the exact `(lowering, scalars)` pair: request verification
+derives realization-law authority from the exact program semantic registry and
+requires full lowering/scalar/program semantic and law-sidecar coherence, so a
 lowering installer cannot supply or replace it. That replacement updates the
 out-of-crate install conformance in `prototypes/serial-sum-compile/src/main.rs`
 and the contract/research sentences that described the rejected triple. No
@@ -114,7 +115,11 @@ nonzero revision, unique ownership, and bounded count/bytes. Residual proof
 completion adds read-only `IndexDomainProofAuthority`,
 `IndexDomainProofEvidence`, `IndexDomainDisproof`, `IndexDomainProofClaim`,
 `IndexDomainProofAssessment`, `IndexRefinementDomainProof`, a bounded
-`IndexDomainProofBudget`, and typed atomic refusal. There is no proof callback
+`IndexDomainProofBudget`, the public hard ceilings
+`MAX_FINITE_DOMAIN_PROOF_CELLS` and
+`MAX_FINITE_DOMAIN_PROOF_INTEGER_BYTES`, and typed atomic
+`IndexDomainProofRefusal`/`IndexDomainProofRefusalKind`; the refusal implements
+`Display` and `Error`. There is no proof callback
 and no public proof, disproof, or authority constructor: IR runs its closed
 exact-finite evaluator and alone seals the opaque receipt. The compiler chooses
 only a bounded work budget and projects IR's assessments into explain output;
@@ -125,7 +130,12 @@ unsupported until a closed, validated certificate language exists.
 
 **Proposal — compiler public draft, not accepted here:** the provider context
 exposes only the narrow `IndexAccessOccurrence`; `session::InstalledCapabilities::installed`
-accepts `(lowering, scalars)` and derives the immutable law snapshot. Compiler
+accepts `(lowering, scalars)` while request verification derives the immutable
+law snapshot from the exact program semantic registry and validates the full
+pair. `LoweringCapabilityRegistryBuilder::new` is now fallible and reports
+`LoweringRegistryError::RefinementAuthority`; request mismatch is
+`UnsupportedCapability { phase: "capability", rule:
+"semantic-authority-pairing" }`. Compiler
 registry search, selected-provider provenance, explain, proof-policy
 implementation, and planning remain compiler owned. The rejected three-argument
 installation spelling and arbitrary verifier install hook are removed.
@@ -145,6 +155,15 @@ and refusal kinds remain exhaustive enums in this draft: adding a semantic case
 must break internal consumers at compile time rather than let wildcard arms
 silently misclassify new proof meaning. This exact public boundary still returns
 to Tom; the ticket does not accept it.
+
+The semantic-registry public inventory also adds
+`SemanticRegistryResource::{IndexRealizationLaws,
+IndexRealizationLawBytes}` and the corresponding `RegistryError` law
+registration failures. `LoweringCapabilityAuthority::refinement()` is an
+addition distinct from the removed compiler-owned occurrence/refinement types.
+Only the `IndexDomainProofEvidence::ExhaustiveFinite` variant is
+`#[non_exhaustive]`; the evidence, claim, outcome, and refusal-kind enums remain
+exhaustive as stated above.
 
 ## Identity step and blast radius
 
@@ -217,6 +236,37 @@ f32 realization templates. An operation without a same-transaction law, an
 unrecognized numerical-contract domain, or a semantically equivalent but
 noncanonical logical index form refuses explicitly. Broadening any of those is a
 new reviewed law/template boundary, not a lowering-provider escape hatch.
+
+**Second fixed-point correction — 2026-08-03:** review found that public
+constructors could still pair semantic authority A with a scalar registry built
+over B, and that the closed evaluator's counterexample payload and proof budget
+did not bound wide domains or arbitrary-precision integer work. IR law-registry
+construction and realization admission now reject semantic/scalar incoherence,
+including equal semantic snapshots with unequal law sidecars; the compiler
+lowering-registry builder is fallible for the same reason, and request preflight
+maps the deliberate A/B mismatch to `capability/semantic-authority-pairing`.
+Direct perturbations prove each constructible boundary can say no. Receipt-time
+duplicate checks were removed because immutable law and lowering authorities
+cannot be constructed incoherently through their checked constructors.
+
+The evaluator now encodes an exact counterexample by its region-bound point
+ordinal, returns symbolic tensor-axis extents and unrepresentable work counts as
+`UnsupportedFragment`, proves empty domains before multiplication, and governs
+both cells and cumulative integer-byte work. Cell cost is exactly points times
+plan nodes plus twice the domain rank plus one predicate; integer cost uses the
+documented conservative byte-width formula and is multiplied by exact point
+count. Checked arithmetic prevents a saturated value from being reported as an
+exact requirement. Regression tests cover wide-rank cell refusal, a 4,097-byte
+false integer value with bounded disproof evidence, static-domain/symbolic-axis
+refusal, zero-domain point counting, and both budgets' must-stop cases.
+
+**Measurement — second fixed point:** combined `tiler-ir` and
+`tiler-compiler` nextest passed 1,271/1,271 with one configured skip. Compiler
+doctests passed 2 ordinary and 7 compile-fail cases; IR doctests passed 8
+ordinary and 1 compile-fail case with one ignored example. Affected-crate
+Clippy with warnings denied, formatting, `git diff --check`, and `tkt lint`
+passed. Guard over the 24-file population from the true claim base reported no
+under-declared scope and warned about live declared-area collisions.
 
 ## Graph maintenance
 

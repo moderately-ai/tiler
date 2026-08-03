@@ -780,8 +780,23 @@ impl fmt::Debug for LoweringCapabilityRegistryBuilder {
 
 impl LoweringCapabilityRegistryBuilder {
     /// Creates an empty builder over exact frozen semantic and scalar authorities.
-    #[must_use]
-    pub fn new(semantic: FrozenSemanticRegistry, scalar: FrozenScalarRegistry) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LoweringRegistryError::RefinementAuthority`] when the scalar
+    /// registry was built over another semantic authority, including one whose
+    /// semantic snapshot is equal but whose realization-law sidecar differs.
+    pub fn new(
+        semantic: FrozenSemanticRegistry,
+        scalar: FrozenScalarRegistry,
+    ) -> Result<Self, LoweringRegistryError> {
+        tiler_ir::index::FrozenIndexRealizationLawRegistry::from_semantic(
+            semantic.clone(),
+            scalar.clone(),
+        )
+        .map_err(|source| LoweringRegistryError::RefinementAuthority {
+            source: Arc::new(source),
+        })?;
         let canonical_bytes = REGISTRY_IDENTITY_TAG
             .len()
             .saturating_add(encoded_bytes_len(
@@ -793,12 +808,12 @@ impl LoweringCapabilityRegistryBuilder {
             .saturating_add(size_of::<u64>())
             // The interned pool's count prefix, written once for the registry.
             .saturating_add(size_of::<u64>());
-        Self {
+        Ok(Self {
             semantic,
             scalar,
             capabilities: BTreeMap::new(),
             canonical_bytes,
-        }
+        })
     }
 
     /// Registers one scalar-lowering capability.
@@ -1771,7 +1786,7 @@ mod tests {
     }
 
     fn empty_builder() -> LoweringCapabilityRegistryBuilder {
-        LoweringCapabilityRegistryBuilder::new(semantic(), scalar_registry())
+        LoweringCapabilityRegistryBuilder::new(semantic(), scalar_registry()).unwrap()
     }
 
     /// Emits `mul(a, b)` for the two checked operand values.
@@ -2304,8 +2319,9 @@ mod tests {
     #[test]
     fn a_resolved_scalar_provider_emits_through_the_canonical_builder() {
         let scalars = scalar_registry();
-        let frozen =
-            LoweringCapabilityRegistryBuilder::new(semantic(), scalars.clone()).apply_multiply();
+        let frozen = LoweringCapabilityRegistryBuilder::new(semantic(), scalars.clone())
+            .unwrap()
+            .apply_multiply();
         let resolved = frozen
             .resolve_scalar_lowering(&multiply_f32_op(), &binary_signature())
             .unwrap();
@@ -2349,8 +2365,9 @@ mod tests {
     #[test]
     fn a_resolved_index_access_provider_emits_a_verified_region() {
         let scalars = scalar_registry();
-        let frozen =
-            LoweringCapabilityRegistryBuilder::new(semantic(), scalars.clone()).apply_multiply();
+        let frozen = LoweringCapabilityRegistryBuilder::new(semantic(), scalars.clone())
+            .unwrap()
+            .apply_multiply();
         let resolved = frozen
             .resolve_index_access(&multiply_f32_op(), &binary_signature())
             .unwrap();

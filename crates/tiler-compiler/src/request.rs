@@ -904,6 +904,7 @@ impl CompilerCapabilitySnapshot {
             scalars.semantic_authority().clone(),
             scalars.clone(),
         )
+        .expect("the governed scalar registry retains its exact semantic authority")
         .freeze();
         Self::new(lowering, scalars)
     }
@@ -1775,10 +1776,12 @@ impl VerifiedCompilationRequest {
         {
             return unsupported("capability", "semantic-authority-pairing");
         }
-        let realization_laws = FrozenIndexRealizationLawRegistry::from_semantic(
+        let Ok(realization_laws) = FrozenIndexRealizationLawRegistry::from_semantic(
             program.semantic_registry().clone(),
             self.capabilities.scalars.clone(),
-        );
+        ) else {
+            return unsupported("capability", "semantic-authority-pairing");
+        };
         let mut target_slots = Vec::with_capacity(target_indexes.len());
         for target_index in target_indexes {
             let slot = self
@@ -2253,10 +2256,12 @@ pub(crate) fn verify_request(
     {
         return unsupported("capability", "semantic-authority-pairing");
     }
-    let realization_laws = FrozenIndexRealizationLawRegistry::from_semantic(
+    let Ok(realization_laws) = FrozenIndexRealizationLawRegistry::from_semantic(
         request.program.semantic_registry().clone(),
         request.capabilities.scalars.clone(),
-    );
+    ) else {
+        return unsupported("capability", "semantic-authority-pairing");
+    };
     let dispatch_types = canonical_program_value_types(request.program);
 
     // Resolve every structurally admitted target independently. A profile that
@@ -3902,6 +3907,7 @@ mod tests {
             program.semantic_registry().clone(),
             scalars.clone(),
         )
+        .unwrap()
         .freeze();
         let mut request = CompilationRequest::governed(program);
         request.capabilities = CompilerCapabilitySnapshot::new(lowering, scalars);

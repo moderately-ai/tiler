@@ -2859,12 +2859,16 @@ mod tests {
         let add = build(IndexRealizationLaw::add_f32());
         assert_eq!(multiply.snapshot_identity(), add.snapshot_identity());
 
-        let scalars = crate::index::FrozenScalarRegistry::standard().unwrap();
+        let multiply_scalars = crate::index::ScalarRegistryBuilder::new(multiply.clone()).freeze();
+        let add_scalars = crate::index::ScalarRegistryBuilder::new(add.clone()).freeze();
         let multiply_laws = crate::index::FrozenIndexRealizationLawRegistry::from_semantic(
             multiply,
-            scalars.clone(),
-        );
-        let add_laws = crate::index::FrozenIndexRealizationLawRegistry::from_semantic(add, scalars);
+            multiply_scalars,
+        )
+        .unwrap();
+        let add_laws =
+            crate::index::FrozenIndexRealizationLawRegistry::from_semantic(add, add_scalars)
+                .unwrap();
         assert_ne!(multiply_laws.identity(), add_laws.identity());
     }
 

@@ -113,7 +113,7 @@ pub(crate) fn governed_lowering_capabilities(
     let mut builder = LoweringCapabilityRegistryBuilder::new(
         scalars.semantic_authority().clone(),
         scalars.clone(),
-    );
+    )?;
     for capability in governed_index_access_capabilities()? {
         capability.register(&mut builder)?;
     }
@@ -129,6 +129,7 @@ pub(crate) fn governed_realization_laws(
         scalars.semantic_authority().clone(),
         scalars.clone(),
     )
+    .expect("the governed scalar registry retains its exact semantic authority")
 }
 
 /// Registers the shipped index-access capabilities onto a caller's builder,
@@ -1821,7 +1822,8 @@ mod tests {
         let mut lowerings = LoweringCapabilityRegistryBuilder::new(
             scalars.semantic_authority().clone(),
             scalars.clone(),
-        );
+        )
+        .unwrap();
         lowerings
             .register_index_access(
                 ProviderIdentity::new("test", "multiply-emits-add", 1).unwrap(),

@@ -1021,7 +1021,7 @@ mod tests {
         scalars: &FrozenScalarRegistry,
     ) -> Result<super::IndexRefinementOutcome, RefinementError> {
         let realizations =
-            FrozenIndexRealizationLawRegistry::from_semantic(semantic(), scalars.clone());
+            FrozenIndexRealizationLawRegistry::from_semantic(semantic(), scalars.clone()).unwrap();
         refine_index_region_with_registry(capability, subject, &realizations, scalars)
     }
 
@@ -1256,7 +1256,8 @@ mod tests {
         index_provider: Arc<dyn IndexAccessLoweringProvider>,
         emitted: &[ScalarOpKey],
     ) -> FrozenLoweringCapabilityRegistry {
-        let mut builder = LoweringCapabilityRegistryBuilder::new(semantic(), scalar_registry());
+        let mut builder =
+            LoweringCapabilityRegistryBuilder::new(semantic(), scalar_registry()).unwrap();
         builder
             .register_index_access(
                 provider("index"),
@@ -1468,7 +1469,7 @@ mod tests {
         let subject = square_occurrence(b"scalar-snapshot-mismatch");
         let region = emit_region(&resolved, &subject, &lowering_scalars).unwrap();
         let realizations =
-            FrozenIndexRealizationLawRegistry::from_semantic(semantic(), verifier_scalars);
+            FrozenIndexRealizationLawRegistry::from_semantic(semantic(), verifier_scalars).unwrap();
         let resolution = realizations.resolve(&subject).unwrap();
 
         assert_eq!(
@@ -1651,7 +1652,8 @@ mod tests {
     #[test]
     fn a_scalar_lowering_capability_is_not_an_index_refinement() {
         let scalars = scalar_registry();
-        let mut builder = LoweringCapabilityRegistryBuilder::new(semantic(), scalar_registry());
+        let mut builder =
+            LoweringCapabilityRegistryBuilder::new(semantic(), scalar_registry()).unwrap();
         builder
             .register_scalar_lowering(
                 provider("scalar"),
