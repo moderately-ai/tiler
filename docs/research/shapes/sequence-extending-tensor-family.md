@@ -69,7 +69,6 @@ grep -n 'pub enum ExtentTerm' -A 8 crates/tiler-ir/src/shape/env/constraint.rs
 #    Positive control: the same read finds AdditiveEquality and its three
 #    ExtentTerm leaves; no leaf nests another relation, so the check reaches the
 #    admitted additive form without mistaking it for a general expression tree.
-#    miss for the claim to be wrong.
 
 # 3. No coordinate expression carries an extent symbol. IndexNode has five
 #    variants; SourcedExtent appears only as a FloorDiv or Modulo divisor, and
