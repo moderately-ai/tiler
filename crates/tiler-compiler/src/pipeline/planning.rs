@@ -73,13 +73,20 @@ pub(super) fn enumerate_complete_plans(
         }
     };
     let lowering_record = record_lowering(explain, &lowering, root)?;
-    let enumeration = enumerate_covers(semantic, budgets, formation).map_err(|source| {
-        failure_at_source(
-            source.into(),
-            ExplainStage::CandidateEnumeration,
-            record_cause(lowering_record),
-        )
-    })?;
+    // The exact-partition contract, stated at the one place the compile path
+    // enumerates covers. `CoverPolicy::governed` records why duplication is not
+    // admitted here: it is a physical-provider and program-assembly limit, not a
+    // legality one, so the derivation belongs beside the policy rather than in a
+    // comment that would drift from it.
+    let cover_policy = crate::cover::CoverPolicy::governed(contract);
+    let enumeration =
+        enumerate_covers(semantic, budgets, formation, cover_policy).map_err(|source| {
+            failure_at_source(
+                source.into(),
+                ExplainStage::CandidateEnumeration,
+                record_cause(lowering_record),
+            )
+        })?;
     let cover_record = record_cover_enumeration(explain, &enumeration, lowering_record)?;
 
     let capabilities = FusionNumericalCapabilities::governed();
@@ -221,7 +228,25 @@ pub(super) fn enumerate_complete_plans(
         let mut refusal: Option<TerminalCause> = None;
         for region in cover.regions() {
             let role = region_role(verified, region.members());
-            let subject = FrontierRegionSubject::new(role, region.members().to_vec());
+            // The sizes of the intermediates *this cover* hands this region, so
+            // a work scaling stated per element of an intermediate resolves
+            // against the edge that exists rather than declining. The cover is
+            // the only authority that knows them: the same region placed in two
+            // covers may read different intermediates, which is why the counts
+            // are stated on the subject and the subject keys the memo below.
+            let subject = FrontierRegionSubject::reading_intermediates(
+                role,
+                region.members().to_vec(),
+                cover
+                    .materializations()
+                    .iter()
+                    .filter(|edge| {
+                        edge.consumers()
+                            .iter()
+                            .any(|consumer| consumer == region.occurrence())
+                    })
+                    .map(crate::cover::MaterializationEdge::element_count),
+            );
             let frontier = if let Some((_, enumerated)) = frontiers_by_subject
                 .iter()
                 .find(|(seen, _)| *seen == subject)
@@ -326,8 +351,8 @@ pub(super) fn enumerate_complete_plans(
         sources.push(CoverFrontiers::new(cover, region_frontiers));
     }
 
-    let portfolio =
-        select_physical_plans(semantic, budgets, formation, &sources).map_err(|source| {
+    let portfolio = select_physical_plans(semantic, budgets, formation, cover_policy, &sources)
+        .map_err(|source| {
             failure_at_source(
                 source.into(),
                 ExplainStage::Selection,

@@ -1214,14 +1214,53 @@ pub(crate) trait PhysicalImplementationProvider {
 pub(crate) struct FrontierRegionSubject {
     role: &'static str,
     semantic_members: Vec<SemanticMemberId>,
+    /// Element counts of the cover-materialized intermediates this region reads,
+    /// deduplicated and ascending.
+    ///
+    /// An intermediate exists because a *cover* chose to materialize between two
+    /// regions, so its size is a fact the cover holds and the region subject does
+    /// not — which is why it is stated here by the caller that holds the cover
+    /// rather than derived from the members. Empty means the subject was stated
+    /// without a cover, and a work scaling that needs one then declines rather
+    /// than being sized against another tensor.
+    intermediate_elements: Vec<u64>,
 }
 
 impl FrontierRegionSubject {
     /// Builds a region subject from a presentation role and its exact members.
+    ///
+    /// The subject reads no cover-materialized intermediate. A local enumeration
+    /// for a region considered outside any cover is exactly this case, and a
+    /// shape-dependent opaque call bound to an intermediate declines for it.
+    #[allow(
+        dead_code,
+        reason = "the coverless constructor states the local-authority case this module documents; the compile path always holds a cover and states its edges instead, so it is exercised by this authority's own tests"
+    )]
     pub(crate) fn new(role: &'static str, semantic_members: Vec<SemanticMemberId>) -> Self {
         Self {
             role,
             semantic_members,
+            intermediate_elements: Vec::new(),
+        }
+    }
+
+    /// Builds a region subject that reads cover-materialized intermediates.
+    ///
+    /// The counts are normalized to a deduplicated ascending order, so two
+    /// subjects reading the same set of intermediate sizes are one subject and
+    /// share one enumeration.
+    pub(crate) fn reading_intermediates(
+        role: &'static str,
+        semantic_members: Vec<SemanticMemberId>,
+        intermediate_elements: impl IntoIterator<Item = u64>,
+    ) -> Self {
+        let mut intermediate_elements: Vec<u64> = intermediate_elements.into_iter().collect();
+        intermediate_elements.sort_unstable();
+        intermediate_elements.dedup();
+        Self {
+            role,
+            semantic_members,
+            intermediate_elements,
         }
     }
 
@@ -1233,6 +1272,19 @@ impl FrontierRegionSubject {
     /// Returns the exact recognized semantic occurrences the region covers.
     pub(crate) fn semantic_members(&self) -> &[SemanticMemberId] {
         &self.semantic_members
+    }
+
+    /// Returns the one element count every intermediate this region reads has.
+    ///
+    /// `None` when the subject reads none, or when it reads intermediates of
+    /// different sizes — the second is a genuine ambiguity rather than a missing
+    /// fact, and both decline for the same reason a work scaling may not be
+    /// answered with a number nothing derived.
+    fn intermediate_elements(&self) -> Option<u64> {
+        match self.intermediate_elements.as_slice() {
+            [count] => Some(*count),
+            [] | [_, _, ..] => None,
+        }
     }
 }
 
@@ -2066,6 +2118,7 @@ pub(crate) fn enumerate_frontier(
                     let work_items = match resolve_work_items(
                         registered.declaration().work(),
                         proposed.bindings(),
+                        subject,
                         request,
                     ) {
                         Ok(work_items) => work_items,
@@ -2453,8 +2506,9 @@ fn encode_binding_error(output: &mut Vec<u8>, fault: crate::call_abi::BindingErr
 pub(crate) enum WorkResolutionError {
     /// The scaling names a parameter absent from this proposal's bindings.
     UnknownParameter(&'static str),
-    /// The parameter is bound to an intermediate whose cover-specific shape is
-    /// unavailable during local frontier enumeration.
+    /// The parameter is bound to an intermediate whose cover-specific shape this
+    /// subject does not determine — it reads none, or it reads several of
+    /// different sizes.
     IntermediateShapeUnavailable {
         /// The parameter whose tensor shape is unavailable.
         parameter: &'static str,
@@ -2472,11 +2526,19 @@ pub(crate) enum WorkResolutionError {
 /// `input_elements` and `output_elements`, which is exactly the count a call
 /// over that tensor performs work proportional to.
 ///
-/// # Why `Intermediate` declines
+/// # How `Intermediate` resolves, and when it still declines
 ///
 /// An intermediate is a cover-level artefact — it exists because a cover chose
-/// to materialize between two regions — and its element count is a property of
-/// that cover, which the frontier does not hold when enumerating for a subject.
+/// to materialize between two regions — so its element count is a property of
+/// that cover. The subject now *carries* that count when it was stated from a
+/// cover: [`crate::cover::MaterializationEdge`] holds the materialized value's
+/// element count, and the caller that holds the cover states the counts of the
+/// edges this region consumes on [`FrontierRegionSubject::reading_intermediates`].
+///
+/// It still declines in the two cases where nothing derived an answer: a subject
+/// stated without a cover reads no intermediate at all, and a subject reading
+/// intermediates of *different* sizes has no single count for a scaling that
+/// names the role rather than a particular edge.
 ///
 /// A previous revision resolved it to `input_elements` on the claim that "the
 /// bounded profile has exactly one materialization: the pointwise result".
@@ -2484,13 +2546,13 @@ pub(crate) enum WorkResolutionError {
 /// unconditionally, and that cover materializes **every** internal value —
 /// including rank-0 scalar constants, whose element count is 1, not the
 /// input's. Substituting `input_elements` there is exactly the
-/// confidently-wrong feasibility verdict `WorkScaling` exists to prevent, so a
-/// shape-dependent call bound to an intermediate is refused rather than
-/// mis-sized. Resolving it correctly needs the cover edge's actual value
-/// shape, which arrives with the cover, not the subject.
+/// confidently-wrong feasibility verdict `WorkScaling` exists to prevent, and
+/// the reason the count is taken from the cover edge rather than from any
+/// tensor that happens to be in scope.
 fn resolve_work_items(
     work: WorkScaling,
     bindings: &[(&'static str, TensorRole)],
+    subject: &FrontierRegionSubject,
     request: &VerifiedTargetRequest,
 ) -> Result<u64, WorkResolutionError> {
     match work {
@@ -2512,9 +2574,9 @@ fn resolve_work_items(
                     .input_elements_at(*ordinal)
                     .ok_or(WorkResolutionError::UnknownParameter(name)),
                 TensorRole::Output => Ok(request.normalized().output_elements()),
-                TensorRole::Intermediate => {
-                    Err(WorkResolutionError::IntermediateShapeUnavailable { parameter: name })
-                }
+                TensorRole::Intermediate => subject
+                    .intermediate_elements()
+                    .ok_or(WorkResolutionError::IntermediateShapeUnavailable { parameter: name }),
             }
         }
     }
@@ -4046,15 +4108,30 @@ mod tests {
             ("y", TensorRole::Output),
         ];
         assert_eq!(
-            resolve_work_items(WorkScaling::PerElementOf("x"), &bindings, &request),
+            resolve_work_items(
+                WorkScaling::PerElementOf("x"),
+                &bindings,
+                &coverless_subject(),
+                &request
+            ),
             Ok(normalized.input_elements)
         );
         assert_eq!(
-            resolve_work_items(WorkScaling::PerElementOf("y"), &bindings, &request),
+            resolve_work_items(
+                WorkScaling::PerElementOf("y"),
+                &bindings,
+                &coverless_subject(),
+                &request
+            ),
             Ok(normalized.output_elements)
         );
         assert_eq!(
-            resolve_work_items(WorkScaling::Fixed(7), &bindings, &request),
+            resolve_work_items(
+                WorkScaling::Fixed(7),
+                &bindings,
+                &coverless_subject(),
+                &request
+            ),
             Ok(7),
             "a fixed scaling was not taken directly"
         );
@@ -4080,21 +4157,68 @@ mod tests {
         ];
 
         assert_eq!(
-            resolve_work_items(WorkScaling::PerElementOf("absent"), &bindings, &request),
+            resolve_work_items(
+                WorkScaling::PerElementOf("absent"),
+                &bindings,
+                &coverless_subject(),
+                &request
+            ),
             Err(WorkResolutionError::UnknownParameter("absent")),
             "a scaling naming an unbound parameter produced a count"
         );
-        // An intermediate declines. A previous revision resolved it to the
-        // input's count on a falsified premise — the all-singleton cover
-        // materializes every internal value, including rank-0 constants — so a
-        // count here would be confidently wrong for exactly the covers that
-        // exist. The decline is the honest answer until the cover edge's own
-        // shape is in hand.
+        // An intermediate declines when the subject was stated without a cover.
+        // A previous revision resolved it to the input's count on a falsified
+        // premise — the all-singleton cover materializes every internal value,
+        // including rank-0 constants — so a count from any tensor in scope would
+        // be confidently wrong for exactly the covers that exist.
         assert_eq!(
-            resolve_work_items(WorkScaling::PerElementOf("z"), &bindings, &request),
+            resolve_work_items(
+                WorkScaling::PerElementOf("z"),
+                &bindings,
+                &coverless_subject(),
+                &request
+            ),
             Err(WorkResolutionError::IntermediateShapeUnavailable { parameter: "z" }),
-            "an intermediate binding produced a count the subject cannot support"
+            "a subject stated without a cover produced an intermediate count"
         );
+
+        // Stated from a cover, the same binding resolves to the edge's own
+        // element count — not the input's, and not the output's.
+        let normalized = request.serial_sum();
+        let edge_elements = normalized.input_elements + normalized.output_elements + 1;
+        assert_eq!(
+            resolve_work_items(
+                WorkScaling::PerElementOf("z"),
+                &bindings,
+                &FrontierRegionSubject::reading_intermediates(
+                    "region",
+                    Vec::new(),
+                    [edge_elements]
+                ),
+                &request
+            ),
+            Ok(edge_elements),
+            "a cover-stated intermediate must resolve to the edge's own size"
+        );
+
+        // Two intermediates of different sizes are an ambiguity rather than a
+        // missing fact, and a scaling that names the role rather than an edge
+        // declines for it.
+        assert_eq!(
+            resolve_work_items(
+                WorkScaling::PerElementOf("z"),
+                &bindings,
+                &FrontierRegionSubject::reading_intermediates("region", Vec::new(), [1, 2]),
+                &request
+            ),
+            Err(WorkResolutionError::IntermediateShapeUnavailable { parameter: "z" }),
+            "two differently sized intermediates must not resolve to one of them"
+        );
+    }
+
+    /// A region subject stated outside any cover, reading no intermediate.
+    fn coverless_subject() -> FrontierRegionSubject {
+        FrontierRegionSubject::new("region", Vec::new())
     }
 
     fn strict_call_resources() -> tiler_ir::schedule::ResourceRequirements {
@@ -4592,7 +4716,12 @@ mod tests {
             expected.requirements().len()
         );
         assert_eq!(
-            resolve_work_items(WorkScaling::PerElementOf("x"), &bindings, &request),
+            resolve_work_items(
+                WorkScaling::PerElementOf("x"),
+                &bindings,
+                &coverless_subject(),
+                &request
+            ),
             Ok(request.serial_sum().input_elements)
         );
     }

@@ -17,23 +17,63 @@ one parent whose contents are visible in the same directory"
 
 use super::*;
 
-/// Records the bounded cover enumeration, its budget stops, and infeasibility.
+/// Records the bounded cover enumeration, what it pruned, its budget stops, and
+/// its infeasibility.
+///
+/// The two pruning channels stay separate because a reader acts differently on
+/// them. A [`crate::cover::CoverRefusal`] is a *hard legality* answer about a
+/// candidate the search reached — recorded as a disproved check, so its
+/// disposition is a rejection — while a dominated cover is legal and merely
+/// beaten, recorded as a cost assessment whose disposition says so. Collapsing
+/// the two would tell a reader that a legal alternative was refused, or that a
+/// refused one might be recovered by changing a cost.
 pub(super) fn record_cover_enumeration(
     explain: &mut ExplainWriter,
     enumeration: &CoverEnumeration,
     root: ExplainRecordId,
 ) -> Result<ExplainRecordId, TargetFailure> {
-    let mut cause = record_count_step(
-        explain,
-        "cover.enumeration.v1",
+    let mut cause = explain_step(
+        (|| -> Result<_, CompileError> {
+            let subject = explain.subject(SubjectKind::Candidate, "region-cover")?;
+            let assessment = PredicateAssessment::proven(
+                "cover.complete-and-legal",
+                EvidenceBasis::CheckedInvariant,
+            )?
+            .with_fact(ExplainFact::new(
+                "cover-count",
+                FactValue::Count(u64::try_from(enumeration.covers().len()).unwrap_or(u64::MAX)),
+            )?)?
+            .with_fact(ExplainFact::new(
+                "cover-policy",
+                FactValue::Identity(crate::explain::SubjectKey::new(enumeration.policy().key())?),
+            )?)?
+            // The statement that turns a budget-stopped enumeration into an
+            // explainable *partial* result rather than a truncated one presented
+            // as complete. It is emitted on every compile, not only when a
+            // budget fires, because a reader must be able to see the claim was
+            // made rather than infer it from a record's absence.
+            .with_fact(ExplainFact::new(
+                "search-exhaustive",
+                FactValue::Boolean(enumeration.is_exhaustive()),
+            )?)?;
+            Ok(explain.push_detail(
+                RuleRef::builtin("cover.enumeration.v1")?,
+                vec![subject],
+                ExplainEvent::Check {
+                    stage: ExplainStage::CandidateEnumeration,
+                    assessment,
+                    rejection: RejectionClass::IntrinsicInvalid,
+                },
+                vec![root],
+            )?)
+        })(),
+        ExplainStage::CandidateEnumeration,
         SubjectKind::Candidate,
         "region-cover",
-        ExplainStage::CandidateEnumeration,
-        "cover.complete-and-legal",
-        "cover-count",
-        enumeration.covers().len(),
-        root,
+        record_cause(root),
     )?;
+    cause = record_cover_refusals(explain, enumeration, cause)?;
+    cause = record_dominated_covers(explain, enumeration, cause)?;
     for stop in enumeration.budget_stops() {
         cause = explain_step(
             (|| -> Result<_, CompileError> {
@@ -73,6 +113,102 @@ pub(super) fn record_cover_enumeration(
             ExplainStage::CandidateEnumeration,
             SubjectKind::Candidate,
             "region-cover",
+            record_cause(cause),
+        )?;
+    }
+    Ok(cause)
+}
+
+/// Names every candidate the partition search refused, with its hard reason.
+///
+/// A refusal is a legality answer, so it is a disproved check and its
+/// disposition is a rejection. The subject is the refused candidate itself —
+/// the region occurrence that would have duplicated or been left unobserved, or
+/// the named output with two producers — so the record names *what* was pruned
+/// rather than only that something was.
+fn record_cover_refusals(
+    explain: &mut ExplainWriter,
+    enumeration: &CoverEnumeration,
+    mut cause: ExplainRecordId,
+) -> Result<ExplainRecordId, TargetFailure> {
+    for refusal in enumeration.refusals() {
+        let key = refusal.subject_label();
+        cause = explain_step(
+            (|| -> Result<_, CompileError> {
+                let subject = explain.subject(SubjectKind::Candidate, &key)?;
+                Ok(explain.push_detail(
+                    RuleRef::builtin("cover.enumeration.v1")?,
+                    vec![subject],
+                    ExplainEvent::Check {
+                        stage: ExplainStage::CandidateEnumeration,
+                        assessment: PredicateAssessment::disproved(
+                            "cover.complete-and-legal",
+                            ReasonCode::new(refusal.reason())?,
+                            EvidenceBasis::CheckedInvariant,
+                        )?,
+                        rejection: RejectionClass::IntrinsicInvalid,
+                    },
+                    vec![cause],
+                )?)
+            })(),
+            ExplainStage::CandidateEnumeration,
+            SubjectKind::Candidate,
+            &key,
+            record_cause(cause),
+        )?;
+    }
+    Ok(cause)
+}
+
+/// Names every legal cover another cover's estimate beat, and the one that beat
+/// it.
+///
+/// Deliberately a cost assessment rather than a check: these covers are legal
+/// and completely derived, and nothing about them was disproved. The record
+/// carries both subjects — the pruned cover first, the dominating cover second —
+/// so a reader does not have to re-derive the pairing from four numbers.
+fn record_dominated_covers(
+    explain: &mut ExplainWriter,
+    enumeration: &CoverEnumeration,
+    mut cause: ExplainRecordId,
+) -> Result<ExplainRecordId, TargetFailure> {
+    for (pruned, dominator) in enumeration.dominated() {
+        let key = pruned.identity().label();
+        let dominator_key = dominator.identity().label();
+        cause = explain_step(
+            (|| -> Result<_, CompileError> {
+                let cost = pruned.cost();
+                let subject = explain.subject(SubjectKind::Candidate, &key)?;
+                let by = explain.subject(SubjectKind::Candidate, &dominator_key)?;
+                Ok(explain.push_detail(
+                    RuleRef::builtin(cost.model_key())?,
+                    vec![subject, by],
+                    ExplainEvent::CostAssessment {
+                        model: CostModelKey::new(cost.model_key())?,
+                        basis: EvidenceBasis::CheckedInvariant,
+                        terms: vec![
+                            CostTerm::new("region-count", Quantity::Count(cost.region_count()))?,
+                            CostTerm::new(
+                                "materialization-count",
+                                Quantity::Count(cost.materialization_count()),
+                            )?,
+                            CostTerm::new(
+                                "materialized-elements",
+                                Quantity::Count(cost.materialized_elements()),
+                            )?,
+                            CostTerm::new(
+                                "recomputed-elements",
+                                Quantity::Operations(cost.recomputed_elements()),
+                            )?,
+                        ],
+                        disposition: CostDisposition::Dominated,
+                    },
+                    vec![cause],
+                )?)
+            })(),
+            ExplainStage::Costing,
+            SubjectKind::Candidate,
+            &key,
             record_cause(cause),
         )?;
     }

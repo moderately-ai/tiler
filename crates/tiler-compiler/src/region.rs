@@ -871,6 +871,49 @@ impl RegionGraph {
         self.canonical_position(member.0)
     }
 
+    /// Returns the graph-local ordinals of one member's ordered results.
+    ///
+    /// The partition search needs a member's own results, not the values its
+    /// region exports: a duplicated member whose value is consumed inside the
+    /// region that recomputed it appears in no region's retained-output list,
+    /// and costing it from that list would report the recomputation as free.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegionError::Structure`] for an ordinal the graph does not hold.
+    pub(crate) fn member_result_values(
+        &self,
+        member: SemanticMemberId,
+    ) -> Result<Vec<SemanticValueId>, RegionError> {
+        Ok(self
+            .operation(member.0)?
+            .results
+            .iter()
+            .map(|value| SemanticValueId(*value))
+            .collect())
+    }
+
+    /// Returns how many elements one semantic value holds.
+    ///
+    /// The count is read from the frozen authority's own shape rather than
+    /// recomputed from a region's iteration domain, because the partition search
+    /// asks it of values it has not scheduled: a materialized cross-region value
+    /// and a recomputed one are sized by the value, not by whichever region
+    /// happens to produce it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegionError::Structure`] for an ordinal the graph does not hold
+    /// and for a shape whose element product is not representable. An
+    /// unrepresentable count is refused rather than saturated: a saturated size
+    /// would be compared against other sizes as though it were measured.
+    pub(crate) fn value_element_count(&self, value: SemanticValueId) -> Result<u64, RegionError> {
+        let shape = &self.value(value.0)?.shape;
+        tiler_ir::schedule::element_count(shape).map_err(|_| RegionError::Structure {
+            rule: "value-element-count",
+        })
+    }
+
     /// Returns the borrowed semantic-operation facts of one region member.
     ///
     /// The facts are the read-only projection legality derivation needs: the

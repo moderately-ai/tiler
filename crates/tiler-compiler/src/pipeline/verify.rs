@@ -48,8 +48,17 @@ pub(super) fn verify_portfolio(
             cause,
         ));
     }
-    verify_selected_portfolio(semantic, formation, portfolio)
-        .map_err(|source| failure_at_source(source.into(), ExplainStage::Selection, cause))?;
+    // The same legality contract planning enumerated under, re-stated from the
+    // request's own resolved contract rather than carried over from planning: a
+    // verifier handed the policy the planner used could not refuse a cover that
+    // was legal only under a weaker one.
+    verify_selected_portfolio(
+        semantic,
+        formation,
+        crate::cover::CoverPolicy::governed(request.numerical_contract()),
+        portfolio,
+    )
+    .map_err(|source| failure_at_source(source.into(), ExplainStage::Selection, cause))?;
     if alternatives.is_empty()
         || alternatives
             .iter()

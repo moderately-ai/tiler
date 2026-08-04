@@ -765,6 +765,14 @@ fn every_wired_authority_emits_its_typed_explain_records() {
             // the mechanism that moved this census: one assessment has one
             // basis, so mixing the terms would make one class lie.
             ("tiler.cost.analytical.v1", 4),
+            // One record per legal cover the partition search's own estimate
+            // beat, naming the pruned cover and the cover that beat it. Sixteen
+            // covers are enumerated for this program and fifteen of them are
+            // dominated by the fused one, which crosses no boundary at all — so
+            // the count is a fact about this program's cover space rather than
+            // an arbitrary number. It is deliberately a *cost* record: those
+            // fifteen covers are legal, and only a refused one is a rejection.
+            ("tiler.cost.partition-structural.v1", 15),
             ("tiler.cost.structural.v1", 2),
             ("tiler.selection.structural-pareto.v1", 2),
         ])
