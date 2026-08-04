@@ -94,9 +94,12 @@
 //! What remains is an explicit operation, which is also what makes the trigger
 //! statable: an entry leaves because somebody ran a collection under a bound
 //! they chose, and the report says which entry, which bound, and which order.
-//! Scheduling it belongs to a consumer that does not exist yet — there is no
-//! proc-macro frontend and no maintenance command to hang it on — and choosing
-//! a schedule now would be designing against an imagined caller.
+//! Scheduling it stays with the caller. The delivering proc-macro path opens
+//! this cache from `tiler_macros::aot::deliver`, and the elimination recorded
+//! in `decide-the-expansion-cache-collection-schedule` leaves an explicit
+//! invocation under a caller-stated bound as the only admissible schedule;
+//! whether Tiler itself ships a maintenance command that issues one is an
+//! undecided product question, so no schedule lives in this crate.
 
 use std::cmp::Ordering;
 use std::fs;
