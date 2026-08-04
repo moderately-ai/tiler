@@ -1,7 +1,7 @@
 ---
 id: complete-the-kv-ownership-supersession-sweep
 title: Complete the KV-ownership supersession sweep across the research corpus
-status: in-progress
+status: review
 priority: p1
 dependencies: []
 related: [supersede-the-runtime-owned-kv-state-design, reclassify-language-model-work-as-a-conformance-track, design-autoregressive-state-and-kv-cache, establish-a-dynamic-kv-physical-layout-authority, spike-first-metal-contraction-vertical, bind-repeated-invocations-over-caller-retained-tensors]
@@ -72,3 +72,57 @@ Preserve the original rationale at every site; date each correction; withdraw a 
 ## Closes when
 
 `grep -rn 'language-model inference ladder' docs/` returns nothing; no sentence in `docs/research/` places a cache, capacity, cursor, valid length, generation, or state contract at Tiler's runtime without a dated withdrawal attached to that sentence; the contraction structure 2/3 exclusion names a blocker that survives the supersession or is lifted; and the stale ticket reference at `dynamic-kv-physical-layout.md:227` names the renamed ticket.
+
+## Outcome
+
+**All enumerated sites corrected, 2026-08-04.** Every line was located by content rather than by the cited offset; several had moved. Original wording is preserved at every site with a dated correction attached, so a reader can check each derivation rather than take the correction on trust.
+
+### Structures 2 and 3 — the exclusion is lifted, and the two halves of its ground differ
+
+`docs/research/scheduling/first-metal-contraction-realizations.md` recorded two contraction index structures as unscheduled because "the schedule that produces those operands is the KV-state model L5 owns and L2 recorded as absent in both of its candidate mechanisms". Read in full, that is two claims, and they fail differently — which is why the correction states both rather than deleting the sentence.
+
+- **The dependency was misattributed.** Nothing in Tiler produces those operands across invocations: the consumer holds them and binds them as ordinary program inputs. [The L4 prefill block](../docs/research/program-planning/first-attention-program-vertical.md) had already shown the same thing without needing the supersession — at `S = T` the block computes its own `K` and `V`, so both structures' operands are program-internal values. [`admit-the-attention-contraction-structures`](admit-the-attention-contraction-structures.md) states this in its own "Why it is separate from the projection structure" section and admitted both structures on that basis.
+- **The undefined production was discharged by evidence, not evaporated.** "Absent in both candidate mechanisms" was L2's accurate reading of its own moment. [The sequence-extending family record](../docs/research/shapes/sequence-extending-tensor-family.md) then eliminated the windowed write and the outside-the-program blit and selected the semantic `Concatenate`, which [`admit-the-sequence-extension-concatenate-family`](admit-the-sequence-extension-concatenate-family.md) registered as `tiler::concatenate-f32@1`; the layout the record refused to prejudge was selected by measurement in [Dynamic KV physical-layout authority](../docs/research/runtime/dynamic-kv-physical-layout.md), whose supersession moved only the pool's owner and left the packing and address order untouched.
+
+**No new scheduling blocker exists and no ticket was filed.** What survives the lift is a measurement boundary the record already states elsewhere — the batched forms are unmeasured deliberately — and [`realize-the-attention-contractions-on-metal`](realize-the-attention-contractions-on-metal.md) already owns their first measurements. Two of the record's own results carry to that work as inputs rather than as obstacles: structure 3 contracts over `S`, so `tiled`'s `K ≡ 0 (mod 16)` precondition is evaluated per binding and holds at one of C1's nine executions; and the K-padding neutrality obligation this profile records as untriggered is reached immediately by a contracted `S`, discharged by the existing refusal rather than by padding.
+
+### Folded in, because these files were already under correction here
+
+- **Two ladder signposts** (`transformer-operation-and-shape-surface.md`, `first-metal-contraction-realizations.md`) moved to "language-model conformance track", completing [`reclassify-language-model-work-as-a-conformance-track`](reclassify-language-model-work-as-a-conformance-track.md)'s eight.
+- **A stale support-matrix rung** in the same L3 status line, which read "the row sits at R3". [`admit-the-attention-contraction-structures`](admit-the-attention-contraction-structures.md) flagged it as out of its own scope and left it; the row has since reached R4 and then R6 for a whole-program contraction occurrence (`docs/roadmap.md`, the tensor-contraction row).
+- **Nine residuals the enumeration missed**, all found by the closure sweep and all in scopes this ticket already holds. Five keep `autoregressive-state-and-kv-cache.md` self-consistent with its own corrected sentences — the P3 prefill candidate's "runtime object", the "live runtime state length" launch-preflight gap, Case 2's trailing "stale runtime state" inference, and two "state contract" attributions. Four are in `research/program-planning`: two traceability links reading "L5's state contract", a `CustomOp1` arity sentence reading "the three retained outputs the KV state needs", and a capacity definition reading "each KV state's fixed logical capacity".
+
+### Deliberately left, with reasons
+
+- `docs/research/placement/device-placement-and-memory-domains.md`, `docs/research/artifacts/target-neutral-artifact-envelope.md`, `docs/research/transfers/transfer-synchronization-and-resource-lifetime.md`, `docs/research/extensions/backend-provider-composition.md` — "runtime instance" and "runtime state" there are generic device-identity and materialized-placement concepts with no KV subject, and all four are outside this ticket's scopes.
+- `docs/research/shapes/transformer-operation-and-shape-surface.md` "Sequence-extending state write" and its twin in the sequence-extending record — a requirement/occurrence name describing what the *reference model* does, not an ownership claim about Tiler.
+- `docs/research/numerics/sources/**` — vendored third-party specifications.
+- `docs/research/runtime/autoregressive-state-and-kv-cache.md` lines 54–85 — the "state contract, one line each" block, left in its original wording under the section's own explicit "superseded as a Tiler object" marker and preamble, exactly as the first supersession pass intended.
+
+### Closure checks
+
+Run from the repository root; each states the population it covers so a null result is distinguishable from a check that did not run.
+
+```sh
+# 1. The reclassification's own closure condition.
+grep -rn 'language-model inference ladder' docs/
+#    Returns nothing. Proof it can say no: the same grep against the pre-sweep
+#    file returns one hit —
+#    `git show d9eba031:docs/research/scheduling/first-metal-contraction-realizations.md | grep -c 'language-model inference ladder'` → 1.
+
+# 2. The ownership pattern sweep, over a named and counted population.
+grep -rlE 'runtime instance|runtime-owned|runtime owns|the runtime state|runtime state|KV state|KV-state|LiveStateScope|state contract|poisoned|state boundary|state model|state surface|state write' docs/research/
+#    11 files of 81 under docs/research/. Every hit line was read: each is a
+#    dated withdrawal, a quotation inside one, a generic runtime/device concept,
+#    or a vendored source. Proof it can say no:
+#    `git show d9eba031:docs/research/scheduling/first-metal-contraction-realizations.md | grep -c "wait on L5's state model"` → 1,
+#    against 0 in the working tree.
+
+# 3. The two ownership-verb and valid-length residual sweeps.
+grep -rnE 'at the runtime|the runtime (owns|holds|publishes|retains|advances|keeps)|runtime-held' docs/research/
+grep -rn 'valid length\|valid range' docs/research/
+#    Every remaining hit is corrected, generic, or vendored; enumerated above.
+
+# 4. The renamed ticket reference.
+grep -n 'bind-repeated-invocations-over-caller-retained-tensors' docs/research/runtime/dynamic-kv-physical-layout.md
+```

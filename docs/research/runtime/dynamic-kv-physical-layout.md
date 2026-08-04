@@ -80,7 +80,13 @@ operands and never consumes capacity.
 replacement `(1,0,0)` is byte 7,680. Substituting the capacity stride yields
 byte 9,216 and must fail the coordinate oracle. Old and replacement are
 disjoint buffers, so their different packings cannot alias; both remain alive
-through final device use, and the new bank plus cursor publish atomically.
+through final device use. *Corrected 2026-08-04:* this sentence ended "and the
+new bank plus cursor publish atomically", which has Tiler publishing a cursor it
+does not hold. The atomicity the clause was buying survives on both sides of the
+boundary and neither side is Tiler's cursor: the invocation's outputs become
+observable only on its observed terminal success, and the **consumer** alternates
+the active bank and advances its own cursor together on that one reported
+success, so no reader of the consumer's state sees a bank without its extent.
 Routed accessible spans are exactly 57,344 and 61,440 bytes even though each
 pool buffer is 73,728 bytes. None of the checks below is inferred from an
 address. **Corrected 2026-08-04:** this sentence listed `S <= capacity`, the
@@ -224,8 +230,13 @@ none is a resident-process measurement.
 All four independently wrong address interpretations fail the retained oracle:
 the two exact-live allocation policies, capacity-strided head-major, and
 sequence-major. The physical-root carrier tickets are obsolete because their
-candidate did not survive. The KV artifact/runtime ticket depends directly on
-the live-extent carrier and must not add a KV-specific stride schema. No Tom
+candidate did not survive.
+[`bind-repeated-invocations-over-caller-retained-tensors`](../../../tickets/bind-repeated-invocations-over-caller-retained-tensors.md)
+depends directly on the live-extent carrier and must add no KV-specific stride
+schema — nor any other workload-named one. *Corrected 2026-08-04:* this sentence
+named "the KV artifact/runtime ticket", which was rewritten and renamed under the
+supersession; the requirement is unchanged and its subject is now correctly an
+ordinary caller-retained tensor rather than a cache. No Tom
 decision remains on physical layout; Tom still owns acceptance of the
 live-extent carrier's tested consequential public/schema spelling when that
 implementation reaches review.
