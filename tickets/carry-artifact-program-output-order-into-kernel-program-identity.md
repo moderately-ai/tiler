@@ -1,7 +1,7 @@
 ---
 id: carry-artifact-program-output-order-into-kernel-program-identity
 title: Carry artifact program output order into kernel-program identity
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [admit-ordered-multi-output-programs-at-the-compiler-request-boundary, implement-general-dag-partitioning]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, identity, artifacts]
+claimed_from: todo
+assignee: agent-output-order
+lease_expires_at: 1785879489
 ---
 ## User-visible outcome
 
